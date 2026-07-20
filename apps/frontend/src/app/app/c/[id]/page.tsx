@@ -28,7 +28,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
+import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 import { trimDecimals, roundUpDecimals, formatUTCTimestamp } from "@/lib/format";
@@ -41,7 +41,7 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
@@ -94,19 +94,128 @@ function formatPerTransferStepName(step: string): string {
 }
 
 /** When embedInApp: only the pay content in a dark card (no tabs, no full page). When false: full page with SendReceiveTabs and white card. */
+/** Claim-to-external-wallet is built but disabled for now — flip to re-enable. */
+const SHOW_EXTERNAL_CLAIM = false;
+const GHOST_PATH =
+  "M12 2C7.58 2 4 5.58 4 10v9.5c0 .5.5.8.9.5l1.6-1.2c.3-.2.7-.2 1 0l1.5 1.1c.3.2.7.2 1 0l1.5-1.1c.3-.2.7-.2 1 0l1.5 1.1c.3.2.7.2 1 0l1.6-1.2c.4-.3.9 0 .9.5V10c0-4.42-3.58-8-8-8z";
+
+function GhostGlyph({ size, opacity }: { size: number; opacity: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" style={{ opacity }} className="drop-shadow-[0_4px_14px_rgba(217,119,6,0.6)]">
+      <path d={GHOST_PATH} fill="#fef3c7" />
+      <ellipse cx="9" cy="10.2" rx="1.1" ry="1.5" fill="#78350f" />
+      <ellipse cx="15" cy="10.2" rx="1.1" ry="1.5" fill="#78350f" />
+    </svg>
+  );
+}
+
+/** Confetti-style burst of our own ghost SVG rising from the bottom of the screen — used instead
+ *  of canvas-confetti's shapeFromText, which silently draws nothing (no error) if the browser's
+ *  canvas context can't rasterize the emoji glyph, which turned out to be unreliable. Pure DOM/SVG
+ *  via Framer Motion instead, so it always renders. Random per-ghost trajectory is computed once
+ *  at mount (useMemo with no deps) so it doesn't reshuffle mid-animation on re-render. */
+function GhostConfettiBurst({ onDone }: { onDone: () => void }) {
+  const ghosts = useMemo(
+    () =>
+      Array.from({ length: 16 }, () => ({
+        left: 8 + Math.random() * 84,
+        size: 16 + Math.random() * 20,
+        delay: Math.random() * 0.25,
+        duration: 1.3 + Math.random() * 0.7,
+        drift: (Math.random() - 0.5) * 16,
+        rotate: (Math.random() - 0.5) * 50,
+      })),
+    [],
+  );
+
+  useEffect(() => {
+    const t = setTimeout(onDone, 2400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-[200] pointer-events-none overflow-hidden">
+      {ghosts.map((g, i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0, top: "100vh", left: `${g.left}vw`, rotate: 0, scale: 0.6 }}
+          animate={{
+            opacity: [0, 1, 1, 0],
+            top: ["100vh", "-8vh"],
+            left: [`${g.left}vw`, `${g.left + g.drift}vw`],
+            rotate: [0, g.rotate],
+            scale: [0.6, 1],
+          }}
+          transition={{ duration: g.duration, delay: g.delay, ease: "easeOut" }}
+          className="absolute"
+        >
+          <GhostGlyph size={g.size} opacity={0.9} />
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
+/** Single ghost mascot peeking over the top edge of the whole pay card — the incognito-mode
+ *  "window chrome changes color" moment (à la Brave/Chrome private windows), not just a small
+ *  toggle. Caller wraps this in <AnimatePresence> and conditionally renders it (rather than this
+ *  component owning its own AnimatePresence) so the mount/unmount transition actually animates —
+ *  AnimatePresence has to stay mounted across the toggle, not be unmounted along with its child. */
+function IncognitoCardGhost() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 44, scale: 0.5 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 44, scale: 0.5 }}
+      transition={{ type: "spring", stiffness: 220, damping: 16 }}
+      className="absolute -top-4 left-1/2 -translate-x-1/2 z-10 select-none pointer-events-none"
+    >
+      <motion.div animate={{ y: [0, -3, 0] }} transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}>
+        <GhostGlyph size={34} opacity={1} />
+      </motion.div>
+    </motion.div>
+  );
+}
+
 function ClaimPayLayout({
   embedInApp,
   topRight,
   from,
+  incognito,
   children,
 }: {
   embedInApp?: boolean;
   topRight?: React.ReactNode;
   from?: string | null;
+  /** True once the sender has opted into incognito mode for this payment — gives the whole card
+   *  a distinct amber-glow border and a ghost mascot peeking over the top, like a browser's
+   *  private-window chrome change, instead of only the small toggle row changing. */
+  incognito?: boolean;
   children: React.ReactNode;
 }) {
   const backHref = from === "history" ? "/history" : "/";
   const backLabel = from === "history" ? "← Back to History" : "← Back to Send";
+  // Memoized so the animate/transition objects (and the keyframe array in particular) keep a
+  // stable reference across re-renders — this component re-renders often (background polling
+  // queries, etc.) and Framer Motion was restarting the infinite box-shadow keyframe loop from
+  // scratch on every single one of those unrelated re-renders, which read as the whole card
+  // flickering/blinking rather than a smooth pulse.
+  const cardBorderAnimation = useMemo(
+    () => ({
+      boxShadow: incognito
+        ? (["0 8px 28px -10px rgba(217,119,6,0.4)", "0 8px 34px -8px rgba(217,119,6,0.6)", "0 8px 28px -10px rgba(217,119,6,0.4)"] as string[])
+        : "0 0 0 0 rgba(0,0,0,0)",
+    }),
+    [incognito],
+  );
+  const cardTransition = useMemo(
+    () =>
+      incognito
+        ? { boxShadow: { duration: 2.6, repeat: Infinity, ease: "easeInOut" } }
+        : { duration: 0.4, ease: "easeOut" },
+    [incognito],
+  );
 
   if (embedInApp) {
     return (
@@ -117,11 +226,16 @@ function ClaimPayLayout({
           </Link>
           {topRight}
         </div>
-        <div
-          className="rounded-xl border border-white/10 bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30"
-          data-embed-pay
-        >
-          {children}
+        <div className="relative">
+          <AnimatePresence>{incognito && <IncognitoCardGhost />}</AnimatePresence>
+          <motion.div
+            animate={cardBorderAnimation}
+            transition={cardTransition}
+            className="rounded-xl bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30"
+            data-embed-pay
+          >
+            {children}
+          </motion.div>
         </div>
       </div>
     );
@@ -138,8 +252,15 @@ function ClaimPayLayout({
           </Link>
           {topRight}
         </div>
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30">
-          {children}
+        <div className="relative">
+          <AnimatePresence>{incognito && <IncognitoCardGhost />}</AnimatePresence>
+          <motion.div
+            animate={cardBorderAnimation}
+            transition={cardTransition}
+            className="rounded-2xl bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30"
+          >
+            {children}
+          </motion.div>
         </div>
       </div>
     </div>
@@ -157,6 +278,7 @@ function ClaimPageSenderShareView({
   onReclaimed,
   recipientType,
   recipientValue,
+  recipientPlatform,
   claimLocked,
   onRecipientUpdated,
 }: {
@@ -169,10 +291,12 @@ function ClaimPageSenderShareView({
   /** Logged-in creator's Privy user id; Reclaim is only shown when this is set. */
   userId?: string | null;
   onReclaimed?: () => void;
-  /** "email" or "username" — which pending-recipient field is editable. Omit to hide Edit. */
-  recipientType?: "email" | "username";
+  /** "email", "username", or "social" — which pending-recipient field is editable. Omit to hide Edit. */
+  recipientType?: "email" | "username" | "social";
   /** Current unmasked recipient identifier (creator only) — prefills the edit dialog. */
   recipientValue?: string;
+  /** Current platform when recipientType is "social" — prefills the platform selector. */
+  recipientPlatform?: string | null;
   /** True while the recipient is actively claiming — Edit is disabled to avoid racing them. */
   claimLocked?: boolean;
   onRecipientUpdated?: () => void;
@@ -186,6 +310,9 @@ function ClaimPageSenderShareView({
   const [isLocalhost, setIsLocalhost] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editValue, setEditValue] = useState(recipientValue || "");
+  const [editPlatform, setEditPlatform] = useState<"discord" | "github" | "telegram">(
+    (recipientPlatform as "discord" | "github" | "telegram" | undefined) || "discord",
+  );
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const statusUpper = (status || "").toUpperCase();
@@ -193,6 +320,7 @@ function ClaimPageSenderShareView({
 
   function startEditRecipient() {
     setEditValue(recipientValue || "");
+    setEditPlatform((recipientPlatform as "discord" | "github" | "telegram" | undefined) || "discord");
     setEditError(null);
     setEditOpen(true);
   }
@@ -215,7 +343,11 @@ function ClaimPageSenderShareView({
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ recipientType, recipientIdentifier: trimmed }),
+        body: JSON.stringify({
+          recipientType,
+          recipientIdentifier: trimmed,
+          ...(recipientType === "social" ? { platform: editPlatform } : {}),
+        }),
       });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
@@ -347,14 +479,33 @@ function ClaimPageSenderShareView({
         <div className="mt-4 max-w-md mx-auto text-left">
           {editOpen ? (
             <div className="space-y-2">
+              {recipientType === "social" && (
+                <div className="flex gap-1.5">
+                  {(["discord", "github", "telegram"] as const).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setEditPlatform(p)}
+                      className={cn(
+                        "flex-1 h-9 rounded-lg text-base font-medium capitalize transition-all border",
+                        editPlatform === p
+                          ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10 text-[#FF7A2A]"
+                          : "border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06]",
+                      )}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
                   {recipientType === "email" ? <Mail className="h-4 w-4" /> : <AtSign className="h-4 w-4" />}
                 </span>
                 <input
                   value={editValue}
-                  onChange={(e) => setEditValue(recipientType === "username" ? e.target.value.replace(/^@+/, "") : e.target.value)}
-                  placeholder={recipientType === "email" ? "name@example.com" : "username"}
+                  onChange={(e) => setEditValue(recipientType !== "email" ? e.target.value.replace(/^@+/, "") : e.target.value)}
+                  placeholder={recipientType === "email" ? "name@example.com" : recipientType === "social" ? "handle" : "username"}
                   className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base"
                   autoFocus
                 />
@@ -526,7 +677,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_pending_social?: boolean; recipient_pending_social_platform?: string | null; recipient_pending_social_value?: string | null; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null },
+    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; recipient_user_id?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_pending_social?: boolean; recipient_pending_social_platform?: string | null; recipient_pending_social_value?: string | null; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; claimed_privately?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null },
     latestIntent: data.latestIntent || null,
     pendingEmail: false,
     pendingSocialPlatform: null,
@@ -824,6 +975,41 @@ function ConfirmingIdentityNotice() {
   );
 }
 
+// ─── Privacy FAQ (same accordion style as send/receive and megapot) ───────────
+
+const CLAIM_PRIVACY_FAQ_ITEMS: { question: string; answer: React.ReactNode }[] = [
+  {
+    question: "How does a private payment work?",
+    answer: (
+      <>
+        <p className="mb-3">A private transfer runs through <span className="font-medium text-slate-300">MagicBlock</span>&apos;s private ephemeral rollup, which breaks the on-chain link between your wallet and the recipient&apos;s — nobody can trace the payment from one to the other.</p>
+        <p>You always pay a freshly generated address, never the recipient&apos;s real wallet directly. Loofta resolves the actual destination and delivers the funds server-side.</p>
+      </>
+    ),
+  },
+  {
+    question: "What are the fees for a private payment?",
+    answer: (
+      <>
+        <p className="mb-3">The fee is <span className="font-medium text-slate-300">0.002 SOL + 0.1%</span>, converted to USD at the time of transfer — that covers MagicBlock&apos;s private ephemeral rollup end to end.</p>
+        <p>There&apos;s no separate network or gas fee on top — that&apos;s the whole cost.</p>
+      </>
+    ),
+  },
+  {
+    question: "What happens if I pay publicly instead?",
+    answer: (
+      <p>The recipient can see the address you paid from, and can link it back to you on any future payment. Private avoids that; public doesn&apos;t.</p>
+    ),
+  },
+  {
+    question: "Can a recipient claim privately even if I paid publicly?",
+    answer: (
+      <p>Yes. Every payment can be claimed either way — whoever receives it chooses at claim time, regardless of how it was sent.</p>
+    ),
+  },
+];
+
 function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
   const id = claimId;
   const router = useRouter();
@@ -968,7 +1154,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     setIsConfirmingIdentity(true);
     setIdentityConfirmGaveUp(false);
     try {
-      await bustPrivyCacheOnce().catch(() => {});
+      await bustPrivyCacheOnce().catch(() => { });
       let resolved = false;
       for (let attempt = 0; attempt < 10; attempt++) {
         if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
@@ -1063,6 +1249,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const networkMode = useAuthStore((s) => s.networkMode);
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
   const isOnboardingOpen = useAuthStore((s) => s.isOnboardingOpen);
+  const setOpenSettingsModal = useAuthStore((s) => s.setOpenSettingsModal);
   const hideAlternateTokenPay = false;
   const mainnetViewOnly = false;
   const { data: tokensRaw = [], isLoading } = useTokensQuery();
@@ -1290,9 +1477,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     }
   };
   const claimAsRecipientMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts?: { claimPrivately?: boolean; destinationAddress?: string }) => {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-      console.info("[Claim] Initiating claim for:", id, "user:", user?.id?.slice(0, 12));
+      console.info("[Claim] Initiating claim for:", id, "user:", user?.id?.slice(0, 12), "opts:", opts);
       const claimToken = await getAccessToken();
       const claimResp = await fetch(`${backendUrl}/claims/${id}/claim`, {
         method: "POST",
@@ -1300,6 +1487,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           "Content-Type": "application/json",
           ...(claimToken ? { Authorization: `Bearer ${claimToken}` } : {}),
         },
+        body: JSON.stringify(opts ?? {}),
       });
       console.info("[Claim] /claim response:", claimResp.status);
       if (claimResp.ok) {
@@ -1314,7 +1502,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           method: "POST",
           headers: retrySweepHeaders,
         }).then(r => r.json()).then(d => console.info("[Claim] retry-sweep (bg):", d)).catch(() => { });
-        return { claimed: true, sweepTxHash: claimData?.sweepTxHash, sweptAmount: claimData?.sweptAmount };
+        return { claimed: true, sweepTxHash: claimData?.sweepTxHash, sweptAmount: claimData?.sweptAmount, feeAmountUsdc: claimData?.feeAmountUsdc };
       }
       // If already claimed/not pending, fire a background retry-sweep for recovery.
       const err = await claimResp.json().catch(() => ({}));
@@ -1380,7 +1568,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       }
       return { prevClaim, prevHistories };
     },
-    onSuccess: (data: { claimed?: boolean; sweepTxHash?: string; sweptAmount?: string; swept?: boolean } | undefined, _vars, context) => {
+    onSuccess: (data: { claimed?: boolean; sweepTxHash?: string; sweptAmount?: string; swept?: boolean; feeAmountUsdc?: number } | undefined, _vars, context) => {
       setClaimCompleted(true);
       setStatus("SUCCESS");
       useClaimPayStore.getState().setClaimed(id, true);
@@ -1416,6 +1604,266 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [retrySweepLoading, setRetrySweepLoading] = useState(false);
   const [reclaimingSenderFunds, setReclaimingSenderFunds] = useState(false);
   const [claimInitiated, setClaimInitiated] = useState(false);
+  /** Every payment now routes through a burner and is claimed explicitly — the recipient always
+   *  gets a choice of destination (own wallet or a pasted external address) and, unless the
+   *  payment already arrived privately, whether to upgrade this claim to a private transfer. */
+  const [showExternalClaim, setShowExternalClaim] = useState(false);
+  const [externalClaimAddress, setExternalClaimAddress] = useState("");
+  const [externalClaimRiskStatus, setExternalClaimRiskStatus] = useState<"idle" | "checking" | "safe" | "unsafe">("idle");
+  const [externalClaimPrivately, setExternalClaimPrivately] = useState(false);
+  useEffect(() => {
+    const raw = externalClaimAddress.trim();
+    if (!raw || !isValidAddressForChain(raw, "solana")) { setExternalClaimRiskStatus("idle"); return; }
+    setExternalClaimRiskStatus("checking");
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/risk/address?address=${encodeURIComponent(raw)}&network=solana`);
+        const data = await res.json().catch(() => ({}));
+        setExternalClaimRiskStatus(data.safe !== false ? "safe" : "unsafe");
+      } catch {
+        setExternalClaimRiskStatus("idle");
+      }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [externalClaimAddress]);
+  /** Redundant to offer once the payment already arrived privately — the burner's incoming leg
+   *  already broke any on-chain link back to the sender, so a plain public sweep out reveals
+   *  nothing new (see the Context section of the universal-claim plan). */
+  const canClaimPrivately = !claim?.is_private;
+  const claimActionDisabled = claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady;
+  /** Recipient pays this fee out of the claimed amount when upgrading a public burner to a
+   *  private claim (exact-in) — mirrors sweepClaimBurnerPrivately's math server-side. Estimate
+   *  only; the real amount comes back from the claim response. */
+  const estimateClaimPrivatelyNet = (usd: number) => {
+    const gasFee = 0.20;
+    const bps = 10;
+    const afterRelay = Math.max(0, usd - gasFee);
+    const protocolFee = (afterRelay * bps) / 10_000;
+    const feeEstimate = gasFee + protocolFee;
+    return { net: Math.max(0, usd - feeEstimate), feeEstimate };
+  };
+  /** Non-null opens the "how much you'll receive" confirmation modal before actually submitting
+   *  a private claim (the only claim path with a fee) — holds whatever extra opts (e.g. a chosen
+   *  external destination) should ride along once confirmed. */
+  const [privateClaimConfirm, setPrivateClaimConfirm] = useState<{ destinationAddress?: string } | null>(null);
+  const confirmPrivateClaimAmount = parseFloat(claim?.amount || "0") || 0;
+  const confirmPrivateClaimEstimate = estimateClaimPrivatelyNet(confirmPrivateClaimAmount);
+  /** Breathing amber glow on the "Claim privately" button — memoized so it doesn't restart on
+   *  every re-render (this panel re-renders often from background polling; see the identical
+   *  fix on ClaimPayLayout's card glow earlier this session). */
+  const privateClaimGlow = useMemo(
+    () => ({
+      boxShadow: [
+        "0 0 0px 0px rgba(217,119,6,0)",
+        "0 0 18px 3px rgba(217,119,6,0.45)",
+        "0 0 0px 0px rgba(217,119,6,0)",
+      ] as string[],
+    }),
+    [],
+  );
+  const privateClaimGlowTransition = useMemo(
+    () => ({ boxShadow: { duration: 2.4, repeat: Infinity, ease: "easeInOut" } }),
+    [],
+  );
+  /** Shared claim panel — replaces the old single hardcoded "claim to wallet" button (and the
+   *  first-claim-only "claim privately" button) with the full set of choices, for every claim. */
+  const renderClaimPanel = (mobile: boolean) => (
+    <div className={mobile ? "w-full" : "hidden md:flex flex-col w-full max-w-md mx-auto"}>
+      <button
+        type="button"
+        onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate({}); }}
+        disabled={claimActionDisabled}
+        className={cn(
+          "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
+          mobile ? "py-4 text-base" : "py-3",
+          "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+          claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
+        )}
+      >
+        {claimAsRecipientMutation.isPending ? (
+          <><Loader2 className={mobile ? "h-5 w-5 animate-spin" : "h-4 w-4 animate-spin"} /><span>Claiming…</span></>
+        ) : (
+          <><CheckCircle2 className={mobile ? "h-5 w-5" : "h-4 w-4"} /><span>Claim publicly{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span></>
+        )}
+      </button>
+
+      {/* Ghost (dark) secondary button — this card is a dark surface (bg-white/5, forced-white
+          text via ClaimPayLayout's overrides). Breathing amber glow + ghost mascot + a confetti
+          burst on click (same GhostConfettiBurst used for the sender's incognito toggle) so
+          going private feels like a distinct, celebrated choice, not just a second button.
+          One under the other, same as mobile, full width so it's grounded at the card's edges
+          instead of floating as a narrow pill. */}
+      {canClaimPrivately && (
+        <>
+          <div className="flex items-center gap-3 my-2.5 w-full">
+            <div className="h-px flex-1 bg-white/10" />
+            <span className="text-xs font-medium tracking-widest text-slate-500 uppercase">or</span>
+            <div className="h-px flex-1 bg-white/10" />
+          </div>
+          <motion.button
+            type="button"
+            onClick={() => { setGhostBurstKey(Date.now()); setPrivateClaimConfirm({}); }}
+            disabled={claimActionDisabled}
+            animate={claimActionDisabled ? undefined : privateClaimGlow}
+            transition={privateClaimGlowTransition}
+            whileHover={claimActionDisabled ? undefined : { scale: 1.02 }}
+            whileTap={claimActionDisabled ? undefined : { scale: 0.98 }}
+            className={cn(
+              "w-full flex items-center justify-center gap-2 rounded-2xl bg-white/5 border border-amber-400/30 font-display font-semibold text-amber-200 transition-colors hover:bg-white/10 hover:border-amber-400/50",
+              mobile ? "py-3 text-base" : "py-3 text-sm",
+              claimActionDisabled && "opacity-50 cursor-not-allowed hover:bg-white/5",
+            )}
+          >
+            <GhostGlyph size={mobile ? 20 : 18} opacity={1} />
+            <span>Claim privately</span>
+          </motion.button>
+        </>
+      )}
+
+      {/* Claim-to-external-wallet: disabled for now — set SHOW_EXTERNAL_CLAIM to re-enable. */}
+      {SHOW_EXTERNAL_CLAIM && (!showExternalClaim ? (
+        <button
+          type="button"
+          onClick={() => setShowExternalClaim(true)}
+          className={cn("text-base md:text-sm text-slate-400 hover:text-slate-200 underline underline-offset-2", mobile ? "mt-3" : "mt-2")}
+        >
+          Claim to a different wallet
+        </button>
+      ) : (
+        <div className={cn("mt-2 text-left", mobile ? "w-full" : "w-full max-w-sm")}>
+          <Input
+            placeholder="Enter Solana address"
+            value={externalClaimAddress}
+            onChange={(e) => setExternalClaimAddress(e.target.value)}
+            className="font-mono text-base"
+          />
+          {externalClaimRiskStatus === "checking" && (
+            <p className="text-base mt-1.5 flex items-center gap-1.5 text-gray-500">
+              <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+              Checking address…
+            </p>
+          )}
+          {externalClaimRiskStatus === "safe" && (
+            <p className="text-base mt-1.5 flex items-center gap-1.5 text-emerald-500 font-medium">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              Address compliant
+            </p>
+          )}
+          {externalClaimRiskStatus === "unsafe" && (
+            <p className="text-base mt-1.5 flex items-center gap-1.5 text-red-500 font-medium">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              Address flagged — claim blocked
+            </p>
+          )}
+          {canClaimPrivately && (
+            <label className="flex items-center gap-2 mt-2 text-base md:text-sm text-gray-600">
+              <input type="checkbox" checked={externalClaimPrivately} onChange={(e) => setExternalClaimPrivately(e.target.checked)} />
+              Also claim privately
+            </label>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              const dest = externalClaimAddress.trim();
+              if (externalClaimPrivately) {
+                setPrivateClaimConfirm({ destinationAddress: dest });
+                return;
+              }
+              setClaimInitiated(true);
+              claimAsRecipientMutation.mutate({ destinationAddress: dest });
+            }}
+            disabled={claimActionDisabled || externalClaimRiskStatus !== "safe"}
+            className={cn(
+              "mt-2 w-full flex items-center justify-center gap-2 rounded-xl py-3 font-semibold text-base transition-all",
+              "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+              (claimActionDisabled || externalClaimRiskStatus !== "safe") && "opacity-50 cursor-not-allowed hover:opacity-50",
+            )}
+          >
+            Claim to this address
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+  /** "How much you'll actually receive" preview before confirming a private claim — the only
+   *  claim path with a fee. Rendered once (not inside renderClaimPanel, which is called twice
+   *  for the desktop/mobile layouts) to avoid mounting two dialogs. */
+  const renderPrivateClaimConfirmDialog = () => (
+    <Dialog open={!!privateClaimConfirm} onOpenChange={(open) => { if (!open) setPrivateClaimConfirm(null); }}>
+      <DialogContent
+        className={cn(
+          "border-white/10 bg-[#0f0f12] text-white",
+          "left-0 right-0 top-0 [transform:none] h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col data-[state=open]:!zoom-in-100 data-[state=open]:!animate-none",
+          "sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-2xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block",
+          "[&>button]:h-12 [&>button]:w-12 [&>button]:rounded-full [&>button_svg]:h-5 [&>button_svg]:w-5",
+        )}
+      >
+        {/* Drag handle — mobile only */}
+        <div className="sm:hidden flex justify-center pt-5 pb-2 shrink-0">
+          <div className="w-10 h-1 rounded-full bg-white/20" />
+        </div>
+
+        <div
+          className="sm:contents px-6 pb-6 sm:p-0 space-y-5 sm:space-y-4"
+          style={{ flex: "1 1 0", height: 0, overflowY: "auto", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
+        >
+          <DialogHeader className="pb-0 pt-2 sm:pt-0">
+            <DialogTitle className="flex items-center gap-2.5 text-3xl sm:text-4xl font-bold tracking-tight text-white">
+              <GhostGlyph size={30} opacity={1} />
+              Claim privately
+            </DialogTitle>
+            <DialogDescription className="text-base font-medium mt-0.5 text-slate-400">
+              A MagicBlock private transfer fee is deducted from the claimed amount.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-2">
+            <div className="flex items-center justify-between text-base text-slate-400">
+              <span>Claim amount</span>
+              <span className="font-sans text-slate-200">${confirmPrivateClaimAmount.toFixed(2)}</span>
+            </div>
+            <div className="flex items-center justify-between text-base text-slate-400">
+              <span>Privacy fee</span>
+              <span className="font-sans text-slate-200">- ${confirmPrivateClaimEstimate.feeEstimate.toFixed(2)}</span>
+            </div>
+            <div className="h-px bg-white/10 my-1" />
+            <div className="flex items-center justify-between text-lg font-semibold">
+              <span className="text-white">You'll receive</span>
+              <span className="font-sans text-amber-300">${confirmPrivateClaimEstimate.net.toFixed(2)}</span>
+            </div>
+          </div>
+
+          <p className="text-base md:text-sm text-slate-500 leading-relaxed">
+            {privatePaymentFundsAppearCopy()}
+          </p>
+
+          <div className="flex flex-col-reverse sm:flex-row gap-2 mt-2">
+            <button
+              type="button"
+              onClick={() => setPrivateClaimConfirm(null)}
+              disabled={claimActionDisabled}
+              className="flex-1 h-12 rounded-xl text-base font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!privateClaimConfirm) return;
+                setClaimInitiated(true);
+                claimAsRecipientMutation.mutate({ claimPrivately: true, ...privateClaimConfirm });
+                setPrivateClaimConfirm(null);
+              }}
+              disabled={claimActionDisabled}
+              className="flex-1 h-12 rounded-xl text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
+            >
+              Confirm
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
   const [claimCompleted, setClaimCompleted] = useState(false);
   const confettiFiredRef = React.useRef(false);
   const [optimisticClaimedAt, setOptimisticClaimedAt] = useState<string | null>(null);
@@ -1626,8 +2074,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [txInput, setTxInput] = useState<string>("");
   const [submittingTx, setSubmittingTx] = useState<boolean>(false);
   const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
-  const [showPrivacyTutorial, setShowPrivacyTutorial] = useState<boolean>(false);
-  const [tutorialStep, setTutorialStep] = useState<number>(0);
+  /** Ghost swarm burst from the bottom of the screen — the celebratory "entering incognito
+   *  mode" moment, separate from the single ghost mascot that lives on the card itself.
+   *  Non-null key mounts one <GhostConfettiBurst>; it clears itself via onDone. */
+  const [ghostBurstKey, setGhostBurstKey] = useState<number | null>(null);
+  const handleTogglePrivateMode = (checked: boolean) => {
+    setIsPrivateMode(checked);
+    if (checked) setGhostBurstKey(Date.now());
+  };
+  const [openPrivacyFaq, setOpenPrivacyFaq] = useState<number | null>(null);
   const [refundAddress, setRefundAddress] = useState<string>("");
   const [refundAddressError, setRefundAddressError] = useState<string | null>(null);
   const hasUpdatedClaimStatus = React.useRef<string | null>(null); // Track if we've already updated DB for this status
@@ -1669,6 +2124,28 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const payingPrivately = requiresPrivate || isPrivateMode;
   const isCreatorView = !!user?.id && claim?.created_by === user.id;
 
+  // Has the sender ever completed a public (non-private) payment to this same recipient before?
+  // If so, a private payment now can't undo that — the recipient already knows their wallet
+  // address. Only meaningful for a registered recipient (recipient_user_id set); a still-pending
+  // one can't have received anything yet.
+  const exposureCheckQuery = useQuery({
+    queryKey: ["claim", id, "exposure-check", claim?.recipient_user_id],
+    queryFn: async () => {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const token = await getAccessToken();
+      const r = await fetch(
+        `${backendUrl}/claims/exposure-check?recipientUserId=${encodeURIComponent(claim!.recipient_user_id!)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+      if (!r.ok) return { hasPaidPublicly: false };
+      const data = await r.json();
+      return { hasPaidPublicly: data?.hasPaidPublicly === true };
+    },
+    enabled: isCreatorView && !!claim?.recipient_user_id,
+    staleTime: 60_000,
+  });
+  const hasPaidRecipientPublicly = exposureCheckQuery.data?.hasPaidPublicly === true;
+
   // True only once both queries have settled AND this render is actually showing (or would
   // show) the "Payment not found" empty state — mirrors the two PaymentNotFoundNotice render
   // conditions below: claim is null (genuine 404), or claim loaded but this viewer isn't its
@@ -1701,6 +2178,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   /** Only hide payer UI for the intended recipient (pending claim flow). Do not hide for anonymous/other payers when recipient_is_registered is set. */
   const hidePaySectionForPendingClaimant =
     isPendingRecipientClaim && isRecipient && !isCreatorView;
+  /** Ghost + glow card treatment is scoped to the payer actively viewing the pay form — not the
+   *  loading skeleton (payingPrivately defaults true before `claim` loads), not the recipient's
+   *  claim view, not the success screen. Mirrors the exact condition gating the pay section below. */
+  const showingPrivatePayForm =
+    !!claim &&
+    payingPrivately &&
+    !isSenderPendingFundedView &&
+    !hidePaySectionForPendingClaimant &&
+    !isRecipient &&
+    !isCheckingRecipient &&
+    !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase());
 
   // Sync the toggle to the claim's declared privacy preference once it loads: forced on when
   // the claim requires private payments, forced off when the creator explicitly asked for a
@@ -2830,118 +3318,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
   return (
     <>
-      {/* Privacy Tutorial Modal */}
-      {showPrivacyTutorial && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => { setShowPrivacyTutorial(false); setTutorialStep(0); }}>
-          <div
-            className="bg-white rounded-[20px] w-full max-w-sm shadow-2xl overflow-hidden"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Progress bar */}
-            <div className="flex gap-1.5 p-4 pb-0">
-              {[0, 1, 2, 3].map(i => (
-                <div key={i} className="flex-1 h-1 rounded-full bg-gray-200 overflow-hidden">
-                  <div className={`h-full transition-all duration-300 ${tutorialStep >= i ? 'w-full' : 'w-0'}`} style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }} />
-                </div>
-              ))}
-            </div>
-
-            {/* Content - fixed height */}
-            <div className="relative h-[360px] overflow-hidden">
-              {/* Step 0: Intro */}
-              <div className={`absolute inset-0 p-6 flex flex-col items-center justify-center text-center transition-all duration-300 ${tutorialStep === 0 ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
-                <Image src="/images/icons/shield-icon.png" alt="" width={64} height={64} className="mb-5" />
-                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-3">Private Settlement</h3>
-                <p className="text-slate-500">Convert your payment to ZEC for complete privacy</p>
-              </div>
-
-              {/* Step 1: Get Wallet */}
-              <div className={`absolute inset-0 p-6 flex flex-col items-center justify-center text-center transition-all duration-300 ${tutorialStep === 1 ? 'opacity-100 translate-x-0' : tutorialStep < 1 ? 'opacity-0 translate-x-full pointer-events-none' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
-                <Image src="/images/icons/wallet.png" alt="" width={128} height={128} className="mb-5" />
-                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-3">Get a Wallet</h3>
-                <p className="text-slate-500 mb-5">Download Zashi to get your shielded address</p>
-                <a
-                  href="https://zashi.app"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-white font-medium hover:opacity-90 transition-opacity"
-                  style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
-                >
-                  Get Zashi →
-                </a>
-              </div>
-
-              {/* Step 2: How it works */}
-              <div className={`absolute inset-0 p-6 flex flex-col transition-all duration-300 ${tutorialStep === 2 ? 'opacity-100 translate-x-0' : tutorialStep < 2 ? 'opacity-0 translate-x-full pointer-events-none' : 'opacity-0 -translate-x-full pointer-events-none'}`}>
-                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-6 text-center">How it works</h3>
-                <div className="flex-1 flex flex-col justify-center space-y-4">
-                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
-                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>1.</span>
-                    <span className="text-slate-700 pt-1">Enter your Zcash shielded address</span>
-                  </div>
-                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
-                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>2.</span>
-                    <span className="text-slate-700 pt-1">We swap your funds to ZEC</span>
-                  </div>
-                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
-                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>3.</span>
-                    <span className="text-slate-700 pt-1">Receive ZEC privately in your wallet</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Step 3: Benefits */}
-              <div className={`absolute inset-0 p-6 flex flex-col transition-all duration-300 ${tutorialStep === 3 ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-full pointer-events-none'}`}>
-                <h3 className="text-2xl font-sans font-medium text-slate-900 mb-6 text-center">Why private?</h3>
-                <div className="flex-1 flex flex-col justify-center space-y-4">
-                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
-                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>✓</span>
-                    <span className="text-slate-700 pt-1">No one can see your balance</span>
-                  </div>
-                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
-                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>✓</span>
-                    <span className="text-slate-700 pt-1">Transaction history is hidden</span>
-                  </div>
-                  <div className="flex items-start gap-4 p-4 rounded-[16px] bg-[#F6F6F8]">
-                    <span className="text-3xl font-bold" style={{ backgroundImage: 'linear-gradient(to bottom, #FF0F00, #EAB308)', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>✓</span>
-                    <span className="text-slate-700 pt-1">Send or receive again from Loofta Pay anytime</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Navigation */}
-            <div className="p-4 border-t border-gray-100">
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    if (tutorialStep === 0) {
-                      setShowPrivacyTutorial(false);
-                      setTutorialStep(0);
-                    } else {
-                      setTutorialStep(s => s - 1);
-                    }
-                  }}
-                  className="flex-1 py-3 rounded-[12px] font-medium text-slate-500 hover:text-slate-700 transition-colors"
-                >
-                  {tutorialStep === 0 ? 'Skip' : 'Back'}
-                </button>
-                <button
-                  onClick={() => tutorialStep < 3 ? setTutorialStep(s => s + 1) : (setShowPrivacyTutorial(false), setTutorialStep(0))}
-                  className="flex-1 py-3 rounded-[12px] font-medium text-white hover:opacity-90 transition-opacity"
-                  style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
-                >
-                  {tutorialStep === 3 ? 'Get Started' : 'Next'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {ghostBurstKey != null && <GhostConfettiBurst key={ghostBurstKey} onDone={() => setGhostBurstKey(null)} />}
+      {renderPrivateClaimConfirmDialog()}
 
       <ClaimPayLayout
         embedInApp={embedInApp}
         from={from}
+        incognito={showingPrivatePayForm}
         topRight={
           user?.id && claim?.created_by === user.id && ["OPEN", "PENDING_DEPOSIT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
             <>
@@ -3114,7 +3497,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               !claim?.recipient_pending_email &&
               !claim?.recipient_pending_username &&
               !claim?.recipient_pending_social &&
-              String(status || claim?.status || "").toUpperCase() === "SUCCESS" ? (
+              String(status || claim?.status || "").toUpperCase() === "SUCCESS" &&
+              // Status can be prematurely SUCCESS while the burner still holds unswept funds
+              // (sender's client posts an optimistic status update before the recipient claims)
+              // — burnerIsReady=true means funds are still sitting there, so don't show "already
+              // received" in that case; fall through to the claim panel instead.
+              !burnerIsReady ? (
               <div className="mt-6 py-6">
                 <div className="text-center mb-6">
                   <div className="mb-4 text-6xl">✅</div>
@@ -3221,7 +3609,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   )}
                 </div>
-                {claim?.created_at && Date.now() - new Date(claim.created_at).getTime() < 11 * 60_000 && (
+                {/* Sent privately: the delay is on the sender→burner leg, counted from Created.
+                    Claimed privately: the delay is on the burner→wallet leg, counted from Claimed.
+                    Independent legs — show whichever one is still inside its own 10-min window. */}
+                {claim?.is_private && claim?.created_at && Date.now() - new Date(claim.created_at).getTime() < 11 * 60_000 && (
+                  <div className="flex items-start gap-2 text-base md:text-sm text-gray-500 mb-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-amber-500 shrink-0 mt-0.5" />
+                    <span>{privatePaymentFundsAppearCopy()}</span>
+                  </div>
+                )}
+                {claim?.claimed_privately && claim?.paid_at && Date.now() - new Date(claim.paid_at).getTime() < 11 * 60_000 && (
                   <div className="flex items-start gap-2 text-base md:text-sm text-gray-500 mb-2">
                     <Loader2 className="h-4 w-4 animate-spin text-amber-500 shrink-0 mt-0.5" />
                     <span>{privatePaymentFundsAppearCopy()}</span>
@@ -3331,6 +3728,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         </div>
                       )}
                     </motion.div>
+                    {claim?.claimed_privately && claimedAt && (Date.now() - new Date(claimedAt).getTime()) < 11 * 60_000 && (
+                      <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.35 }}
+                        className="text-base md:text-sm text-gray-500 text-center"
+                      >
+                        {privatePaymentFundsAppearCopy()}
+                      </motion.p>
+                    )}
                   </motion.div>
                 );
               })()
@@ -3357,7 +3764,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 );
               })()
             ) : claim?.recipient_pending_email && !(user?.id && claim?.created_by === user.id) ? (
-              <div className="mt-6 text-center py-12 px-4">
+              <div className="mt-6 text-center pt-12 pb-6 px-4">
                 {!user?.id ? (
                   (() => {
                     const senderHasPaid = ["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(
@@ -3414,45 +3821,18 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         </>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
-                      disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
-                      className={cn(
-                        "hidden md:inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
-                        "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                        (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) &&
-                        "opacity-50 cursor-not-allowed hover:opacity-50",
-                      )}
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      Claim to wallet
-                      {walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}
-                    </button>
+                    {/* Extra top space grounds the button group at the bottom of the card instead of
+                        crowding the status line right above it. */}
+                    <div className="mt-10">{renderClaimPanel(false)}</div>
                     {/* Mobile: sticky above BottomNav (h-16 = 64px) */}
                     <div className="md:hidden fixed bottom-16 left-0 right-0 z-40 px-4 py-3 bg-[#0f0f12]/95 backdrop-blur-sm border-t border-white/10">
-                      <button
-                        type="button"
-                        onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
-                        disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
-                        className={cn(
-                          "w-full flex items-center justify-center gap-2 rounded-xl py-4 font-semibold text-base transition-all",
-                          "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                          (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) && "opacity-50 cursor-not-allowed hover:opacity-50",
-                        )}
-                      >
-                        {claimAsRecipientMutation.isPending ? (
-                          <><Loader2 className="h-5 w-5 animate-spin" /><span>Claiming…</span></>
-                        ) : (
-                          <><CheckCircle2 className="h-5 w-5" /><span>Claim to wallet{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span></>
-                        )}
-                      </button>
+                      {renderClaimPanel(true)}
                     </div>
                   </>
                 )}
               </div>
             ) : isRecipient && claim?.recipient_pending_username ? (
-              <div className="mt-6 text-center py-12 px-4">
+              <div className="mt-6 text-center pt-12 pb-6 px-4">
                 <div className="mb-4 text-6xl">📩</div>
                 <h3 className="text-2xl font-semibold text-gray-900 mb-2">This payment is for you</h3>
                 {["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(String(claim?.status || "").toUpperCase()) ? (
@@ -3505,39 +3885,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           </>
                         )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
-                        disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
-                        className={cn(
-                          "hidden md:inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
-                          "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                          (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) &&
-                          "opacity-50 cursor-not-allowed hover:opacity-50",
-                        )}
-                      >
-                        <CheckCircle2 className="h-4 w-4" />
-                        Claim to wallet
-                        {walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}
-                      </button>
+                      {/* Extra top space grounds the button group at the bottom of the card instead of
+                        crowding the status line right above it. */}
+                      <div className="mt-10">{renderClaimPanel(false)}</div>
                       {/* Mobile: sticky above BottomNav (h-16 = 64px) */}
                       <div className="md:hidden fixed bottom-16 left-0 right-0 z-40 px-4 py-3 bg-[#0f0f12]/95 backdrop-blur-sm border-t border-white/10">
-                        <button
-                          type="button"
-                          onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
-                          disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
-                          className={cn(
-                            "w-full flex items-center justify-center gap-2 rounded-xl py-4 font-semibold text-base transition-all",
-                            "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                            (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) && "opacity-50 cursor-not-allowed hover:opacity-50",
-                          )}
-                        >
-                          {claimAsRecipientMutation.isPending ? (
-                            <><Loader2 className="h-5 w-5 animate-spin" /><span>Claiming…</span></>
-                          ) : (
-                            <><CheckCircle2 className="h-5 w-5" /><span>Claim to wallet{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span></>
-                          )}
-                        </button>
+                        {renderClaimPanel(true)}
                       </div>
                     </>
                   )
@@ -3583,11 +3936,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 recipientLabel={`@${claim.recipient_pending_social_value || "handle"} on ${claim.recipient_pending_social_platform ?? "social"}`}
                 status={String(status || claim?.status || "").toUpperCase()}
                 userId={user?.id}
+                recipientType="social"
+                recipientValue={claim?.recipient_pending_social_value ?? undefined}
+                recipientPlatform={claim?.recipient_pending_social_platform}
                 claimLocked={!!claim?.recipient_claim_in_progress}
                 onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
               />
             ) : isRecipient && claim?.recipient_pending_social ? (
-              <div className="mt-6 text-center py-12 px-4">
+              <div className="mt-6 text-center pt-12 pb-6 px-4">
                 <div className="mb-4 text-6xl">🎁</div>
                 <h3 className="text-2xl font-semibold text-gray-900 mb-2">This payment is for you</h3>
                 {["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(String(claim?.status || "").toUpperCase()) ? (
@@ -3644,39 +4000,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           </>
                         )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
-                        disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
-                        className={cn(
-                          "hidden md:inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px]",
-                          "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                          (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) &&
-                          "opacity-50 cursor-not-allowed hover:opacity-50",
-                        )}
-                      >
-                        <CheckCircle2 className="h-4 w-4" />
-                        Claim to wallet
-                        {walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}
-                      </button>
+                      {/* Extra top space grounds the button group at the bottom of the card instead of
+                        crowding the status line right above it. */}
+                      <div className="mt-10">{renderClaimPanel(false)}</div>
                       {/* Mobile: sticky above BottomNav (h-16 = 64px) */}
                       <div className="md:hidden fixed bottom-16 left-0 right-0 z-40 px-4 py-3 bg-[#0f0f12]/95 backdrop-blur-sm border-t border-white/10">
-                        <button
-                          type="button"
-                          onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate(); }}
-                          disabled={claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady}
-                          className={cn(
-                            "w-full flex items-center justify-center gap-2 rounded-xl py-4 font-semibold text-base transition-all",
-                            "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                            (claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady) && "opacity-50 cursor-not-allowed hover:opacity-50",
-                          )}
-                        >
-                          {claimAsRecipientMutation.isPending ? (
-                            <><Loader2 className="h-5 w-5 animate-spin" /><span>Claiming…</span></>
-                          ) : (
-                            <><CheckCircle2 className="h-5 w-5" /><span>Claim to wallet{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span></>
-                          )}
-                        </button>
+                        {renderClaimPanel(true)}
                       </div>
                     </>
                   )
@@ -3694,7 +4023,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   String(claim?.status || "").toUpperCase()
                 );
                 return (
-                  <div className="mt-6 text-center py-12 px-4">
+                  <div className="mt-6 text-center pt-12 pb-6 px-4">
                     <div className="mb-4 text-6xl">🎁</div>
                     <h3 className="text-2xl font-semibold text-gray-900 mb-2">This payment is for you</h3>
                     {senderHasPaid ? (
@@ -3740,7 +4069,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   String(claim?.status || "").toUpperCase()
                 );
                 return (
-                  <div className="mt-6 text-center py-12 px-4">
+                  <div className="mt-6 text-center pt-12 pb-6 px-4">
                     <div className="mb-4 text-6xl">🎁</div>
                     <h3 className="text-2xl font-semibold text-gray-900 mb-2">
                       A payment is waiting
@@ -3763,17 +4092,43 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 );
               })()
             ) : isRecipient ? (
-              <div className="mt-6 text-center py-12">
-                <div className="mb-4 text-6xl">📩</div>
-                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                  This payment is for you
-                </h3>
-                <p className="text-gray-600 text-base mb-4">
-                  ${parseFloat(claim?.amount || "0").toFixed(2)} – waiting for the sender to pay. When they do, it’ll show up here and in your Loofta account.
-                </p>
-                <Link href={from === "history" ? "/history" : "/"} className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-gray-600 hover:text-gray-900">
-                  {from === "history" ? "← Back to History" : "← Back to Send"}
-                </Link>
+              <div className="mt-6 text-center pt-12 pb-6 px-4">
+                <div className="text-6xl font-sans font-semibold">
+                  + ${parseFloat(claim?.amount || "0").toFixed(2)}
+                </div>
+                <div className="text-xl text-gray-500 mt-3 mb-5">
+                  from{" "}
+                  {claim?.creator_username
+                    ? `@${claim.creator_username}`
+                    : claim?.creator_email || "Anonymous"}
+                </div>
+                <div className="flex items-center justify-center gap-2 text-base md:text-sm mb-4">
+                  {burnerIsChecking ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                      <span className="text-gray-500">Checking if funds have arrived…</span>
+                    </>
+                  ) : burnerIsReady ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      <span className="text-green-600 font-medium">Funds ready — you can claim now.</span>
+                    </>
+                  ) : (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+                      <span className="text-gray-500">
+                        {privatePaymentWaitingAfterSenderCopy()}
+                      </span>
+                    </>
+                  )}
+                </div>
+                {/* Extra top space grounds the button group at the bottom of the card instead of
+                        crowding the status line right above it. */}
+                <div className="mt-10">{renderClaimPanel(false)}</div>
+                {/* Mobile: sticky above BottomNav (h-16 = 64px) */}
+                <div className="md:hidden fixed bottom-16 left-0 right-0 z-40 px-4 py-3 bg-[#0f0f12]/95 backdrop-blur-sm border-t border-white/10">
+                  {renderClaimPanel(true)}
+                </div>
               </div>
             ) : ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <>
@@ -4054,14 +4409,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                             : claim?.recipient_username
                               ? `@${claim.recipient_username}`
                               : (claim as { recipient_pending_social_value?: string } | null)?.recipient_pending_social_value ? (
-                                  <span className="inline-flex items-center gap-1.5 align-middle">
-                                    <SocialPlatformIcon
-                                      platform={((claim as { recipient_pending_social_platform?: string } | null)?.recipient_pending_social_platform ?? "github") as SocialIconPlatform}
-                                      className="h-4 w-4 shrink-0"
-                                    />
-                                    @{(claim as { recipient_pending_social_value?: string }).recipient_pending_social_value}
-                                  </span>
-                                )
+                                <span className="inline-flex items-center gap-1.5 align-middle">
+                                  <SocialPlatformIcon
+                                    platform={((claim as { recipient_pending_social_platform?: string } | null)?.recipient_pending_social_platform ?? "github") as SocialIconPlatform}
+                                    className="h-4 w-4 shrink-0"
+                                  />
+                                  @{(claim as { recipient_pending_social_value?: string }).recipient_pending_social_value}
+                                </span>
+                              )
                                 : (claim as { recipient_pending_email_value?: string } | null)?.recipient_pending_email_value
                                   ? (claim as { recipient_pending_email_value?: string }).recipient_pending_email_value
                                   : claim?.recipient_email
@@ -4171,18 +4526,28 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     <p className="min-w-0 leading-relaxed">{PRIVATE_PAYMENT_ALL_PRIVATE_LINE}</p>
                   </div>
                 ) : (
-                  <div className="mt-5 flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
-                    <div className="min-w-0">
-                      <p className="text-base md:text-sm font-medium text-gray-900">
-                        {isPrivateMode ? "Private payment" : "This is not a private payment"}
+                  <IncognitoModeToggle checked={isPrivateMode} onCheckedChange={handleTogglePrivateMode} className="mt-5" />
+                )}
+
+                {/* Wallet-exposure nudge — this recipient has already seen this sender's wallet
+                    address via a past public payment, so paying privately now doesn't undo that. */}
+                {hasPaidRecipientPublicly && (
+                  <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0 mt-0.5">
+                      <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base md:text-sm text-amber-800 leading-relaxed">
+                        You paid this person publicly before, so they already know your wallet address. For more confidentiality, you can rotate to a new wallet.
                       </p>
-                      <p className="text-base md:text-sm text-gray-500">
-                        {isPrivateMode
-                          ? "Amount and addresses stay hidden on-chain — you cover the added fee."
-                          : "Add privacy to hide the amount and addresses. You'd cover the extra fee."}
-                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setOpenSettingsModal(true)}
+                        className="mt-1.5 text-base md:text-sm font-semibold text-amber-800 hover:text-amber-900 underline underline-offset-2"
+                      >
+                        Withdraw &amp; rotate wallet
+                      </button>
                     </div>
-                    <Switch checked={isPrivateMode} onCheckedChange={setIsPrivateMode} aria-label="Make this payment private" />
                   </div>
                 )}
 
@@ -4813,6 +5178,38 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           />
         )}
       </ClaimPayLayout>
+
+      {/* FAQ — same style as send/receive and megapot */}
+      <section id="how-privacy-works" className="md:pb-16 px-4 mt-2 pb-24">
+        <div className="max-w-xl mx-auto">
+          <h2 className="text-3xl md:text-4xl font-medium font-sans text-white text-center mb-8 md:mb-10">
+            How private payments work
+          </h2>
+          <div className="flex flex-col gap-4">
+            {CLAIM_PRIVACY_FAQ_ITEMS.map((item, index) => (
+              <div key={index} className="rounded-[20px] border border-white/10 bg-white/5 overflow-hidden">
+                <button type="button" onClick={() => setOpenPrivacyFaq(openPrivacyFaq === index ? null : index)}
+                  className="w-full px-6 py-5 flex items-center justify-between text-left">
+                  <span className="text-lg md:text-xl font-semibold font-sans text-slate-200">{item.question}</span>
+                  <motion.span className="text-4xl text-orange-500 shrink-0 ml-4"
+                    animate={{ rotate: openPrivacyFaq === index ? 45 : 0 }} transition={{ duration: 0.2 }}>
+                    +
+                  </motion.span>
+                </button>
+                <AnimatePresence initial={false}>
+                  {openPrivacyFaq === index && (
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3, ease: "easeInOut" }}
+                      className="overflow-hidden">
+                      <div className="px-6 pb-5 text-lg text-slate-400 leading-relaxed">{item.answer}</div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* Pay Now modal: same centered style as onboarding (emoji + amount + subtitle), then 2 options */}
       <Dialog

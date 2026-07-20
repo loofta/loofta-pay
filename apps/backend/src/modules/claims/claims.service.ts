@@ -4,7 +4,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import nacl from 'tweetnacl';
-import { Keypair, PublicKey, Transaction, TransactionInstruction, SystemProgram, Connection, ComputeBudgetProgram } from '@solana/web3.js';
+import { Keypair, PublicKey, Transaction, VersionedTransaction, TransactionInstruction, SystemProgram, Connection, ComputeBudgetProgram } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
   getAccount,
@@ -16,7 +16,7 @@ import {
 import { SupabaseService } from '@/database/supabase.service';
 import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto, CreateClaimFromSocialDto } from './dto';
 import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
-import { UsersService } from '../users/users.service';
+import { UsersService, SocialPlatform } from '../users/users.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
 import { EmailService } from '../email/email.service';
@@ -178,8 +178,6 @@ export class ClaimsService {
     const cleanUsername = username.replace(/^@/, '').toLowerCase();
 
     let recipientAddress: string;
-    let requiresPrivate = false;
-    let finalIsPrivate = isPrivate;
 
     try {
       const user = await this.usersService.findByUsername(cleanUsername);
@@ -188,18 +186,14 @@ export class ClaimsService {
           "This recipient is registered but hasn't updated Loofta to mainnet yet. Ask them to open Loofta and complete the update, then try sending again.",
         );
       }
-      requiresPrivate = user.requirePrivatePayments || false;
-      finalIsPrivate = requiresPrivate ? true : isPrivate;
-      if (requiresPrivate && !isPrivate) {
-        throw new BadRequestException(
-          'This user requires private payments only. Please enable privacy when creating the payment link.'
-        );
-      }
       recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
 
-      // No burner for registered recipients — MagicBlock PER handles the private transfer
-      // directly to their real wallet (resolved server-side). Burners are only needed when
-      // the recipient hasn't signed up yet and funds must be held until they claim.
+      // Every payment now routes through a burner and requires an explicit claim, registered
+      // recipients included — the sender never pays a recipient's real wallet directly.
+      const burner = this.createClaimBurner();
+      if (!burner) {
+        this.logger.warn('Creating claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Claiming will fail until the key is set.');
+      }
       const { data: claim, error: claimError } = await this.supabaseService.payments
         .insert({
           amount: Number(amount),
@@ -213,7 +207,9 @@ export class ClaimsService {
           to_chain: 'solana',
           to_token: 'USDC',
           is_devnet: isDevnet,
+          is_private: isPrivate,
           short_id: generateShortId(),
+          ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
         })
         .select('id, short_id')
         .single();
@@ -225,7 +221,7 @@ export class ClaimsService {
 
       const id = claim.id;
       const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
-      this.logger.log(`Created claim from username: ${id} for user ${cleanUsername} (private: ${finalIsPrivate}, required: ${requiresPrivate})`);
+      this.logger.log(`Created claim from username: ${id} for user ${cleanUsername} (private: ${isPrivate})`);
       return { id, short_id: claim.short_id ?? null, link };
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
@@ -250,6 +246,7 @@ export class ClaimsService {
         to_chain: 'solana',
         to_token: 'USDC',
         is_devnet: isDevnet,
+        is_private: isPrivate,
         recipient_was_unregistered: true,
         short_id: generateShortId(),
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
@@ -281,8 +278,6 @@ export class ClaimsService {
     if (!cleanHandle) throw new BadRequestException('A valid handle is required.');
 
     let recipientAddress: string;
-    let requiresPrivate = false;
-    let finalIsPrivate = isPrivate;
 
     try {
       const user = await this.usersService.findBySocialHandle(platform, cleanHandle);
@@ -291,15 +286,12 @@ export class ClaimsService {
           "This recipient is registered but hasn't updated Loofta to mainnet yet. Ask them to open Loofta and complete the update, then try sending again.",
         );
       }
-      requiresPrivate = user.requirePrivatePayments || false;
-      finalIsPrivate = requiresPrivate ? true : isPrivate;
-      if (requiresPrivate && !isPrivate) {
-        throw new BadRequestException(
-          'This user requires private payments only. Please enable privacy when creating the payment link.'
-        );
-      }
       recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
 
+      const burner = this.createClaimBurner();
+      if (!burner) {
+        this.logger.warn('Creating claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Claiming will fail until the key is set.');
+      }
       const { data: claim, error: claimError } = await this.supabaseService.payments
         .insert({
           amount: Number(amount),
@@ -313,7 +305,9 @@ export class ClaimsService {
           to_chain: 'solana',
           to_token: 'USDC',
           is_devnet: isDevnet,
+          is_private: isPrivate,
           short_id: generateShortId(),
+          ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
         })
         .select('id, short_id')
         .single();
@@ -325,7 +319,7 @@ export class ClaimsService {
 
       const id = claim.id;
       const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
-      this.logger.log(`Created claim from ${platform}: ${id} for @${cleanHandle} (private: ${finalIsPrivate}, required: ${requiresPrivate})`);
+      this.logger.log(`Created claim from ${platform}: ${id} for @${cleanHandle} (private: ${isPrivate})`);
       return { id, short_id: claim.short_id ?? null, link };
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
@@ -351,6 +345,7 @@ export class ClaimsService {
         to_chain: 'solana',
         to_token: 'USDC',
         is_devnet: isDevnet,
+        is_private: isPrivate,
         recipient_was_unregistered: true,
         short_id: generateShortId(),
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
@@ -573,6 +568,15 @@ export class ClaimsService {
     return `${maskedLocal}@${maskedRoot}${tld ? `.${tld}` : ''}`;
   }
 
+  /**
+   * Mint a burner for a claim created outside this service (the Next.js request-money/pay-to-
+   * wallet route inserts directly into Supabase and has no access to SEND_PAYMENT_ENC_KEY/KMS).
+   * Called only via the internal-secret-gated controller endpoint.
+   */
+  mintBurnerForExternalCreation(): { claim_burner_address: string; claim_burner_encrypted_secret: string } | null {
+    return this.createClaimBurner();
+  }
+
   /** Generate a unique burner keypair per claim (like send-payment); secret encrypted with SEND_PAYMENT_ENC_KEY. */
   private createClaimBurner(): { claim_burner_address: string; claim_burner_encrypted_secret: string } | null {
     const burnerKeypair = Keypair.generate();
@@ -710,7 +714,6 @@ export class ClaimsService {
     const cleanEmail = email.trim().toLowerCase();
 
     let recipientAddress: string;
-    let requiresPrivate = false;
 
     try {
       const user = await this.usersService.findByEmail(cleanEmail);
@@ -719,14 +722,12 @@ export class ClaimsService {
           "This recipient is registered but hasn't updated Loofta to mainnet yet. Ask them to open Loofta and complete the update, then try sending again.",
         );
       }
-      requiresPrivate = user.requirePrivatePayments || false;
-      if (requiresPrivate && !isPrivate) {
-        throw new BadRequestException(
-          'This user requires private payments only. Please enable privacy when creating the payment link.',
-        );
-      }
       recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
 
+      const burner = this.createClaimBurner();
+      if (!burner) {
+        this.logger.warn('Creating claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Claiming will fail until the key is set.');
+      }
       const { data: claim, error: claimError } = await this.supabaseService.payments
         .insert({
           amount: Number(amount),
@@ -740,7 +741,9 @@ export class ClaimsService {
           to_chain: 'solana',
           to_token: 'USDC',
           is_devnet: isDevnet,
+          is_private: isPrivate,
           short_id: generateShortId(),
+          ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
         })
         .select('id, short_id')
         .single();
@@ -752,7 +755,7 @@ export class ClaimsService {
 
       const id = claim.id;
       const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
-      this.logger.log(`Created claim from email (existing user): ${id} for ${cleanEmail}`);
+      this.logger.log(`Created claim from email (existing user): ${id} for ${cleanEmail} (private: ${isPrivate})`);
       return { id, short_id: claim.short_id ?? null, link };
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
@@ -778,6 +781,7 @@ export class ClaimsService {
         to_chain: 'solana',
         to_token: 'USDC',
         is_devnet: isDevnet,
+        is_private: isPrivate,
         recipient_was_unregistered: true,
         short_id: generateShortId(),
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
@@ -1007,8 +1011,12 @@ export class ClaimsService {
     // Links explicitly created non-private always force fee-on-sender: the recipient declined
     // private payments, so if the sender opts into a private transfer anyway, that's the
     // sender's choice and the sender's cost — it can't come out of the recipient's amount.
+    // Otherwise the fee direction is whatever the link's own creator chose at creation time
+    // (request-money links let the recipient set fee_on_sender for their own private links) —
+    // no payer override; the sender is always paying to fund the burner privately here, and
+    // this is the sender-initiated incognito path, so fee-on-sender is the default expectation.
     const isNonPrivateLink = (row as any).is_private === false;
-    const feeOnSender = isNonPrivateLink || (row as any).fee_on_sender !== false;
+    const feeOnSender = isNonPrivateLink ? true : (row as any).fee_on_sender !== false;
     const cluster = requestCluster
       ?? (isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet');
     const effectiveMint = cluster === 'mainnet'
@@ -1090,16 +1098,16 @@ export class ClaimsService {
     return { conn, claimMint: new PublicKey(mintStr), cluster };
   }
 
-  /** Same routing as frontend getEffectiveRecipient: pending → burner, else wallet. */
+  /**
+   * Every payment now routes through a burner and requires an explicit claim, including
+   * sender-chosen-private payments — the sender never pays a recipient's real wallet directly.
+   * When the sender pays privately, this is the MagicBlock transfer's destination: the burner.
+   * The recipient separately claims burner → their real (or chosen) destination afterward.
+   */
   private resolveEffectiveRecipientForPrivatePayment(
     claim: Claim & { claim_burner_address?: string | null },
   ): string {
-    const ra = (claim.recipient_address || '').trim();
-    const burner = (claim.claim_burner_address || '').trim();
-    if (ra && !this.isPendingRecipientAddress(ra)) {
-      return ra;
-    }
-    return burner;
+    return (claim.claim_burner_address || '').trim();
   }
 
   /**
@@ -1158,13 +1166,34 @@ export class ClaimsService {
   }
 
   /**
+   * Has this sender ever completed a public (non-private) payment to this recipient before?
+   * Backs the privacy nudge warning a sender their recipient already knows their wallet address —
+   * a private payment going forward can't undo that. Only meaningful once the recipient has a
+   * stable recipient_user_id (a still-pending recipient can't have received anything yet), so
+   * this short-circuits to false rather than matching on a raw address. Backed by the partial
+   * index in 20260720120000_add_payments_sender_recipient_public_idx.sql.
+   */
+  async hasEverPaidPublicly(senderUserId: string, recipientUserId: string): Promise<boolean> {
+    if (!senderUserId || !recipientUserId) return false;
+    const { data } = await this.supabaseService.payments
+      .select('id')
+      .eq('sender_user_id', senderUserId)
+      .eq('recipient_user_id', recipientUserId)
+      .eq('is_private', false)
+      .eq('status', 'SUCCESS')
+      .limit(1);
+    return !!data?.length;
+  }
+
+  /**
    * Claim a pending payment (PENDING_EMAIL / PENDING_USERNAME) as the authenticated recipient.
    * Updates recipient_address to the user's Solana wallet so the payer can complete deposit.
    */
   async claimAsRecipient(
     claimId: string,
     privyUserId: string,
-  ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string }> {
+    opts?: { claimPrivately?: boolean; destinationAddress?: string },
+  ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
     const claim = await this.findOneRaw(claimId);
     // Guard: do not re-claim a completed or cancelled payment
     const claimStatus = (claim.status || '').toUpperCase();
@@ -1187,9 +1216,21 @@ export class ClaimsService {
     if (!isRecipient) {
       throw new ForbiddenException('You are not the intended recipient of this payment.');
     }
+    // identityWallet: the caller's own registered wallet — persisted to recipient_address and
+    // used as the retry target for the default claim-to-wallet flow. sweepDestination: where
+    // funds actually go THIS time — overridden by an explicit destinationAddress (claim to an
+    // external wallet) without ever touching the recipient's on-file identity.
     const wallet = await this.usersService.getSolanaWalletAddress(privyUserId);
     if (!wallet?.trim()) {
       throw new BadRequestException('No Solana wallet linked to your account. Please add a wallet in settings.');
+    }
+    let sweepDestination = wallet;
+    if (opts?.destinationAddress?.trim()) {
+      const dest = opts.destinationAddress.trim();
+      if (!isValidSolanaAddress(dest)) {
+        throw new BadRequestException('Invalid destination address.');
+      }
+      sweepDestination = dest;
     }
 
     // Lock the recipient identity for the duration of this claim attempt — otherwise the
@@ -1223,9 +1264,13 @@ export class ClaimsService {
       // Attempt sweep before writing recipient_address — if sweep throws (e.g. fee payer has no SOL)
       // we must not have overwritten the PENDING_EMAIL/PENDING_USERNAME address, otherwise the user
       // cannot retry because the pending-claim detection no longer matches.
-      const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
+      const { sweepTxHash, sweptAmount, feeAmountUsdc } = await this.sweepClaimBurnerToWallet(
+        claimId, claim, sweepDestination, { claimPrivately: opts?.claimPrivately },
+      );
 
-      // Sweep didn't throw — safe to commit the resolved wallet to DB.
+      // Sweep didn't throw — safe to commit the resolved wallet to DB. Always the caller's own
+      // identity wallet (`wallet`), never `sweepDestination` — claiming to an external address
+      // must never overwrite the recipient's own on-file identity.
       if (isPendingEmail || isPendingUsername || isPendingSocial) {
         const { error } = await this.updateRow(
           claimId,
@@ -1248,7 +1293,7 @@ export class ClaimsService {
         // Don't downgrade; schedule a background retry to catch late-arriving funds.
         this.logger.log(`Claim ${claimId}: burner empty but status already SUCCESS — scheduling background retry`);
         if (claimBurnerAddress) {
-          this.scheduleBackgroundSweepRetry(claimId, wallet, privyUserId);
+          this.scheduleBackgroundSweepRetry(claimId, sweepDestination, privyUserId, { claimPrivately: opts?.claimPrivately });
         }
       } else {
         // Funds still in-flight on MagicBlock private leg (devnet: random delay up to ~15 min). Mark
@@ -1257,12 +1302,12 @@ export class ClaimsService {
         this.logger.log(`Claim ${claimId}: burner empty at claim time — marked PRIVATE_TRANSFER_PENDING, scheduling background sweep retry`);
         const rawForRetry = claim as { claim_burner_address?: string | null };
         if (rawForRetry.claim_burner_address) {
-          this.scheduleBackgroundSweepRetry(claimId, wallet, privyUserId);
+          this.scheduleBackgroundSweepRetry(claimId, sweepDestination, privyUserId, { claimPrivately: opts?.claimPrivately });
         }
       }
 
       this.logger.log(`Claim ${claimId} claimed by recipient (privy ${privyUserId})`);
-      return { claimed: true, sweepTxHash, sweptAmount };
+      return { claimed: true, sweepTxHash, sweptAmount, feeAmountUsdc };
     } finally {
       if (recipientLockHeld) {
         await this.supabaseService.payments
@@ -1286,8 +1331,10 @@ export class ClaimsService {
   async updateClaimRecipient(opts: {
     claimId: string;
     userId: string;
-    recipientType: 'email' | 'username';
+    recipientType: 'email' | 'username' | 'social';
     recipientIdentifier: string;
+    /** Required when recipientType is 'social' — which platform the handle belongs to. */
+    platform?: SocialPlatform;
   }): Promise<{ ok: boolean }> {
     const result = await this.fetchRawRow(opts.claimId);
     if (!result) throw new NotFoundException('Payment not found.');
@@ -1309,7 +1356,8 @@ export class ClaimsService {
     const ra = (claim.recipient_address || '').trim();
     const isPendingEmail = ra.startsWith(ClaimsService.PENDING_EMAIL_PREFIX);
     const isPendingUsername = ra.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
-    if (!isPendingEmail && !isPendingUsername) {
+    const isPendingSocial = ra.startsWith(ClaimsService.PENDING_SOCIAL_PREFIX);
+    if (!isPendingEmail && !isPendingUsername && !isPendingSocial) {
       throw new BadRequestException('Only payments to an unregistered recipient who has not yet claimed can have their recipient edited.');
     }
     if (this.isRecipientClaimLockActive(claim.recipient_claim_lock_at)) {
@@ -1324,11 +1372,21 @@ export class ClaimsService {
       recipientAddress = `${ClaimsService.PENDING_EMAIL_PREFIX}${cleanEmail}`;
       extraFields.recipient_email = cleanEmail;
       extraFields.recipient_username = null;
-    } else {
+    } else if (opts.recipientType === 'username') {
       const cleanUsername = opts.recipientIdentifier.trim().replace(/^@/, '').toLowerCase();
       if (!cleanUsername) throw new BadRequestException('A valid username is required.');
       recipientAddress = `${ClaimsService.PENDING_USERNAME_PREFIX}${cleanUsername}`;
       extraFields.recipient_username = cleanUsername;
+      extraFields.recipient_email = null;
+    } else {
+      const platform = opts.platform;
+      if (!platform || !['discord', 'github', 'telegram'].includes(platform)) {
+        throw new BadRequestException('A valid platform (discord, github, or telegram) is required.');
+      }
+      const cleanHandle = opts.recipientIdentifier.trim().replace(/^@/, '').toLowerCase();
+      if (!cleanHandle) throw new BadRequestException('A valid handle is required.');
+      recipientAddress = `${ClaimsService.PENDING_SOCIAL_PREFIX}${platform}:${cleanHandle}`;
+      extraFields.recipient_username = null;
       extraFields.recipient_email = null;
     }
 
@@ -1378,7 +1436,12 @@ export class ClaimsService {
   /**
    * Poll burner ATA every few seconds until funds arrive (payer→burner private leg), then sweep to recipient.
    */
-  private scheduleBackgroundSweepRetry(claimId: string, wallet: string, privyUserId: string): void {
+  private scheduleBackgroundSweepRetry(
+    claimId: string,
+    wallet: string,
+    privyUserId: string,
+    opts?: { claimPrivately?: boolean },
+  ): void {
     const started = Date.now();
     const backgroundMaxMs = this.getBurnerInboundBackgroundMaxMs();
     const tick = async (): Promise<void> => {
@@ -1390,7 +1453,7 @@ export class ClaimsService {
         const freshClaim = await this.findOneRaw(claimId);
         const st = (freshClaim.status || '').toUpperCase();
         if (st === 'SUCCESS' || st === 'CANCELLED') return;
-        const { sweepTxHash } = await this.sweepClaimBurnerToWallet(claimId, freshClaim, wallet);
+        const { sweepTxHash } = await this.sweepClaimBurnerToWallet(claimId, freshClaim, wallet, opts);
         if (sweepTxHash) {
           await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
           this.notifyRecipientAfterPayment(claimId);
@@ -1626,67 +1689,101 @@ export class ClaimsService {
    * 2. Auto-sign a MagicBlock PER private transfer: burner → recipient (requested_amount, grossed up for MB fee).
    * 3. Sweep remaining dust (Loofta fee + gas pre-paid by sender) to the fee-payer wallet.
    */
-  private async sweepCrossChainBurnerPrivately(
+  /**
+   * Burner-signed MagicBlock private transfer, burner -> destination. Fully server-side signing
+   * (backend already custodies the burner key) — no client wallet round-trip needed. Used for:
+   *  - cross-chain deposits (always private, fee pre-funded into the burner — feeOnSender: true)
+   *  - "claim privately": recipient upgrading a publicly-sent payment to a private claim,
+   *    paying the fee out of the claimed amount (feeOnSender: false)
+   */
+  private async sweepClaimBurnerPrivately(
     claimId: string,
     claim: Claim,
-    wallet: string,
+    destination: string,
     burnerKeypair: Keypair,
     conn: Connection,
-  ): Promise<{ sweepTxHash?: string; sweptAmount?: string }> {
+    opts: { feeOnSender: boolean },
+  ): Promise<{ sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
     const burnerAta = await getAssociatedTokenAddress(this.usdcMint, burnerKeypair.publicKey);
 
-    // Wait for NEAR intent USDC delivery — full amount must arrive before forwarding
-    const amountUsdCrossChain = parseFloat(String(claim.amount || '0'));
-    const expectedUnitsCrossChain = BigInt(Math.round(amountUsdCrossChain * 1_000_000));
+    // Wait for full delivery into the burner before forwarding.
+    const amountUsd = parseFloat(String(claim.amount || '0'));
+    const baseUnits = Math.round(amountUsd * 1_000_000);
     let balance = BigInt(0);
     try { balance = (await getAccount(conn, burnerAta)).amount; } catch { /* not yet */ }
-    if (balance < expectedUnitsCrossChain) {
-      balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS, expectedUnitsCrossChain);
+    if (balance < BigInt(baseUnits)) {
+      balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS, BigInt(baseUnits));
     }
     if (balance === BigInt(0)) {
-      this.logger.log(`[CrossChain] ${claimId}: USDC not yet in burner — funds still in flight`);
+      this.logger.log(`[PrivateSweep] ${claimId}: USDC not yet in burner — funds still in flight`);
       return {};
     }
 
-    const amountUsd = parseFloat(String(claim.amount || '0'));
-    const requestedBaseUnits = Math.round(amountUsd * 1_000_000);
-    // Balance check needs a rough estimate of MagicBlock's real (internal) gross debit — the
-    // actual transfer below sends the clean amount with exactOut:true and lets MagicBlock
-    // compute its own gross-up, so this estimate is only used to decide if it's safe to proceed.
-    const estimatedGrossUnits = estimateMagicblockGrossUp(requestedBaseUnits);
+    const relayFeeUnits = Math.round(MAGICBLOCK_GAS_USDC * 1_000_000);
+    // feeOnSender=true (exact-out, e.g. cross-chain): send the clean amount, MagicBlock grosses
+    //   up its own internal debit so the destination nets exactly baseUnits — the fee was
+    //   already pre-funded into the burner separately (handleCrossChainDeposit's gross-up).
+    // feeOnSender=false (exact-in, "claim privately"): send baseUnits minus the relay fee —
+    //   the fee comes out of what the recipient set out to claim.
+    const transferUnits = opts.feeOnSender ? baseUnits : baseUnits - relayFeeUnits;
+    // Balance check: exact-out needs the rough gross-debit estimate (MagicBlock computes its
+    // own internal gross-up); exact-in only ever needs the plain baseUnits already confirmed above.
+    const estimatedGrossUnits = opts.feeOnSender ? estimateMagicblockGrossUp(baseUnits) : baseUnits;
     const cluster = isSolanaLocalhostFromConfig(this.configService) ? 'localhost'
       : isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
 
     this.logger.log(
-      `[CrossChain] ${claimId}: balance=${balance} requestedBaseUnits=${requestedBaseUnits} estimatedGrossUnits=${estimatedGrossUnits} cluster=${cluster} recipient=${wallet.slice(0, 8)}…`,
+      `[PrivateSweep] ${claimId}: balance=${balance} baseUnits=${baseUnits} transferUnits=${transferUnits} feeOnSender=${opts.feeOnSender} cluster=${cluster} destination=${destination.slice(0, 8)}…`,
     );
 
     if (BigInt(estimatedGrossUnits) > balance) {
-      this.logger.warn(`[CrossChain] ${claimId}: balance ${balance} < estimatedGrossUnits ${estimatedGrossUnits} — aborting, intent may not be complete`);
+      this.logger.warn(`[PrivateSweep] ${claimId}: balance ${balance} < estimatedGrossUnits ${estimatedGrossUnits} — aborting, funds may not be fully delivered yet`);
       return {};
     }
 
-    // Build PER private transfer from burner to recipient — clean amount, exactOut:true lets
-    // MagicBlock gross up its own internal debit so the recipient nets exactly requestedBaseUnits.
     const txResponse = await requestMagicblockPrivateTransfer({
       from: burnerKeypair.publicKey.toBase58(),
-      to: wallet.trim(),
+      to: destination.trim(),
       mint: this.usdcMint.toBase58(),
-      amount: requestedBaseUnits,
+      amount: transferUnits,
       cluster,
-      exactOut: true,
+      exactOut: opts.feeOnSender,
+      gasless: true,
     });
 
-    // Auto-sign with burner keypair (and fee payer for ATA rent)
+    // MagicBlock can return either a legacy or a v0 (versioned) message depending on the
+    // transfer shape (e.g. a multi-part split forces v0) — try legacy first, fall back to
+    // versioned. Mirrors the same dual-path handling in usePerPrivateTransfer.ts (frontend).
     const txBytes = Buffer.from(txResponse.transactionBase64, 'base64');
-    const tx = Transaction.from(txBytes);
     const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
-    if (feePayerKp) {
-      tx.feePayer = feePayerKp.publicKey;
-      tx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
+    let legacyTx: Transaction | null = null;
+    let versionedTx: VersionedTransaction | null = null;
+    try {
+      legacyTx = Transaction.from(txBytes);
+    } catch {
+      versionedTx = VersionedTransaction.deserialize(txBytes);
     }
-    tx.partialSign(burnerKeypair);
-    if (feePayerKp) tx.partialSign(feePayerKp);
+    if (legacyTx) {
+      if (feePayerKp) {
+        legacyTx.feePayer = feePayerKp.publicKey;
+        legacyTx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
+      }
+      legacyTx.partialSign(burnerKeypair);
+      if (feePayerKp) legacyTx.partialSign(feePayerKp);
+    } else if (versionedTx) {
+      // gasless: true means MagicBlock's own validator is typically already the fee payer and
+      // has pre-signed server-side — only sign with whichever of our own keys are actually
+      // required signers (passing an extra, non-required key would throw).
+      const requiredKeys = new Set(
+        versionedTx.message.staticAccountKeys
+          .slice(0, versionedTx.message.header.numRequiredSignatures)
+          .map((k) => k.toBase58()),
+      );
+      const signers = [burnerKeypair, feePayerKp].filter(
+        (kp): kp is Keypair => !!kp && requiredKeys.has(kp.publicKey.toBase58()),
+      );
+      versionedTx.sign(signers);
+    }
 
     // Submit — ephemeral rollup if MagicBlock requires it, otherwise base chain
     let sendConn = conn;
@@ -1694,9 +1791,18 @@ export class ClaimsService {
       const ec = await this.getEphemeralConnectionForBurner(burnerKeypair);
       if (ec) sendConn = ec;
     }
-    const sig = await sendConn.sendRawTransaction(tx.serialize({ requireAllSignatures: false }), { skipPreflight: true });
+    const serialized = legacyTx
+      ? legacyTx.serialize({ requireAllSignatures: false })
+      : versionedTx!.serialize();
+    const sig = await sendConn.sendRawTransaction(serialized, { skipPreflight: true });
     await this.pollConfirmTransaction(conn, sig);
-    this.logger.log(`[CrossChain] ${claimId}: PER transfer confirmed tx=${sig}`);
+    this.logger.log(`[PrivateSweep] ${claimId}: PER transfer confirmed tx=${sig}`);
+
+    // Mark how this claim was fulfilled — independent of is_private (how it was funded).
+    await this.supabaseService.payments.update({ claimed_privately: true }).eq('id', claimId).then(
+      () => {},
+      (e: unknown) => this.logger.warn(`[PrivateSweep] ${claimId}: failed to stamp claimed_privately (non-fatal): ${String(e)}`),
+    );
 
     // Sweep dust (fee + gas pre-paid into burner) to fee-payer wallet — fire-and-forget
     const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
@@ -1718,22 +1824,28 @@ export class ClaimsService {
             dustTx.feePayer = feePayerKp.publicKey;
             dustTx.sign(burnerKeypair, feePayerKp);
             const dustSig = await conn.sendRawTransaction(dustTx.serialize(), { skipPreflight: true });
-            this.logger.log(`[CrossChain] ${claimId}: dust swept (${dust} units) → fee payer tx=${dustSig}`);
+            this.logger.log(`[PrivateSweep] ${claimId}: dust swept (${dust} units) → fee payer tx=${dustSig}`);
           }
         } catch (e) {
-          this.logger.warn(`[CrossChain] ${claimId}: dust sweep failed (non-fatal): ${String(e)}`);
+          this.logger.warn(`[PrivateSweep] ${claimId}: dust sweep failed (non-fatal): ${String(e)}`);
         }
       })();
     }
 
-    return { sweepTxHash: sig, sweptAmount: (requestedBaseUnits / 1_000_000).toFixed(6) };
+    const estimatedMbVolumeFeeUnits = opts.feeOnSender
+      ? (estimateMagicblockGrossUp(baseUnits) - baseUnits)
+      : Math.ceil((baseUnits - relayFeeUnits) * MAGICBLOCK_VOLUME_FEE_BPS / 10_000);
+    const feeAmountUsdc = opts.feeOnSender ? 0 : (estimatedMbVolumeFeeUnits + relayFeeUnits) / 1_000_000;
+
+    return { sweepTxHash: sig, sweptAmount: (transferUnits / 1_000_000).toFixed(6), feeAmountUsdc };
   }
 
   private async sweepClaimBurnerToWallet(
     claimId: string,
     claim: Claim & { recipient_address?: string },
-    wallet: string,
-  ): Promise<{ sweepTxHash?: string; sweptAmount?: string }> {
+    destination: string,
+    opts?: { claimPrivately?: boolean },
+  ): Promise<{ sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
     const rawClaim = claim as { claim_burner_address?: string | null; claim_burner_encrypted_secret?: string | null };
     const burnerAddr = (rawClaim.claim_burner_address || '').trim();
     let sweepTxHash: string | undefined;
@@ -1758,9 +1870,19 @@ export class ClaimsService {
 
       // Cross-chain payments (e.g. ETH/BTC → Solana via NEAR Intents) land in the burner
       // and must be privately forwarded to the recipient via MagicBlock PER transfer.
+      // `await` (not a bare `return`) is required here — a returned-but-unawaited promise's
+      // rejection bypasses this function's own try/catch entirely and reaches the caller as a
+      // raw, unwrapped error instead of a clean BadRequestException (a real bug this once was).
       const isCrossChain = await this.isCrossChainPayment(claimId);
       if (isCrossChain) {
-        return this.sweepCrossChainBurnerPrivately(claimId, claim, wallet, burnerKeypair, conn);
+        return await this.sweepClaimBurnerPrivately(claimId, claim, destination, burnerKeypair, conn, { feeOnSender: true });
+      }
+
+      // Recipient chose to upgrade this publicly-sent payment to a private claim — burner never
+      // reaches this branch already-private (sender-chosen-private payments deliver directly and
+      // never touch a burner), so this is always the "fee comes out of the claim" case.
+      if (opts?.claimPrivately) {
+        return await this.sweepClaimBurnerPrivately(claimId, claim, destination, burnerKeypair, conn, { feeOnSender: false });
       }
 
       // Always attempt PER withdraw first. This also recovers older claims that
@@ -1788,12 +1910,12 @@ export class ClaimsService {
         balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS, expectedUnits);
       }
       this.logger.log(
-        `Claim ${claimId}: [MONEY] burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} balance=${balance} expected=${expectedUnits} perAttempted=${perWithdraw.attempted} perSuccess=${perWithdraw.success} -> recipient ${wallet.slice(0, 8)}...`,
+        `Claim ${claimId}: [MONEY] burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} balance=${balance} expected=${expectedUnits} perAttempted=${perWithdraw.attempted} perSuccess=${perWithdraw.success} -> recipient ${destination.slice(0, 8)}...`,
       );
       if (balance >= expectedUnits) {
         // Direct SPL sweep: burner → recipient (public). Payer→burner was already private via MagicBlock.
         const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
-        const recipientPubkey = new PublicKey(wallet.trim());
+        const recipientPubkey = new PublicKey(destination.trim());
         const recipientAta = await getAssociatedTokenAddress(claimMint, recipientPubkey);
         const sweepTx = new Transaction();
         try {
@@ -1822,11 +1944,11 @@ export class ClaimsService {
           throw new Error('Network fee sponsorship is temporarily unavailable');
         }
         this.logger.log(
-          `Claim ${claimId}: [SWEEP] direct SPL burner->recipient ${balance} base units (burner ${burnerKeypair.publicKey.toBase58().slice(0, 8)} → ${wallet.slice(0, 8)}) feePayer=${feePayerPubkey.toBase58().slice(0, 8)} sol=${feePayerSolBalance}`,
+          `Claim ${claimId}: [SWEEP] direct SPL burner->recipient ${balance} base units (burner ${burnerKeypair.publicKey.toBase58().slice(0, 8)} → ${destination.slice(0, 8)}) feePayer=${feePayerPubkey.toBase58().slice(0, 8)} sol=${feePayerSolBalance}`,
         );
         const sig = await this.sendAndConfirmWithRebuild(conn, sweepTx, feePayerPubkey, sweepSigners, `sweep-${claimId.slice(0, 8)}`);
         this.logger.log(
-          `Claim ${claimId}: [MONEY] ✅ swept ${balance} base-units USDC (${(Number(balance) / 1_000_000).toFixed(6)} USDC) burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} -> recipient=${wallet.slice(0, 8)} tx=${sig}`,
+          `Claim ${claimId}: [MONEY] ✅ swept ${balance} base-units USDC (${(Number(balance) / 1_000_000).toFixed(6)} USDC) burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} -> recipient=${destination.slice(0, 8)} tx=${sig}`,
         );
         sweepTxHash = sig;
         sweptAmount = (Number(balance) / 1_000_000).toFixed(6);

@@ -2,7 +2,6 @@ import {
   Controller,
   Get,
   Post,
-  Put,
   Query,
   Body,
   NotFoundException,
@@ -90,7 +89,6 @@ export class UsersController {
           type: 'object',
           properties: {
             username: { type: 'string', nullable: true },
-            requirePrivatePayments: { type: 'boolean' },
           },
         },
       },
@@ -102,33 +100,8 @@ export class UsersController {
       throw new NotFoundException('username is required');
     }
 
-    const { username: resolvedUsername, requirePrivatePayments } =
-      await this.usersService.findByUsername(username);
-    return { user: { username: resolvedUsername, requirePrivatePayments } };
-  }
-
-  /**
-   * Get current user's preferences
-   */
-  @Get('me/preferences')
-  @UseGuards(PrivyAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current user privacy preferences' })
-  @ApiResponse({
-    status: 200,
-    description: 'User preferences',
-    schema: {
-      properties: {
-        requirePrivatePayments: { type: 'boolean' },
-      },
-    },
-  })
-  async getMyPreferences(@PrivyUser() user: { id: string }) {
-    const prefs = await this.usersService.getUserPreferences(user.id);
-    if (!prefs) {
-      throw new NotFoundException('User preferences not found');
-    }
-    return prefs;
+    const { username: resolvedUsername } = await this.usersService.findByUsername(username);
+    return { user: { username: resolvedUsername } };
   }
 
   @Get('me/tier')
@@ -146,32 +119,6 @@ export class UsersController {
   })
   async getMyTier(@PrivyUser() user: { id: string }) {
     return this.usersService.getUserTier(user.id);
-  }
-
-  /**
-   * Update privacy preferences
-   */
-  @Put('me/preferences')
-  @UseGuards(PrivyAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update privacy preferences' })
-  @ApiBody({
-    schema: {
-      properties: {
-        requirePrivatePayments: { type: 'boolean' },
-      },
-    },
-  })
-  @ApiResponse({ status: 200, description: 'Preferences updated' })
-  async updatePreferences(
-    @PrivyUser() user: { id: string },
-    @Body() body: { requirePrivatePayments: boolean },
-  ) {
-    await this.usersService.updatePrivacyPreferences(
-      user.id,
-      body.requirePrivatePayments,
-    );
-    return { success: true };
   }
 
   /**

@@ -7,6 +7,32 @@ import { generateShortId } from "@/lib/shortId";
 import { getVerifiedUserId, isWalletAddressRegisteredOnLoofta } from "@/lib/serverAuth";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 
+const BACKEND_URL =
+  process.env.BACKEND_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  "http://localhost:3001";
+
+const INTERNAL_SECRET = process.env.LOOFTA_INTERNAL_SECRET;
+
+/** Every payment routes through a burner and requires an explicit claim — mint one via the
+ * backend, which alone has SEND_PAYMENT_ENC_KEY/KMS access to encrypt the burner secret. */
+async function mintBurner(authHeader: string): Promise<{ burner_address: string; burner_encrypted_secret: string } | null> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/claims/internal/create-burner`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": authHeader,
+        ...(INTERNAL_SECRET ? { "X-Loofta-Internal": INTERNAL_SECRET } : {}),
+      },
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(request: Request) {
   const uid = await getVerifiedUserId(request);
   if (!uid) {
@@ -36,6 +62,13 @@ export async function POST(request: Request) {
     const isFromRecipient = direction === 'from_recipient';
     const isDevnet = cluster === 'mainnet' ? false : cluster === 'devnet' ? true : isNonMainnetCluster();
     const shortId = generateShortId();
+
+    // Every payment routes through a burner and requires an explicit claim — no exceptions.
+    const burner = await mintBurner(request.headers.get("Authorization") ?? "");
+    if (!burner) {
+      console.error("[claims/create] burner minting failed — creating claim without one; claiming will fail until this is fixed");
+    }
+
     const { data, error } = await supabase
       .from("payments")
       .insert({
@@ -57,6 +90,7 @@ export async function POST(request: Request) {
         // never deducted from the recipient's amount.
         fee_on_sender: isPrivate === false ? true : feeOnSender !== false,
         is_private: isPrivate !== false,
+        ...(burner ? { burner_address: burner.burner_address, burner_encrypted_secret: burner.burner_encrypted_secret } : {}),
       })
       .select("id")
       .single();

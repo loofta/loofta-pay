@@ -97,7 +97,8 @@ export class DepositService {
 
   /**
    * Handle same-chain deposit scenarios.
-   * For pending claims (PENDING_EMAIL/PENDING_USERNAME), depositAddress = claim_burner_address; else recipient_address.
+   * Every payment now routes through the burner and requires an explicit claim — the sender
+   * never pays a recipient's real wallet directly, registered or not.
    */
   private async handleSameChainDeposit(
     claim: any,
@@ -112,14 +113,10 @@ export class DepositService {
       // Direct transfer - no swap needed
       this.logger.log('[Deposit] Same chain + same token -> Direct transfer');
 
-      const ra = rawClaim.recipient_address || '';
-      const isPending = ra.startsWith(ClaimsService.PENDING_EMAIL_PREFIX) || ra.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
-      const depositAddress = isPending
-        ? (rawClaim.claim_burner_address || '').trim()
-        : (claim.recipient_address || rawClaim.recipient_address || '').trim();
-      if (isPending && !depositAddress) {
+      const depositAddress = (rawClaim.claim_burner_address || '').trim();
+      if (!depositAddress) {
         throw new BadRequestException({
-          message: 'Burner address required for pending claim.',
+          message: 'Burner address required for this claim.',
           code: 'MISSING_BURNER',
         });
       }

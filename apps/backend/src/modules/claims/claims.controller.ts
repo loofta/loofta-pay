@@ -5,6 +5,7 @@ import {
   Patch,
   Body,
   Param,
+  Query,
   Req,
   Headers,
   UseGuards,
@@ -194,6 +195,26 @@ export class ClaimsController {
   }
 
   /**
+   * Has the current user ever sent this recipient a public (non-private) payment before?
+   * Backs the "you paid this person publicly before, they already know your wallet address"
+   * privacy nudge — recipientUserId is the stable identity, never the raw wallet address.
+   */
+  @Get('exposure-check')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Check whether the current user has ever paid this recipient publicly' })
+  @ApiResponse({ status: 200, description: 'Whether a public payment to this recipient exists', schema: { properties: { hasPaidPublicly: { type: 'boolean' } } } })
+  async exposureCheck(
+    @Query('recipientUserId') recipientUserId: string,
+    @Req() req: { user?: { id: string } },
+  ): Promise<{ hasPaidPublicly: boolean }> {
+    const senderUserId = req.user?.id;
+    if (!senderUserId || !recipientUserId) return { hasPaidPublicly: false };
+    const hasPaidPublicly = await this.claimsService.hasEverPaidPublicly(senderUserId, recipientUserId);
+    return { hasPaidPublicly };
+  }
+
+  /**
    * Troubleshoot endpoint: inspect claim burner balance for creator/recipient.
    */
   @Get(':id/troubleshoot-burner')
@@ -239,10 +260,14 @@ export class ClaimsController {
   async claimAsRecipient(
     @Param('id') id: string,
     @Req() req: { user?: { id: string } },
-  ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string }> {
+    @Body() body: { claimPrivately?: boolean; destinationAddress?: string },
+  ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
     const privyUserId = req.user?.id;
     if (!privyUserId) throw new UnauthorizedException('Login required to claim.');
-    return this.claimsService.claimAsRecipient(id, privyUserId);
+    return this.claimsService.claimAsRecipient(id, privyUserId, {
+      claimPrivately: body?.claimPrivately,
+      destinationAddress: body?.destinationAddress,
+    });
   }
 
   /**
@@ -262,22 +287,26 @@ export class ClaimsController {
   @ApiResponse({ status: 403, description: 'Not the creator' })
   async updateRecipient(
     @Param('id') id: string,
-    @Body() body: { recipientType: 'email' | 'username'; recipientIdentifier: string },
+    @Body() body: { recipientType: 'email' | 'username' | 'social'; recipientIdentifier: string; platform?: 'discord' | 'github' | 'telegram' },
     @Req() req: { user?: { id: string } },
   ): Promise<{ ok: boolean }> {
     const privyUserId = req.user?.id;
     if (!privyUserId) throw new UnauthorizedException('Login required.');
-    if (body.recipientType !== 'email' && body.recipientType !== 'username') {
-      throw new BadRequestException('recipientType must be "email" or "username"');
+    if (!['email', 'username', 'social'].includes(body.recipientType)) {
+      throw new BadRequestException('recipientType must be "email", "username", or "social"');
     }
     if (!body.recipientIdentifier?.trim()) {
       throw new BadRequestException('recipientIdentifier required');
+    }
+    if (body.recipientType === 'social' && !['discord', 'github', 'telegram'].includes(body.platform || '')) {
+      throw new BadRequestException('platform must be "discord", "github", or "telegram" when recipientType is "social"');
     }
     return this.claimsService.updateClaimRecipient({
       claimId: id,
       userId: privyUserId,
       recipientType: body.recipientType,
       recipientIdentifier: body.recipientIdentifier,
+      platform: body.platform,
     });
   }
 
@@ -702,6 +731,43 @@ export class ClaimsController {
     // This would use the user ID from the request
     // For now, return empty array as placeholder
     return { claims: [] };
+  }
+
+  /**
+   * Internal: mint a burner keypair for a claim being created outside this service (the Next.js
+   * request-money/pay-to-wallet route inserts directly into Supabase and has no access to
+   * SEND_PAYMENT_ENC_KEY/KMS). Gated by X-Loofta-Internal — must come through our own BFF, not a
+   * direct caller — same convention as solana-sponsor/sign-and-broadcast above.
+   */
+  @Post('internal/create-burner')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(30, 60, 'claims:internal-create-burner')
+  @ApiOperation({ summary: 'Internal: mint an encrypted burner keypair for claim creation' })
+  @ApiResponse({
+    status: 200,
+    description: 'Burner address + encrypted secret',
+    schema: { properties: { burner_address: { type: 'string' }, burner_encrypted_secret: { type: 'string' } } },
+  })
+  async createBurnerInternal(
+    @Headers('x-loofta-internal') internalKey: string | undefined,
+  ): Promise<{ burner_address: string; burner_encrypted_secret: string }> {
+    const expectedSecret =
+      this.configService.get<string>('LOOFTA_INTERNAL_SECRET') ??
+      process.env.LOOFTA_INTERNAL_SECRET;
+    if (expectedSecret) {
+      if (!internalKey || internalKey !== expectedSecret) {
+        this.logger.warn('ClaimsController[internal/create-burner]: blocked direct call — missing/invalid X-Loofta-Internal');
+        throw new ForbiddenException('Direct API access not permitted');
+      }
+    } else {
+      this.logger.warn('ClaimsController[internal/create-burner]: LOOFTA_INTERNAL_SECRET not set — skipping internal-key check (set it in Railway to enable protection)');
+    }
+    const burner = this.claimsService.mintBurnerForExternalCreation();
+    if (!burner) {
+      throw new BadRequestException('Burner creation is unavailable (SEND_PAYMENT_ENC_KEY not configured).');
+    }
+    return { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret };
   }
 
   /**

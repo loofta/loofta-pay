@@ -7,7 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, Lock } from "lucide-react";
 import { useTranslations, useLocale } from "next-intl";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
@@ -34,6 +34,7 @@ export type PaymentHistoryClaim = {
   paid_with_token: string | null;
   paid_with_chain: string | null;
   is_private: boolean | null;
+  claimed_privately?: boolean | null;
   description: string | null;
   is_devnet?: boolean;
 };
@@ -437,6 +438,11 @@ export default function HistoryPage() {
                       const hasKnownCounterparty =
                         !(type === "sent" && claim.direction === "from_recipient") ||
                         REQUEST_LINK_PAID_STATUSES.has(String(claim.status || "").toUpperCase());
+                      // Sender cares whether THEY sent it privately; recipient cares whether
+                      // privacy was involved on either leg (sent privately or claimed privately).
+                      const showPrivacyIcon = type === "sent"
+                        ? !!claim.is_private
+                        : !!claim.is_private || !!claim.claimed_privately;
                       return (
                         <li key={`${type}-${claim.id}`}>
                           <Link
@@ -444,8 +450,11 @@ export default function HistoryPage() {
                             className="block rounded-xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 transition-colors"
                           >
                             <div className="flex items-center justify-between gap-2">
-                              <span className={`text-base font-semibold ${type === "sent" ? "text-amber-400" : "text-emerald-400"}`}>
+                              <span className={`flex items-center gap-1.5 text-base font-semibold ${type === "sent" ? "text-amber-400" : "text-emerald-400"}`}>
                                 {type === "sent" ? t('sent') : t('received')}
+                                {showPrivacyIcon && (
+                                  <Lock className="h-3.5 w-3.5 text-amber-300" aria-label="Private" />
+                                )}
                               </span>
                               <span className="text-white font-semibold font-sans">
                                 {type === "sent" ? "-" : "+"}${amount.toFixed(2)} {claim.to_symbol}

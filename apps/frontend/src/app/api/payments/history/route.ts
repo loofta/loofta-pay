@@ -4,7 +4,7 @@ import { isNonMainnetCluster } from "@/lib/solanaCluster";
 
 // recipient_address included only to detect PENDING_* prefixes — real wallet addresses are stripped in normalisePayment
 const PAYMENT_SELECT =
-  "id, short_id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, recipient_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet";
+  "id, short_id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, recipient_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, is_private, claimed_privately";
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -26,6 +26,7 @@ export type PaymentHistoryClaim = {
   paid_with_chain: string | null;
   paid_with_token: string | null;
   is_private: boolean | null;
+  claimed_privately?: boolean | null;
   status: string;
   created_at: string;
   paid_at: string | null;
@@ -84,7 +85,8 @@ function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & {
     })(),
     creator_email: null,
     created_by: (row.created_by as string | null) ?? null,
-    is_private: null,
+    is_private: (row.is_private as boolean | null) ?? null,
+    claimed_privately: Boolean(row.claimed_privately),
     description: (row.description as string | null) ?? null,
     is_devnet: Boolean(row.is_devnet),
     _recipient_user_id: (row.recipient_user_id as string | null) ?? null,

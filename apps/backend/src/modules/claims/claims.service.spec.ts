@@ -122,13 +122,11 @@ const mockUsersService = {
     id: 'user-uuid',
     privyUserId: CREATOR_ID,
     username: 'testuser',
-    requirePrivatePayments: false,
   }),
   findByEmail: jest.fn().mockResolvedValue({
     id: 'user-uuid',
     privyUserId: CREATOR_ID,
     username: 'testuser',
-    requirePrivatePayments: false,
   }),
 };
 
@@ -175,10 +173,10 @@ describe('ClaimsService', () => {
     mockUsersService.findByPrivyId.mockResolvedValue({ username: 'testuser' });
     mockUsersService.getSolanaWalletAddress.mockResolvedValue(RECIPIENT_WALLET);
     mockUsersService.findByUsername.mockResolvedValue({
-      id: 'user-uuid', privyUserId: CREATOR_ID, username: 'testuser', requirePrivatePayments: false,
+      id: 'user-uuid', privyUserId: CREATOR_ID, username: 'testuser',
     });
     mockUsersService.findByEmail.mockResolvedValue({
-      id: 'user-uuid', privyUserId: CREATOR_ID, username: 'testuser', requirePrivatePayments: false,
+      id: 'user-uuid', privyUserId: CREATOR_ID, username: 'testuser',
     });
 
     const module: TestingModule = await Test.createTestingModule({

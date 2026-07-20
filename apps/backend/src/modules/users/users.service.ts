@@ -121,7 +121,6 @@ export class UsersService {
     privyUserId: string;
     email: string | null;
     username: string | null;
-    requirePrivatePayments: boolean;
   }> {
     const cleanHandle = (handle || '').replace(/^@/, '').toLowerCase().trim();
     if (!cleanHandle) throw new NotFoundException('Handle is required');
@@ -137,7 +136,7 @@ export class UsersService {
     }
 
     const { data: user, error } = await this.supabaseService.appUsers
-      .select('id, privy_user_id, email, username, require_private_payments')
+      .select('id, privy_user_id, email, username')
       .eq('privy_user_id', social.user_id)
       .maybeSingle();
 
@@ -150,7 +149,6 @@ export class UsersService {
       privyUserId: user.privy_user_id,
       email: user.email,
       username: user.username,
-      requirePrivatePayments: user.require_private_payments || false,
     };
   }
 
@@ -257,12 +255,11 @@ export class UsersService {
     privyUserId: string;
     email: string | null;
     username: string | null;
-    requirePrivatePayments: boolean;
   }> {
     const clean = (email || '').trim().toLowerCase();
     if (!clean) throw new NotFoundException('Email is required');
     const { data: user, error } = await this.supabaseService.appUsers
-      .select('id, privy_user_id, email, username, require_private_payments')
+      .select('id, privy_user_id, email, username')
       .eq('email', clean)
       .maybeSingle();
     if (error) {
@@ -275,7 +272,6 @@ export class UsersService {
       privyUserId: user.privy_user_id,
       email: user.email,
       username: user.username,
-      requirePrivatePayments: user.require_private_payments || false,
     };
   }
 
@@ -315,17 +311,16 @@ export class UsersService {
     privyUserId: string;
     email: string | null;
     username: string | null;
-    requirePrivatePayments: boolean;
   }> {
     // Remove @ prefix if present
     const cleanUsername = username.replace(/^@/, '').toLowerCase();
-    
+
     this.logger.debug(`Looking up user with username: "${cleanUsername}"`);
 
     // Use maybeSingle() instead of single() to handle 0 rows gracefully.
     // ilike for case-insensitive exact match (DB may store "Lisa" while we query "lisa").
     const { data: user, error } = await this.supabaseService.appUsers
-      .select('id, privy_user_id, email, username, require_private_payments')
+      .select('id, privy_user_id, email, username')
       .ilike('username', cleanUsername)
       .maybeSingle();
 
@@ -352,7 +347,6 @@ export class UsersService {
       privyUserId: user.privy_user_id,
       email: user.email,
       username: user.username,
-      requirePrivatePayments: user.require_private_payments || false,
     };
   }
 
@@ -572,27 +566,6 @@ export class UsersService {
     return { usernames };
   }
 
-  /**
-   * Get user preferences by Privy user ID
-   */
-  async getUserPreferences(privyUserId: string): Promise<{
-    requirePrivatePayments: boolean;
-  } | null> {
-    const { data: user, error } = await this.supabaseService.appUsers
-      .select('require_private_payments')
-      .eq('privy_user_id', privyUserId)
-      .maybeSingle();
-
-    if (error || !user) {
-      this.logger.error('Error fetching user preferences:', error);
-      return null;
-    }
-
-    return {
-      requirePrivatePayments: user.require_private_payments || false,
-    };
-  }
-
   async getUserTier(privyUserId: string): Promise<{ totalVolumeUsd: number; tier: string }> {
     const { data, error } = await this.supabaseService.appUsers
       .select('total_volume_usd')
@@ -601,25 +574,6 @@ export class UsersService {
 
     const volume = error || !data ? 0 : (Number((data as Record<string, unknown>).total_volume_usd) || 0);
     return { totalVolumeUsd: volume, tier: computeTierKey(volume) };
-  }
-
-  /**
-   * Update user privacy preferences
-   */
-  async updatePrivacyPreferences(
-    privyUserId: string,
-    requirePrivatePayments: boolean,
-  ): Promise<void> {
-    const { error } = await this.supabaseService.appUsers
-      .update({ require_private_payments: requirePrivatePayments })
-      .eq('privy_user_id', privyUserId);
-
-    if (error) {
-      this.logger.error('Error updating privacy preferences:', error);
-      throw new Error('Failed to update privacy preferences');
-    }
-
-    this.logger.log(`Updated privacy preferences for user ${privyUserId}: requirePrivatePayments=${requirePrivatePayments}`);
   }
 
   /**

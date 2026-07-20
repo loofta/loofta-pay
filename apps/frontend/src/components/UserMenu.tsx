@@ -23,7 +23,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Wallet, Info } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { ChangeUsernameModal } from "@/components/ChangeUsernameModal";
 /** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
@@ -200,9 +199,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
-  const [requirePrivatePayments, setRequirePrivatePayments] = useState(false);
-  const [loadingPreferences, setLoadingPreferences] = useState(false);
-  const [updatingPreferences, setUpdatingPreferences] = useState(false);
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -457,35 +453,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     return `${baseUrl}/me/@${username}`;
   };
 
-  // Fetch user preferences when modal opens
-  useEffect(() => {
-    if (showShareModal && authenticated && getAccessToken && privyUser?.id) {
-      const fetchPreferences = async () => {
-        setLoadingPreferences(true);
-        try {
-          const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-          const token = await getAccessToken();
-          const response = await fetch(`${backendUrl}/users/me/preferences`, {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-          });
-          if (response.ok) {
-            const data = await response.json();
-            setRequirePrivatePayments(data.requirePrivatePayments || false);
-          } else {
-            const errorData = await response.json().catch(() => ({}));
-            console.error('Failed to fetch preferences:', errorData);
-          }
-        } catch (error) {
-          console.error('Failed to fetch preferences:', error);
-        } finally {
-          setLoadingPreferences(false);
-        }
-      };
-      fetchPreferences();
-    }
-  }, [showShareModal, authenticated, getAccessToken, privyUser?.id]);
 
   // Telegram isn't a Privy-linked account in this app (see telegram-relay/) — fetch its
   // connected state from social_accounts whenever the settings modal opens.
@@ -569,47 +536,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     };
     fetchTier();
   }, [authenticated, privyUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Update user preferences
-  const handleTogglePrivatePayments = async (checked: boolean) => {
-    if (!authenticated || !getAccessToken || !privyUser?.id) return;
-
-    setUpdatingPreferences(true);
-    try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-      const token = await getAccessToken();
-      const response = await fetch(`${backendUrl}/users/me/preferences`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ requirePrivatePayments: checked }),
-      });
-
-      if (response.ok) {
-        setRequirePrivatePayments(checked);
-        toast({
-          title: "Settings updated",
-          description: checked
-            ? "Your payment link now requires private payments only."
-            : "Your payment link now accepts both standard and private payments.",
-        });
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('Failed to update preferences:', errorData);
-        throw new Error(errorData.message || 'Failed to update preferences');
-      }
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: error.message || "Failed to update privacy preferences. Please try again.",
-      });
-    } finally {
-      setUpdatingPreferences(false);
-    }
-  };
 
   const copyPaymentLink = () => {
     const link = getPaymentLink();
@@ -1119,37 +1045,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         )}
                       </button>
                     </div>
-                  </motion.div>
-
-                  {/* Private payment status */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.15 }}
-                    className="mb-6 p-4 rounded-xl border border-white/10 bg-white/5"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-base font-semibold text-white">
-                          {t('privatePayments')}
-                        </span>
-                        {PRIVATE_PAYMENT_ENABLED ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                            {t('enabled')}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            {t('comingSoon')}
-                          </span>
-                        )}
-                      </div>
-
-                    </div>
-                    <p className="text-base md:text-sm text-slate-400 mt-3 w-full block">
-                      {PRIVATE_PAYMENT_ENABLED
-                        ? t('privatePaymentsDescEnabled')
-                        : t('privatePaymentsDescDisabled')}
-                    </p>
                   </motion.div>
 
                   {/* Share Buttons */}
