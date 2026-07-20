@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useLoginWithTelegram } from "@privy-io/react-auth";
 
 /**
  * Hosted on loofta.com (not pay.loofta.xyz) because Telegram's Login Widget doesn't work on
@@ -18,7 +18,13 @@ import { usePrivy } from "@privy-io/react-auth";
  *    has signed in to a real account.
  */
 export default function TelegramRelayPage() {
-  const { ready, authenticated, user, login } = usePrivy();
+  const { ready, authenticated, user } = usePrivy();
+  // Dedicated hook for Telegram specifically — usePrivy().login({loginMethods:["telegram"]})
+  // routes into Privy's legacy bot-token widget flow (initLoginWithTelegram) regardless of
+  // whether OAuth-based Telegram is enabled in the dashboard, which is what was throwing
+  // "Telegram Auth configuration is not loaded" even after telegram was added to the app's
+  // loginMethods. useLoginWithTelegram is the OAuth-compatible entry point.
+  const { login: loginWithTelegram } = useLoginWithTelegram();
   const [token, setToken] = useState<string | null>(null);
   const [claimId, setClaimId] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "connecting" | "done" | "mismatch" | "error">("idle");
@@ -42,8 +48,8 @@ export default function TelegramRelayPage() {
   useEffect(() => {
     if (!ready || authenticated || !hasIdentifier || autoLoginAttemptedRef.current) return;
     autoLoginAttemptedRef.current = true;
-    login({ loginMethods: ["telegram"], disableSignup: true });
-  }, [ready, authenticated, hasIdentifier, login]);
+    loginWithTelegram().catch(() => setStatus("error"));
+  }, [ready, authenticated, hasIdentifier, loginWithTelegram]);
 
   useEffect(() => {
     if (!ready || !authenticated || !user || !hasIdentifier || submittedRef.current) return;
@@ -108,7 +114,7 @@ export default function TelegramRelayPage() {
           ) : !authenticated ? (
             <button
               type="button"
-              onClick={() => login({ loginMethods: ["telegram"], disableSignup: true })}
+              onClick={() => loginWithTelegram().catch(() => setStatus("error"))}
               className="px-5 py-2.5 rounded-xl bg-[#26A5E4] text-white font-semibold hover:opacity-90"
             >
               Log in with Telegram
