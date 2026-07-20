@@ -7,6 +7,7 @@ import {
   ArrowRight,
   AtSign,
   Check,
+  ChevronDown,
   Landmark,
   Lock,
   Mail,
@@ -109,19 +110,26 @@ function Header() {
             <a
               key={item.href}
               href={item.href}
-              className={`font-grotesk text-base font-medium ${INK_2} transition-colors hover:${INK}`}
+              className={`font-grotesk text-base font-medium ${INK_2} transition-colors hover:text-[#F4F2EC]`}
             >
               {item.label}
             </a>
           ))}
         </nav>
 
-        <Link
-          href={APP_URL}
-          className={`inline-flex items-center gap-2.5 justify-self-end rounded-full px-6 py-[13px] font-display text-[17px] font-medium text-white shadow-[0_14px_34px_-12px_rgba(255,19,1,0.6)] transition-transform duration-200 hover:-translate-y-0.5 ${BRAND_GRADIENT}`}
-        >
-          Open app
-        </Link>
+        <div className="relative justify-self-end">
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 -z-10 rounded-full opacity-70 blur-xl"
+            style={{ background: "linear-gradient(90deg, #FF1301, #EAB308)" }}
+          />
+          <Link
+            href={APP_URL}
+            className={`inline-flex items-center gap-2.5 rounded-full px-6 py-[13px] font-display text-[17px] font-medium text-white shadow-[0_14px_34px_-12px_rgba(255,19,1,0.6)] transition-transform duration-200 hover:-translate-y-0.5 ${BRAND_GRADIENT}`}
+          >
+            Open app
+          </Link>
+        </div>
       </div>
     </header>
   );
@@ -253,7 +261,7 @@ function Hero() {
               <br />
               {revealWords("email or @handle.", {
                 delayOffset: 0.44,
-                className: `italic ${BRAND_GRADIENT} bg-clip-text text-transparent`,
+                className: "italic text-[#FF6A00]",
               })}
             </h1>
           </div>
@@ -446,8 +454,18 @@ function ClaimSection() {
    PRIVACY, OPTIONAL
    ===================================================== */
 
-function DashedConnector() {
-  return <span aria-hidden className="h-px w-6 border-t border-dashed border-white/25 sm:w-12" />;
+function DashedConnector({ delay = 0 }: { delay?: number }) {
+  return (
+    <span aria-hidden className="relative w-px flex-1 border-l border-dashed border-white/20">
+      {/* a pulse of light traveling down the line, handing off between the two segments */}
+      <motion.span
+        className="absolute left-1/2 h-2 w-2 -translate-x-1/2 rounded-full bg-[#FF8A00] shadow-[0_0_10px_3px_rgba(255,138,0,0.65)]"
+        style={{ top: 0 }}
+        animate={{ top: ["-4%", "104%"], opacity: [0, 1, 1, 0] }}
+        transition={{ duration: 1.6, repeat: Infinity, ease: "linear", delay }}
+      />
+    </span>
+  );
 }
 
 function PrivacySection() {
@@ -488,34 +506,35 @@ function PrivacySection() {
         <motion.div
           {...fadeUp}
           transition={{ ...fadeUp.transition, delay: 0.1 }}
-          className={`relative flex aspect-square items-center justify-center overflow-hidden rounded-[32px] border ${BORDER_LINE} ${BG_PAPER_2} shadow-[0_40px_90px_-30px_rgba(0,0,0,0.6)]`}
+          className={`relative flex aspect-square flex-col items-center justify-between overflow-hidden rounded-[32px] border ${BORDER_LINE} ${BG_PAPER_2} p-8 shadow-[0_40px_90px_-30px_rgba(0,0,0,0.6)] sm:p-10`}
         >
-          <div className="flex items-center gap-5 sm:gap-8">
-            <div className="flex flex-col items-center gap-4">
-              <Icon3DArrowUser size={110} />
-              <span className={`font-display text-2xl font-semibold ${INK_2}`}>You</span>
-            </div>
+          <div className="flex flex-col items-center gap-3">
+            {/* plain person, no arrow baked in — direction is shown by the chevrons below */}
+            <Icon3DArrowUser size={72} showArrow={false} />
+            <span className={`font-display text-xl font-semibold ${INK_2}`}>You</span>
+          </div>
 
-            <div className="flex items-center gap-3">
-              <DashedConnector />
-              <div className="relative flex h-[190px] w-[190px] items-center justify-center">
-                {/* one soft glow, breathing behind the shield */}
-                <motion.span
-                  aria-hidden
-                  className="absolute h-[160px] w-[160px] rounded-full"
-                  style={{ background: "radial-gradient(circle, rgba(255,106,0,0.35), transparent 70%)" }}
-                  animate={{ opacity: [0.5, 0.9, 0.5], scale: [0.95, 1.05, 0.95] }}
-                  transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
-                />
-                <Icon3DShield size={140} />
-              </div>
-              <DashedConnector />
+          <div className="flex flex-1 flex-col items-center justify-center gap-1">
+            <DashedConnector />
+            <ChevronDown className="h-4 w-4 text-white/25" strokeWidth={2.5} />
+            <div className="relative flex h-[130px] w-[130px] shrink-0 items-center justify-center">
+              {/* one soft glow, breathing behind the shield */}
+              <motion.span
+                aria-hidden
+                className="absolute h-[110px] w-[110px] rounded-full"
+                style={{ background: "radial-gradient(circle, rgba(255,106,0,0.35), transparent 70%)" }}
+                animate={{ opacity: [0.5, 0.9, 0.5], scale: [0.95, 1.05, 0.95] }}
+                transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
+              />
+              <Icon3DShield size={96} />
             </div>
+            <ChevronDown className="h-4 w-4 text-white/25" strokeWidth={2.5} />
+            <DashedConnector />
+          </div>
 
-            <div className="flex flex-col items-center gap-4">
-              <Icon3DArrowUser size={110} />
-              <span className={`font-display text-2xl font-semibold ${INK_2}`}>Them</span>
-            </div>
+          <div className="flex flex-col items-center gap-3">
+            <Icon3DArrowUser size={72} showArrow={false} />
+            <span className={`font-display text-xl font-semibold ${INK_2}`}>Them</span>
           </div>
         </motion.div>
       </div>
@@ -550,30 +569,15 @@ function HowItWorks() {
           {steps.map((s, i) => (
             <motion.div
               key={s.title}
-              initial={{ opacity: 0, y: 60, scale: 0.88, rotate: i % 2 === 0 ? -4 : 4 }}
-              whileInView={{ opacity: 1, y: 0, scale: 1, rotate: 0 }}
+              initial={{ opacity: 0, y: 36 }}
+              whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-60px" }}
-              transition={{ duration: 0.7, ease: easeBrand, delay: i * 0.28 }}
+              transition={{ duration: 0.45, ease: easeBrand, delay: i * 0.15 }}
               className={`rounded-[26px] border ${BORDER_LINE} ${BG_PAPER_2} p-9`}
             >
-              <motion.div
-                initial={{ scale: 0, rotate: -25 }}
-                whileInView={{ scale: 1, rotate: 0 }}
-                viewport={{ once: true, margin: "-60px" }}
-                transition={{ type: "spring", stiffness: 260, damping: 14, delay: i * 0.28 + 0.22 }}
-                className="inline-block"
-              >
-                <Icon3DNumber n={s.n} size={72} />
-              </motion.div>
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: "-60px" }}
-                transition={{ duration: 0.5, ease: easeBrand, delay: i * 0.28 + 0.36 }}
-              >
-                <h3 className={`mt-[22px] font-display text-[30px] font-medium leading-[1.02] ${INK}`}>{s.title}</h3>
-                <p className={`mt-2.5 font-grotesk text-[19px] leading-[1.55] ${INK_2}`}>{s.body}</p>
-              </motion.div>
+              <Icon3DNumber n={s.n} size={72} />
+              <h3 className={`mt-[22px] font-display text-[30px] font-medium leading-[1.02] ${INK}`}>{s.title}</h3>
+              <p className={`mt-2.5 font-grotesk text-[19px] leading-[1.55] ${INK_2}`}>{s.body}</p>
             </motion.div>
           ))}
         </div>
@@ -717,7 +721,7 @@ function RewardsSection() {
               $1,100,000
             </div>
             <p className={`mt-1.5 font-grotesk text-base ${INK_3}`}>
-              Illustrative example — draws every day at 7:10pm CET, actual jackpot varies
+              draws every day at 5:10pm UTC
             </p>
 
             <div className="mt-[34px] flex justify-center gap-5">
@@ -763,7 +767,7 @@ function FinalCTA() {
           {revealWords("you send a", { delayOffset: 0.2 })}{" "}
           {revealWords("text.", {
             delayOffset: 0.28,
-            className: `italic ${BRAND_GRADIENT} bg-clip-text text-transparent`,
+            className: "italic text-[#FF6A00]",
           })}
         </h2>
         <p className={`mx-auto mt-[26px] max-w-[600px] font-grotesk text-[22px] ${INK_2}`}>

@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import HomeV2Content from "./HomeV2Content";
 
-// A/B variant of the homepage — leads with "send by email or @handle" (social
-// identity) instead of privacy-first messaging; privacy becomes an optional
-// per-payment toggle further down the page. Kept out of search results and
-// canonicalized to "/" so it never competes with or duplicates the homepage,
-// same pattern as the existing /home-white variant.
+// This variant won the A/B test against the old privacy-first homepage and is
+// now also served at "/" (see ../page.tsx). This route is kept only so the old
+// /home-v2 link doesn't 404; canonicalized to "/" and out of search results so
+// it never competes with the real homepage.
 export const metadata: Metadata = {
   alternates: {
     canonical: "/",

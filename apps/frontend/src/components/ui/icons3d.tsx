@@ -72,7 +72,7 @@ export function Icon3DEye({ size = 52 }: { size?: number }) {
   );
 }
 
-export function Icon3DArrowUser({ size = 52 }: { size?: number }) {
+export function Icon3DArrowUser({ size = 52, showArrow = true }: { size?: number; showArrow?: boolean }) {
   return (
     <svg width={size} height={size} viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -90,30 +90,32 @@ export function Icon3DArrowUser({ size = 52 }: { size?: number }) {
           <feDropShadow dx="0" dy="3" stdDeviation="3" floodColor="#b01000" floodOpacity="0.35" />
         </filter>
       </defs>
-      {/* Person head */}
-      <circle cx="18" cy="15" r="8.5" fill="url(#i3d-au-fill)" filter="url(#i3d-au-shadow)" />
-      <ellipse cx="14" cy="11" rx="5" ry="4" fill="url(#i3d-au-gloss)" />
-      {/* Person body */}
-      <path
-        d="M4 42 C4 30 9 26 18 26 C22 26 26 27.5 29 30"
-        stroke="url(#i3d-au-fill)" strokeWidth="0" fill="none"
-      />
-      <path
-        d="M3 44 Q3 27 18 27 Q27 27 30 32 L26 32 Q22 29 18 29 Q7 29 7 44 Z"
-        fill="url(#i3d-au-fill)"
-        filter="url(#i3d-au-shadow)"
-      />
-      {/* Arrow pointing right */}
-      <path
-        d="M34 28 L50 28"
-        stroke="url(#i3d-au-fill)" strokeWidth="0" fill="none"
-      />
-      <rect x="33" y="25.5" width="17" height="5" rx="2.5" fill="url(#i3d-au-fill)" filter="url(#i3d-au-shadow)" />
-      <path
-        d="M43 19 L53 28 L43 37"
-        strokeWidth="0" fill="none"
-      />
-      <polygon points="42,18 54,28 42,38 46,28" fill="url(#i3d-au-fill)" filter="url(#i3d-au-shadow)" />
+      {showArrow ? (
+        <>
+          {/* Person head, offset left to balance the arrow on the right */}
+          <circle cx="18" cy="15" r="8.5" fill="url(#i3d-au-fill)" filter="url(#i3d-au-shadow)" />
+          <ellipse cx="14" cy="11" rx="5" ry="4" fill="url(#i3d-au-gloss)" />
+          <path
+            d="M3 44 Q3 27 18 27 Q27 27 30 32 L26 32 Q22 29 18 29 Q7 29 7 44 Z"
+            fill="url(#i3d-au-fill)"
+            filter="url(#i3d-au-shadow)"
+          />
+          {/* Arrow pointing right — sending outward */}
+          <rect x="33" y="25.5" width="17" height="5" rx="2.5" fill="url(#i3d-au-fill)" filter="url(#i3d-au-shadow)" />
+          <polygon points="42,18 54,28 42,38 46,28" fill="url(#i3d-au-fill)" filter="url(#i3d-au-shadow)" />
+        </>
+      ) : (
+        <>
+          {/* Person alone, centered — a recipient isn't "sending" anything onward */}
+          <circle cx="28" cy="17" r="9" fill="url(#i3d-au-fill)" filter="url(#i3d-au-shadow)" />
+          <ellipse cx="24" cy="13" rx="5.2" ry="4.2" fill="url(#i3d-au-gloss)" />
+          <path
+            d="M9 46 Q9 29 28 29 Q47 29 47 46 Z"
+            fill="url(#i3d-au-fill)"
+            filter="url(#i3d-au-shadow)"
+          />
+        </>
+      )}
     </svg>
   );
 }
