@@ -101,11 +101,11 @@ function Header() {
   return (
     <header className={`sticky top-0 z-50 border-b ${BORDER_LINE_2} bg-[rgba(11,11,15,0.72)] px-6 py-5 backdrop-blur-[14px] md:px-10`}>
       <div className="mx-auto grid max-w-[1240px] grid-cols-[1fr_auto_1fr] items-center">
-        <Link href="/" className="justify-self-start">
+        <Link href="/" className="col-start-1 justify-self-start">
           <Image src="/loofta_white.svg" alt="Loofta" width={138} height={30} priority className="h-[30px] w-auto" />
         </Link>
 
-        <nav className="hidden gap-[38px] justify-self-center md:flex">
+        <nav className="col-start-2 hidden gap-[38px] justify-self-center md:flex">
           {navItems.map((item) => (
             <a
               key={item.href}
@@ -117,7 +117,7 @@ function Header() {
           ))}
         </nav>
 
-        <div className="relative justify-self-end">
+        <div className="relative col-start-3 justify-self-end">
           <span
             aria-hidden
             className="pointer-events-none absolute inset-0 -z-10 rounded-full opacity-70 blur-xl"
@@ -627,20 +627,20 @@ function BusinessSection() {
             </ul>
             <div className="mt-8 flex flex-wrap gap-3.5">
               <a
-                href="mailto:hello@loofta.xyz"
+                href="https://t.me/looftaxyz"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="inline-flex items-center gap-2.5 rounded-full bg-[#F4F2EC] px-8 py-5 font-display text-[22px] font-medium text-[#0B0B0F] transition-transform duration-200 hover:-translate-y-0.5"
               >
                 Talk to sales
                 <ArrowRight className="h-5 w-5" strokeWidth={2} />
               </a>
-              <a
-                href="https://loofta.gitbook.io/docs"
-                target="_blank"
-                rel="noopener noreferrer"
+              <Link
+                href="/partners"
                 className={`inline-flex items-center gap-2.5 rounded-full border-[1.5px] ${BORDER_LINE} bg-[#0B0B0F] px-8 py-5 font-display text-[22px] font-medium ${INK} transition-colors duration-200 hover:border-white/40`}
               >
-                Read the docs
-              </a>
+                Read more
+              </Link>
             </div>
           </motion.div>
 

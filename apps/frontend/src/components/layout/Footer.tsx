@@ -34,9 +34,10 @@ export function Footer() {
             </ul>
           </div>
 
-          {/* For business */}
+          {/* Partners (was "For business" — the app header's own "For Business" link was
+              removed, this is now the only nav to /partners) */}
           <div>
-            <h4 className="text-white font-semibold mb-4">{t('forBusiness')}</h4>
+            <h4 className="text-white font-semibold mb-4">Partners</h4>
             <ul className="space-y-2">
               <li><a href={looftaXyz.checkout} className="text-slate-400 hover:text-white transition-colors">{t('checkout')}</a></li>
               <li><a href={looftaXyz.partners} className="text-slate-400 hover:text-white transition-colors">{t('partners')}</a></li>

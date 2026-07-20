@@ -54,7 +54,6 @@ function MobileMenu({
     { href: "/", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
-    { href: "/partners", label: "For Business", description: "Bring social payments into your product" },
   ];
 
   return (
@@ -246,7 +245,6 @@ export function MinimalHeader() {
 
   const isRewardsActive = pathname?.startsWith("/rewards");
   const isWinActive = pathname?.includes("/megapot");
-  const isPartnersActive = pathname?.startsWith("/partners");
 
   return (
     <>
@@ -303,19 +301,6 @@ export function MinimalHeader() {
                   <span>Megapot</span>
                 </Link>
 
-                {/* Desktop: For Business link */}
-                <Link
-                  href="/partners"
-                  className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isPartnersActive
-                      ? "text-orange-300 bg-orange-500/10"
-                      : "text-slate-300 hover:text-white hover:bg-white/10",
-                  ].join(" ")}
-                >
-                  <span>For Business</span>
-                </Link>
-
                 {/* Desktop: Balance button */}
                 <button
                   type="button"
@@ -354,17 +339,6 @@ export function MinimalHeader() {
               </>
             ) : (
               <>
-                <Link
-                  href="/partners"
-                  className={[
-                    "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isPartnersActive
-                      ? "text-orange-300 bg-orange-500/10"
-                      : "text-slate-300 hover:text-white hover:bg-white/10",
-                  ].join(" ")}
-                >
-                  <span>For Business</span>
-                </Link>
                 <button
                   type="button"
                   onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}

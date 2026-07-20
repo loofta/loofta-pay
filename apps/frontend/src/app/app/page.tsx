@@ -285,7 +285,8 @@ export default function Home() {
           amount,
           userId: user?.id,
           accessToken,
-          isPrivate: true,
+          // Privacy is opt-in and decided at pay time (the incognito toggle on /c/[id]), not here.
+          isPrivate: false,
           description: fullDescription,
           cluster: apiCluster,
         });
@@ -295,7 +296,8 @@ export default function Home() {
           amount,
           userId: user?.id,
           accessToken,
-          isPrivate: true,
+          // Privacy is opt-in and decided at pay time (the incognito toggle on /c/[id]), not here.
+          isPrivate: false,
           description: fullDescription,
           cluster: apiCluster,
         });
@@ -306,7 +308,8 @@ export default function Home() {
           amount,
           userId: user?.id,
           accessToken,
-          isPrivate: true,
+          // Privacy is opt-in and decided at pay time (the incognito toggle on /c/[id]), not here.
+          isPrivate: false,
           description: fullDescription,
           cluster: apiCluster,
         });
@@ -317,7 +320,8 @@ export default function Home() {
           amount,
           userId: user?.id,
           accessToken,
-          isPrivate: true,
+          // Privacy is opt-in and decided at pay time (the incognito toggle on /c/[id]), not here.
+          isPrivate: false,
           description: fullDescription,
           cluster: apiCluster,
         });
@@ -566,12 +570,12 @@ export default function Home() {
                     loadingText="Creating payment…"
                   >
                     {authenticated ? (
-                      <>Send privately <ArrowRight className="h-4 w-4" /></>
+                      <>Send <ArrowRight className="h-4 w-4" /></>
                     ) : t('signInToContinue')}
                   </GradientActionButton>
                   <p className="flex items-center justify-center gap-1.5 text-sm text-slate-500 -mt-2">
                     <Lock className="h-3.5 w-3.5" />
-                    Shielded transfer · they don&apos;t need an account yet
+                    They don&apos;t need an account yet
                   </p>
                 </div>
               )}
