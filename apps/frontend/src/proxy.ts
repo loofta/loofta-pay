@@ -20,10 +20,17 @@ export function proxy(request: NextRequest) {
   // loofta.com exists solely to host the Telegram Connect widget — Privy/Telegram's login
   // widget doesn't work on .xyz domains, so this relay domain hands the handle back to
   // pay.loofta.xyz via a one-time token (see telegram-relay/page.tsx + api/telegram-relay).
+  // Now that this domain's DNS actually resolves to this deployment (previously it pointed
+  // elsewhere), every other route on it — the marketing site, the app, etc. — is technically
+  // reachable here too. That's not intentional: redirect anything but the relay path itself back
+  // to the canonical app domain instead of silently duplicate-serving it on loofta.com.
   const isTelegramRelayDomain = hostname === "loofta.com" || hostname === "www.loofta.com";
   if (isTelegramRelayDomain) {
-    const rewritten = new URL(`/telegram-relay${request.nextUrl.search}`, request.url);
-    return NextResponse.rewrite(rewritten);
+    if (pathname === "/telegram-relay") {
+      const rewritten = new URL(`/telegram-relay${request.nextUrl.search}`, request.url);
+      return NextResponse.rewrite(rewritten);
+    }
+    return NextResponse.redirect(new URL(`${pathname}${request.nextUrl.search}`, "https://pay.loofta.xyz"));
   }
 
   const isAppDomain =
