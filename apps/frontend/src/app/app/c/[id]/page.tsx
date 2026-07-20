@@ -1139,6 +1139,23 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       toast({ variant: "destructive", title: "Couldn't connect Telegram", description: "Try again." });
     }
   };
+  // An unauthenticated visitor clicking "Sign in with Telegram" can't actually sign in via
+  // Telegram directly — Privy's Telegram widget only works on the loofta.com relay domain, not
+  // here. And the relay can't run first either: connectTelegram needs an existing access token
+  // to know which Loofta account to attach the discovered handle to, so a session has to exist
+  // before the relay does. The only workable order is sign in (any method) then relay — this ref
+  // makes that continuation automatic the moment sign-in completes, instead of requiring the
+  // user to notice and click a separate "Connect Telegram" step afterward.
+  const autoConnectTelegramAfterSignInRef = useRef(false);
+  useEffect(() => {
+    if (!authenticated || !autoConnectTelegramAfterSignInRef.current) return;
+    autoConnectTelegramAfterSignInRef.current = false;
+    void connectTelegram();
+  }, [authenticated]);
+  const signInThenConnectTelegram = () => {
+    autoConnectTelegramAfterSignInRef.current = true;
+    login({ disableSignup: false });
+  };
   const connectSocialPlatform = (platform: string | null | undefined) => {
     if (platform === "discord") linkDiscord();
     else if (platform === "github") linkGithub();
@@ -3514,9 +3531,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             </div>
             <h3 className="text-xl font-semibold text-white mb-2">Sign in to view details</h3>
             <p className="text-slate-400 text-base mb-6 max-w-xs">
-              {pendingSocialPlatformHint === "telegram"
-                ? "This was sent to a Telegram username. Sign in, then connect Telegram to check."
-                : pendingSocialPlatformHint
+              {pendingSocialPlatformHint
                 ? `This was sent to a ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "social"} username. Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "that account"} to check.`
                 : "This payment may be waiting for you. Sign in to check."}
             </p>
@@ -3525,11 +3540,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 if (pendingEmailHint) login({ loginMethods: ["email"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "github") login({ loginMethods: ["github"], disableSignup: false });
-                // Telegram's login widget doesn't work on this (.xyz) domain — Privy's native
-                // loginMethods:["telegram"] silently fails here. Sign in with any other method
-                // instead; once authenticated, SocialConnectPrompt/connectTelegram takes over and
-                // routes Telegram linking through the loofta.com relay, which does work.
-                else if (pendingSocialPlatformHint === "telegram") login({ disableSignup: false });
+                // Telegram's login widget doesn't work on this (.xyz) domain. Sign in with any
+                // other method, then auto-continue straight into the loofta.com relay to connect
+                // Telegram — see signInThenConnectTelegram.
+                else if (pendingSocialPlatformHint === "telegram") signInThenConnectTelegram();
                 else login();
               }}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white hover:opacity-90 transition-opacity"
