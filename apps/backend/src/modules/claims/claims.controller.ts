@@ -287,7 +287,7 @@ export class ClaimsController {
   @ApiResponse({ status: 403, description: 'Not the creator' })
   async updateRecipient(
     @Param('id') id: string,
-    @Body() body: { recipientType: 'email' | 'username' | 'social'; recipientIdentifier: string; platform?: 'discord' | 'github' | 'telegram' },
+    @Body() body: { recipientType: 'email' | 'username' | 'social'; recipientIdentifier: string; platform?: 'discord' | 'github' | 'telegram' | 'twitter' },
     @Req() req: { user?: { id: string } },
   ): Promise<{ ok: boolean }> {
     const privyUserId = req.user?.id;
@@ -298,8 +298,8 @@ export class ClaimsController {
     if (!body.recipientIdentifier?.trim()) {
       throw new BadRequestException('recipientIdentifier required');
     }
-    if (body.recipientType === 'social' && !['discord', 'github', 'telegram'].includes(body.platform || '')) {
-      throw new BadRequestException('platform must be "discord", "github", or "telegram" when recipientType is "social"');
+    if (body.recipientType === 'social' && !['discord', 'github', 'telegram', 'twitter'].includes(body.platform || '')) {
+      throw new BadRequestException('platform must be "discord", "github", "telegram", or "twitter" when recipientType is "social"');
     }
     return this.claimsService.updateClaimRecipient({
       claimId: id,

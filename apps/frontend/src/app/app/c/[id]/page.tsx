@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { useToast } from "@/components/ui/use-toast";
@@ -686,7 +687,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
-const SOCIAL_PLATFORM_LABELS: Record<string, string> = { discord: "Discord", github: "GitHub", telegram: "Telegram" };
+const SOCIAL_PLATFORM_LABELS: Record<string, string> = { discord: "Discord", github: "GitHub", telegram: "Telegram", twitter: "Twitter" };
 
 function getEffectiveRecipient(claim: { claim_burner_address?: string; recipient_address?: string } | null): string {
   if (!claim) return "";
@@ -1068,6 +1069,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     if (platform === "discord") return hasDiscordLinked;
     if (platform === "github") return hasGithubLinked;
     if (platform === "telegram") return hasTelegramLinked;
+    if (platform === "twitter") return hasTwitterLinked;
     return false;
   };
   const connectTelegram = async () => {
@@ -1094,6 +1096,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     if (platform === "discord") linkDiscord();
     else if (platform === "github") linkGithub();
     else if (platform === "telegram") void connectTelegram();
+    else if (platform === "twitter") linkTwitter();
   };
   const [updatingUsernameToTwitter, setUpdatingUsernameToTwitter] = useState(false);
 

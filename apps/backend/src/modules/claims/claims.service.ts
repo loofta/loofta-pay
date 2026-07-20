@@ -381,14 +381,14 @@ export class ClaimsService {
   }
 
   /** Parses "PENDING_SOCIAL:<platform>:<handle>" into its parts, or null if malformed. */
-  private parsePendingSocialAddress(addr: string): { platform: 'discord' | 'github' | 'telegram'; handle: string } | null {
+  private parsePendingSocialAddress(addr: string): { platform: 'discord' | 'github' | 'telegram' | 'twitter'; handle: string } | null {
     const rest = addr.slice(ClaimsService.PENDING_SOCIAL_PREFIX.length);
     const sep = rest.indexOf(':');
     if (sep < 0) return null;
     const platform = rest.slice(0, sep).trim();
     const handle = rest.slice(sep + 1).trim().toLowerCase();
-    if (!handle || !['discord', 'github', 'telegram'].includes(platform)) return null;
-    return { platform: platform as 'discord' | 'github' | 'telegram', handle };
+    if (!handle || !['discord', 'github', 'telegram', 'twitter'].includes(platform)) return null;
+    return { platform: platform as 'discord' | 'github' | 'telegram' | 'twitter', handle };
   }
 
   /**
@@ -1350,7 +1350,7 @@ export class ClaimsService {
     recipientType: 'email' | 'username' | 'social';
     recipientIdentifier: string;
     /** Required when recipientType is 'social' — which platform the handle belongs to. */
-    platform?: SocialPlatform;
+    platform?: SocialPlatform | 'twitter';
   }): Promise<{ ok: boolean }> {
     const result = await this.fetchRawRow(opts.claimId);
     if (!result) throw new NotFoundException('Payment not found.');
@@ -1396,8 +1396,8 @@ export class ClaimsService {
       extraFields.recipient_email = null;
     } else {
       const platform = opts.platform;
-      if (!platform || !['discord', 'github', 'telegram'].includes(platform)) {
-        throw new BadRequestException('A valid platform (discord, github, or telegram) is required.');
+      if (!platform || !['discord', 'github', 'telegram', 'twitter'].includes(platform)) {
+        throw new BadRequestException('A valid platform (discord, github, telegram, or twitter) is required.');
       }
       const cleanHandle = opts.recipientIdentifier.trim().replace(/^@/, '').toLowerCase();
       if (!cleanHandle) throw new BadRequestException('A valid handle is required.');
