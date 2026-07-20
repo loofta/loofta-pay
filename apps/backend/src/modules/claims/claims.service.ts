@@ -1260,6 +1260,22 @@ export class ClaimsService {
       }
     }
 
+    // Persist that the verified recipient actually asked to claim this, and how — the cron sweep
+    // retry (cronSweepPendingBurners) only resumes claims where this is set, so a funded-but-
+    // never-claimed burner never gets auto-delivered to a recipient who hasn't chosen anything.
+    // Best-effort: never block the claim itself on this bookkeeping write.
+    await this.supabaseService.payments
+      .update({
+        claim_requested_at: new Date().toISOString(),
+        claim_requested_privately: opts?.claimPrivately ?? false,
+        claim_requested_destination: opts?.destinationAddress?.trim() || null,
+      })
+      .eq('id', claimId)
+      .then(
+        () => {},
+        (e: unknown) => this.logger.warn(`Claim ${claimId}: failed to stamp claim_requested_at (non-fatal): ${String(e)}`),
+      );
+
     try {
       // Attempt sweep before writing recipient_address — if sweep throws (e.g. fee payer has no SOL)
       // we must not have overwritten the PENDING_EMAIL/PENDING_USERNAME address, otherwise the user
@@ -2811,13 +2827,22 @@ export class ClaimsService {
    */
   async cronSweepPendingBurners(): Promise<void> {
     const cutoff = new Date(Date.now() - 10 * 60_000).toISOString();
+    // claim_requested_at IS NOT NULL is load-bearing: every payment now requires an explicit
+    // claim, so this cron must only RESUME a sweep the recipient already asked for (funds
+    // hadn't landed yet, or the in-process retry died on a server restart) — never proactively
+    // deliver to a recipient who hasn't chosen anything, even once their wallet is resolvable.
     const { data: pendingClaims, error } = await this.supabaseService.payments
       .select('*')
       .eq('status', 'PRIVATE_TRANSFER_PENDING')
       .gte('updated_at', cutoff)
       .not('burner_address', 'is', null)
-      .not('burner_encrypted_secret', 'is', null);
+      .not('burner_encrypted_secret', 'is', null)
+      .not('claim_requested_at', 'is', null);
 
+    if (error && this.isMissingColumnError(error)) {
+      this.logger.warn('[cronSweep] claim_requested_at column missing (migration not deployed yet) — skipping this tick rather than auto-sweeping unclaimed burners');
+      return;
+    }
     if (error) {
       this.logger.error('[cronSweep] Query error:', error);
       return;
@@ -2828,13 +2853,18 @@ export class ClaimsService {
 
     for (const raw of pendingClaims) {
       const claim = this.normalizeFromPayments(raw as Record<string, unknown>) as unknown as Claim & { recipient_address?: string };
+      const rawRow = raw as { claim_requested_privately?: boolean | null; claim_requested_destination?: string | null };
       const recipientWallet = (claim.recipient_address || '').trim();
       if (!recipientWallet || this.isPendingRecipientAddress(recipientWallet)) {
         this.logger.warn(`[cronSweep] Claim ${claim.id}: recipient not resolved yet, skipping`);
         continue;
       }
+      // Resume with the SAME choice the recipient originally made — never silently downgrade
+      // a requested private/external claim to a plain public sweep to their default wallet.
+      const destination = rawRow.claim_requested_destination?.trim() || recipientWallet;
+      const claimPrivately = rawRow.claim_requested_privately === true;
       try {
-        const { sweepTxHash } = await this.sweepClaimBurnerToWallet(claim.id, claim, recipientWallet);
+        const { sweepTxHash } = await this.sweepClaimBurnerToWallet(claim.id, claim, destination, { claimPrivately });
         if (sweepTxHash) {
           await this.updateStatus(claim.id, 'SUCCESS', { recipientSwept: true });
           this.notifyRecipientAfterPayment(claim.id);
