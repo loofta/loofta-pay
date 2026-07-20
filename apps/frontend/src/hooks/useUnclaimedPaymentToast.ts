@@ -21,12 +21,22 @@ async function fetchUnclaimedPayments(
     short_id?: string | null;
     amount: string;
     recipient_address?: string;
+    status?: string;
+    paid_at?: string | null;
   }>;
-  // recipient_address is only ever present for still-PENDING_EMAIL/PENDING_USERNAME rows —
-  // see normalisePayment() in app/api/payments/history/route.ts. Its presence alone means
-  // "funded but not yet swept to this user's wallet," i.e. unclaimed.
+  // recipient_address is present for still-PENDING_EMAIL/PENDING_USERNAME/PENDING_SOCIAL rows —
+  // see normalisePayment() in app/api/payments/history/route.ts — which covers an unregistered
+  // recipient. But every claim now routes through a burner regardless of registration (universal
+  // claim architecture), so a REGISTERED recipient's payment can just as easily be sitting
+  // unswept — that case has no recipient_address (it's a real wallet, stripped from the
+  // response) but is reliably flagged by status === PRIVATE_TRANSFER_PENDING instead (the same
+  // signal the history page's own "Unclaimed" sort already relies on). Check both — but always
+  // require paid_at too: an old row can sit at PRIVATE_TRANSFER_PENDING with paid_at still null
+  // (the sender's payment never actually completed — abandoned, pre-dates the current burner
+  // flow, whatever), and that's not "waiting to land," it's dead. Without this a months-old,
+  // never-funded claim surfaces as an urgent nudge every time.
   return received
-    .filter((c) => !!c.recipient_address)
+    .filter((c) => !!c.paid_at && (!!c.recipient_address || String(c.status || "").toUpperCase() === "PRIVATE_TRANSFER_PENDING"))
     .map((c) => ({ id: c.id, short_id: c.short_id ?? null, amount: c.amount }));
 }
 

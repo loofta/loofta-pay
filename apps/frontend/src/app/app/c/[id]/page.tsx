@@ -153,7 +153,11 @@ function GhostConfettiBurst({ onDone }: { onDone: () => void }) {
  *  "window chrome changes color" moment (à la Brave/Chrome private windows), not just a small
  *  toggle. Caller wraps this in <AnimatePresence> and conditionally renders it (rather than this
  *  component owning its own AnimatePresence) so the mount/unmount transition actually animates —
- *  AnimatePresence has to stay mounted across the toggle, not be unmounted along with its child. */
+ *  AnimatePresence has to stay mounted across the toggle, not be unmounted along with its child.
+ *  The ghost alone is a nice visual flourish but doesn't actually tell an unfamiliar viewer what
+ *  it means — the label underneath is the part that does. Neutral present-tense wording ("Private
+ *  payment") so it reads correctly whether the sender is mid-flow (about to pay privately) or a
+ *  recipient is looking at a payment that already was sent privately. */
 function IncognitoCardGhost() {
   return (
     <motion.div
@@ -161,11 +165,14 @@ function IncognitoCardGhost() {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 44, scale: 0.5 }}
       transition={{ type: "spring", stiffness: 220, damping: 16 }}
-      className="absolute -top-4 left-1/2 -translate-x-1/2 z-10 select-none pointer-events-none"
+      className="absolute -top-4 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center select-none pointer-events-none"
     >
       <motion.div animate={{ y: [0, -3, 0] }} transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}>
         <GhostGlyph size={34} opacity={1} />
       </motion.div>
+      <span className="mt-0.5 text-sm font-semibold text-amber-300 tracking-wide [text-shadow:0_1px_4px_rgba(0,0,0,0.5)]">
+        Private payment
+      </span>
     </motion.div>
   );
 }
@@ -871,8 +878,6 @@ function PaymentNotFoundNotice({
   onConnectTwitter,
   onConnectEmail,
   isConfirmingIdentity,
-  backHref,
-  backLabel,
 }: {
   message: string;
   hint?: string | null;
@@ -884,9 +889,24 @@ function PaymentNotFoundNotice({
   /** True while refreshIdentityInPlace() is running after Connect X/email, so the "not found"
    *  state doesn't sit there looking frozen while the identity refetch is in flight. */
   isConfirmingIdentity?: boolean;
-  backHref?: string;
-  backLabel?: string;
 }) {
+  // Never show "Payment not found" while a check that could still overturn it is in flight —
+  // saying "not found" and "confirming" at the same time reads as contradictory. The claim
+  // page's own back link (in ClaimPayLayout, always rendered above this card) already covers
+  // getting back out, so this state doesn't need its own.
+  if (isConfirmingIdentity) {
+    return (
+      <div className="py-16 flex flex-col items-center text-center">
+        <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-4xl select-none">
+          🔍
+        </div>
+        <p className="flex items-center gap-2 text-base text-slate-300">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Confirming your account…
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="py-16 flex flex-col items-center text-center">
       <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-4xl select-none">
@@ -897,42 +917,27 @@ function PaymentNotFoundNotice({
         <p className="text-slate-300 text-base">{message}</p>
         {hint && <p className="text-slate-300 text-base">{hint}</p>}
       </div>
-      {isConfirmingIdentity ? (
-        <p className="mb-6 flex items-center gap-2 text-base text-slate-300">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Confirming your account…
-        </p>
-      ) : (
-        showLinkButtons && (!hasTwitterLinked || !hasEmailLinked) && (
-          <div className="flex flex-wrap justify-center gap-3 mb-6">
-            {!hasTwitterLinked && (
-              <button
-                type="button"
-                onClick={onConnectTwitter}
-                className="inline-flex items-center justify-center h-11 rounded-lg bg-white/10 text-white px-5 text-base font-semibold hover:bg-white/20 transition-colors"
-              >
-                Connect X
-              </button>
-            )}
-            {!hasEmailLinked && (
-              <button
-                type="button"
-                onClick={onConnectEmail}
-                className="inline-flex items-center justify-center h-11 rounded-lg bg-white/10 text-white px-5 text-base font-semibold hover:bg-white/20 transition-colors"
-              >
-                Add email
-              </button>
-            )}
-          </div>
-        )
-      )}
-      {backHref && (
-        <Link
-          href={backHref}
-          className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors"
-        >
-          {backLabel}
-        </Link>
+      {showLinkButtons && (!hasTwitterLinked || !hasEmailLinked) && (
+        <div className="flex flex-wrap justify-center gap-3 mb-6">
+          {!hasTwitterLinked && (
+            <button
+              type="button"
+              onClick={onConnectTwitter}
+              className="inline-flex items-center justify-center h-11 rounded-lg bg-white/10 text-white px-5 text-base font-semibold hover:bg-white/20 transition-colors"
+            >
+              Connect X
+            </button>
+          )}
+          {!hasEmailLinked && (
+            <button
+              type="button"
+              onClick={onConnectEmail}
+              className="inline-flex items-center justify-center h-11 rounded-lg bg-white/10 text-white px-5 text-base font-semibold hover:bg-white/20 transition-colors"
+            >
+              Add email
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -996,6 +1001,18 @@ function ConfirmingIdentityNotice() {
 // ─── Privacy FAQ (same accordion style as send/receive and megapot) ───────────
 
 const CLAIM_PRIVACY_FAQ_ITEMS: { question: string; answer: React.ReactNode }[] = [
+  {
+    question: "What does the ghost icon mean?",
+    answer: (
+      <>
+        <p className="mb-3 flex items-center gap-2">
+          <GhostGlyph size={20} opacity={1} />
+          <span>It marks a private payment — one where the on-chain link between sender and recipient is hidden.</span>
+        </p>
+        <p>You&apos;ll see it on a payment card, in the claim confirmation, and next to any row in your history that was sent or claimed privately.</p>
+      </>
+    ),
+  },
   {
     question: "How does a private payment work?",
     answer: (
@@ -1249,8 +1266,18 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     setIdentityConfirmGaveUp(false);
     try {
       await bustPrivyCacheOnce().catch(() => { });
+      // Retrying only helps when a pending identifier could newly resolve via Privy's own
+      // eventual-consistency catch-up — a fresh email/social link, or the pending-username
+      // Twitter-handle fallback. A claim with none of those pending — a plain registered
+      // recipient whose wallet just doesn't match this session — gets a definitive answer on the
+      // very first check; nothing about waiting and re-checking changes a fixed wallet-address
+      // comparison. Burning the full ~15s retry budget on a check that can only ever return the
+      // same answer is exactly what read as "Confirming your account…" taking forever for no
+      // reason.
+      const worthRetrying = pendingEmailHint || !!pendingSocialPlatformHint || !!claim?.recipient_pending_username;
+      const maxAttempts = worthRetrying ? 10 : 1;
       let resolved = false;
-      for (let attempt = 0; attempt < 10; attempt++) {
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
         if (attempt > 0) await new Promise((r) => setTimeout(r, 1500));
         const [claimResult, recipientResult] = await Promise.all([
           claimQuery.refetch(),
@@ -3615,8 +3642,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   onConnectTwitter={() => linkTwitter()}
                   onConnectEmail={() => linkEmail()}
                   isConfirmingIdentity={isConfirmingIdentity}
-                  backHref={from === "history" ? "/history" : "/"}
-                  backLabel={from === "history" ? "← Back to History" : "← Back to Send"}
                 />
               )
             ) : isRecipient &&

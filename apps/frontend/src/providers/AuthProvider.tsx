@@ -39,12 +39,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		<PrivyProvider
 			appId={appId}
 			config={{
-				// Email/Twitter/Discord/GitHub for login and linking; encourage two methods for recovery.
-				// If you see "Login with X not allowed", enable that method in the Privy Dashboard:
-				// https://dashboard.privy.io → your app → Login Methods → Socials → enable it.
-				// Telegram is intentionally NOT here — Privy's Telegram widget doesn't work on .xyz
-				// domains, so it's handled by a separate relay on loofta.com (see telegram-relay/).
-				loginMethods: ["email", "twitter", "discord", "github"],
+				// Email/Twitter/Discord/GitHub/Telegram for login and linking; encourage two methods
+				// for recovery. If you see "Login with X not allowed", enable that method in the
+				// Privy Dashboard: https://dashboard.privy.io → your app → Login Methods → enable it.
+				// Telegram is included here (not just per-call on the relay page) because Privy only
+				// allows one PrivyProvider per app — a login method has to be declared here to be
+				// usable via login({loginMethods:["telegram"]}) anywhere, including on the loofta.com
+				// relay (see telegram-relay/page.tsx), which means it also shows up in the default
+				// sign-in modal everywhere else. Telegram's widget itself still only works on
+				// loofta.com/www.loofta.com, not this (.xyz) app domain — see TELEGRAM_SEND_ENABLED
+				// in lib/socialPlatforms.ts for the separate flag gating it from send/edit pickers.
+				loginMethods: ["email", "twitter", "discord", "github", "telegram"],
 				embeddedWallets: {
 					// Create EVM (Base) wallets for users who don't have one yet.
 					// Needed for non-custodial peer offramp (ZKP2P on Base).

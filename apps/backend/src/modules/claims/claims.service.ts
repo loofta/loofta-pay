@@ -1157,6 +1157,14 @@ export class ClaimsService {
       );
       return { isRecipient: matches };
     }
+    // A registered claim stamps recipient_user_id at creation time — trust that stable identity
+    // reference first. Falling back to wallet-address comparison alone breaks once a recipient's
+    // registered wallet changes after the claim was created (e.g. a mainnet wallet migration),
+    // since recipient_address is a point-in-time snapshot that never gets updated to match.
+    const recipientUserId = (claim as { recipient_user_id?: string | null }).recipient_user_id;
+    if (recipientUserId) {
+      return { isRecipient: recipientUserId === privyUserId };
+    }
     try {
       const userWallet = await this.usersService.getSolanaWalletAddress(privyUserId);
       return { isRecipient: userWallet.trim().toLowerCase() === recipientAddress.trim().toLowerCase() };
