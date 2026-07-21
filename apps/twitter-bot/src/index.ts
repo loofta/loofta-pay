@@ -18,7 +18,10 @@ const TWITTER_API_SECRET   = required('TWITTER_API_SECRET')
 const TWITTER_ACCESS_TOKEN = required('TWITTER_ACCESS_TOKEN')
 const TWITTER_ACCESS_SECRET = required('TWITTER_ACCESS_SECRET')
 const LOOFTA_API_URL       = required('LOOFTA_API_URL')       // e.g. https://api.loofta.xyz
-const TWITTER_BOT_SECRET   = required('TWITTER_BOT_SECRET')   // shared secret for /twitter-payments
+// Per-integrator API key (see apps/backend/src/modules/integrators) — replaces the old shared,
+// static TWITTER_BOT_SECRET/BotGuard so this bot has its own revocable, rate-limited identity
+// instead of one secret shared by anything that ever needed bot-like auth.
+const LOOFTA_INTEGRATOR_API_KEY = required('LOOFTA_INTEGRATOR_API_KEY')
 const APP_URL              = process.env.APP_URL ?? 'https://pay.loofta.xyz'
 const BOT_HANDLE           = (process.env.TWITTER_BOT_HANDLE ?? 'looftapay').toLowerCase()
 const POLL_INTERVAL_MS     = parseInt(process.env.POLL_INTERVAL_MS ?? '180000', 10) // 3 min default
@@ -48,7 +51,7 @@ async function createPaymentRequest(params: {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${TWITTER_BOT_SECRET}`,
+        Authorization: `Bearer ${LOOFTA_INTEGRATOR_API_KEY}`,
       },
       body: JSON.stringify({ ...params, is_devnet: true }), // devnet-only for now; flip to IS_DEVNET when mainnet is ready
     })

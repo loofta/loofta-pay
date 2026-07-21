@@ -2,8 +2,8 @@ import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from
 import { IntegratorsService } from '@/modules/integrators/integrators.service';
 
 /**
- * Multi-tenant successor to BotGuard (modules/twitter-payments/bot.guard.ts) — that guard checks
- * one static shared secret with no per-caller identity, scope, rate limit, or revocation. This
+ * Multi-tenant successor to the twitter-payments module's old BotGuard, which checked one
+ * static shared secret with no per-caller identity, scope, rate limit, or revocation. This
  * hashes the incoming bearer key and looks up the specific, individually-revocable integrator it
  * belongs to, attaching it to the request for downstream rate limiting and payment attribution.
  */

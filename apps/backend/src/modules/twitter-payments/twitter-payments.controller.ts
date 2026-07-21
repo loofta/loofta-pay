@@ -9,24 +9,32 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiSecurity } from '@nestjs/swagger';
-import { AuthGuard, RateLimitGuard } from '@/common/guards';
+import { AuthGuard, RateLimitGuard, IntegratorGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { TwitterPaymentsService } from './twitter-payments.service';
 import { CreateTwitterPaymentDto } from './dto/create-twitter-payment.dto';
-import { BotGuard } from './bot.guard';
 
 @ApiTags('twitter-payments')
 @Controller('twitter-payments')
 export class TwitterPaymentsController {
   constructor(private readonly twitterPayments: TwitterPaymentsService) {}
 
-  /** Bot-only: create a pending payment request from a parsed tweet */
+  /**
+   * Integrator-only: create a pending payment request from a parsed tweet. This is unchanged
+   * from when it used the old static-secret BotGuard — the twitter-bot only ever creates an
+   * INVOICE here (twitter_payment_requests row); the actual funding still happens via /fund
+   * below, driven by the tweet's human sender logging into their own Loofta account. That's a
+   * genuinely different funding model from POST /integrators/v1/pay-human (where the integrator
+   * itself deposits funds directly), so this endpoint was deliberately NOT replaced by that one —
+   * only its auth mechanism changed, from one shared static secret to a real, individually
+   * revocable integrator API key.
+   */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @UseGuards(BotGuard)
-  @ApiSecurity('bot-secret')
-  @ApiOperation({ summary: 'Bot creates a pending Twitter payment request' })
+  @UseGuards(IntegratorGuard)
+  @ApiSecurity('integrator-key')
+  @ApiOperation({ summary: 'Integrator (bot) creates a pending Twitter payment request' })
   @ApiResponse({ status: 201, description: '{ short_id, link }' })
   async create(@Body() dto: CreateTwitterPaymentDto) {
     return this.twitterPayments.create(dto);
