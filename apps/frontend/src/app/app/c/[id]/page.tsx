@@ -170,7 +170,9 @@ function IncognitoCardBadge() {
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="flex items-center justify-center p-1.5 [filter:drop-shadow(0_2px_5px_rgba(0,0,0,0.6))]">
-              <PrivacyGlyph size={28} opacity={1} className="text-slate-300" />
+              {/* VenetianMask's own glyph sits low in its viewBox (more empty space above than
+                  below) — nudge it up a hair so it reads as optically centered in this badge. */}
+              <PrivacyGlyph size={28} opacity={1} className="text-slate-300 -translate-y-px" />
             </span>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={8} className="!border-white/10 !bg-[#0a0a0c] !text-slate-200">

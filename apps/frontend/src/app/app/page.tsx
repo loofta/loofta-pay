@@ -266,7 +266,7 @@ export default function Home() {
     const trimmed = recipient.replace(/^@/, "").trim();
     if (!trimmed || !amount) return;
     if (!authenticated) {
-      privyLogin({ loginMethods: ["email"], disableSignup: false });
+      privyLogin({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false });
       return;
     }
     if (amountNum < minAmountUsd) {
@@ -564,7 +564,7 @@ export default function Home() {
                   </div>
 
                   <GradientActionButton
-                    onClick={authenticated ? handleSend : () => privyLogin({ loginMethods: ["email"], disableSignup: false })}
+                    onClick={authenticated ? handleSend : () => privyLogin({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })}
                     disabled={authenticated && (!canSend || creating)}
                     loading={creating}
                     loadingText="Creating payment…"
