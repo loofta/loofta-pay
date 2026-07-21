@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   useWallets as useSolanaWallets,
@@ -177,8 +177,16 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
   const [showPaste, setShowPaste] = useState(false);
+  const [pasteText, setPasteText] = useState("");
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Live-validates as the user types/edits, instead of only on the initial paste — lets them see
+  // and fix a malformed line before anything is actually imported into the row list below.
+  const { rows: pasteParsedRows, errors: pasteParsedErrors } = useMemo(
+    () => (pasteText.trim() ? parseCSV(pasteText) : { rows: [] as MultiSendRow[], errors: [] as string[] }),
+    [pasteText],
+  );
 
   const { user, getAccessToken, login, authenticated } = usePrivy();
   const networkMode = useAuthStore((s) => s.networkMode);
@@ -236,6 +244,20 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       }
     };
     reader.readAsText(file);
+  }
+
+  function importPastedRows() {
+    if (pasteParsedRows.length === 0) return;
+    const capped = pasteParsedRows.slice(0, 10);
+    const padded = capped.length < 2 ? [...capped, ...defaultRows().slice(capped.length)] : capped;
+    setRows(padded);
+    // Fully clean import (no skipped/malformed lines, nothing truncated) — collapse the panel
+    // like before. Otherwise leave the text and its live error list in place so the user can fix
+    // the remaining lines and click "Add" again, instead of the box silently vanishing or emptying.
+    if (pasteParsedErrors.length === 0 && pasteParsedRows.length <= 10) {
+      setShowPaste(false);
+      setPasteText("");
+    }
   }
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -870,23 +892,50 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
             <textarea
               autoFocus
               rows={5}
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
               placeholder={"alice@email.com, 100, Thanks!\nbob_username, 50\nTELEGRAM:@carol_tg, 200, Invoice #42"}
               className="w-full rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-slate-500 text-base font-mono p-2.5 resize-none focus:outline-none focus:border-white/30"
-              onPaste={(e) => {
-                const text = e.clipboardData.getData("text");
-                if (!text.trim()) return;
-                e.preventDefault();
-                const { rows: newRows, errors } = parseCSV(text);
-                setCsvErrors(errors);
-                if (newRows.length > 0) {
-                  const capped = newRows.slice(0, 10);
-                  const padded = capped.length < 2 ? [...capped, ...defaultRows().slice(capped.length)] : capped;
-                  setRows(padded);
-                  if (newRows.length > 10) setCsvErrors((prev) => [`Only the first 10 recipients were imported (max 10)`, ...prev]);
-                  if (errors.length === 0) setShowPaste(false);
-                }
-              }}
             />
+            {pasteText.trim().length > 0 && (
+              <>
+                <div className="flex items-center justify-between gap-2">
+                  <p className={`text-base ${pasteParsedErrors.length > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                    {pasteParsedRows.length > 0
+                      ? `${pasteParsedRows.length} recipient${pasteParsedRows.length === 1 ? "" : "s"} ready${
+                          pasteParsedErrors.length > 0
+                            ? `, ${pasteParsedErrors.length} row${pasteParsedErrors.length === 1 ? "" : "s"} need${pasteParsedErrors.length === 1 ? "s" : ""} fixing`
+                            : ""
+                        }`
+                      : "No valid recipients yet"}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={importPastedRows}
+                    disabled={pasteParsedRows.length === 0}
+                    className="shrink-0 h-9 px-3 rounded-lg text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40 disabled:pointer-events-none"
+                  >
+                    Add {pasteParsedRows.length || ""} recipient{pasteParsedRows.length === 1 ? "" : "s"}
+                  </button>
+                </div>
+                {pasteParsedRows.length > 10 && (
+                  <p className="text-slate-500 text-base flex items-start gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    Only the first 10 recipients will be imported (max 10) — the rest are ignored.
+                  </p>
+                )}
+                {pasteParsedErrors.length > 0 && (
+                  <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 space-y-1">
+                    {pasteParsedErrors.map((err, i) => (
+                      <p key={i} className="text-red-400 text-base flex items-start gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        {err}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 
