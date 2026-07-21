@@ -34,12 +34,40 @@ export default function TelegramRelayPage() {
   const [status, setStatus] = useState<"idle" | "connecting" | "done" | "mismatch" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const submittedRef = useRef(false);
-  const autoLoginAttemptedRef = useRef(false);
+
+  // useLoginWithOAuth's initOAuth does a full top-level redirect (window.assign) to Telegram and
+  // back — unlike a popup-based widget, this REMOUNTS the whole page/React tree when it returns.
+  // A plain useRef can't survive that (it resets to its initial value on every fresh mount), so
+  // relying on one here would let the auto-trigger effect below fire a SECOND time right as Privy
+  // is still processing the OAuth return, re-redirecting instead of settling into "authenticated".
+  // sessionStorage survives the redirect within the same tab, so it's the only thing that can
+  // actually gate "have we already started this flow" across that reload.
+  const AUTO_LOGIN_KEY = "telegram-relay:auto-login-attempted";
+
+  // Once the flow reaches any terminal state, clear the persisted keys — a manual retry (clicking
+  // the button again after an error) or a reused tab should start clean, not stay permanently
+  // gated by a flag left over from the attempt that just finished.
+  useEffect(() => {
+    if (status === "done" || status === "error" || status === "mismatch") {
+      sessionStorage.removeItem(AUTO_LOGIN_KEY);
+      sessionStorage.removeItem("telegram-relay:token");
+      sessionStorage.removeItem("telegram-relay:claimId");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setToken(params.get("token"));
-    setClaimId(params.get("claimId"));
+    // Same reload concern applies to the identifying params themselves — fall back to whatever
+    // was persisted just before the redirect if this load's URL doesn't have them (Privy's own
+    // oauth callback params get appended to the return URL, but don't rely on the rest surviving
+    // byte-for-byte across every possible redirect implementation).
+    const t = params.get("token") || sessionStorage.getItem("telegram-relay:token");
+    const c = params.get("claimId") || sessionStorage.getItem("telegram-relay:claimId");
+    if (t) sessionStorage.setItem("telegram-relay:token", t);
+    if (c) sessionStorage.setItem("telegram-relay:claimId", c);
+    setToken(t);
+    setClaimId(c);
   }, []);
 
   const hasIdentifier = !!token || !!claimId;
@@ -54,11 +82,13 @@ export default function TelegramRelayPage() {
   // Skip the extra manual click — trigger the Telegram login as soon as this page is ready, so
   // opening this tab immediately shows Telegram's own prompt instead of an intermediate "Log in
   // with Telegram" button. The button below still renders as a fallback, since a login triggered
-  // outside a direct click can be blocked by some browsers' popup blockers; only fires once so a
-  // cancelled/dismissed flow doesn't get reopened in a loop.
+  // outside a direct click can be blocked by some browsers' popup blockers; only fires once per
+  // tab (sessionStorage, not a ref — see note above) so the post-redirect reload doesn't retrigger
+  // a fresh login attempt instead of letting the just-completed one settle.
   useEffect(() => {
-    if (!ready || authenticated || !hasIdentifier || autoLoginAttemptedRef.current) return;
-    autoLoginAttemptedRef.current = true;
+    if (!ready || authenticated || !hasIdentifier) return;
+    if (sessionStorage.getItem(AUTO_LOGIN_KEY) === "1") return;
+    sessionStorage.setItem(AUTO_LOGIN_KEY, "1");
     void startTelegramLogin();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, authenticated, hasIdentifier]);
