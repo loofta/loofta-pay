@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { usePrivy, useLoginWithTelegram } from "@privy-io/react-auth";
+import { usePrivy, useLoginWithTelegram, useLoginWithOAuth } from "@privy-io/react-auth";
 
 /**
  * Hosted on loofta.com (not pay.loofta.xyz) because Telegram's Login Widget doesn't work on
@@ -25,6 +25,13 @@ export default function TelegramRelayPage() {
   // "Telegram Auth configuration is not loaded" even after telegram was added to the app's
   // loginMethods. useLoginWithTelegram is the OAuth-compatible entry point.
   const { login: loginWithTelegram } = useLoginWithTelegram();
+  // TEMPORARY diagnostic — not part of the real flow. Tests whether OAuth-family logins work at
+  // all on this relay page/domain (loofta.com, isolated Privy session), to isolate whether the
+  // "Telegram Auth configuration is not loaded" error is specific to Telegram or a symptom of
+  // something wrong with this page/domain more broadly. Remove once Telegram is sorted out.
+  const { initOAuth: loginWithTwitterTest, state: twitterTestState } = useLoginWithOAuth({
+    onError: (e) => console.error("[telegram-relay][DIAGNOSTIC twitter test] failed:", e),
+  });
   const [token, setToken] = useState<string | null>(null);
   const [claimId, setClaimId] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "connecting" | "done" | "mismatch" | "error">("idle");
@@ -167,6 +174,19 @@ export default function TelegramRelayPage() {
             <p className="text-sm text-slate-400">Connecting your handle…</p>
           )}
         </>
+      )}
+      {/* TEMPORARY diagnostic button — see comment above on loginWithTwitterTest. */}
+      {hasIdentifier && !authenticated && (
+        <div className="mt-6 pt-6 border-t border-white/10 w-full max-w-xs">
+          <p className="text-xs text-slate-500 mb-2">Diagnostic only — not part of the real flow:</p>
+          <button
+            type="button"
+            onClick={() => loginWithTwitterTest({ provider: "twitter" })}
+            className="px-5 py-2.5 rounded-xl bg-slate-700 text-white text-sm font-semibold hover:opacity-90 w-full"
+          >
+            Test: Log in with Twitter ({twitterTestState.status})
+          </button>
+        </div>
       )}
     </div>
   );
