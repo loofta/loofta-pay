@@ -39,6 +39,31 @@ const SOCIAL_PICKS: { id: SocialSendPlatform; name: string }[] = [
 
 const HOME_TAB_KEY = "loofta.home.tab";
 
+/**
+ * Twitter/Discord/GitHub logins triggered from privyLogin() can fall back to a full top-level
+ * redirect (not a popup) in some browsers/webviews — same behavior as the Telegram relay flow —
+ * which reloads this page and wipes plain React state. sessionStorage survives that reload, so
+ * the draft is restored on the next mount instead of forcing the sender to retype everything.
+ */
+const SEND_DRAFT_KEY = "loofta.send.formDraft";
+type SendDraft = {
+  recipient: string;
+  amount: string;
+  description: string;
+  gifUrl: string | null;
+  sendMethod: SendMethod;
+  socialPlatform: SocialSendPlatform | null;
+};
+function readSendDraft(): SendDraft | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(SEND_DRAFT_KEY);
+    return raw ? (JSON.parse(raw) as SendDraft) : null;
+  } catch {
+    return null;
+  }
+}
+
 const bold = (chunks: ReactNode) => (
   <span className="font-medium text-slate-300">{chunks}</span>
 );
@@ -92,14 +117,23 @@ export default function Home() {
     if (typeof window !== "undefined") localStorage.setItem(HOME_TAB_KEY, tab);
   };
   const { toast } = useToast();
-  const [recipient, setRecipient] = useState("");
-  const [amount, setAmount] = useState("");
-  const [description, setDescription] = useState("");
-  const [gifUrl, setGifUrl] = useState<string | null>(null);
+  const [recipient, setRecipient] = useState(() => readSendDraft()?.recipient ?? "");
+  const [amount, setAmount] = useState(() => readSendDraft()?.amount ?? "");
+  const [description, setDescription] = useState(() => readSendDraft()?.description ?? "");
+  const [gifUrl, setGifUrl] = useState<string | null>(() => readSendDraft()?.gifUrl ?? null);
   /** "SEND TO" pill selection — matches the reference screenshot's Email/Social handle tabs, plus a Loofta username option. */
-  const [sendMethod, setSendMethod] = useState<SendMethod>("email");
+  const [sendMethod, setSendMethod] = useState<SendMethod>(() => readSendDraft()?.sendMethod ?? "email");
   /** Defaults to Twitter — the most common case — rather than making everyone pick a platform first. */
-  const [socialPlatform, setSocialPlatform] = useState<SocialSendPlatform | null>("twitter");
+  const [socialPlatform, setSocialPlatform] = useState<SocialSendPlatform | null>(
+    () => readSendDraft()?.socialPlatform ?? "twitter",
+  );
+
+  // Keep the draft in sync so a mid-login page reload (see SEND_DRAFT_KEY above) can restore it.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const draft: SendDraft = { recipient, amount, description, gifUrl, sendMethod, socialPlatform };
+    sessionStorage.setItem(SEND_DRAFT_KEY, JSON.stringify(draft));
+  }, [recipient, amount, description, gifUrl, sendMethod, socialPlatform]);
   const [creating, setCreating] = useState(false);
   const { showMultiSend, setShowMultiSend } = useMultiSendStore();
   const [linkCopied, setLinkCopied] = useState(false);
@@ -326,6 +360,7 @@ export default function Home() {
           cluster: apiCluster,
         });
       }
+      sessionStorage.removeItem(SEND_DRAFT_KEY);
       router.push(`/c/${result.id}`);
     } catch (e: unknown) {
       toast({
