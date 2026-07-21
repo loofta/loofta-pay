@@ -51,8 +51,7 @@ export default function PayWithEmailContent() {
         <div className="relative max-w-3xl mx-auto px-4 md:px-8 pt-24 md:pt-32">
           {/* Hero */}
           <div className="mb-20">
-            <span className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-lg font-semibold text-white mb-8 ${BRAND_GRADIENT} ${BRAND_SHADOW}`}>
-              <span className="h-1.5 w-1.5 rounded-full bg-white/70" />
+            <span className={`inline-flex items-center rounded-full px-4 py-2 text-lg font-semibold text-white mb-8 ${BRAND_GRADIENT} ${BRAND_SHADOW}`}>
               No wallet address needed
             </span>
 
