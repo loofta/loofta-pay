@@ -38,6 +38,7 @@ import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
 import { TELEGRAM_SEND_ENABLED } from "@/lib/socialPlatforms";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
+import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 import type { MultiSendRecipientType } from "@/store/multiSend";
 
 type ConfirmFeeData = {
@@ -185,6 +186,13 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   // Default OFF (normal/public) — matches the single-send claim page's incognito toggle default.
   // Private costs a MagicBlock fee per recipient; normal is a free plain on-chain transfer.
   const [sendPrivately, setSendPrivately] = useState(false);
+  // Same "entering incognito mode" confetti moment as the single-send claim page — non-null key
+  // mounts one <PrivacyConfettiBurst>; it clears itself via onDone.
+  const [privacyBurstKey, setPrivacyBurstKey] = useState<number | null>(null);
+  const handleToggleSendPrivately = (checked: boolean) => {
+    setSendPrivately(checked);
+    if (checked) setPrivacyBurstKey(Date.now());
+  };
   const [showAllRecipients, setShowAllRecipients] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -678,6 +686,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
     return (
       <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+        {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -724,7 +733,12 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                   const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
                   const fee = Math.ceil(((mbGross - net) / 1_000_000 + 0.20) * 100) / 100;
                   return (
-                    <div key={row.id} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2.5 gap-2">
+                    <div
+                      key={row.id}
+                      className={`flex items-center justify-between rounded-lg border px-3 py-2.5 gap-2 ${
+                        idx % 2 === 0 ? "bg-white/[0.03] border-white/5" : "bg-white/[0.08] border-white/10"
+                      }`}
+                    >
                       <div className="min-w-0">
                         <p className="text-slate-400 text-base">Recipient {idx + 1}</p>
                         <p className="text-white text-base font-medium truncate">
@@ -770,7 +784,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                 </div>
               </div>
 
-              <IncognitoModeToggle checked={sendPrivately} onCheckedChange={setSendPrivately} offLabel="Normal payment" />
+              <IncognitoModeToggle checked={sendPrivately} onCheckedChange={handleToggleSendPrivately} />
 
               <p className="text-slate-400 text-base">
                 {sendPrivately
@@ -907,6 +921,18 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           <ArrowLeft className="w-5 h-5" />
         </button>
         <p className="text-white text-xl font-semibold flex-1">Multi Send</p>
+        <button
+          type="button"
+          onClick={() => {
+            setRows(defaultRows());
+            setCsvErrors([]);
+            setPasteText("");
+            setShowPaste(false);
+          }}
+          className="text-slate-400 hover:text-white text-base border border-white/10 rounded-lg px-3 py-1.5 hover:bg-white/[0.06] transition-all"
+        >
+          Reset
+        </button>
         {process.env.NODE_ENV === "development" && (
           <button
             type="button"
