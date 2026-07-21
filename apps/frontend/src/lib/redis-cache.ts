@@ -37,3 +37,21 @@ export async function redisDel(key: string): Promise<void> {
     /* fail open */
   }
 }
+
+/**
+ * Fixed-window counter: increments `key`, setting it to expire after `ttlSeconds` on first
+ * increment. Returns 0 (never exceeds any real limit) on a Redis error, so a Redis hiccup never
+ * blocks legitimate requests — same fail-open convention as the rest of this file.
+ */
+export async function redisIncrWithExpiry(key: string, ttlSeconds: number): Promise<number> {
+  try {
+    const redis = await getRedis();
+    const count = await redis.incr(key);
+    if (count === 1) {
+      await redis.expire(key, ttlSeconds);
+    }
+    return count;
+  } catch {
+    return 0;
+  }
+}

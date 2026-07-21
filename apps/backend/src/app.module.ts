@@ -25,6 +25,8 @@ import { TwitterPaymentsModule } from './modules/twitter-payments/twitter-paymen
 import { OfframpModule } from './modules/offramp/offramp.module';
 import { LotteryModule } from './modules/lottery/lottery.module';
 import { MagicblockQuestModule } from './modules/magicblock-quest/magicblock-quest.module';
+import { IntegratorsModule } from './modules/integrators/integrators.module';
+import { X402PaymentsModule } from './modules/x402-payments/x402-payments.module';
 
 @Module({
   imports: [
@@ -82,6 +84,8 @@ import { MagicblockQuestModule } from './modules/magicblock-quest/magicblock-que
     OfframpModule,
     LotteryModule,
     MagicblockQuestModule,
+    IntegratorsModule,
+    X402PaymentsModule,
   ],
   providers: [
     {

@@ -59,6 +59,10 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('payment_intents');
   }
 
+  get paymentEvents() {
+    return this.client.from('payment_events');
+  }
+
   get users() {
     return this.client.from('users');
   }
@@ -113,5 +117,13 @@ export class SupabaseService implements OnModuleInit {
 
   get socialAccounts() {
     return this.client.from('social_accounts');
+  }
+
+  get integrators() {
+    return this.client.from('integrators');
+  }
+
+  get integratorApiKeys() {
+    return this.client.from('integrator_api_keys');
   }
 }

@@ -27,30 +27,46 @@ export class RateLimitGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const response = context.switchToHttp().getResponse();
 
-    // Prefer authenticated user ID; fall back to IP for public endpoints
-    const userId: string | undefined = request.user?.id;
     const ip: string =
       (request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
       request.ip ||
       'unknown';
-    const identifier = userId ?? ip;
+
+    // 'integrator': keyed on the integrator IntegratorGuard attached to the request (which must
+    // run first), using that integrator's own DB-configured limit rather than the decorator's
+    // static one — each integrator gets an independently enforced cap. Falls back to IP if
+    // keyFrom is 'integrator' but no integrator is present (misconfigured guard order), rather
+    // than silently keying on nothing.
+    let identifier: string;
+    let limit: number;
+    if (options.keyFrom === 'integrator' && request.integrator?.id) {
+      identifier = `integrator:${request.integrator.id}`;
+      limit = request.integrator.rateLimitPerMin ?? options.limit;
+    } else if (options.keyFrom === 'ip') {
+      identifier = ip;
+      limit = options.limit;
+    } else {
+      // Default ('user' or unset): prefer authenticated user ID; fall back to IP.
+      identifier = request.user?.id ?? ip;
+      limit = options.limit;
+    }
 
     const keyPrefix = options.keyPrefix ?? context.getHandler().name;
     const key = `rl:${keyPrefix}:${identifier}`;
 
     const { allowed, remaining, retryAfterMs } = await this.redis.slideWindow(
       key,
-      options.limit,
+      limit,
       options.windowSecs,
     );
 
-    response.setHeader('X-RateLimit-Limit', options.limit);
+    response.setHeader('X-RateLimit-Limit', limit);
     response.setHeader('X-RateLimit-Remaining', remaining);
     response.setHeader('X-RateLimit-Window', options.windowSecs);
 
     if (!allowed) {
       this.logger.warn(
-        `Rate limit hit — key=${key} limit=${options.limit}/${options.windowSecs}s`,
+        `Rate limit hit — key=${key} limit=${limit}/${options.windowSecs}s`,
       );
       response.setHeader('Retry-After', Math.ceil(retryAfterMs / 1000));
       response.status(429).json({

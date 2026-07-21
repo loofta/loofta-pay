@@ -9,7 +9,8 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiSecurity } from '@nestjs/swagger';
-import { AuthGuard } from '@/common/guards';
+import { AuthGuard, RateLimitGuard } from '@/common/guards';
+import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { TwitterPaymentsService } from './twitter-payments.service';
 import { CreateTwitterPaymentDto } from './dto/create-twitter-payment.dto';
@@ -33,6 +34,8 @@ export class TwitterPaymentsController {
 
   /** Public: get payment request details for the funding page */
   @Get(':short_id')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(120, 60, 'twitter-payments:get')
   @ApiOperation({ summary: 'Get public details of a Twitter payment request' })
   async getPublic(@Param('short_id') shortId: string) {
     return this.twitterPayments.getPublic(shortId);

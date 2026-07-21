@@ -17,7 +17,7 @@ import { SupabaseService } from '@/database/supabase.service';
 import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto, CreateClaimFromSocialDto } from './dto';
 import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
 import { UsersService, SocialPlatform } from '../users/users.service';
-import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
+import { SendPaymentEncryptionService, V2_PREFIX, deriveHkdfKey } from '../send-payment/encryption.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
 import { EmailService } from '../email/email.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
@@ -687,8 +687,27 @@ export class ClaimsService {
     // Fallback: direct key path (when EncryptionService DI is unavailable)
     const key = this.getClaimBurnerDecryptionKey();
     if (!key) throw new Error('SEND_PAYMENT_ENC_KEY not available for decrypt');
-    // v2 format in direct-key mode is not supported — all v2 secrets were produced
-    // via EncryptionService and will be handled in the branch above.
+
+    if (ciphertextBase64.startsWith(V2_PREFIX)) {
+      // Per-context HKDF-derived key — same derivation as SendPaymentEncryptionService (shared
+      // via deriveHkdfKey) so this path decrypts v2 burners identically instead of only
+      // supporting legacy v1, which would otherwise leave v2-encrypted funds unsweepable
+      // whenever this fallback is the only decrypt path available.
+      const raw = ciphertextBase64.slice(V2_PREFIX.length);
+      const aesKey = deriveHkdfKey(key, burnerAddress ?? '');
+      try {
+        return this.decryptBurnerSecretWithKey(raw, aesKey);
+      } catch (primaryErr) {
+        const oldKey = this.getClaimBurnerDecryptionKey('SEND_PAYMENT_ENC_KEY_OLD');
+        if (oldKey) {
+          this.logger.warn('decryptClaimBurnerSecret: primary key failed (v2); retrying with SEND_PAYMENT_ENC_KEY_OLD (rotation fallback)');
+          const oldAesKey = deriveHkdfKey(oldKey, burnerAddress ?? '');
+          return this.decryptBurnerSecretWithKey(raw, oldAesKey);
+        }
+        throw primaryErr;
+      }
+    }
+
     try {
       return this.decryptBurnerSecretWithKey(ciphertextBase64, key);
     } catch (primaryErr) {

@@ -28,6 +28,17 @@ const TAG_LENGTH = 16;
 /** V2 ciphertext prefix — marks per-context HKDF-derived key encryption */
 export const V2_PREFIX = 'v2:';
 
+/**
+ * HKDF using HMAC-SHA256 (RFC 5869 single-block extract+expand). Produces a 32-byte key unique
+ * to (masterKey, context). Exported (not just SendPaymentEncryptionService-private) so any other
+ * caller decrypting a "v2:" ciphertext outside the DI'd service — e.g. ClaimsService's no-DI
+ * fallback — derives the identical key rather than reimplementing this and risking divergence.
+ */
+export function deriveHkdfKey(masterKey: Buffer, context: string): Buffer {
+  const prk = createHmac('sha256', 'loofta-burner-key-v1').update(masterKey).digest();
+  return createHmac('sha256', prk).update(`${context}\x01`).digest();
+}
+
 /** Read env var from .env.local when ConfigService/process.env don't have it. */
 function getEnvFromFile(varName: string): string | null {
   const tryPaths = [
@@ -141,15 +152,9 @@ export class SendPaymentEncryptionService {
   // Private helpers
   // ─────────────────────────────────────────────────────────────────
 
-  /**
-   * HKDF using HMAC-SHA256 (RFC 5869 single-block extract+expand).
-   * Produces a 32-byte key unique to (masterKey, context).
-   */
+  /** HKDF key derivation — see the exported `deriveHkdfKey` this delegates to. */
   private deriveKey(masterKey: Buffer, context: string): Buffer {
-    // Extract: PRK = HMAC-SHA256(salt="loofta-burner-key-v1", IKM=masterKey)
-    const prk = createHmac('sha256', 'loofta-burner-key-v1').update(masterKey).digest();
-    // Expand: OKM = HMAC-SHA256(PRK, context || 0x01)
-    return createHmac('sha256', prk).update(`${context}\x01`).digest();
+    return deriveHkdfKey(masterKey, context);
   }
 
   private encryptWithKey(plaintext: Buffer, key: Buffer): string {
@@ -175,7 +180,9 @@ export class SendPaymentEncryptionService {
     let raw =
       this.config.get<string>(envVar) ??
       (typeof process !== 'undefined' ? process.env[envVar] : undefined);
-    if (!raw || typeof raw !== 'string') {
+    // .env.local-on-disk is a local-dev convenience only — a production container should never
+    // treat a file on disk as a fallback source of truth for the master encryption key.
+    if ((!raw || typeof raw !== 'string') && process.env.NODE_ENV !== 'production') {
       raw = getEnvFromFile(envVar) ?? undefined;
     }
     if (!raw || typeof raw !== 'string') return null;

@@ -93,7 +93,9 @@ export class SolanaSponsorService {
       this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY') ?? process.env.SOLANA_FEE_PAYER_PRIVATE_KEY ?? null;
     if (privateKeyBase58 && typeof privateKeyBase58 === 'string') privateKeyBase58 = privateKeyBase58.trim() || null;
     let source = privateKeyBase58 ? 'config/env' : '';
-    if (!privateKeyBase58) {
+    // .env.local-on-disk is a local-dev convenience only — a production container should never
+    // treat a file on disk as a fallback source of truth for the fee-payer private key.
+    if (!privateKeyBase58 && process.env.NODE_ENV !== 'production') {
       privateKeyBase58 = getEnvFromFile('SOLANA_FEE_PAYER_PRIVATE_KEY');
       source = privateKeyBase58 ? 'file' : '';
     }
