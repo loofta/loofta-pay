@@ -173,6 +173,45 @@ export class BurnerPaymentService {
   }
 
   /**
+   * Re-derives the deposit address/required amount for a still-pending payment — used by the
+   * x402 facade to build PaymentRequirements from OUR OWN record rather than trusting whatever
+   * the client echoes back in its PaymentPayload.
+   */
+  async getPendingPaymentInfo(
+    paymentId: string,
+  ): Promise<{ depositAddress: string; requiredAmountBaseUnits: string; isDevnet: boolean }> {
+    const { data: payment, error } = await this.supabaseService.payments
+      .select('id, status, burner_address, amount, is_devnet')
+      .eq('id', paymentId)
+      .maybeSingle();
+    if (error || !payment) throw new NotFoundException('Payment not found');
+    if (payment.status !== 'PENDING_DEPOSIT') {
+      throw new BadRequestException(`Payment is no longer pending deposit (status: ${payment.status})`);
+    }
+    if (!payment.burner_address) throw new BadRequestException('Payment has no burner address');
+
+    const isDevnet = !!payment.is_devnet;
+    const burnerPubkey = new PublicKey(payment.burner_address);
+    const depositAddress = (await getAssociatedTokenAddress(this.usdcMintFor(isDevnet), burnerPubkey)).toBase58();
+
+    return {
+      depositAddress,
+      requiredAmountBaseUnits: this.usdToBaseUnits(Number(payment.amount)).toString(),
+      isDevnet,
+    };
+  }
+
+  /** The claim link a recipient uses once a payment is funded — same shape as at creation time. */
+  async getClaimLink(paymentId: string): Promise<string> {
+    const { data: payment, error } = await this.supabaseService.payments
+      .select('id, short_id')
+      .eq('id', paymentId)
+      .maybeSingle();
+    if (error || !payment) throw new NotFoundException('Payment not found');
+    return `${this.baseUrl}/c/${payment.short_id ?? payment.id}`;
+  }
+
+  /**
    * Independently verifies the burner actually holds at least the required USDC by reading its
    * real on-chain token account balance — never trusts a client-supplied tx hash/assertion.
    * Flips the payment to FUNDED (compare-and-swap on status) on success. Idempotent: calling

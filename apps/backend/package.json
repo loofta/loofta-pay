@@ -50,6 +50,8 @@
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.95.8",
     "@supabase/supabase-js": "^2.87.3",
+    "@x402/core": "2.19.0",
+    "@x402/svm": "2.19.0",
     "@zkp2p/sdk": "^0.4.3",
     "bn.js": "^5.2.1",
     "bs58": "^6.0.0",
