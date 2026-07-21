@@ -18,7 +18,7 @@ import { usePrivy, useLoginWithTelegram } from "@privy-io/react-auth";
  *    has signed in to a real account.
  */
 export default function TelegramRelayPage() {
-  const { ready, authenticated, user } = usePrivy();
+  const { ready, authenticated, user, getAccessToken } = usePrivy();
   // Dedicated hook for Telegram specifically — usePrivy().login({loginMethods:["telegram"]})
   // routes into Privy's legacy bot-token widget flow (initLoginWithTelegram) regardless of
   // whether OAuth-based Telegram is enabled in the dashboard, which is what was throwing
@@ -57,44 +57,54 @@ export default function TelegramRelayPage() {
     // ("discord" vs "discord_oauth", etc.) — an OAuth-linked Telegram account likely comes back
     // as "telegram_oauth" given Privy's dashboard itself distinguishes telegram_auth (legacy)
     // from telegram_oauth (this flow), not necessarily the plain "telegram" checked before.
+    // Only used here to gate on "has Telegram actually finished linking to this session yet" —
+    // the handle itself is never sent to the backend; both endpoints re-derive it server-side
+    // from relayAccessToken, since a client-supplied handle string can't be trusted.
     const account = (user.linkedAccounts || []).find(
       (a: { type?: string }) => a.type === "telegram" || a.type === "telegram_oauth",
     );
-    const raw = account ? (account as { username?: string }).username : null;
-    if (!raw) return;
+    if (!account) return;
 
     submittedRef.current = true;
     setStatus("connecting");
-    const endpoint = token ? "/api/telegram-relay/complete" : "/api/telegram-relay/verify-claim";
-    const body = token ? { token, handle: raw } : { claimId, handle: raw };
-    fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data?.success) {
-          setStatus("done");
-          // This tab is normally opened via window.open() from the claim page, which polls
-          // popup.closed to know linking/verifying finished — close() is the actual completion
-          // signal. If it wasn't opened via script (e.g. visited this link directly), close() is
-          // a silent no-op and the fallback redirect below covers that case instead.
-          window.close();
-          setTimeout(() => {
-            const base = process.env.NEXT_PUBLIC_APP_URL || "https://pay.loofta.xyz";
-            window.location.href = `${base}/app?connected=telegram`;
-          }, 800);
-        } else if (!token && data?.error) {
-          // verify-claim's "wrong account" case — a real, informative mismatch, not a fetch/server error.
-          setStatus("mismatch");
-          setErrorMessage(data.error);
-        } else {
-          setStatus("error");
-        }
+    (async () => {
+      const relayAccessToken = await getAccessToken().catch(() => null);
+      if (!relayAccessToken) {
+        submittedRef.current = false;
+        setStatus("error");
+        return;
+      }
+      const endpoint = token ? "/api/telegram-relay/complete" : "/api/telegram-relay/verify-claim";
+      const body = token ? { token, relayAccessToken } : { claimId, relayAccessToken };
+      fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       })
-      .catch(() => setStatus("error"));
-  }, [ready, authenticated, user, hasIdentifier, token, claimId]);
+        .then((r) => r.json())
+        .then((data) => {
+          if (data?.success) {
+            setStatus("done");
+            // This tab is normally opened via window.open() from the claim page, which polls
+            // popup.closed to know linking/verifying finished — close() is the actual completion
+            // signal. If it wasn't opened via script (e.g. visited this link directly), close() is
+            // a silent no-op and the fallback redirect below covers that case instead.
+            window.close();
+            setTimeout(() => {
+              const base = process.env.NEXT_PUBLIC_APP_URL || "https://pay.loofta.xyz";
+              window.location.href = `${base}/app?connected=telegram`;
+            }, 800);
+          } else if (!token && data?.error) {
+            // verify-claim's "wrong account" case — a real, informative mismatch, not a fetch/server error.
+            setStatus("mismatch");
+            setErrorMessage(data.error);
+          } else {
+            setStatus("error");
+          }
+        })
+        .catch(() => setStatus("error"));
+    })();
+  }, [ready, authenticated, user, hasIdentifier, token, claimId, getAccessToken]);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-[#0b0d12] text-white px-6 text-center">

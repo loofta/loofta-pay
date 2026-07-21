@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { getVerifiedTelegramHandleFromAccessToken } from "@/lib/serverAuth";
 import { redisGet, redisSet } from "@/lib/redis-cache";
 
 /** Must match ClaimsService.PENDING_SOCIAL_PREFIX (backend claims.service.ts). Format: PENDING_SOCIAL:<platform>:<handle> */
@@ -16,18 +17,22 @@ function verifiedKey(claimId: string) {
  * `claimId` mode, used from the claim page's pre-auth "Sign in with Telegram" button — unlike
  * the token-based /complete flow, which requires an existing session). Stores a short-lived,
  * claim-scoped "verified" flag rather than writing to social_accounts directly, since there's no
- * account yet to write it to; /telegram-relay/attach-verified redeems it once one exists.
- * POST /api/telegram-relay/verify-claim { claimId, handle }
+ * account yet to write it to; /telegram-relay/attach-verified redeems it once one exists. The
+ * handle is never trusted from the client — this endpoint is otherwise unauthenticated, so a
+ * client-supplied handle would let anyone "verify" any claim just by knowing the recipient's
+ * public @username; relayAccessToken (the throwaway relay-domain Privy session's own access
+ * token) is independently verified server-side instead.
+ * POST /api/telegram-relay/verify-claim { claimId, relayAccessToken }
  */
 export async function POST(request: NextRequest) {
   try {
-    const { claimId, handle } = (await request.json()) as { claimId?: string; handle?: string };
-    if (!claimId || !handle) {
-      return NextResponse.json({ error: "claimId and handle are required" }, { status: 400 });
+    const { claimId, relayAccessToken } = (await request.json()) as { claimId?: string; relayAccessToken?: string };
+    if (!claimId || !relayAccessToken) {
+      return NextResponse.json({ error: "claimId and relayAccessToken are required" }, { status: 400 });
     }
-    const cleanHandle = handle.replace(/^@/, "").toLowerCase().trim();
+    const cleanHandle = await getVerifiedTelegramHandleFromAccessToken(relayAccessToken);
     if (!cleanHandle) {
-      return NextResponse.json({ error: "Invalid handle" }, { status: 400 });
+      return NextResponse.json({ error: "Could not verify Telegram login" }, { status: 400 });
     }
 
     const supabase = getSupabaseAdmin();

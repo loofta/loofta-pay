@@ -75,6 +75,35 @@ export async function getVerifiedLiveHandle(
 }
 
 /**
+ * The caller's own LIVE Telegram handle, verified against Privy's record for the Privy access
+ * token supplied — never trust a client-supplied `handle` string for Telegram. Unlike
+ * getVerifiedLiveHandle, this takes a raw access token rather than a privyUserId: the Telegram
+ * relay flow (telegram-relay/page.tsx) logs in via a throwaway Privy session scoped to the
+ * loofta.com domain, distinct from the caller's real pay.loofta.xyz account session, so there is
+ * no already-authenticated privyUserId to look up — the token itself is the only proof that a
+ * Telegram OAuth login actually happened. Without this, both /api/telegram-relay/complete and
+ * /api/telegram-relay/verify-claim would have no way to confirm a POSTed handle was ever actually
+ * verified via Telegram, letting anyone bind or claim an arbitrary handle they simply typed.
+ */
+export async function getVerifiedTelegramHandleFromAccessToken(accessToken: string): Promise<string | null> {
+  try {
+    const claims = await getClient().verifyAuthToken(accessToken);
+    if (!claims.userId) return null;
+    const user = await getPrivyUser(claims.userId);
+    if (!user) return null;
+    for (const account of (user.linkedAccounts || []) as Array<{ type?: string; username?: string | null }>) {
+      const type = (account.type || "").toLowerCase();
+      if (type !== "telegram" && type !== "telegram_oauth") continue;
+      const handle = (account.username || "").toString().replace(/^@/, "").toLowerCase().trim();
+      if (handle) return handle;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * True if `address` is already linked to a registered Loofta (Privy) account. Used to stop
  * senders from disabling privacy on a payment link by passing off a Loofta wallet as "external"
  * — see /api/claims/create. Fails closed (treated as registered) on lookup errors so a Privy

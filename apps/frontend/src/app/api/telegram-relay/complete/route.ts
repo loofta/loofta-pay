@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { getVerifiedTelegramHandleFromAccessToken } from "@/lib/serverAuth";
 import { redisGet, redisDel } from "@/lib/redis-cache";
 
 function relayTokenKey(token: string) {
@@ -12,14 +13,17 @@ function relayTokenKey(token: string) {
  * for being a .xyz TLD). That Privy login happens in a separate session/domain from the user's
  * real pay.loofta.xyz account, so it's authenticated here by the one-time relay token instead of
  * a Privy access token — the token (minted by /api/users/telegram-relay-token) is what proves
- * which Loofta account this handle belongs to.
- * POST /api/telegram-relay/complete { token, handle }
+ * which Loofta account this handle belongs to. The handle itself is never trusted from the
+ * client — relayAccessToken (the throwaway session's own Privy access token) is independently
+ * verified server-side via getVerifiedTelegramHandleFromAccessToken, since a client-supplied
+ * handle string would let anyone bind an arbitrary Telegram handle to their account.
+ * POST /api/telegram-relay/complete { token, relayAccessToken }
  */
 export async function POST(request: NextRequest) {
   try {
-    const { token, handle } = (await request.json()) as { token?: string; handle?: string };
-    if (!token || !handle) {
-      return NextResponse.json({ error: "token and handle are required" }, { status: 400 });
+    const { token, relayAccessToken } = (await request.json()) as { token?: string; relayAccessToken?: string };
+    if (!token || !relayAccessToken) {
+      return NextResponse.json({ error: "token and relayAccessToken are required" }, { status: 400 });
     }
 
     const privyUserId = await redisGet(relayTokenKey(token));
@@ -28,9 +32,9 @@ export async function POST(request: NextRequest) {
     }
     await redisDel(relayTokenKey(token));
 
-    const cleanHandle = handle.replace(/^@/, "").toLowerCase().trim();
+    const cleanHandle = await getVerifiedTelegramHandleFromAccessToken(relayAccessToken);
     if (!cleanHandle) {
-      return NextResponse.json({ error: "Invalid handle" }, { status: 400 });
+      return NextResponse.json({ error: "Could not verify Telegram login" }, { status: 400 });
     }
 
     const supabase = getSupabaseAdmin();
