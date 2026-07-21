@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
@@ -14,13 +15,21 @@ import {
 import {
   AnalyticsData, EditForm, LIMIT, Payment, PaymentDetail, toLocalDatetime, trunc, WAITLIST_LIMIT,
 } from "./admin-shared";
-import { PaymentsTab } from "./tabs/PaymentsTab";
-import { SparksTab } from "./tabs/SparksTab";
-import { BlinkTab } from "./tabs/BlinkTab";
-import { WaitlistTab } from "./tabs/WaitlistTab";
-import { CashoutTab } from "./tabs/CashoutTab";
-import { LotteryTab } from "./tabs/LotteryTab";
-import { AnalyticsTab } from "./tabs/AnalyticsTab";
+
+// Each tab is its own chunk, fetched only when that tab is actually opened — the dashboard's
+// initial load (and every Fast Refresh of an unrelated tab) no longer has to compile all seven.
+const tabLoading = () => (
+  <div className="flex items-center justify-center py-16">
+    <Loader2 className="w-5 h-5 animate-spin text-gray-600" />
+  </div>
+);
+const PaymentsTab = dynamic(() => import("./tabs/PaymentsTab").then((m) => m.PaymentsTab), { loading: tabLoading, ssr: false });
+const SparksTab = dynamic(() => import("./tabs/SparksTab").then((m) => m.SparksTab), { loading: tabLoading, ssr: false });
+const BlinkTab = dynamic(() => import("./tabs/BlinkTab").then((m) => m.BlinkTab), { loading: tabLoading, ssr: false });
+const WaitlistTab = dynamic(() => import("./tabs/WaitlistTab").then((m) => m.WaitlistTab), { loading: tabLoading, ssr: false });
+const CashoutTab = dynamic(() => import("./tabs/CashoutTab").then((m) => m.CashoutTab), { loading: tabLoading, ssr: false });
+const LotteryTab = dynamic(() => import("./tabs/LotteryTab").then((m) => m.LotteryTab), { loading: tabLoading, ssr: false });
+const AnalyticsTab = dynamic(() => import("./tabs/AnalyticsTab").then((m) => m.AnalyticsTab), { loading: tabLoading, ssr: false });
 
 export default function AdminDashboard() {
   const { authenticated, userId, login, ready } = useAuth();
