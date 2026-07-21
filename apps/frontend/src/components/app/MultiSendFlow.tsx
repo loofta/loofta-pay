@@ -88,8 +88,28 @@ function RecipientTypeIcon({ icon, className }: { icon: "user" | "mail" | Social
 const EXAMPLE_CSV = `recipient,amount,message
 alice@email.com,100,Thanks for the work!
 bob_username,50,Invoice #1234
-carol@email.com,200,Great job this month
-diana,75,`;
+TELEGRAM:@carol_tg,200,Great job this month
+TWITTER:@diana,75,`;
+
+const VALID_PREFIX_TYPES = new Set(RECIPIENT_TYPE_OPTIONS.map((o) => o.id as string));
+
+/**
+ * Lets a pasted/CSV recipient explicitly declare its platform (e.g. "TELEGRAM:@handle",
+ * "EMAIL:email@email.com") instead of relying on inferType's email-vs-username guess — the only
+ * way to reach twitter/discord/github/telegram from bulk paste, since inferType can't distinguish
+ * those from a plain username.
+ */
+function parseRecipientWithPrefix(raw: string): { type: MultiSendRecipientType | null; value: string } {
+  const trimmed = raw.trim();
+  const m = trimmed.match(/^([a-z]+)\s*:\s*(.+)$/i);
+  if (m) {
+    const candidate = m[1].toLowerCase();
+    if (VALID_PREFIX_TYPES.has(candidate)) {
+      return { type: candidate as MultiSendRecipientType, value: m[2].trim() };
+    }
+  }
+  return { type: null, value: trimmed };
+}
 
 function parseCSVLine(line: string, delimiter: string): string[] {
   const result: string[] = [];
@@ -117,7 +137,8 @@ function parseCSV(text: string): { rows: MultiSendRow[]; errors: string[] } {
 
   for (let i = 0; i < dataLines.length; i++) {
     const parts = parseCSVLine(dataLines[i], delimiter);
-    const recipient = parts[0]?.trim().replace(/^@/, "") ?? "";
+    const { type: recipientType, value: recipientRaw } = parseRecipientWithPrefix(parts[0] ?? "");
+    const recipient = recipientRaw.replace(/^@/, "");
     const amountStr = parts[1]?.trim() ?? "";
     const message = parts[2]?.trim() ?? "";
 
@@ -129,6 +150,7 @@ function parseCSV(text: string): { rows: MultiSendRow[]; errors: string[] } {
       recipient,
       amount: String(amount),
       message,
+      ...(recipientType ? { recipientType } : {}),
     });
   }
   return { rows: newRows, errors };
@@ -810,6 +832,9 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           <p className="text-white text-base font-semibold">Import from CSV</p>
           <p className="text-slate-400 text-base mt-0.5">Drag & drop or click to browse</p>
           <p className="text-slate-400 text-base font-mono mt-2">recipient, amount, message</p>
+          <p className="text-slate-500 text-base mt-1">
+            Prefix a recipient to set its platform, e.g. TELEGRAM:@handle or EMAIL:name@email.com
+          </p>
         </div>
 
         <div className="flex items-center justify-center gap-4">
@@ -839,10 +864,13 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         {showPaste && (
           <div className="rounded-xl border border-white/15 bg-white/5 p-3 space-y-2">
             <p className="text-slate-400 text-base">Paste CSV or spreadsheet rows — comma or tab separated</p>
+            <p className="text-slate-500 text-base -mt-1">
+              Prefix a recipient to set its platform, e.g. TELEGRAM:@handle or EMAIL:name@email.com
+            </p>
             <textarea
               autoFocus
               rows={5}
-              placeholder={"alice@email.com, 100, Thanks!\nbob_username, 50\ncarol@email.com, 200, Invoice #42"}
+              placeholder={"alice@email.com, 100, Thanks!\nbob_username, 50\nTELEGRAM:@carol_tg, 200, Invoice #42"}
               className="w-full rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-slate-500 text-base font-mono p-2.5 resize-none focus:outline-none focus:border-white/30"
               onPaste={(e) => {
                 const text = e.clipboardData.getData("text");
