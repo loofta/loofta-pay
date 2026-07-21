@@ -1,32 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { redisGet, redisDel } from "@/lib/redis-cache";
-import { verifyTelegramAuth, type TelegramAuthPayload } from "@/lib/telegramAuth";
 
 function relayTokenKey(token: string) {
   return `telegram-relay:${token}`;
 }
 
 /**
- * Called from telegram-relay/page.tsx after Telegram's own Login Widget returns a signed auth
- * payload — verified here via verifyTelegramAuth (HMAC-SHA256 against our bot token) before any
- * of it is trusted. The `username` used below comes from THAT verified payload, never from a
- * bare client-supplied string — accepting an unverified handle would let anyone assert ownership
- * of any Telegram username with no proof at all.
- * The one-time relay token (minted by /api/users/telegram-relay-token) identifies which
- * pay.loofta.xyz account this verified handle belongs to.
- * POST /api/telegram-relay/complete { token, telegramAuth: TelegramAuthPayload }
+ * Called from telegram-relay/page.tsx after the user logs in with Telegram via Privy on
+ * loofta.com (a Privy-registered domain, unlike pay.loofta.xyz which Telegram's widget blocks
+ * for being a .xyz TLD). That Privy login happens in a separate session/domain from the user's
+ * real pay.loofta.xyz account, so it's authenticated here by the one-time relay token instead of
+ * a Privy access token — the token (minted by /api/users/telegram-relay-token) is what proves
+ * which Loofta account this handle belongs to.
+ * POST /api/telegram-relay/complete { token, handle }
  */
 export async function POST(request: NextRequest) {
   try {
-    const { token, telegramAuth } = (await request.json()) as { token?: string; telegramAuth?: TelegramAuthPayload };
-    if (!token || !telegramAuth) {
-      return NextResponse.json({ error: "token and telegramAuth are required" }, { status: 400 });
-    }
-
-    const verification = verifyTelegramAuth(telegramAuth);
-    if (!verification.valid) {
-      return NextResponse.json({ error: verification.reason || "Could not verify Telegram login." }, { status: 400 });
+    const { token, handle } = (await request.json()) as { token?: string; handle?: string };
+    if (!token || !handle) {
+      return NextResponse.json({ error: "token and handle are required" }, { status: 400 });
     }
 
     const privyUserId = await redisGet(relayTokenKey(token));
@@ -35,9 +28,9 @@ export async function POST(request: NextRequest) {
     }
     await redisDel(relayTokenKey(token));
 
-    const cleanHandle = (telegramAuth.username || "").replace(/^@/, "").toLowerCase().trim();
+    const cleanHandle = handle.replace(/^@/, "").toLowerCase().trim();
     if (!cleanHandle) {
-      return NextResponse.json({ error: "This Telegram account has no public username set." }, { status: 400 });
+      return NextResponse.json({ error: "Invalid handle" }, { status: 400 });
     }
 
     const supabase = getSupabaseAdmin();
