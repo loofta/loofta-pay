@@ -42,10 +42,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				// Email/Twitter/Discord/GitHub for login and linking; encourage two methods for recovery.
 				// If you see "Login with X not allowed", enable that method in the Privy Dashboard:
 				// https://dashboard.privy.io → your app → Login Methods → Socials → enable it.
-				// Telegram deliberately NOT in this array — it's only ever triggered via the dedicated
-				// useLoginWithTelegram() hook on the loofta.com relay page (telegram-relay/page.tsx),
-				// which doesn't require the method to be listed here. Keeping it out of loginMethods
-				// means it never shows up as a generic sign-in option anywhere else in the app.
+				// Telegram deliberately NOT in this array — it's only ever triggered via
+				// useLoginWithOAuth({ provider: "telegram" }) on the loofta.com relay page
+				// (telegram-relay/page.tsx), a generic headless-OAuth hook that doesn't require the
+				// method to be listed here (unlike the dedicated useLoginWithTelegram hook, which
+				// routes through Privy's legacy bot-token flow gated on the app's disabled
+				// `telegram_auth` dashboard flag — confirmed broken with Privy support). Keeping
+				// telegram out of loginMethods means it never shows up as a generic sign-in option
+				// anywhere else in the app.
 				loginMethods: ["email", "twitter", "discord", "github"],
 				embeddedWallets: {
 					// Create EVM (Base) wallets for users who don't have one yet.
