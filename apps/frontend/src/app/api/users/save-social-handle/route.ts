@@ -10,20 +10,21 @@ function userPrefsKey(uid: string) { return `user:prefs:${uid}`; }
 // the HMAC-verified /api/telegram-relay/* endpoints, which prove ownership against Telegram's own
 // signed widget payload instead. Clearing is different: it only ever touches the caller's own row
 // (already scoped by user_id below), so there's no identity to re-verify — telegram is allowed there.
-const WRITABLE_PLATFORMS = ["discord", "github"] as const;
-const DELETABLE_PLATFORMS = ["discord", "github", "telegram"] as const;
+const WRITABLE_PLATFORMS = ["discord", "github", "instagram"] as const;
+const DELETABLE_PLATFORMS = ["discord", "github", "instagram", "telegram"] as const;
 type Platform = (typeof DELETABLE_PLATFORMS)[number];
 
 /**
- * Save, update, or clear a Discord/GitHub/Telegram handle in social_accounts for the authenticated
- * user. Called when a user links Discord/GitHub via Privy (set), or disconnects any of the three
- * (clear) — Telegram can only ever be cleared here, never set (see WRITABLE_PLATFORMS above).
- * The client-supplied `handle` in the body is only ever used to decide set-vs-clear — the value
- * actually written always comes from getVerifiedLiveHandle's own live Privy lookup, so a caller
- * can never assert a handle they don't actually have linked (that would let anyone claim any
- * Discord/GitHub-pending payment by just POSTing the victim's handle onto their own account).
+ * Save, update, or clear a Discord/GitHub/Instagram/Telegram handle in social_accounts for the
+ * authenticated user. Called when a user links Discord/GitHub/Instagram via Privy (set), or
+ * disconnects any of the four (clear) — Telegram can only ever be cleared here, never set (see
+ * WRITABLE_PLATFORMS above). The client-supplied `handle` in the body is only ever used to decide
+ * set-vs-clear — the value actually written always comes from getVerifiedLiveHandle's own live
+ * Privy lookup, so a caller can never assert a handle they don't actually have linked (that would
+ * let anyone claim any Discord/GitHub/Instagram-pending payment by just POSTing the victim's
+ * handle onto their own account).
  * POST /api/users/save-social-handle
- * Body: { platform: 'discord'|'github'|'telegram', handle: string | null } — null clears it.
+ * Body: { platform: 'discord'|'github'|'instagram'|'telegram', handle: string | null } — null clears it.
  */
 export async function POST(request: NextRequest) {
   const privyUserId = await getVerifiedUserId(request);
