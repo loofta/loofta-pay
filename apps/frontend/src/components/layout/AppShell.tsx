@@ -31,7 +31,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   const showBottomNav = !isCheckoutPage && (
     pathname === '/' || pathname === '/app' ||
     pathname === '/history' || pathname === '/app/history' ||
-    pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' ||
+    pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' || pathname === '/profile' ||
     pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
     pathname === '/sparks' || pathname === '/app/sparks' ||
     pathname === '/megapot' || pathname === '/app/megapot'
