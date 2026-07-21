@@ -349,6 +349,8 @@ export default function Home() {
         });
       } else {
         // Twitter handle (resolved via the existing username/twitter_username fallback).
+        // treatUnregisteredAsTwitter tags an unresolved handle as pending-Twitter (not a bare
+        // pending username) so "edit recipient" on /c/[id] later shows Twitter as selected.
         result = await createClaimFromUsername({
           username: trimmed.toLowerCase(),
           amount,
@@ -358,6 +360,7 @@ export default function Home() {
           isPrivate: false,
           description: fullDescription,
           cluster: apiCluster,
+          treatUnregisteredAsTwitter: true,
         });
       }
       sessionStorage.removeItem(SEND_DRAFT_KEY);

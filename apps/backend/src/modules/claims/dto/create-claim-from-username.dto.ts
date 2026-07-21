@@ -28,6 +28,18 @@ export class CreateClaimFromUsernameDto {
   @IsString()
   cluster?: 'devnet' | 'mainnet';
 
+  @ApiPropertyOptional({
+    description:
+      'Set when this "username" is actually a Twitter handle the sender picked from the social ' +
+      'platform picker (registered-user lookup still checks the username table, since a Twitter ' +
+      'handle can double as a Loofta username) — tags an unresolved handle as a pending Twitter ' +
+      'recipient instead of a pending Loofta username, so "edit recipient" later shows the correct platform.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  treatUnregisteredAsTwitter?: boolean;
+
   // Server-side only — stripped from request body by ValidationPipe whitelist.
   userId?: string;
 }

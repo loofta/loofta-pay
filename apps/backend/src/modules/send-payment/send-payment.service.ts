@@ -881,7 +881,7 @@ export class SendPaymentService {
         toPubkey = burner.publicKey;
         const recipientAddress = recipient.recipient_type === 'email'
           ? `${PENDING_EMAIL_PREFIX}${normalizedId}`
-          : (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram')
+          : (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram' || recipient.recipient_type === 'twitter')
             ? `${PENDING_SOCIAL_PREFIX}${recipient.recipient_type}:${normalizedId}`
             : `${PENDING_USERNAME_PREFIX}${normalizedId}`;
         paymentInsert = {
@@ -1202,7 +1202,7 @@ export class SendPaymentService {
         toPubkey = burner.publicKey.toBase58();
         const recipientAddress = recipient.recipient_type === 'email'
           ? `${PENDING_EMAIL_PREFIX}${normalizedId}`
-          : (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram')
+          : (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram' || recipient.recipient_type === 'twitter')
             ? `${PENDING_SOCIAL_PREFIX}${recipient.recipient_type}:${normalizedId}`
             : `${PENDING_USERNAME_PREFIX}${normalizedId}`;
         paymentInsert = {
@@ -1368,7 +1368,7 @@ export class SendPaymentService {
         const burnerEncryptedSecret = this.encryption.encrypt(Buffer.from(burner.secretKey));
         const recipientAddress = recipient.recipient_type === 'email'
           ? `${PENDING_EMAIL_PREFIX}${normalizedId}`
-          : (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram')
+          : (recipient.recipient_type === 'discord' || recipient.recipient_type === 'github' || recipient.recipient_type === 'telegram' || recipient.recipient_type === 'twitter')
             ? `${PENDING_SOCIAL_PREFIX}${recipient.recipient_type}:${normalizedId}`
             : `${PENDING_USERNAME_PREFIX}${normalizedId}`;
         paymentInsert = {

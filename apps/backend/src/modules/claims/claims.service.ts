@@ -169,7 +169,7 @@ export class ClaimsService {
    * If user does not exist: create "burner" claim with PENDING_USERNAME so they can claim later when they sign up with that username.
    */
   async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string }> {
-    const { username, amount, userId, isPrivate = false, description, cluster } = dto;
+    const { username, amount, userId, isPrivate = false, description, cluster, treatUnregisteredAsTwitter } = dto;
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
     // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
@@ -229,7 +229,12 @@ export class ClaimsService {
       // User not found: create "burner" claim so they can claim later when they sign up with this username
     }
 
-    recipientAddress = `${ClaimsService.PENDING_USERNAME_PREFIX}${cleanUsername}`;
+    // Tag as pending-social:twitter (not pending-username) when the sender picked this handle
+    // from the Twitter option in the social picker — keeps the recipient's actual chosen
+    // platform intact for "edit recipient" instead of collapsing it into a bare username.
+    recipientAddress = treatUnregisteredAsTwitter
+      ? `${ClaimsService.PENDING_SOCIAL_PREFIX}twitter:${cleanUsername}`
+      : `${ClaimsService.PENDING_USERNAME_PREFIX}${cleanUsername}`;
     const burner = this.createClaimBurner();
     if (!burner) {
       this.logger.warn('Creating pending-username claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Pay-with-Loofta will fail until the key is set.');
