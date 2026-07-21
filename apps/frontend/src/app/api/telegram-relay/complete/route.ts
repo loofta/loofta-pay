@@ -38,6 +38,23 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = getSupabaseAdmin();
+
+    // Telegram bypasses Privy's own linked-account uniqueness entirely (it isn't a Privy-linked
+    // account in this app), so nothing else stops the same handle from being attached to more
+    // than one Loofta account — check explicitly for a clean error message. The DB's unique index
+    // on (platform, handle) is the actual source of truth (below is only a friendlier message; a
+    // concurrent race is caught by that constraint instead).
+    const { data: claimedByOther } = await supabase
+      .from("social_accounts")
+      .select("user_id")
+      .eq("platform", "telegram")
+      .eq("handle", cleanHandle)
+      .neq("user_id", privyUserId)
+      .maybeSingle();
+    if (claimedByOther) {
+      return NextResponse.json({ error: "This Telegram account is already connected to another Loofta account." }, { status: 409 });
+    }
+
     const { error } = await supabase
       .from("social_accounts")
       .upsert(
@@ -46,6 +63,9 @@ export async function POST(request: NextRequest) {
       );
 
     if (error) {
+      if (error.code === "23505") {
+        return NextResponse.json({ error: "This Telegram account is already connected to another Loofta account." }, { status: 409 });
+      }
       console.error("[telegram-relay/complete] upsert error:", error);
       return NextResponse.json({ error: "Failed to save" }, { status: 500 });
     }

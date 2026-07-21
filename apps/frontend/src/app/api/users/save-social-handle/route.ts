@@ -62,6 +62,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `No verified ${platform} account linked to this Loofta account.` }, { status: 400 });
     }
 
+    // Belt-and-suspenders alongside Privy's own linked-account uniqueness: covers the case where
+    // a stale row was left behind after a user unlinked this account in Privy without ever
+    // clearing it here first, then a different Loofta account linked that now-available account.
+    // The DB's unique index on (platform, handle) is the actual source of truth.
+    const { data: claimedByOther } = await supabase
+      .from("social_accounts")
+      .select("user_id")
+      .eq("platform", platform)
+      .eq("handle", cleanHandle)
+      .neq("user_id", privyUserId)
+      .maybeSingle();
+    if (claimedByOther) {
+      return NextResponse.json({ error: `This ${platform} account is already connected to another Loofta account.` }, { status: 409 });
+    }
+
     const { error } = await supabase
       .from("social_accounts")
       .upsert(
@@ -70,6 +85,9 @@ export async function POST(request: NextRequest) {
       );
 
     if (error) {
+      if (error.code === "23505") {
+        return NextResponse.json({ error: `This ${platform} account is already connected to another Loofta account.` }, { status: 409 });
+      }
       console.error("[save-social-handle] upsert error:", error);
       return NextResponse.json({ error: "Failed to save" }, { status: 500 });
     }
