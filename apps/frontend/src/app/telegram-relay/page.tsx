@@ -68,6 +68,16 @@ export default function TelegramRelayPage() {
     if (c) sessionStorage.setItem("telegram-relay:claimId", c);
     setToken(t);
     setClaimId(c);
+
+    // initOAuth uses the current page URL (including query string) as the implicit OAuth
+    // redirect target, and Privy's dashboard "Allowed OAuth redirect URLs" list requires an
+    // EXACT match with no query params — a URL like /telegram-relay?token=... can never match a
+    // registered /telegram-relay entry, which is what was throwing "Redirect URL is not allowed".
+    // Safe to strip now: token/claimId are already persisted above, and every read of them from
+    // here on uses this state (or the sessionStorage fallback), never window.location.search again.
+    if (params.toString()) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
 
   const hasIdentifier = !!token || !!claimId;
