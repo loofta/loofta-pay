@@ -921,18 +921,6 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           <ArrowLeft className="w-5 h-5" />
         </button>
         <p className="text-white text-xl font-semibold flex-1">Multi Send</p>
-        <button
-          type="button"
-          onClick={() => {
-            setRows(defaultRows());
-            setCsvErrors([]);
-            setPasteText("");
-            setShowPaste(false);
-          }}
-          className="text-slate-400 hover:text-white text-base border border-white/10 rounded-lg px-3 py-1.5 hover:bg-white/[0.06] transition-all"
-        >
-          Reset
-        </button>
         {process.env.NODE_ENV === "development" && (
           <button
             type="button"
