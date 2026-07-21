@@ -1,0 +1,39 @@
+{
+  "name": "@loofta/pay-sdk",
+  "version": "0.1.0",
+  "description": "Pay any human by email, username, or social handle with stablecoin — SDK for the Loofta Pay Protocol. Works as a plain API-key client or as a fully autonomous x402 agent with its own Solana signer.",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./agent-tool": {
+      "types": "./dist/agent-tool.d.ts",
+      "import": "./dist/agent-tool.mjs",
+      "require": "./dist/agent-tool.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.95.4",
+    "bs58": "^6.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.8.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
