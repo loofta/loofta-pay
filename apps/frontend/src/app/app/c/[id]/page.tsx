@@ -78,6 +78,7 @@ import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
 import { TELEGRAM_SEND_ENABLED } from "@/lib/socialPlatforms";
 import { PrivacyGlyph } from "@/components/PrivacyGlyph";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
 function formatPerTransferStepName(step: string): string {
@@ -149,13 +150,13 @@ function PrivacyConfettiBurst({ onDone }: { onDone: () => void }) {
   );
 }
 
-/** Small dark pill on the top edge of the pay card — the incognito-mode "window chrome changes"
- *  moment (à la Brave/Chrome private windows). Caller wraps this in <AnimatePresence> and
- *  conditionally renders it (rather than this component owning its own AnimatePresence) so the
- *  mount/unmount transition actually animates — AnimatePresence has to stay mounted across the
- *  toggle, not be unmounted along with its child. Deliberately quiet: static pill, no bounce, no
- *  glow — a flashy ghost mascot here read as a privacy red flag in user feedback, which defeats
- *  the point of "private". */
+/** Small icon-only mark on the top edge of the pay card — the incognito-mode "window chrome
+ *  changes" moment (à la Brave/Chrome private windows). Caller wraps this in <AnimatePresence>
+ *  and conditionally renders it (rather than this component owning its own AnimatePresence) so
+ *  the mount/unmount transition actually animates — AnimatePresence has to stay mounted across
+ *  the toggle, not be unmounted along with its child. No label, no glow — just the mask icon;
+ *  hover for what it means. An earlier version with a floating ghost mascot, then a labeled
+ *  pill, both read as more of a privacy red flag than a reassurance in user feedback. */
 function IncognitoCardBadge() {
   return (
     <motion.div
@@ -163,10 +164,20 @@ function IncognitoCardBadge() {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 8, scale: 0.92 }}
       transition={{ type: "spring", stiffness: 300, damping: 24 }}
-      className="absolute -top-3.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 rounded-full border border-white/10 bg-[#0a0a0c] px-3 py-1.5 select-none pointer-events-none shadow-[0_2px_10px_rgba(0,0,0,0.45)]"
+      className="absolute -top-5 left-1/2 -translate-x-1/2 z-10 select-none"
     >
-      <PrivacyGlyph size={13} opacity={1} className="text-slate-300" />
-      <span className="text-xs font-medium text-slate-300 tracking-wide">Private</span>
+      <TooltipProvider delayDuration={150}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="flex items-center justify-center p-1.5 [filter:drop-shadow(0_2px_5px_rgba(0,0,0,0.6))]">
+              <PrivacyGlyph size={28} opacity={1} className="text-slate-300" />
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={8} className="!border-white/10 !bg-[#0a0a0c] !text-slate-200">
+            This payment is private
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     </motion.div>
   );
 }
