@@ -48,7 +48,11 @@ export default function TelegramRelayPage() {
   useEffect(() => {
     if (!ready || authenticated || !hasIdentifier || autoLoginAttemptedRef.current) return;
     autoLoginAttemptedRef.current = true;
-    loginWithTelegram().catch(() => setStatus("error"));
+    loginWithTelegram().catch((e) => {
+      console.error("[telegram-relay] loginWithTelegram failed:", e);
+      setStatus("error");
+      setErrorMessage(e instanceof Error ? e.message : null);
+    });
   }, [ready, authenticated, hasIdentifier, loginWithTelegram]);
 
   useEffect(() => {
@@ -68,10 +72,14 @@ export default function TelegramRelayPage() {
     submittedRef.current = true;
     setStatus("connecting");
     (async () => {
-      const relayAccessToken = await getAccessToken().catch(() => null);
+      const relayAccessToken = await getAccessToken().catch((e) => {
+        console.error("[telegram-relay] getAccessToken failed:", e);
+        return null;
+      });
       if (!relayAccessToken) {
         submittedRef.current = false;
         setStatus("error");
+        setErrorMessage("Could not get a session token — try again in a moment.");
         return;
       }
       const endpoint = token ? "/api/telegram-relay/complete" : "/api/telegram-relay/verify-claim";
@@ -81,9 +89,15 @@ export default function TelegramRelayPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       })
-        .then((r) => r.json())
-        .then((data) => {
-          if (data?.success) {
+        .then(async (r) => {
+          const data = await r.json().catch(() => null);
+          if (!r.ok || !data) {
+            console.error(`[telegram-relay] ${endpoint} failed:`, r.status, data);
+            setStatus("error");
+            setErrorMessage(data?.error || `Request failed (${r.status}).`);
+            return;
+          }
+          if (data.success) {
             setStatus("done");
             // This tab is normally opened via window.open() from the claim page, which polls
             // popup.closed to know linking/verifying finished — close() is the actual completion
@@ -94,15 +108,21 @@ export default function TelegramRelayPage() {
               const base = process.env.NEXT_PUBLIC_APP_URL || "https://pay.loofta.xyz";
               window.location.href = `${base}/app?connected=telegram`;
             }, 800);
-          } else if (!token && data?.error) {
+          } else if (!token && data.error) {
             // verify-claim's "wrong account" case — a real, informative mismatch, not a fetch/server error.
             setStatus("mismatch");
             setErrorMessage(data.error);
           } else {
+            console.error(`[telegram-relay] ${endpoint} returned no success:`, data);
             setStatus("error");
+            setErrorMessage(data.error || null);
           }
         })
-        .catch(() => setStatus("error"));
+        .catch((e) => {
+          console.error(`[telegram-relay] ${endpoint} threw:`, e);
+          setStatus("error");
+          setErrorMessage(e instanceof Error ? e.message : null);
+        });
     })();
   }, [ready, authenticated, user, hasIdentifier, token, claimId, getAccessToken]);
 
@@ -115,7 +135,9 @@ export default function TelegramRelayPage() {
         </p>
       )}
       {hasIdentifier && status === "error" && (
-        <p className="text-sm text-red-400 max-w-sm">Something went wrong. Go back to Loofta and try again.</p>
+        <p className="text-sm text-red-400 max-w-sm">
+          {errorMessage || "Something went wrong."} Go back to Loofta and try again.
+        </p>
       )}
       {hasIdentifier && status === "mismatch" && (
         <p className="text-sm text-red-400 max-w-sm">{errorMessage ?? "This Telegram account doesn't match."}</p>
@@ -130,7 +152,13 @@ export default function TelegramRelayPage() {
           ) : !authenticated ? (
             <button
               type="button"
-              onClick={() => loginWithTelegram().catch(() => setStatus("error"))}
+              onClick={() =>
+                loginWithTelegram().catch((e) => {
+                  console.error("[telegram-relay] loginWithTelegram failed:", e);
+                  setStatus("error");
+                  setErrorMessage(e instanceof Error ? e.message : null);
+                })
+              }
               className="px-5 py-2.5 rounded-xl bg-[#26A5E4] text-white font-semibold hover:opacity-90"
             >
               Log in with Telegram

@@ -9,7 +9,7 @@ import { useAuthStore } from "@/store/auth";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { useTranslations, useLocale } from "next-intl";
-import { GhostGlyph } from "@/components/GhostGlyph";
+import { PrivacyGlyph } from "@/components/PrivacyGlyph";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
@@ -458,8 +458,8 @@ export default function HistoryPage() {
                               <span className={`flex items-center gap-1.5 text-base font-semibold ${type === "sent" ? "text-amber-400" : "text-emerald-400"}`}>
                                 {type === "sent" ? t('sent') : t('received')}
                                 {showPrivacyIcon && (
-                                  <span aria-label="Private" className="inline-flex">
-                                    <GhostGlyph size={14} opacity={0.9} />
+                                  <span aria-label="Private" className="inline-flex text-slate-400">
+                                    <PrivacyGlyph size={14} opacity={0.9} />
                                   </span>
                                 )}
                               </span>

@@ -77,7 +77,7 @@ import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
 import { TELEGRAM_SEND_ENABLED } from "@/lib/socialPlatforms";
-import { GhostGlyph } from "@/components/GhostGlyph";
+import { PrivacyGlyph } from "@/components/PrivacyGlyph";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
 function formatPerTransferStepName(step: string): string {
@@ -101,13 +101,13 @@ function formatPerTransferStepName(step: string): string {
 /** Claim-to-external-wallet is built but disabled for now — flip to re-enable. */
 const SHOW_EXTERNAL_CLAIM = false;
 
-/** Confetti-style burst of our own ghost SVG rising from the bottom of the screen — used instead
+/** Confetti-style burst of our own mask SVG rising from the bottom of the screen — used instead
  *  of canvas-confetti's shapeFromText, which silently draws nothing (no error) if the browser's
  *  canvas context can't rasterize the emoji glyph, which turned out to be unreliable. Pure DOM/SVG
- *  via Framer Motion instead, so it always renders. Random per-ghost trajectory is computed once
+ *  via Framer Motion instead, so it always renders. Random per-glyph trajectory is computed once
  *  at mount (useMemo with no deps) so it doesn't reshuffle mid-animation on re-render. */
-function GhostConfettiBurst({ onDone }: { onDone: () => void }) {
-  const ghosts = useMemo(
+function PrivacyConfettiBurst({ onDone }: { onDone: () => void }) {
+  const glyphs = useMemo(
     () =>
       Array.from({ length: 16 }, () => ({
         left: 8 + Math.random() * 84,
@@ -128,7 +128,7 @@ function GhostConfettiBurst({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="fixed inset-0 z-[200] pointer-events-none overflow-hidden">
-      {ghosts.map((g, i) => (
+      {glyphs.map((g, i) => (
         <motion.div
           key={i}
           initial={{ opacity: 0, top: "100vh", left: `${g.left}vw`, rotate: 0, scale: 0.6 }}
@@ -140,39 +140,33 @@ function GhostConfettiBurst({ onDone }: { onDone: () => void }) {
             scale: [0.6, 1],
           }}
           transition={{ duration: g.duration, delay: g.delay, ease: "easeOut" }}
-          className="absolute"
+          className="absolute text-slate-300"
         >
-          <GhostGlyph size={g.size} opacity={0.9} />
+          <PrivacyGlyph size={g.size} opacity={0.9} />
         </motion.div>
       ))}
     </div>
   );
 }
 
-/** Single ghost mascot peeking over the top edge of the whole pay card — the incognito-mode
- *  "window chrome changes color" moment (à la Brave/Chrome private windows), not just a small
- *  toggle. Caller wraps this in <AnimatePresence> and conditionally renders it (rather than this
- *  component owning its own AnimatePresence) so the mount/unmount transition actually animates —
- *  AnimatePresence has to stay mounted across the toggle, not be unmounted along with its child.
- *  The ghost alone is a nice visual flourish but doesn't actually tell an unfamiliar viewer what
- *  it means — the label underneath is the part that does. Neutral present-tense wording ("Private
- *  payment") so it reads correctly whether the sender is mid-flow (about to pay privately) or a
- *  recipient is looking at a payment that already was sent privately. */
-function IncognitoCardGhost() {
+/** Small dark pill on the top edge of the pay card — the incognito-mode "window chrome changes"
+ *  moment (à la Brave/Chrome private windows). Caller wraps this in <AnimatePresence> and
+ *  conditionally renders it (rather than this component owning its own AnimatePresence) so the
+ *  mount/unmount transition actually animates — AnimatePresence has to stay mounted across the
+ *  toggle, not be unmounted along with its child. Deliberately quiet: static pill, no bounce, no
+ *  glow — a flashy ghost mascot here read as a privacy red flag in user feedback, which defeats
+ *  the point of "private". */
+function IncognitoCardBadge() {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 44, scale: 0.5 }}
+      initial={{ opacity: 0, y: 8, scale: 0.92 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 44, scale: 0.5 }}
-      transition={{ type: "spring", stiffness: 220, damping: 16 }}
-      className="absolute -top-4 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center select-none pointer-events-none"
+      exit={{ opacity: 0, y: 8, scale: 0.92 }}
+      transition={{ type: "spring", stiffness: 300, damping: 24 }}
+      className="absolute -top-3.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 rounded-full border border-white/10 bg-[#0a0a0c] px-3 py-1.5 select-none pointer-events-none shadow-[0_2px_10px_rgba(0,0,0,0.45)]"
     >
-      <motion.div animate={{ y: [0, -3, 0] }} transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}>
-        <GhostGlyph size={34} opacity={1} />
-      </motion.div>
-      <span className="mt-0.5 text-sm font-semibold text-amber-300 tracking-wide [text-shadow:0_1px_4px_rgba(0,0,0,0.5)]">
-        Private payment
-      </span>
+      <PrivacyGlyph size={13} opacity={1} className="text-slate-300" />
+      <span className="text-xs font-medium text-slate-300 tracking-wide">Private</span>
     </motion.div>
   );
 }
@@ -187,34 +181,28 @@ function ClaimPayLayout({
   embedInApp?: boolean;
   topRight?: React.ReactNode;
   from?: string | null;
-  /** True once the sender has opted into incognito mode for this payment — gives the whole card
-   *  a distinct amber-glow border and a ghost mascot peeking over the top, like a browser's
-   *  private-window chrome change, instead of only the small toggle row changing. */
+  /** True once the sender has opted into incognito mode for this payment — darkens the whole
+   *  card and adds a small "Private" pill peeking over the top, like a browser's private-window
+   *  chrome change, instead of only the small toggle row changing. Static and quiet on purpose —
+   *  an earlier version pulsed an amber glow and floated a ghost mascot, which read as a privacy
+   *  red flag in user feedback rather than a reassurance. */
   incognito?: boolean;
   children: React.ReactNode;
 }) {
   const backHref = from === "history" ? "/history" : "/";
   const backLabel = from === "history" ? "← Back to History" : "← Back to Send";
-  // Memoized so the animate/transition objects (and the keyframe array in particular) keep a
-  // stable reference across re-renders — this component re-renders often (background polling
-  // queries, etc.) and Framer Motion was restarting the infinite box-shadow keyframe loop from
-  // scratch on every single one of those unrelated re-renders, which read as the whole card
-  // flickering/blinking rather than a smooth pulse.
+  // Memoized so the animate/transition objects keep a stable reference across re-renders — this
+  // component re-renders often (background polling queries, etc.) and Framer Motion was
+  // restarting the transition from scratch on every single one of those unrelated re-renders.
   const cardBorderAnimation = useMemo(
     () => ({
       boxShadow: incognito
-        ? (["0 8px 28px -10px rgba(217,119,6,0.4)", "0 8px 34px -8px rgba(217,119,6,0.6)", "0 8px 28px -10px rgba(217,119,6,0.4)"] as string[])
+        ? "inset 0 0 0 1px rgba(255,255,255,0.14), 0 10px 30px -14px rgba(0,0,0,0.7)"
         : "0 0 0 0 rgba(0,0,0,0)",
     }),
     [incognito],
   );
-  const cardTransition = useMemo(
-    () =>
-      incognito
-        ? { boxShadow: { duration: 2.6, repeat: Infinity, ease: "easeInOut" } }
-        : { duration: 0.4, ease: "easeOut" },
-    [incognito],
-  );
+  const cardTransition = useMemo(() => ({ duration: 0.4, ease: "easeOut" }), []);
 
   if (embedInApp) {
     return (
@@ -226,11 +214,14 @@ function ClaimPayLayout({
           {topRight}
         </div>
         <div className="relative">
-          <AnimatePresence>{incognito && <IncognitoCardGhost />}</AnimatePresence>
+          <AnimatePresence>{incognito && <IncognitoCardBadge />}</AnimatePresence>
           <motion.div
             animate={cardBorderAnimation}
             transition={cardTransition}
-            className="rounded-xl bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30"
+            className={cn(
+              "rounded-xl p-6 text-white transition-colors [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30",
+              incognito ? "bg-black/40" : "bg-white/5",
+            )}
             data-embed-pay
           >
             {children}
@@ -252,11 +243,14 @@ function ClaimPayLayout({
           {topRight}
         </div>
         <div className="relative">
-          <AnimatePresence>{incognito && <IncognitoCardGhost />}</AnimatePresence>
+          <AnimatePresence>{incognito && <IncognitoCardBadge />}</AnimatePresence>
           <motion.div
             animate={cardBorderAnimation}
             transition={cardTransition}
-            className="rounded-2xl bg-white/5 p-6 text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30"
+            className={cn(
+              "rounded-2xl p-6 text-white transition-colors [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30",
+              incognito ? "bg-black/40" : "bg-white/5",
+            )}
           >
             {children}
           </motion.div>
@@ -1010,11 +1004,11 @@ function ConfirmingIdentityNotice() {
 
 const CLAIM_PRIVACY_FAQ_ITEMS: { question: string; answer: React.ReactNode }[] = [
   {
-    question: "What does the ghost icon mean?",
+    question: "What does the mask icon mean?",
     answer: (
       <>
-        <p className="mb-3 flex items-center gap-2">
-          <GhostGlyph size={20} opacity={1} />
+        <p className="mb-3 flex items-center gap-2 text-slate-300">
+          <PrivacyGlyph size={20} opacity={1} />
           <span>It marks a private payment — one where the on-chain link between sender and recipient is hidden.</span>
         </p>
         <p>You&apos;ll see it on a payment card, in the claim confirmation, and next to any row in your history that was sent or claimed privately.</p>
@@ -1777,23 +1771,6 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [privateClaimConfirm, setPrivateClaimConfirm] = useState<{ destinationAddress?: string } | null>(null);
   const confirmPrivateClaimAmount = parseFloat(claim?.amount || "0") || 0;
   const confirmPrivateClaimEstimate = estimateClaimPrivatelyNet(confirmPrivateClaimAmount);
-  /** Breathing amber glow on the "Claim privately" button — memoized so it doesn't restart on
-   *  every re-render (this panel re-renders often from background polling; see the identical
-   *  fix on ClaimPayLayout's card glow earlier this session). */
-  const privateClaimGlow = useMemo(
-    () => ({
-      boxShadow: [
-        "0 0 0px 0px rgba(217,119,6,0)",
-        "0 0 18px 3px rgba(217,119,6,0.45)",
-        "0 0 0px 0px rgba(217,119,6,0)",
-      ] as string[],
-    }),
-    [],
-  );
-  const privateClaimGlowTransition = useMemo(
-    () => ({ boxShadow: { duration: 2.4, repeat: Infinity, ease: "easeInOut" } }),
-    [],
-  );
   /** Shared claim panel — replaces the old single hardcoded "claim to wallet" button (and the
    *  first-claim-only "claim privately" button) with the full set of choices, for every claim. */
   const renderClaimPanel = (mobile: boolean) => (
@@ -1822,12 +1799,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         )}
       </button>
 
-      {/* Ghost (dark) secondary button — this card is a dark surface (bg-white/5, forced-white
-          text via ClaimPayLayout's overrides). Breathing amber glow + ghost mascot + a confetti
-          burst on click (same GhostConfettiBurst used for the sender's incognito toggle) so
-          going private feels like a distinct, celebrated choice, not just a second button.
-          One under the other, same as mobile, full width so it's grounded at the card's edges
-          instead of floating as a narrow pill. */}
+      {/* Dark secondary button — this card is a dark surface (bg-white/5, forced-white text via
+          ClaimPayLayout's overrides). A confetti burst on click (same PrivacyConfettiBurst used
+          for the sender's incognito toggle) so going private still feels like a distinct choice —
+          no glow or bright color on the button itself though, an earlier amber-pulsing version
+          read as a privacy red flag in user feedback. One under the other, same as mobile, full
+          width so it's grounded at the card's edges instead of floating as a narrow pill. */}
       {canClaimPrivately && (
         <>
           <div className="flex items-center gap-3 my-2.5 w-full">
@@ -1837,19 +1814,17 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           </div>
           <motion.button
             type="button"
-            onClick={() => { setGhostBurstKey(Date.now()); setPrivateClaimConfirm({}); }}
+            onClick={() => { setPrivacyBurstKey(Date.now()); setPrivateClaimConfirm({}); }}
             disabled={claimActionDisabled}
-            animate={claimActionDisabled ? undefined : privateClaimGlow}
-            transition={privateClaimGlowTransition}
             whileHover={claimActionDisabled ? undefined : { scale: 1.02 }}
             whileTap={claimActionDisabled ? undefined : { scale: 0.98 }}
             className={cn(
-              "w-full flex items-center justify-center gap-2 rounded-2xl bg-white/5 border border-amber-400/30 font-display font-semibold text-amber-200 transition-colors hover:bg-white/10 hover:border-amber-400/50",
+              "w-full flex items-center justify-center gap-2 rounded-2xl bg-black/30 border border-white/15 font-display font-semibold text-slate-200 transition-colors hover:bg-black/40 hover:border-white/25",
               mobile ? "py-3 text-base" : "py-3 text-sm",
-              claimActionDisabled && "opacity-50 cursor-not-allowed hover:bg-white/5",
+              claimActionDisabled && "opacity-50 cursor-not-allowed hover:bg-black/30",
             )}
           >
-            <GhostGlyph size={mobile ? 20 : 18} opacity={1} />
+            <PrivacyGlyph size={mobile ? 20 : 18} opacity={1} />
             <span>Claim privately</span>
           </motion.button>
         </>
@@ -1944,7 +1919,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         >
           <DialogHeader className="pb-0 pt-2 sm:pt-0">
             <DialogTitle className="flex items-center gap-2.5 text-3xl sm:text-4xl font-bold tracking-tight text-white">
-              <GhostGlyph size={30} opacity={1} />
+              <PrivacyGlyph size={26} opacity={1} />
               Claim privately
             </DialogTitle>
             <DialogDescription className="text-base font-medium mt-0.5 text-slate-400">
@@ -2209,13 +2184,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [txInput, setTxInput] = useState<string>("");
   const [submittingTx, setSubmittingTx] = useState<boolean>(false);
   const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
-  /** Ghost swarm burst from the bottom of the screen — the celebratory "entering incognito
-   *  mode" moment, separate from the single ghost mascot that lives on the card itself.
-   *  Non-null key mounts one <GhostConfettiBurst>; it clears itself via onDone. */
-  const [ghostBurstKey, setGhostBurstKey] = useState<number | null>(null);
+  /** Confetti burst from the bottom of the screen — the celebratory "entering incognito mode"
+   *  moment, separate from the small "Private" badge that lives on the card itself. Non-null key
+   *  mounts one <PrivacyConfettiBurst>; it clears itself via onDone. */
+  const [privacyBurstKey, setPrivacyBurstKey] = useState<number | null>(null);
   const handleTogglePrivateMode = (checked: boolean) => {
     setIsPrivateMode(checked);
-    if (checked) setGhostBurstKey(Date.now());
+    if (checked) setPrivacyBurstKey(Date.now());
   };
   const [openPrivacyFaq, setOpenPrivacyFaq] = useState<number | null>(null);
   const [refundAddress, setRefundAddress] = useState<string>("");
@@ -2324,7 +2299,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   /** Only hide payer UI for the intended recipient (pending claim flow). Do not hide for anonymous/other payers when recipient_is_registered is set. */
   const hidePaySectionForPendingClaimant =
     isPendingRecipientClaim && isRecipient && !isCreatorView;
-  /** Ghost + glow card treatment is scoped to the payer actively viewing the pay form — not the
+  /** Dark card treatment is scoped to the payer actively viewing the pay form — not the
    *  loading skeleton (payingPrivately defaults true before `claim` loads), not the recipient's
    *  claim view, not the success screen. Mirrors the exact condition gating the pay section below. */
   const showingPrivatePayForm =
@@ -2335,7 +2310,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     !isRecipient &&
     !isCheckingRecipient &&
     !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase());
-  /** Same ghost + glow card treatment, mirrored for the recipient's side: viewing a payment that
+  /** Same dark card treatment, mirrored for the recipient's side: viewing a payment that
    *  was genuinely sent privately (claim.is_private), whether still pending claim or already
    *  claimed — the "someone went out of their way to hide this from the public chain" fact is
    *  true for the whole time the recipient looks at it, not just while the sender is paying. */
@@ -3469,7 +3444,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
   return (
     <>
-      {ghostBurstKey != null && <GhostConfettiBurst key={ghostBurstKey} onDone={() => setGhostBurstKey(null)} />}
+      {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
       {renderPrivateClaimConfirmDialog()}
 
       <ClaimPayLayout

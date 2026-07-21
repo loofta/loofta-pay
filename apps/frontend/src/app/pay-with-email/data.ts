@@ -2,12 +2,12 @@ export const PAY_WITH_EMAIL_FAQ = [
   {
     question: "Do I need the recipient's wallet address to pay them?",
     answer:
-      "No. All you need is an email address or a social handle — X, Telegram, whatever you already have for them. Loofta resolves it to a payment behind the scenes, so there's no address to copy, no ENS to look up, and no risk of sending to the wrong chain.",
+      "No. All you need is an email address or a social handle, X, Telegram, whatever you already have for them. Loofta resolves it to a payment behind the scenes, so there's no address to copy, no ENS to look up, and no risk of sending to the wrong chain.",
   },
   {
     question: "What if they've never used crypto before?",
     answer:
-      "It still works. They get a private claim link the moment you send, and the payment sits there waiting even if they've never touched a wallet in their life. When they open it, they're walked through claiming it — no prior account or crypto knowledge required.",
+      "It still works. They get a private claim link the moment you send, and the payment sits there waiting even if they've never touched a wallet in their life. When they open it, they're walked through claiming it, no prior account or crypto knowledge required.",
   },
   {
     question: "How do they actually get the money?",
@@ -32,6 +32,6 @@ export const PAY_WITH_EMAIL_FAQ = [
   {
     question: "Can I keep the payment private?",
     answer:
-      "Yes. Flip on Shielded mode and MagicBlock hides the link between sender and recipient on-chain — Loofta is non-custodial, so only you ever hold your keys.",
+      "Yes. Flip on Shielded mode and MagicBlock hides the link between sender and recipient on-chain. Loofta is non-custodial, so only you ever hold your keys.",
   },
 ];
