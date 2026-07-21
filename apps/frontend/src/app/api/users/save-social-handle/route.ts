@@ -5,22 +5,25 @@ import { redisDel } from "@/lib/redis-cache";
 
 function userPrefsKey(uid: string) { return `user:prefs:${uid}`; }
 
-// Telegram is deliberately excluded — it isn't a Privy-linked OAuth account (see
-// telegram-relay/page.tsx), so there's nothing for getVerifiedLiveHandle to check here. Telegram
-// handles may only be written via the HMAC-verified /api/telegram-relay/* endpoints, which prove
-// ownership against Telegram's own signed widget payload instead.
-const PLATFORMS = ["discord", "github"] as const;
-type Platform = (typeof PLATFORMS)[number];
+// Telegram can't be SET here — it isn't a Privy-linked OAuth account (see telegram-relay/page.tsx),
+// so there's nothing for getVerifiedLiveHandle to check. Telegram handles may only be written via
+// the HMAC-verified /api/telegram-relay/* endpoints, which prove ownership against Telegram's own
+// signed widget payload instead. Clearing is different: it only ever touches the caller's own row
+// (already scoped by user_id below), so there's no identity to re-verify — telegram is allowed there.
+const WRITABLE_PLATFORMS = ["discord", "github"] as const;
+const DELETABLE_PLATFORMS = ["discord", "github", "telegram"] as const;
+type Platform = (typeof DELETABLE_PLATFORMS)[number];
 
 /**
- * Save, update, or clear a Discord/GitHub handle in social_accounts for the authenticated user.
- * Called when a user links one of these accounts via Privy (set), or disconnects it (clear).
+ * Save, update, or clear a Discord/GitHub/Telegram handle in social_accounts for the authenticated
+ * user. Called when a user links Discord/GitHub via Privy (set), or disconnects any of the three
+ * (clear) — Telegram can only ever be cleared here, never set (see WRITABLE_PLATFORMS above).
  * The client-supplied `handle` in the body is only ever used to decide set-vs-clear — the value
  * actually written always comes from getVerifiedLiveHandle's own live Privy lookup, so a caller
  * can never assert a handle they don't actually have linked (that would let anyone claim any
  * Discord/GitHub-pending payment by just POSTing the victim's handle onto their own account).
  * POST /api/users/save-social-handle
- * Body: { platform: 'discord'|'github', handle: string | null } — null clears it.
+ * Body: { platform: 'discord'|'github'|'telegram', handle: string | null } — null clears it.
  */
 export async function POST(request: NextRequest) {
   const privyUserId = await getVerifiedUserId(request);
@@ -30,13 +33,11 @@ export async function POST(request: NextRequest) {
   try {
     const { platform, handle: rawHandle } = await request.json() as { platform: Platform; handle: string | null };
 
-    if (!PLATFORMS.includes(platform)) {
-      return NextResponse.json({ error: "Invalid platform" }, { status: 400 });
-    }
-
-    const supabase = getSupabaseAdmin();
-
     if (rawHandle === null) {
+      if (!DELETABLE_PLATFORMS.includes(platform)) {
+        return NextResponse.json({ error: "Invalid platform" }, { status: 400 });
+      }
+      const supabase = getSupabaseAdmin();
       const { error } = await supabase
         .from("social_accounts")
         .delete()
@@ -50,7 +51,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, platform, handle: null });
     }
 
-    const cleanHandle = await getVerifiedLiveHandle(privyUserId, platform);
+    if (!WRITABLE_PLATFORMS.includes(platform as typeof WRITABLE_PLATFORMS[number])) {
+      return NextResponse.json({ error: "Invalid platform" }, { status: 400 });
+    }
+
+    const supabase = getSupabaseAdmin();
+    const cleanHandle = await getVerifiedLiveHandle(privyUserId, platform as typeof WRITABLE_PLATFORMS[number]);
     if (!cleanHandle) {
       return NextResponse.json({ error: `No verified ${platform} account linked to this Loofta account.` }, { status: 400 });
     }

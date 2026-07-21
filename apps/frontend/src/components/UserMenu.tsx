@@ -504,11 +504,36 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       if (!res.ok) throw new Error("Could not start Telegram connect.");
       const data = await res.json();
       const relayBase = process.env.NEXT_PUBLIC_TELEGRAM_RELAY_URL || "https://loofta.com";
-      window.open(`${relayBase}/telegram-relay?token=${encodeURIComponent(data.token)}`, "_blank", "noopener,noreferrer");
+      // Deliberately no "noopener"/"noreferrer" — same as c/[id]/page.tsx's connectTelegram —
+      // passing them makes window.open return null, which breaks the popup.closed polling below
+      // (the only "recheck now" signal, since the relay's own tab can't navigate this settings tab).
+      const popup = window.open(`${relayBase}/telegram-relay?token=${encodeURIComponent(data.token)}`, "_blank");
+      if (!popup) {
+        // Popup blocked — best-effort fallback: recheck once this tab regains focus.
+        const onFocus = () => {
+          window.removeEventListener("focus", onFocus);
+          void fetchTelegramHandle();
+        };
+        window.addEventListener("focus", onFocus);
+        setConnectingTelegram(false);
+        return;
+      }
+      let attempts = 0;
+      const maxAttempts = 600; // ~10 minutes at 1s polling
+      const poll = setInterval(() => {
+        attempts += 1;
+        if (popup.closed) {
+          clearInterval(poll);
+          setConnectingTelegram(false);
+          void fetchTelegramHandle();
+        } else if (attempts >= maxAttempts) {
+          clearInterval(poll);
+          setConnectingTelegram(false);
+        }
+      }, 1000);
     } catch (e: unknown) {
       const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
       toast({ variant: "destructive", title: "Could not connect Telegram", description: msg || "Try again." });
-    } finally {
       setConnectingTelegram(false);
     }
   };
