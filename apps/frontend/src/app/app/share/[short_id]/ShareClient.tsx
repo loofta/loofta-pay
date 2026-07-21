@@ -77,10 +77,15 @@ export default function ShareClient({ short_id }: { short_id: string }) {
     : request?.recipient_social_handle
       ? `@${request.recipient_social_handle}`
       : 'someone'
-  const recipientPlatform = !request?.recipient_username ? (request?.recipient_social_platform as SocialIconPlatform | null | undefined) : null
+  const recipientPlatform = !request?.recipient_username ? (request?.recipient_social_platform ?? null) : null
+  // "email" is a platform marker with no handle (see sharePreview.ts) — shown as a mail icon
+  // instead of a SocialPlatformIcon glyph, since it isn't one of that component's brand icons.
+  const isEmailRecipient = recipientPlatform === 'email'
+  const recipientSocialIcon = recipientPlatform && !isEmailRecipient ? (recipientPlatform as SocialIconPlatform) : null
   const RecipientTag = ({ className }: { className?: string }) => (
     <span className={`inline-flex items-center gap-1.5 align-middle ${className ?? ''}`}>
-      {recipientPlatform && <SocialPlatformIcon platform={recipientPlatform} className="h-[0.85em] w-[0.85em] shrink-0" />}
+      {recipientSocialIcon && <SocialPlatformIcon platform={recipientSocialIcon} className="h-[0.85em] w-[0.85em] shrink-0" />}
+      {isEmailRecipient && <Mail className="h-[0.85em] w-[0.85em] shrink-0" />}
       {recipientHandle}
     </span>
   )
