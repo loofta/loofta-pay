@@ -438,7 +438,12 @@ export class ClaimsService {
     };
   }
 
-  /** Fetch raw row by ID: tries payments first (normalized), falls back to claims. */
+  /**
+   * Fetch raw row by ID: tries payments first (normalized), falls back to claims. Also accepts
+   * an 8-char short_id in place of the UUID (no format collision risk — short_ids and UUIDs
+   * don't overlap in length/charset), so every caller of this method transparently supports
+   * either form without a separate resolve step.
+   */
   private async fetchRawRow(
     id: string,
   ): Promise<{ row: Record<string, unknown>; table: 'payments' | 'claims' } | null> {
@@ -447,6 +452,13 @@ export class ClaimsService {
       .eq('id', id)
       .maybeSingle();
     if (pr) return { row: this.normalizeFromPayments(pr as Record<string, unknown>), table: 'payments' };
+
+    const { data: prByShortId } = await this.supabaseService.payments
+      .select('*')
+      .eq('short_id', id)
+      .maybeSingle();
+    if (prByShortId) return { row: this.normalizeFromPayments(prByShortId as Record<string, unknown>), table: 'payments' };
+
     const { data: cr } = await this.supabaseService.claims
       .select('*')
       .eq('id', id)
@@ -817,6 +829,37 @@ export class ClaimsService {
     const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
     this.logger.log(`Created claim from email (pending): ${id} for ${cleanEmail} – they claim by signing in${burner ? ' (unique burner)' : ''}`);
     return { id, short_id: claim.short_id ?? null, link };
+  }
+
+  /**
+   * Genuinely public, pre-auth summary — used by claim pages (e.g. the standalone Loofta Link
+   * app) to show "you're about to claim $X" BEFORE the visitor logs in. Deliberately returns
+   * only fields that reveal nothing about the recipient's identity (unlike findOne, which
+   * requires auth precisely because it exposes recipient/creator details) — no recipient_*,
+   * no created_by, nothing to mask.
+   */
+  async findPublicSummary(idOrShortId: string): Promise<{
+    id: string;
+    short_id: string | null;
+    amount: string;
+    to_symbol: string | null;
+    description: string | null;
+    status: string;
+  }> {
+    const result = await this.fetchRawRow(idOrShortId);
+    if (!result) throw new NotFoundException('Payment not found.');
+    const row = result.row as Record<string, unknown>;
+    if (String(row.status || '').toUpperCase() === 'DELETED') {
+      throw new NotFoundException("This payment doesn't exist.");
+    }
+    return {
+      id: String(row.id),
+      short_id: (row.short_id as string) ?? null,
+      amount: String(row.amount),
+      to_symbol: (row.to_symbol as string) ?? 'USDC',
+      description: (row.description as string) ?? null,
+      status: String(row.status),
+    };
   }
 
   /**

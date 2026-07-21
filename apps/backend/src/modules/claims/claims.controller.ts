@@ -177,6 +177,20 @@ export class ClaimsController {
   }
 
   /**
+   * Genuinely public pre-auth summary (amount/description/status only, no recipient identity) —
+   * lets a claim page show "you're about to claim $X" before the visitor logs in. Accepts either
+   * the UUID or the 8-char short_id (fetchRawRow resolves both).
+   */
+  @Get(':id/summary')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(60, 60, 'claims:summary', 'ip')
+  @ApiOperation({ summary: 'Get public, pre-auth payment summary (amount/description/status only)' })
+  @ApiParam({ name: 'id', description: 'Claim UUID or short_id' })
+  async findPublicSummary(@Param('id') id: string) {
+    return this.claimsService.findPublicSummary(id);
+  }
+
+  /**
    * Check if the authenticated user is the recipient of this claim (for "Received" / "Claim" view on claim page)
    */
   @Get(':id/recipient-check')
