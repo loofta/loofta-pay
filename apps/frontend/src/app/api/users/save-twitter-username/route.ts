@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
-import { getVerifiedUserId } from "@/lib/serverAuth";
+import { getVerifiedUserId, getVerifiedLiveHandle } from "@/lib/serverAuth";
 import { redisDel } from "@/lib/redis-cache";
 
 function userPrefsKey(uid: string) { return `user:prefs:${uid}`; }
@@ -8,6 +8,10 @@ function userPrefsKey(uid: string) { return `user:prefs:${uid}`; }
 /**
  * Save, update, or clear the twitter_username column for the authenticated user.
  * Called when a user links their Twitter/X account via Privy (set), or disconnects it (clear).
+ * The client-supplied `twitterUsername` in the body is only ever used to decide set-vs-clear —
+ * the value actually written always comes from getVerifiedLiveHandle's own live Privy lookup, so
+ * a caller can never assert a handle they don't actually have linked (that would let anyone claim
+ * any Twitter-pending payment by just POSTing the victim's handle onto their own account).
  * POST /api/users/save-twitter-username
  * Body: { twitterUsername: string | null } — null clears the column.
  */
@@ -21,12 +25,9 @@ export async function POST(request: NextRequest) {
 
     let handle: string | null = null;
     if (twitterUsername !== null) {
-      if (!twitterUsername || typeof twitterUsername !== "string") {
-        return NextResponse.json({ error: "twitterUsername is required" }, { status: 400 });
-      }
-      handle = twitterUsername.replace(/^@/, "").toLowerCase().trim();
+      handle = await getVerifiedLiveHandle(privyUserId, "twitter");
       if (!handle) {
-        return NextResponse.json({ error: "Invalid handle" }, { status: 400 });
+        return NextResponse.json({ error: "No verified Twitter/X account linked to this Loofta account." }, { status: 400 });
       }
     }
 

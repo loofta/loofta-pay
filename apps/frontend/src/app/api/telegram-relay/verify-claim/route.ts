@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { redisGet, redisSet } from "@/lib/redis-cache";
+import { verifyTelegramAuth, type TelegramAuthPayload } from "@/lib/telegramAuth";
 
 /** Must match ClaimsService.PENDING_SOCIAL_PREFIX (backend claims.service.ts). Format: PENDING_SOCIAL:<platform>:<handle> */
 const PENDING_SOCIAL_PREFIX = "PENDING_SOCIAL:";
@@ -17,17 +18,27 @@ function verifiedKey(claimId: string) {
  * the token-based /complete flow, which requires an existing session). Stores a short-lived,
  * claim-scoped "verified" flag rather than writing to social_accounts directly, since there's no
  * account yet to write it to; /telegram-relay/attach-verified redeems it once one exists.
- * POST /api/telegram-relay/verify-claim { claimId, handle }
+ * This endpoint is reachable with NO Loofta session at all (that's the point — there's no
+ * account yet), which makes verifyTelegramAuth here non-negotiable: without it, anyone could
+ * POST an arbitrary handle for any claimId, get back verified:true, and later redeem someone
+ * else's payment via attach-verified without ever touching Telegram.
+ * POST /api/telegram-relay/verify-claim { claimId, telegramAuth: TelegramAuthPayload }
  */
 export async function POST(request: NextRequest) {
   try {
-    const { claimId, handle } = (await request.json()) as { claimId?: string; handle?: string };
-    if (!claimId || !handle) {
-      return NextResponse.json({ error: "claimId and handle are required" }, { status: 400 });
+    const { claimId, telegramAuth } = (await request.json()) as { claimId?: string; telegramAuth?: TelegramAuthPayload };
+    if (!claimId || !telegramAuth) {
+      return NextResponse.json({ error: "claimId and telegramAuth are required" }, { status: 400 });
     }
-    const cleanHandle = handle.replace(/^@/, "").toLowerCase().trim();
+
+    const verification = verifyTelegramAuth(telegramAuth);
+    if (!verification.valid) {
+      return NextResponse.json({ error: verification.reason || "Could not verify Telegram login." }, { status: 400 });
+    }
+
+    const cleanHandle = (telegramAuth.username || "").replace(/^@/, "").toLowerCase().trim();
     if (!cleanHandle) {
-      return NextResponse.json({ error: "Invalid handle" }, { status: 400 });
+      return NextResponse.json({ error: "This Telegram account has no public username set." }, { status: 400 });
     }
 
     const supabase = getSupabaseAdmin();

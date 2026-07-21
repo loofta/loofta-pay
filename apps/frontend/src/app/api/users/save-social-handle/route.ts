@@ -1,20 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
-import { getVerifiedUserId } from "@/lib/serverAuth";
+import { getVerifiedUserId, getVerifiedLiveHandle } from "@/lib/serverAuth";
 import { redisDel } from "@/lib/redis-cache";
 
 function userPrefsKey(uid: string) { return `user:prefs:${uid}`; }
 
-const PLATFORMS = ["discord", "github", "telegram"] as const;
+// Telegram is deliberately excluded — it isn't a Privy-linked OAuth account (see
+// telegram-relay/page.tsx), so there's nothing for getVerifiedLiveHandle to check here. Telegram
+// handles may only be written via the HMAC-verified /api/telegram-relay/* endpoints, which prove
+// ownership against Telegram's own signed widget payload instead.
+const PLATFORMS = ["discord", "github"] as const;
 type Platform = (typeof PLATFORMS)[number];
 
 /**
- * Save, update, or clear a Discord/GitHub/Telegram handle in social_accounts for the
- * authenticated user. Called when a user links one of these accounts via Privy (set), or
- * disconnects it (clear). Generalized version of save-twitter-username for the platforms
- * backed by the normalized social_accounts table instead of an app_users column.
+ * Save, update, or clear a Discord/GitHub handle in social_accounts for the authenticated user.
+ * Called when a user links one of these accounts via Privy (set), or disconnects it (clear).
+ * The client-supplied `handle` in the body is only ever used to decide set-vs-clear — the value
+ * actually written always comes from getVerifiedLiveHandle's own live Privy lookup, so a caller
+ * can never assert a handle they don't actually have linked (that would let anyone claim any
+ * Discord/GitHub-pending payment by just POSTing the victim's handle onto their own account).
  * POST /api/users/save-social-handle
- * Body: { platform: 'discord'|'github'|'telegram', handle: string | null } — null clears it.
+ * Body: { platform: 'discord'|'github', handle: string | null } — null clears it.
  */
 export async function POST(request: NextRequest) {
   const privyUserId = await getVerifiedUserId(request);
@@ -22,7 +28,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const { platform, handle } = await request.json() as { platform: Platform; handle: string | null };
+    const { platform, handle: rawHandle } = await request.json() as { platform: Platform; handle: string | null };
 
     if (!PLATFORMS.includes(platform)) {
       return NextResponse.json({ error: "Invalid platform" }, { status: 400 });
@@ -30,7 +36,7 @@ export async function POST(request: NextRequest) {
 
     const supabase = getSupabaseAdmin();
 
-    if (handle === null) {
+    if (rawHandle === null) {
       const { error } = await supabase
         .from("social_accounts")
         .delete()
@@ -44,12 +50,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, platform, handle: null });
     }
 
-    if (typeof handle !== "string") {
-      return NextResponse.json({ error: "handle is required" }, { status: 400 });
-    }
-    const cleanHandle = handle.replace(/^@/, "").toLowerCase().trim();
+    const cleanHandle = await getVerifiedLiveHandle(privyUserId, platform);
     if (!cleanHandle) {
-      return NextResponse.json({ error: "Invalid handle" }, { status: 400 });
+      return NextResponse.json({ error: `No verified ${platform} account linked to this Loofta account.` }, { status: 400 });
     }
 
     const { error } = await supabase

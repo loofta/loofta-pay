@@ -3,6 +3,8 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { extractChainsFromAssets } from "@/lib/assetUtils";
+import { getVerifiedSolanaWallets } from "@/lib/serverAuth";
+import { verifySolanaUsdcPayment } from "@/lib/verifySolanaPayment";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
@@ -10,6 +12,24 @@ const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
 const PENDING_SOCIAL_PREFIX = "PENDING_SOCIAL:";
 /** Must match ClaimsService.RECIPIENT_CLAIM_LOCK_TTL_MS (backend claims.service.ts). */
 const RECIPIENT_CLAIM_LOCK_TTL_MS = 5 * 60_000;
+
+// In-memory per-IP fixed-window limiter — same pattern as /api/share/[short_id]. Brute-forcing a
+// 122-bit claim UUID is infeasible regardless, but this bounds request volume against any single
+// known id (scraping, accidental retry storms) rather than leaving this endpoint fully open.
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_REQUESTS = 60;
+const requestCounts = new Map<string, { count: number; resetAt: number }>();
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = requestCounts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    requestCounts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > RATE_LIMIT_MAX_REQUESTS;
+}
 
 async function getVerifiedUserId(request: Request): Promise<string | null> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -71,6 +91,11 @@ function normalisePayment(raw: Record<string, unknown>): Record<string, unknown>
 }
 
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  if (isRateLimited(ip)) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
+
   const params = await props.params;
   const supabase = getSupabaseAdmin();
 
@@ -362,14 +387,17 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     // Try payments table first
     const { data: existingPayment } = await supabase
       .from("payments")
-      .select("id, status, created_by, direction, sender_user_id, recipient_user_id")
+      .select("id, status, created_by, direction, sender_user_id, recipient_user_id, amount, burner_address, is_devnet")
       .eq("id", paymentId)
       .maybeSingle();
 
     let useLegacy = !existingPayment;
 
     if (!useLegacy) {
-      const ep = existingPayment as { created_by?: string | null; direction?: string; sender_user_id?: string | null; recipient_user_id?: string | null };
+      const ep = existingPayment as {
+        created_by?: string | null; direction?: string; sender_user_id?: string | null; recipient_user_id?: string | null;
+        amount?: number | string | null; burner_address?: string | null; is_devnet?: boolean | null;
+      };
 
       // Ownership check
       if (ep.direction === "from_recipient") {
@@ -377,6 +405,33 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         // Once a sender is assigned, only they or the creator may update further.
         if (ep.sender_user_id && ep.sender_user_id !== userId && ep.created_by !== userId) {
           return NextResponse.json({ error: "Not authorized to update this payment" }, { status: 403 });
+        }
+
+        // First-time attribution ("who actually paid this request?") is the exploitable gap:
+        // without this, any authenticated user could POST status:"SUCCESS" with a fabricated or
+        // unrelated txHash and get themselves recorded as having paid someone else's request,
+        // firing a false "you got paid" notification to the real creator. Once sender_user_id is
+        // already set, later transitions are already ownership-gated above, so this only needs
+        // to run on the transition that assigns it.
+        if (status === "SUCCESS" && !ep.sender_user_id) {
+          if (!ep.burner_address) {
+            return NextResponse.json({ error: "This payment has no verifiable destination yet — try again shortly." }, { status: 400 });
+          }
+          if (!txHash) {
+            return NextResponse.json({ error: "A transaction signature is required to mark this as paid." }, { status: 400 });
+          }
+          const callerWallets = await getVerifiedSolanaWallets(userId);
+          const verification = await verifySolanaUsdcPayment({
+            txHash,
+            destinationWallet: ep.burner_address,
+            minAmountUsd: Number(ep.amount) || 0,
+            callerWalletAddresses: callerWallets,
+            isDevnet: !!ep.is_devnet,
+          });
+          if (!verification.valid) {
+            console.warn(`[payments/PATCH] Rejected unverified SUCCESS claim on ${paymentId} by ${userId}: ${verification.reason}`);
+            return NextResponse.json({ error: verification.reason || "Could not verify this payment on-chain." }, { status: 400 });
+          }
         }
       } else {
         // from_sender: only creator/sender/recipient

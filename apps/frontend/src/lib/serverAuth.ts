@@ -24,6 +24,56 @@ export async function getPrivyUser(privyUserId: string) {
   }
 }
 
+/** The caller's own linked Solana wallet addresses, per Privy's live record (not client-supplied). */
+export async function getVerifiedSolanaWallets(privyUserId: string): Promise<string[]> {
+  const user = await getPrivyUser(privyUserId);
+  if (!user) return [];
+  const wallets: string[] = [];
+  for (const account of (user.linkedAccounts || []) as Array<{ type?: string; chainType?: string; chainId?: string; address?: string }>) {
+    const type = (account.type || "").toLowerCase();
+    const chainType = (account.chainType || "").toLowerCase();
+    const chainId = (account.chainId || "").toString().toLowerCase();
+    const isSolana =
+      type === "wallet" || type === "solana" || type === "solana_embedded_wallet" ||
+      chainType === "solana" || chainId.startsWith("solana:");
+    if (!isSolana) continue;
+    const addr = (account.address || "").toString().trim();
+    if (addr) wallets.push(addr);
+  }
+  return wallets;
+}
+
+/**
+ * The caller's own LIVE, Privy-verified handle for an OAuth-linked platform — the only trusted
+ * source for anything that persists a social handle onto a user's identity (e.g.
+ * save-twitter-username, save-social-handle). Never persist a client-supplied handle string
+ * directly: without an independent check like this, any authenticated user could POST an
+ * arbitrary handle onto their own account and pass every downstream recipient-identity check
+ * (verifyRecipientIdentityForSendPayment, backend) for a payment that was never sent to them.
+ */
+export async function getVerifiedLiveHandle(
+  privyUserId: string,
+  platform: "twitter" | "discord" | "github",
+): Promise<string | null> {
+  const user = await getPrivyUser(privyUserId);
+  if (!user) return null;
+  const oauthTypes =
+    platform === "twitter" ? ["twitter", "x", "twitter_oauth"]
+    : platform === "discord" ? ["discord", "discord_oauth"]
+    : ["github", "github_oauth"];
+  for (const account of (user.linkedAccounts || []) as Array<{ type?: string; username?: string | null; name?: string | null; address?: string | null }>) {
+    const type = (account.type || "").toLowerCase();
+    if (!oauthTypes.includes(type)) continue;
+    const handle = (account.username || account.name || account.address || "")
+      .toString()
+      .replace(/^@/, "")
+      .toLowerCase()
+      .trim();
+    if (handle) return handle;
+  }
+  return null;
+}
+
 /**
  * True if `address` is already linked to a registered Loofta (Privy) account. Used to stop
  * senders from disabling privacy on a payment link by passing off a Loofta wallet as "external"
