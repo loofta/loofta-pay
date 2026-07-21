@@ -58,10 +58,15 @@ export default function TelegramRelayPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    // Present only on the very first load (before initOAuth ever runs) — absent on the return
+    // trip from Telegram, whose URL instead carries Privy's OWN oauth callback params (e.g.
+    // privy_oauth_code/privy_oauth_state). That distinction is exactly what decides whether it's
+    // safe to touch the URL below: Privy's SDK reads those return params straight off
+    // window.location to complete the login, so this must never strip them mid-processing.
+    const hasOwnParams = params.has("token") || params.has("claimId");
+
     // Same reload concern applies to the identifying params themselves — fall back to whatever
-    // was persisted just before the redirect if this load's URL doesn't have them (Privy's own
-    // oauth callback params get appended to the return URL, but don't rely on the rest surviving
-    // byte-for-byte across every possible redirect implementation).
+    // was persisted just before the redirect if this load's URL doesn't have them.
     const t = params.get("token") || sessionStorage.getItem("telegram-relay:token");
     const c = params.get("claimId") || sessionStorage.getItem("telegram-relay:claimId");
     if (t) sessionStorage.setItem("telegram-relay:token", t);
@@ -73,9 +78,12 @@ export default function TelegramRelayPage() {
     // redirect target, and Privy's dashboard "Allowed OAuth redirect URLs" list requires an
     // EXACT match with no query params — a URL like /telegram-relay?token=... can never match a
     // registered /telegram-relay entry, which is what was throwing "Redirect URL is not allowed".
-    // Safe to strip now: token/claimId are already persisted above, and every read of them from
-    // here on uses this state (or the sessionStorage fallback), never window.location.search again.
-    if (params.toString()) {
+    // Only strip on THIS (first) load, gated on hasOwnParams — token/claimId are already
+    // persisted above, so nothing downstream needs them in the URL anymore. Stripping
+    // unconditionally (including on the return trip, when hasOwnParams is false) was deleting
+    // Privy's own callback params before its SDK could read them, which silently broke completing
+    // the login — this is what caused "redirected back but shows the login form again."
+    if (hasOwnParams) {
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
