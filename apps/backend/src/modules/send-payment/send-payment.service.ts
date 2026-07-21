@@ -915,7 +915,7 @@ export class SendPaymentService {
       }
 
       const paymentId = (data as { id: string }).id;
-      const linkUrl = `${this.baseUrl}/c/${paymentId}`;
+      const linkUrl = `${this.baseUrl}/share/${paymentId}`;
 
       this.logger.log(
         `[MultiSend] payment=${paymentId} recipient=${normalizedId} amount=${amountStr} registered=${isRegistered} to=${toPubkey.toBase58().slice(0, 8)}…`,
@@ -1232,7 +1232,7 @@ export class SendPaymentService {
         throw new BadRequestException(`Failed to create payment for ${normalizedId}: ${error.message}`);
       }
       const paymentId = (data as { id: string }).id;
-      const linkUrl = `${this.baseUrl}/c/${paymentId}`;
+      const linkUrl = `${this.baseUrl}/share/${paymentId}`;
 
       const baseUnits = Math.round(amountUsd * 1_000_000);
       // Clean amount + exactOut:true — MagicBlock grosses up its own internal debit so the
@@ -1392,7 +1392,7 @@ export class SendPaymentService {
       }
 
       const paymentId = (data as { id: string }).id;
-      const linkUrl = `${this.baseUrl}/c/${shortId}`;
+      const linkUrl = `${this.baseUrl}/share/${shortId}`;
 
       // Fee estimate (no actual MagicBlock call — estimated from formula)
       const baseUnits = Math.round(amountUsd * 1_000_000);

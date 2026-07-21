@@ -243,6 +243,19 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     URL.revokeObjectURL(url);
   }
 
+  /** Export the just-created links so the sender can hand them out from a spreadsheet — one
+   *  recipient (handle + link) per line, same CSV-download pattern as downloadExample above. */
+  function exportLinks(links: MultiSendLinkItem[]) {
+    const csv = ["recipient,link", ...links.map((l) => `${l.recipient_identifier},${l.link}`)].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "loofta-multisend-links.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   function handleCSVFile(file: File) {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -652,6 +665,15 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
             );
           })}
         </div>
+
+        <button
+          type="button"
+          onClick={() => exportLinks(phase.links)}
+          className="w-full h-11 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all flex items-center justify-center gap-1.5"
+        >
+          <FileDown className="w-4 h-4" />
+          Export handles &amp; links
+        </button>
 
         <Button
           onClick={() => {
