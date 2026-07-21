@@ -53,7 +53,13 @@ export default function TelegramRelayPage() {
 
   useEffect(() => {
     if (!ready || !authenticated || !user || !hasIdentifier || submittedRef.current) return;
-    const account = (user.linkedAccounts || []).find((a: { type?: string }) => a.type === "telegram");
+    // Matches both possible type strings the same way this app already handles discord/github
+    // ("discord" vs "discord_oauth", etc.) — an OAuth-linked Telegram account likely comes back
+    // as "telegram_oauth" given Privy's dashboard itself distinguishes telegram_auth (legacy)
+    // from telegram_oauth (this flow), not necessarily the plain "telegram" checked before.
+    const account = (user.linkedAccounts || []).find(
+      (a: { type?: string }) => a.type === "telegram" || a.type === "telegram_oauth",
+    );
     const raw = account ? (account as { username?: string }).username : null;
     if (!raw) return;
 
