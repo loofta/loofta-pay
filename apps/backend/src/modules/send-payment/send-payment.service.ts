@@ -797,16 +797,6 @@ export class SendPaymentService {
     }
 
     const isDevnet = isSolanaDevnetFromConfig(this.configService);
-    if (!isDevnet) {
-      const { data: waitlistRow } = await this.supabaseService.mainnetWaitlist
-        .select('mainnet_access')
-        .eq('privy_user_id', senderUserId)
-        .eq('mainnet_access', true)
-        .maybeSingle();
-      if (!waitlistRow) {
-        throw new ForbiddenException('Mainnet access required to use multi-send on mainnet.');
-      }
-    }
     const senderPubkey = new PublicKey(dto.sender_wallet.trim());
     const senderAta = await getAssociatedTokenAddress(this.usdcMint, senderPubkey);
 
@@ -1138,16 +1128,6 @@ export class SendPaymentService {
   }> {
     const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
     const isDevnet = isSolanaDevnetFromConfig(this.configService);
-    if (!isDevnet) {
-      const { data: waitlistRow } = await this.supabaseService.mainnetWaitlist
-        .select('mainnet_access')
-        .eq('privy_user_id', senderUserId)
-        .eq('mainnet_access', true)
-        .maybeSingle();
-      if (!waitlistRow) {
-        throw new ForbiddenException('Mainnet access required to use multi-send on mainnet.');
-      }
-    }
     const cluster: 'devnet' | 'mainnet' | 'localhost' = isSolanaLocalhostFromConfig(this.configService) ? 'localhost' : isDevnet ? 'devnet' : 'mainnet';
     const effectiveMint = cluster === 'mainnet'
       ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
@@ -1305,17 +1285,6 @@ export class SendPaymentService {
     recipient_count: number;
   }> {
     const isDevnet = isSolanaDevnetFromConfig(this.configService);
-
-    if (!isDevnet) {
-      const { data: waitlistRow } = await this.supabaseService.mainnetWaitlist
-        .select('mainnet_access')
-        .eq('privy_user_id', senderUserId)
-        .eq('mainnet_access', true)
-        .maybeSingle();
-      if (!waitlistRow) {
-        throw new ForbiddenException('Mainnet access required to use multi-send on mainnet.');
-      }
-    }
 
     const PENDING_EMAIL_PREFIX = 'PENDING_EMAIL:';
     const PENDING_USERNAME_PREFIX = 'PENDING_USERNAME:';
