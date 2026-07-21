@@ -454,18 +454,8 @@ function ClaimSection() {
    PRIVACY, OPTIONAL
    ===================================================== */
 
-function DashedConnector({ delay = 0 }: { delay?: number }) {
-  return (
-    <span aria-hidden className="relative w-px flex-1 border-l border-dashed border-white/20">
-      {/* a pulse of light traveling down the line, handing off between the two segments */}
-      <motion.span
-        className="absolute left-1/2 h-2 w-2 -translate-x-1/2 rounded-full bg-[#FF8A00] shadow-[0_0_10px_3px_rgba(255,138,0,0.65)]"
-        style={{ top: 0 }}
-        animate={{ top: ["-4%", "104%"], opacity: [0, 1, 1, 0] }}
-        transition={{ duration: 1.6, repeat: Infinity, ease: "linear", delay }}
-      />
-    </span>
-  );
+function DashedConnector() {
+  return <span aria-hidden className="relative w-px flex-1 border-l border-dashed border-white/20" />;
 }
 
 function PrivacySection() {
@@ -506,7 +496,7 @@ function PrivacySection() {
         <motion.div
           {...fadeUp}
           transition={{ ...fadeUp.transition, delay: 0.1 }}
-          className={`relative flex aspect-square flex-col items-center justify-between overflow-hidden rounded-[32px] border ${BORDER_LINE} ${BG_PAPER_2} p-8 shadow-[0_40px_90px_-30px_rgba(0,0,0,0.6)] sm:p-10`}
+          className={`relative hidden aspect-square flex-col items-center justify-between overflow-hidden rounded-[32px] border ${BORDER_LINE} ${BG_PAPER_2} p-8 shadow-[0_40px_90px_-30px_rgba(0,0,0,0.6)] sm:flex sm:p-10`}
         >
           <div className="flex flex-col items-center gap-3">
             {/* plain person, no arrow baked in — direction is shown by the chevrons below */}
