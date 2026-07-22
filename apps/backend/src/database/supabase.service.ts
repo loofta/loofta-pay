@@ -115,6 +115,10 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('social_accounts');
   }
 
+  get privateTransfers() {
+    return this.client.from('private_transfers');
+  }
+
   get ataSponsorships() {
     return this.client.from('ata_sponsorships');
   }

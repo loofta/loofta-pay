@@ -20,7 +20,7 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X, VenetianMask } from "lucide-react";
 import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, clearPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
@@ -65,10 +65,17 @@ import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { cn } from "@/lib/utils";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 import { QRCodeSVG } from "qrcode.react";
+import { usePerPrivateSelfTransfer } from "@/hooks/usePerPrivateSelfTransfer";
+import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
+import { startPrivateDeposit, getPrivateTransferStatus, type PrivateTransferStatus } from "@/services/api/privateBalance";
+import { PRIVATE_PAYMENT_MAX_WAIT_MINUTES } from "@/lib/privatePaymentCopy";
 
 const LOG_PREFIX = "[BalanceModal]";
 const PEER_LOG = "[Peer Offramp]";
 const PEER_SESSION_KEY = "loofta_peer_session";
+const PRIVATE_DEPOSIT_SESSION_KEY = "loofta_private_deposit_id";
+const PRIVATE_WITHDRAW_SESSION_KEY = "loofta_private_withdraw_id";
+const PRIVATE_TRANSFER_TERMINAL_STATUSES = new Set(["complete", "failed"]);
 const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 const ZKP2P_RATE_UNIT = 1_000_000_000_000_000_000n; // 1e18
 function zkp2pRate(spreadPercent: number): string {
@@ -355,7 +362,7 @@ export function BalanceModal({
   const dialogContentRef = useRef<HTMLDivElement>(null);
 
   const [coinbaseLoading, setCoinbaseLoading] = useState(false);
-  const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | "peer-offramp" | null>(null);
+  const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | "peer-offramp" | "private-relay" | null>(null);
   const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
   const [showFiatOfframpPicker, setShowFiatOfframpPicker] = useState(false);
   const [showFiatOnrampPicker, setShowFiatOnrampPicker] = useState(false);
@@ -389,7 +396,28 @@ export function BalanceModal({
   const [peerUsdcUsdPrice, setPeerUsdcUsdPrice] = useState<number>(1); // USDC/USD, defaults to 1
 
   // Near Intents top-up deposit
-  const [topUpView, setTopUpView] = useState<"near-intents-deposit" | null>(null);
+  const [topUpView, setTopUpView] = useState<"near-intents-deposit" | "private-deposit" | null>(null);
+
+  // Private Deposit (MagicBlock burner-relay) — USDC on Solana only for now (cross-chain sources
+  // are built server-side but gated off until failed-bridge refund recovery is automated)
+  const [privateDepositAmount, setPrivateDepositAmount] = useState("");
+  const [privateDepositSubmitting, setPrivateDepositSubmitting] = useState(false);
+  const [privateDepositId, setPrivateDepositId] = useState<string | null>(null);
+  const [privateDepositAddress, setPrivateDepositAddress] = useState<string | null>(null);
+  const [privateDepositStatus, setPrivateDepositStatus] = useState<PrivateTransferStatus | null>(null);
+  const [privateDepositError, setPrivateDepositError] = useState<string | null>(null);
+  const privateDepositPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Private Withdrawal (MagicBlock burner-relay) — to USDC on Solana direct, or any Near Intents token
+  // cross-chain. Reuses the same withdrawAmount/withdrawAddress/fromSel state as usdc-sol/near-intents
+  // withdrawals (withdrawTokens already resolves to [usdcSol, ...otherChains] for any non-near-intents
+  // method, private-relay included — no separate token list needed).
+  const [privateWithdrawSubmitting, setPrivateWithdrawSubmitting] = useState(false);
+  const [privateWithdrawId, setPrivateWithdrawId] = useState<string | null>(null);
+  const [privateWithdrawStatus, setPrivateWithdrawStatus] = useState<PrivateTransferStatus | null>(null);
+  const [privateWithdrawError, setPrivateWithdrawError] = useState<string | null>(null);
+  const [privateWithdrawFee, setPrivateWithdrawFee] = useState<number | null>(null);
+  const privateWithdrawPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [depositFromSel, setDepositFromSel] = useState<TokenSelection | undefined>(undefined);
   const [depositAmount, setDepositAmount] = useState("");
   const [depositRefundAddr, setDepositRefundAddr] = useState("");
@@ -411,6 +439,7 @@ export function BalanceModal({
   const { wallets: evmWallets } = useEvmWallets();
   const { createWallet: createEvmWallet } = useCreateWallet();
   const { sendTransaction: privySendEvmTx } = useEvmSendTransaction();
+  const { withdraw: perPrivateWithdraw } = usePerPrivateSelfTransfer();
 
   // Keep a ref so async callbacks always see the latest EVM wallets list
   const evmWalletsRef = useRef(evmWallets);
@@ -691,6 +720,86 @@ export function BalanceModal({
       setDepositSubmitting(false);
     }
   };
+
+  // Private Deposit: create a one-time burner address to send USDC to (USDC on Solana only for now)
+  const privateDepositAmountNum = parseFloat(privateDepositAmount) || 0;
+  const handleStartPrivateDeposit = async () => {
+    if (!user?.id || !privateDepositAmountNum) return;
+    setPrivateDepositSubmitting(true);
+    setPrivateDepositError(null);
+    try {
+      const accessToken = await getAccessToken();
+      const result = await startPrivateDeposit(privateDepositAmountNum, user.id, accessToken, devnetMode ? "devnet" : "mainnet");
+      setPrivateDepositId(result.id);
+      setPrivateDepositAddress(result.depositAddress);
+      setPrivateDepositStatus("awaiting_funds");
+      localStorage.setItem(PRIVATE_DEPOSIT_SESSION_KEY, result.id);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not start private deposit";
+      toast({ variant: "destructive", title: "Failed to start private deposit", description: msg });
+    } finally {
+      setPrivateDepositSubmitting(false);
+    }
+  };
+
+  const resetPrivateDeposit = useCallback(() => {
+    setPrivateDepositId(null);
+    setPrivateDepositAddress(null);
+    setPrivateDepositStatus(null);
+    setPrivateDepositError(null);
+    setPrivateDepositAmount("");
+    localStorage.removeItem(PRIVATE_DEPOSIT_SESSION_KEY);
+  }, []);
+
+  // Private Withdrawal: sign leg 1 (own wallet -> burner); backend cron handles leg 2 (burner -> destination).
+  // USDC on Solana only for now — reuses withdrawAmount/withdrawAddress, same state usdc-sol uses.
+  const handlePrivateWithdraw = async () => {
+    if (!user?.id || !wallet || !solanaAddress) return;
+    const amount = parseFloat(withdrawAmount) || 0;
+    const destination = withdrawAddress.trim();
+    if (!amount || !destination) return;
+    setPrivateWithdrawSubmitting(true);
+    setPrivateWithdrawError(null);
+    try {
+      const accessToken = await getAccessToken();
+      const anchorWallet = privyStandardWalletToAnchorWallet(
+        wallet,
+        signTransaction,
+        getPrivySolanaChainForMode(devnetMode ? "devnet" : "mainnet"),
+      );
+      const { id } = await perPrivateWithdraw(anchorWallet, {
+        privyUserId: user.id,
+        accessToken,
+        amountUsdc: amount,
+        destinationAddress: destination,
+        onTxBuilt: ({ id: txId, feeAmountUsdc }) => {
+          setPrivateWithdrawId(txId);
+          setPrivateWithdrawFee(feeAmountUsdc);
+          setPrivateWithdrawStatus("awaiting_signature");
+          localStorage.setItem(PRIVATE_WITHDRAW_SESSION_KEY, txId);
+        },
+      });
+      setPrivateWithdrawId(id);
+      setPrivateWithdrawStatus("delivering_to_burner");
+      optimisticWithdrawBalance(amount);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Private withdrawal failed";
+      setPrivateWithdrawError(msg);
+      toast({ variant: "destructive", title: "Private withdrawal failed", description: msg });
+    } finally {
+      setPrivateWithdrawSubmitting(false);
+    }
+  };
+
+  const resetPrivateWithdraw = useCallback(() => {
+    setPrivateWithdrawId(null);
+    setPrivateWithdrawStatus(null);
+    setPrivateWithdrawError(null);
+    setPrivateWithdrawFee(null);
+    setWithdrawAmount("");
+    setWithdrawAddress("");
+    localStorage.removeItem(PRIVATE_WITHDRAW_SESSION_KEY);
+  }, []);
 
   const wallet = useMemo(
     () => (solanaAddress ? solanaWallets?.find((w) => w.address === solanaAddress) : undefined),
@@ -1237,6 +1346,87 @@ export function BalanceModal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depositPollAddr]);
+
+  // Private Deposit: restore an in-progress session on reopen (completion is backend-driven, can outlive a single session)
+  useEffect(() => {
+    if (!open || privateDepositId) return;
+    const saved = localStorage.getItem(PRIVATE_DEPOSIT_SESSION_KEY);
+    if (saved) setPrivateDepositId(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Private Deposit: status polling
+  useEffect(() => {
+    if (!privateDepositId || !user?.id || PRIVATE_TRANSFER_TERMINAL_STATUSES.has(privateDepositStatus || "")) {
+      if (privateDepositPollRef.current) clearInterval(privateDepositPollRef.current);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const accessToken = await getAccessToken();
+        const status = await getPrivateTransferStatus(privateDepositId, user.id, accessToken);
+        if (cancelled) return;
+        setPrivateDepositStatus(status.status);
+        if (status.depositAddress) setPrivateDepositAddress(status.depositAddress);
+        if (status.errorMessage) setPrivateDepositError(status.errorMessage);
+        if (status.status === "complete") {
+          localStorage.removeItem(PRIVATE_DEPOSIT_SESSION_KEY);
+          onRefresh();
+        } else if (status.status === "failed") {
+          localStorage.removeItem(PRIVATE_DEPOSIT_SESSION_KEY);
+        }
+      } catch { /* ignore, retry next tick */ }
+    };
+    poll();
+    privateDepositPollRef.current = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      if (privateDepositPollRef.current) clearInterval(privateDepositPollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [privateDepositId, privateDepositStatus, user?.id]);
+
+  // Private Withdrawal: restore an in-progress session on reopen
+  useEffect(() => {
+    if (!open || privateWithdrawId) return;
+    const saved = localStorage.getItem(PRIVATE_WITHDRAW_SESSION_KEY);
+    if (saved) setPrivateWithdrawId(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Private Withdrawal: status polling — leg 2 (burner -> destination) is entirely backend-driven
+  useEffect(() => {
+    if (!privateWithdrawId || !user?.id || PRIVATE_TRANSFER_TERMINAL_STATUSES.has(privateWithdrawStatus || "")) {
+      if (privateWithdrawPollRef.current) clearInterval(privateWithdrawPollRef.current);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const accessToken = await getAccessToken();
+        const status = await getPrivateTransferStatus(privateWithdrawId, user.id, accessToken);
+        if (cancelled) return;
+        setPrivateWithdrawStatus(status.status);
+        if (status.errorMessage) setPrivateWithdrawError(status.errorMessage);
+        if (status.status === "complete") {
+          localStorage.removeItem(PRIVATE_WITHDRAW_SESSION_KEY);
+          onRefresh();
+        } else if (status.status === "failed") {
+          localStorage.removeItem(PRIVATE_WITHDRAW_SESSION_KEY);
+        }
+      } catch { /* ignore, retry next tick */ }
+    };
+    poll();
+    privateWithdrawPollRef.current = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      if (privateWithdrawPollRef.current) clearInterval(privateWithdrawPollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [privateWithdrawId, privateWithdrawStatus, user?.id]);
 
   // Auto-cancel pending deposits/withdrawals older than 1 hour
   const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -2349,7 +2539,21 @@ export function BalanceModal({
               ) : (
                 <div className="py-2 space-y-3">
 
-                  {/* 1. Crypto deposit via Blink */}
+                  {/* 1. Private deposit — burner-relay MagicBlock private transfer */}
+                  <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("private-deposit")}
+                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      <VenetianMask className={`h-7 w-7 ${dark ? "text-slate-300" : "text-gray-500"}`} strokeWidth={1.75} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Private Deposit</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>USDC on Solana · not linked on-chain</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+
+                  {/* 2. Crypto deposit via Blink */}
                   <button type="button" disabled={!solanaAddress || blinkDepositing || coinbaseLoading} onClick={handleBlinkDeposit}
                     className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
@@ -2365,7 +2569,7 @@ export function BalanceModal({
 
                   {blinkError && <p className="text-base text-orange-500 text-center px-1">{blinkError}</p>}
 
-                  {/* 2. More crypto via Near Intents */}
+                  {/* 3. More crypto via Near Intents */}
                   <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("near-intents-deposit")}
                     className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
@@ -2379,7 +2583,7 @@ export function BalanceModal({
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
 
-                  {/* 3. Fiat / bank — opens provider picker */}
+                  {/* 4. Fiat / bank — opens provider picker */}
                   <button type="button" disabled={!solanaAddress || blinkDepositing} onClick={() => setShowFiatOnrampPicker(true)}
                     className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
@@ -2393,6 +2597,115 @@ export function BalanceModal({
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
 
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Top Up tab — Private Deposit (burner-relay) */}
+          {tab === "topup" && topUpView === "private-deposit" && (
+            <div className="space-y-4 py-2">
+
+              {/* Back */}
+              <button type="button" onClick={() => { setTopUpView(null); resetPrivateDeposit(); }}
+                className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                <ChevronLeft className="h-4 w-4" />Back
+              </button>
+
+              {privateDepositAddress ? (
+                /* ── Deposit address view ── */
+                <div className="space-y-3">
+
+                  {/* Status */}
+                  <div className={`flex items-center gap-3 rounded-2xl px-4 py-3.5 ${dark ? "bg-white/5 border border-white/10" : "bg-gradient-to-r from-orange-50/70 to-amber-50/30 border border-orange-100"}`}>
+                    {privateDepositStatus === "complete" ? (
+                      <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+                    ) : privateDepositStatus === "failed" ? (
+                      <AlertTriangle className="h-5 w-5 text-red-400 shrink-0" />
+                    ) : (
+                      <Loader2 className="h-5 w-5 animate-spin text-blue-400 shrink-0" />
+                    )}
+                    <div>
+                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
+                        {privateDepositStatus === "complete" ? "Complete!"
+                          : privateDepositStatus === "failed" ? "Something went wrong"
+                            : privateDepositStatus === "delivering_privately" ? "Delivering privately…"
+                              : "Waiting for your deposit…"}
+                      </p>
+                      <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        {privateDepositStatus === "complete"
+                          ? "Funds have landed in your balance."
+                          : privateDepositStatus === "failed"
+                            ? (privateDepositError || "Please contact support.")
+                            : privateDepositStatus === "delivering_privately"
+                              ? `Routing to your balance privately — can take up to ${PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes.`
+                              : "Once received, it's automatically routed to your balance privately — no need to keep this open."}
+                      </p>
+                    </div>
+                  </div>
+
+                  {privateDepositStatus !== "complete" && (
+                    <div className={`rounded-2xl border overflow-hidden ${dark ? "border-white/10" : "border-gray-100"}`}>
+                      <div className={`px-4 py-3 border-b ${dark ? "border-white/[0.06] bg-white/5" : "border-gray-100 bg-gray-50/60"}`}>
+                        <p className={`text-base font-medium ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                          Send exactly <span className={`font-bold ${dark ? "text-white" : "text-gray-900"}`}>{privateDepositAmountNum} USDC</span> (Solana) to this address
+                        </p>
+                      </div>
+
+                      <div className="px-4 py-3">
+                        <p className={`text-sm font-medium mb-1.5 uppercase tracking-wide ${dark ? "text-slate-500" : "text-gray-400"}`}>Deposit address</p>
+                        <div className="flex items-center gap-2">
+                          <p className={`text-base font-mono flex-1 break-all ${dark ? "text-slate-300" : "text-gray-700"}`}>{privateDepositAddress}</p>
+                          <button type="button" onClick={() => { navigator.clipboard.writeText(privateDepositAddress!); toast({ title: "Copied!", description: "Deposit address copied." }); }}
+                            className={`shrink-0 p-2 rounded-lg transition-colors ${dark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-gray-100 text-gray-400 hover:text-gray-700"}`}>
+                            <Copy className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className={`flex justify-center py-4 border-t ${dark ? "border-white/[0.06]" : "border-gray-100"}`}>
+                        <div className={`p-3 rounded-xl ${dark ? "bg-white" : "bg-white border border-gray-100"}`}>
+                          <QRCodeSVG value={privateDepositAddress} size={140} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {(privateDepositStatus === "complete" || privateDepositStatus === "failed") && (
+                    <Button onClick={() => { setTopUpView(null); resetPrivateDeposit(); }}
+                      className={cn("w-full", privateDepositStatus === "complete" ? "bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white" : "bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white")}>
+                      {privateDepositStatus === "complete" ? "Done" : "Close"}
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                /* ── Amount form ── */
+                <div className="space-y-4">
+                  <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    Send USDC from any wallet to a one-time address. It's privately routed to your balance — the sending wallet is never linked to your Loofta wallet on-chain.
+                  </p>
+                  <div>
+                    <Label htmlFor="private-deposit-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
+                    <Input
+                      id="private-deposit-amount"
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="0.00"
+                      value={privateDepositAmount}
+                      onChange={(e) => setPrivateDepositAmount(e.target.value)}
+                      className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                    />
+                  </div>
+                  <Button
+                    onClick={handleStartPrivateDeposit}
+                    disabled={privateDepositSubmitting || !privateDepositAmountNum}
+                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
+                  >
+                    {privateDepositSubmitting ? (
+                      <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Getting deposit address…</span>
+                    ) : "Get deposit address"}
+                  </Button>
                 </div>
               )}
             </div>
@@ -2806,7 +3119,31 @@ export function BalanceModal({
           {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod === null && !showFiatOfframpPicker && (
             <div className="py-2 space-y-3">
 
-              {/* 1. USDC on Solana */}
+              {/* 1. Private withdrawal — burner-relay MagicBlock private transfer */}
+              <button
+                type="button"
+                disabled={!solanaAddress}
+                onClick={() => setWithdrawMethod("private-relay")}
+                className={cn(
+                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                  dark
+                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                )}
+              >
+                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                  <VenetianMask className={`h-7 w-7 ${dark ? "text-slate-300" : "text-gray-500"}`} strokeWidth={1.75} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Private Withdrawal</p>
+                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    To any Solana wallet · not linked on-chain
+                  </p>
+                </div>
+                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+              </button>
+
+              {/* 2. USDC on Solana */}
               <button
                 type="button"
                 disabled={!solanaAddress}
@@ -2832,7 +3169,7 @@ export function BalanceModal({
 
               {spendableBalance >= 1 && (
                 <>
-                  {/* 2. Other token via Near Intents */}
+                  {/* 3. Other token via Near Intents */}
                   <button
                     type="button"
                     disabled={!solanaAddress}
@@ -2856,7 +3193,7 @@ export function BalanceModal({
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
 
-                  {/* 3. Cash out via Peer (ZKP2P) */}
+                  {/* 4. Cash out via Peer (ZKP2P) */}
                   <button
                     type="button"
                     disabled={!solanaAddress}
@@ -2874,13 +3211,13 @@ export function BalanceModal({
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cash out with Peer</p>
                       <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        Venmo · Cash App · Wise · 3 more
+                        Venmo · Cash App
                       </p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
 
-                  {/* 4. Bank or card — shows provider picker */}
+                  {/* 5. Bank or card — shows provider picker */}
                   <button
                     type="button"
                     disabled={!solanaAddress}
@@ -2903,9 +3240,119 @@ export function BalanceModal({
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
+
                 </>
               )}
 
+            </div>
+          )}
+
+          {/* Withdraw tab — Private Withdrawal (burner-relay) */}
+          {tab === "withdraw" && withdrawMethod === "private-relay" && (
+            <div className="space-y-4 py-2">
+
+              {/* Back */}
+              <button type="button" onClick={() => { setWithdrawMethod(null); resetPrivateWithdraw(); }}
+                className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                <ChevronLeft className="h-4 w-4" />Back
+              </button>
+
+              {privateWithdrawId ? (
+                /* ── Status view ── */
+                <div className="space-y-3">
+                  <div className={`flex items-center gap-3 rounded-2xl px-4 py-3.5 ${dark ? "bg-white/5 border border-white/10" : "bg-gradient-to-r from-orange-50/70 to-amber-50/30 border border-orange-100"}`}>
+                    {privateWithdrawStatus === "complete" ? (
+                      <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+                    ) : privateWithdrawStatus === "failed" ? (
+                      <AlertTriangle className="h-5 w-5 text-red-400 shrink-0" />
+                    ) : (
+                      <Loader2 className="h-5 w-5 animate-spin text-blue-400 shrink-0" />
+                    )}
+                    <div>
+                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
+                        {privateWithdrawStatus === "complete" ? "Complete!"
+                          : privateWithdrawStatus === "failed" ? "Something went wrong"
+                            : privateWithdrawStatus === "awaiting_signature" ? "Waiting for signature…"
+                              : "Delivering privately…"}
+                      </p>
+                      <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        {privateWithdrawStatus === "complete"
+                          ? "Funds have landed at the destination."
+                          : privateWithdrawStatus === "failed"
+                            ? (privateWithdrawError || "Please contact support.")
+                            : `Can take up to ${PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes — no need to keep this open, it'll finish in the background.`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {privateWithdrawFee != null && (
+                    <p className={`text-base text-center ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                      Privacy fee: ~${privateWithdrawFee.toFixed(3)}
+                    </p>
+                  )}
+
+                  {(privateWithdrawStatus === "complete" || privateWithdrawStatus === "failed") && (
+                    <Button onClick={() => { setWithdrawMethod(null); resetPrivateWithdraw(); }}
+                      className={cn("w-full", privateWithdrawStatus === "complete" ? "bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white" : "bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white")}>
+                      {privateWithdrawStatus === "complete" ? "Done" : "Close"}
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                /* ── Form ── */
+                <div className="space-y-4">
+                  <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    Send USDC to any Solana address without linking your Loofta wallet to the destination on-chain.
+                  </p>
+                  <div>
+                    <Label htmlFor="private-withdraw-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
+                    <Input
+                      id="private-withdraw-amount"
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="0.00"
+                      value={withdrawAmount}
+                      onChange={(e) => setWithdrawAmount(e.target.value)}
+                      className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                    />
+                    <p className={`text-base mt-1.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                      Available: {spendableBalance.toFixed(2)} USDC
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="private-withdraw-address" className={dark ? "text-slate-300" : undefined}>Destination Solana address</Label>
+                    <Input
+                      id="private-withdraw-address"
+                      placeholder="Enter a Solana address"
+                      value={withdrawAddress}
+                      onChange={(e) => setWithdrawAddress(e.target.value)}
+                      className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                    />
+                    {withdrawAddress && !isValidAddressForChain(withdrawAddress, "solana") && (
+                      <p className="text-base text-red-400 mt-1 flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                        Invalid Solana address
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    onClick={handlePrivateWithdraw}
+                    disabled={
+                      privateWithdrawSubmitting ||
+                      !parseFloat(withdrawAmount) ||
+                      parseFloat(withdrawAmount) > spendableBalance ||
+                      !withdrawAddress.trim() ||
+                      !isValidAddressForChain(withdrawAddress, "solana")
+                    }
+                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
+                  >
+                    {privateWithdrawSubmitting ? (
+                      <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Building transfer…</span>
+                    ) : "Send privately"}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
@@ -3150,46 +3597,48 @@ export function BalanceModal({
                 <ChevronLeft className="h-4 w-4" />Back
               </button>
 
-              {/* Currency selector */}
-              <div>
-                <p className={`text-base font-semibold mb-2 ${dark ? "text-white" : "text-gray-900"}`}>Receive currency</p>
-                <Select value={peerCurrency} onValueChange={(v) => setPeerCurrency(v)}>
-                  <SelectTrigger className={cn(
-                    "w-full text-base",
-                    dark ? "bg-white/10 border-white/20 text-white" : "bg-white border-gray-200 text-gray-900"
-                  )}>
-                    <SelectValue>
-                      {(() => {
-                        const cur = getPeerCurrency(peerCurrency);
-                        return cur ? `${cur.flag}  ${cur.code} — ${cur.label}` : peerCurrency;
-                      })()}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent className={dark ? "bg-zinc-900 border-white/10 text-white" : ""}>
-                    {PEER_CURRENCIES.map((c) => (
-                      <SelectItem key={c.code} value={c.code} className={cn(
-                        "text-base cursor-pointer",
-                        dark ? "text-white focus:bg-white/10 focus:text-white" : ""
-                      )}>
-                        {c.flag}{"  "}{c.code} — {c.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {peerCurrency !== "USD" && (() => {
-                  const platforms = PEER_PLATFORMS.filter(p => p.currencies.includes(peerCurrency));
-                  if (!platforms.length) return null;
-                  const names = platforms.map(p => p.name).join(" & ");
-                  return (
-                    <p className={`text-base mt-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                      {peerCurrency} payouts available via {names}.
-                    </p>
-                  );
-                })()}
-              </div>
+              {/* Currency selector — hidden while USD is the only supported currency (Venmo/Cash App are both USD-only) */}
+              {PEER_CURRENCIES.length > 1 && (
+                <div>
+                  <p className={`text-base font-semibold mb-2 ${dark ? "text-white" : "text-gray-900"}`}>Receive currency</p>
+                  <Select value={peerCurrency} onValueChange={(v) => setPeerCurrency(v)}>
+                    <SelectTrigger className={cn(
+                      "w-full text-base",
+                      dark ? "bg-white/10 border-white/20 text-white" : "bg-white border-gray-200 text-gray-900"
+                    )}>
+                      <SelectValue>
+                        {(() => {
+                          const cur = getPeerCurrency(peerCurrency);
+                          return cur ? `${cur.flag}  ${cur.code} — ${cur.label}` : peerCurrency;
+                        })()}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent className={dark ? "bg-zinc-900 border-white/10 text-white" : ""}>
+                      {PEER_CURRENCIES.map((c) => (
+                        <SelectItem key={c.code} value={c.code} className={cn(
+                          "text-base cursor-pointer",
+                          dark ? "text-white focus:bg-white/10 focus:text-white" : ""
+                        )}>
+                          {c.flag}{"  "}{c.code} — {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {peerCurrency !== "USD" && (() => {
+                    const platforms = PEER_PLATFORMS.filter(p => p.currencies.includes(peerCurrency));
+                    if (!platforms.length) return null;
+                    const names = platforms.map(p => p.name).join(" & ");
+                    return (
+                      <p className={`text-base mt-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        {peerCurrency} payouts available via {names}.
+                      </p>
+                    );
+                  })()}
+                </div>
+              )}
 
               <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Choose a platform</p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 {PEER_PLATFORMS.filter((p) => p.currencies.includes(peerCurrency)).map((p) => {
                   const cooldownMins = platformCooldowns[p.id] ?? 0;
                   const inCooldown = cooldownMins > 0;

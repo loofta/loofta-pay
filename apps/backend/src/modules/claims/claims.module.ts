@@ -15,6 +15,6 @@ import { MagicblockQuestModule } from '../magicblock-quest/magicblock-quest.modu
   imports: [IntentsModule, UsersModule, forwardRef(() => CronModule), forwardRef(() => SendPaymentModule), EmailModule, MagicblockQuestModule],
   controllers: [ClaimsController, AdminClaimsController],
   providers: [ClaimsService, DepositService, SolanaSponsorService],
-  exports: [ClaimsService, DepositService],
+  exports: [ClaimsService, DepositService, SolanaSponsorService],
 })
 export class ClaimsModule {}
