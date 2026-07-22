@@ -145,6 +145,16 @@ export class RhinestoneService {
    * count-only and cannot carry numbers). Same sponsored-batch pattern: approve + buy in one
    * userOp. Dry-run simulated first (mirrors claimWinnings below) so a bad ticket/bounds mismatch
    * surfaces a clear revert reason in logs instead of a silently-failed sponsored tx.
+   *
+   * The dry-run simulates ONLY `buyTickets` against current on-chain state — it has no way to
+   * see the `approve` that gets batched immediately before it in the real sendTransaction below,
+   * so it will always revert with an allowance error even when the real batch would succeed
+   * (approve lands first, in the same userOp, then buyTickets reads that fresh allowance). That
+   * specific revert is therefore expected noise, not a real problem — this used to cause every
+   * custom-number purchase to fail as "ERC20: transfer amount exceeds allowance" and abort
+   * before the real (working) batched tx ever ran, unrecoverable by retrying since nothing ever
+   * reached the chain to change the allowance. Any OTHER revert reason (bad ticket bounds,
+   * duplicate numbers, sold out, etc.) still aborts here as intended.
    */
   async buyMegapotTicketsCustom(opts: {
     companionPrivateKey: `0x${string}`;
@@ -175,8 +185,13 @@ export class RhinestoneService {
       const msg: string = simErr.message ?? '';
       const isRpcError = msg.includes('over rate limit') || msg.includes('RPC Request failed') ||
                          msg.includes('timeout') || msg.includes('429');
+      // Expected: the dry-run can't see the approve that's batched immediately before this call
+      // in the real sendTransaction below, so it always looks under-allowanced in isolation.
+      const isExpectedAllowanceGap = msg.includes('exceeds allowance') || msg.includes('insufficient allowance');
       if (isRpcError) {
         this.logger.warn(`Rhinestone: custom buy dry-run skipped (RPC error, not a revert): ${msg.slice(0, 120)}`);
+      } else if (isExpectedAllowanceGap) {
+        this.logger.log(`Rhinestone: custom buy dry-run allowance gap (expected — approve is batched before buy) — proceeding with sponsored sendTransaction`);
       } else {
         this.logger.warn(`Rhinestone: custom buy dry-run revert from ${smartAcctAddress}: ${msg.slice(0, 200)}`);
         throw simErr;

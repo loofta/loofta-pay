@@ -67,6 +67,12 @@ const DRAW_PURCHASE_CUTOFF_MS = 5 * 60_000;
 // regimes with ~20-60% headroom instead of a flat guess.
 const LOOFTA_TICKET_FEE_FLAT_USDC = 0.03;
 const LOOFTA_TICKET_FEE_BPS = 150;
+// Cap on auto-retry attempts for a ticket stuck in 'failed' — protects against retrying a
+// genuinely, permanently broken ticket (bad data, sold-out round, etc.) forever.
+const MAX_AUTO_RETRIES = 3;
+// Don't auto-resurrect ancient abandoned tickets — only retry failures from roughly the last
+// couple of draw cycles.
+const AUTO_RETRY_MAX_AGE_MS = 48 * 60 * 60_000;
 
 // Same alphabet/algorithm as claims.service.ts's generateShortId — public 8-char share code for
 // gift links (mirrors payments.short_id), kept as its own copy per this repo's existing convention.
@@ -1375,6 +1381,7 @@ export class LotteryService {
   // its interval — a second concurrent run would see the same 'sent' rows and double-bridge.
   private processingSent = false;
   private processingBridging = false;
+  private processingAutoRetry = false;
 
   async processSentTickets(): Promise<void> {
     if (this.processingSent) return;
@@ -1619,6 +1626,101 @@ export class LotteryService {
       }
     } finally {
       this.processingBridging = false;
+    }
+  }
+
+  /**
+   * Auto-retry tickets stuck in 'failed' status — so a buyer who left the screen (or never saw/
+   * clicked "Retry purchase") isn't permanently stuck on a ticket that a transient/now-fixed bug
+   * failed. Delegates the actual decision to reconcileOrRetryFailedTicket, which always checks
+   * on-chain FIRST: a ticket can be marked 'failed' even though the purchase actually landed
+   * (e.g. the buyTickets dry-run false-positive this was written after, or a DB write racing a
+   * real success) — never re-buy one that's already there. Capped at MAX_AUTO_RETRIES attempts
+   * and AUTO_RETRY_MAX_AGE_MS age so a genuinely, permanently broken ticket isn't retried forever.
+   */
+  async autoRetryFailedTickets(): Promise<void> {
+    if (this.processingAutoRetry) return;
+    this.processingAutoRetry = true;
+    try {
+      const db = this.supabase.getClient();
+      const cutoff = new Date(Date.now() - AUTO_RETRY_MAX_AGE_MS).toISOString();
+      const { data: tickets } = await db
+        .from('lottery_tickets')
+        .select('*')
+        .eq('status', 'failed')
+        .lt('retry_count', MAX_AUTO_RETRIES)
+        .gte('created_at', cutoff)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: true })
+        .limit(10);
+
+      for (const ticket of tickets ?? []) {
+        await this.reconcileOrRetryFailedTicket(ticket).catch(e =>
+          this.logger.warn(`autoRetryFailedTickets ${ticket.id}: ${e.message}`),
+        );
+      }
+    } finally {
+      this.processingAutoRetry = false;
+    }
+  }
+
+  /**
+   * Shared by both the auto-retry cron and the user-facing "Retry purchase" button. Checks Base
+   * chain directly for a ticket-NFT mint to this ticket's companion address before doing anything
+   * else: if one is already there, the purchase actually succeeded despite the 'failed' status —
+   * correct the DB record (status, round, NFT ids/numbers) and stop, WITHOUT spending money again.
+   * Only when there's genuinely no on-chain mint does it queue an actual retry (status → 'buying',
+   * picked up by the existing processBridgingTickets cron on its next 5s tick).
+   *
+   * Uses a status='failed' compare-and-swap on every write so this can never race a concurrent
+   * manual retry or another auto-retry pass into double-queuing or double-correcting the same row.
+   */
+  private async reconcileOrRetryFailedTicket(ticket: any): Promise<void> {
+    const db = this.supabase.getClient();
+    if (!ticket.companion_address) {
+      this.logger.warn(`Ticket ${ticket.id}: retry skipped — no companion_address on row`);
+      return;
+    }
+
+    const { tokenIds, ticketNumbers } = await this.megapot
+      .getTicketNumbersFromNft(ticket.companion_address as Address, ticket.round_id ?? undefined)
+      .catch((e: any) => {
+        this.logger.warn(`Ticket ${ticket.id}: on-chain mint check failed (treating as unverified, not retrying this pass): ${e?.message}`);
+        return { tokenIds: [] as string[], ticketNumbers: [] as { main: number[]; bonus: number }[] };
+      });
+
+    if (tokenIds.length > 0) {
+      let roundId: string | null = ticket.round_id ?? null;
+      let drawTime: string | null = ticket.draw_time ?? null;
+      if (!roundId) {
+        try {
+          const round = await this.megapot.getActiveRound();
+          roundId = round?.id ?? null;
+          drawTime = round?.drawTime ?? null;
+        } catch { /* keep nulls — backfillTicketNumbers cron will retry */ }
+      }
+      const { data: fixed } = await db.from('lottery_tickets').update({
+        status: 'active',
+        round_id: roundId,
+        draw_time: drawTime,
+        ticket_nft_ids: tokenIds,
+        ...(ticketNumbers.length ? { ticket_numbers: ticketNumbers } : {}),
+        updated_at: new Date().toISOString(),
+      }).eq('id', ticket.id).eq('status', 'failed').select('id');
+      if (fixed?.length) {
+        this.logger.log(`Ticket ${ticket.id}: found ${tokenIds.length} on-chain mint(s) despite 'failed' status — corrected to 'active' WITHOUT re-buying (tokenIds=${JSON.stringify(tokenIds)})`);
+      }
+      return;
+    }
+
+    const nextRetryCount = (ticket.retry_count ?? 0) + 1;
+    const { data: claimed } = await db.from('lottery_tickets').update({
+      status: 'buying',
+      retry_count: nextRetryCount,
+      updated_at: new Date().toISOString(),
+    }).eq('id', ticket.id).eq('status', 'failed').select('id');
+    if (claimed?.length) {
+      this.logger.log(`Ticket ${ticket.id}: no on-chain mint found — retry queued (attempt ${nextRetryCount}/${MAX_AUTO_RETRIES})`);
     }
   }
 
@@ -4043,7 +4145,7 @@ export class LotteryService {
     const db = this.supabase.getClient();
     const { data: ticket } = await db
       .from('lottery_tickets')
-      .select('id, status, bridge_status')
+      .select('*')
       .eq('id', ticketId)
       .eq('user_id', userId)
       .single();
@@ -4054,10 +4156,16 @@ export class LotteryService {
       throw new BadRequestException('Cancelled or rescued tickets cannot be retried');
     }
 
-    await db.from('lottery_tickets').update({
-      status: 'buying',
-      updated_at: new Date().toISOString(),
-    }).eq('id', ticketId).eq('user_id', userId);
+    if (ticket.status === 'failed') {
+      // Never blindly re-buy — check on-chain first in case the purchase actually landed despite
+      // the 'failed' status (see reconcileOrRetryFailedTicket).
+      await this.reconcileOrRetryFailedTicket(ticket);
+    } else {
+      await db.from('lottery_tickets').update({
+        status: 'buying',
+        updated_at: new Date().toISOString(),
+      }).eq('id', ticketId).eq('user_id', userId);
+    }
 
     this.logger.log(`Ticket ${ticketId}: retry queued by user ${userId}`);
     return { ok: true };

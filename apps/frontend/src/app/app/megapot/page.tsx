@@ -1324,17 +1324,21 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
       suppressedTicketIdRef.current = null;
       // The buyer's payment is confirmed on-chain right here — bridging + the actual Megapot
       // purchase happen in the background from this point, same as if they closed the tab (the
-      // backend already tolerates that). No reason to keep them staring at "Hang tight" for it.
-      // The numbers themselves were already picked client-side before we ever charged them (see
-      // setLastTickets above), so there's nothing left to wait on before showing "Good luck" —
-      // straight to the real success screen instead of an intermediate "confirmed" placeholder.
-      setStep("done");
+      // backend already tolerates that). Backend work (buy-confirm above, pollStatus, onPurchased)
+      // starts immediately so it's not artificially delayed — only the UI transition off "Hang
+      // tight" is held a few seconds so it doesn't feel like an instant jump straight from signing
+      // to "Good luck" the moment the wallet popup closes.
       pollingStartedRef.current = true;
       pollStatus(currentTicketId, numTickets);
       // Dashboard data is otherwise only refetched once the ticket reaches active/won (inside
       // pollStatus below) — without this, a buyer who checks History right after paying sees
       // whatever was on the page before this purchase, with no sign their ticket even exists yet.
       onPurchased();
+      await new Promise((resolve) => setTimeout(resolve, 10_000));
+      // The numbers themselves were already picked client-side before we ever charged them (see
+      // setLastTickets above), so there's nothing left to wait on before showing "Good luck" —
+      // straight to the real success screen instead of an intermediate "confirmed" placeholder.
+      setStep("done");
     } catch (err: any) {
       const message = err?.message ?? "Unknown error";
       if (ticketId && paymentBroadcast) {
@@ -2620,7 +2624,16 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
       const data = await res.json();
       if (res.ok) {
         setRetryResult(r => ({ ...r, [ticketId]: "Retry queued — ticket will be processed in the next cron run (~1 min)." }));
-        setTimeout(onRefresh, 5000);
+        // A single refresh at a fixed delay used to land before the cron had actually processed
+        // the retry (it can take up to ~1 min), so the list still showed the stale status and the
+        // buyer had to manually reload once it was actually done. Poll a few times across that
+        // window instead so the UI catches up on its own.
+        let pollCount = 0;
+        const pollInterval = setInterval(() => {
+          pollCount++;
+          onRefresh();
+          if (pollCount >= 12) clearInterval(pollInterval); // ~90s total (12 × ~7.5s)
+        }, 7_500);
       } else {
         setRetryResult(r => ({ ...r, [ticketId]: `Error: ${data.message ?? "Unknown error"}` }));
       }

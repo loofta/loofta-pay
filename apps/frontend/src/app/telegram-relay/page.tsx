@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { usePrivy, useLoginWithTelegram, useLoginWithOAuth } from "@privy-io/react-auth";
+import { usePrivy, useLoginWithOAuth } from "@privy-io/react-auth";
 
 /**
  * Hosted on loofta.com (not pay.loofta.xyz) because Telegram's Login Widget doesn't work on
@@ -16,61 +16,109 @@ import { usePrivy, useLoginWithTelegram, useLoginWithOAuth } from "@privy-io/rea
  *    an account to attach it to. See /api/telegram-relay/verify-claim; the claim page redeems the
  *    resulting claim-scoped verification via /api/telegram-relay/attach-verified once the visitor
  *    has signed in to a real account.
+ *
+ * Uses useLoginWithOAuth({ provider: "telegram" }) — NOT the dedicated useLoginWithTelegram hook.
+ * That hook (and the generic login({loginMethods:["telegram"]}) call) both route through Privy's
+ * legacy bot-token widget flow (initLoginWithTelegram), which requires the app's `telegram_auth`
+ * dashboard flag — stuck disabled for this app despite Telegram OAuth being fully configured.
+ * useLoginWithOAuth's generic OAuth path (confirmed by Privy support, and by 'telegram' actually
+ * being a valid value in @privy-io/api-types' OAuthProviderID) doesn't depend on that flag at all.
  */
 export default function TelegramRelayPage() {
   const { ready, authenticated, user, getAccessToken } = usePrivy();
-  // Dedicated hook for Telegram specifically — usePrivy().login({loginMethods:["telegram"]})
-  // routes into Privy's legacy bot-token widget flow (initLoginWithTelegram) regardless of
-  // whether OAuth-based Telegram is enabled in the dashboard, which is what was throwing
-  // "Telegram Auth configuration is not loaded" even after telegram was added to the app's
-  // loginMethods. useLoginWithTelegram is the OAuth-compatible entry point.
-  const { login: loginWithTelegram } = useLoginWithTelegram();
-  // TEMPORARY diagnostic — not part of the real flow. Tests whether OAuth-family logins work at
-  // all on this relay page/domain (loofta.com, isolated Privy session), to isolate whether the
-  // "Telegram Auth configuration is not loaded" error is specific to Telegram or a symptom of
-  // something wrong with this page/domain more broadly. Remove once Telegram is sorted out.
-  const { initOAuth: loginWithTwitterTest, state: twitterTestState } = useLoginWithOAuth({
-    onError: (e) => console.error("[telegram-relay][DIAGNOSTIC twitter test] failed:", e),
+  const { initOAuth: loginWithTelegram } = useLoginWithOAuth({
+    onError: (e) => console.error("[telegram-relay] useLoginWithOAuth error:", e),
   });
   const [token, setToken] = useState<string | null>(null);
   const [claimId, setClaimId] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "connecting" | "done" | "mismatch" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const submittedRef = useRef(false);
-  const autoLoginAttemptedRef = useRef(false);
+
+  // useLoginWithOAuth's initOAuth does a full top-level redirect (window.assign) to Telegram and
+  // back — unlike a popup-based widget, this REMOUNTS the whole page/React tree when it returns.
+  // A plain useRef can't survive that (it resets to its initial value on every fresh mount), so
+  // relying on one here would let the auto-trigger effect below fire a SECOND time right as Privy
+  // is still processing the OAuth return, re-redirecting instead of settling into "authenticated".
+  // sessionStorage survives the redirect within the same tab, so it's the only thing that can
+  // actually gate "have we already started this flow" across that reload.
+  const AUTO_LOGIN_KEY = "telegram-relay:auto-login-attempted";
+
+  // Once the flow reaches any terminal state, clear the persisted keys — a manual retry (clicking
+  // the button again after an error) or a reused tab should start clean, not stay permanently
+  // gated by a flag left over from the attempt that just finished.
+  useEffect(() => {
+    if (status === "done" || status === "error" || status === "mismatch") {
+      sessionStorage.removeItem(AUTO_LOGIN_KEY);
+      sessionStorage.removeItem("telegram-relay:token");
+      sessionStorage.removeItem("telegram-relay:claimId");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setToken(params.get("token"));
-    setClaimId(params.get("claimId"));
+    // Present only on the very first load (before initOAuth ever runs) — absent on the return
+    // trip from Telegram, whose URL instead carries Privy's OWN oauth callback params (e.g.
+    // privy_oauth_code/privy_oauth_state). That distinction is exactly what decides whether it's
+    // safe to touch the URL below: Privy's SDK reads those return params straight off
+    // window.location to complete the login, so this must never strip them mid-processing.
+    const hasOwnParams = params.has("token") || params.has("claimId");
+
+    // Same reload concern applies to the identifying params themselves — fall back to whatever
+    // was persisted just before the redirect if this load's URL doesn't have them.
+    const t = params.get("token") || sessionStorage.getItem("telegram-relay:token");
+    const c = params.get("claimId") || sessionStorage.getItem("telegram-relay:claimId");
+    if (t) sessionStorage.setItem("telegram-relay:token", t);
+    if (c) sessionStorage.setItem("telegram-relay:claimId", c);
+    setToken(t);
+    setClaimId(c);
+
+    // initOAuth uses the current page URL (including query string) as the implicit OAuth
+    // redirect target, and Privy's dashboard "Allowed OAuth redirect URLs" list requires an
+    // EXACT match with no query params — a URL like /telegram-relay?token=... can never match a
+    // registered /telegram-relay entry, which is what was throwing "Redirect URL is not allowed".
+    // Only strip on THIS (first) load, gated on hasOwnParams — token/claimId are already
+    // persisted above, so nothing downstream needs them in the URL anymore. Stripping
+    // unconditionally (including on the return trip, when hasOwnParams is false) was deleting
+    // Privy's own callback params before its SDK could read them, which silently broke completing
+    // the login — this is what caused "redirected back but shows the login form again."
+    if (hasOwnParams) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
 
   const hasIdentifier = !!token || !!claimId;
 
-  // Skip the extra manual click — trigger the Telegram login widget as soon as this page is
-  // ready, so opening this tab immediately shows Telegram's own prompt instead of an
-  // intermediate "Log in with Telegram" button. The button below still renders as a fallback,
-  // since a login triggered outside a direct click can be blocked by some browsers' popup
-  // blockers; only fires once so a cancelled/dismissed widget doesn't get reopened in a loop.
-  useEffect(() => {
-    if (!ready || authenticated || !hasIdentifier || autoLoginAttemptedRef.current) return;
-    autoLoginAttemptedRef.current = true;
-    loginWithTelegram().catch((e) => {
+  const startTelegramLogin = () =>
+    loginWithTelegram({ provider: "telegram" }).catch((e) => {
       console.error("[telegram-relay] loginWithTelegram failed:", e);
       setStatus("error");
       setErrorMessage(e instanceof Error ? e.message : null);
     });
-  }, [ready, authenticated, hasIdentifier, loginWithTelegram]);
+
+  // Skip the extra manual click — trigger the Telegram login as soon as this page is ready, so
+  // opening this tab immediately shows Telegram's own prompt instead of an intermediate "Log in
+  // with Telegram" button. The button below still renders as a fallback, since a login triggered
+  // outside a direct click can be blocked by some browsers' popup blockers; only fires once per
+  // tab (sessionStorage, not a ref — see note above) so the post-redirect reload doesn't retrigger
+  // a fresh login attempt instead of letting the just-completed one settle.
+  useEffect(() => {
+    if (!ready || authenticated || !hasIdentifier) return;
+    if (sessionStorage.getItem(AUTO_LOGIN_KEY) === "1") return;
+    sessionStorage.setItem(AUTO_LOGIN_KEY, "1");
+    void startTelegramLogin();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, authenticated, hasIdentifier]);
 
   useEffect(() => {
     if (!ready || !authenticated || !user || !hasIdentifier || submittedRef.current) return;
     // Matches both possible type strings the same way this app already handles discord/github
-    // ("discord" vs "discord_oauth", etc.) — an OAuth-linked Telegram account likely comes back
-    // as "telegram_oauth" given Privy's dashboard itself distinguishes telegram_auth (legacy)
-    // from telegram_oauth (this flow), not necessarily the plain "telegram" checked before.
-    // Only used here to gate on "has Telegram actually finished linking to this session yet" —
-    // the handle itself is never sent to the backend; both endpoints re-derive it server-side
-    // from relayAccessToken, since a client-supplied handle string can't be trusted.
+    // ("discord" vs "discord_oauth", etc.) — an OAuth-linked Telegram account may come back as
+    // either "telegram" or "telegram_oauth" depending on SDK version. Only used here to gate on
+    // "has Telegram actually finished linking to this session yet" — the handle itself is never
+    // sent to the backend; both endpoints re-derive it server-side from relayAccessToken, since a
+    // client-supplied handle string can't be trusted.
     const account = (user.linkedAccounts || []).find(
       (a: { type?: string }) => a.type === "telegram" || a.type === "telegram_oauth",
     );
@@ -159,13 +207,7 @@ export default function TelegramRelayPage() {
           ) : !authenticated ? (
             <button
               type="button"
-              onClick={() =>
-                loginWithTelegram().catch((e) => {
-                  console.error("[telegram-relay] loginWithTelegram failed:", e);
-                  setStatus("error");
-                  setErrorMessage(e instanceof Error ? e.message : null);
-                })
-              }
+              onClick={() => void startTelegramLogin()}
               className="px-5 py-2.5 rounded-xl bg-[#26A5E4] text-white font-semibold hover:opacity-90"
             >
               Log in with Telegram
@@ -174,19 +216,6 @@ export default function TelegramRelayPage() {
             <p className="text-sm text-slate-400">Connecting your handle…</p>
           )}
         </>
-      )}
-      {/* TEMPORARY diagnostic button — see comment above on loginWithTwitterTest. */}
-      {hasIdentifier && !authenticated && (
-        <div className="mt-6 pt-6 border-t border-white/10 w-full max-w-xs">
-          <p className="text-xs text-slate-500 mb-2">Diagnostic only — not part of the real flow:</p>
-          <button
-            type="button"
-            onClick={() => loginWithTwitterTest({ provider: "twitter" })}
-            className="px-5 py-2.5 rounded-xl bg-slate-700 text-white text-sm font-semibold hover:opacity-90 w-full"
-          >
-            Test: Log in with Twitter ({twitterTestState.status})
-          </button>
-        </div>
       )}
     </div>
   );

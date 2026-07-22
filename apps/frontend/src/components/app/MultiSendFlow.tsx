@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   useWallets as useSolanaWallets,
@@ -13,11 +13,13 @@ import { getRpcForMode, getRpcFallbackForMode, getPrivySolanaChainForMode } from
 import { getEphemeralRpcForMode } from "@/lib/per/constants";
 import {
   createMultiPayments,
+  buildMultiSend,
   multiConfirm,
   type MultiSendRecipient,
   type MultiSendLinkItem,
   type MultiFeeItem,
   type MultiCreateResult,
+  type MultiSendResult,
 } from "@/services/api/sendPayment";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
@@ -30,11 +32,13 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
-import { PlusIcon, XIcon, CheckCircle2, Check, Copy, ExternalLink, Loader2, ArrowLeft, UploadCloud, FileDown, AlertCircle, User, Mail } from "lucide-react";
+import { PlusIcon, XIcon, CheckCircle2, Check, Copy, ExternalLink, Loader2, ArrowLeft, UploadCloud, FileDown, AlertCircle, User, Mail, ChevronDown } from "lucide-react";
 import { MessageInput } from "@/components/MessageInput";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
 import { TELEGRAM_SEND_ENABLED } from "@/lib/socialPlatforms";
+import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
+import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 import type { MultiSendRecipientType } from "@/store/multiSend";
 
 type ConfirmFeeData = {
@@ -88,8 +92,28 @@ function RecipientTypeIcon({ icon, className }: { icon: "user" | "mail" | Social
 const EXAMPLE_CSV = `recipient,amount,message
 alice@email.com,100,Thanks for the work!
 bob_username,50,Invoice #1234
-carol@email.com,200,Great job this month
-diana,75,`;
+TELEGRAM:@carol_tg,200,Great job this month
+TWITTER:@diana,75,`;
+
+const VALID_PREFIX_TYPES = new Set(RECIPIENT_TYPE_OPTIONS.map((o) => o.id as string));
+
+/**
+ * Lets a pasted/CSV recipient explicitly declare its platform (e.g. "TELEGRAM:@handle",
+ * "EMAIL:email@email.com") instead of relying on inferType's email-vs-username guess — the only
+ * way to reach twitter/discord/github/telegram from bulk paste, since inferType can't distinguish
+ * those from a plain username.
+ */
+function parseRecipientWithPrefix(raw: string): { type: MultiSendRecipientType | null; value: string } {
+  const trimmed = raw.trim();
+  const m = trimmed.match(/^([a-z]+)\s*:\s*(.+)$/i);
+  if (m) {
+    const candidate = m[1].toLowerCase();
+    if (VALID_PREFIX_TYPES.has(candidate)) {
+      return { type: candidate as MultiSendRecipientType, value: m[2].trim() };
+    }
+  }
+  return { type: null, value: trimmed };
+}
 
 function parseCSVLine(line: string, delimiter: string): string[] {
   const result: string[] = [];
@@ -117,7 +141,8 @@ function parseCSV(text: string): { rows: MultiSendRow[]; errors: string[] } {
 
   for (let i = 0; i < dataLines.length; i++) {
     const parts = parseCSVLine(dataLines[i], delimiter);
-    const recipient = parts[0]?.trim().replace(/^@/, "") ?? "";
+    const { type: recipientType, value: recipientRaw } = parseRecipientWithPrefix(parts[0] ?? "");
+    const recipient = recipientRaw.replace(/^@/, "");
     const amountStr = parts[1]?.trim() ?? "";
     const message = parts[2]?.trim() ?? "";
 
@@ -129,6 +154,7 @@ function parseCSV(text: string): { rows: MultiSendRow[]; errors: string[] } {
       recipient,
       amount: String(amount),
       message,
+      ...(recipientType ? { recipientType } : {}),
     });
   }
   return { rows: newRows, errors };
@@ -155,8 +181,27 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
   const [showPaste, setShowPaste] = useState(false);
+  const [pasteText, setPasteText] = useState("");
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+  // Default OFF (normal/public) — matches the single-send claim page's incognito toggle default.
+  // Private costs a MagicBlock fee per recipient; normal is a free plain on-chain transfer.
+  const [sendPrivately, setSendPrivately] = useState(false);
+  // Same "entering incognito mode" confetti moment as the single-send claim page — non-null key
+  // mounts one <PrivacyConfettiBurst>; it clears itself via onDone.
+  const [privacyBurstKey, setPrivacyBurstKey] = useState<number | null>(null);
+  const handleToggleSendPrivately = (checked: boolean) => {
+    setSendPrivately(checked);
+    if (checked) setPrivacyBurstKey(Date.now());
+  };
+  const [showAllRecipients, setShowAllRecipients] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Live-validates as the user types/edits, instead of only on the initial paste — lets them see
+  // and fix a malformed line before anything is actually imported into the row list below.
+  const { rows: pasteParsedRows, errors: pasteParsedErrors } = useMemo(
+    () => (pasteText.trim() ? parseCSV(pasteText) : { rows: [] as MultiSendRow[], errors: [] as string[] }),
+    [pasteText],
+  );
 
   const { user, getAccessToken, login, authenticated } = usePrivy();
   const networkMode = useAuthStore((s) => s.networkMode);
@@ -198,6 +243,19 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     URL.revokeObjectURL(url);
   }
 
+  /** Export the just-created links so the sender can hand them out from a spreadsheet — one
+   *  recipient (handle + link) per line, same CSV-download pattern as downloadExample above. */
+  function exportLinks(links: MultiSendLinkItem[]) {
+    const csv = ["recipient,link", ...links.map((l) => `${l.recipient_identifier},${l.link}`)].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "loofta-multisend-links.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   function handleCSVFile(file: File) {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -214,6 +272,20 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       }
     };
     reader.readAsText(file);
+  }
+
+  function importPastedRows() {
+    if (pasteParsedRows.length === 0) return;
+    const capped = pasteParsedRows.slice(0, 10);
+    const padded = capped.length < 2 ? [...capped, ...defaultRows().slice(capped.length)] : capped;
+    setRows(padded);
+    // Fully clean import (no skipped/malformed lines, nothing truncated) — collapse the panel
+    // like before. Otherwise leave the text and its live error list in place so the user can fix
+    // the remaining lines and click "Add" again, instead of the box silently vanishing or emptying.
+    if (pasteParsedErrors.length === 0 && pasteParsedRows.length <= 10) {
+      setShowPaste(false);
+      setPasteText("");
+    }
   }
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -295,6 +367,67 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       console.info(`[MultiSend] createPayments failed: ${msg}`);
       setPhase({ kind: "error", message: msg });
       toast({ variant: "destructive", title: "Failed to create payments", description: msg });
+    }
+  }
+
+  /**
+   * Normal (non-private) path — one combined plain SPL transaction for every recipient, no
+   * MagicBlock fee. Unlike createPayments+executePayment (which create rows first, then build
+   * per-recipient), buildMultiSend creates the payment rows AND returns the single unsigned tx in
+   * one call — there's no separate "rebuild for existing rows" endpoint, so a failed broadcast
+   * here has no retry (see the error phase below); the user goes Back and hits "Pay now" again.
+   */
+  async function executePublicPayment(senderWallet: string) {
+    console.info(`[MultiSend] executePublicPayment senderWallet=${senderWallet.slice(0, 8)}… recipients=${recipients.length}`);
+    setPhase({ kind: "creating" });
+    try {
+      const accessToken = await getAccessToken();
+      if (!user?.id) throw new Error("Not authenticated");
+
+      const result: MultiSendResult = await buildMultiSend(
+        { recipients, sender_wallet: senderWallet, cluster: apiCluster },
+        user.id,
+        accessToken,
+      );
+      console.info(`[MultiSend] public tx built payment_ids=${result.payment_ids.join(",")}`);
+
+      const cluster = networkMode === "mainnet" ? "mainnet" : "devnet";
+      const chain = getPrivySolanaChainForMode(networkMode);
+      const wallet = solanaWallets.find((w) => w.address === senderWallet) ?? solanaWallets[0];
+      if (!wallet) throw new Error("Loofta wallet not found. Try logging out and back in.");
+
+      setPhase({ kind: "awaiting_signature" });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const signedOutput = await (privySolanaSignTransaction as any)({
+        transaction: Buffer.from(result.transactionBase64, "base64") as Uint8Array,
+        wallet,
+        chain,
+        options: { uiOptions: { showWalletUIs: false } },
+      });
+      const signedBytes: Uint8Array = signedOutput.signedTransaction;
+
+      setPhase({ kind: "broadcasting", index: 1, total: 1 });
+      const sig = await broadcastAndWaitForHash(signedBytes, "combined", "base", cluster);
+      // Pass the real backend-computed value, not a hardcoded 0 — the backend charges a small
+      // ATA-rent recovery fee whenever this send created new recipient token accounts (see
+      // ata-rent-recovery.ts), so it's not always exactly free even on this "no platform fee" path.
+      multiConfirm(result.payment_ids, user.id, accessToken, sig, result.networkFeeUsdc ?? 0).catch(() => { });
+
+      console.info(`[MultiSend] public send done payment_ids=${result.payment_ids.join(",")}`);
+      setCompletedLinks(result.links as MultiSendLink[]);
+      setReviewPending(false);
+      setRows(defaultRows());
+      setPhase({
+        kind: "done",
+        recipientCount: result.recipientCount,
+        totalUsdc: result.totalAmountUsdc,
+        links: result.links,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      console.info(`[MultiSend] executePublicPayment failed: ${msg}`);
+      setPhase({ kind: "error", message: msg });
+      toast({ variant: "destructive", title: "Multi-send failed", description: msg });
     }
   }
 
@@ -443,7 +576,11 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       toast({ variant: "destructive", title: "No Loofta wallet", description: "Your embedded wallet was not found. Try logging out and back in." });
       return;
     }
-    await createPayments(wallet.address);
+    if (sendPrivately) {
+      await createPayments(wallet.address);
+    } else {
+      await executePublicPayment(wallet.address);
+    }
   }
 
   // ── Done screen ────────────────────────────────────────────────────────────
@@ -530,6 +667,15 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           })}
         </div>
 
+        <button
+          type="button"
+          onClick={() => exportLinks(phase.links)}
+          className="w-full h-11 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all flex items-center justify-center gap-1.5"
+        >
+          <FileDown className="w-4 h-4" />
+          Export handles &amp; links
+        </button>
+
         <Button
           onClick={() => {
             clear();
@@ -563,6 +709,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
     return (
       <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+        {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -578,88 +725,111 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           <p className="text-white text-xl font-semibold">Review Payment</p>
         </div>
 
-        <div className="space-y-1">
-          {/* Header */}
-          <div className="flex justify-between text-slate-400 text-base px-1 pb-1">
-            <span>Recipient</span>
-            <span className="flex gap-5 shrink-0">
-              <span>Amount</span>
-              <span>~Fee</span>
-            </span>
-          </div>
-          {validRows.map((row, idx) => {
-            const amt = parseFloat(row.amount);
-            const net = Math.round(amt * 1_000_000);
-            const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
-            const fee = Math.ceil(((mbGross - net) / 1_000_000 + 0.20) * 100) / 100;
-            return (
-              <div key={row.id} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2.5 gap-2">
-                <div className="min-w-0">
-                  <p className="text-slate-400 text-base">Recipient {idx + 1}</p>
-                  <p className="text-white text-base font-medium truncate">
-                    {row.recipient.trim().replace(/^@/, "")}
-                  </p>
-                  {row.message.trim() && (
-                    <p className="text-slate-400 text-base truncate">{row.message.trim()}</p>
-                  )}
-                </div>
-                <span className="flex gap-5 text-right shrink-0">
-                  <span className="text-white text-base">${amt.toFixed(2)}</span>
-                  <span className="text-slate-400 text-base">+${fee.toFixed(2)}</span>
-                </span>
-              </div>
-            );
-          })}
-          {/* Total row */}
-          {(() => {
-            const totalFee = validRows.reduce((s, r) => {
-              const amt = parseFloat(r.amount);
-              const net = Math.round(amt * 1_000_000);
-              const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
-              return s + Math.ceil(((mbGross - net) / 1_000_000 + 0.20) * 100) / 100;
-            }, 0);
-            return (
-              <div className="flex justify-between items-center border-t border-white/10 px-3 pt-3 mt-1">
-                <span className="text-white font-semibold text-lg">{validRows.length} recipient{validRows.length !== 1 ? "s" : ""}</span>
-                <span className="flex gap-5 text-right shrink-0">
-                  <span className="text-white font-semibold text-lg">${reviewTotal.toFixed(2)}</span>
-                  <span className="text-slate-400 text-base">+${totalFee.toFixed(2)} fees</span>
-                </span>
-              </div>
-            );
-          })()}
-        </div>
-
-        <p className="text-slate-400 text-base">
-          Fees are estimated. Exact breakdown confirmed before payment.
-        </p>
-
         {(() => {
-          const totalFees = validRows.reduce((s, r) => {
+          const VISIBLE_LIMIT = 4;
+          const visibleRows = showAllRecipients ? validRows : validRows.slice(0, VISIBLE_LIMIT);
+          const hiddenCount = validRows.length - visibleRows.length;
+          const totalFee = validRows.reduce((s, r) => {
             const amt = parseFloat(r.amount);
             const net = Math.round(amt * 1_000_000);
             const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
             return s + Math.ceil(((mbGross - net) / 1_000_000 + 0.20) * 100) / 100;
           }, 0);
-          const reviewTotalWithFees = reviewTotal + totalFees;
+          const reviewTotalWithFees = sendPrivately ? reviewTotal + totalFee : reviewTotal;
           const hasEnough = solanaPayment.hasEnoughBalance(reviewTotalWithFees);
           const isBalanceBusy = solanaPayment.isBalanceLoading;
-          if (!isBalanceBusy && !hasEnough) {
-            return (
-              <InsufficientBalanceCard
-                balanceUSD={solanaPayment.balanceUSD}
-                neededUSD={reviewTotalWithFees}
-              />
-            );
-          }
+
           return (
-            <Button
-              onClick={handlePayNow}
-              disabled={isBalanceBusy}
-              className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-            >
-              {isBalanceBusy ? "Loading balance…" : "Pay now"}
-            </Button>
+            <>
+              <div className="space-y-1">
+                {/* Header */}
+                <div className="flex justify-between text-slate-400 text-base px-1 pb-1">
+                  <span>Recipient</span>
+                  <span className="flex gap-5 shrink-0">
+                    <span>Amount</span>
+                    {sendPrivately && <span>~Fee</span>}
+                  </span>
+                </div>
+                {visibleRows.map((row, idx) => {
+                  const amt = parseFloat(row.amount);
+                  const net = Math.round(amt * 1_000_000);
+                  const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
+                  const fee = Math.ceil(((mbGross - net) / 1_000_000 + 0.20) * 100) / 100;
+                  return (
+                    <div
+                      key={row.id}
+                      className={`flex items-center justify-between rounded-lg border px-3 py-2.5 gap-2 ${
+                        idx % 2 === 0 ? "bg-white/[0.03] border-white/5" : "bg-white/[0.08] border-white/10"
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-slate-400 text-base">Recipient {idx + 1}</p>
+                        <p className="text-white text-base font-medium truncate">
+                          {row.recipient.trim().replace(/^@/, "")}
+                        </p>
+                        {row.message.trim() && (
+                          <p className="text-slate-400 text-base truncate">{row.message.trim()}</p>
+                        )}
+                      </div>
+                      <span className="flex gap-5 text-right shrink-0">
+                        <span className="text-white text-base">${amt.toFixed(2)}</span>
+                        {sendPrivately && <span className="text-slate-400 text-base">+${fee.toFixed(2)}</span>}
+                      </span>
+                    </div>
+                  );
+                })}
+                {hiddenCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllRecipients(true)}
+                    className="w-full flex items-center justify-center gap-1.5 rounded-lg py-2 text-base font-medium text-slate-400 hover:text-white hover:bg-white/[0.06] transition-all"
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                    {hiddenCount} more recipient{hiddenCount !== 1 ? "s" : ""}
+                  </button>
+                )}
+                {showAllRecipients && validRows.length > VISIBLE_LIMIT && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllRecipients(false)}
+                    className="w-full flex items-center justify-center gap-1.5 rounded-lg py-2 text-base font-medium text-slate-400 hover:text-white hover:bg-white/[0.06] transition-all"
+                  >
+                    Show less
+                  </button>
+                )}
+                {/* Total row */}
+                <div className="flex justify-between items-center border-t border-white/10 px-3 pt-3 mt-1">
+                  <span className="text-white font-semibold text-lg">{validRows.length} recipient{validRows.length !== 1 ? "s" : ""}</span>
+                  <span className="flex gap-5 text-right shrink-0">
+                    <span className="text-white font-semibold text-lg">${reviewTotal.toFixed(2)}</span>
+                    <span className="text-slate-400 text-base">{sendPrivately ? `+$${totalFee.toFixed(2)} fees` : "no fees"}</span>
+                  </span>
+                </div>
+              </div>
+
+              <IncognitoModeToggle checked={sendPrivately} onCheckedChange={handleToggleSendPrivately} />
+
+              <p className="text-slate-400 text-base">
+                {sendPrivately
+                  ? "Private hides these payments from public on-chain view. Fees are estimated, exact breakdown confirmed before payment."
+                  : "Normal payments are a plain on-chain transfer, free of charge."}
+              </p>
+
+              {!isBalanceBusy && !hasEnough ? (
+                <InsufficientBalanceCard
+                  balanceUSD={solanaPayment.balanceUSD}
+                  neededUSD={reviewTotalWithFees}
+                />
+              ) : (
+                <Button
+                  onClick={handlePayNow}
+                  disabled={isBalanceBusy}
+                  className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                >
+                  {isBalanceBusy ? "Loading balance…" : "Pay now"}
+                </Button>
+              )}
+            </>
           );
         })()}
 
@@ -687,7 +857,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                     {phase.kind === "creating" && "Preparing payments"}
                     {phase.kind === "building" && `Preparing payment ${phase.index} of ${phase.total}`}
                     {phase.kind === "awaiting_signature" && "Approve in your wallet"}
-                    {phase.kind === "broadcasting" && `Sending payment ${phase.index} of ${phase.total}`}
+                    {phase.kind === "broadcasting" && (sendPrivately ? `Sending payment ${phase.index} of ${phase.total}` : "Sending payment")}
                   </DialogTitle>
                   <p className="pt-2 text-base text-center text-muted-foreground max-w-sm">
                     {phase.kind === "creating" &&
@@ -695,19 +865,33 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                     {phase.kind === "building" &&
                       "Building this recipient's private transfer. Please keep this window open."}
                     {phase.kind === "awaiting_signature" && (
-                      <>
-                        Your wallet may show{" "}
-                        <span className="font-medium text-orange-600">
-                          {filledRows.length} transaction{filledRows.length === 1 ? "" : "s"}
-                        </span>{" "}
-                        in one approval. Do not close this tab until you finish signing.
-                      </>
+                      sendPrivately ? (
+                        <>
+                          Your wallet may show{" "}
+                          <span className="font-medium text-orange-600">
+                            {filledRows.length} transaction{filledRows.length === 1 ? "" : "s"}
+                          </span>{" "}
+                          in one approval. Do not close this tab until you finish signing.
+                        </>
+                      ) : (
+                        <>
+                          One transaction sending to{" "}
+                          <span className="font-medium text-orange-600">
+                            {filledRows.length} recipient{filledRows.length === 1 ? "" : "s"}
+                          </span>
+                          . Do not close this tab until you finish signing.
+                        </>
+                      )
                     )}
                     {phase.kind === "broadcasting" && (
-                      <>
-                        Recipient <span className="font-medium text-orange-600">{phase.index} of {phase.total}</span>.
-                        Sent one at a time for privacy — each confirmation can take up to a couple of minutes.
-                      </>
+                      sendPrivately ? (
+                        <>
+                          Recipient <span className="font-medium text-orange-600">{phase.index} of {phase.total}</span>.
+                          Sent one at a time for privacy, each confirmation can take up to a couple of minutes.
+                        </>
+                      ) : (
+                        "Broadcasting your combined payment. This can take a moment."
+                      )
                     )}
                   </p>
                 </DialogHeader>
@@ -810,6 +994,9 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           <p className="text-white text-base font-semibold">Import from CSV</p>
           <p className="text-slate-400 text-base mt-0.5">Drag & drop or click to browse</p>
           <p className="text-slate-400 text-base font-mono mt-2">recipient, amount, message</p>
+          <p className="text-slate-500 text-base mt-1">
+            Prefix a recipient to set its platform, e.g. TELEGRAM:@handle or EMAIL:name@email.com
+          </p>
         </div>
 
         <div className="flex items-center justify-center gap-4">
@@ -839,26 +1026,56 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         {showPaste && (
           <div className="rounded-xl border border-white/15 bg-white/5 p-3 space-y-2">
             <p className="text-slate-400 text-base">Paste CSV or spreadsheet rows — comma or tab separated</p>
+            <p className="text-slate-500 text-base -mt-1">
+              Prefix a recipient to set its platform, e.g. TELEGRAM:@handle or EMAIL:name@email.com
+            </p>
             <textarea
               autoFocus
               rows={5}
-              placeholder={"alice@email.com, 100, Thanks!\nbob_username, 50\ncarol@email.com, 200, Invoice #42"}
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              placeholder={"alice@email.com, 100, Thanks!\nbob_username, 50\nTELEGRAM:@carol_tg, 200, Invoice #42"}
               className="w-full rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-slate-500 text-base font-mono p-2.5 resize-none focus:outline-none focus:border-white/30"
-              onPaste={(e) => {
-                const text = e.clipboardData.getData("text");
-                if (!text.trim()) return;
-                e.preventDefault();
-                const { rows: newRows, errors } = parseCSV(text);
-                setCsvErrors(errors);
-                if (newRows.length > 0) {
-                  const capped = newRows.slice(0, 10);
-                  const padded = capped.length < 2 ? [...capped, ...defaultRows().slice(capped.length)] : capped;
-                  setRows(padded);
-                  if (newRows.length > 10) setCsvErrors((prev) => [`Only the first 10 recipients were imported (max 10)`, ...prev]);
-                  if (errors.length === 0) setShowPaste(false);
-                }
-              }}
             />
+            {pasteText.trim().length > 0 && (
+              <>
+                <div className="flex items-center justify-between gap-2">
+                  <p className={`text-base ${pasteParsedErrors.length > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                    {pasteParsedRows.length > 0
+                      ? `${pasteParsedRows.length} recipient${pasteParsedRows.length === 1 ? "" : "s"} ready${
+                          pasteParsedErrors.length > 0
+                            ? `, ${pasteParsedErrors.length} row${pasteParsedErrors.length === 1 ? "" : "s"} need${pasteParsedErrors.length === 1 ? "s" : ""} fixing`
+                            : ""
+                        }`
+                      : "No valid recipients yet"}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={importPastedRows}
+                    disabled={pasteParsedRows.length === 0}
+                    className="shrink-0 h-9 px-3 rounded-lg text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40 disabled:pointer-events-none"
+                  >
+                    Add {pasteParsedRows.length || ""} recipient{pasteParsedRows.length === 1 ? "" : "s"}
+                  </button>
+                </div>
+                {pasteParsedRows.length > 10 && (
+                  <p className="text-slate-500 text-base flex items-start gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    Only the first 10 recipients will be imported (max 10) — the rest are ignored.
+                  </p>
+                )}
+                {pasteParsedErrors.length > 0 && (
+                  <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 space-y-1">
+                    {pasteParsedErrors.map((err, i) => (
+                      <p key={i} className="text-red-400 text-base flex items-start gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        {err}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 

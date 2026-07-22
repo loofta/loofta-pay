@@ -27,6 +27,7 @@ import { LotteryModule } from './modules/lottery/lottery.module';
 import { MagicblockQuestModule } from './modules/magicblock-quest/magicblock-quest.module';
 import { IntegratorsModule } from './modules/integrators/integrators.module';
 import { X402PaymentsModule } from './modules/x402-payments/x402-payments.module';
+import { PrivateBalanceModule } from './modules/private-balance/private-balance.module';
 
 @Module({
   imports: [
@@ -86,6 +87,7 @@ import { X402PaymentsModule } from './modules/x402-payments/x402-payments.module
     MagicblockQuestModule,
     IntegratorsModule,
     X402PaymentsModule,
+    PrivateBalanceModule,
   ],
   providers: [
     {

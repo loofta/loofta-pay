@@ -7,7 +7,6 @@ import { useAuthStore } from "@/store/auth";
 import { getRpcForMode, getRpcFallbackForMode } from "@/lib/solanaRpc";
 import { formatMagicblockPrivateDelayLogMs } from "@/services/magicblockPaymentsApi";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
-import { buildSendPaymentPrivateTransfer } from "@/services/api/sendPayment";
 import { getEphemeralRpcForMode } from "@/lib/per/constants";
 import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
@@ -24,9 +23,7 @@ export type PerPrivateTransferOptions = {
   /** Privy access token — preferred over privyUserId for backend auth. */
   accessToken?: string | null;
   /** Pay a Loofta claim (`/c/[id]`). Recipient is never sent from the browser. */
-  claimId?: string;
-  /** Pay a send-payment link (`/send`). Recipient is never sent from the browser. */
-  sendPaymentId?: string;
+  claimId: string;
   onProgress?: (p: PerTransferProgress) => void;
   /** Informational (e.g. logging). */
   isBurnerRecipient?: boolean;
@@ -62,15 +59,12 @@ export function usePerPrivateTransfer() {
 
   const transfer = useCallback(
     async (wallet: Wallet, options: PerPrivateTransferOptions): Promise<string> => {
-      const { privyUserId, accessToken, claimId, sendPaymentId, onProgress, isBurnerRecipient, onSignature, onTxBuilt, privySignAndSend, gasless = true } = options;
+      const { privyUserId, accessToken, claimId, onProgress, isBurnerRecipient, onSignature, onTxBuilt, privySignAndSend, gasless = true } = options;
       if (!privyUserId?.trim()) {
         throw new Error("Log in to send a private transfer.");
       }
-      if (!claimId && !sendPaymentId) {
-        throw new Error("claimId or sendPaymentId is required for private transfer.");
-      }
-      if (claimId && sendPaymentId) {
-        throw new Error("Pass only one of claimId or sendPaymentId.");
+      if (!claimId) {
+        throw new Error("claimId is required for private transfer.");
       }
 
       onProgress?.({ phase: "preparing" });
@@ -80,16 +74,14 @@ export function usePerPrivateTransfer() {
       const sender = wallet.publicKey.toBase58();
 
       console.info(
-        `[PrivatePay] ▶ start | cluster=${apiCluster} claim=${claimId ?? "—"} send=${sendPaymentId ?? "—"} isBurner=${isBurnerRecipient ?? false} delayMs=${formatMagicblockPrivateDelayLogMs(apiCluster)}`,
+        `[PrivatePay] ▶ start | cluster=${apiCluster} claim=${claimId} isBurner=${isBurnerRecipient ?? false} delayMs=${formatMagicblockPrivateDelayLogMs(apiCluster)}`,
       );
 
       // ─────────────────────────────────────────────────────────────────────────
       // MAIN: build and sign the MagicBlock private transfer
       // ─────────────────────────────────────────────────────────────────────────
-      console.info(`[PrivatePay] building MB private transfer tx | cluster=${apiCluster} claim=${claimId ?? "—"} send=${sendPaymentId ?? "—"}`);
-      const txData = claimId
-        ? await buildClaimPrivateTransfer(claimId, privyUserId, sender, accessToken, apiCluster, gasless)
-        : await buildSendPaymentPrivateTransfer(sendPaymentId!, privyUserId, sender, accessToken, apiCluster);
+      console.info(`[PrivatePay] building MB private transfer tx | cluster=${apiCluster} claim=${claimId}`);
+      const txData = await buildClaimPrivateTransfer(claimId, privyUserId, sender, accessToken, apiCluster, gasless);
 
       if (txData.feeAmountUsdc != null) {
         onTxBuilt?.({ feeAmountUsdc: txData.feeAmountUsdc, feeBreakdown: txData.feeBreakdown });

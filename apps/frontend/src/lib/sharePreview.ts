@@ -1,6 +1,7 @@
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
+const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 /** Must match ClaimsService.PENDING_SOCIAL_PREFIX (backend claims.service.ts). Format: PENDING_SOCIAL:<platform>:<handle> */
 const PENDING_SOCIAL_PREFIX = "PENDING_SOCIAL:";
 
@@ -9,7 +10,9 @@ export interface SharePreview {
   short_id: string;
   sender_username: string | null;
   recipient_username: string | null;
-  /** Set instead of recipient_username when the payment is addressed to a Discord/GitHub/Telegram handle. */
+  /** Set instead of recipient_username when the payment is addressed to a Twitter/Discord/GitHub/Telegram
+   *  handle, or to the literal string "email" (no handle) when it's addressed to an email — never the
+   *  actual address, so the card can still show which platform without exposing it. */
   recipient_social_platform: string | null;
   recipient_social_handle: string | null;
   amount_usd: number;
@@ -77,6 +80,9 @@ export async function getSharePreview(shortIdOrUuid: string): Promise<SharePrevi
     const sep = rest.indexOf(":");
     recipient_social_platform = sep >= 0 ? rest.slice(0, sep).trim() : null;
     recipient_social_handle = (sep >= 0 ? rest.slice(sep + 1) : rest).trim();
+  } else if (!recipient_username && recipientAddress.startsWith(PENDING_EMAIL_PREFIX)) {
+    // No handle exposed here — this is only a platform marker so the card can show a mail icon.
+    recipient_social_platform = "email";
   }
 
   return {

@@ -12,6 +12,8 @@ export async function createClaimFromUsername(input: {
   isPrivate?: boolean;
   description?: string;
   cluster?: 'devnet' | 'mainnet';
+  /** Set when `username` is actually a Twitter handle picked from the social picker — see DTO for why. */
+  treatUnregisteredAsTwitter?: boolean;
 }): Promise<{ id: string; short_id?: string | null }> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
   const authHeader: Record<string, string> = input.accessToken
@@ -31,6 +33,7 @@ export async function createClaimFromUsername(input: {
       isPrivate: input.isPrivate ?? false,
       description: input.description ?? undefined,
       cluster: input.cluster,
+      treatUnregisteredAsTwitter: input.treatUnregisteredAsTwitter ?? false,
     }),
   });
   if (!r.ok) {

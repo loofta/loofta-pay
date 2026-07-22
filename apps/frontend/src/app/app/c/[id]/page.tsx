@@ -78,6 +78,7 @@ import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
 import { TELEGRAM_SEND_ENABLED } from "@/lib/socialPlatforms";
 import { PrivacyGlyph } from "@/components/PrivacyGlyph";
+import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 
@@ -102,54 +103,6 @@ function formatPerTransferStepName(step: string): string {
 /** Claim-to-external-wallet is built but disabled for now — flip to re-enable. */
 const SHOW_EXTERNAL_CLAIM = false;
 
-/** Confetti-style burst of our own mask SVG rising from the bottom of the screen — used instead
- *  of canvas-confetti's shapeFromText, which silently draws nothing (no error) if the browser's
- *  canvas context can't rasterize the emoji glyph, which turned out to be unreliable. Pure DOM/SVG
- *  via Framer Motion instead, so it always renders. Random per-glyph trajectory is computed once
- *  at mount (useMemo with no deps) so it doesn't reshuffle mid-animation on re-render. */
-function PrivacyConfettiBurst({ onDone }: { onDone: () => void }) {
-  const glyphs = useMemo(
-    () =>
-      Array.from({ length: 16 }, () => ({
-        left: 8 + Math.random() * 84,
-        size: 16 + Math.random() * 20,
-        delay: Math.random() * 0.25,
-        duration: 1.3 + Math.random() * 0.7,
-        drift: (Math.random() - 0.5) * 16,
-        rotate: (Math.random() - 0.5) * 50,
-      })),
-    [],
-  );
-
-  useEffect(() => {
-    const t = setTimeout(onDone, 2400);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <div className="fixed inset-0 z-[200] pointer-events-none overflow-hidden">
-      {glyphs.map((g, i) => (
-        <motion.div
-          key={i}
-          initial={{ opacity: 0, top: "100vh", left: `${g.left}vw`, rotate: 0, scale: 0.6 }}
-          animate={{
-            opacity: [0, 1, 1, 0],
-            top: ["100vh", "-8vh"],
-            left: [`${g.left}vw`, `${g.left + g.drift}vw`],
-            rotate: [0, g.rotate],
-            scale: [0.6, 1],
-          }}
-          transition={{ duration: g.duration, delay: g.delay, ease: "easeOut" }}
-          className="absolute text-slate-300"
-        >
-          <PrivacyGlyph size={g.size} opacity={0.9} />
-        </motion.div>
-      ))}
-    </div>
-  );
-}
-
 /** Small icon-only mark on the top edge of the pay card — the incognito-mode "window chrome
  *  changes" moment (à la Brave/Chrome private windows). Caller wraps this in <AnimatePresence>
  *  and conditionally renders it (rather than this component owning its own AnimatePresence) so
@@ -170,7 +123,9 @@ function IncognitoCardBadge() {
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="flex items-center justify-center p-1.5 [filter:drop-shadow(0_2px_5px_rgba(0,0,0,0.6))]">
-              <PrivacyGlyph size={28} opacity={1} className="text-slate-300" />
+              {/* VenetianMask's own glyph sits low in its viewBox (more empty space above than
+                  below) — nudge it up a hair so it reads as optically centered in this badge. */}
+              <PrivacyGlyph size={28} opacity={1} className="text-slate-300 -translate-y-px" />
             </span>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={8} className="!border-white/10 !bg-[#0a0a0c] !text-slate-200">

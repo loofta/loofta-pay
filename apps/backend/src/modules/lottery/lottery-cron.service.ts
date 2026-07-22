@@ -117,6 +117,19 @@ export class LotteryCronService {
     );
   }
 
+  /** Every 2 minutes: auto-retry tickets stuck in 'failed' status — so a buyer who isn't present
+   *  to click "Retry purchase" isn't permanently stuck. Always checks Base chain for an existing
+   *  ticket-NFT mint before doing anything, so it never re-buys a ticket that actually succeeded
+   *  despite the 'failed' status (see LotteryService.reconcileOrRetryFailedTicket). Capped at
+   *  MAX_AUTO_RETRIES attempts per ticket. */
+  @Cron('*/2 * * * *')
+  async autoRetryFailedTickets(): Promise<void> {
+    if (!this.isProd) return;
+    await this.lottery.autoRetryFailedTickets().catch(e =>
+      this.logger.error(`autoRetryFailedTickets: ${e.message}`),
+    );
+  }
+
   /** Every 30 minutes: alert the operator by email if the fee wallet (funds bridge top-ups + gas)
    *  is running low. De-duped in the service so this cadence never spams. */
   @Cron('0 */30 * * * *')

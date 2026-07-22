@@ -53,14 +53,15 @@ export async function getVerifiedSolanaWallets(privyUserId: string): Promise<str
  */
 export async function getVerifiedLiveHandle(
   privyUserId: string,
-  platform: "twitter" | "discord" | "github",
+  platform: "twitter" | "discord" | "github" | "instagram",
 ): Promise<string | null> {
   const user = await getPrivyUser(privyUserId);
   if (!user) return null;
   const oauthTypes =
     platform === "twitter" ? ["twitter", "x", "twitter_oauth"]
     : platform === "discord" ? ["discord", "discord_oauth"]
-    : ["github", "github_oauth"];
+    : platform === "github" ? ["github", "github_oauth"]
+    : ["instagram", "instagram_oauth"];
   for (const account of (user.linkedAccounts || []) as Array<{ type?: string; username?: string | null; name?: string | null; address?: string | null }>) {
     const type = (account.type || "").toLowerCase();
     if (!oauthTypes.includes(type)) continue;

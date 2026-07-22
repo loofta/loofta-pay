@@ -169,7 +169,7 @@ export class ClaimsService {
    * If user does not exist: create "burner" claim with PENDING_USERNAME so they can claim later when they sign up with that username.
    */
   async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string }> {
-    const { username, amount, userId, isPrivate = false, description, cluster } = dto;
+    const { username, amount, userId, isPrivate = false, description, cluster, treatUnregisteredAsTwitter } = dto;
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
     // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
@@ -229,7 +229,12 @@ export class ClaimsService {
       // User not found: create "burner" claim so they can claim later when they sign up with this username
     }
 
-    recipientAddress = `${ClaimsService.PENDING_USERNAME_PREFIX}${cleanUsername}`;
+    // Tag as pending-social:twitter (not pending-username) when the sender picked this handle
+    // from the Twitter option in the social picker — keeps the recipient's actual chosen
+    // platform intact for "edit recipient" instead of collapsing it into a bare username.
+    recipientAddress = treatUnregisteredAsTwitter
+      ? `${ClaimsService.PENDING_SOCIAL_PREFIX}twitter:${cleanUsername}`
+      : `${ClaimsService.PENDING_USERNAME_PREFIX}${cleanUsername}`;
     const burner = this.createClaimBurner();
     if (!burner) {
       this.logger.warn('Creating pending-username claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Pay-with-Loofta will fail until the key is set.');
@@ -1926,6 +1931,38 @@ export class ClaimsService {
     return { sweepTxHash: sig, sweptAmount: (transferUnits / 1_000_000).toFixed(6), feeAmountUsdc };
   }
 
+  /**
+   * Anti-drain guard for sponsor-paid ATA creation. Whenever our fee payer pays the rent to
+   * create a wallet's USDC ATA, that rent is only ours to lose once — the wallet's owner can
+   * close the account later and reclaim the rent for themselves, then get sponsored again the
+   * next time they receive a payment. Without this guard, that create→close→repeat cycle is
+   * a free, repeatable drain on the fee payer (see project memory: solana sponsor security
+   * hardening, and the recurring drains that predate this).
+   *
+   * Records a first-ever sponsorship in ata_sponsorships via an insert that fails on conflict.
+   * Returns true the first time (safe to sponsor), false every time after (already paid for
+   * once — refuse to pay again). Fails OPEN (returns true) only on a genuine DB error, since a
+   * false negative here blocks a legitimate claim entirely; a missed guard insert is a much
+   * smaller risk than that.
+   */
+  private async guardAtaSponsorship(walletAddress: string, mint: string, context: string): Promise<boolean> {
+    const { error } = await this.supabaseService.ataSponsorships.insert({
+      wallet_address: walletAddress,
+      mint,
+      context,
+    });
+    if (!error) return true;
+    // Postgres unique-violation — this (wallet, mint) was already sponsored once before.
+    if (error.code === '23505') {
+      this.logger.warn(
+        `[AtaSponsorship] BLOCKED repeat sponsorship for wallet=${walletAddress.slice(0, 8)}… mint=${mint.slice(0, 8)}… context=${context} — ATA was already paid for once; refusing to pay rent again.`,
+      );
+      return false;
+    }
+    this.logger.warn(`[AtaSponsorship] guard insert failed (failing open): ${error.message}`);
+    return true;
+  }
+
   private async sweepClaimBurnerToWallet(
     claimId: string,
     claim: Claim & { recipient_address?: string },
@@ -2008,6 +2045,20 @@ export class ClaimsService {
           await getAccount(conn, recipientAta);
         } catch {
           if (feePayerKp) {
+            const allowed = await this.guardAtaSponsorship(
+              recipientPubkey.toBase58(),
+              claimMint.toBase58(),
+              `claim:${claimId}`,
+            );
+            if (!allowed) {
+              // Funds are untouched — still sitting in the burner — so this is safely retryable
+              // by support, not a loss. Refusing here is what closes the create→close→repeat
+              // sponsor-drain instead of paying rent for the same wallet's ATA a second time.
+              throw new Error(
+                'This wallet already received a sponsored token account once before and closed it. ' +
+                  'Further free account creation is blocked to prevent abuse. Please contact support.',
+              );
+            }
             sweepTx.add(
               createAssociatedTokenAccountInstruction(
                 feePayerKp.publicKey,
@@ -2394,6 +2445,19 @@ export class ClaimsService {
             } catch {
               const feePayer = this.solanaSponsor.getFeePayerKeypair();
               if (feePayer) {
+                const allowed = await this.guardAtaSponsorship(
+                  creatorPubkey.toBase58(),
+                  claimMint.toBase58(),
+                  `reclaim:${claimId}`,
+                );
+                if (!allowed) {
+                  // Funds are untouched — still sitting in the burner — so this is safely
+                  // retryable by support, not a loss.
+                  throw new Error(
+                    'This wallet already received a sponsored token account once before and closed it. ' +
+                      'Further free account creation is blocked to prevent abuse. Please contact support.',
+                  );
+                }
                 tx.add(
                   createAssociatedTokenAccountInstruction(
                     feePayer.publicKey,

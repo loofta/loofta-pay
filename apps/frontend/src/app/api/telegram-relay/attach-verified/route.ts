@@ -32,11 +32,28 @@ export async function POST(request: NextRequest) {
   await redisDel(verifiedKey(claimId));
 
   const supabase = getSupabaseAdmin();
+
+  // Same guard as telegram-relay/complete — see its comment. The DB's unique index on
+  // (platform, handle) is the actual source of truth; this is only a friendlier message.
+  const { data: claimedByOther } = await supabase
+    .from("social_accounts")
+    .select("user_id")
+    .eq("platform", "telegram")
+    .eq("handle", handle)
+    .neq("user_id", privyUserId)
+    .maybeSingle();
+  if (claimedByOther) {
+    return NextResponse.json({ error: "This Telegram account is already connected to another Loofta account." }, { status: 409 });
+  }
+
   const { error } = await supabase
     .from("social_accounts")
     .upsert({ user_id: privyUserId, platform: "telegram", handle }, { onConflict: "user_id,platform" });
 
   if (error) {
+    if (error.code === "23505") {
+      return NextResponse.json({ error: "This Telegram account is already connected to another Loofta account." }, { status: 409 });
+    }
     console.error("[telegram-relay/attach-verified] upsert error:", error);
     return NextResponse.json({ error: "Failed to save" }, { status: 500 });
   }
