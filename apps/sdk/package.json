@@ -22,7 +22,10 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "example:rest": "tsx examples/01-rest-api-key.ts",
+    "example:x402": "tsx examples/02-x402-signer.ts",
+    "example:agent": "tsx examples/03-agent-demo.ts"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.14",
@@ -30,7 +33,9 @@
     "bs58": "^6.0.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "tsup": "^8.0.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.8.3"
   },
   "publishConfig": {

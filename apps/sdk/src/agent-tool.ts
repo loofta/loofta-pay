@@ -16,24 +16,24 @@ export function createPayHumanTool(client: LooftaPayClient) {
       type: "object" as const,
       properties: {
         recipient_type: {
-          type: "string",
+          type: "string" as const,
           enum: ["email", "username", "twitter", "discord", "github", "telegram"] as RecipientType[],
           description: "How the recipient is identified",
         },
         recipient: {
-          type: "string",
+          type: "string" as const,
           description: "Email address, username, or social handle (no @ needed)",
         },
         amount_usd: {
-          type: "number",
+          type: "number" as const,
           description: "Amount in USD to send",
         },
         note: {
-          type: "string",
+          type: "string" as const,
           description: "Optional note attached to the payment",
         },
       },
-      required: ["recipient_type", "recipient", "amount_usd"],
+      required: ["recipient_type", "recipient", "amount_usd"] as const,
     },
     handler: async (input: {
       recipient_type: RecipientType;
