@@ -408,9 +408,10 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
       setPhase({ kind: "broadcasting", index: 1, total: 1 });
       const sig = await broadcastAndWaitForHash(signedBytes, "combined", "base", cluster);
-      // Explicit 0, not omitted — confirmMultiSend falls back to a MagicBlock fee ESTIMATE
-      // whenever feeUsdc is undefined, which would wrongly stamp a fee on this fee-free public send.
-      multiConfirm(result.payment_ids, user.id, accessToken, sig, 0).catch(() => { });
+      // Pass the real backend-computed value, not a hardcoded 0 — the backend charges a small
+      // ATA-rent recovery fee whenever this send created new recipient token accounts (see
+      // ata-rent-recovery.ts), so it's not always exactly free even on this "no platform fee" path.
+      multiConfirm(result.payment_ids, user.id, accessToken, sig, result.networkFeeUsdc ?? 0).catch(() => { });
 
       console.info(`[MultiSend] public send done payment_ids=${result.payment_ids.join(",")}`);
       setCompletedLinks(result.links as MultiSendLink[]);

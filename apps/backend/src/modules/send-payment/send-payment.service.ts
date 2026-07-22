@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { MAGICBLOCK_GAS_SOL, MAGICBLOCK_GAS_USDC, estimateMagicblockGrossUp, decodeActualSenderDebit, type MagicblockPrivateTransferClientResponse } from '@/common/magicblock-private-transfer';
+import { quoteAtaRentRecoveryUsdc } from '@/common/ata-rent-recovery';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService, type SocialPlatform } from '../users/users.service';
@@ -773,7 +774,13 @@ export class SendPaymentService {
    *
    * Fee model: our fee-payer key sponsors SOL gas. Sender pays exactly the amounts they enter.
    * Recipients receive the exact amount entered (no BPS deduction). USDC ATAs are created
-   * automatically for new recipients — cost absorbed by the fee payer.
+   * automatically for new recipients — but their rent is NOT free: whoever later closes that
+   * ATA reclaims the rent for themselves, so an unrecovered sponsor-paid creation is a permanent
+   * loss that can be cycled indefinitely (create, close, repeat). We charge a small ATA-rent
+   * recovery fee (see ata-rent-recovery.ts) on top of the sender's entered amounts whenever this
+   * transaction actually needs to create one or more new ATAs — recipients who already have an
+   * ATA still cost nothing extra. This mirrors the fix MagicBlock made for their own hosted
+   * Payments API after hitting the same sponsor-drain issue.
    *
    * For email recipients not yet on Loofta: funds land in a burner wallet and a claim email
    * is sent. For registered users: funds land directly in their wallet.
@@ -789,6 +796,8 @@ export class SendPaymentService {
     payment_ids: string[];
     totalAmountUsdc: number;
     recipientCount: number;
+    /** ATA-rent recovery charged on top of totalAmountUsdc; 0 when every recipient already has a USDC ATA. */
+    networkFeeUsdc: number;
   }> {
     if (!this.feePayerKeypair) {
       throw new BadRequestException(
@@ -936,8 +945,10 @@ export class SendPaymentService {
       });
     }
 
-    // ─── Phase 2: batch-check which recipient ATAs exist ──────────────────────
-    const allAtaKeys = [senderAta, ...infos.map((r) => r.toAta)];
+    // ─── Phase 2: batch-check which recipient ATAs exist (+ our own fee-payer USDC ATA,
+    // needed below if we have to route a rent-recovery fee to it) ──────────────────────
+    const feePayerUsdcAta = await getAssociatedTokenAddress(this.usdcMint, this.feePayerKeypair.publicKey);
+    const allAtaKeys = [senderAta, feePayerUsdcAta, ...infos.map((r) => r.toAta)];
     const accountInfos = await this.connection.getMultipleAccountsInfo(allAtaKeys);
 
     if (accountInfos[0] === null) {
@@ -945,13 +956,34 @@ export class SendPaymentService {
         'Your USDC token account does not exist. Please deposit USDC to your wallet first.',
       );
     }
+    const feePayerAtaExists = accountInfos[1] !== null;
+
+    const newAtaCount = infos.filter((_, i) => accountInfos[i + 2] === null).length;
+    const recovery = await quoteAtaRentRecoveryUsdc(newAtaCount);
+    if (recovery.newAtaCount > 0) {
+      this.logger.log(
+        `[MultiSend] ATA rent recovery: ${recovery.newAtaCount} new ATA(s) → $${recovery.totalUsdc.toFixed(4)} charged to sender (solPrice=${recovery.solPriceUsd ?? 'unavailable'})`,
+      );
+    }
 
     // ─── Phase 3: build combined transaction ──────────────────────────────────
     const instructions = [];
 
+    if (recovery.totalUsdcUnits > 0 && !feePayerAtaExists) {
+      // One-time bootstrap of our own USDC ATA — not a per-request cost, happens at most once ever.
+      instructions.push(
+        createAssociatedTokenAccountInstruction(
+          this.feePayerKeypair.publicKey,
+          feePayerUsdcAta,
+          this.feePayerKeypair.publicKey,
+          this.usdcMint,
+        ),
+      );
+    }
+
     for (let i = 0; i < infos.length; i++) {
       const info = infos[i];
-      const recipientAtaExists = accountInfos[i + 1] !== null;
+      const recipientAtaExists = accountInfos[i + 2] !== null;
 
       if (!recipientAtaExists) {
         instructions.push(
@@ -966,6 +998,12 @@ export class SendPaymentService {
 
       instructions.push(
         createTransferInstruction(senderAta, info.toAta, senderPubkey, info.amountUnits),
+      );
+    }
+
+    if (recovery.totalUsdcUnits > 0) {
+      instructions.push(
+        createTransferInstruction(senderAta, feePayerUsdcAta, senderPubkey, recovery.totalUsdcUnits),
       );
     }
 
@@ -1011,6 +1049,7 @@ export class SendPaymentService {
       payment_ids: infos.map((r) => r.paymentId),
       totalAmountUsdc,
       recipientCount: infos.length,
+      networkFeeUsdc: recovery.totalUsdc,
     };
   }
 

@@ -154,6 +154,8 @@ export interface MultiSendResult {
   payment_ids: string[];
   totalAmountUsdc: number;
   recipientCount: number;
+  /** ATA-rent recovery charged on top of totalAmountUsdc; 0 when every recipient already has a USDC ATA. */
+  networkFeeUsdc: number;
 }
 
 /** One MagicBlock private transfer tx per recipient — sign all in one go. */
