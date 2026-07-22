@@ -194,6 +194,83 @@ export class EmailService {
   }
 
   /**
+   * Sent to a user whose Megapot purchase briefly showed as "failed" due to a backend bug, even
+   * though the purchase actually went through — their ticket is confirmed active now. Recovery
+   * comms for the 2026-07-20/21 custom-number-ticket allowance bug and its follow-on issues.
+   */
+  async sendTicketRecoveredEmail(data: {
+    recipientEmail: string;
+    numTickets: number;
+    roundId: string;
+  }): Promise<void> {
+    if (!this.resend) return;
+    const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `Your Megapot ${ticketWord} ${data.numTickets === 1 ? 'is' : 'are'} confirmed active 🎟️`,
+        html: this.buildTicketRecoveredHtml(data),
+      });
+      this.logger.log(`Ticket recovered email sent to ${data.recipientEmail} (${data.numTickets} tickets, round ${data.roundId})`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send ticket recovered email to ${data.recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
+  private buildTicketRecoveredHtml(data: { numTickets: number; roundId: string }): string {
+    const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
+    const dashboardUrl = 'https://pay.loofta.xyz/app/megapot';
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Your Megapot ticket is confirmed active</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Fixed</span>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px 8px;">
+              <p style="margin:0 0 12px;font-size:28px;line-height:1.15;color:#ffffff;font-weight:700;text-align:center;">Your ${data.numTickets} Megapot ${ticketWord}<br/>${data.numTickets === 1 ? 'is' : 'are'} confirmed active</p>
+              <p style="margin:0 0 24px;font-size:14px;color:#9ca3af;text-align:center;line-height:1.6;">
+                We found a bug that showed some purchases as "failed" even though they'd actually gone through on-chain. Yours was one of them, sorry about that. Your ${ticketWord} for round ${data.roundId} ${data.numTickets === 1 ? 'is' : 'are'} in and eligible for the draw, no action needed on your end.
+              </p>
+              <div style="text-align:center;margin-bottom:8px;">
+                <a href="${dashboardUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  View your ticket${data.numTickets === 1 ? '' : 's'}
+                </a>
+              </div>
+              <p style="margin:20px 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  /**
    * Operational alert (to the team, not a user) — the Solana fee wallet that funds Megapot bridge
    * top-ups + gas is running low. Sent when SOL and/or USDC drops under threshold. Plain internal
    * email; deliberately not branded like the user-facing ones.
