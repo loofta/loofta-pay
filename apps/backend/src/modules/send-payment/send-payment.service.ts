@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { MAGICBLOCK_GAS_SOL, MAGICBLOCK_GAS_USDC, estimateMagicblockGrossUp, decodeActualSenderDebit, type MagicblockPrivateTransferClientResponse } from '@/common/magicblock-private-transfer';
-import { quoteAtaRentRecoveryUsdc } from '@/common/ata-rent-recovery';
+import { quoteAtaRentRecoveryUsdc, ATA_RENT_LAMPORTS } from '@/common/ata-rent-recovery';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService, type SocialPlatform } from '../users/users.service';
@@ -16,7 +16,7 @@ import { decryptWithPassphrase } from './vault/vault-crypto';
 import type { PassphraseEncryptedPayload } from './vault/vault-crypto';
 import { CreateSendPaymentDto, ClaimSendPaymentDto, BuildMultiSendDto } from './dto';
 import { SendPaymentLink, SendPaymentLinkPublic, SendPaymentLinkStatus, RecipientType } from './entities/send-payment-link.entity';
-import { Keypair, Connection, PublicKey, Transaction, AddressLookupTableAccount, SystemProgram } from '@solana/web3.js';
+import { Keypair, Connection, PublicKey, Transaction, AddressLookupTableAccount, SystemProgram, TransactionInstruction } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
   createTransferInstruction,
@@ -33,8 +33,15 @@ const bs58Module = require('bs58');
 const bs58 = bs58Module?.default ?? bs58Module;
 
 const DECIMALS = 6;
-/** SOL for burner to cover claim/reclaim gas (sent to burner, not fee payer). */
-const BURNER_SOL_LAMPORTS = 500_000;
+/**
+ * SOL the sender is asked to send to the burner alongside their USDC, sent to the burner (not
+ * the fee payer). Sized to cover normal gas plus one ATA-rent-exempt-minimum (ATA_RENT_LAMPORTS):
+ * whenever claim()/reclaim() has to sponsor creating the destination wallet's USDC ATA, that rent
+ * is recovered straight back out of this same burner balance (see recoverAtaRentFromBurner) —
+ * money the sender already earmarked for burner gas, not a deduction from what the
+ * claimant/sender actually receives.
+ */
+const BURNER_SOL_LAMPORTS = 500_000 + ATA_RENT_LAMPORTS;
 
 // Same generator as ClaimsService/TwitterPaymentsService — duplicated rather than shared per
 // this codebase's existing convention (see claims.service.ts, twitter-payments.service.ts).
@@ -271,6 +278,45 @@ export class SendPaymentService {
     };
   }
 
+  /**
+   * Recovers the ATA rent we just sponsored (if any) from the burner's own pre-funded SOL
+   * balance, back to the fee payer — the sender already sends BURNER_SOL_LAMPORTS of native SOL
+   * alongside their USDC deposit specifically to cover downstream burner gas/rent, so this never
+   * touches the USDC amount that lands with the claimant or the reclaiming sender. Without this,
+   * every sponsor-paid ATA creation here is a permanent, repeatable loss (create, close, repeat)
+   * — see ata-rent-recovery.ts and the multisend fix this mirrors.
+   *
+   * Recovers at most what the burner actually holds, so links funded before BURNER_SOL_LAMPORTS
+   * was raised still succeed (partial or no recovery) instead of failing the claim/reclaim.
+   */
+  private async recoverAtaRentFromBurner(
+    instructions: TransactionInstruction[],
+    burnerPubkey: PublicKey,
+    context: string,
+  ): Promise<void> {
+    if (!this.feePayerKeypair) return;
+    try {
+      const burnerBalance = await this.connection.getBalance(burnerPubkey, 'confirmed');
+      const recoverable = Math.min(ATA_RENT_LAMPORTS, burnerBalance);
+      if (recoverable > 0) {
+        instructions.push(
+          SystemProgram.transfer({
+            fromPubkey: burnerPubkey,
+            toPubkey: this.feePayerKeypair.publicKey,
+            lamports: recoverable,
+          }),
+        );
+        this.logger.log(
+          `[SendPayment] ${context}: recovering ${recoverable} lamports of ATA rent from burner ${burnerPubkey.toBase58().slice(0, 8)}…`,
+        );
+      } else {
+        this.logger.warn(`[SendPayment] ${context}: burner ${burnerPubkey.toBase58().slice(0, 8)}… has no SOL left to recover ATA rent from`);
+      }
+    } catch (e) {
+      this.logger.warn(`[SendPayment] ${context}: ATA rent recovery failed: ${(e as Error)?.message}`);
+    }
+  }
+
   private async resolveRecipientSolanaPubkey(
     dto: CreateSendPaymentDto,
     recipientIdentifier: string,
@@ -474,11 +520,17 @@ export class SendPaymentService {
 
     type BurnerWithBalance = { keypair: Keypair; ata: PublicKey; balance: bigint };
     const candidates: BurnerWithBalance[] = [];
+    // The original burner is who the sender sent BURNER_SOL_LAMPORTS of native SOL to (see
+    // create()) — kept separately from `candidates` so we can recover ATA rent from it below
+    // even on the (normal) path where it holds no USDC itself (funds arrived via a private-claim
+    // burner instead) and so wouldn't otherwise end up in `withBalance`/`signers`.
+    let originalBurnerKeypair: Keypair | null = null;
 
     // Original burner (deposit_address shown to sender)
     if (link.burner_encrypted_secret) {
       const secretKey = this.encryption.decrypt(link.burner_encrypted_secret);
       const keypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
+      originalBurnerKeypair = keypair;
       const ata = await getAssociatedTokenAddress(mint, keypair.publicKey);
       let balance = BigInt(0);
       try {
@@ -552,6 +604,9 @@ export class SendPaymentService {
           mint,
         ),
       );
+      if (originalBurnerKeypair) {
+        await this.recoverAtaRentFromBurner(instructions, originalBurnerKeypair.publicKey, `Claim ${id}`);
+      }
     }
     for (const { keypair, ata, balance } of withBalance) {
       instructions.push(createTransferInstruction(ata, recipientAta, keypair.publicKey, balance));
@@ -568,6 +623,11 @@ export class SendPaymentService {
       );
     }
     const signers = [this.feePayerKeypair, ...withBalance.map((c) => c.keypair)];
+    // Original burner must co-sign whenever we're recovering ATA rent from it directly, even on
+    // the path where it holds no USDC and so isn't already in withBalance.
+    if (originalBurnerKeypair && !signers.some((s) => s.publicKey.equals(originalBurnerKeypair!.publicKey))) {
+      signers.push(originalBurnerKeypair);
+    }
     const message = new TransactionMessage({
       payerKey: this.feePayerKeypair.publicKey,
       recentBlockhash: blockhash,
@@ -726,6 +786,7 @@ export class SendPaymentService {
           mint,
         ),
       );
+      await this.recoverAtaRentFromBurner(instructions, originalKeypair.publicKey, `Reclaim ${id}`);
     }
     for (const { keypair, ata, balance } of withBalance) {
       instructions.push(createTransferInstruction(ata, senderAta, keypair.publicKey, balance));
@@ -733,6 +794,11 @@ export class SendPaymentService {
 
     const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
     const signers = [this.feePayerKeypair, ...withBalance.map((c) => c.keypair)];
+    // Original burner must co-sign whenever we're recovering ATA rent from it directly, even on
+    // the path where it holds no USDC and so isn't already in withBalance.
+    if (!signers.some((s) => s.publicKey.equals(originalKeypair.publicKey))) {
+      signers.push(originalKeypair);
+    }
     const message = new TransactionMessage({
       payerKey: this.feePayerKeypair.publicKey,
       recentBlockhash: blockhash,

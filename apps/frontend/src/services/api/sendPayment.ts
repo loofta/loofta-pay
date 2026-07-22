@@ -19,7 +19,7 @@ export interface SendPaymentLinkPublic {
   message?: string | null;
   /** USDC ATA deposit address (derived from burner). The underlying burner wallet is never exposed. */
   deposit_address?: string | null;
-  /** SOL lamports to send to burner for claim gas (e.g. 500000 = 0.0005 SOL). */
+  /** SOL lamports to send to burner for claim gas + ATA rent recovery — always read this value, don't hardcode it. */
   required_sol_lamports?: number;
   is_sender?: boolean;
 }
@@ -38,7 +38,7 @@ export interface CreateSendPaymentResult {
   deposit_address: string;
   /** Burner wallet pubkey — needed to fund SOL gas for claim. */
   burner_address: string;
-  /** SOL lamports sender should send to burner for claim gas (0.0005 SOL). */
+  /** SOL lamports sender should send to burner for claim gas + ATA rent recovery — always read this value, don't hardcode it. */
   required_sol_lamports: number;
   amount: string;
   token: string;
