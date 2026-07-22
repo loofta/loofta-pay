@@ -114,4 +114,8 @@ export class SupabaseService implements OnModuleInit {
   get socialAccounts() {
     return this.client.from('social_accounts');
   }
+
+  get ataSponsorships() {
+    return this.client.from('ata_sponsorships');
+  }
 }
