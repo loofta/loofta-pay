@@ -1251,7 +1251,7 @@ export function BalanceModal({
         }
       }
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbDeposits]);
 
   // Reset token selection and address when withdraw method changes
@@ -1472,7 +1472,7 @@ export function BalanceModal({
       onRefresh();
     }, 7000);
     return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [withdrawStep]);
 
   // Initialise amount to full spendable balance when modal opens or balance changes
@@ -2358,7 +2358,7 @@ export function BalanceModal({
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with Blink</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>ETH · USDC · USDT — any chain</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>USDC · USDT — any chain</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
@@ -2583,13 +2583,13 @@ export function BalanceModal({
                           const isCancelled = effectiveStatus === "cancelled";
                           const statusColor = isComplete ? "text-emerald-400"
                             : effectiveStatus === "failed" ? "text-red-400"
-                            : isCancelled ? (dark ? "text-slate-500" : "text-gray-400")
-                            : "text-blue-400";
+                              : isCancelled ? (dark ? "text-slate-500" : "text-gray-400")
+                                : "text-blue-400";
                           const statusLabel = isComplete ? "Complete"
                             : effectiveStatus === "failed" ? "Failed"
-                            : isCancelled ? "Cancelled"
-                            : dep.type === "near-intents" ? (dep.bridge_status ? bridgeStatusLabel(dep.bridge_status) : "Bridging…")
-                            : "Check your wallet";
+                              : isCancelled ? "Cancelled"
+                                : dep.type === "near-intents" ? (dep.bridge_status ? bridgeStatusLabel(dep.bridge_status) : "Bridging…")
+                                  : "Check your wallet";
                           return (
                             <li key={dep.id}>
                               <div className={`rounded-lg border p-3 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
