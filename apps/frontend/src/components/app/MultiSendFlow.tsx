@@ -801,8 +801,6 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
             const gross = Math.ceil((netTotal * 10_000) / (10_000 - (MAGICBLOCK_ONLY_BPS + dynamicLooftaBps)));
             return Math.ceil(((gross - netTotal) / 1_000_000 + magicblockFlatFeeUsdc) * 100) / 100;
           })();
-          const oldPerRecipientFee = oldModelFeeUnits / 1_000_000;
-          const feeSavings = Math.max(0, oldPerRecipientFee - totalFee);
           const reviewTotalWithFees = sendPrivately ? reviewTotal + totalFee : reviewTotal;
           const hasEnough = solanaPayment.hasEnoughBalance(reviewTotalWithFees);
           const isBalanceBusy = solanaPayment.isBalanceLoading;
@@ -861,28 +859,9 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                   <span className="text-white font-semibold text-lg">{validRows.length} recipient{validRows.length !== 1 ? "s" : ""}</span>
                   <span className="flex gap-5 text-right shrink-0">
                     <span className="text-white font-semibold text-lg">${reviewTotal.toFixed(2)}</span>
-                    <span className="text-slate-400 text-base">
-                      {sendPrivately ? (
-                        <>
-                          {feeSavings > 0.005 && (
-                            <span className="line-through text-slate-600 mr-1.5">${oldPerRecipientFee.toFixed(2)}</span>
-                          )}
-                          +${totalFee.toFixed(2)} fees
-                        </>
-                      ) : (
-                        "no fees"
-                      )}
-                    </span>
+                    <span className="text-slate-400 text-base">{sendPrivately ? `+$${totalFee.toFixed(2)} fees` : "no fees"}</span>
                   </span>
                 </div>
-                {sendPrivately && feeSavings > 0.005 && (
-                  <div className="flex items-center justify-between rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2">
-                    <span className="text-emerald-400 text-base font-medium">Multi-send discount</span>
-                    <span className="text-emerald-400 text-base font-semibold">
-                      -${feeSavings.toFixed(2)} vs. one private payment per recipient
-                    </span>
-                  </div>
-                )}
               </div>
 
               <IncognitoModeToggle checked={sendPrivately} onCheckedChange={handleToggleSendPrivately} />
