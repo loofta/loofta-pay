@@ -3096,6 +3096,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           chain,
           accessToken: looFtaToken,
           network: networkMode === "mainnet" ? "mainnet" : "devnet",
+          // Explicit, network-matched mint — without this it silently fell back to
+          // getUsdcMint()'s own env-based cluster detection (NEXT_PUBLIC_SOLANA_CLUSTER),
+          // independent of this account's networkMode toggle. When those two disagreed, the
+          // ATA-creation instruction was built for the wrong-network USDC mint, causing
+          // "IncorrectProgramId" during the Token program CPI for any recipient without an
+          // existing USDC token account (recipients who already had one skipped that
+          // instruction entirely, which is why this stayed hidden).
+          usdcMint: getUsdcMintForMode(networkMode === "mainnet" ? "mainnet" : "devnet"),
         });
       }
       setPerTransferPhase(null);
