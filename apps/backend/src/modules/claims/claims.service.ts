@@ -27,6 +27,7 @@ import {
   MAGICBLOCK_GAS_USDC,
   MAGICBLOCK_VOLUME_FEE_BPS,
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
+  SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS,
   estimateMagicblockGrossUp,
   requestMagicblockPrivateTransfer,
   decodeActualSenderDebit,
@@ -1104,16 +1105,19 @@ export class ClaimsService {
       .eq('id', claimId);
     this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}${isNonPrivateLink ? ' is_private=true (sender opted into private on a non-private link)' : ''}`);
 
-    // MagicBlock cost = 10 BPS volume fee + flat 0.2 USDC gasless relay fee.
+    // MagicBlock cost = 10 BPS volume fee + flat 0.2 USDC gasless relay fee, plus Loofta's own
+    // cut (SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS) taken in the same call via platformFeeBps.
     const relayFeeUnits = gasless ? Math.round(MAGICBLOCK_GAS_USDC * 1_000_000) : 0;
+    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS;
+    const platformFeeAccount = this.solanaSponsor.getFeePayerAddress();
     // Exact out: pass the clean amount with exactOut:true — MagicBlock grosses up the sender's
     //   debit internally and guarantees the recipient nets exactly baseUnits.
     // Exact in:  sender pays (baseUnits - relay) + relay = baseUnits total, MB deducts its fee
     //   from (baseUnits - relay) before delivery, recipient gets less.
     const transferUnits = feeOnSender ? baseUnits : baseUnits - relayFeeUnits;
     const estimatedMbVolumeFeeUnits = feeOnSender
-      ? (estimateMagicblockGrossUp(baseUnits) - baseUnits)
-      : Math.ceil((baseUnits - relayFeeUnits) * MAGICBLOCK_VOLUME_FEE_BPS / 10_000);
+      ? (estimateMagicblockGrossUp(baseUnits, totalBps) - baseUnits)
+      : Math.ceil((baseUnits - relayFeeUnits) * totalBps / 10_000);
 
     this.logger.log(
       `[PrivatePay] claim=${claimId} amount=${amountUsd} baseUnits=${baseUnits} feeOnSender=${feeOnSender}` +
@@ -1128,6 +1132,7 @@ export class ClaimsService {
       cluster,
       exactOut: feeOnSender,
       ...(gasless ? { gasless: true } : {}),
+      ...(platformFeeAccount ? { platformFeeBps: SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS, platformFeeAccount } : {}),
     });
 
     // Decode the actual debit from the transaction — ground truth over the gross estimate.
@@ -1832,6 +1837,13 @@ export class ClaimsService {
       return {};
     }
 
+    // Loofta's cut only on the exact-in ("claim privately") branch — feeOnSender=true is the
+    // cross-chain deposit sweep, whose burner is pre-funded elsewhere for exactly MagicBlock's
+    // own gross-up; adding platformFeeBps there too would grow the required gross-up beyond what
+    // was pre-funded and could strand the sweep (balance-check abort above). Exact-in has no such
+    // pre-funding assumption — the fee just comes out of what's being delivered, same as today.
+    const singlePaymentPlatformFeeAccount = !opts.feeOnSender ? this.solanaSponsor.getFeePayerAddress() : null;
+
     const txResponse = await requestMagicblockPrivateTransfer({
       from: burnerKeypair.publicKey.toBase58(),
       to: destination.trim(),
@@ -1840,6 +1852,9 @@ export class ClaimsService {
       cluster,
       exactOut: opts.feeOnSender,
       gasless: true,
+      ...(singlePaymentPlatformFeeAccount
+        ? { platformFeeBps: SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS, platformFeeAccount: singlePaymentPlatformFeeAccount }
+        : {}),
     });
 
     // MagicBlock can return either a legacy or a v0 (versioned) message depending on the
@@ -1923,9 +1938,11 @@ export class ClaimsService {
       })();
     }
 
+    // Loofta's bps only applies to the exact-in branch here too, matching the platformFeeBps
+    // scoping above — the cross-chain (feeOnSender=true) estimate stays MagicBlock-only.
     const estimatedMbVolumeFeeUnits = opts.feeOnSender
       ? (estimateMagicblockGrossUp(baseUnits) - baseUnits)
-      : Math.ceil((baseUnits - relayFeeUnits) * MAGICBLOCK_VOLUME_FEE_BPS / 10_000);
+      : Math.ceil((baseUnits - relayFeeUnits) * (MAGICBLOCK_VOLUME_FEE_BPS + SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS) / 10_000);
     const feeAmountUsdc = opts.feeOnSender ? 0 : (estimatedMbVolumeFeeUnits + relayFeeUnits) / 1_000_000;
 
     return { sweepTxHash: sig, sweptAmount: (transferUnits / 1_000_000).toFixed(6), feeAmountUsdc };

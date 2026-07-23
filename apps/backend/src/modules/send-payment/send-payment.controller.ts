@@ -16,7 +16,7 @@ import { AuthGuard, RateLimitGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { SendPaymentService } from './send-payment.service';
-import { BuildMultiSendDto } from './dto';
+import { BuildMultiSendDto, BuildMultiSendHubDto, ConfirmMultiSendHubDto } from './dto';
 
 @ApiTags('send-payment')
 @Controller('send-payment')
@@ -50,25 +50,39 @@ export class SendPaymentController {
     return this.sendPaymentService.buildMultiPrivateTransfer(user.id, dto);
   }
 
-  @Post('multi-build-private')
+  @Post('multi-build-hub')
   @UseGuards(AuthGuard, RateLimitGuard)
   @RateLimit(20, 60, 'sendpay:build')
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Build one MagicBlock private transfer tx per recipient (sign all in one go)' })
-  @ApiResponse({ status: 200, description: 'N unsigned MagicBlock txs + payment IDs' })
-  async buildMultiPrivate(
+  @ApiOperation({ summary: 'Build the sender\'s one private hub transfer for a batch created by multi-create' })
+  @ApiResponse({ status: 200, description: 'One unsigned MagicBlock tx (sender → hub) + payment IDs' })
+  async buildMultiHub(
     @PrivyUser() user: { id: string },
-    @Body() dto: BuildMultiSendDto,
+    @Body() dto: BuildMultiSendHubDto,
   ) {
-    return this.sendPaymentService.buildMultiPrivateMagicblock(user.id, dto);
+    return this.sendPaymentService.buildMultiSendHubTransfer(user.id, dto.multi_send_batch_id, dto.sender_wallet, dto.cluster);
+  }
+
+  @Post('multi-confirm-hub')
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'sendpay:confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Sender broadcast the hub transfer — start the server-side fan-out to each recipient burner' })
+  async confirmMultiHub(
+    @PrivyUser() user: { id: string },
+    @Body() body: ConfirmMultiSendHubDto,
+  ) {
+    this.sendPaymentService.confirmMultiSendHub(user.id, body.multi_send_batch_id, body.tx_hash);
+    return { ok: true };
   }
 
   @Post('multi-confirm')
   @UseGuards(AuthGuard)
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Mark multi-send payments as transferred after tx confirmation' })
+  @ApiOperation({ summary: 'Mark multi-send payments as transferred after tx confirmation (public combined-tx path)' })
   async confirmMulti(
     @PrivyUser() user: { id: string },
     @Body() body: { payment_ids: string[]; tx_hash?: string; fee_usdc?: number },

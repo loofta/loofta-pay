@@ -36,23 +36,14 @@ export interface MultiSendResult {
   networkFeeUsdc: number;
 }
 
-/** One MagicBlock private transfer tx per recipient — sign all in one go. */
-export interface MultiPrivateTxItem {
-  paymentId: string;
-  recipientIdentifier: string;
-  amount: string;
+/** The sender's one private MagicBlock transfer for a batch — sender wallet → hub. */
+export interface MultiSendHubBuildResult {
   transactionBase64: string;
   version: string;
   sendTo: string;
   feeAmountUsdc: number;
-}
-
-export interface MultiPrivateBuildResult {
-  transactions: MultiPrivateTxItem[];
-  links: MultiSendLinkItem[];
-  payment_ids: string[];
+  paymentIds: string[];
   totalAmountUsdc: number;
-  recipientCount: number;
 }
 
 export interface MultiFeeItem {
@@ -69,6 +60,7 @@ export interface MultiCreateResult {
   total_amount_usdc: number;
   total_fee_usdc: number;
   recipient_count: number;
+  multi_send_batch_id: string;
 }
 
 export async function createMultiPayments(
@@ -84,14 +76,35 @@ export async function createMultiPayments(
   });
 }
 
-export async function buildMultiPrivate(
-  input: { recipients: MultiSendRecipient[]; sender_wallet: string; cluster?: 'devnet' | 'mainnet' },
+/** Step 2 of the private hub flow — one MagicBlock private transfer, sender wallet → hub, for
+ *  the whole batch multi-create just created. The sender's only signature for the batch. */
+export async function buildMultiSendHub(
+  input: { multi_send_batch_id: string; sender_wallet: string; cluster?: 'devnet' | 'mainnet' },
   userId: string,
   accessToken?: string | null,
-): Promise<MultiPrivateBuildResult> {
-  return fetchApi<MultiPrivateBuildResult>('/send-payment/multi-build-private', {
+): Promise<MultiSendHubBuildResult> {
+  return fetchApi<MultiSendHubBuildResult>('/send-payment/multi-build-hub', {
     method: 'POST',
     body: JSON.stringify(input),
+    userId,
+    accessToken,
+  });
+}
+
+/** Step 3 of the private hub flow — sender broadcast the hub transfer; kicks off the backend
+ *  fan-out to each recipient's burner. Fire-and-forget on the backend, resolves immediately. */
+export async function confirmMultiSendHub(
+  multiSendBatchId: string,
+  userId: string,
+  accessToken?: string | null,
+  txHash?: string,
+): Promise<void> {
+  await fetchApi<{ ok: boolean }>('/send-payment/multi-confirm-hub', {
+    method: 'POST',
+    body: JSON.stringify({
+      multi_send_batch_id: multiSendBatchId,
+      ...(txHash ? { tx_hash: txHash } : {}),
+    }),
     userId,
     accessToken,
   });

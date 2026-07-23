@@ -173,7 +173,7 @@ function SendWidget() {
         transition={{ duration: 6.5, times: [0, 0.7, 1], repeat: Infinity, ease: "easeInOut" }}
       />
 
-      <div className={`relative z-[1] border-b ${BORDER_LINE_2} px-7 pb-6 pt-7`}>
+      <div className={`relative z-[1] border-b ${BORDER_LINE_2} px-5 pb-6 pt-7 sm:px-7`}>
         <div className={`mb-3.5 font-grotesk text-[13px] font-semibold uppercase tracking-[0.14em] ${INK_3}`}>
           Send to
         </div>
@@ -198,14 +198,14 @@ function SendWidget() {
         </div>
       </div>
 
-      <div className="relative z-[1] px-7 pb-7 pt-6">
+      <div className="relative z-[1] px-5 pb-7 pt-6 sm:px-7">
         <div className={`mb-4 flex items-center gap-3 rounded-2xl border ${BORDER_LINE} bg-white/[0.04] px-4 py-4 focus-within:border-[#FF6A00]/70`}>
-          <span className={INK_3}>{mode === "email" ? <Mail className="h-5 w-5" /> : <AtSign className="h-5 w-5" />}</span>
+          <span className={`shrink-0 ${INK_3}`}>{mode === "email" ? <Mail className="h-5 w-5" /> : <AtSign className="h-5 w-5" />}</span>
           <input
             value={recipient}
             onChange={(e) => setRecipient(e.target.value)}
             placeholder={mode === "email" ? "satoshi@gmail.com" : "@satoshi"}
-            className={`w-full bg-transparent font-grotesk text-lg font-medium ${INK} outline-none placeholder:text-[#7D7B76]`}
+            className={`w-full min-w-0 bg-transparent font-grotesk text-lg font-medium ${INK} outline-none placeholder:text-[#7D7B76]`}
           />
         </div>
 
@@ -692,7 +692,7 @@ function RewardsSection() {
       <div className="mx-auto max-w-[1240px]">
         <motion.div
           {...fadeUp}
-          className="relative overflow-hidden rounded-[40px] border border-[rgba(255,255,255,0.1)] bg-[#131319] px-8 py-14 text-center md:px-16"
+          className="relative overflow-hidden rounded-[40px] border border-[rgba(255,255,255,0.1)] bg-[#131319] px-5 py-12 text-center sm:px-8 md:px-16 md:py-14"
         >
           <div
             aria-hidden
@@ -707,17 +707,17 @@ function RewardsSection() {
               Daily prize pool · powered by Megapot
             </span>
 
-            <div className={`mt-[34px] font-display text-[clamp(56px,8vw,110px)] font-semibold leading-[0.9] tracking-[-0.03em] ${BRAND_GRADIENT} bg-clip-text text-transparent`}>
+            <div className={`mt-[34px] font-display text-[clamp(38px,11vw,110px)] font-semibold leading-[0.9] tracking-[-0.03em] ${BRAND_GRADIENT} bg-clip-text text-transparent`}>
               $1,100,000
             </div>
             <p className={`mt-1.5 font-grotesk text-base ${INK_3}`}>
               draws every day at 5:10pm UTC
             </p>
 
-            <div className="mt-[34px] flex justify-center gap-5">
+            <div className="mt-[34px] flex justify-center gap-2.5 sm:gap-5">
               {[{ v: h, l: "Hrs" }, { v: m, l: "Min" }, { v: s, l: "Sec" }].map((c) => (
-                <div key={c.l} className={`min-w-[110px] rounded-2xl border border-[rgba(255,255,255,0.12)] bg-white/[0.06] px-[26px] py-5`}>
-                  <div className={`font-display text-[52px] font-medium leading-none tabular-nums ${INK}`}>{c.v}</div>
+                <div key={c.l} className={`min-w-[76px] rounded-2xl border border-[rgba(255,255,255,0.12)] bg-white/[0.06] px-3 py-3.5 sm:min-w-[110px] sm:px-[26px] sm:py-5`}>
+                  <div className={`font-display text-[32px] font-medium leading-none tabular-nums sm:text-[52px] ${INK}`}>{c.v}</div>
                   <div className="mt-1 font-grotesk text-sm font-semibold uppercase tracking-[0.16em] text-white/50">{c.l}</div>
                 </div>
               ))}
@@ -728,9 +728,11 @@ function RewardsSection() {
               get paid, and stack entries into the weekly jackpot, automatically.
             </p>
 
-            <div className="mt-8 inline-flex items-center gap-3.5 rounded-full border border-[rgba(255,255,255,0.16)] bg-white/[0.08] px-[26px] py-3.5 font-grotesk text-lg font-medium text-white">
-              <Icon3DStar size={26} />
-              <span className="font-display text-[26px] font-medium text-[#EAB308]">+1 ticket</span>
+            <div className="mt-8 inline-flex flex-wrap items-center justify-center gap-2 rounded-2xl border border-[rgba(255,255,255,0.16)] bg-white/[0.08] px-4 py-3 font-grotesk text-sm font-medium text-white sm:flex-nowrap sm:gap-3.5 sm:rounded-full sm:px-[26px] sm:py-3.5 sm:text-lg">
+              <span className="h-[18px] w-[18px] shrink-0 sm:h-[26px] sm:w-[26px] [&>svg]:h-full [&>svg]:w-full">
+                <Icon3DStar size={26} />
+              </span>
+              <span className="font-display text-lg font-medium text-[#EAB308] sm:text-[26px]">+1 ticket</span>
               per 20 USDC sent, no cost, no catch
             </div>
           </div>
@@ -766,7 +768,7 @@ function FinalCTA() {
         <div className="mt-9 flex justify-center">
           <Link
             href={APP_URL}
-            className={`inline-flex items-center gap-2.5 rounded-full px-8 py-5 font-display text-[22px] font-medium text-white shadow-[0_14px_34px_-12px_rgba(255,19,1,0.6)] transition-transform duration-200 hover:-translate-y-0.5 ${BRAND_GRADIENT}`}
+            className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full px-6 py-4 font-display text-lg font-medium text-white shadow-[0_14px_34px_-12px_rgba(255,19,1,0.6)] transition-transform duration-200 hover:-translate-y-0.5 sm:gap-2.5 sm:px-8 sm:py-5 sm:text-[22px] ${BRAND_GRADIENT}`}
           >
             Send your first payment
             <ArrowRight className="h-5 w-5" strokeWidth={2} />

@@ -92,3 +92,37 @@ export class BuildMultiSendDto {
   @IsIn(['devnet', 'mainnet'])
   cluster?: 'devnet' | 'mainnet';
 }
+
+/** Step 2 of the private hub flow: build the sender's one hub transfer for a batch that
+ *  multi-create (createMultiPayments) already created. */
+export class BuildMultiSendHubDto {
+  @ApiProperty({ description: 'multi_send_batch_id returned by multi-create' })
+  @IsString()
+  @IsNotEmpty()
+  multi_send_batch_id: string;
+
+  @ApiProperty({ description: 'Sender Solana wallet pubkey' })
+  @IsString()
+  @IsNotEmpty()
+  sender_wallet: string;
+
+  @ApiPropertyOptional({ enum: ['devnet', 'mainnet'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(['devnet', 'mainnet'])
+  cluster?: 'devnet' | 'mainnet';
+}
+
+/** Step 3 of the private hub flow: sender has broadcast the hub transfer — kick off the
+ *  server-side fan-out to each recipient's burner. */
+export class ConfirmMultiSendHubDto {
+  @ApiProperty({ description: 'multi_send_batch_id returned by multi-create' })
+  @IsString()
+  @IsNotEmpty()
+  multi_send_batch_id: string;
+
+  @ApiPropertyOptional({ description: 'Hub transfer signature, for logging' })
+  @IsOptional()
+  @IsString()
+  tx_hash?: string;
+}

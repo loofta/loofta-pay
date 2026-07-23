@@ -26,6 +26,14 @@ export const MAGICBLOCK_VOLUME_FEE_BPS = 10; // deducted from USDC amount by Mag
 export const MAGICBLOCK_GAS_SOL = 0.002;     // actual MagicBlock SOL charge (documented)
 export const MAGICBLOCK_GAS_USDC = 0.2;      // flat USDC relay fee charged by MagicBlock (200_000 units)
 export const MAGICBLOCK_MIN_SENDER_SOL = 0.003; // top-up target: 0.002 MB fee + tx fees + buffer
+/** Loofta's own cut on the multi-send hub transfer, additive to MagicBlock's own bps, taken via
+ *  platformFeeBps/platformFeeAccount in the same call — see private-balance.service.ts's
+ *  PRIVATE_BALANCE_PLATFORM_FEE_BPS for the precedent this follows. */
+export const MULTI_SEND_LOOFTA_PLATFORM_FEE_BPS = 10;
+/** Loofta's own cut on a single private payment (buildPrivateTransferForPayer sender→burner,
+ *  sweepClaimBurnerPrivately burner→destination), additive to MagicBlock's own bps — same
+ *  platformFeeBps/platformFeeAccount mechanism, same 10bps as PRIVATE_BALANCE_PLATFORM_FEE_BPS. */
+export const SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS = 10;
 /** Cache TTL: 60 seconds. */
 const SOL_PRICE_CACHE_TTL_MS = 60_000;
 
@@ -87,9 +95,13 @@ export async function fetchSolPriceUsd(): Promise<number | null> {
  * The real transfer always sends the clean `netBaseUnits` with `exactOut: true` and lets
  * MagicBlock compute its own gross-up internally (see requestMagicblockPrivateTransfer).
  * This just approximates that internal math so a "platform fee" line has something to show.
+ *
+ * `totalBpsOverride` lets callers that also take a platformFeeBps cut (e.g. multi-send's hub
+ * transfer) estimate the combined gross-up — defaults to MagicBlock's own bps alone.
  */
-export function estimateMagicblockGrossUp(netBaseUnits: number): number {
-  return Math.ceil((netBaseUnits * 10_000) / (10_000 - MAGICBLOCK_VOLUME_FEE_BPS)) + 1;
+export function estimateMagicblockGrossUp(netBaseUnits: number, totalBpsOverride?: number): number {
+  const bps = totalBpsOverride ?? MAGICBLOCK_VOLUME_FEE_BPS;
+  return Math.ceil((netBaseUnits * 10_000) / (10_000 - bps)) + 1;
 }
 
 /**

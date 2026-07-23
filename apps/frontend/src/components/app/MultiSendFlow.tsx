@@ -14,14 +14,14 @@ import { getEphemeralRpcForMode } from "@/lib/per/constants";
 import {
   createMultiPayments,
   buildMultiSend,
+  buildMultiSendHub,
+  confirmMultiSendHub,
   multiConfirm,
   type MultiSendRecipient,
   type MultiSendLinkItem,
-  type MultiFeeItem,
   type MultiCreateResult,
   type MultiSendResult,
 } from "@/services/api/sendPayment";
-import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
@@ -39,13 +39,23 @@ import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/Social
 import { TELEGRAM_SEND_ENABLED } from "@/lib/socialPlatforms";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
+import { useSolPrice } from "@/hooks/useSolPrice";
 import type { MultiSendRecipientType } from "@/store/multiSend";
+
+// MagicBlock's flat relay fee, in SOL — same figure as backend MAGICBLOCK_GAS_SOL
+// (apps/backend/src/common/magicblock-private-transfer.ts). Duplicated rather than shared
+// per this codebase's existing convention for small cross-app constants.
+const MAGICBLOCK_GAS_SOL = 0.002;
+// MagicBlock's own volume fee + Loofta's cut on the private multi-send hub transfer — same
+// figures as backend MAGICBLOCK_VOLUME_FEE_BPS + MULTI_SEND_LOOFTA_PLATFORM_FEE_BPS.
+const MULTI_SEND_TOTAL_BPS = 20;
+const MAGICBLOCK_ONLY_BPS = 10;
 
 type ConfirmFeeData = {
   senderWallet: string;
+  multiSendBatchId: string;
   paymentIds: string[];
   links: MultiSendLinkItem[];
-  feeItems: MultiFeeItem[];
   totalAmountUsdc: number;
   totalFeeUsdc: number;
 };
@@ -177,6 +187,10 @@ export interface MultiSendFlowProps {
 
 export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   const { rows, reviewPending, completedLinks, hydrated, setRows, setReviewPending, setCompletedLinks, clear } = useMultiSendStore();
+  // MagicBlock's flat relay fee is 0.002 SOL, not a fixed USD amount — priced live so the
+  // estimate doesn't drift stale as SOL/USD moves (was hardcoded to $0.20, i.e. SOL≈$100).
+  const solPriceUsd = useSolPrice();
+  const magicblockFlatFeeUsdc = MAGICBLOCK_GAS_SOL * solPriceUsd;
   const [phase, setPhase] = useState<SendPhase>({ kind: "idle" });
   const [isDragOver, setIsDragOver] = useState(false);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
@@ -388,12 +402,12 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         accessToken,
       );
 
-      console.info(`[MultiSend] payment records created payment_ids=${result.payment_ids.join(",")}`);
+      console.info(`[MultiSend] payment records created batch=${result.multi_send_batch_id} payment_ids=${result.payment_ids.join(",")}`);
       await executePayment({
         senderWallet,
+        multiSendBatchId: result.multi_send_batch_id,
         paymentIds: result.payment_ids,
         links: result.links,
-        feeItems: result.fee_items,
         totalAmountUsdc: result.total_amount_usdc,
         totalFeeUsdc: result.total_fee_usdc,
       });
@@ -503,81 +517,58 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     return sig;
   }
 
+  /**
+   * Private path: ONE MagicBlock private transfer, sender wallet → hub — the sender's only
+   * signature for the whole batch. The backend fans out to each recipient's own burner with
+   * plain SPL transfers afterward (see confirmMultiSendHub / fanOutMultiSendHubTransfer on the
+   * backend) — recipients aren't funded yet by the time this resolves, only the hub is.
+   */
   async function executePayment(confirmState: ConfirmFeeData) {
-    console.info(`[MultiSend] executePayment paymentIds=${confirmState.paymentIds.join(",")}`);
-    const { senderWallet, paymentIds, links } = confirmState;
+    console.info(`[MultiSend] executePayment batch=${confirmState.multiSendBatchId} paymentIds=${confirmState.paymentIds.join(",")}`);
+    const { senderWallet, multiSendBatchId, links } = confirmState;
 
     try {
       const accessToken = await getAccessToken();
       if (!user?.id) throw new Error("Not authenticated");
 
       const cluster = networkMode === "mainnet" ? "mainnet" : "devnet";
-
-      type BroadcastResult =
-        | { status: "fulfilled"; value: { paymentId: string; sig: string; feeUsdc: number | undefined } }
-        | { status: "rejected"; reason: unknown };
-      const broadcastResults: BroadcastResult[] = [];
-
-      // Build → sign → broadcast one at a time so each tx uses a fresh blockhash
-      // and fresh MagicBlock encrypted-balance state.
       const chain = getPrivySolanaChainForMode(networkMode);
       const wallet = solanaWallets.find((w) => w.address === senderWallet) ?? solanaWallets[0];
       if (!wallet) throw new Error("Loofta wallet not found. Try logging out and back in.");
 
-      console.info(`[MultiSend] building+signing+broadcasting ${paymentIds.length} txs one-by-one cluster=${cluster}`);
+      setPhase({ kind: "building", index: 1, total: 1 });
+      const hubTx = await buildMultiSendHub(
+        { multi_send_batch_id: multiSendBatchId, sender_wallet: senderWallet, cluster: apiCluster },
+        user.id,
+        accessToken,
+      );
 
-      for (let i = 0; i < paymentIds.length; i++) {
-        const paymentId = paymentIds[i];
-        const stepIndex = i + 1;
-        const stepTotal = paymentIds.length;
-        try {
-          setPhase({ kind: "building", index: stepIndex, total: stepTotal });
-          const txData = await buildClaimPrivateTransfer(paymentId, user.id!, senderWallet, accessToken, apiCluster);
-          const feeUsdc = txData.feeAmountUsdc ?? 0;
+      setPhase({ kind: "awaiting_signature" });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const signedOutput = await (privySolanaSignTransaction as any)({
+        transaction: Buffer.from(hubTx.transactionBase64, "base64") as Uint8Array,
+        wallet,
+        chain,
+        options: { uiOptions: { showWalletUIs: false } },
+      });
+      const signedBytes: Uint8Array = signedOutput.signedTransaction;
 
-          setPhase({ kind: "broadcasting", index: stepIndex, total: stepTotal });
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const signedOutput = await (privySolanaSignTransaction as any)({
-            transaction: Buffer.from(txData.transactionBase64, "base64") as Uint8Array,
-            wallet,
-            chain,
-            options: { uiOptions: { showWalletUIs: false } },
-          });
-          const signedBytes: Uint8Array = signedOutput.signedTransaction;
+      setPhase({ kind: "broadcasting", index: 1, total: 1 });
+      const sig = await broadcastAndWaitForHash(signedBytes, "hub", hubTx.sendTo, cluster);
 
-          const sig = await broadcastAndWaitForHash(signedBytes, paymentId, txData.sendTo, cluster);
-          broadcastResults.push({ status: "fulfilled", value: { paymentId, sig, feeUsdc } });
-          multiConfirm([paymentId], user.id!, accessToken, sig, feeUsdc).catch(() => { });
-        } catch (e) {
-          broadcastResults.push({ status: "rejected", reason: e });
-        }
-      }
+      // Fire-and-forget — the backend polls for the hub's balance and fans out to each
+      // recipient burner in the background, resolving well after this call returns.
+      confirmMultiSendHub(multiSendBatchId, user.id, accessToken, sig).catch(() => { });
 
-      const succeededResults = broadcastResults.filter((r): r is { status: "fulfilled"; value: { paymentId: string; sig: string; feeUsdc: number | undefined } } => r.status === "fulfilled");
-      const failedCount = broadcastResults.length - succeededResults.length;
-
-      if (succeededResults.length === 0) {
-        const firstErr = (broadcastResults[0] as { status: "rejected"; reason: unknown }).reason;
-        throw new Error(firstErr instanceof Error ? firstErr.message : "All payments failed on-chain");
-      }
-
-      const confirmedIds = new Set(succeededResults.map((r) => r.value.paymentId));
-      const confirmedLinks = links.filter((l) => confirmedIds.has(l.id));
-      const confirmedUsdc = succeededResults.reduce((s, r) => {
-        const row = confirmState.feeItems.find((f) => f.payment_id === r.value.paymentId);
-        return s + (row ? parseFloat(row.amount) : 0);
-      }, 0);
-
-      console.info(`[MultiSend] done succeeded=${succeededResults.length} failed=${failedCount}`);
-      setCompletedLinks(confirmedLinks as MultiSendLink[]);
+      console.info(`[MultiSend] hub transfer broadcast batch=${multiSendBatchId} sig=${sig.slice(0, 12)}…`);
+      setCompletedLinks(links as MultiSendLink[]);
       setReviewPending(false);
-      if (failedCount === 0) setRows(defaultRows());
+      setRows(defaultRows());
       setPhase({
         kind: "done",
-        recipientCount: succeededResults.length,
-        totalUsdc: confirmedUsdc,
-        links: confirmedLinks,
-        failedCount,
+        recipientCount: confirmState.paymentIds.length,
+        totalUsdc: confirmState.totalAmountUsdc,
+        links,
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Unknown error";
@@ -639,6 +630,11 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         <p className="text-slate-400 text-base">
           ${phase.totalUsdc.toFixed(2)} USDC sent to {phase.recipientCount} recipient{phase.recipientCount > 1 ? "s" : ""}.
         </p>
+        {sendPrivately && (
+          <p className="text-slate-400 text-base">
+            Sent privately — recipients are funded in the background and can take up to 15 minutes to receive their funds.
+          </p>
+        )}
         {!!phase.failedCount && (
           <p className="text-amber-400 text-base">
             {phase.failedCount} payment{phase.failedCount > 1 ? "s" : ""} failed to confirm on-chain. The funds were not deducted for those.
@@ -774,12 +770,39 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           const VISIBLE_LIMIT = 4;
           const visibleRows = showAllRecipients ? validRows : validRows.slice(0, VISIBLE_LIMIT);
           const hiddenCount = validRows.length - visibleRows.length;
-          const totalFee = validRows.reduce((s, r) => {
-            const amt = parseFloat(r.amount);
-            const net = Math.round(amt * 1_000_000);
-            const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
-            return s + Math.ceil(((mbGross - net) / 1_000_000 + 0.20) * 100) / 100;
+          // What sending the same batch as one MagicBlock private transfer PER recipient (the
+          // pre-hub model) would have cost, in base units — MagicBlock's own 10bps + a full flat
+          // relay fee on EACH row, since every row was its own separate MagicBlock call back then.
+          const flatFeeUnits = Math.round(magicblockFlatFeeUsdc * 1_000_000);
+          const oldModelFeeUnits = validRows.reduce((s, r) => {
+            const net = Math.round(parseFloat(r.amount) * 1_000_000);
+            if (net <= 0) return s;
+            const mbGross = Math.ceil((net * 10_000) / (10_000 - MAGICBLOCK_ONLY_BPS));
+            return s + (mbGross - net) + flatFeeUnits;
           }, 0);
+          // Batch-level fee, not per-row: the private path is now ONE MagicBlock transfer
+          // (sender → hub) for the whole batch, not one per recipient. Loofta's cut is capped
+          // (same algorithm as backend computeDynamicPlatformFeeBps) so the actual charge never
+          // exceeds the per-recipient model above, minus a small guaranteed-savings buffer — the
+          // shown discount is never zero/negative purely from a fixed-bps mismatch.
+          const netTotal = Math.round(reviewTotal * 1_000_000);
+          const GUARANTEED_SAVINGS_UNITS = 30_000; // $0.03, matches backend buffer
+          const targetMaxFeeUnits = oldModelFeeUnits - GUARANTEED_SAVINGS_UNITS;
+          let dynamicLooftaBps = 0;
+          if (netTotal > 0) {
+            for (let bps = MULTI_SEND_TOTAL_BPS - MAGICBLOCK_ONLY_BPS; bps > 0; bps--) {
+              const gross = Math.ceil((netTotal * 10_000) / (10_000 - (MAGICBLOCK_ONLY_BPS + bps)));
+              const newFeeUnits = (gross - netTotal) + flatFeeUnits;
+              if (newFeeUnits <= targetMaxFeeUnits) { dynamicLooftaBps = bps; break; }
+            }
+          }
+          const totalFee = (() => {
+            if (netTotal <= 0) return 0;
+            const gross = Math.ceil((netTotal * 10_000) / (10_000 - (MAGICBLOCK_ONLY_BPS + dynamicLooftaBps)));
+            return Math.ceil(((gross - netTotal) / 1_000_000 + magicblockFlatFeeUsdc) * 100) / 100;
+          })();
+          const oldPerRecipientFee = oldModelFeeUnits / 1_000_000;
+          const feeSavings = Math.max(0, oldPerRecipientFee - totalFee);
           const reviewTotalWithFees = sendPrivately ? reviewTotal + totalFee : reviewTotal;
           const hasEnough = solanaPayment.hasEnoughBalance(reviewTotalWithFees);
           const isBalanceBusy = solanaPayment.isBalanceLoading;
@@ -790,16 +813,10 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                 {/* Header */}
                 <div className="flex justify-between text-slate-400 text-base px-1 pb-1">
                   <span>Recipient</span>
-                  <span className="flex gap-5 shrink-0">
-                    <span>Amount</span>
-                    {sendPrivately && <span>~Fee</span>}
-                  </span>
+                  <span>Amount</span>
                 </div>
                 {visibleRows.map((row, idx) => {
                   const amt = parseFloat(row.amount);
-                  const net = Math.round(amt * 1_000_000);
-                  const mbGross = Math.ceil((net * 10_000) / (10_000 - 10));
-                  const fee = Math.ceil(((mbGross - net) / 1_000_000 + 0.20) * 100) / 100;
                   return (
                     <div
                       key={row.id}
@@ -816,10 +833,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                           <p className="text-slate-400 text-base truncate">{row.message.trim()}</p>
                         )}
                       </div>
-                      <span className="flex gap-5 text-right shrink-0">
-                        <span className="text-white text-base">${amt.toFixed(2)}</span>
-                        {sendPrivately && <span className="text-slate-400 text-base">+${fee.toFixed(2)}</span>}
-                      </span>
+                      <span className="text-white text-base shrink-0">${amt.toFixed(2)}</span>
                     </div>
                   );
                 })}
@@ -847,9 +861,28 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                   <span className="text-white font-semibold text-lg">{validRows.length} recipient{validRows.length !== 1 ? "s" : ""}</span>
                   <span className="flex gap-5 text-right shrink-0">
                     <span className="text-white font-semibold text-lg">${reviewTotal.toFixed(2)}</span>
-                    <span className="text-slate-400 text-base">{sendPrivately ? `+$${totalFee.toFixed(2)} fees` : "no fees"}</span>
+                    <span className="text-slate-400 text-base">
+                      {sendPrivately ? (
+                        <>
+                          {feeSavings > 0.005 && (
+                            <span className="line-through text-slate-600 mr-1.5">${oldPerRecipientFee.toFixed(2)}</span>
+                          )}
+                          +${totalFee.toFixed(2)} fees
+                        </>
+                      ) : (
+                        "no fees"
+                      )}
+                    </span>
                   </span>
                 </div>
+                {sendPrivately && feeSavings > 0.005 && (
+                  <div className="flex items-center justify-between rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2">
+                    <span className="text-emerald-400 text-base font-medium">Multi-send discount</span>
+                    <span className="text-emerald-400 text-base font-semibold">
+                      -${feeSavings.toFixed(2)} vs. one private payment per recipient
+                    </span>
+                  </div>
+                )}
               </div>
 
               <IncognitoModeToggle checked={sendPrivately} onCheckedChange={handleToggleSendPrivately} />
@@ -900,39 +933,32 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                   </div>
                   <DialogTitle className="text-xl font-semibold text-gray-900 text-center">
                     {phase.kind === "creating" && "Preparing payments"}
-                    {phase.kind === "building" && `Preparing payment ${phase.index} of ${phase.total}`}
+                    {phase.kind === "building" && "Preparing your payment"}
                     {phase.kind === "awaiting_signature" && "Approve in your wallet"}
-                    {phase.kind === "broadcasting" && (sendPrivately ? `Sending payment ${phase.index} of ${phase.total}` : "Sending payment")}
+                    {phase.kind === "broadcasting" && "Sending payment"}
                   </DialogTitle>
                   <p className="pt-2 text-base text-center text-muted-foreground max-w-sm">
                     {phase.kind === "creating" &&
                       "Setting up transactions. Please keep this window open."}
-                    {phase.kind === "building" &&
-                      "Building this recipient's private transfer. Please keep this window open."}
+                    {phase.kind === "building" && (
+                      sendPrivately
+                        ? "Building your one private transfer. Please keep this window open."
+                        : "Building your combined transfer. Please keep this window open."
+                    )}
                     {phase.kind === "awaiting_signature" && (
-                      sendPrivately ? (
-                        <>
-                          Your wallet may show{" "}
-                          <span className="font-medium text-orange-600">
-                            {filledRows.length} transaction{filledRows.length === 1 ? "" : "s"}
-                          </span>{" "}
-                          in one approval. Do not close this tab until you finish signing.
-                        </>
-                      ) : (
-                        <>
-                          One transaction sending to{" "}
-                          <span className="font-medium text-orange-600">
-                            {filledRows.length} recipient{filledRows.length === 1 ? "" : "s"}
-                          </span>
-                          . Do not close this tab until you finish signing.
-                        </>
-                      )
+                      <>
+                        One transaction {sendPrivately ? "privately funding" : "sending to"}{" "}
+                        <span className="font-medium text-orange-600">
+                          {filledRows.length} recipient{filledRows.length === 1 ? "" : "s"}
+                        </span>
+                        . Do not close this tab until you finish signing.
+                      </>
                     )}
                     {phase.kind === "broadcasting" && (
                       sendPrivately ? (
                         <>
-                          Recipient <span className="font-medium text-orange-600">{phase.index} of {phase.total}</span>.
-                          Sent one at a time for privacy, each confirmation can take up to a couple of minutes.
+                          Your private transfer is broadcasting. Recipients are funded privately in the
+                          background afterward — funds can take up to 15 minutes to land.
                         </>
                       ) : (
                         "Broadcasting your combined payment. This can take a moment."
