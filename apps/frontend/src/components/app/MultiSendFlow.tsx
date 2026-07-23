@@ -183,6 +183,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+  const [copiedList, setCopiedList] = useState(false);
   // Default OFF (normal/public) — matches the single-send claim page's incognito toggle default.
   // Private costs a MagicBlock fee per recipient; normal is a free plain on-chain transfer.
   const [sendPrivately, setSendPrivately] = useState(false);
@@ -243,10 +244,27 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     URL.revokeObjectURL(url);
   }
 
+  /** Links don't carry recipient_type — only the rows the batch was built from do — so platform
+   *  is recovered by zipping back to filledRows in submission order (same order links were
+   *  created in, one per filled row). */
+  function buildExportRows(links: MultiSendLinkItem[]) {
+    return links.map((l, i) => ({
+      recipient: l.recipient_identifier,
+      platform: RECIPIENT_TYPE_OPTIONS.find((o) => o.id === filledRows[i]?.recipientType)?.label ?? "Username",
+      amount: l.amount,
+      link: l.link,
+    }));
+  }
+
   /** Export the just-created links so the sender can hand them out from a spreadsheet — one
-   *  recipient (handle + link) per line, same CSV-download pattern as downloadExample above. */
+   *  recipient (handle + platform + amount + link) per line, same CSV-download pattern as
+   *  downloadExample above. */
   function exportLinks(links: MultiSendLinkItem[]) {
-    const csv = ["recipient,link", ...links.map((l) => `${l.recipient_identifier},${l.link}`)].join("\n");
+    const exportRows = buildExportRows(links);
+    const csv = [
+      "recipient,platform,amount,link",
+      ...exportRows.map((r) => `${r.recipient},${r.platform},${r.amount},${r.link}`),
+    ].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -254,6 +272,23 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     a.download = "loofta-multisend-links.csv";
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  /** Same rows as exportLinks, copied to the clipboard as tab-separated text so it pastes
+   *  cleanly into a spreadsheet without needing a file download. */
+  async function copyLinksList(links: MultiSendLinkItem[]) {
+    const exportRows = buildExportRows(links);
+    const text = [
+      "recipient\tplatform\tamount\tlink",
+      ...exportRows.map((r) => `${r.recipient}\t${r.platform}\t${r.amount}\t${r.link}`),
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedList(true);
+      setTimeout(() => setCopiedList(false), 2000);
+    } catch {
+      toast({ variant: "destructive", title: "Copy failed" });
+    }
   }
 
   function handleCSVFile(file: File) {
@@ -667,14 +702,24 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           })}
         </div>
 
-        <button
-          type="button"
-          onClick={() => exportLinks(phase.links)}
-          className="w-full h-11 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all flex items-center justify-center gap-1.5"
-        >
-          <FileDown className="w-4 h-4" />
-          Export handles &amp; links
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => exportLinks(phase.links)}
+            className="flex-1 h-11 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all flex items-center justify-center gap-1.5"
+          >
+            <FileDown className="w-4 h-4" />
+            Export CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => copyLinksList(phase.links)}
+            className="flex-1 h-11 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all flex items-center justify-center gap-1.5"
+          >
+            {copiedList ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+            {copiedList ? "Copied!" : "Copy list"}
+          </button>
+        </div>
 
         <Button
           onClick={() => {
