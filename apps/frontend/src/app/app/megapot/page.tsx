@@ -1806,7 +1806,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
               ) : giftStep === "signing" ? "Signing…" : (
                 <>
                   <Gift className="w-5 h-5" />
-                  {drawCutoff ? "Sales paused" : `Gift privately · ${fmt(numTickets + mbFee(numTickets))}`}
+                  {drawCutoff ? "Sales paused" : `Gift${sendPrivately ? " privately" : ""} · ${fmt(totalCostUsd)}`}
                 </>
               )}
             </button>

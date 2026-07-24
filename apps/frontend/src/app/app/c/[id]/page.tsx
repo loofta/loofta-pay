@@ -1557,12 +1557,18 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
    * pauses (e.g. embedded wallet re-init), so we drive it explicitly out to ~2min.
    */
   const refreshWalletBalances = () => {
+    const refetchBoth = () => {
+      queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+      queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
+      queryClient.invalidateQueries({ queryKey: ["solanaPaymentBalance"] });
+      queryClient.refetchQueries({ queryKey: ["solanaPaymentBalance"] });
+    };
+    // Fire immediately too — the delayed retries below exist for on-chain indexing lag, but an
+    // already-fresh balance (or a claim that lands fast) shouldn't wait 2s minimum to reflect.
+    refetchBoth();
     const delaysMs = [2_000, 5_000, 10_000, 20_000, 35_000, 55_000, 80_000, 110_000];
     for (const delay of delaysMs) {
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-        queryClient.refetchQueries({ queryKey: ["embeddedSolanaUsdcBalance"] });
-      }, delay);
+      setTimeout(refetchBoth, delay);
     }
   };
   const claimAsRecipientMutation = useMutation({
@@ -1669,6 +1675,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       queryClient.invalidateQueries({ queryKey: ["claim", id], exact: true });
       queryClient.refetchQueries({ queryKey: ["claim", id], exact: true });
       queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+      // The unclaimed-nudge toast reads a filtered view of this same history data under its own
+      // query key — without this it keeps showing an already-claimed payment until something
+      // else happens to refetch it (e.g. a full page reload).
+      queryClient.invalidateQueries({ queryKey: ["payments", "unclaimed-nudge"] });
       refreshWalletBalances();
     },
     onError: (error: unknown, _vars, context: any) => {
