@@ -129,7 +129,47 @@ export class MagicblockQuestService {
       }
       throw new Error(`setWallet failed: ${error.message}`);
     }
+    // Backfill: push any qualifying purchase/payment made BEFORE the wallet was connected — the
+    // purchase-time push (confirmSend/updateStatus) requires a connected wallet and otherwise
+    // returns early with no row created at all, so there'd be nothing for retryFailedPushes to
+    // ever retry (repeated real-world incident, 2026-07-24 — several users bought privately, then
+    // connected their wallet after, and their quest silently never got a first attempt).
+    this.backfillQuestsForNewWallet(userId).catch((e) =>
+      this.logger.warn(`backfillQuestsForNewWallet(${userId}) failed: ${(e as Error)?.message ?? e}`),
+    );
     return { wallet: trimmed };
+  }
+
+  /** Fire-and-forget: re-runs the same qualifying push for every pre-existing purchase/payment
+   *  this user made before connecting a MagicBlock wallet. Safe to call repeatedly — pushForAction's
+   *  own (quest_type, source_id) reservation silently no-ops anything already pushed. */
+  private async backfillQuestsForNewWallet(userId: string): Promise<void> {
+    const db = this.supabase.getClient();
+
+    const { data: tickets } = await db
+      .from('lottery_tickets')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('funded_privately', true);
+    for (const t of tickets ?? []) {
+      await this.maybePushLotteryTicketQuest((t as { id: string }).id).catch((e) =>
+        this.logger.warn(`backfill lottery_ticket ${(t as { id: string }).id} failed: ${(e as Error)?.message ?? e}`),
+      );
+    }
+
+    const { data: payments } = await db
+      .from('payments')
+      .select('id')
+      .eq('sender_user_id', userId)
+      .eq('status', 'SUCCESS')
+      .eq('is_private', true)
+      .eq('is_devnet', false)
+      .neq('direction', 'from_recipient');
+    for (const p of payments ?? []) {
+      await this.maybePushPrivatePaymentQuest((p as { id: string }).id).catch((e) =>
+        this.logger.warn(`backfill private_payment ${(p as { id: string }).id} failed: ${(e as Error)?.message ?? e}`),
+      );
+    }
   }
 
   /** Completion counts/status are scoped to the current quest week — they reset every Friday 10:00 CET/CEST. */
