@@ -2165,10 +2165,24 @@ export class ClaimsService {
           `PER withdraw failed: ${perWithdraw.error ?? 'unknown'} | debug: ${(perWithdraw.debug ?? []).join(' | ')}`,
         );
       } else if (!perWithdraw.attempted) {
-        // No PER deposit found and ATA is empty – funds may already be swept or were never deposited.
-        this.logger.log(
-          `Claim ${claimId}: no PER deposit and burner ATA empty – funds likely already swept or not yet deposited`,
-        );
+        // No PER deposit found and ATA is empty. Two very different situations look identical
+        // here: funds never arrived yet, OR a previous sweep attempt already broadcast and landed
+        // on-chain but this function threw afterward (e.g. a flaky confirmation check) before ever
+        // returning sweepTxHash — the caller then never marks SUCCESS, and every later retry sees
+        // the same "empty" balance and can never tell the difference on its own (see the incident
+        // on claim ~b665e249, 2026-07-24: recipient had the exact expected amount on-chain while
+        // this stayed PRIVATE_TRANSFER_PENDING indefinitely). Check the burner's own recent history
+        // for an already-succeeded outbound transfer of the expected amount before giving up.
+        const already = await this.findExistingBurnerSweep(conn, burnerKeypair.publicKey, expectedUnits);
+        if (already) {
+          this.logger.log(`Claim ${claimId}: burner ATA empty but an already-landed sweep tx was found (${already}) — treating as delivered instead of re-waiting`);
+          sweepTxHash = already;
+          sweptAmount = (Number(expectedUnits) / 1_000_000).toFixed(6);
+        } else {
+          this.logger.log(
+            `Claim ${claimId}: no PER deposit and burner ATA empty, no prior sweep found – funds not yet deposited`,
+          );
+        }
       }
     } catch (e: any) {
       this.logger.warn(`Claim ${claimId}: burner sweep failed – ${e?.message ?? e}`);
@@ -2177,6 +2191,44 @@ export class ClaimsService {
       );
     }
     return { sweepTxHash, sweptAmount };
+  }
+
+  /**
+   * Checks a burner's own recent signatures for an already-confirmed outbound SPL transfer of
+   * exactly `expectedUnits` — used only when the ATA is unexpectedly empty (see call site) to
+   * distinguish "never funded" from "already swept, but the confirmation step crashed before we
+   * recorded it." Limited to the last 15 signatures: a burner is single-purpose and short-lived,
+   * so the real sweep (if any) is always one of the most recent transactions, never buried deep.
+   */
+  private async findExistingBurnerSweep(
+    conn: import('@solana/web3.js').Connection,
+    burner: PublicKey,
+    expectedUnits: bigint,
+  ): Promise<string | null> {
+    try {
+      const sigs = await conn.getSignaturesForAddress(burner, { limit: 15 });
+      for (const sigInfo of sigs) {
+        if (sigInfo.err) continue;
+        const tx = await conn.getParsedTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 });
+        if (!tx || tx.meta?.err) continue;
+        for (const ix of tx.transaction.message.instructions) {
+          const parsed = (ix as { parsed?: { type?: string; info?: { source?: string; amount?: string; tokenAmount?: { amount?: string } } } }).parsed;
+          if (!parsed || !['transfer', 'transferChecked'].includes(parsed.type ?? '')) continue;
+          const info = parsed.info;
+          if (!info?.source) continue;
+          const amountStr = info.tokenAmount?.amount ?? info.amount;
+          if (!amountStr) continue;
+          try {
+            if (BigInt(amountStr) === expectedUnits) return sigInfo.signature;
+          } catch {
+            // non-numeric amount string — skip
+          }
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`findExistingBurnerSweep(${burner.toBase58().slice(0, 8)}…): lookup failed — ${(e as Error)?.message ?? e}`);
+    }
+    return null;
   }
 
   private parsePerDepositAmountRaw(data: Buffer): bigint {
