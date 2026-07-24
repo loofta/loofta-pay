@@ -169,8 +169,15 @@ export async function GET(request: Request) {
     const pendingAddresses: string[] = [];
     if (currentUser?.username) pendingAddresses.push(`PENDING_USERNAME:${currentUser.username.toLowerCase()}`);
     if (currentUser?.twitter_username) {
-      const handle = `PENDING_USERNAME:${currentUser.twitter_username.replace(/^@/, "").toLowerCase()}`;
+      const cleanTwitter = currentUser.twitter_username.replace(/^@/, "").toLowerCase();
+      const handle = `PENDING_USERNAME:${cleanTwitter}`;
       if (!pendingAddresses.includes(handle)) pendingAddresses.push(handle);
+      // A payment sent explicitly via the "Twitter" option in the social picker (not the plain
+      // username field) is stored as PENDING_SOCIAL:twitter:<handle>, not PENDING_USERNAME:<handle>
+      // (see ClaimsService's treatUnregisteredAsTwitter branch) — must check both shapes or those
+      // payments never surface here even once the recipient connects the exact matching X account.
+      const socialHandle = `PENDING_SOCIAL:twitter:${cleanTwitter}`;
+      if (!pendingAddresses.includes(socialHandle)) pendingAddresses.push(socialHandle);
     }
     if (currentUser?.email) pendingAddresses.push(`PENDING_EMAIL:${currentUser.email.toLowerCase()}`);
     // Same fallback for Discord/GitHub/Telegram — a payment sent to a handle before it was
