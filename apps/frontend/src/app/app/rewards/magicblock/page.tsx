@@ -166,6 +166,26 @@ function Header() {
   );
 }
 
+function StartQuestLink() {
+  return (
+    <a
+      href={MAGICBLOCK_PROJECT_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mb-4 flex items-center justify-between gap-3 rounded-2xl border p-4 hover:bg-white/[0.07] transition-colors"
+      style={{ borderColor: `${ACCENT}40`, backgroundColor: `${ACCENT}14` }}
+    >
+      <div className="min-w-0">
+        <p className="text-base font-semibold text-white">Start the quests on MagicBlock</p>
+        <p className="text-sm text-slate-400 mt-0.5">
+          Quests must be started there first — track your progress on the Questline.
+        </p>
+      </div>
+      <span className="shrink-0 text-lg" style={{ color: ACCENT }}>→</span>
+    </a>
+  );
+}
+
 function Skeleton() {
   return (
     <div className="animate-pulse space-y-3">
@@ -341,6 +361,7 @@ export default function RewardsMagicblockPage() {
       <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
         <div className="max-w-lg mx-auto px-4 py-6 pb-24">
           <Header />
+          <StartQuestLink />
 
           {!authenticated ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">

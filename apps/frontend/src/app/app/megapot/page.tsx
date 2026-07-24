@@ -1182,6 +1182,55 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   // late-arriving update for an abandoned ticket can't clobber the screen for a newer purchase.
   const activeTicketIdRef = useRef<string | null>(null);
 
+  const checkTicketStatus = useCallback(async (ticketId: string): Promise<TicketSummary | null> => {
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`/api/lottery/status/${ticketId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return null;
+      // A missing/malformed row (e.g. a stale ticketId that no longer resolves for this user)
+      // must not crash the caller — this used to throw and get silently swallowed, wedging the
+      // "Hang tight" screen forever.
+      return await res.json().catch(() => null);
+    } catch {
+      return null;
+    }
+  }, [getAccessToken]);
+
+  // Applies a fetched status if it's terminal (active/won/failed) — clears the localStorage flag
+  // and updates the visible step. Returns true if it was terminal (caller should stop polling).
+  const applyTerminalTicketStatus = useCallback((ticketId: string, t: TicketSummary | null): boolean => {
+    if (!t || !t.status) return false;
+    const isCurrent = activeTicketIdRef.current === ticketId;
+    // The buyer already saw "payment confirmed" the moment MagicBlock landed (see
+    // handlePrivateBuy) — bridging/buying finish in the background from here, so this only
+    // needs to catch the two terminal outcomes, not drive step-by-step UI anymore.
+    if (["active", "won"].includes(t.status)) {
+      localStorage.removeItem("megapot_ticket");
+      pollingStartedRef.current = false;
+      stopPoll(); onPurchased();
+      if (isCurrent) {
+        // Always take numbers/count from the server response here, not whatever `lastTickets`
+        // already held — this branch can be reached after a fresh page load (mount-resume or
+        // cross-device restore) where the buyer never went through handlePrivateBuy in this
+        // browser session at all, so there'd be nothing else to show them.
+        setLastTickets(t.ticketNumbers ?? []);
+        setLastNumTickets(t.numTickets);
+        setStep("done");
+      }
+      return true;
+    }
+    if (t.status === "failed") {
+      localStorage.removeItem("megapot_ticket");
+      pollingStartedRef.current = false;
+      stopPoll();
+      if (isCurrent) { setStep("error"); setStepError("Purchase failed — contact support."); }
+      return true;
+    }
+    return false;
+  }, [onPurchased, stopPoll]);
+
   const pollStatus = useCallback((ticketId: string, numTicketsForStorage?: number) => {
     // Preserve whatever count is already on record if this particular call didn't pass one — every
     // call to pollStatus rewrites this same key (e.g. resuming an in-flight ticket on mount), so an
@@ -1197,43 +1246,10 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     activeTicketIdRef.current = ticketId;
     stopPoll();
     pollRef.current = setInterval(async () => {
-      try {
-        const token = await getAccessToken();
-        const res = await fetch(`/api/lottery/status/${ticketId}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        if (!res.ok) return;
-        const t: TicketSummary | null = await res.json().catch(() => null);
-        // A missing/malformed row (e.g. a stale ticketId that no longer resolves for this user)
-        // must not crash the interval — that used to throw inside this try block and get silently
-        // swallowed by the catch below, wedging the "Hang tight" screen forever.
-        if (!t || !t.status) return;
-        const isCurrent = activeTicketIdRef.current === ticketId;
-        // The buyer already saw "payment confirmed" the moment MagicBlock landed (see
-        // handlePrivateBuy) — bridging/buying finish in the background from here, so this poll
-        // only needs to catch the two terminal outcomes, not drive step-by-step UI anymore.
-        if (["active", "won"].includes(t.status)) {
-          localStorage.removeItem("megapot_ticket");
-          pollingStartedRef.current = false;
-          stopPoll(); onPurchased();
-          if (isCurrent) {
-            // Always take numbers/count from the server response here, not whatever `lastTickets`
-            // already held — this branch can be reached after a fresh page load (mount-resume or
-            // cross-device restore) where the buyer never went through handlePrivateBuy in this
-            // browser session at all, so there'd be nothing else to show them.
-            setLastTickets(t.ticketNumbers ?? []);
-            setLastNumTickets(t.numTickets);
-            setStep("done");
-          }
-        } else if (t.status === "failed") {
-          localStorage.removeItem("megapot_ticket");
-          pollingStartedRef.current = false;
-          stopPoll();
-          if (isCurrent) { setStep("error"); setStepError("Purchase failed — contact support."); }
-        }
-      } catch { /* ignore */ }
+      const t = await checkTicketStatus(ticketId);
+      applyTerminalTicketStatus(ticketId, t);
     }, 8_000);
-  }, [getAccessToken, onPurchased, stopPoll]);
+  }, [checkTicketStatus, applyTerminalTicketStatus, stopPoll]);
 
   // Resume polling on mount if a ticket was in-flight on this device (localStorage persists across
   // refreshes). Purchases confirm in "usually takes a minute" per the copy below — an hour is
@@ -1258,14 +1274,26 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     }
     if (!ticketId) { localStorage.removeItem("megapot_ticket"); return; }
     pollingStartedRef.current = true;
-    // Payment already landed on-chain by the time this key exists (it's written right after
-    // MagicBlock confirms) — resume quietly rather than re-showing a blocking "Hang tight" screen.
+    activeTicketIdRef.current = ticketId;
     setLastNumTickets(numTicketsForModal);
-    setStep("confirmed");
-    // Must pass the count along — pollStatus rewrites this same localStorage entry on every call,
-    // so omitting it here would overwrite the real count with nothing on every resume, which is
-    // exactly what produced "0 tickets locked in" after leaving and coming back to this tab.
-    pollStatus(ticketId, numTicketsForModal);
+
+    const resumeTicketId = ticketId;
+    (async () => {
+      // Check the real current status right away instead of blindly flashing "Good luck" for a
+      // ticket that may have already resolved (won/lost/failed) minutes or hours ago on a
+      // previous visit — the old code only found out on the next 8s poll tick, so revisiting the
+      // page after the ticket was already done kept re-showing "confirmed" for a beat every time.
+      const t = await checkTicketStatus(resumeTicketId);
+      if (applyTerminalTicketStatus(resumeTicketId, t)) return;
+      // Still genuinely in flight — payment already landed on-chain by the time this key exists
+      // (it's written right after MagicBlock confirms), so resume quietly rather than showing a
+      // blocking "Hang tight" screen.
+      setStep("confirmed");
+      // Must pass the count along — pollStatus rewrites this same localStorage entry on every
+      // call, so omitting it here would overwrite the real count with nothing on every resume,
+      // which is exactly what produced "0 tickets locked in" after leaving and coming back.
+      pollStatus(resumeTicketId, numTicketsForModal);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1503,6 +1531,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           recipientType,
           recipientIdentifier,
           note: [giftNote.trim(), giftGifUrl].filter(Boolean).join(" ").trim() || undefined,
+          route: sendPrivately ? "solana_private" : "solana_public",
         }),
       });
       if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
@@ -1730,12 +1759,8 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             </div>
           )}
 
-          {!giftMode && (
-            <>
-              {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
-              <IncognitoModeToggle checked={sendPrivately} onCheckedChange={handleToggleSendPrivately} />
-            </>
-          )}
+          {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
+          <IncognitoModeToggle checked={sendPrivately} onCheckedChange={handleToggleSendPrivately} />
 
           {sendPrivately ? (
             <FeeBreakdown ticketCostUsd={numTickets} mode="buy" solPriceUsd={solPriceUsd} />

@@ -474,8 +474,11 @@ export class LotteryService {
     recipientType: 'email' | 'handle';
     recipientIdentifier: string;
     note?: string;
+    /** Same private/public choice as initiatePurchase — defaults to private server-side too. */
+    route?: 'solana_private' | 'solana_public';
   }): Promise<{ giftId: string; txBase64: string; requiredSigners: string[] }> {
     const { userId, userSolanaAddress, numTickets } = opts;
+    const route = opts.route ?? 'solana_private';
     await this.assertNotInDrawCutoff();
     if (!numTickets || numTickets < 1 || numTickets > 100) throw new BadRequestException('1–100 tickets per gift');
     if (!['email', 'handle'].includes(opts.recipientType)) throw new BadRequestException('recipientType must be "email" or "handle"');
@@ -503,27 +506,36 @@ export class LotteryService {
     // No Loofta service fee on gifted purchases either — the sender signs only the MagicBlock
     // transfer (see initiatePurchase). Bridge cost is absorbed from the fee-wallet reserve.
 
-    const cluster = this.getSolanaCluster();
-    let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
-    try {
-      txResponse = await requestMagicblockPrivateTransfer({
-        from: userSolanaAddress,
-        to: burnerAddress,
-        mint: USDC_MINT.toBase58(),
-        amount: costUnits,
-        cluster,
-        exactOut: true,
-        gasless: true,
-        minDelayMs: 10_000,
-        maxDelayMs: 30_000,
-      });
-    } catch (err: any) {
-      if (String(err?.message).includes('delegated to another validator')) {
-        throw new BadRequestException(
-          'A previous payment from this wallet is still in transit (usually clears within 2 minutes). Please wait and try again.',
-        );
+    let txResponse: { transactionBase64: string; requiredSigners: string[] };
+    if (route === 'solana_private') {
+      const cluster = this.getSolanaCluster();
+      try {
+        txResponse = await requestMagicblockPrivateTransfer({
+          from: userSolanaAddress,
+          to: burnerAddress,
+          mint: USDC_MINT.toBase58(),
+          amount: costUnits,
+          cluster,
+          exactOut: true,
+          gasless: true,
+          minDelayMs: 10_000,
+          maxDelayMs: 30_000,
+        });
+      } catch (err: any) {
+        if (String(err?.message).includes('delegated to another validator')) {
+          throw new BadRequestException(
+            'A previous payment from this wallet is still in transit (usually clears within 2 minutes). Please wait and try again.',
+          );
+        }
+        throw err;
       }
-      throw err;
+    } else {
+      const txBase64 = await this.buildPublicBurnerTransferTx({
+        fromAddress: userSolanaAddress,
+        toAddress: burnerAddress,
+        amountUsdc: costUsdc,
+      });
+      txResponse = { transactionBase64: txBase64, requiredSigners: [userSolanaAddress] };
     }
 
     const db = this.supabase.getClient();
@@ -543,6 +555,7 @@ export class LotteryService {
         status: 'pending_payment',
         burner_sol_address: burnerAddress,
         burner_sol_key_enc: burnerKeyEnc,
+        funded_privately: route === 'solana_private',
       })
       .select('id')
       .single();
@@ -671,6 +684,7 @@ export class LotteryService {
         claim_token: claimToken,
         short_id: shortId,
         status: 'unclaimed',
+        funded_privately: false, // no sender payment at all — funded from Loofta's own treasury
       })
       .select('id')
       .single();
@@ -992,10 +1006,10 @@ export class LotteryService {
           status: 'sent',
           sender_tx_hash: senderTxHash,
           is_gift: true,
-          // sender_paid gifts were actually funded via a MagicBlock private transfer
-          // (initiateGiftedPurchase); admin_treasury gifts are funded from Loofta's own fee
-          // wallet with no private payment from anyone, so they don't qualify.
-          funded_privately: gift.funding_mode === 'sender_paid',
+          // Mirrors the gift's own funded_privately (set at initiateGiftedPurchase per the
+          // sender's route choice) — admin_treasury gifts are funded from Loofta's own fee wallet
+          // with no private payment from anyone, so gift.funded_privately is already false there.
+          funded_privately: !!gift.funded_privately,
         })
         .select('id')
         .single();
@@ -1003,6 +1017,13 @@ export class LotteryService {
 
       await db.from('lottery_gifts').update({ resulting_ticket_id: ticket.id }).eq('id', gift.id);
       this.logger.log(`Gift ${gift.id}: claimed by ${claimantPrivyUserId}, ticket ${ticket.id} funded (${numTickets} tickets, sig=${senderTxHash})`);
+
+      // Credits the claimant (ticket owner), not the gifter — maybePushLotteryTicketQuest reads
+      // the ticket's own user_id/funded_privately, so a privately-funded gift counts for whoever
+      // ends up owning the ticket, same as a direct self-purchase.
+      this.magicblockQuest.maybePushLotteryTicketQuest(ticket.id).catch((e) =>
+        this.logger.warn(`MagicBlock quest push failed for gift ticket ${ticket.id}: ${(e as Error)?.message}`),
+      );
 
       // Don't wait for the next processSentTickets cron tick (up to 5s away) — the burner is
       // already known-funded (just topped up, or funded by the sender earlier), so start the

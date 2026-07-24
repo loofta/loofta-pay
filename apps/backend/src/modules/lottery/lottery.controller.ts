@@ -73,6 +73,12 @@ class BuyGiftDto {
   @IsOptional()
   @IsString()
   note?: string;
+
+  /** Defaults to private server-side too — an old/stale client omitting this still gets today's
+   *  only behavior. */
+  @IsOptional()
+  @IsIn(['solana_private', 'solana_public'])
+  route?: 'solana_private' | 'solana_public';
 }
 
 class UpdateGiftRecipientDto {
@@ -234,6 +240,7 @@ export class LotteryController {
       recipientType: dto.recipientType,
       recipientIdentifier: dto.recipientIdentifier,
       note: dto.note,
+      route: dto.route,
     });
   }
 

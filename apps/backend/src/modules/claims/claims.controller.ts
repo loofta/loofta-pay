@@ -285,9 +285,12 @@ export class ClaimsController {
   }
 
   /**
-   * Sender action: fix a typo'd recipient (email or username) on a payment they sent to an
-   * unregistered recipient, as long as it's still unclaimed. Blocked while the recipient is
-   * mid-claim (recipient_claim_lock_at) or once they've actually claimed.
+   * Sender action: fix a typo'd or wrong recipient (email, username, or social handle) on a
+   * payment they sent, whether the current recipient is still unregistered/pending or already
+   * resolved to a registered account — as long as it's still unclaimed. Blocked while the
+   * recipient is mid-claim (recipient_claim_lock_at) or once they've actually claimed (status
+   * SUCCESS). Always writes a fresh PENDING_* recipient, so editing an already-resolved
+   * recipient correctly turns the claim pending again on the corrected identifier.
    */
   @Post(':id/recipient')
   @HttpCode(HttpStatus.OK)

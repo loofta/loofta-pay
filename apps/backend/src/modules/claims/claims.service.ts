@@ -981,14 +981,17 @@ export class ClaimsService {
       // No burner: recipient_address IS the payment destination for direct-wallet links — keep it
     }
 
-    // Surface whether a recipient-edit is currently blocked by an in-flight claim (see
-    // recipient_claim_lock_at / claimAsRecipient) — creator-only, and only meaningful while the
-    // recipient is still pending, so the sender's "Edit recipient" UI can disable itself instead
-    // of the edit call failing with no warning.
+    // Surface whether a recipient-edit is currently blocked (see recipient_claim_lock_at /
+    // claim_requested_at / claimAsRecipient and the matching guards in updateClaimRecipient) —
+    // creator-only, so the sender's "Edit recipient" UI can disable itself instead of the edit
+    // call failing with no warning. claim_requested_at is included, not just the transient lock:
+    // it's set once and never cleared the moment the recipient starts claiming, which is what
+    // actually blocks edits after the lock itself has already released (see updateClaimRecipient).
     const isCreatorViewer = !!(requestingUserId && claim.created_by && requestingUserId === claim.created_by);
     if (isCreatorViewer) {
       (claim as Claim & { recipient_claim_in_progress?: boolean }).recipient_claim_in_progress =
-        this.isRecipientClaimLockActive((claim as unknown as { recipient_claim_lock_at?: string | null }).recipient_claim_lock_at);
+        this.isRecipientClaimLockActive((claim as unknown as { recipient_claim_lock_at?: string | null }).recipient_claim_lock_at) ||
+        !!(claim as unknown as { claim_requested_at?: string | null }).claim_requested_at;
     }
     delete (claim as unknown as Record<string, unknown>)['recipient_claim_lock_at'];
 
@@ -1343,9 +1346,11 @@ export class ClaimsService {
     // Lock the recipient identity for the duration of this claim attempt — otherwise the
     // sender's "edit recipient" action (updateClaimRecipient) could overwrite recipient_address
     // in the window between reading `ra` above and committing the resolved wallet below (the
-    // sweep call this guards can run for up to BURNER_INBOUND_INLINE_MAX_MS). Only pending
-    // (unregistered) recipients are lockable/editable — registered recipients skip this.
-    const usesRecipientLock = isPendingEmail || isPendingUsername || isPendingSocial;
+    // sweep call this guards can run for up to BURNER_INBOUND_INLINE_MAX_MS). updateClaimRecipient
+    // now allows editing a registered recipient too (not just pending ones), so this must engage
+    // for both — skipping it for registered recipients was only ever safe while they were
+    // uneditable in the first place.
+    const usesRecipientLock = isPendingEmail || isPendingUsername || isPendingSocial || isRegisteredRecipient;
     let recipientLockHeld = false;
     if (usesRecipientLock) {
       const lockCutoff = this.recipientClaimLockStaleCutoffIso();
@@ -1445,11 +1450,18 @@ export class ClaimsService {
   }
 
   /**
-   * Sender action: fix a typo'd recipient on a payment they sent to an unregistered
-   * (PENDING_EMAIL / PENDING_USERNAME) recipient — only while it's still unclaimed. Mirrors
-   * lottery.service.ts updateGiftRecipient. Once the recipient has actually claimed (or is in
-   * the middle of claiming — see the recipient_claim_lock_at guard in claimAsRecipient), editing
-   * is blocked: the identity that claimed it (or is about to) is locked in.
+   * Sender action: fix a typo'd or wrong recipient on a payment they sent — whether the current
+   * recipient is still unregistered (PENDING_EMAIL / PENDING_USERNAME / PENDING_SOCIAL) or already
+   * resolved to a registered account at creation (e.g. a Telegram/username/email handle that
+   * immediately matched an existing user) — only while it's genuinely still unclaimed. Mirrors
+   * lottery.service.ts updateGiftRecipient. Blocked once claim_requested_at is set (the recipient
+   * has definitively started claiming — see claimAsRecipient) or once claimed (status SUCCESS) or
+   * mid-claim (recipient_claim_lock_at): the identity that claimed it, or is claiming it, is locked
+   * in. claim_requested_at is the load-bearing check here rather than status/lock alone — the
+   * claim lock releases as soon as claimAsRecipient's initial call returns, but its background
+   * sweep retry (scheduleBackgroundSweepRetry) can still be resolving the recipient's real wallet
+   * afterward while status briefly sits at PRIVATE_TRANSFER_PENDING; claim_requested_at, once set,
+   * never gets cleared, so it closes that window regardless of the lock/status snapshot.
    */
   async updateClaimRecipient(opts: {
     claimId: string;
@@ -1469,6 +1481,7 @@ export class ClaimsService {
       status?: string;
       recipient_address?: string | null;
       recipient_claim_lock_at?: string | null;
+      claim_requested_at?: string | null;
     };
     if (!claim.created_by || claim.created_by !== opts.userId) {
       throw new ForbiddenException('Only the sender can edit the recipient.');
@@ -1477,11 +1490,19 @@ export class ClaimsService {
       throw new BadRequestException('This payment was cancelled and can no longer be edited.');
     }
     const ra = (claim.recipient_address || '').trim();
-    const isPendingEmail = ra.startsWith(ClaimsService.PENDING_EMAIL_PREFIX);
-    const isPendingUsername = ra.startsWith(ClaimsService.PENDING_USERNAME_PREFIX);
-    const isPendingSocial = ra.startsWith(ClaimsService.PENDING_SOCIAL_PREFIX);
-    if (!isPendingEmail && !isPendingUsername && !isPendingSocial) {
-      throw new BadRequestException('Only payments to an unregistered recipient who has not yet claimed can have their recipient edited.');
+    // Editable whether the current recipient is still pending (unregistered) OR already resolved
+    // to a registered account (e.g. a Telegram/username/email handle that matched an existing
+    // user immediately at creation) — the only things that actually lock this out are the recipient
+    // having ever actually requested a claim, the claim having paid out, or the recipient being
+    // mid-claim right now. A resolved recipient has no PENDING_* prefix to react to a change in
+    // identifier the same way a pending one does, but that's fine: this always writes a fresh
+    // PENDING_* sentinel below, so editing a resolved recipient correctly turns the claim pending
+    // again on the corrected identifier.
+    if (claim.claim_requested_at) {
+      throw new BadRequestException('The recipient has already started claiming this payment and can no longer be edited.');
+    }
+    if ((claim.status || '').toUpperCase() === 'SUCCESS') {
+      throw new BadRequestException('This payment has already been claimed and can no longer be edited.');
     }
     if (this.isRecipientClaimLockActive(claim.recipient_claim_lock_at)) {
       throw new BadRequestException('The recipient is currently claiming this payment — try again in a minute.');

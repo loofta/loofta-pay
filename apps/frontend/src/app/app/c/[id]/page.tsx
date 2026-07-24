@@ -4058,6 +4058,27 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 claimLocked={!!claim?.recipient_claim_in_progress}
                 onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
               />
+            ) : (claim as { recipient_is_registered?: boolean })?.recipient_is_registered &&
+              user?.id && claim?.created_by === user.id &&
+              ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+              // Recipient resolved to a registered account immediately at creation (e.g. a Telegram/
+              // username/email handle that already matched an existing user) — still editable up
+              // until it's actually claimed, same as the pending-recipient cases above. claimLocked
+              // additionally covers "already SUCCESS" here since, unlike the pending cases, a
+              // resolved recipient's claim can reach SUCCESS while still carrying no PENDING_*
+              // prefix for updateClaimRecipient's own guard to react to.
+              <ClaimPageSenderShareView
+                claimId={id}
+                shortCode={claim?.short_id}
+                amount={parseFloat(claim?.amount || "0")}
+                recipientLabel={claim?.recipient_username ? `@${claim.recipient_username}` : "recipient"}
+                status={String(status || claim?.status || "").toUpperCase()}
+                userId={user?.id}
+                recipientType="username"
+                recipientValue={claim?.recipient_username ?? undefined}
+                claimLocked={!!claim?.recipient_claim_in_progress || String(status || claim?.status || "").toUpperCase() === "SUCCESS"}
+                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
+              />
             ) : isRecipient && claim?.recipient_pending_social ? (
               <div className="mt-6 text-center pt-12 pb-6 px-4">
                 <div className="mb-4 text-6xl">🎁</div>
