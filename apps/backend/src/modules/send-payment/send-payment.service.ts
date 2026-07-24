@@ -580,6 +580,12 @@ export class SendPaymentService {
     // (Disabled altogether — see ENABLE_MULTI_SEND_PLATFORM_FEE — until MagicBlock confirms the
     // platformFeeBps + exactOut combination that broke claims.service.ts's single-payment path.)
     const dynamicLooftaBps = ENABLE_MULTI_SEND_PLATFORM_FEE ? this.computeDynamicPlatformFeeBps(rows, totalBaseUnits, relayFeeUnits) : 0;
+    // MagicBlock confirmed platformFeeAccount must be the fee collector's initialized USDC ATA,
+    // not its wallet address — this was passing hubAddress (the wallet) directly, same bug as
+    // claims.service.ts's single-payment path.
+    const hubFeeAta = ENABLE_MULTI_SEND_PLATFORM_FEE
+      ? (await getAssociatedTokenAddress(effectiveMint, this.feePayerKeypair.publicKey)).toBase58()
+      : null;
 
     // Clean batch total + exactOut:true — MagicBlock grosses up the sender's debit internally so
     // the hub nets exactly totalBaseUnits. platformFeeBps/platformFeeAccount take Loofta's own
@@ -592,7 +598,7 @@ export class SendPaymentService {
       cluster: cluster === 'localhost' ? 'devnet' : cluster,
       exactOut: true,
       gasless: true,
-      ...(ENABLE_MULTI_SEND_PLATFORM_FEE ? { platformFeeBps: dynamicLooftaBps, platformFeeAccount: hubAddress } : {}),
+      ...(ENABLE_MULTI_SEND_PLATFORM_FEE ? { platformFeeBps: dynamicLooftaBps, platformFeeAccount: hubFeeAta! } : {}),
     });
 
     const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + dynamicLooftaBps;

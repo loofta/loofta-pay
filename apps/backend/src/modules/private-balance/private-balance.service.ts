@@ -1,6 +1,7 @@
 import { Injectable, Logger, BadRequestException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Keypair, PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
@@ -226,7 +227,13 @@ export class PrivateBalanceService {
     // Server-resolved — never trust a client-supplied sender for the user's own balance.
     const userWallet = await this.usersService.getSolanaWalletAddress(userId);
     const burner = this.createBurner();
-    const platformFeeAccount = this.solanaSponsor.getFeePayerAddress();
+    // MagicBlock confirmed platformFeeAccount must be the fee collector's initialized USDC ATA,
+    // not its wallet address (undocumented, no validation on their end) — same bug that broke
+    // claims.service.ts's single-payment path with InvalidAccountData.
+    const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
+    const platformFeeAccount = feePayerAddress
+      ? (await getAssociatedTokenAddress(mint, new PublicKey(feePayerAddress))).toBase58()
+      : null;
 
     let txResponse;
     try {

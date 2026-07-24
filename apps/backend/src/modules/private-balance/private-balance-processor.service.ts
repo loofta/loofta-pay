@@ -120,7 +120,12 @@ export class PrivateBalanceProcessorService {
     const transferUnits = balance - relayFeeUnits;
     const destination = await this.usersService.getSolanaWalletAddress(row.user_id);
     const burnerKeypair = this.privateBalanceService.decryptBurnerSecret(row.burner_encrypted_secret, row.burner_address);
-    const platformFeeAccount = this.solanaSponsor.getFeePayerAddress();
+    // MagicBlock confirmed platformFeeAccount must be the fee collector's initialized USDC ATA,
+    // not its wallet address — same bug as private-balance.service.ts's build leg.
+    const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
+    const platformFeeAccount = feePayerAddress
+      ? (await getAssociatedTokenAddress(mint, new PublicKey(feePayerAddress))).toBase58()
+      : null;
 
     const txResponse = await requestMagicblockPrivateTransfer({
       from: row.burner_address,

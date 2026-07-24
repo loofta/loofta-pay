@@ -35,17 +35,17 @@ export const MULTI_SEND_LOOFTA_PLATFORM_FEE_BPS = 10;
  *  platformFeeBps/platformFeeAccount mechanism, same 10bps as PRIVATE_BALANCE_PLATFORM_FEE_BPS. */
 export const SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS = 10;
 /**
- * Kill switch, both flags OFF as of 2026-07-24: the first live private payment to actually
- * exercise either platform-fee addition (claims.service.ts single-payment sender→burner leg)
- * failed on-chain with `InvalidAccountData` — a fresh, never-before-used claim burner as `to`
- * combined with platformFeeBps/exactOut apparently changes the instruction set MagicBlock builds
- * in a way it doesn't for an established wallet (see private-balance's working precedent, whose
- * `to` is always the user's own long-lived wallet). Reported to MagicBlock; all the fee-calc
- * plumbing below is left intact — flip a flag back to true once confirmed safe, no need to
- * re-derive any of this.
+ * Kill switch — re-enabled 2026-07-24. Root cause (confirmed by MagicBlock support): `to` was a
+ * fresh, never-before-used claim burner and `platformFeeAccount` was the fee collector's *wallet*
+ * address; MagicBlock's API silently requires platformFeeAccount to be that wallet's already-
+ * initialized USDC ATA (undocumented, unvalidated on their end) — passing the wallet address
+ * itself produced a Token program `InvalidAccountData`. Fixed at every call site by deriving the
+ * ATA via getAssociatedTokenAddress instead of passing the raw sponsor address; confirmed
+ * on-chain that this fee payer's USDC ATA already exists. If this ever needs to go back off,
+ * flip these — no need to re-derive any of the fee-calc plumbing below.
  */
-export const ENABLE_SINGLE_PAYMENT_PLATFORM_FEE = false;
-export const ENABLE_MULTI_SEND_PLATFORM_FEE = false;
+export const ENABLE_SINGLE_PAYMENT_PLATFORM_FEE = true;
+export const ENABLE_MULTI_SEND_PLATFORM_FEE = true;
 /** Cache TTL: 60 seconds. */
 const SOL_PRICE_CACHE_TTL_MS = 60_000;
 
