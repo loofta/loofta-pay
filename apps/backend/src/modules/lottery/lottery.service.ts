@@ -386,6 +386,7 @@ export class LotteryService {
         cost_usdc: costUsdc,
         status: 'pending_send',
         requested_numbers: requestedNumbers,
+        funded_privately: route === 'solana_private',
       })
       .select('id')
       .single();
@@ -989,6 +990,10 @@ export class LotteryService {
           status: 'sent',
           sender_tx_hash: senderTxHash,
           is_gift: true,
+          // sender_paid gifts were actually funded via a MagicBlock private transfer
+          // (initiateGiftedPurchase); admin_treasury gifts are funded from Loofta's own fee
+          // wallet with no private payment from anyone, so they don't qualify.
+          funded_privately: gift.funding_mode === 'sender_paid',
         })
         .select('id')
         .single();

@@ -216,10 +216,12 @@ export class MagicblockQuestService {
     const db = this.supabase.getClient();
     const { data: ticket } = await db
       .from('lottery_tickets')
-      .select('user_id, burner_sol_address')
+      .select('user_id, funded_privately')
       .eq('id', ticketId)
       .maybeSingle();
-    if (!ticket?.burner_sol_address) return; // public purchase — doesn't qualify
+    // funded_privately is the real signal — burner_sol_address is set for public purchases and
+    // admin_treasury-funded gifts too, so it can't distinguish an actual private payment on its own.
+    if (!ticket?.funded_privately) return;
 
     await this.pushForAction({ userId: ticket.user_id, questType: 'lottery_ticket', sourceId: ticketId });
   }

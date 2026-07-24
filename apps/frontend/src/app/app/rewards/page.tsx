@@ -243,6 +243,78 @@ export default function RewardsPage() {
           {t("activeCampaigns")}
         </p>
 
+        {/* MagicBlock Quests — ongoing, no end date */}
+        <div className="mt-4">
+          <Link href="/rewards/magicblock" className="block group">
+            <div
+              className="relative rounded-2xl overflow-hidden border transition-all duration-200"
+              style={{
+                backgroundImage: `url("${MAGICBLOCK_BG}")`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                borderColor: `${MAGICBLOCK_ACCENT}33`,
+              }}
+            >
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/15" />
+
+              <div className="relative z-10 p-6">
+                <div className="flex items-center gap-2 mb-6">
+                  <span
+                    className="text-sm font-bold px-2.5 py-1 rounded-full border"
+                    style={{ backgroundColor: `${MAGICBLOCK_ACCENT}26`, color: MAGICBLOCK_ACCENT, borderColor: `${MAGICBLOCK_ACCENT}40` }}
+                  >
+                    Mainnet
+                  </span>
+                  <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
+                    Ongoing
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 mb-3">
+                  <Image
+                    src="/loofta-white.svg"
+                    alt="Loofta"
+                    width={72}
+                    height={20}
+                    priority
+                    className="opacity-90"
+                  />
+                  <span className="text-slate-500 font-light text-lg">×</span>
+                  <div className="w-7 h-7 rounded-md bg-white/10 border border-white/15 flex items-center justify-center p-1">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/images/logo/magicblock-mark.svg" alt="MagicBlock" className="w-full h-full object-contain" />
+                  </div>
+                </div>
+
+                <h2 className="text-2xl font-bold text-white leading-tight mb-2">
+                  MagicBlock Quests
+                </h2>
+
+                <p className="text-base text-slate-300 mb-5 leading-relaxed">
+                  Connect your MagicBlock wallet once — private ticket purchases and private payments auto-validate, no clicks needed.
+                </p>
+
+                <div className="flex items-end justify-between">
+                  <div>
+                    <p className="text-sm font-semibold uppercase tracking-wider mb-1" style={{ color: `${MAGICBLOCK_ACCENT}99` }}>
+                      Quests
+                    </p>
+                    <p className="text-3xl font-bold leading-none" style={{ color: MAGICBLOCK_ACCENT }}>
+                      Repeatable
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
+                    <span>View quests</span>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
+                      <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Link>
+        </div>
+
         {/* Blink Campaign */}
         <div className="mt-4">
         {(() => {
@@ -424,78 +496,6 @@ export default function RewardsPage() {
               ? <Link href="/rewards/megapot" className="block group">{megapotCard}</Link>
               : <div className="block">{megapotCard}</div>;
           })()}
-        </div>
-
-        {/* MagicBlock Quests — ongoing, no end date */}
-        <div className="mt-4">
-          <Link href="/rewards/magicblock" className="block group">
-            <div
-              className="relative rounded-2xl overflow-hidden border transition-all duration-200"
-              style={{
-                backgroundImage: `url("${MAGICBLOCK_BG}")`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-                borderColor: `${MAGICBLOCK_ACCENT}33`,
-              }}
-            >
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/15" />
-
-              <div className="relative z-10 p-6">
-                <div className="flex items-center gap-2 mb-6">
-                  <span
-                    className="text-sm font-bold px-2.5 py-1 rounded-full border"
-                    style={{ backgroundColor: `${MAGICBLOCK_ACCENT}26`, color: MAGICBLOCK_ACCENT, borderColor: `${MAGICBLOCK_ACCENT}40` }}
-                  >
-                    Mainnet
-                  </span>
-                  <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
-                    Ongoing
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 mb-3">
-                  <Image
-                    src="/loofta-white.svg"
-                    alt="Loofta"
-                    width={72}
-                    height={20}
-                    priority
-                    className="opacity-90"
-                  />
-                  <span className="text-slate-500 font-light text-lg">×</span>
-                  <div className="w-7 h-7 rounded-md bg-white/10 border border-white/15 flex items-center justify-center p-1">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/images/logo/magicblock-mark.svg" alt="MagicBlock" className="w-full h-full object-contain" />
-                  </div>
-                </div>
-
-                <h2 className="text-2xl font-bold text-white leading-tight mb-2">
-                  MagicBlock Quests
-                </h2>
-
-                <p className="text-base text-slate-300 mb-5 leading-relaxed">
-                  Connect your MagicBlock wallet once — private ticket purchases and private payments auto-validate, no clicks needed.
-                </p>
-
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className="text-sm font-semibold uppercase tracking-wider mb-1" style={{ color: `${MAGICBLOCK_ACCENT}99` }}>
-                      Quests
-                    </p>
-                    <p className="text-3xl font-bold leading-none" style={{ color: MAGICBLOCK_ACCENT }}>
-                      Repeatable
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
-                    <span>View quests</span>
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
-                      <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Link>
         </div>
 
         {/* ── ENDED ── */}
