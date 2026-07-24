@@ -138,6 +138,14 @@ export class ClaimsService {
     const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
     const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
     const shortId = generateShortId();
+    // Always create a burner, regardless of recipient type — same policy as createFromUsername/
+    // Social/Email. This is the direct-recipient-address creation path (also reachable by
+    // integrators via POST /claims/create, not just the frontend), so it must not be the one
+    // gap where a payment routes sender→recipient with no burner hop.
+    const burner = this.createClaimBurner();
+    if (!burner) {
+      this.logger.warn('Creating claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Claiming will fail until the key is set.');
+    }
     const { data, error } = await this.supabaseService.payments
       .insert({
         amount: Number(amount),
@@ -149,6 +157,7 @@ export class ClaimsService {
         to_token: 'USDC',
         is_devnet: isDevnet,
         short_id: shortId,
+        ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id')
       .single();

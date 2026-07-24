@@ -64,9 +64,14 @@ export async function POST(request: Request) {
     const shortId = generateShortId();
 
     // Every payment routes through a burner and requires an explicit claim — no exceptions.
+    // A failed mint must not silently degrade into a burner-less (direct sender→recipient) claim.
     const burner = await mintBurner(request.headers.get("Authorization") ?? "");
     if (!burner) {
-      console.error("[claims/create] burner minting failed — creating claim without one; claiming will fail until this is fixed");
+      console.error("[claims/create] burner minting failed — refusing to create a burner-less claim");
+      return NextResponse.json(
+        { error: "Could not prepare this payment right now. Please try again in a moment." },
+        { status: 503 },
+      );
     }
 
     const { data, error } = await supabase
@@ -90,7 +95,8 @@ export async function POST(request: Request) {
         // never deducted from the recipient's amount.
         fee_on_sender: isPrivate === false ? true : feeOnSender !== false,
         is_private: isPrivate !== false,
-        ...(burner ? { burner_address: burner.burner_address, burner_encrypted_secret: burner.burner_encrypted_secret } : {}),
+        burner_address: burner.burner_address,
+        burner_encrypted_secret: burner.burner_encrypted_secret,
       })
       .select("id")
       .single();
