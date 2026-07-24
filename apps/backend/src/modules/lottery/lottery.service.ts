@@ -210,6 +210,8 @@ export interface LotteryTicketSummary {
   /** True when this ticket came from claiming a gift — the claimant never paid for it, see
    *  purchaseGiftTickets. Dashboard "spent" excludes these; "won" still counts them. */
   isGift: boolean;
+  /** True when the ticket's cost was actually paid via a MagicBlock private transfer. */
+  fundedPrivately: boolean;
 }
 
 export interface LotteryWithdrawalSummary {
@@ -4062,6 +4064,7 @@ export class LotteryService {
       ticketNumbers: t.ticket_numbers ?? null,
       winningNumbers: t.winning_numbers ?? null,
       isGift: Boolean(t.is_gift),
+      fundedPrivately: Boolean(t.funded_privately),
     };
   }
 

@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn } from "lucide-react";
+import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, VenetianMask } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { getMyGifts, updateGiftRecipient, type MyGiftItem } from "@/services/api/lotteryGift";
 import { MessageInput } from "@/components/MessageInput";
@@ -85,6 +85,8 @@ interface TicketSummary {
   isGift?: boolean;
   /** Backend-authoritative: a won ticket below the withdrawal floor, shown as "Free ticket". */
   isFreeTicket?: boolean;
+  /** True when this ticket's cost was actually paid via a MagicBlock private transfer. */
+  fundedPrivately?: boolean;
 }
 interface WithdrawalSummary {
   id: string; ticketId: string; route: "base" | "solana_private";
@@ -575,6 +577,15 @@ const STEALTH_PHRASES = [
   "cutting through back alleys so nobody can trace it 🕵️",
 ];
 
+// Shown for public (non-private) purchases — no stealth/secrecy framing, since this is a plain
+// on-chain transfer visible to anyone like any normal transaction.
+const PUBLIC_PHRASES = [
+  "sending your payment on-chain 🔗",
+  "printing your tickets... 🎟️",
+  "broadcasting to the network 📡",
+  "confirming on-chain 🔎",
+];
+
 const PURCHASE_STEP_LABEL: Partial<Record<BuyStep, string>> = {
   signing: "Confirm in your wallet",
   sent: "Payment sent",
@@ -587,13 +598,14 @@ const PURCHASE_STEP_LABEL: Partial<Record<BuyStep, string>> = {
  * dismiss, no Escape, no X — the underlying transfer/bridge/buy chain can't be
  * cancelled mid-flight, so we don't offer a close affordance that would mislead the user.
  */
-function PurchaseProgressModal({ step, error, devReset }: { step: BuyStep; error?: string; devReset?: () => void }) {
+function PurchaseProgressModal({ step, error, devReset, isPrivate = true }: { step: BuyStep; error?: string; devReset?: () => void; isPrivate?: boolean }) {
   const [phraseIdx, setPhraseIdx] = useState(0);
   const reduceMotion = useReducedMotion();
+  const phrases = isPrivate ? STEALTH_PHRASES : PUBLIC_PHRASES;
   useEffect(() => {
-    const id = setInterval(() => setPhraseIdx(i => (i + 1) % STEALTH_PHRASES.length), 3500);
+    const id = setInterval(() => setPhraseIdx(i => (i + 1) % phrases.length), 3500);
     return () => clearInterval(id);
-  }, []);
+  }, [phrases.length]);
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 backdrop-blur-md p-4" role="dialog" aria-modal="true" aria-label="Purchasing tickets">
@@ -627,7 +639,7 @@ function PurchaseProgressModal({ step, error, devReset }: { step: BuyStep; error
               transition={{ duration: 0.35 }}
               className="text-lg sm:text-2xl font-semibold text-slate-100 leading-snug"
             >
-              {STEALTH_PHRASES[phraseIdx]}
+              {phrases[phraseIdx]}
             </motion.p>
           </AnimatePresence>
         </div>
@@ -1574,6 +1586,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           step={step}
           error={stepError}
           devReset={IS_LOCALHOST ? startNewPayment : undefined}
+          isPrivate={sendPrivately}
         />
       )}
       {step === "confirmed" && (
@@ -2989,6 +3002,11 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
               {t.isGift && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border border-emerald-500/30 text-emerald-400 bg-emerald-500/10">
                   Gifted
+                </span>
+              )}
+              {t.fundedPrivately && (
+                <span title="Purchased privately" className="inline-flex items-center shrink-0">
+                  <VenetianMask className="w-4 h-4 text-[#FF7A2A]/80" aria-label="Purchased privately" />
                 </span>
               )}
             </div>
