@@ -437,7 +437,7 @@ export default function SparksPage() {
             <button
               type="button"
               onClick={() =>
-                privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })
+                privyLogin({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })
               }
               className="rounded-xl px-5 py-2.5 font-medium bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 transition-opacity"
             >

@@ -272,7 +272,7 @@ export default function HistoryPage() {
               <p className="text-slate-400 mb-4">{t('signInPrompt')}</p>
               <button
                 type="button"
-                onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
+                onClick={() => privyLogin({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })}
                 className="rounded-xl px-4 py-2 font-medium bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
               >
                 {t('signIn')}

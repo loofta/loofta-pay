@@ -679,7 +679,7 @@ export default function Home() {
                         <Button
                           type="button"
                           variant="receiveSignIn"
-                          onClick={() => privyLogin({ loginMethods: ["email", "twitter"], disableSignup: false })}
+                          onClick={() => privyLogin({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })}
                           className="w-full h-12 rounded-xl font-semibold"
                         >
                           {t('signInToGetLink')}

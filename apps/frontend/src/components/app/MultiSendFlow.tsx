@@ -580,7 +580,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
   function handleRequestPayment() {
     if (!authenticated) {
-      login({ loginMethods: ["twitter", "email"], disableSignup: false });
+      login({ loginMethods: ["twitter", "email", "discord", "github"], disableSignup: false });
       return;
     }
     if (filledRows.length < 2) {
@@ -1287,7 +1287,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       )}
 
       <Button
-        onClick={!authenticated ? () => login({ loginMethods: ["twitter", "email"], disableSignup: false }) : handleRequestPayment}
+        onClick={!authenticated ? () => login({ loginMethods: ["twitter", "email", "discord", "github"], disableSignup: false }) : handleRequestPayment}
         disabled={authenticated && !canReview}
         className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
       >
