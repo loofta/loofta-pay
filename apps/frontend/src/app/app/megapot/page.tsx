@@ -1650,9 +1650,11 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
       )}
       {!isRunning && step !== "confirmed" && step !== "checking" && step !== "done" && giftStep !== "done" && (
         <>
-          <p className="text-slate-300 text-xl font-medium font-sans">Buy tickets privately</p>
+          <p className="text-slate-300 text-xl font-medium font-sans">Buy tickets{sendPrivately ? " privately" : ""}</p>
 
-          <p className="text-sm text-slate-400">🔒 Shielded via MagicBlock. Min {PRIVATE_MIN} tickets. Uses your Loofta balance.</p>
+          {sendPrivately && (
+            <p className="text-sm text-slate-400">🔒 Shielded via MagicBlock. Min {PRIVATE_MIN} tickets. Uses your Loofta balance.</p>
+          )}
 
           {/* Gift toggle */}
           <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden">
