@@ -28,6 +28,7 @@ import {
   MAGICBLOCK_VOLUME_FEE_BPS,
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
   SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS,
+  ENABLE_SINGLE_PAYMENT_PLATFORM_FEE,
   estimateMagicblockGrossUp,
   requestMagicblockPrivateTransfer,
   decodeActualSenderDebit,
@@ -1105,11 +1106,11 @@ export class ClaimsService {
       .eq('id', claimId);
     this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}${isNonPrivateLink ? ' is_private=true (sender opted into private on a non-private link)' : ''}`);
 
-    // MagicBlock cost = 10 BPS volume fee + flat 0.2 USDC gasless relay fee, plus Loofta's own
-    // cut (SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS) taken in the same call via platformFeeBps.
+    // MagicBlock cost = 10 BPS volume fee + flat 0.2 USDC gasless relay fee, plus (disabled, see
+    // ENABLE_SINGLE_PAYMENT_PLATFORM_FEE) Loofta's own cut via platformFeeBps.
     const relayFeeUnits = gasless ? Math.round(MAGICBLOCK_GAS_USDC * 1_000_000) : 0;
-    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS;
-    const platformFeeAccount = this.solanaSponsor.getFeePayerAddress();
+    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + (ENABLE_SINGLE_PAYMENT_PLATFORM_FEE ? SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS : 0);
+    const platformFeeAccount = ENABLE_SINGLE_PAYMENT_PLATFORM_FEE ? this.solanaSponsor.getFeePayerAddress() : null;
     // Exact out: pass the clean amount with exactOut:true — MagicBlock grosses up the sender's
     //   debit internally and guarantees the recipient nets exactly baseUnits.
     // Exact in:  sender pays (baseUnits - relay) + relay = baseUnits total, MB deducts its fee
@@ -1842,7 +1843,8 @@ export class ClaimsService {
     // own gross-up; adding platformFeeBps there too would grow the required gross-up beyond what
     // was pre-funded and could strand the sweep (balance-check abort above). Exact-in has no such
     // pre-funding assumption — the fee just comes out of what's being delivered, same as today.
-    const singlePaymentPlatformFeeAccount = !opts.feeOnSender ? this.solanaSponsor.getFeePayerAddress() : null;
+    // (Currently disabled altogether — see ENABLE_SINGLE_PAYMENT_PLATFORM_FEE.)
+    const singlePaymentPlatformFeeAccount = (ENABLE_SINGLE_PAYMENT_PLATFORM_FEE && !opts.feeOnSender) ? this.solanaSponsor.getFeePayerAddress() : null;
 
     const txResponse = await requestMagicblockPrivateTransfer({
       from: burnerKeypair.publicKey.toBase58(),
@@ -1940,9 +1942,10 @@ export class ClaimsService {
 
     // Loofta's bps only applies to the exact-in branch here too, matching the platformFeeBps
     // scoping above — the cross-chain (feeOnSender=true) estimate stays MagicBlock-only.
+    // (Currently disabled altogether — see ENABLE_SINGLE_PAYMENT_PLATFORM_FEE.)
     const estimatedMbVolumeFeeUnits = opts.feeOnSender
       ? (estimateMagicblockGrossUp(baseUnits) - baseUnits)
-      : Math.ceil((baseUnits - relayFeeUnits) * (MAGICBLOCK_VOLUME_FEE_BPS + SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS) / 10_000);
+      : Math.ceil((baseUnits - relayFeeUnits) * (MAGICBLOCK_VOLUME_FEE_BPS + (ENABLE_SINGLE_PAYMENT_PLATFORM_FEE ? SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS : 0)) / 10_000);
     const feeAmountUsdc = opts.feeOnSender ? 0 : (estimatedMbVolumeFeeUnits + relayFeeUnits) / 1_000_000;
 
     return { sweepTxHash: sig, sweptAmount: (transferUnits / 1_000_000).toFixed(6), feeAmountUsdc };

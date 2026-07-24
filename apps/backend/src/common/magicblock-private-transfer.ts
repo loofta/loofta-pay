@@ -34,6 +34,18 @@ export const MULTI_SEND_LOOFTA_PLATFORM_FEE_BPS = 10;
  *  sweepClaimBurnerPrivately burner→destination), additive to MagicBlock's own bps — same
  *  platformFeeBps/platformFeeAccount mechanism, same 10bps as PRIVATE_BALANCE_PLATFORM_FEE_BPS. */
 export const SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS = 10;
+/**
+ * Kill switch, both flags OFF as of 2026-07-24: the first live private payment to actually
+ * exercise either platform-fee addition (claims.service.ts single-payment sender→burner leg)
+ * failed on-chain with `InvalidAccountData` — a fresh, never-before-used claim burner as `to`
+ * combined with platformFeeBps/exactOut apparently changes the instruction set MagicBlock builds
+ * in a way it doesn't for an established wallet (see private-balance's working precedent, whose
+ * `to` is always the user's own long-lived wallet). Reported to MagicBlock; all the fee-calc
+ * plumbing below is left intact — flip a flag back to true once confirmed safe, no need to
+ * re-derive any of this.
+ */
+export const ENABLE_SINGLE_PAYMENT_PLATFORM_FEE = false;
+export const ENABLE_MULTI_SEND_PLATFORM_FEE = false;
 /** Cache TTL: 60 seconds. */
 const SOL_PRICE_CACHE_TTL_MS = 60_000;
 

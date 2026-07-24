@@ -108,7 +108,16 @@ export function usePerPrivateTransfer() {
         // Use sign-only so Privy doesn't run a gas-policy SOL-balance preflight check.
         // We broadcast directly after signing with our RPC.
         console.info(`[PrivatePay] Privy sign path | bytes=${rawTxBytes.length} version=${txData.version} sendTo=${txData.sendTo}`);
-        signature = await privySignAndSend(rawTxBytes);
+        try {
+          signature = await privySignAndSend(rawTxBytes);
+        } catch (e) {
+          if (e instanceof SendTransactionError) {
+            try { const logs = await e.getLogs(broadcastConn); console.error("[PrivatePay] Privy broadcast failed:", logs); } catch { /* ignore */ }
+            throw new Error(privatePayErrorMessageForUser(e.message, cluster));
+          }
+          if (e instanceof Error) throw new Error(privatePayErrorMessageForUser(e.message, cluster));
+          throw e;
+        }
         console.info(`[PrivatePay] Privy sign complete | sig=${signature.slice(0, 12)}…`);
       } else {
         // Legacy path (Phantom, etc.): deserialize, sign, countersign if needed, broadcast.

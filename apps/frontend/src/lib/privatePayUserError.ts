@@ -6,9 +6,25 @@
 export function stripSolanaTxErrorBoilerplate(message: string): string {
   return message
     .replace(/\s*Catch the `SendTransactionError`[\s\S]*$/i, "")
-    .replace(/\s*Logs:\s*\[\s*\]\s*\.?/gi, "")
+    // Strip the whole Logs: [...] block regardless of content — raw program log lines
+    // (e.g. "Program ... invoke [1]") are never meaningful to an end user.
+    .replace(/\s*Logs:\s*\[[\s\S]*?\]\s*\.?/gi, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** True once a message is just a bare technical fragment not worth showing verbatim
+ *  (e.g. "Simulation failed. Message: Transaction simulation failed: Error processing
+ *  Instruction 1: invalid account data for instruction."). */
+export function isRawOnChainProgramError(message: string): boolean {
+  const s = message.toLowerCase();
+  return (
+    s.includes("simulation failed") ||
+    s.includes("invalidaccountdata") ||
+    s.includes("invalid account data") ||
+    /error processing instruction/i.test(s) ||
+    /custom program error/i.test(s)
+  );
 }
 
 /** Typical simulation failure when the fee payer has no SOL / account never funded. */
@@ -40,6 +56,10 @@ export function privatePayErrorMessageForUser(message: string, cluster: string):
     return (
       "This wallet does not have enough SOL to pay Solana network fees. Add a small amount of SOL for fees and try again."
     );
+  }
+
+  if (isRawOnChainProgramError(cleaned)) {
+    return "This private transfer couldn't be completed right now. Please try again in a moment — if it keeps happening, contact support.";
   }
 
   if (cleaned.length > 400) {

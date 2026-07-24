@@ -11,6 +11,7 @@ import {
   MAGICBLOCK_GAS_SOL,
   MAGICBLOCK_VOLUME_FEE_BPS,
   MULTI_SEND_LOOFTA_PLATFORM_FEE_BPS,
+  ENABLE_MULTI_SEND_PLATFORM_FEE,
   estimateMagicblockGrossUp,
   fetchSolPriceUsd,
 } from '@/common/magicblock-private-transfer';
@@ -576,7 +577,9 @@ export class SendPaymentService {
     // private transfers would have cost — a fixed bps rate can't guarantee that on its own since
     // it scales with dollar amount while the thing multi-send actually saves (fewer flat relay
     // fees) doesn't. See computeDynamicPlatformFeeBps.
-    const dynamicLooftaBps = this.computeDynamicPlatformFeeBps(rows, totalBaseUnits, relayFeeUnits);
+    // (Disabled altogether — see ENABLE_MULTI_SEND_PLATFORM_FEE — until MagicBlock confirms the
+    // platformFeeBps + exactOut combination that broke claims.service.ts's single-payment path.)
+    const dynamicLooftaBps = ENABLE_MULTI_SEND_PLATFORM_FEE ? this.computeDynamicPlatformFeeBps(rows, totalBaseUnits, relayFeeUnits) : 0;
 
     // Clean batch total + exactOut:true — MagicBlock grosses up the sender's debit internally so
     // the hub nets exactly totalBaseUnits. platformFeeBps/platformFeeAccount take Loofta's own
@@ -589,8 +592,7 @@ export class SendPaymentService {
       cluster: cluster === 'localhost' ? 'devnet' : cluster,
       exactOut: true,
       gasless: true,
-      platformFeeBps: dynamicLooftaBps,
-      platformFeeAccount: hubAddress,
+      ...(ENABLE_MULTI_SEND_PLATFORM_FEE ? { platformFeeBps: dynamicLooftaBps, platformFeeAccount: hubAddress } : {}),
     });
 
     const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + dynamicLooftaBps;
