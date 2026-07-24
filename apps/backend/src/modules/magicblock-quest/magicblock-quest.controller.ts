@@ -14,6 +14,9 @@ export class MagicblockQuestController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get connected MagicBlock wallet and repeatable quest completion status' })
   async getMe(@PrivyUser() user: { id: string }) {
+    // Fire-and-forget: retries any previously-failed push before answering, so a page
+    // load/poll can self-heal a quest that failed due to transient config or timing issues.
+    void this.magicblockQuest.retryFailedPushes(user.id);
     return this.magicblockQuest.getQuestStatus(user.id);
   }
 

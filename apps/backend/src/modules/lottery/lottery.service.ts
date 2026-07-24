@@ -274,8 +274,14 @@ export class LotteryService {
     numTickets: number;
     userSolanaAddress: string;
     pickedTickets?: TicketPick[];
+    /** Defaults to private — matches today's only behavior; public is the opt-in. Only changes
+     *  the sender→burner leg (MagicBlock private transfer vs. a plain sponsor-cosigned transfer)
+     *  — burner→Base bridging (tryStartBridge) and the actual ticket purchase are already
+     *  privacy-agnostic and unchanged either way. */
+    route?: 'solana_private' | 'solana_public';
   }): Promise<InitiatePurchaseResult> {
     const { userId, numTickets, userSolanaAddress, pickedTickets } = opts;
+    const route = opts.route ?? 'solana_private';
     // Only meaningful when it exactly covers the purchase and stays within the on-chain
     // per-call cap on custom tickets — any mismatch just falls back to quick-pick at buy time
     // rather than blocking the purchase (see the buy step below).
@@ -318,38 +324,51 @@ export class LotteryService {
 
     // Estimate only, for the fee breakdown display — the real transfer sends the clean
     // `costUnits` with exactOut:true and lets MagicBlock gross up the sender's debit internally.
-    const grossAmount = estimateMagicblockGrossUp(costUnits);
-    const magicblockFeeUsdc = parseFloat(((grossAmount - costUnits) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6));
+    // Public route has no MagicBlock hop at all, so no fee here.
+    const grossAmount = route === 'solana_private' ? estimateMagicblockGrossUp(costUnits) : costUnits;
+    const magicblockFeeUsdc = route === 'solana_private'
+      ? parseFloat(((grossAmount - costUnits) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6))
+      : 0;
     // Loofta no longer charges a separate service fee on purchases — the buyer pays only the
-    // ticket cost + MagicBlock's own transfer fee. The Li.Fi bridge cost is absorbed from Loofta's
-    // fee-wallet reserve (see tryStartBridge), not passed to the buyer.
+    // ticket cost + MagicBlock's own transfer fee (private route only). The Base-side bridge cost
+    // is absorbed from Loofta's fee-wallet reserve either way (see tryStartBridge), not passed to
+    // the buyer.
     const totalUsdc = costUsdc + magicblockFeeUsdc;
 
-    // 4. Build MagicBlock private transfer: user → burner. Amount is exactly costUsdc — already
-    // a whole-dollar figure for any ticket count, so no rounding is needed for the exactOut leg
-    // to avoid fingerprinting. Li.Fi's bridging cost is funded later from the fee wallet, not
-    // baked into this amount (see tryStartBridge). This is now the ONLY tx the buyer signs.
-    const cluster = this.getSolanaCluster();
-    let txResponse: Awaited<ReturnType<typeof requestMagicblockPrivateTransfer>>;
-    try {
-      txResponse = await requestMagicblockPrivateTransfer({
-        from: userSolanaAddress,
-        to: burnerAddress,
-        mint: USDC_MINT.toBase58(),
-        amount: costUnits,
-        cluster,
-        exactOut: true,
-        gasless: true,
-        minDelayMs: 10_000,
-        maxDelayMs: 30_000,
-      });
-    } catch (err: any) {
-      if (String(err?.message).includes('delegated to another validator')) {
-        throw new BadRequestException(
-          'A previous payment from this wallet is still in transit (usually clears within 2 minutes). Please wait and try again.',
-        );
+    // 4. Build the sender → burner transfer. Amount is exactly costUsdc — already a whole-dollar
+    // figure for any ticket count, so no rounding is needed to avoid fingerprinting. Base-side
+    // bridging is funded later from the fee wallet regardless of route (see tryStartBridge). This
+    // is the ONLY tx the buyer signs either way.
+    let txResponse: { transactionBase64: string; requiredSigners: string[] };
+    if (route === 'solana_private') {
+      const cluster = this.getSolanaCluster();
+      try {
+        txResponse = await requestMagicblockPrivateTransfer({
+          from: userSolanaAddress,
+          to: burnerAddress,
+          mint: USDC_MINT.toBase58(),
+          amount: costUnits,
+          cluster,
+          exactOut: true,
+          gasless: true,
+          minDelayMs: 10_000,
+          maxDelayMs: 30_000,
+        });
+      } catch (err: any) {
+        if (String(err?.message).includes('delegated to another validator')) {
+          throw new BadRequestException(
+            'A previous payment from this wallet is still in transit (usually clears within 2 minutes). Please wait and try again.',
+          );
+        }
+        throw err;
       }
-      throw err;
+    } else {
+      const txBase64 = await this.buildPublicBurnerTransferTx({
+        fromAddress: userSolanaAddress,
+        toAddress: burnerAddress,
+        amountUsdc: costUsdc,
+      });
+      txResponse = { transactionBase64: txBase64, requiredSigners: [userSolanaAddress] };
     }
 
     // 6. Store ticket in DB
@@ -379,6 +398,49 @@ export class LotteryService {
       requiredSigners: txResponse.requiredSigners,
       feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, looftaFeeUsdc: 0, totalUsdc },
     };
+  }
+
+  /**
+   * Public-route sender → burner leg: a plain, sponsor-cosigned USDC transfer instead of a
+   * MagicBlock private transfer. No bridge-fee top-up needed here (unlike
+   * buildPublicPurchaseTransferTx's NEAR Intents deposit) — this only funds the burner, and
+   * tryStartBridge already tops up from the fee wallet for the burner→Base leg regardless of how
+   * the burner got funded. Same co-signing pattern as buildPublicPurchaseTransferTx: the fee
+   * wallet partial-signs now as fee payer, the user's signature is all that's left.
+   */
+  private async buildPublicBurnerTransferTx(opts: {
+    fromAddress: string;
+    toAddress: string;
+    amountUsdc: number;
+  }): Promise<string> {
+    const { fromAddress, toAddress, amountUsdc } = opts;
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
+    const bs58Mod = await import('bs58');
+    const feePayerKeypair = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
+
+    const conn = await this.getSolanaConnection();
+    const fromPubkey = new PublicKey(fromAddress);
+    const toPubkey = new PublicKey(toAddress);
+    const fromAta = await getAssociatedTokenAddress(USDC_MINT, fromPubkey);
+    const toAta = await getAssociatedTokenAddress(USDC_MINT, toPubkey);
+
+    const instructions: TransactionInstruction[] = [
+      createAssociatedTokenAccountIdempotentInstruction(feePayerKeypair.publicKey, toAta, toPubkey, USDC_MINT),
+      createTransferInstruction(fromAta, toAta, fromPubkey, Math.round(amountUsdc * 1_000_000)),
+    ];
+
+    const { blockhash } = await conn.getLatestBlockhash();
+    const message = new TransactionMessage({
+      payerKey: feePayerKeypair.publicKey,
+      recentBlockhash: blockhash,
+      instructions,
+    }).compileToV0Message();
+
+    const tx = new VersionedTransaction(message);
+    tx.sign([feePayerKeypair]); // fee wallet partial-signs to sponsor gas + burner ATA rent; user signs client-side
+
+    return Buffer.from(tx.serialize()).toString('base64');
   }
 
   // ─── Gift a ticket ──────────────────────────────────────────────────────────
@@ -2919,8 +2981,11 @@ export class LotteryService {
     ticketIds: string[];
     userId: string;
     destinationAddress: string;
+    /** Defaults to private — matches today's only behavior; public is the opt-in. */
+    route?: 'solana_private' | 'solana_public';
   }): Promise<{ withdrawalIds: string[]; batchId: string }> {
     if (!opts.ticketIds.length) throw new BadRequestException('No ticket IDs provided');
+    const route = opts.route ?? 'solana_private';
     const db = this.supabase.getClient();
 
     const { data: tickets, error: tErr } = await db
@@ -3000,7 +3065,7 @@ export class LotteryService {
       user_id: opts.userId,
       ticket_id: t.id,
       batch_id: batchId,
-      route: 'solana_private' as const,
+      route,
       destination_address: opts.destinationAddress,
       amount_usdc: parseFloat(t.win_amount_usdc),
       status: 'pending',
@@ -3023,7 +3088,7 @@ export class LotteryService {
       this.logger.error(`Batch withdrawal ${batchId}: ${e.message}`),
     );
 
-    this.logger.log(`Batch withdrawal ${batchId}: ${tickets.length} tickets → burner ${burnerAddress}`);
+    this.logger.log(`Batch withdrawal ${batchId}: ${tickets.length} tickets → burner ${burnerAddress} route=${route}`);
     return { withdrawalIds: withdrawals.map(w => w.id), batchId };
   }
 
@@ -3255,13 +3320,25 @@ export class LotteryService {
     return MAGICBLOCK_GAS_SOL * solPrice;
   }
 
-  async estimatePrivateWithdrawalNet(amountUsdc: number): Promise<{ feeUsd: number; receiveUsdc: number }> {
+  async estimatePrivateWithdrawalNet(
+    amountUsdc: number,
+    route: 'solana_private' | 'solana_public' = 'solana_private',
+  ): Promise<{ feeUsd: number; receiveUsdc: number }> {
     // 1. Bridge leg: what actually lands in the burner (guaranteed min out). Use whichever bridge
-    // the withdrawal will actually run through, so the estimate matches delivery.
+    // the withdrawal will actually run through, so the estimate matches delivery. Identical for
+    // both routes — only the final burner→destination leg differs (step 2).
     const bridge = this.bridgeProvider === 'relay'
       ? await this.relay.getWithdrawalFeeEstimate(amountUsdc)
       : await this.lifi.getWithdrawalFeeEstimate(amountUsdc);
     const bridgeReceive = bridge.receiveUsdc;
+
+    if (route === 'solana_public') {
+      // doPublicSolanaTransfer's final leg is a plain, sponsor-paid transfer — no relay fee or
+      // volume fee on top of the bridge, so the bridge's own net is the real delivered amount.
+      const receiveUsdc = parseFloat(Math.max(0, bridgeReceive).toFixed(6));
+      const feeUsd = parseFloat(Math.max(0, amountUsdc - receiveUsdc).toFixed(6));
+      return { feeUsd, receiveUsdc };
+    }
 
     // 2. MagicBlock leg — mirror doMagicBlockTransfer exactly. There's no gasless minimum, so this
     // always applies: relay fee (0.002 SOL priced live, +15% safety margin) + a $0.01 grossup
@@ -3488,11 +3565,13 @@ export class LotteryService {
   private async processPendingWithdrawalsInner(): Promise<void> {
     const db = this.supabase.getClient();
 
-    // Li.Fi based withdrawals (new): bridge in-flight
+    // Li.Fi based withdrawals (new): bridge in-flight. Bridging itself is identical for both
+    // solana_private and solana_public — only the final burner→destination leg differs (see
+    // checkLifiWithdrawal/tryCompleteBatch), so both routes need to be polled here.
     const { data: lifiWithdrawals } = await db
       .from('lottery_withdrawals')
       .select('*')
-      .eq('route', 'solana_private')
+      .in('route', ['solana_private', 'solana_public'])
       .eq('status', 'processing')
       .not('lifi_tx_hash', 'is', null)
       .neq('bridge_status', 'done');
@@ -3505,26 +3584,28 @@ export class LotteryService {
       );
     }
 
-    // Retry: bridge done but MagicBlock step not yet complete (e.g. MagicBlock errored last time)
+    // Retry: bridge done but final delivery step not yet complete (e.g. it errored last time)
     const { data: magicblockRetries } = await db
       .from('lottery_withdrawals')
       .select('*')
-      .eq('route', 'solana_private')
+      .in('route', ['solana_private', 'solana_public'])
       .eq('status', 'processing')
       .eq('bridge_status', 'done')
       .is('magicblock_tx_hash', null);
 
     if (magicblockRetries?.length) {
-      this.logger.log(`processPendingWithdrawals: ${magicblockRetries.length} MagicBlock retries`);
+      this.logger.log(`processPendingWithdrawals: ${magicblockRetries.length} final-delivery retries`);
       for (const w of magicblockRetries) {
         const retry = async () => {
           if (w.batch_id) {
             await this.tryCompleteBatch(w.batch_id, w);
+          } else if (w.route === 'solana_public') {
+            await this.doPublicSolanaTransfer(w, w.amount_usdc);
           } else {
             await this.doMagicBlockTransfer(w, w.amount_usdc);
           }
         };
-        await retry().catch(e => this.logger.warn(`Withdrawal ${w.id} (MagicBlock retry): ${e.message}`));
+        await retry().catch(e => this.logger.warn(`Withdrawal ${w.id} (final-delivery retry): ${e.message}`));
       }
     }
 
@@ -3576,8 +3657,11 @@ export class LotteryService {
     }).eq('id', withdrawal.id);
 
     if (withdrawal.batch_id) {
-      this.logger.log(`${W} step 3/3 — checking if all batch bridges done before MagicBlock`);
+      this.logger.log(`${W} step 3/3 — checking if all batch bridges done before final delivery`);
       await this.tryCompleteBatch(withdrawal.batch_id, withdrawal);
+    } else if (withdrawal.route === 'solana_public') {
+      this.logger.log(`${W} step 3/3 — triggering public Solana transfer`);
+      await this.doPublicSolanaTransfer(withdrawal, withdrawal.amount_usdc);
     } else {
       this.logger.log(`${W} step 3/3 — triggering MagicBlock private transfer`);
       await this.doMagicBlockTransfer(withdrawal, withdrawal.amount_usdc);
@@ -3609,8 +3693,13 @@ export class LotteryService {
     const totalUsdc = allInBatch
       .filter(w => w.status !== 'failed')
       .reduce((sum, w) => sum + parseFloat(w.amount_usdc ?? '0'), 0);
-    this.logger.log(`${B} ALL bridges done (${allInBatch.length}/${allInBatch.length}) — total=${totalUsdc} USDC → MagicBlock private transfer`);
-    await this.doMagicBlockTransfer(anyWithdrawal, totalUsdc, batchId);
+    if (anyWithdrawal.route === 'solana_public') {
+      this.logger.log(`${B} ALL bridges done (${allInBatch.length}/${allInBatch.length}) — total=${totalUsdc} USDC → public Solana transfer`);
+      await this.doPublicSolanaTransfer(anyWithdrawal, totalUsdc, batchId);
+    } else {
+      this.logger.log(`${B} ALL bridges done (${allInBatch.length}/${allInBatch.length}) — total=${totalUsdc} USDC → MagicBlock private transfer`);
+      await this.doMagicBlockTransfer(anyWithdrawal, totalUsdc, batchId);
+    }
   }
 
   /** MagicBlock private transfer from burner → user's Loofta balance. Shared by single and batch. */
@@ -3829,6 +3918,104 @@ export class LotteryService {
           .eq('id', t.id);
         // Also stamp the withdrawal row with the actually-delivered share so the client can show
         // "you received $X" (the real net), not the gross win it optimistically displayed at redeem.
+        const rowUpdate = db.from('lottery_withdrawals')
+          .update({ amount_usdc: finalAmount, updated_at: new Date().toISOString() });
+        await (batchId
+          ? rowUpdate.eq('batch_id', batchId).eq('ticket_id', t.id)
+          : rowUpdate.eq('id', withdrawal.id));
+      }
+      this.logger.log(`${W} marked ${ticketIds.length} ticket(s) withdrawn, reconciled to actual delivered total $${deliveredUsdc.toFixed(6)}`);
+    }
+  }
+
+  /**
+   * Public (non-private) Solana delivery — burner → destination, plain SPL transfer instead of
+   * doMagicBlockTransfer's MagicBlock private transfer. Reuses sendUsdcFromBurner (the same
+   * sponsor-paid plain-transfer primitive doMagicBlockTransfer itself falls back to when a burner
+   * balance is too small to cover MagicBlock's relay fee) — no shrink-and-retry loop needed here
+   * since a plain transfer's cost is a fixed, predictable network fee, not MagicBlock's
+   * unpredictable internal gross-up. Deliberately kept separate from doMagicBlockTransfer rather
+   * than sharing its tail via refactor, so the existing hardened private path is untouched.
+   */
+  private async doPublicSolanaTransfer(withdrawal: any, amountUsdc: number, batchId?: string): Promise<void> {
+    const db = this.supabase.getClient();
+    const W = batchId ? `[Batch ${batchId.slice(0, 8)}]` : `[Withdrawal ${withdrawal.id.slice(0, 8)}]`;
+
+    // Same atomic-claim pattern as doMagicBlockTransfer, reusing the same magicblock_claimed_at
+    // column as a generic "final-leg delivery claimed" marker — guards against the same
+    // concurrent-retry double-send race (checkLifiWithdrawal firing at the same moment as the
+    // cron's stale-retry sweep).
+    const staleBefore = new Date(Date.now() - 2 * 60_000).toISOString();
+    let claimedRows: { id: string }[] | null = null;
+    {
+      let q = db.from('lottery_withdrawals')
+        .update({ magicblock_claimed_at: new Date().toISOString() })
+        .eq('status', 'processing')
+        .is('magicblock_claimed_at', null);
+      q = batchId ? q.eq('batch_id', batchId) : q.eq('id', withdrawal.id);
+      const { data, error } = await q.select('id');
+      if (error) throw new Error(`Public delivery claim failed: ${error.message}`);
+      claimedRows = data;
+    }
+    if (!claimedRows?.length) {
+      let q = db.from('lottery_withdrawals')
+        .update({ magicblock_claimed_at: new Date().toISOString() })
+        .eq('status', 'processing')
+        .lt('magicblock_claimed_at', staleBefore);
+      q = batchId ? q.eq('batch_id', batchId) : q.eq('id', withdrawal.id);
+      const { data, error } = await q.select('id');
+      if (error) throw new Error(`Public delivery claim (stale-retry) failed: ${error.message}`);
+      claimedRows = data;
+    }
+    if (!claimedRows?.length) {
+      this.logger.log(`${W} public delivery already claimed by a concurrent run — skipping`);
+      return;
+    }
+
+    const burnerBalance = await this.getBurnerUsdcBalance(withdrawal.withdrawal_burner_sol_address);
+    if (burnerBalance === 0n) {
+      this.logger.warn(`${W} step 3/3 (public): burner balance 0 — bridge may still be settling, will retry next cron`);
+      return;
+    }
+
+    const burnerKey = this.decryptKey(withdrawal.withdrawal_burner_sol_key_enc, withdrawal.withdrawal_burner_sol_address);
+    const burnerKeypair = Keypair.fromSecretKey(burnerKey);
+
+    this.logger.log(`${W} step 3/3 (public): burner ${withdrawal.withdrawal_burner_sol_address.slice(0, 8)}… balance=${burnerBalance} → ${withdrawal.destination_address} (plain transfer, sponsor pays gas + ATA rent)`);
+
+    // No relay fee to reserve — sponsor pays network fee/rent, not the burner — so the full
+    // balance goes to the destination (no proportional or flat fee on this leg, matching the
+    // same-session multi-send hub fan-out's fee-free plain-transfer design).
+    const sig = await this.sendUsdcFromBurner(burnerKeypair, withdrawal.destination_address, burnerBalance);
+    const deliveredUsdc = Number(burnerBalance) / 1_000_000;
+
+    this.logger.log(`${W} step 3/3 (public) complete: sig=${sig}`);
+
+    const updateData = { status: 'complete', magicblock_tx_hash: sig, bridge_status: 'done', updated_at: new Date().toISOString() };
+    let ticketIds: string[] = [];
+    if (batchId) {
+      await db.from('lottery_withdrawals').update(updateData).eq('batch_id', batchId).neq('status', 'failed');
+      const { data: batchRows } = await db.from('lottery_withdrawals').select('ticket_id').eq('batch_id', batchId).neq('status', 'failed');
+      ticketIds = (batchRows ?? []).map((r: any) => r.ticket_id).filter(Boolean);
+    } else {
+      await db.from('lottery_withdrawals').update(updateData).eq('id', withdrawal.id);
+      if (withdrawal.ticket_id) ticketIds = [withdrawal.ticket_id];
+    }
+
+    if (ticketIds.length) {
+      const { data: ticketsForPayout } = await db
+        .from('lottery_tickets')
+        .select('id, win_amount_usdc')
+        .in('id', ticketIds);
+      const rows = ticketsForPayout ?? [];
+      const priorTotal = rows.reduce((sum: number, t: any) => sum + (t.win_amount_usdc ?? 0), 0);
+
+      for (const t of rows) {
+        const share = priorTotal > 0 ? (t.win_amount_usdc ?? 0) / priorTotal : 1 / rows.length;
+        const finalAmount = parseFloat((deliveredUsdc * share).toFixed(6));
+        await db.from('lottery_tickets')
+          .update({ status: 'withdrawn', win_amount_usdc: finalAmount, updated_at: new Date().toISOString() })
+          .eq('id', t.id);
         const rowUpdate = db.from('lottery_withdrawals')
           .update({ amount_usdc: finalAmount, updated_at: new Date().toISOString() });
         await (batchId

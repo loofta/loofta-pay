@@ -47,6 +47,12 @@ class BuyTicketsDto {
   @ValidateNested({ each: true })
   @Type(() => TicketNumbersDto)
   tickets?: TicketNumbersDto[];
+
+  /** Defaults to private server-side too — an old/stale client omitting this still gets today's
+   *  only behavior. */
+  @IsOptional()
+  @IsIn(['solana_private', 'solana_public'])
+  route?: 'solana_private' | 'solana_public';
 }
 
 class BuyGiftDto {
@@ -133,6 +139,12 @@ class WithdrawBatchDto {
 
   @IsString()
   destinationAddress: string;
+
+  /** Defaults to private server-side too — an old/stale client omitting this still gets today's
+   *  only behavior. */
+  @IsOptional()
+  @IsIn(['solana_private', 'solana_public'])
+  route?: 'solana_private' | 'solana_public';
 }
 
 @ApiTags('lottery')
@@ -147,12 +159,15 @@ export class LotteryController {
 
   @Get('bridge-fee')
   @Public()
-  @ApiOperation({ summary: 'Estimate net a private withdrawal delivers (Li.Fi bridge + MagicBlock fees, Base→Solana)' })
-  async bridgeFee(@Query('amountUsdc') amountUsdc: string): Promise<{ feeUsd: number; receiveUsdc: number }> {
+  @ApiOperation({ summary: 'Estimate net a withdrawal delivers (bridge + optional MagicBlock fees, Base→Solana)' })
+  async bridgeFee(
+    @Query('amountUsdc') amountUsdc: string,
+    @Query('route') route?: 'solana_private' | 'solana_public',
+  ): Promise<{ feeUsd: number; receiveUsdc: number }> {
     const amount = parseFloat(amountUsdc);
     if (!amount || amount <= 0 || amount > 1_000_000) throw new BadRequestException('amountUsdc must be between 0 and 1,000,000');
     try {
-      return await this.lottery.estimatePrivateWithdrawalNet(amount);
+      return await this.lottery.estimatePrivateWithdrawalNet(amount, route);
     } catch (e: any) {
       // No fabricated fallback — a fee estimate that doesn't match the real bridge is worse than
       // none. 503 tells the frontend to show "unavailable, try again", not a guessed number.
@@ -178,6 +193,7 @@ export class LotteryController {
       numTickets: dto.numTickets,
       userSolanaAddress: dto.userSolanaAddress,
       pickedTickets: dto.tickets?.map(t => ({ main: t.main, bonus: t.bonus })),
+      route: dto.route,
     });
   }
 
@@ -365,6 +381,7 @@ export class LotteryController {
       ticketIds: dto.ticketIds,
       userId: req.user.id,
       destinationAddress: dto.destinationAddress,
+      route: dto.route,
     });
   }
 

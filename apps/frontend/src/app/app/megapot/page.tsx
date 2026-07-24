@@ -17,6 +17,8 @@ import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCar
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { isInsufficientSolOrNoPriorCreditError, privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
 import { getSolanaCluster } from "@/lib/solanaCluster";
+import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
+import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
 const MAGICBLOCK_BPS = 10;
@@ -986,8 +988,9 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
   }
 
   if (mode === "buy-public") {
-    const BRIDGE_BUFFER = 0.15;
-    const total = ticketCostUsd + BRIDGE_BUFFER;
+    // Matches initiatePublicPurchase/buildPublicPurchaseTransferTx on the backend: the buyer's
+    // wallet only ever sends ticketCostUsd — the NEAR Intents bridge-fee buffer is topped up
+    // separately from Loofta's own fee wallet in the same transaction, not charged to the buyer.
     return (
       <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
         <div className="flex justify-between px-4 py-3.5">
@@ -996,11 +999,11 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
         </div>
         <div className="flex justify-between px-4 py-3.5">
           <span className="text-base text-slate-400">NEAR Intents bridge fee (SOL USDC → Base)</span>
-          <span className="text-base text-slate-400 tabular-nums">~{fmt(BRIDGE_BUFFER)}</span>
+          <span className="text-base text-emerald-400 tabular-nums">Covered by Loofta</span>
         </div>
         <div className="flex justify-between px-4 py-3.5">
           <span className="text-base font-semibold text-white">Total to send</span>
-          <span className="text-base font-semibold text-white tabular-nums">~{fmt(total)}</span>
+          <span className="text-base font-semibold text-white tabular-nums">{fmt(ticketCostUsd)}</span>
         </div>
       </div>
     );
@@ -1064,6 +1067,13 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   const [numTickets, setNumTickets] = useState(DEFAULT_TICKETS);
   const [tickets, setTickets] = useState<TicketNumbers[]>(() => Array.from({ length: DEFAULT_TICKETS }, randomTicket));
   const [chooseOpen, setChooseOpen] = useState(false);
+  // Default ON — matches today's only (private) behavior; public buying is the new opt-in.
+  const [sendPrivately, setSendPrivately] = useState(true);
+  const [privacyBurstKey, setPrivacyBurstKey] = useState<number | null>(null);
+  const handleToggleSendPrivately = (checked: boolean) => {
+    setSendPrivately(checked);
+    if (checked) setPrivacyBurstKey(Date.now());
+  };
   const [step, setStep] = useState<BuyStep>("idle");
   const [stepError, setStepError] = useState("");
   const [stepErrorIsBalance, setStepErrorIsBalance] = useState(false);
@@ -1129,7 +1139,9 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   // Purchases draw from the buyer's Loofta balance — check it up front so a short buyer sees a
   // top-up prompt instead of a raw MagicBlock/Solana simulation error at signing time.
   const { balanceUSD, isLoading: isBalanceLoading } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated === true });
-  const totalCostUsd = numTickets + mbFee(numTickets);
+  // Public buying has no MagicBlock fee — the buyer only ever sends ticketCostUsd (see
+  // buildPublicPurchaseTransferTx; the NEAR Intents bridge buffer comes from Loofta's fee wallet).
+  const totalCostUsd = sendPrivately ? numTickets + mbFee(numTickets) : numTickets;
   const insufficientBalance = authenticated === true && !isBalanceLoading && balanceUSD < totalCostUsd;
 
   const embeddedSolAddress = ((user?.linkedAccounts ?? [])
@@ -1287,6 +1299,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           numTickets,
           userSolanaAddress: embeddedWallet?.address,
           tickets: numTickets <= 10 ? tickets.map(t => ({ main: t.main, bonus: t.bonus })) : undefined,
+          route: "solana_private",
         }),
       });
       if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
@@ -1362,6 +1375,90 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         setStepError("");
       } else {
         setStepError(privatePayErrorMessageForUser(message, getSolanaCluster()));
+      }
+    }
+  }
+
+  /**
+   * Public path — same /buy endpoint as private, with route: "solana_public". Only the sender→
+   * burner leg differs (plain sponsor-cosigned transfer instead of a MagicBlock private transfer,
+   * see initiatePurchase/buildPublicBurnerTransferTx on the backend) — the burner→Base bridge
+   * (already Relay-first/Li.Fi-fallback for every ticket regardless of privacy) and the actual
+   * ticket purchase are unchanged, so custom number picks work exactly the same as private buying.
+   */
+  async function handlePublicBuy() {
+    if (!embeddedWallet?.address) {
+      setStepError("Wallet not ready — please wait a moment and try again.");
+      return;
+    }
+    setLastTickets([...tickets]);
+    setLastNumTickets(numTickets);
+    setStep("signing");
+    setStepError("");
+    setStepErrorIsBalance(false);
+    let ticketId: string | undefined;
+    let paymentBroadcast = false;
+    try {
+      const token = await getAccessToken();
+      const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const initRes = await fetch("/api/lottery/buy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({
+          numTickets,
+          userSolanaAddress: embeddedWallet?.address,
+          tickets: numTickets <= 10 ? tickets.map(t => ({ main: t.main, bonus: t.bonus })) : undefined,
+          route: "solana_public",
+        }),
+      });
+      if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
+      const initData = await initRes.json();
+      const currentTicketId: string = initData.ticketId;
+      ticketId = currentTicketId;
+      const txBase64 = initData.txBase64;
+
+      const txBytes = Buffer.from(txBase64, "base64");
+      let signature: string;
+      try {
+        const { signature: sigBytes } = await signAndSendTransaction({
+          transaction: txBytes as unknown as Uint8Array,
+          wallet: embeddedWallet as any,
+        });
+        signature = bs58.encode(sigBytes as Uint8Array);
+        paymentBroadcast = true;
+      } catch (signErr: any) {
+        if (/confirmation (timed out|failed)/i.test(signErr?.message ?? "")) paymentBroadcast = true;
+        throw signErr;
+      }
+      setStep("sent");
+      await fetch("/api/lottery/buy-confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ ticketId: currentTicketId, senderTxHash: signature }),
+      });
+      suppressedTicketIdRef.current = null;
+      pollingStartedRef.current = true;
+      pollStatus(currentTicketId, numTickets);
+      onPurchased();
+      await new Promise((resolve) => setTimeout(resolve, 10_000));
+      setStep("done");
+    } catch (err: any) {
+      const message = err?.message ?? "Unknown error";
+      if (ticketId && paymentBroadcast) {
+        suppressedTicketIdRef.current = null;
+        setStep("checking");
+        setStepError("");
+        pollingStartedRef.current = true;
+        pollStatus(ticketId, numTickets);
+        onPurchased();
+        return;
+      }
+      setStep("error");
+      if (isInsufficientSolOrNoPriorCreditError(message)) {
+        setStepErrorIsBalance(true);
+        setStepError("");
+      } else {
+        setStepError(message);
       }
     }
   }
@@ -1620,7 +1717,27 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             </div>
           )}
 
-          <FeeBreakdown ticketCostUsd={numTickets} mode="buy" solPriceUsd={solPriceUsd} />
+          {!giftMode && (
+            <>
+              {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
+              <IncognitoModeToggle checked={sendPrivately} onCheckedChange={handleToggleSendPrivately} />
+            </>
+          )}
+
+          {sendPrivately ? (
+            <FeeBreakdown ticketCostUsd={numTickets} mode="buy" solPriceUsd={solPriceUsd} />
+          ) : (
+            <div className="rounded-xl bg-white/[0.03] border border-white/10 divide-y divide-white/[0.06]">
+              <div className="flex justify-between px-4 py-3.5">
+                <span className="text-base text-slate-400">Tickets ({numTickets} × $1.00)</span>
+                <span className="text-base text-slate-200 tabular-nums">{fmt(numTickets)}</span>
+              </div>
+              <div className="flex justify-between px-4 py-3.5">
+                <span className="text-base font-semibold text-white">Total to send</span>
+                <span className="text-base font-semibold text-white tabular-nums">{fmt(numTickets)}</span>
+              </div>
+            </div>
+          )}
 
           {step === "error" && stepError && (
             <p className="text-base text-red-400">{stepError}</p>
@@ -1654,7 +1771,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
               )}
             </button>
           ) : (
-            <button onClick={!authenticated ? () => login() : () => handlePrivateBuy()}
+            <button onClick={!authenticated ? () => login() : () => (sendPrivately ? handlePrivateBuy() : handlePublicBuy())}
               disabled={authenticated && drawCutoff}
               className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center justify-center gap-2">
               {!authenticated ? (
@@ -1662,7 +1779,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
                   <LogIn className="w-5 h-5" />
                   Sign in to continue
                 </>
-              ) : (drawCutoff ? "Sales paused" : `Buy privately · ${fmt(numTickets + mbFee(numTickets))}`)}
+              ) : (drawCutoff ? "Sales paused" : `Buy${sendPrivately ? " privately" : ""} · ${fmt(totalCostUsd)}`)}
             </button>
           )}
         </>
@@ -1735,6 +1852,13 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   const [playAgainError, setPlayAgainError] = useState("");
   const [confirmingRedeem, setConfirmingRedeem] = useState(false);
   const reduceMotion = useReducedMotion();
+  // Default ON — matches today's only (private) behavior; public withdrawal is the new opt-in.
+  const [sendPrivately, setSendPrivately] = useState(true);
+  const [privacyBurstKey, setPrivacyBurstKey] = useState<number | null>(null);
+  const handleToggleSendPrivately = (checked: boolean) => {
+    setSendPrivately(checked);
+    if (checked) setPrivacyBurstKey(Date.now());
+  };
 
   // Resume an in-flight redeem across a page refresh — without this, a refresh mid-redeem drops
   // back to "ready to redeem" (the ticket's status stays 'won' until the very end of the
@@ -1823,7 +1947,8 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
       for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) await new Promise(r => setTimeout(r, 700 * attempt));
         try {
-          const res = await fetch(`/api/lottery/bridge-fee?amountUsdc=${totalAmount}`, { headers });
+          const route = sendPrivately ? "solana_private" : "solana_public";
+          const res = await fetch(`/api/lottery/bridge-fee?amountUsdc=${totalAmount}&route=${route}`, { headers });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
           if (data?.feeUsd == null || data?.receiveUsdc == null) throw new Error("Malformed response");
@@ -1837,7 +1962,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
     })();
 
     return () => { cancelled = true; };
-  }, [totalAmount, accessToken, feeRetryToken]);
+  }, [totalAmount, accessToken, feeRetryToken, sendPrivately]);
 
   async function handleWithdraw() {
     if (!userSolanaAddress || !wonTickets.length) return;
@@ -1846,7 +1971,11 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
       const res = await fetch("/api/lottery/withdraw-batch", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-        body: JSON.stringify({ ticketIds: wonTickets.map(t => t.id), destinationAddress: userSolanaAddress }),
+        body: JSON.stringify({
+          ticketIds: wonTickets.map(t => t.id),
+          destinationAddress: userSolanaAddress,
+          route: sendPrivately ? "solana_private" : "solana_public",
+        }),
       });
       if (!res.ok) throw new Error((await res.json()).message ?? "Failed");
       const data = await res.json().catch(() => null);
@@ -2070,15 +2199,23 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
       </div>
 
       {!isFreeTicket && (
-        <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
-          <ShieldCheck className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-          <div>
-            <p className="text-base text-slate-300 font-medium">
-              {isBatch ? "All your wins arrive as one private transfer" : "Arrives privately in your Loofta balance"}
-            </p>
-            <p className="text-sm text-slate-500 mt-0.5">No on-chain link between your winnings and your wallet</p>
+        <>
+          {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
+          <IncognitoModeToggle checked={sendPrivately} onCheckedChange={handleToggleSendPrivately} />
+          <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
+            <ShieldCheck className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-base text-slate-300 font-medium">
+                {sendPrivately
+                  ? (isBatch ? "All your wins arrive as one private transfer" : "Arrives privately in your Loofta balance")
+                  : (isBatch ? "All your wins arrive as one plain transfer" : "Arrives directly in your wallet")}
+              </p>
+              <p className="text-sm text-slate-500 mt-0.5">
+                {sendPrivately ? "No on-chain link between your winnings and your wallet" : "Visible on-chain, same as a normal transfer"}
+              </p>
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {playAgainError && <p className="text-base text-red-400">{playAgainError}</p>}
@@ -2099,7 +2236,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           {error && <p className="text-base text-red-400">{error}</p>}
           <button onClick={handleWithdraw} disabled={loading || bridgeFeeUsd === null}
             className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
-            {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Withdraw ~${fmt(bridgeReceiveUsdc ?? totalAmount)} privately`}
+            {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Withdraw ~${fmt(bridgeReceiveUsdc ?? totalAmount)}${sendPrivately ? " privately" : ""}`}
           </button>
           <button onClick={handlePlayAgain} disabled={playingAgain}
             className="w-full text-center text-base font-medium text-slate-300 hover:text-white underline underline-offset-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
@@ -2146,7 +2283,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           {error && <p className="text-base text-red-400">{error}</p>}
           <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
             className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
-            {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Redeem ~${fmt(bridgeReceiveUsdc ?? totalAmount)} privately`}
+            {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Redeem ~${fmt(bridgeReceiveUsdc ?? totalAmount)}${sendPrivately ? " privately" : ""}`}
           </button>
         </>
       )}

@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { ArrowLeft } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 
@@ -46,11 +46,30 @@ const QUEST_COPY: Record<MagicblockQuestType, { title: string; description: stri
 };
 
 async function fetchMagicblockQuestStatus(token: string | null): Promise<MagicblockQuestStatus> {
+  console.info("[MagicblockQuest] GET /rewards/magicblock/me", { hasToken: !!token });
   const res = await fetch(`${BACKEND_URL}/rewards/magicblock/me`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  if (!res.ok) throw new Error("Failed to load MagicBlock quests");
-  return res.json();
+  const body = await res.json().catch((e) => {
+    console.error("[MagicblockQuest] response was not valid JSON:", e);
+    return null;
+  });
+  if (!res.ok) {
+    console.error("[MagicblockQuest] fetch failed", { status: res.status, body });
+    throw new Error("Failed to load MagicBlock quests");
+  }
+  console.info("[MagicblockQuest] status", {
+    wallet: body?.wallet,
+    resetsAt: body?.resetsAt,
+    quests: body?.quests?.map((q: MagicblockQuestStatusItem) => ({
+      questType: q.questType,
+      questId: q.questId,
+      completions: q.completions,
+      lastPushedAt: q.lastPushedAt,
+      lastError: q.lastError,
+    })),
+  });
+  return body;
 }
 
 async function connectMagicblockWallet(token: string | null, wallet: string): Promise<{ wallet: string }> {
@@ -63,6 +82,7 @@ async function connectMagicblockWallet(token: string | null, wallet: string): Pr
     body: JSON.stringify({ wallet }),
   });
   const data = await res.json().catch(() => ({}));
+  console.info("[MagicblockQuest] POST /rewards/magicblock/wallet", { status: res.status, data });
   // 409 = already connected (e.g. a double-submit race) — treat like success, just refetch.
   if (!res.ok && res.status !== 409) {
     throw new Error(data?.message ?? "Failed to connect wallet");
@@ -274,6 +294,11 @@ export default function RewardsMagicblockPage() {
   const { login: privyLogin, getAccessToken } = usePrivy();
   const queryClient = useQueryClient();
 
+  // Every GET /me makes the backend retry any previously-failed quest push. On a fresh page
+  // load, poll a handful of times so a stuck-but-now-fixable quest self-heals without a manual
+  // refresh, then settle — this counter resets each time the page (re)mounts.
+  const pollAttemptsRef = useRef(0);
+
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["magicblock-quest-me", userId],
     queryFn: async () => {
@@ -285,6 +310,14 @@ export default function RewardsMagicblockPage() {
     gcTime: 5 * 60_000,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
+    refetchInterval: (query) => {
+      const status = query.state.data as MagicblockQuestStatus | undefined;
+      if (!status) return false;
+      const hasRetryable = status.quests.some((q) => q.completions === 0 && q.lastError);
+      if (!hasRetryable || pollAttemptsRef.current >= 6) return false;
+      pollAttemptsRef.current += 1;
+      return 5_000;
+    },
   });
 
   function handleConnected() {

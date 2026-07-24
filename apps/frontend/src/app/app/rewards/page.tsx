@@ -14,8 +14,7 @@ const BLINK_END_DATE = new Date("2026-08-15T00:00:00.000Z");
 const MEGAPOT_START_DATE = new Date("2026-07-07T15:00:00.000Z");
 const MEGAPOT_END_DATE = new Date("2026-08-31T00:00:00.000Z");
 const MEGAPOT_ACCENT = "#5EEAD4";
-// Get Paid campaign: 2 weeks starting Jul 9 2026
-const GETPAID_START_DATE = new Date("2026-07-09T00:00:00.000Z");
+// Get Paid campaign: 2 weeks starting Jul 9 2026 — ended Jul 23
 const GETPAID_END_DATE = new Date("2026-07-23T00:00:00.000Z");
 const GETPAID_ACCENT = "#4ADE80";
 const MAGICBLOCK_ACCENT = "#f97316"; // Loofta primary brand orange (--primary in globals.css)
@@ -217,8 +216,6 @@ export default function RewardsPage() {
   const [blinkActive, setBlinkActive] = useState(false);
   const [megapotDaysLeft, setMegapotDaysLeft] = useState<number | null>(null);
   const [megapotActive, setMegapotActive] = useState(false);
-  const [getpaidDaysLeft, setGetpaidDaysLeft] = useState<number | null>(null);
-  const [getpaidActive, setGetpaidActive] = useState(false);
   const [isLocalhost, setIsLocalhost] = useState(false);
 
   useEffect(() => {
@@ -228,8 +225,6 @@ export default function RewardsPage() {
     setBlinkActive(now >= BLINK_START_DATE);
     setMegapotDaysLeft(getDaysLeft(MEGAPOT_END_DATE));
     setMegapotActive(now >= MEGAPOT_START_DATE);
-    setGetpaidDaysLeft(getDaysLeft(GETPAID_END_DATE));
-    setGetpaidActive(now >= GETPAID_START_DATE);
     setIsLocalhost(window.location.hostname === "localhost");
   }, []);
 
@@ -247,81 +242,6 @@ export default function RewardsPage() {
         <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">
           {t("activeCampaigns")}
         </p>
-
-        {/* Get Paid Campaign */}
-        {(() => {
-            const getpaidClickable = getpaidActive || isLocalhost;
-            const getpaidCard = (
-            <div
-              className="relative rounded-2xl overflow-hidden border transition-all duration-200"
-              style={{
-                backgroundImage: `url("${GETPAID_BG}")`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-                borderColor: `${GETPAID_ACCENT}33`,
-              }}
-            >
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/15" />
-
-              <div className="relative z-10 p-6">
-                <div className="flex items-center gap-2 mb-6">
-                  <span
-                    className="text-sm font-bold px-2.5 py-1 rounded-full border"
-                    style={{ backgroundColor: `${GETPAID_ACCENT}26`, color: GETPAID_ACCENT, borderColor: `${GETPAID_ACCENT}40` }}
-                  >
-                    Mainnet
-                  </span>
-                  {getpaidDaysLeft !== null && (
-                    <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
-                      Ends in {getpaidDaysLeft}d
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 mb-3">
-                  <Image
-                    src="/loofta-white.svg"
-                    alt="Loofta"
-                    width={72}
-                    height={20}
-                    priority
-                    className="opacity-90"
-                  />
-                </div>
-
-                <h2 className="text-2xl font-bold text-white leading-tight mb-2">
-                  Get Paid Campaign
-                </h2>
-
-                <p className="text-base text-slate-300 mb-5 leading-relaxed">
-                  Create a payment link, share it with someone, and get paid through it — 3 people who qualify each win $20.
-                </p>
-
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className="text-sm font-semibold uppercase tracking-wider mb-1" style={{ color: `${GETPAID_ACCENT}99` }}>
-                      Prize
-                    </p>
-                    <p className="text-3xl font-bold leading-none" style={{ color: GETPAID_ACCENT }}>
-                      $20 × 3
-                    </p>
-                  </div>
-                  {getpaidClickable && (
-                    <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
-                      <span>View quest</span>
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
-                        <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-            );
-            return getpaidClickable
-              ? <Link href="/rewards/getpaid" className="block group">{getpaidCard}</Link>
-              : <div className="block">{getpaidCard}</div>;
-        })()}
 
         {/* Blink Campaign */}
         <div className="mt-4">
@@ -583,6 +503,62 @@ export default function RewardsPage() {
           <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4">
             Ended
           </p>
+
+          {/* Get Paid Campaign — ended */}
+          <Link href="/rewards/getpaid" className="block group mb-4">
+            <div
+              className="relative rounded-2xl overflow-hidden border border-white/10 group-hover:border-white/20 transition-all duration-200 opacity-70"
+              style={{ backgroundImage: `url("${GETPAID_BG}")`, backgroundSize: "cover", backgroundPosition: "center" }}
+            >
+              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/30" />
+              <div className="relative z-10 p-6">
+                <div className="flex items-center gap-2 mb-6">
+                  <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-white/10 text-slate-400 border border-white/15">
+                    Mainnet
+                  </span>
+                  <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-white/10 text-slate-400 border border-white/15">
+                    Ended
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 mb-3">
+                  <Image
+                    src="/loofta-white.svg"
+                    alt="Loofta"
+                    width={72}
+                    height={20}
+                    priority
+                    className="opacity-90"
+                  />
+                </div>
+
+                <h2 className="text-2xl font-bold text-white leading-tight mb-2">
+                  Get Paid Campaign
+                </h2>
+
+                <p className="text-base text-slate-400 mb-6 leading-relaxed">
+                  Create a payment link, share it with someone, and get paid through it — 3 people who qualify each win $20.
+                </p>
+
+                <div className="flex items-end justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Prize
+                    </p>
+                    <p className="text-3xl font-bold text-slate-300 leading-none">
+                      $20 × 3
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-base font-semibold text-slate-500 group-hover:text-slate-400 transition-colors pb-0.5">
+                    <span>View results</span>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
+                      <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Link>
 
           {/* Sparks Campaign — ended */}
           <Link href="/rewards/sparks" className="block group">

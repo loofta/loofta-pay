@@ -5,6 +5,9 @@ import { SupabaseService } from '@/database/supabase.service';
 const PUSH_URL = 'https://quests.magicblock.app/api/validators/push';
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const RESET_TIMEZONE = 'Europe/Paris'; // CET/CEST
+// Don't re-attempt a failed push more often than this — retryFailedPushes is triggered on every
+// GET /me (i.e. every page load/poll), so this bounds how often we actually hit MagicBlock.
+const RETRY_COOLDOWN_MS = 15_000;
 const WEEKDAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
 export type MagicblockQuestType = 'lottery_ticket' | 'private_payment';
@@ -158,6 +161,47 @@ export class MagicblockQuestService {
     });
 
     return { wallet, quests, resetsAt: resetsAt.toISOString() };
+  }
+
+  /**
+   * Fire-and-forget: called on every GET /me so a page load/poll re-attempts any push that
+   * previously failed (e.g. missing API key at the time, or the MagicBlock quest not yet
+   * started). Never throws — a retry failure must not break the status endpoint.
+   */
+  async retryFailedPushes(userId: string): Promise<void> {
+    try {
+      const weekStart = currentQuestWeekStart();
+      const cutoff = new Date(Date.now() - RETRY_COOLDOWN_MS).toISOString();
+      const db = this.supabase.getClient();
+      const { data: rows } = await db
+        .from('magicblock_quest_pushes')
+        .select('id, quest_id, wallet')
+        .eq('user_id', userId)
+        .eq('success', false)
+        .gte('pushed_at', weekStart.toISOString())
+        .lt('pushed_at', cutoff);
+      if (!rows?.length) return;
+
+      for (const row of rows as { id: string; quest_id: number; wallet: string }[]) {
+        try {
+          const response = await this.pushToMagicBlock(row.quest_id, row.wallet);
+          await db
+            .from('magicblock_quest_pushes')
+            .update({ success: true, response, pushed_at: new Date().toISOString() })
+            .eq('id', row.id);
+          this.logger.log(`MagicBlock quest ${row.quest_id} retry succeeded (push ${row.id})`);
+        } catch (e) {
+          const message = (e as Error)?.message ?? String(e);
+          await db
+            .from('magicblock_quest_pushes')
+            .update({ response: { error: message }, pushed_at: new Date().toISOString() })
+            .eq('id', row.id);
+          this.logger.warn(`MagicBlock quest retry failed (push ${row.id}): ${message}`);
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`retryFailedPushes errored for user ${userId}: ${(e as Error)?.message ?? e}`);
+    }
   }
 
   private extractError(response: unknown): string | null {

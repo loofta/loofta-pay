@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 export function IncognitoModeToggle({
   checked,
   onCheckedChange,
-  offLabel = "Private payment",
+  offLabel = "Pay privately",
   className,
 }: {
   checked: boolean;
@@ -24,7 +24,7 @@ export function IncognitoModeToggle({
     <div className={cn("flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2", className)}>
       {checked && <VenetianMask className="h-4 w-4 shrink-0 text-slate-300" strokeWidth={1.75} />}
       <span className={cn("flex-1 min-w-0 text-sm font-medium transition-colors", checked ? "text-slate-100" : "text-slate-200")}>
-        {checked ? "Private" : offLabel}
+        {checked ? "Pay privately" : offLabel}
       </span>
       <Switch checked={checked} onCheckedChange={onCheckedChange} aria-label="Make this payment private" />
     </div>
