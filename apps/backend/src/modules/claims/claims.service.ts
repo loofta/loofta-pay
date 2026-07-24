@@ -3019,14 +3019,23 @@ export class ClaimsService {
   }
 
   /**
-   * Returns claims that are PRIVATE_TRANSFER_PENDING with a saved sender_tx_hash.
-   * Used by the cron verifier to poll on-chain and auto-upgrade to SUCCESS.
+   * Returns claims that are PRIVATE_TRANSFER_PENDING with a saved sender_tx_hash, EXCLUDING any
+   * claim that has a burner (burner_address set) — those are burner-mediated (private) claims
+   * with a second, separate leg (burner → recipient), so confirming the sender's leg-1 tx here is
+   * NOT the same as the payment actually completing. Every prior version of this query included
+   * burner claims, and updateStatus's own downgrade guard would correctly refuse to mark them
+   * SUCCESS (hasBurner) — but each of those calls still stamped a fresh paid_at/updated_at, which
+   * kept the claim matching this exact same query on the very next cron tick: a self-sustaining
+   * infinite loop between this verifier and updateStatus's guard, firing every minute forever
+   * (incident 2026-07-24, claim b665e249). Burner claims are the sweep cron's job
+   * (cronSweepPendingBurners) and the recipient's own claim action — never this verifier's.
    */
   async getPendingTxHashClaims(): Promise<{ id: string; sender_tx_hash: string; created_at: string }[]> {
     const { data, error } = await this.supabaseService.payments
       .select('id, sender_tx_hash, created_at')
       .eq('status', 'PRIVATE_TRANSFER_PENDING')
-      .not('sender_tx_hash', 'is', null);
+      .not('sender_tx_hash', 'is', null)
+      .is('burner_address', null);
     if (error) {
       this.logger.error('Failed to query pending tx hash claims:', error);
       return [];

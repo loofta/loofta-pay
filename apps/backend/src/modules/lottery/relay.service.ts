@@ -242,11 +242,18 @@ export class RelayService {
     };
   }
 
-  /** Display-only fee estimate for a Base→Solana withdrawal of `amountUsdc`. */
+  /**
+   * Display-only fee estimate for a Base→Solana withdrawal of `amountUsdc` — no funds ever move
+   * to `toAddress` here, it only exists so Relay has a syntactically valid recipient to quote
+   * against. Was '11111111111111111111111111111111' (the System Program ID) — Relay tightened
+   * recipient validation and now rejects that as "a token contract [that] cannot receive funds"
+   * (broke every withdrawal fee estimate in prod on 2026-07-24). The well-known Solana incinerator
+   * address is a plain, ordinary (non-program) account, so it passes that validation.
+   */
   async getWithdrawalFeeEstimate(amountUsdc: number): Promise<{ feeUsd: number; receiveUsdc: number }> {
     const q = await this.getBaseToSolQuote({
       fromAddress: '0x000000000000000000000000000000000000dEaD',
-      toAddress: '11111111111111111111111111111111',
+      toAddress: '1nc1nerator11111111111111111111111111111111',
       amountUnits: BigInt(Math.round(amountUsdc * 1_000_000)),
     });
     return { feeUsd: q.feeUsd, receiveUsdc: Number(q.toAmountMinUnits) / 1_000_000 };
