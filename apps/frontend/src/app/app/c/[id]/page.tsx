@@ -3578,7 +3578,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           </div>
         ) : claim ? (
           <>
-            {!isCreatorView && !isRecipient && claim?.direction !== 'from_recipient' ? (
+            {/* A claim that already paid out has nothing left to authorize — never show "Payment
+                not found" for it just because this viewer's raw identity check failed (e.g. a
+                returning Telegram-relay recipient landing on their second, unlinked Privy user id
+                — see the 2026-07-24 Td2mutpu incident). The receipt view below already re-checks
+                SUCCESS on its own, so this only needs to stop routing settled claims into the
+                not-found branch. */}
+            {!isCreatorView && !isRecipient && claim?.direction !== 'from_recipient'
+              && String(status || claim?.status || "").toUpperCase() !== "SUCCESS" ? (
               claim?.recipient_pending_social && !hasSocialPlatformLinked(claim.recipient_pending_social_platform) ? (
                 <SocialConnectPrompt
                   platform={claim.recipient_pending_social_platform ?? "discord"}
@@ -3602,7 +3609,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   isConfirmingIdentity={isConfirmingIdentity}
                 />
               )
-            ) : isRecipient &&
+            ) : (isRecipient || String(status || claim?.status || "").toUpperCase() === "SUCCESS") &&
               !claim?.recipient_pending_email &&
               !claim?.recipient_pending_username &&
               !claim?.recipient_pending_social &&

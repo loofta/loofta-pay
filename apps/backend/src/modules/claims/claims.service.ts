@@ -295,6 +295,10 @@ export class ClaimsService {
       }
       recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
 
+      // Always create a burner here, regardless of isPrivate — deliberate, not a leftover default.
+      // Public sends to a social handle still route sender→burner→recipient so the pay-time
+      // privacy toggle on /c/[id] can switch a claim into private funding right up to the moment
+      // it's paid, without needing a different code path per privacy setting.
       const burner = this.createClaimBurner();
       if (!burner) {
         this.logger.warn('Creating claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Claiming will fail until the key is set.');
@@ -889,7 +893,15 @@ export class ClaimsService {
       throw new ForbiddenException('Authentication required to view this payment.');
     }
     const isCreator = !!(claim.created_by && claim.created_by === requestingUserId);
-    if (!isCreator) {
+    // Once a claim has actually paid out, there's nothing left to authorize (no funds to move,
+    // no destination to pick) — skip the recipient-identity check for this terminal state rather
+    // than risk a real "Payment not found" for a legitimate recipient. This matters concretely:
+    // Telegram-login can hand a returning recipient a second, unlinked Privy user id with no
+    // wallet/social-account trail back to the original one (confirmed in production — see the
+    // 2026-07-24 Td2mutpu incident), so checkIsRecipient's strict identity match can permanently
+    // fail for the real recipient even though the payment already succeeded to their real wallet.
+    const isAlreadySettled = (claim.status || '').toUpperCase() === 'SUCCESS';
+    if (!isCreator && !isAlreadySettled) {
       const { isRecipient } = await this.checkIsRecipient(id, requestingUserId);
       if (!isRecipient) {
         throw new NotFoundException('Payment not found.');
