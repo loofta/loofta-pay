@@ -18,7 +18,7 @@ export function LotteryTab({
   giftsLoaded, giftsData,
 
   statusFilter, setStatusFilter, fetchLottery,
-  total, loading, loaded, data, page,
+  total, activeTicketsTotal, revenueToday, loading, loaded, data, page,
   expandedId, setExpandedId,
 }: {
   giftIdentifierInput: string;
@@ -45,6 +45,8 @@ export function LotteryTab({
   setStatusFilter: (v: string) => void;
   fetchLottery: (page?: number, status?: string) => void;
   total: number;
+  activeTicketsTotal: number;
+  revenueToday: number;
   loading: boolean;
   loaded: boolean;
   data: any[];
@@ -54,6 +56,22 @@ export function LotteryTab({
 }) {
   return (
     <div className="space-y-3">
+      {/* Top-line stats */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-xl border border-gray-800 p-4">
+          <div className="text-sm text-gray-500 uppercase tracking-wide">Revenue today</div>
+          <div className="text-2xl font-semibold text-emerald-400 tabular-nums mt-1">
+            ${revenueToday.toFixed(2)}
+          </div>
+        </div>
+        <div className="rounded-xl border border-gray-800 p-4">
+          <div className="text-sm text-gray-500 uppercase tracking-wide">Active tickets</div>
+          <div className="text-2xl font-semibold text-blue-400 tabular-nums mt-1">
+            {activeTicketsTotal.toLocaleString()}
+          </div>
+        </div>
+      </div>
+
       {/* Gift a Megapot ticket */}
       <div className="rounded-xl border border-gray-800 p-4 space-y-3">
         <div className="text-base font-semibold text-gray-200">Gift a Megapot ticket</div>

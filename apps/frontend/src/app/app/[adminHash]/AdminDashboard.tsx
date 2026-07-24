@@ -116,6 +116,8 @@ export default function AdminDashboard() {
   const [lotteryLoading, setLotteryLoading] = useState(false);
   const [lotteryLoaded, setLotteryLoaded] = useState(false);
   const [lotteryTotal, setLotteryTotal] = useState(0);
+  const [lotteryActiveTicketsTotal, setLotteryActiveTicketsTotal] = useState(0);
+  const [lotteryRevenueToday, setLotteryRevenueToday] = useState(0);
   const [lotteryPage, setLotteryPage] = useState(1);
   const [lotteryStatusFilter, setLotteryStatusFilter] = useState("");
   const [lotteryExpandedId, setLotteryExpandedId] = useState<string | null>(null);
@@ -329,6 +331,8 @@ export default function AdminDashboard() {
       const data = await res.json();
       setLotteryData(data.data ?? []);
       setLotteryTotal(data.total ?? 0);
+      setLotteryActiveTicketsTotal(data.activeTicketsTotal ?? 0);
+      setLotteryRevenueToday(data.revenueToday ?? 0);
       setLotteryPage(page);
       setLotteryLoaded(true);
     } catch {
@@ -795,7 +799,8 @@ export default function AdminDashboard() {
           referralFeesBalance={referralFeesBalance} referralFeesWallet={referralFeesWallet} referralFeesBasescanUrl={referralFeesBasescanUrl}
           giftsLoaded={giftsLoaded} giftsData={giftsData}
           statusFilter={lotteryStatusFilter} setStatusFilter={setLotteryStatusFilter} fetchLottery={fetchLottery}
-          total={lotteryTotal} loading={lotteryLoading} loaded={lotteryLoaded} data={lotteryData} page={lotteryPage}
+          total={lotteryTotal} activeTicketsTotal={lotteryActiveTicketsTotal} revenueToday={lotteryRevenueToday}
+          loading={lotteryLoading} loaded={lotteryLoaded} data={lotteryData} page={lotteryPage}
           expandedId={lotteryExpandedId} setExpandedId={setLotteryExpandedId}
         />
       )}

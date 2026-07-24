@@ -94,9 +94,11 @@ export class MagicblockQuestService {
     private readonly config: ConfigService,
   ) {}
 
+  // Hardcoded, not env vars — these are fixed MagicBlock questline IDs, not secrets or
+  // per-environment config, and env drift between local/Railway already caused this to silently
+  // no-op in production once today (2026-07-24).
   private questId(type: MagicblockQuestType): number {
-    const key = type === 'lottery_ticket' ? 'MAGICBLOCK_QUEST_ID_LOTTERY' : 'MAGICBLOCK_QUEST_ID_PAYMENT';
-    return Number(this.config.get<string>(key, '0'));
+    return type === 'lottery_ticket' ? 43 : 44;
   }
 
   async getWallet(userId: string): Promise<string | null> {

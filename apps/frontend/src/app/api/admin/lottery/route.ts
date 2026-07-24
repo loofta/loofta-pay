@@ -46,5 +46,24 @@ export async function GET(request: NextRequest) {
 
   const enriched = tickets.map((t: any) => ({ ...t, user: userMap[t.user_id] ?? null }));
 
-  return NextResponse.json({ data: enriched, total: count ?? 0, page, limit: PAGE_SIZE });
+  // Active tickets total: sum of num_tickets across every row currently in the live/undrawn
+  // round — a row can represent several tickets bought in one purchase, so this is a sum, not
+  // a row count. Not scoped to "today" — a ticket bought yesterday is still active until drawn.
+  const { data: activeRows } = await supabase
+    .from("lottery_tickets")
+    .select("num_tickets")
+    .eq("status", "active");
+  const activeTicketsTotal = (activeRows ?? []).reduce((sum: number, r: any) => sum + (Number(r.num_tickets) || 0), 0);
+
+  // Revenue today: Loofta's actual fee take (not gross ticket sales) for tickets created since
+  // UTC midnight.
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+  const { data: todayRows } = await supabase
+    .from("lottery_tickets")
+    .select("fee_amount_usdc")
+    .gte("created_at", todayStart.toISOString());
+  const revenueToday = (todayRows ?? []).reduce((sum: number, r: any) => sum + (Number(r.fee_amount_usdc) || 0), 0);
+
+  return NextResponse.json({ data: enriched, total: count ?? 0, page, limit: PAGE_SIZE, activeTicketsTotal, revenueToday });
 }
