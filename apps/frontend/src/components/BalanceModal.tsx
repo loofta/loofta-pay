@@ -69,6 +69,11 @@ import { usePerPrivateSelfTransfer } from "@/hooks/usePerPrivateSelfTransfer";
 import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
 import { startPrivateDeposit, getPrivateTransferStatus, type PrivateTransferStatus } from "@/services/api/privateBalance";
 import { PRIVATE_PAYMENT_MAX_WAIT_MINUTES } from "@/lib/privatePaymentCopy";
+import { PajCashOnrampView } from "@/components/paj-cash/PajCashOnrampView";
+import { PajCashOfframpView } from "@/components/paj-cash/PajCashOfframpView";
+import { pajListOrders, type PajCashOrder } from "@/services/pajCash";
+
+const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
 
 const LOG_PREFIX = "[BalanceModal]";
 const PEER_LOG = "[Peer Offramp]";
@@ -362,7 +367,7 @@ export function BalanceModal({
   const dialogContentRef = useRef<HTMLDivElement>(null);
 
   const [coinbaseLoading, setCoinbaseLoading] = useState(false);
-  const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | "peer-offramp" | "private-relay" | null>(null);
+  const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | "peer-offramp" | "private-relay" | "paj-cash" | null>(null);
   const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
   const [showFiatOfframpPicker, setShowFiatOfframpPicker] = useState(false);
   const [showFiatOnrampPicker, setShowFiatOnrampPicker] = useState(false);
@@ -396,7 +401,10 @@ export function BalanceModal({
   const [peerUsdcUsdPrice, setPeerUsdcUsdPrice] = useState<number>(1); // USDC/USD, defaults to 1
 
   // Near Intents top-up deposit
-  const [topUpView, setTopUpView] = useState<"near-intents-deposit" | "private-deposit" | null>(null);
+  const [topUpView, setTopUpView] = useState<"near-intents-deposit" | "private-deposit" | "paj-cash-onramp" | null>(null);
+
+  // PAJ Cash (Naira on/off-ramp) history
+  const [pajCashHistory, setPajCashHistory] = useState<PajCashOrder[]>([]);
 
   // Private Deposit (MagicBlock burner-relay) — USDC on Solana only for now (cross-chain sources
   // are built server-side but gated off until failed-bridge refund recovery is automated)
@@ -805,6 +813,8 @@ export function BalanceModal({
     () => (solanaAddress ? solanaWallets?.find((w) => w.address === solanaAddress) : undefined),
     [solanaAddress, solanaWallets]
   );
+
+  const pajPrefillEmail = user?.email?.address || undefined;
 
   const usdcSolanaToken = useMemo(
     () =>
@@ -1472,6 +1482,7 @@ export function BalanceModal({
     setRecentWithdrawals(history);
     fetchPeerHistory();
     fetchDbDeposits();
+    fetchPajCashHistory();
 
     // Restore deposit view if a Near Intents top-up is still pending
     if (depositAddr && !TERMINAL_BRIDGE_STATUSES.has(depositBridgeStatus || "")) {
@@ -1760,6 +1771,15 @@ export function BalanceModal({
         setPeerOfframpHistory(Array.isArray(records) ? records : []);
       }
     } catch { /* non-fatal */ } finally { setPeerHistoryLoading(false); }
+  };
+
+  const fetchPajCashHistory = async () => {
+    if (!PAJ_CASH_ENABLED) return;
+    try {
+      const token = await getAccessToken();
+      const orders = await pajListOrders(token);
+      setPajCashHistory(orders);
+    } catch { /* non-fatal */ }
   };
 
   const resumePeerOfframp = (record: PeerOfframpRecord) => {
@@ -2528,6 +2548,30 @@ export function BalanceModal({
                       <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Coming soon</p>
                     </div>
                   </div>
+
+                  {/* PAJ Cash — Naira on-ramp */}
+                  {PAJ_CASH_ENABLED && (
+                    <button
+                      type="button"
+                      disabled={!solanaAddress}
+                      onClick={() => { setShowFiatOnrampPicker(false); setTopUpView("paj-cash-onramp"); }}
+                      className={cn(
+                        "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                        dark
+                          ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                          : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      )}
+                    >
+                      <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                        <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Naira · PAJ Cash</p>
+                        <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Bank transfer in Nigeria</p>
+                      </div>
+                      <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="py-2 space-y-3">
@@ -2864,7 +2908,7 @@ export function BalanceModal({
               coinbase: "Coinbase",
               moonpay: "MoonPay",
             };
-            const isEmpty = dbDeposits.length === 0 && recentWithdrawals.length === 0 && peerOfframpHistory.length === 0 && !dbDepositsLoading;
+            const isEmpty = dbDeposits.length === 0 && recentWithdrawals.length === 0 && peerOfframpHistory.length === 0 && pajCashHistory.length === 0 && !dbDepositsLoading;
             return (
               <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
                 {dbDepositsLoading && dbDeposits.length === 0 && peerOfframpHistory.length === 0 && recentWithdrawals.length === 0 ? (
@@ -2877,6 +2921,7 @@ export function BalanceModal({
                       ...dbDeposits.map((dep) => ({ kind: "deposit" as const, ts: new Date(dep.created_at).getTime(), dep })),
                       ...peerOfframpHistory.map((record) => ({ kind: "peer" as const, ts: new Date(record.created_at).getTime(), record })),
                       ...recentWithdrawals.map((item) => ({ kind: "withdrawal" as const, ts: item.createdAt, item })),
+                      ...pajCashHistory.map((order) => ({ kind: "paj" as const, ts: new Date(order.created_at).getTime(), order })),
                     ]
                       .sort((a, b) => b.ts - a.ts)
                       .map((entry) => {
@@ -2954,6 +2999,35 @@ export function BalanceModal({
                                       </button>
                                     )}
                                   </div>
+                                </div>
+                              </div>
+                            </li>
+                          );
+                        }
+
+                        if (entry.kind === "paj") {
+                          const order = entry.order;
+                          const isComplete = order.status === "COMPLETE";
+                          const isFailed = order.status === "FAILED" || order.status === "CANCELLED" || order.status === "EXPIRED";
+                          const statusColor = isComplete ? "text-emerald-400" : isFailed ? "text-red-400" : "text-blue-400";
+                          const statusLabel = isComplete ? "Complete" : isFailed ? order.status.charAt(0) + order.status.slice(1).toLowerCase() : "In progress";
+                          return (
+                            <li key={`paj-${order.id}`}>
+                              <div className={`rounded-lg border p-3 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
+                                      {order.direction === "ON_RAMP" ? "Naira top-up" : "Naira withdrawal"}
+                                      {order.fiat_amount ? <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>· ₦{Number(order.fiat_amount).toLocaleString()}</span> : ""}
+                                    </p>
+                                    <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                                      {new Date(order.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                    </p>
+                                  </div>
+                                  <span className={`text-base font-medium flex items-center gap-1 shrink-0 ${statusColor}`}>
+                                    {!isComplete && !isFailed && <Loader2 className="h-3 w-3 animate-spin" />}
+                                    {statusLabel}
+                                  </span>
                                 </div>
                               </div>
                             </li>
@@ -3414,11 +3488,63 @@ export function BalanceModal({
                   </p>
                 </div>
               </div>
+
+              {/* PAJ Cash — Naira off-ramp */}
+              {PAJ_CASH_ENABLED && (
+                <button
+                  type="button"
+                  disabled={!solanaAddress}
+                  onClick={() => { setShowFiatOfframpPicker(false); setWithdrawMethod("paj-cash"); }}
+                  className={cn(
+                    "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                    dark
+                      ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                      : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  )}
+                >
+                  <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                    <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Naira · PAJ Cash</p>
+                    <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Bank transfer in Nigeria</p>
+                  </div>
+                  <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                </button>
+              )}
             </div>
           )}
 
-          {/* Withdraw tab — form (method selected, not peer-offramp which has its own sections) */}
-          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "peer-offramp" && (
+          {/* Top-up tab — PAJ Cash (Naira) */}
+          {tab === "topup" && topUpView === "paj-cash-onramp" && (
+            <PajCashOnrampView
+              dark={dark}
+              prefillEmail={pajPrefillEmail}
+              getAccessToken={getAccessToken}
+              onBack={() => setTopUpView(null)}
+              onComplete={() => { fetchPajCashHistory(); onRefresh?.(); }}
+            />
+          )}
+
+          {/* Withdraw tab — PAJ Cash (Naira) */}
+          {tab === "withdraw" && withdrawMethod === "paj-cash" && (
+            <PajCashOfframpView
+              dark={dark}
+              devnetMode={devnetMode}
+              solanaAddress={solanaAddress}
+              wallet={wallet}
+              signTransaction={signTransaction}
+              userId={user?.id}
+              prefillEmail={pajPrefillEmail}
+              maxAmountUsdc={spendableBalance}
+              getAccessToken={getAccessToken}
+              onBack={() => setWithdrawMethod(null)}
+              onComplete={() => { fetchPajCashHistory(); onRefresh?.(); }}
+            />
+          )}
+
+          {/* Withdraw tab — form (method selected, not peer-offramp or paj-cash which have their own sections) */}
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "peer-offramp" && withdrawMethod !== "paj-cash" && (
             <div className="space-y-4 py-2">
 
               {/* Back button — hidden on devnet (only one method available, nothing to go back to) */}

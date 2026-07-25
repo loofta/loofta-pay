@@ -28,6 +28,7 @@ import { MagicblockQuestModule } from './modules/magicblock-quest/magicblock-que
 import { IntegratorsModule } from './modules/integrators/integrators.module';
 import { X402PaymentsModule } from './modules/x402-payments/x402-payments.module';
 import { PrivateBalanceModule } from './modules/private-balance/private-balance.module';
+import { PajCashModule } from './modules/paj-cash/paj-cash.module';
 
 @Module({
   imports: [
@@ -88,6 +89,7 @@ import { PrivateBalanceModule } from './modules/private-balance/private-balance.
     IntegratorsModule,
     X402PaymentsModule,
     PrivateBalanceModule,
+    PajCashModule,
   ],
   providers: [
     {
