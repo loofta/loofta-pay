@@ -3,5 +3,6 @@
   "framework": "nextjs",
   "installCommand": "npm install",
   "buildCommand": "npm run build -w @loofta/frontend",
-  "outputDirectory": "apps/frontend/.next"
+  "outputDirectory": "apps/frontend/.next",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- apps/frontend apps/shared-types package.json package-lock.json patches vercel.json"
 }
