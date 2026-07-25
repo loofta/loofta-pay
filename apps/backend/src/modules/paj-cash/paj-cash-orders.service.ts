@@ -119,7 +119,7 @@ export class PajCashOrdersService {
     let order;
     try {
       order = await this.pajCash.createOfframp(token, {
-        bank: bankAccount.paj_bank_account_id,
+        bank: bankAccount.bank_id,
         accountNumber: bankAccount.account_number,
         currency,
         amount: params.amountUsdc,

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 import { ChevronLeft, Copy, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
@@ -17,6 +16,7 @@ import {
 } from "@/services/pajCash";
 import { PajCashLinkFlow } from "./PajCashLinkFlow";
 import { PajCashKycStep } from "./PajCashKycStep";
+import { AmountInput } from "@/components/AmountInput";
 
 type Step = "checking-link" | "link" | "amount" | "kyc" | "instructions" | "complete" | "failed";
 
@@ -40,7 +40,6 @@ export function PajCashOnrampView({ dark, prefillEmail, getAccessToken, onBack, 
   const [order, setOrder] = useState<PajCashOrder | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const inputClass = `mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`;
   const cardClass = `rounded-xl border-2 p-4 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`;
 
   useEffect(() => {
@@ -168,15 +167,14 @@ export function PajCashOnrampView({ dark, prefillEmail, getAccessToken, onBack, 
 
         <div>
           <Label htmlFor="paj-onramp-amount" className={dark ? "text-slate-300" : undefined}>Amount (NGN)</Label>
-          <Input
+          <AmountInput
             id="paj-onramp-amount"
-            type="number"
-            min="0"
-            step="any"
-            placeholder="0.00"
+            dark={dark}
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className={inputClass}
+            onChange={setAmount}
+            maxDecimals={2}
+            prefix="₦"
+            className="mt-1"
           />
           {quoteLoading ? (
             <p className={`text-base mt-1.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>Getting quote…</p>

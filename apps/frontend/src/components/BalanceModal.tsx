@@ -72,6 +72,7 @@ import { PRIVATE_PAYMENT_MAX_WAIT_MINUTES } from "@/lib/privatePaymentCopy";
 import { PajCashOnrampView } from "@/components/paj-cash/PajCashOnrampView";
 import { PajCashOfframpView } from "@/components/paj-cash/PajCashOfframpView";
 import { pajListOrders, type PajCashOrder } from "@/services/pajCash";
+import { AmountInput } from "@/components/AmountInput";
 
 const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
 
@@ -2723,15 +2724,13 @@ export function BalanceModal({
                   </p>
                   <div>
                     <Label htmlFor="private-deposit-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
-                    <Input
+                    <AmountInput
                       id="private-deposit-amount"
-                      type="number"
-                      min="0"
-                      step="any"
-                      placeholder="0.00"
+                      dark={dark}
                       value={privateDepositAmount}
-                      onChange={(e) => setPrivateDepositAmount(e.target.value)}
-                      className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                      onChange={setPrivateDepositAmount}
+                      suffix="USDC"
+                      className="mt-1"
                     />
                   </div>
                   <Button
@@ -2848,15 +2847,12 @@ export function BalanceModal({
                   {/* Amount */}
                   <div>
                     <Label htmlFor="deposit-amount" className={dark ? "text-slate-300" : undefined}>Amount to send</Label>
-                    <Input
+                    <AmountInput
                       id="deposit-amount"
-                      type="number"
-                      min="0"
-                      step="any"
-                      placeholder="0.00"
+                      dark={dark}
                       value={depositAmount}
-                      onChange={(e) => setDepositAmount(e.target.value)}
-                      className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                      onChange={setDepositAmount}
+                      className="mt-1"
                     />
                     {depositQuoteOut && (
                       <p className={`text-base mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
@@ -3373,15 +3369,13 @@ export function BalanceModal({
                   </p>
                   <div>
                     <Label htmlFor="private-withdraw-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
-                    <Input
+                    <AmountInput
                       id="private-withdraw-amount"
-                      type="number"
-                      min="0"
-                      step="any"
-                      placeholder="0.00"
+                      dark={dark}
                       value={withdrawAmount}
-                      onChange={(e) => setWithdrawAmount(e.target.value)}
-                      className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                      onChange={setWithdrawAmount}
+                      suffix="USDC"
+                      className="mt-1"
                     />
                     <p className={`text-base mt-1.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
                       Available: {spendableBalance.toFixed(2)} USDC
@@ -3619,17 +3613,15 @@ export function BalanceModal({
                 <Label htmlFor="withdraw-amount" className={dark ? "text-slate-300" : undefined}>
                   {withdrawMethod === "near-intents" ? "Amount to bridge (USDC)" : "Amount to send (USDC)"}
                 </Label>
-                <div className="mt-1 flex gap-2">
-                  <Input
+                <div className="mt-1 flex items-center gap-2">
+                  <AmountInput
                     id="withdraw-amount"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    max={payFromBalanceNum}
-                    placeholder="0.00"
+                    dark={dark}
                     value={withdrawAmount}
-                    onChange={(e) => setWithdrawAmount(e.target.value)}
-                    className={`flex-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                    onChange={setWithdrawAmount}
+                    maxDecimals={2}
+                    suffix="USDC"
+                    className="flex-1"
                   />
                   <Button
                     type="button"
@@ -3822,11 +3814,13 @@ export function BalanceModal({
                 {/* Amount */}
                 <div>
                   <Label htmlFor="peer-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
-                  <div className="mt-1 flex gap-2">
-                    <Input id="peer-amount" type="number" min="1" step="0.01" placeholder="0.00"
+                  <div className="mt-1 flex items-center gap-2">
+                    <AmountInput id="peer-amount" dark={dark}
                       value={withdrawAmount}
-                      onChange={(e) => setWithdrawAmount(e.target.value)}
-                      className={`flex-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                      onChange={setWithdrawAmount}
+                      maxDecimals={2}
+                      suffix="USDC"
+                      className="flex-1"
                     />
                     <Button type="button" variant="outline" size="sm"
                       onClick={() => setWithdrawAmount(Math.min(spendableBalance, platform.maxUSDC).toFixed(2).replace(/\.?0+$/, ""))}

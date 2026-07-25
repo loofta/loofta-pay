@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
+import { cn } from "@/lib/utils";
 import { ChevronLeft, Loader2, CheckCircle2, AlertTriangle, ArrowRight } from "lucide-react";
 import { Connection } from "@solana/web3.js";
 import type { ConnectedStandardSolanaWallet, useSignTransaction } from "@privy-io/react-auth/solana";
@@ -30,6 +31,7 @@ import {
 import { PajCashLinkFlow } from "./PajCashLinkFlow";
 import { PajCashKycStep } from "./PajCashKycStep";
 import { BankCombobox } from "./BankCombobox";
+import { AmountInput } from "@/components/AmountInput";
 
 type SignTransactionFn = ReturnType<typeof useSignTransaction>["signTransaction"];
 
@@ -375,7 +377,12 @@ export function PajCashOfframpView({
             variant="outline"
             onClick={handleResolve}
             disabled={resolving || !bankId || !accountNumber.trim()}
-            className="w-full"
+            className={cn(
+              "w-full",
+              dark
+                ? "border-white/20 !bg-transparent text-slate-200 hover:!bg-white/10 hover:text-white"
+                : "border-gray-300 !bg-transparent text-gray-900 hover:!bg-gray-100 hover:text-gray-900"
+            )}
           >
             {resolving ? (
               <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Looking up account…</span>
@@ -406,21 +413,22 @@ export function PajCashOfframpView({
 
         <div>
           <Label htmlFor="paj-offramp-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
-          <Input
-            id="paj-offramp-amount"
-            type="number"
-            min="0"
-            step="any"
-            placeholder="0.00"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className={inputClass}
-          />
-          {quoteLoading ? (
-            <p className={`text-base mt-1.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>Getting quote…</p>
-          ) : quote !== null ? (
-            <p className={`text-base mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>≈ ₦{quote.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
-          ) : null}
+          <div className={`mt-1.5 rounded-2xl border-2 px-5 py-4 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
+            <AmountInput
+              id="paj-offramp-amount"
+              dark={dark}
+              value={amount}
+              onChange={setAmount}
+              suffix="USDC"
+            />
+            {quoteLoading ? (
+              <p className={`text-base mt-2 ${dark ? "text-slate-500" : "text-gray-400"}`}>Getting quote…</p>
+            ) : quote !== null ? (
+              <p className={`text-base mt-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                ≈ ₦{quote.toLocaleString(undefined, { maximumFractionDigits: 2 })} · before PAJ&apos;s fee, confirmed on the next step
+              </p>
+            ) : null}
+          </div>
         </div>
 
         <Button
