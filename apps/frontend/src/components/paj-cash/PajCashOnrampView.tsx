@@ -67,7 +67,7 @@ export function PajCashOnrampView({ dark, prefillEmail, getAccessToken, onBack, 
       try {
         const accessToken = await getAccessToken();
         const q = await pajGetValue("onramp", amountNum, "NGN", accessToken);
-        if (!cancelled) setQuote(q.amount);
+        if (!cancelled) setQuote(q.fiatAmount);
       } catch {
         if (!cancelled) setQuote(null);
       } finally {
@@ -166,21 +166,23 @@ export function PajCashOnrampView({ dark, prefillEmail, getAccessToken, onBack, 
         <p className={`text-base font-medium ${dark ? "text-slate-400" : "text-gray-500"}`}>Top up with Naira</p>
 
         <div>
-          <Label htmlFor="paj-onramp-amount" className={dark ? "text-slate-300" : undefined}>Amount (NGN)</Label>
-          <AmountInput
-            id="paj-onramp-amount"
-            dark={dark}
-            value={amount}
-            onChange={setAmount}
-            maxDecimals={2}
-            prefix="₦"
-            className="mt-1"
-          />
-          {quoteLoading ? (
-            <p className={`text-base mt-1.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>Getting quote…</p>
-          ) : quote !== null ? (
-            <p className={`text-base mt-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>≈ {quote.toLocaleString(undefined, { maximumFractionDigits: 4 })} USDC</p>
-          ) : null}
+          <Label htmlFor="paj-onramp-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
+          <div className={`mt-1.5 rounded-2xl border-2 px-5 py-4 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
+            <AmountInput
+              id="paj-onramp-amount"
+              dark={dark}
+              value={amount}
+              onChange={setAmount}
+              suffix="USDC"
+            />
+            {quoteLoading ? (
+              <p className={`text-base mt-2 ${dark ? "text-slate-500" : "text-gray-400"}`}>Getting quote…</p>
+            ) : quote !== null ? (
+              <p className={`text-base mt-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                ≈ ₦{quote.toLocaleString(undefined, { maximumFractionDigits: 2 })} · you&apos;ll send this to complete the top-up
+              </p>
+            ) : null}
+          </div>
         </div>
 
         <Button

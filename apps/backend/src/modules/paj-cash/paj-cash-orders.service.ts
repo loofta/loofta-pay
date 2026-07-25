@@ -58,20 +58,19 @@ export class PajCashOrdersService {
     return this.supabase.getClient().from('paj_cash_orders');
   }
 
-  async createOnramp(userId: string, params: { fiatAmount: number; currency?: PajCurrency }): Promise<PajCashOrderRow> {
-    if (!(params.fiatAmount > 0)) throw new BadRequestException('fiatAmount must be greater than 0');
+  async createOnramp(userId: string, params: { amountUsdc: number; currency?: PajCurrency }): Promise<PajCashOrderRow> {
+    if (!(params.amountUsdc > 0)) throw new BadRequestException('amountUsdc must be greater than 0');
     const currency = params.currency ?? 'NGN';
-    if (currency === 'NGN' && params.fiatAmount > MAX_FIAT_NGN_PER_ORDER) {
-      throw new BadRequestException(`Amount exceeds the current per-order limit of ₦${MAX_FIAT_NGN_PER_ORDER.toLocaleString()}`);
-    }
 
     const token = await this.session.getValidSessionToken(userId);
     const recipient = await this.usersService.getSolanaWalletAddress(userId);
 
     let order;
     try {
+      // Pass the token amount, not a pre-computed fiatAmount — PAJ returns the authoritative
+      // fiatAmount for exactly this many USDC, rather than us guessing at their rate/fee.
       order = await this.pajCash.createOnramp(token, {
-        fiatAmount: params.fiatAmount,
+        amount: params.amountUsdc,
         currency,
         recipient,
         mint: SOLANA_USDC_MINT,
@@ -80,6 +79,10 @@ export class PajCashOrdersService {
     } catch (err) {
       if (err instanceof PajApiError && looksLikeKycError(err)) throw new PajKycRequiredError(err.message);
       throw err;
+    }
+
+    if (currency === 'NGN' && order.fiatAmount > MAX_FIAT_NGN_PER_ORDER) {
+      throw new BadRequestException(`Amount exceeds the current per-order limit of ₦${MAX_FIAT_NGN_PER_ORDER.toLocaleString()}`);
     }
 
     const { data, error } = await this.table()

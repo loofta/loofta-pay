@@ -151,8 +151,8 @@ export async function pajSubmitKyc(idNumber: string, idType: 'BVN' | 'NIN', acce
   return pajCashFetch('/paj-cash/kyc', { method: 'POST', body: JSON.stringify({ idNumber, idType, country: 'NG' }), accessToken });
 }
 
-export async function pajCreateOnramp(fiatAmount: number, accessToken: string | null): Promise<PajCashOrder> {
-  return pajCashFetch('/paj-cash/onramp', { method: 'POST', body: JSON.stringify({ fiatAmount, currency: 'NGN' }), accessToken });
+export async function pajCreateOnramp(amountUsdc: number, accessToken: string | null): Promise<PajCashOrder> {
+  return pajCashFetch('/paj-cash/onramp', { method: 'POST', body: JSON.stringify({ amountUsdc, currency: 'NGN' }), accessToken });
 }
 
 export async function pajCreateOfframp(bankAccountId: string, amountUsdc: number, accessToken: string | null): Promise<PajCashOrder> {

@@ -90,7 +90,7 @@ export class PajCashController {
   }
 
   @Get('value')
-  @ApiOperation({ summary: 'Live fiat<->USDC quote for an on-ramp or off-ramp amount' })
+  @ApiOperation({ summary: 'Live USDC<->fiat quote for an on-ramp or off-ramp amount' })
   async value(
     @Req() req: any,
     @Query('direction') direction: 'onramp' | 'offramp',
@@ -100,10 +100,18 @@ export class PajCashController {
     const amountNum = Number(amount);
     if (!(amountNum > 0)) throw new BadRequestException('amount must be greater than 0');
     try {
-      const token = await this.session.getValidSessionToken(req.user.id);
-      return direction === 'offramp'
-        ? await this.pajCash.getOfframpValue(token, amountNum, SOLANA_USDC_MINT, currency)
-        : await this.pajCash.getOnrampValue(token, amountNum, SOLANA_USDC_MINT, currency);
+      if (direction === 'offramp') {
+        const token = await this.session.getValidSessionToken(req.user.id);
+        return await this.pajCash.getOfframpValue(token, amountNum, SOLANA_USDC_MINT, currency);
+      }
+      // On-ramp: the caller now enters the USDC amount they want, but PAJ's onramp-value
+      // endpoint only converts fiat->token (no token->fiat variant for the onramp rate — see
+      // `getOfframpValue` above, which uses the *offramp* rate and would give the wrong number
+      // here). Approximate with the plain onRampRate from `/pub/rate` instead; the authoritative
+      // fiatAmount is whatever PAJ returns when the order is actually created.
+      const rates = await this.pajCash.getRate();
+      const fiatAmount = Math.round(amountNum * rates.onRampRate.rate * 100) / 100;
+      return { amount: amountNum, fiatAmount, mint: SOLANA_USDC_MINT, currency, rate: rates.onRampRate.rate };
     } catch (err) {
       rethrowAsHttp(err);
     }

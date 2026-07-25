@@ -56,6 +56,19 @@ export interface PajSavedBankAccount {
   bank: string;
 }
 
+export interface PajRateInfo {
+  baseCurrency: string;
+  targetCurrency: string;
+  isActive: boolean;
+  rate: number;
+  type: 'onRamp' | 'offRamp';
+}
+
+export interface PajRateResponse {
+  onRampRate: PajRateInfo;
+  offRampRate: PajRateInfo;
+}
+
 export interface PajValueQuote {
   amount: number;
   fiatAmount: number;
@@ -196,7 +209,7 @@ export class PajCashService {
 
   // ── Rate / value ─────────────────────────────────────────────────
 
-  async getRate(): Promise<unknown> {
+  async getRate(): Promise<PajRateResponse> {
     return this.request('GET', '/pub/rate');
   }
 
