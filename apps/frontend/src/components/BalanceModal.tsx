@@ -216,7 +216,7 @@ function ProgressSteps({
           <div>
             <p className={`text-base ${textSub}`}>You receive (estimated)</p>
             <p className={`text-base font-semibold ${textBase}`}>
-              ~{Number(estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 6 })} {destinationToken}
+              ~{Number(estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 2 })} {destinationToken}
               <span className={`font-normal ml-1 ${textSub}`}>on {destinationChain}</span>
             </p>
           </div>
@@ -2912,7 +2912,7 @@ export function BalanceModal({
                               <span className="flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Fetching quote…</span>
                             ) : depositQuoteOut ? (
                               <>
-                                ~{Number(depositQuoteOut).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC
+                                ~{Number(depositQuoteOut).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
                                 <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>on {usdcSolanaToken?.chain || "solana"}</span>
                               </>
                             ) : (
@@ -3708,7 +3708,7 @@ export function BalanceModal({
                           <span className="flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Fetching quote…</span>
                         ) : quoteAmount ? (
                           <>
-                            ~{Number(quoteAmount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {effectiveToken?.symbol || "token"}
+                            ~{Number(quoteAmount).toLocaleString(undefined, { maximumFractionDigits: 2 })} {effectiveToken?.symbol || "token"}
                             <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>on {effectiveToken?.chain}</span>
                           </>
                         ) : (
