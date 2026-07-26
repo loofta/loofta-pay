@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { AtSign, ChevronDown, ChevronRight, Copy, ExternalLink, Loader2, Mail } from "lucide-react";
-import { AddressCell, trunc, TxCell } from "../admin-shared";
+import { AddressCell, SolAddressCell, trunc, TxCell } from "../admin-shared";
 
 export function LotteryTab({
   giftIdentifierInput, setGiftIdentifierInput,
@@ -341,6 +341,10 @@ export function LotteryTab({
                             <div>
                               <span className="text-gray-500">Companion address </span>
                               <AddressCell address={row.companion_address} />
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Burner Solana address </span>
+                              <SolAddressCell address={row.burner_sol_address} />
                             </div>
                           </div>
                         </td>

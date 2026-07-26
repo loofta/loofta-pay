@@ -353,7 +353,8 @@ export function BalanceModal({
 
   // Quote estimation for cross-chain
   const [quoteAmount, setQuoteAmount] = useState<string | null>(null);
-  const [quoteLoading, setQuoteLoading] = useState(false); // eslint-disable-line @typescript-eslint/no-unused-vars
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
 
   // Withdrawal progress tracking
   const [withdrawStep, setWithdrawStep] = useState<WithdrawalStep>("idle");
@@ -436,6 +437,8 @@ export function BalanceModal({
   const [depositBridgeStatus, setDepositBridgeStatus] = useState<string | null>(null);
   const [depositPollAddr, setDepositPollAddr] = useState<string | null>(null);
   const [depositQuoteOut, setDepositQuoteOut] = useState<string | null>(null);
+  const [depositQuoteLoading, setDepositQuoteLoading] = useState(false);
+  const [depositQuoteError, setDepositQuoteError] = useState<string | null>(null);
   const depositPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoExpiredRef = useRef<Set<string>>(new Set());
 
@@ -1304,11 +1307,21 @@ export function BalanceModal({
 
   // Deposit quote estimation (Near Intents top-up)
   useEffect(() => {
-    if (!selectedDepositToken || !usdcSolanaToken || !depositAmountNum) {
+    if (!selectedDepositToken || !depositAmountNum) {
       setDepositQuoteOut(null);
+      setDepositQuoteLoading(false);
+      setDepositQuoteError(null);
+      return;
+    }
+    if (!usdcSolanaToken) {
+      setDepositQuoteOut(null);
+      setDepositQuoteLoading(false);
+      setDepositQuoteError("USDC/Solana token list not loaded — try reopening the modal");
       return;
     }
     let cancelled = false;
+    setDepositQuoteLoading(true);
+    setDepositQuoteError(null);
     const t = setTimeout(async () => {
       try {
         const r = await getAccurateQuote({
@@ -1318,10 +1331,30 @@ export function BalanceModal({
           slippageBps: 100,
           dryRun: true,
         });
-        if (!cancelled && r.amountOut) setDepositQuoteOut(r.amountOut);
-      } catch { /* non-fatal */ }
+        if (cancelled) return;
+        // r.error can be present even when r.amountOut is (a fee-free price-ratio fallback,
+        // not a real quote) — never show that as if it were an accurate, fee-inclusive number.
+        if (r.amountOut && !r.error) {
+          setDepositQuoteOut(r.amountOut);
+        } else {
+          setDepositQuoteOut(null);
+          const msg = r.error?.message || `Quote failed (${r.error?.type ?? "unknown"})`;
+          setDepositQuoteError(msg);
+          console.error("[deposit quote] failed:", r.error);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setDepositQuoteOut(null);
+          setDepositQuoteError(e instanceof Error ? e.message : "Quote failed");
+        }
+      } finally {
+        if (!cancelled) setDepositQuoteLoading(false);
+      }
     }, 600);
-    return () => { cancelled = true; clearTimeout(t); };
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDepositToken?.tokenId, depositAmountNum, usdcSolanaToken]);
 
@@ -1689,10 +1722,12 @@ export function BalanceModal({
     if (!isNearIntentsWithdraw || !usdcSolanaToken || !effectiveToken || !withdrawAmountNum) {
       setQuoteAmount(null);
       setQuoteLoading(false);
+      setQuoteError(null);
       return;
     }
     let cancelled = false;
     setQuoteLoading(true);
+    setQuoteError(null);
     const t = setTimeout(async () => {
       try {
         const r = await getAccurateQuote({
@@ -1702,9 +1737,22 @@ export function BalanceModal({
           slippageBps: 100,
           dryRun: true,
         });
-        if (!cancelled && r.amountOut) setQuoteAmount(r.amountOut);
-      } catch {
-        // non-fatal
+        if (cancelled) return;
+        // r.error can be present even when r.amountOut is (a fee-free price-ratio fallback,
+        // not a real quote) — never show that as if it were an accurate, fee-inclusive number.
+        if (r.amountOut && !r.error) {
+          setQuoteAmount(r.amountOut);
+        } else {
+          setQuoteAmount(null);
+          const msg = r.error?.message || `Quote failed (${r.error?.type ?? "unknown"})`;
+          setQuoteError(msg);
+          console.error("[withdraw quote] failed:", r.error);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setQuoteAmount(null);
+          setQuoteError(e instanceof Error ? e.message : "Quote failed");
+        }
       } finally {
         if (!cancelled) setQuoteLoading(false);
       }
@@ -2854,11 +2902,25 @@ export function BalanceModal({
                       onChange={setDepositAmount}
                       className="mt-1"
                     />
-                    {depositQuoteOut && (
-                      <p className={`text-base mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        <ArrowRight className="h-3.5 w-3.5 shrink-0" />
-                        ~{Number(depositQuoteOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} USDC received
-                      </p>
+                    {depositAmountNum > 0 && selectedDepositToken && (
+                      <div className={`mt-2 rounded-xl border p-3 flex items-center gap-3 ${dark ? "border-white/10" : "border-gray-200"}`}>
+                        <ArrowRight className={`h-4 w-4 shrink-0 ${dark ? "text-slate-400" : "text-gray-400"}`} />
+                        <div>
+                          <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>You will receive</p>
+                          <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
+                            {depositQuoteLoading ? (
+                              <span className="flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Fetching quote…</span>
+                            ) : depositQuoteOut ? (
+                              <>
+                                ~{Number(depositQuoteOut).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC
+                                <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>on {usdcSolanaToken?.chain || "solana"}</span>
+                              </>
+                            ) : (
+                              <span className="text-red-400 text-sm font-normal">{depositQuoteError || "Unable to fetch quote"}</span>
+                            )}
+                          </p>
+                        </div>
+                      </div>
                     )}
                   </div>
 
@@ -3635,6 +3697,26 @@ export function BalanceModal({
                 </div>
                 {withdrawAmountNum > spendableBalance && spendableBalance > 0 && (
                   <p className="text-base text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
+                )}
+                {isNearIntentsWithdraw && withdrawAmountNum > 0 && (
+                  <div className={`mt-2 rounded-xl border p-3 flex items-center gap-3 ${dark ? "border-white/10" : "border-gray-200"}`}>
+                    <ArrowRight className={`h-4 w-4 shrink-0 ${dark ? "text-slate-400" : "text-gray-400"}`} />
+                    <div>
+                      <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>You will receive</p>
+                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
+                        {quoteLoading ? (
+                          <span className="flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Fetching quote…</span>
+                        ) : quoteAmount ? (
+                          <>
+                            ~{Number(quoteAmount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {effectiveToken?.symbol || "token"}
+                            <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>on {effectiveToken?.chain}</span>
+                          </>
+                        ) : (
+                          <span className="text-red-400 text-sm font-normal">{quoteError || "Unable to fetch quote"}</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
                 )}
               </div>
 

@@ -227,28 +227,6 @@ export async function getAccurateQuote(params: {
     } else {
       // Fallback path without authMethod: for dry quotes, align with intents-swap-widget to avoid KYT
       if (dryRun) {
-        const ZERO = "0x0000000000000000000000000000000000000000";
-        const getDryQuoteAddress = (blockchain: string): string => {
-          const key = String(blockchain || "").toLowerCase();
-          const evmSet = new Set([
-            "eth",
-            "bera",
-            "base",
-            "gnosis",
-            "arb",
-            "bsc",
-            "avax",
-            "op",
-            "pol",
-            "polygon",
-          ]);
-          if (key === "near") return "system.near";
-          if (key === "sol" || key === "solana")
-            return "11111111111111111111111111111111";
-          if (evmSet.has(key)) return ZERO;
-          // default to evm zero
-          return ZERO;
-        };
         // For dry quotes, use refund address for refund (origin chain), but recipient needs to be for destination chain
         const refundDry = refundTo;
         // Get a valid placeholder address for the destination chain
@@ -343,7 +321,15 @@ export async function getAccurateQuote(params: {
     } else if (err?.code === "ERR_NETWORK" || message?.toLowerCase().includes("network")) {
       type = "network";
     }
-    // Fallback: compute via prices if available, but attach error
+    // Real 1-click quote failed — log the actual reason so it's visible in devtools even
+    // though the fallback below still returns a (fee-free, approximate) number to callers.
+    console.error("[getAccurateQuote] real quote failed, falling back to raw price ratio (no fees reflected):", {
+      type, status, message, correlationId, originAsset, destinationAsset,
+    });
+
+    // Fallback: compute via prices if available, but attach error — callers must check
+    // `error` even when `amountOut` is present, since this ignores every fee (NEAR's own
+    // network/bridge fee and any appFees) and is NOT a substitute for a real quote.
   const pIn = typeof fromToken.price === "number" ? fromToken.price : undefined;
   const pOut = typeof toToken.price === "number" ? toToken.price : undefined;
   if (pIn && pOut && pOut > 0) {

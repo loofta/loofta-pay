@@ -71,6 +71,10 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('app_users');
   }
 
+  get userDeposits() {
+    return this.client.from('user_deposits');
+  }
+
   /**
    * Fetches every app_users row with a non-null privy_user_id, paging past
    * PostgREST's max_rows cap (1000) instead of silently truncating.

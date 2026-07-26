@@ -29,6 +29,7 @@ import { IntegratorsModule } from './modules/integrators/integrators.module';
 import { X402PaymentsModule } from './modules/x402-payments/x402-payments.module';
 import { PrivateBalanceModule } from './modules/private-balance/private-balance.module';
 import { PajCashModule } from './modules/paj-cash/paj-cash.module';
+import { UserDepositsModule } from './modules/user-deposits/user-deposits.module';
 
 @Module({
   imports: [
@@ -90,6 +91,7 @@ import { PajCashModule } from './modules/paj-cash/paj-cash.module';
     X402PaymentsModule,
     PrivateBalanceModule,
     PajCashModule,
+    UserDepositsModule,
   ],
   providers: [
     {

@@ -279,6 +279,29 @@ export function AddressCell({ address }: { address: string | null }) {
   );
 }
 
+export function SolAddressCell({ address, isDevnet = false }: { address: string | null; isDevnet?: boolean }) {
+  if (!address) return <span className="text-gray-600">—</span>;
+  const url = `https://solscan.io/account/${address}${isDevnet ? "?cluster=devnet" : ""}`;
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className="font-mono text-blue-400 hover:text-blue-200 hover:underline"
+        title={address}
+      >
+        {trunc(address, 14)}
+      </a>
+      <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+        <ExternalLink className="w-2.5 h-2.5 text-gray-500 hover:text-gray-300" />
+      </a>
+      <CopyButton value={address} />
+    </span>
+  );
+}
+
 export function UserChip({ user, privyId }: { user: AppUser | null; privyId: string | null }) {
   if (!privyId) return <span className="text-gray-600 text-sm">anon</span>;
   return (

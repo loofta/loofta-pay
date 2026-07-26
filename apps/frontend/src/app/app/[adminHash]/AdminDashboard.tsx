@@ -51,7 +51,7 @@ export default function AdminDashboard() {
   // Filters — applied state triggers fetch
   const [searchInput, setSearchInput] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
-  const [devnetFilter, setDevnetFilter] = useState<"all" | "devnet" | "mainnet">("devnet");
+  const [devnetFilter, setDevnetFilter] = useState<"all" | "devnet" | "mainnet">("mainnet");
   const [statusFilter, setStatusFilter] = useState("all");
 
   // Expanded row
@@ -104,13 +104,30 @@ export default function AdminDashboard() {
   const [grantTwitterInput, setGrantTwitterInput] = useState("");
   const [grantingByTwitter, setGrantingByTwitter] = useState(false);
 
-  // Cash Out (Peer offramp)
+  // Cash Out (Peer offramp / crypto withdrawals / PAJ Cash Naira)
+  const [cashoutKind, setCashoutKind] = useState<"peer" | "crypto" | "naira">("peer");
+
   const [cashoutData, setCashoutData] = useState<any[]>([]);
   const [cashoutLoading, setCashoutLoading] = useState(false);
   const [cashoutLoaded, setCashoutLoaded] = useState(false);
   const [cashoutTotal, setCashoutTotal] = useState(0);
   const [cashoutPage, setCashoutPage] = useState(1);
   const [cashoutStatusFilter, setCashoutStatusFilter] = useState("");
+
+  const [withdrawalsData, setWithdrawalsData] = useState<any[]>([]);
+  const [withdrawalsLoading, setWithdrawalsLoading] = useState(false);
+  const [withdrawalsLoaded, setWithdrawalsLoaded] = useState(false);
+  const [withdrawalsTotal, setWithdrawalsTotal] = useState(0);
+  const [withdrawalsPage, setWithdrawalsPage] = useState(1);
+  const [withdrawalsTypeFilter, setWithdrawalsTypeFilter] = useState("");
+
+  const [pajCashData, setPajCashData] = useState<any[]>([]);
+  const [pajCashLoading, setPajCashLoading] = useState(false);
+  const [pajCashLoaded, setPajCashLoaded] = useState(false);
+  const [pajCashTotal, setPajCashTotal] = useState(0);
+  const [pajCashPage, setPajCashPage] = useState(1);
+  const [pajCashStatusFilter, setPajCashStatusFilter] = useState("");
+  const [pajCashDirectionFilter, setPajCashDirectionFilter] = useState("");
 
   const [lotteryData, setLotteryData] = useState<any[]>([]);
   const [lotteryLoading, setLotteryLoading] = useState(false);
@@ -317,6 +334,47 @@ export default function AdminDashboard() {
       toast({ variant: "destructive", title: "Failed to load cash outs" });
     } finally {
       setCashoutLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  const fetchWithdrawals = useCallback(async (page = 1, type = "") => {
+    setWithdrawalsLoading(true);
+    try {
+      const headers = await authHeaders();
+      const qs = new URLSearchParams({ page: String(page) });
+      if (type) qs.set("type", type);
+      const res = await fetch(`/api/admin/withdrawals?${qs}`, { headers });
+      if (!res.ok) throw new Error("Failed to load withdrawals");
+      const data = await res.json();
+      setWithdrawalsData(data.data ?? []);
+      setWithdrawalsTotal(data.total ?? 0);
+      setWithdrawalsPage(page);
+      setWithdrawalsLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load withdrawals" });
+    } finally {
+      setWithdrawalsLoading(false);
+    }
+  }, [authHeaders, toast]);
+
+  const fetchPajCash = useCallback(async (page = 1, status = "", direction = "") => {
+    setPajCashLoading(true);
+    try {
+      const headers = await authHeaders();
+      const qs = new URLSearchParams({ page: String(page) });
+      if (status) qs.set("status", status);
+      if (direction) qs.set("direction", direction);
+      const res = await fetch(`/api/admin/paj-cash?${qs}`, { headers });
+      if (!res.ok) throw new Error("Failed to load Naira orders");
+      const data = await res.json();
+      setPajCashData(data.data ?? []);
+      setPajCashTotal(data.total ?? 0);
+      setPajCashPage(page);
+      setPajCashLoaded(true);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load Naira orders" });
+    } finally {
+      setPajCashLoading(false);
     }
   }, [authHeaders, toast]);
 
@@ -691,11 +749,15 @@ export default function AdminDashboard() {
             activeTab === "sparks" ? fetchSparks :
             activeTab === "blink" ? fetchBlink :
             activeTab === "analytics" ? fetchAnalytics :
-            activeTab === "cashout" ? () => fetchCashOuts(cashoutPage, cashoutStatusFilter) :
+            activeTab === "cashout" ? (
+              cashoutKind === "peer" ? () => fetchCashOuts(cashoutPage, cashoutStatusFilter) :
+              cashoutKind === "crypto" ? () => fetchWithdrawals(withdrawalsPage, withdrawalsTypeFilter) :
+              () => fetchPajCash(pajCashPage, pajCashStatusFilter, pajCashDirectionFilter)
+            ) :
             activeTab === "lottery" ? () => { reconcileAndFetchLottery(lotteryPage, lotteryStatusFilter); fetchGifts(giftsPage); fetchReferralFees(); } :
             () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })
           }
-          disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading || cashoutLoading || lotteryLoading}
+          disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading || cashoutLoading || withdrawalsLoading || pajCashLoading || lotteryLoading}
           className="border-gray-700 text-gray-300 bg-gray-900 hover:bg-gray-800"
         >
           {(loading || sparksLoading || waitlistLoading || blinkLoading) ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -745,11 +807,16 @@ export default function AdminDashboard() {
         </button>
         <button
           type="button"
-          onClick={() => { setActiveTab("cashout"); if (!cashoutLoaded) fetchCashOuts(1, ""); }}
+          onClick={() => {
+            setActiveTab("cashout");
+            if (cashoutKind === "peer" && !cashoutLoaded) fetchCashOuts(1, "");
+            if (cashoutKind === "crypto" && !withdrawalsLoaded) fetchWithdrawals(1, "");
+            if (cashoutKind === "naira" && !pajCashLoaded) fetchPajCash(1, "", "");
+          }}
           className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "cashout" ? "border-orange-500 text-orange-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           Cash Out
-          {cashoutLoaded && <span className="text-sm bg-orange-900/50 text-orange-400 rounded px-1.5 py-0.5">{cashoutTotal}</span>}
+          {cashoutLoaded && <span className="text-sm bg-orange-900/50 text-orange-400 rounded px-1.5 py-0.5">{cashoutTotal + withdrawalsTotal + pajCashTotal}</span>}
         </button>
         <button
           type="button"
@@ -784,8 +851,16 @@ export default function AdminDashboard() {
 
       {activeTab === "cashout" && (
         <CashoutTab
+          cashoutKind={cashoutKind} setCashoutKind={setCashoutKind}
           statusFilter={cashoutStatusFilter} setStatusFilter={setCashoutStatusFilter} fetchCashOuts={fetchCashOuts}
           total={cashoutTotal} loading={cashoutLoading} loaded={cashoutLoaded} data={cashoutData} page={cashoutPage}
+          withdrawalsData={withdrawalsData} withdrawalsLoading={withdrawalsLoading} withdrawalsLoaded={withdrawalsLoaded}
+          withdrawalsTotal={withdrawalsTotal} withdrawalsPage={withdrawalsPage}
+          withdrawalsTypeFilter={withdrawalsTypeFilter} setWithdrawalsTypeFilter={setWithdrawalsTypeFilter} fetchWithdrawals={fetchWithdrawals}
+          pajCashData={pajCashData} pajCashLoading={pajCashLoading} pajCashLoaded={pajCashLoaded}
+          pajCashTotal={pajCashTotal} pajCashPage={pajCashPage}
+          pajCashStatusFilter={pajCashStatusFilter} setPajCashStatusFilter={setPajCashStatusFilter}
+          pajCashDirectionFilter={pajCashDirectionFilter} setPajCashDirectionFilter={setPajCashDirectionFilter} fetchPajCash={fetchPajCash}
         />
       )}
 
