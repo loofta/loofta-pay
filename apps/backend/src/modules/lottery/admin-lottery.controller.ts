@@ -1,9 +1,10 @@
-import { Controller, Get, Post, Body, Query, Request, UseGuards, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, Query, Request, UseGuards, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiSecurity, ApiQuery } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { AdminGuard } from '@/common/guards';
 import { LotteryService } from './lottery.service';
 import { MegapotService, MEGAPOT_JACKPOT } from './megapot.service';
+import { PackService, PackTierConfig } from './pack.service';
 import { SupabaseService } from '@/database/supabase.service';
 
 class CreateGiftDto {
@@ -23,6 +24,11 @@ class CreateGiftDto {
   note?: string;
 }
 
+class SetPackTierEnabledDto {
+  @IsBoolean()
+  enabled: boolean;
+}
+
 @ApiTags('admin/lottery')
 @Controller('admin/lottery')
 @UseGuards(AdminGuard)
@@ -31,6 +37,7 @@ export class AdminLotteryController {
   constructor(
     private readonly lottery: LotteryService,
     private readonly megapot: MegapotService,
+    private readonly packs: PackService,
     private readonly supabase: SupabaseService,
   ) {}
 
@@ -84,5 +91,17 @@ export class AdminLotteryController {
       .range((page - 1) * pageSize, page * pageSize - 1);
     if (error) throw new BadRequestException(error.message);
     return { data: data ?? [], total: count ?? 0, page, limit: pageSize };
+  }
+
+  @Get('packs/tiers')
+  @ApiOperation({ summary: 'Full Mystery Pack tier config including odds + enabled flags (never exposed to the public config endpoint)' })
+  async packTiers(): Promise<PackTierConfig[]> {
+    return this.packs.getAdminTiers();
+  }
+
+  @Patch('packs/tiers/:tierKey')
+  @ApiOperation({ summary: 'Enable/disable a Mystery Pack tier. Weights are untouched — a disabled tier just falls back to the next-lower enabled one at roll time, so this is a silent, instant, single-field toggle with no other math or frontend change required.' })
+  async setPackTierEnabled(@Param('tierKey') tierKey: string, @Body() dto: SetPackTierEnabledDto): Promise<PackTierConfig> {
+    return this.packs.setTierEnabled(tierKey, dto.enabled);
   }
 }

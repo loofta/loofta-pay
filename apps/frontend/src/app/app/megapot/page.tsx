@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, VenetianMask } from "lucide-react";
+import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, VenetianMask, Sparkles } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { getMyGifts, updateGiftRecipient, type MyGiftItem } from "@/services/api/lotteryGift";
 import { MessageInput } from "@/components/MessageInput";
@@ -3853,6 +3853,20 @@ export default function MegapotPage() {
 
         {tab === "buy" && (
           <>
+            <Link
+              href="/app/megapot/packs"
+              className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-gradient-to-r from-[#FF1301]/15 to-[#EAB308]/15 px-4 py-3 transition-colors hover:from-[#FF1301]/20 hover:to-[#EAB308]/20"
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-300" />
+                <div>
+                  <p className="text-sm font-semibold text-amber-200">Mystery Pack</p>
+                  <p className="text-sm text-slate-300">Open a pack, win up to 100 tickets</p>
+                </div>
+              </div>
+              <span className="rounded-lg bg-white/10 px-3 py-1.5 text-sm font-semibold text-white">Open</span>
+            </Link>
+
             <PrizePoolHero
               prizePool={dashboard?.nextDraw?.prizePool ?? null}
               drawTime={dashboard?.nextDraw?.drawTime ?? null}

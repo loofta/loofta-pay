@@ -29,6 +29,7 @@ const BlinkTab = dynamic(() => import("./tabs/BlinkTab").then((m) => m.BlinkTab)
 const WaitlistTab = dynamic(() => import("./tabs/WaitlistTab").then((m) => m.WaitlistTab), { loading: tabLoading, ssr: false });
 const CashoutTab = dynamic(() => import("./tabs/CashoutTab").then((m) => m.CashoutTab), { loading: tabLoading, ssr: false });
 const LotteryTab = dynamic(() => import("./tabs/LotteryTab").then((m) => m.LotteryTab), { loading: tabLoading, ssr: false });
+const PacksTab = dynamic(() => import("./tabs/PacksTab").then((m) => m.PacksTab), { loading: tabLoading, ssr: false });
 const AnalyticsTab = dynamic(() => import("./tabs/AnalyticsTab").then((m) => m.AnalyticsTab), { loading: tabLoading, ssr: false });
 
 export default function AdminDashboard() {
