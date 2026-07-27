@@ -60,6 +60,25 @@ const SOUND_MUTED_STORAGE_KEY = "megapot_pack_sound_muted";
 // regardless of what this sends, so this check is purely about not showing dev UI to real users.
 const IS_LOCALHOST = typeof window !== "undefined" && window.location.hostname === "localhost";
 
+/** buildPaymentTx sponsors gas + the treasury's own destination ATA (see pack.service.ts), so an
+ *  "insufficient funds" simulation failure here can only ever mean the user's own USDC balance —
+ *  never SOL for fees. Translates that (and other common wallet-signing failures) out of the raw
+ *  @solana/kit error dump (program logs, base64 simulation context) that Privy's signAndSendTransaction
+ *  throws verbatim, which is meaningless to an end user. */
+function friendlyPackPayError(rawMessage: string | undefined, priceLabel: string): string {
+  const s = (rawMessage ?? "").toLowerCase();
+  if (s.includes("insufficient funds")) {
+    return `Not enough USDC in your wallet — opening a pack costs ${priceLabel}.`;
+  }
+  if (s.includes("user rejected") || s.includes("denied")) {
+    return "Payment cancelled.";
+  }
+  if (s.includes("simulation failed") || /custom program error/i.test(s)) {
+    return "Payment couldn't be completed right now. Please try again in a moment.";
+  }
+  return rawMessage && rawMessage.length < 200 ? rawMessage : "Payment failed — please try again.";
+}
+
 export default function MegapotPacksPage() {
   const { user, authenticated, login, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
@@ -261,11 +280,11 @@ export default function MegapotPacksPage() {
         localStorage.setItem(PACK_PAYMENT_STORAGE_KEY, JSON.stringify({ paymentTxHash: signature, paidAt: Date.now() }));
       } catch { /* ignore storage failures — worst case, a refresh asks to pay again */ }
     } catch (err: any) {
-      setPayError(err?.message ?? "Payment failed — please try again.");
+      setPayError(friendlyPackPayError(err?.message, priceLabel));
     } finally {
       setPaying(false);
     }
-  }, [embeddedWallet, getAccessToken, signAndSendTransaction, demoMode]);
+  }, [embeddedWallet, getAccessToken, signAndSendTransaction, demoMode, priceLabel]);
 
   // A pack actually opening is the only thing that should ever consume the stored payment —
   // an /open error must NOT clear paid/paymentTxHash, so the user can just tap the pack again
