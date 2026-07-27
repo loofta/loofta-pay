@@ -25,6 +25,14 @@ interface TreasuryStatus {
   treasuryAddress: string;
 }
 
+interface PackRevenue {
+  grossUsdc: number;
+  ticketCostUsdc: number;
+  netRevenueUsdc: number;
+  packsOpened: number;
+  ticketsAwarded: number;
+}
+
 interface AdminPackOpening {
   id: string;
   created_at: string;
@@ -59,6 +67,7 @@ export function PacksTab() {
   const [togglingKey, setTogglingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [treasury, setTreasury] = useState<TreasuryStatus | null>(null);
+  const [revenue, setRevenue] = useState<PackRevenue | null>(null);
 
   const [dailyLimit, setDailyLimit] = useState<number | null>(null);
   const [dailyLimitInput, setDailyLimitInput] = useState<string>("");
@@ -99,6 +108,14 @@ export function PacksTab() {
     } catch { /* non-critical — tier list above still loads/works without this */ }
   }, [authHeaders]);
 
+  const fetchRevenue = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/lottery/packs/revenue", { headers: await authHeaders() });
+      if (!res.ok) return;
+      setRevenue(await res.json());
+    } catch { /* non-critical */ }
+  }, [authHeaders]);
+
   const fetchSettings = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/lottery/packs/settings", { headers: await authHeaders() });
@@ -126,7 +143,7 @@ export function PacksTab() {
     }
   }, [authHeaders]);
 
-  useEffect(() => { fetchTiers(); fetchTreasury(); fetchSettings(); fetchOpenings(1); }, [fetchTiers, fetchTreasury, fetchSettings, fetchOpenings]);
+  useEffect(() => { fetchTiers(); fetchTreasury(); fetchRevenue(); fetchSettings(); fetchOpenings(1); }, [fetchTiers, fetchTreasury, fetchRevenue, fetchSettings, fetchOpenings]);
 
   // Empty input clears the limit (unlimited) — anything else must be a positive integer, matching
   // PackService.setDailyOpenLimit's own validation (this is just the earlier, friendlier check).
@@ -179,6 +196,34 @@ export function PacksTab() {
 
   return (
     <div className="space-y-3">
+      {/* Net revenue = real (non-demo) pack payments collected minus what the tickets those wins
+          awarded actually cost (tickets_awarded × TICKET_PRICE_USDC, same constant LotteryService
+          funds them with). Demo opens never appear here — see PackService.getRevenue. */}
+      {revenue && (
+        <div className="rounded-xl border border-gray-800 p-4">
+          <div className="text-base font-semibold text-gray-200 mb-3">Mystery Pack revenue</div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <div className="text-sm text-gray-500">Collected</div>
+              <div className="text-lg font-bold text-gray-200 tabular-nums">${revenue.grossUsdc.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">Tickets cost</div>
+              <div className="text-lg font-bold text-gray-200 tabular-nums">${revenue.ticketCostUsdc.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">Net</div>
+              <div className={`text-lg font-bold tabular-nums ${revenue.netRevenueUsdc >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                ${revenue.netRevenueUsdc.toFixed(2)}
+              </div>
+            </div>
+          </div>
+          <div className="text-sm text-gray-500 pt-2">
+            {revenue.packsOpened} real pack{revenue.packsOpened === 1 ? "" : "s"} opened, {revenue.ticketsAwarded} ticket{revenue.ticketsAwarded === 1 ? "" : "s"} awarded
+          </div>
+        </div>
+      )}
+
       {/* Treasury funds every pack win's real ticket purchase — if it can't cover the largest
           payout an enabled tier could hit, buildPaymentTx refuses to charge anyone (see
           pack.service.ts) and the consumer page shows packs as paused. This is the "add funds"

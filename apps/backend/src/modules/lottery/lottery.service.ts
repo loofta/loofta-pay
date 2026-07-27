@@ -26,7 +26,9 @@ import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK
 import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
-const TICKET_PRICE_USDC = 1;
+// Exported so pack.service.ts can compute Mystery Pack net revenue (pack cost - ticket cost)
+// against the same single source of truth, instead of duplicating the number.
+export const TICKET_PRICE_USDC = 1;
 // A win below this is worth less than a ticket's cash value once the fixed bridge + relay fees
 // are taken out, so cashing it out would deliver a fraction of the figure shown. Below the line a
 // win is treated as a "free ticket" — the only action is Play Again (reinvest into the next draw,

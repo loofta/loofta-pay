@@ -120,6 +120,12 @@ export class AdminLotteryController {
     return this.packs.getTreasuryStatus();
   }
 
+  @Get('packs/revenue')
+  @ApiOperation({ summary: 'Mystery Pack net revenue — real (non-demo) pack payments collected minus what the tickets awarded actually cost' })
+  async packRevenue() {
+    return this.packs.getRevenue();
+  }
+
   @Get('packs/settings')
   @ApiOperation({ summary: 'Mystery Pack global settings (currently: daily open limit per user, null = unlimited)' })
   async packSettings(): Promise<{ dailyOpenLimit: number | null }> {

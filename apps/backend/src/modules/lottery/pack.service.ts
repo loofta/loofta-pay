@@ -4,7 +4,7 @@ import { randomInt } from 'crypto';
 import { Connection, Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
 import { SupabaseService } from '@/database/supabase.service';
-import { LotteryService } from './lottery.service';
+import { LotteryService, TICKET_PRICE_USDC } from './lottery.service';
 import { UsersService } from '../users/users.service';
 
 // Same mainnet USDC mint used everywhere else in this module (lottery.service.ts) — this app's
@@ -250,6 +250,36 @@ export class PackService {
       realTotal: realTotal ?? 0,
       page,
       limit: pageSize,
+    };
+  }
+
+  /**
+   * Admin: net revenue from Mystery Packs — what was actually collected from real (non-demo)
+   * pack payments, minus what those wins actually cost in tickets (tickets_awarded × the same
+   * TICKET_PRICE_USDC LotteryService uses to fund them). Counts every real open regardless of
+   * current purchase status (fulfilled or still retrying) — the cost is incurred the moment a
+   * tier is rolled and recorded, not only once the treasury-funded purchase happens to have
+   * already succeeded.
+   */
+  async getRevenue(): Promise<{ grossUsdc: number; ticketCostUsdc: number; netRevenueUsdc: number; packsOpened: number; ticketsAwarded: number }> {
+    const db = this.supabase.getClient();
+    const { data, error } = await db
+      .from('pack_openings')
+      .select('cost_usdc, tickets_awarded')
+      .eq('is_test', false);
+    if (error) throw new Error(`Failed to compute pack revenue: ${error.message}`);
+
+    const rows = data ?? [];
+    const grossUsdc = rows.reduce((sum, r) => sum + Number(r.cost_usdc), 0);
+    const ticketsAwarded = rows.reduce((sum, r) => sum + r.tickets_awarded, 0);
+    const ticketCostUsdc = ticketsAwarded * TICKET_PRICE_USDC;
+
+    return {
+      grossUsdc,
+      ticketCostUsdc,
+      netRevenueUsdc: grossUsdc - ticketCostUsdc,
+      packsOpened: rows.length,
+      ticketsAwarded,
     };
   }
 
