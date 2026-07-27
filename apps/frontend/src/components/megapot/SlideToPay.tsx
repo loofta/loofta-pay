@@ -11,8 +11,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence, useMotionValue, useTransform, animate, useReducedMotion } from "framer-motion";
 import { ChevronsRight, Loader2, Check } from "lucide-react";
 
-const THUMB_SIZE = 58; // was 48 — a bigger hit target reads more confident and is easier to grab on mobile
+const TRACK_HEIGHT = 64; // matches the track's h-16
 const TRACK_PADDING = 5;
+// Derived from the track height (not a separate arbitrary number) so the thumb always fills the
+// padded interior edge-to-edge — a fixed size independent of TRACK_HEIGHT previously left a
+// visible gap above/below the thumb instead of it touching the top and bottom of the pill.
+const THUMB_SIZE = TRACK_HEIGHT - TRACK_PADDING * 2;
 const CONFIRM_DELAY_MS = 160; // lets the thumb visibly snap to the end before morphing
 // Fraction of the track that must be crossed to count as "slid" — a little more forgiving than a
 // near-full-width requirement so a real fat-finger swipe on a small screen isn't punished for
@@ -87,7 +91,7 @@ export default function SlideToPay({
                 // starts on the track can get interpreted as a page/vertical scroll gesture by
                 // the browser before framer-motion's own drag handling ever takes over, making
                 // the slide feel sticky or unresponsive on phones specifically.
-                className="relative h-16 w-full rounded-full bg-white/[0.07] border border-white/10 overflow-hidden select-none"
+                className="relative h-16 w-full rounded-full bg-white/[0.07] border border-white/10 overflow-hidden select-none flex items-center"
                 style={{ padding: TRACK_PADDING, touchAction: "none" }}
               >
                 <motion.div
