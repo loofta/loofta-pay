@@ -20,6 +20,7 @@ import bs58 from "bs58";
 import { motion, AnimatePresence, useDragControls } from "framer-motion";
 import { X, Info, Volume2, VolumeX } from "lucide-react";
 import SlideToPay from "@/components/megapot/SlideToPay";
+import { warmUpAudio } from "@/lib/packSoundEffects";
 import type { PackOpenResult, PackRarity } from "@/components/megapot/MegapotPack";
 
 const MegapotPack = dynamic(() => import("@/components/megapot/MegapotPack"), { ssr: false });
@@ -59,6 +60,11 @@ const SOUND_MUTED_STORAGE_KEY = "megapot_pack_sound_muted";
 // only. The backend independently hard-blocks openPackDemo outside non-production environments
 // regardless of what this sends, so this check is purely about not showing dev UI to real users.
 const IS_LOCALHOST = typeof window !== "undefined" && window.location.hostname === "localhost";
+
+// Mirrors the backend's DEMO_MODE_ALLOWED_USER_ID (pack.service.ts) — just controls whether the
+// toggle is even shown off localhost; the real enforcement is server-side in openPackDemo, which
+// checks the caller's verified id independently of anything this sends.
+const DEMO_MODE_ALLOWED_USER_ID = "did:privy:cmmqqbaad00au0dkwumsmkget";
 
 /** buildPaymentTx sponsors gas + the treasury's own destination ATA (see pack.service.ts), so an
  *  "insufficient funds" simulation failure here can only ever mean the user's own USDC balance —
@@ -226,6 +232,10 @@ export default function MegapotPacksPage() {
   const handleConfirmPayment = useCallback(async () => {
     setPaying(true);
     setPayError(null);
+    // Second (redundant, harmless) chance to pay the one-time AudioContext construction cost
+    // ahead of the pack-open click — covers a user who taps Confirm without ever touching the
+    // canvas first (MegapotPack's own pointerdown listener is the primary trigger).
+    warmUpAudio();
     try {
       if (demoMode) {
         // Same slide-to-pay UX as a real payment (so it's actually useful for testing the flow),
@@ -342,7 +352,7 @@ export default function MegapotPacksPage() {
         </Link>
         <span className="text-sm font-semibold tracking-wide text-slate-200">Mystery Pack</span>
         <div className="flex items-center gap-2">
-          {IS_LOCALHOST && (
+          {(IS_LOCALHOST || user?.id === DEMO_MODE_ALLOWED_USER_ID) && (
             <button
               onClick={() => setDemoMode(d => !d)}
               className={`flex items-center justify-center h-9 px-3 rounded-full text-xs font-bold tracking-wide transition-colors ${

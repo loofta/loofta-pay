@@ -67,6 +67,10 @@ const MIN_TREASURY_BALANCE_USDC = 10;
 // PACK_PAYMENT_TTL_MS), so "recoverable on refresh" and "recoverable server-side" agree.
 const RECOVERABLE_PAYMENT_WINDOW_MS = 60 * 60 * 1000;
 
+// Hardcoded exception: this one Privy user can use demo (no-payment, no-real-ticket) pack opens
+// even in production — everyone else still gets the hard production block.
+const DEMO_MODE_ALLOWED_USER_ID = 'did:privy:cmmqqbaad00au0dkwumsmkget';
+
 @Injectable()
 export class PackService {
   private readonly logger = new Logger(PackService.name);
@@ -440,10 +444,12 @@ export class PackService {
    * funded ticket purchase ever fires (fulfillPackOpening is never called), so a demo open can
    * never cost Loofta's treasury anything either. Hard-blocked outside non-production
    * environments regardless of what the frontend sends, since this is the one path in the module
-   * that skips the "never trust the client" payment verification on purpose.
+   * that skips the "never trust the client" payment verification on purpose — except for
+   * DEMO_MODE_ALLOWED_USER_ID, who can use it in production too.
    */
   async openPackDemo(userId: string): Promise<PackOpenResult> {
-    if (this.config.get<string>('NODE_ENV') === 'production') {
+    const isProd = this.config.get<string>('NODE_ENV') === 'production';
+    if (isProd && userId !== DEMO_MODE_ALLOWED_USER_ID) {
       throw new BadRequestException('Demo packs are not available in production');
     }
 

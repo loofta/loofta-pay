@@ -21,7 +21,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { playShakeSound, playBurstSound, playRevealChime } from '@/lib/packSoundEffects';
+import { playShakeSound, playBurstSound, playRevealChime, warmUpAudio } from '@/lib/packSoundEffects';
 
 const RED = '#FF1301', ORG = '#FF6A00', YEL = '#EAB308', PAPER = '#FFFDF7', INK = '#0B0B0F';
 
@@ -516,6 +516,12 @@ export default function MegapotPack({
     }
     renderer.domElement.addEventListener('click', onClick);
 
+    // Warms up the AudioContext on the very first touch/drag of the canvas (orbiting is
+    // encouraged before the pack is even opened) rather than waiting for the click that starts
+    // the shake — see packSoundEffects.warmUpAudio for why that timing matters on mobile.
+    const onPointerDownWarmUp = () => warmUpAudio();
+    renderer.domElement.addEventListener('pointerdown', onPointerDownWarmUp, { passive: true });
+
     function reset() {
       phase = 'idle';
       if (ui.btn) ui.btn.style.visibility = 'hidden';
@@ -627,6 +633,7 @@ export default function MegapotPack({
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener('click', onClick);
+      renderer.domElement.removeEventListener('pointerdown', onPointerDownWarmUp);
       ui.btn?.removeEventListener('click', reset);
       controls.dispose();
       pmrem.dispose();
