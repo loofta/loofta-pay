@@ -41,4 +41,17 @@ export class PackController {
   async open(@Body() dto: OpenPackDto, @Request() req: any): Promise<PackOpenResult> {
     return this.packs.openPack(req.user.id, dto.paymentTxHash);
   }
+
+  @Post('demo-open')
+  @ApiOperation({ summary: 'Dev-only: same real tier roll as /open, but no payment required and no real ticket purchased — hard-blocked in production' })
+  async demoOpen(@Request() req: any): Promise<PackOpenResult> {
+    return this.packs.openPackDemo(req.user.id);
+  }
+
+  @Get('pending-payment')
+  @ApiOperation({ summary: 'Look for a real, confirmed pack payment the caller already sent but never got to redeem (e.g. the client dropped the request after a successful on-chain send) — lets the frontend recover it instead of charging a second time' })
+  async pendingPayment(@Request() req: any): Promise<{ paymentTxHash: string | null }> {
+    const found = await this.packs.findRecoverablePayment(req.user.id);
+    return { paymentTxHash: found?.paymentTxHash ?? null };
+  }
 }

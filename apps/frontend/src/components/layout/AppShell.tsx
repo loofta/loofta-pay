@@ -28,6 +28,11 @@ function ShellContent({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
+  // Mystery Pack is a full-screen immersive page sized as calc(100dvh - var(--header-h,0px)) —
+  // that var only tracks MinimalHeader's own height, not this banner's, so showing it here would
+  // push the pack canvas down by an unaccounted amount (the same overlap bug the header itself
+  // used to have, one layer up).
+  const isImmersivePage = pathname?.startsWith('/megapot/packs') || pathname?.startsWith('/app/megapot/packs');
   const showBottomNav = !isCheckoutPage && (
     pathname === '/' || pathname === '/app' ||
     pathname === '/history' || pathname === '/app/history' ||
@@ -37,7 +42,7 @@ function ShellContent({ children }: { children: ReactNode }) {
     pathname === '/megapot' || pathname === '/app/megapot'
   );
   const showMinimalHeader = !isCheckoutPage;
-  const showBanner = showMinimalHeader && !bannerDismissed;
+  const showBanner = showMinimalHeader && !bannerDismissed && !isImmersivePage;
   const showFooter = !isCheckoutPage;
 
   const bannerText = networkMode === "mainnet" ? t('bannerMainnet') : t('bannerDevnet');

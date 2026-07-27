@@ -73,7 +73,7 @@ export default function AdminDashboard() {
   const [saving, setSaving] = useState(false);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout" | "lottery">("payments");
+  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout" | "lottery" | "packs">("payments");
 
   // Sparks leaderboard
   const [sparksData, setSparksData] = useState<any[]>([]);
@@ -827,6 +827,13 @@ export default function AdminDashboard() {
           Lottery Tickets
           {lotteryLoaded && <span className="text-sm bg-teal-900/50 text-teal-400 rounded px-1.5 py-0.5">{lotteryTotal}</span>}
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("packs")}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "packs" ? "border-teal-500 text-teal-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          Mystery Packs
+        </button>
         <Link
           href={outreachUrl}
           className="px-4 py-2 text-base md:text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-orange-400 hover:border-orange-500/50 transition-colors flex items-center gap-1.5 ml-auto"
@@ -880,6 +887,8 @@ export default function AdminDashboard() {
           expandedId={lotteryExpandedId} setExpandedId={setLotteryExpandedId}
         />
       )}
+
+      {activeTab === "packs" && <PacksTab />}
 
       {activeTab === "analytics" && (
         <AnalyticsTab

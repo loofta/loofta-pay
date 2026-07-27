@@ -44,7 +44,7 @@ const ROUND_UP_GRACE_USDC = 0.1;
 // (USDC) and gas/relay (SOL) and — since purchases no longer collect a Loofta fee — is no longer
 // auto-replenished, so it must be watched. Defaults overridable via env; recipient defaults to the
 // operator's address.
-const FEE_WALLET_MIN_SOL = 0.15;
+const FEE_WALLET_MIN_SOL = 0.10;
 const FEE_WALLET_MIN_USDC = 10;
 const FEE_WALLET_ALERT_DEFAULT_EMAIL = 'lisa.bechina@gmail.com';
 // Re-alert cadence while still low, so one email doesn't get buried and forgotten.
@@ -53,7 +53,7 @@ const FEE_WALLET_REALERT_MS = 24 * 60 * 60_000;
 // destination-side activity means the bridge tool's solver network has abandoned the order,
 // not that it's "just slow". Past this, stop waiting and make the user whole ourselves.
 const BRIDGE_STALL_TIMEOUT_MS = 20 * 60_000;
-// New private purchases stop 5 min before the draw (draw is 7:10 PM CET daily) — a purchase
+// New private purchases stop 5 min before the draw (draw is 7:00 PM CET daily) — a purchase
 // started right at the wire could still be mid-bridge when the round is drawn, buying a ticket
 // that can never win. Reopens automatically once Megapot's API reports the next round.
 const DRAW_PURCHASE_CUTOFF_MS = 5 * 60_000;
@@ -1052,6 +1052,76 @@ export class LotteryService {
         .eq('id', gift.id);
       throw new BadRequestException('Something went wrong claiming your gift — please try again in a moment.');
     }
+  }
+
+  /**
+   * Treasury-funded ticket purchase straight into a known user's own account — no gift/claim
+   * indirection, no sender payment. Same funding model as an admin_treasury gift (generate a
+   * fresh burner, top it up from Loofta's own fee wallet, buy for real), just skipping the
+   * lottery_gifts wrapper since the recipient is already known and already owns the win (used by
+   * PackService when a Mystery Pack roll awards tickets — the user already paid for the pack
+   * itself, so this leg is funded by Loofta the same way a gifted ticket is). Throws on failure
+   * rather than swallowing it — PackService is responsible for catching this and marking the
+   * pack_openings row retryable instead of losing the user's prize.
+   */
+  async purchaseTicketsForUser(userId: string, numTickets: number): Promise<{ ticketId: string }> {
+    await this.assertNotInDrawCutoff();
+    const userSolanaAddress = await this.usersService.getSolanaWalletAddress(userId);
+
+    const companionPrivKey = generatePrivateKey();
+    const companionAddress = await this.rhinestone.getCompanionAddress(companionPrivKey);
+    const companionKeyEnc = this.enc.encrypt(Buffer.from(companionPrivKey.slice(2), 'hex'), companionAddress);
+
+    const costUsdc = numTickets * TICKET_PRICE_USDC;
+    const costUnits = Math.round(costUsdc * 1_000_000);
+
+    const burnerKeypair = Keypair.generate();
+    const burnerAddress = burnerKeypair.publicKey.toBase58();
+    const burnerKeyEnc = this.enc.encrypt(Buffer.from(burnerKeypair.secretKey), burnerAddress);
+    const senderTxHash = await this.topUpFromFeeWallet(burnerAddress, BigInt(costUnits));
+
+    const db = this.supabase.getClient();
+    const { data: ticket, error } = await db
+      .from('lottery_tickets')
+      .insert({
+        user_id: userId,
+        user_solana_address: userSolanaAddress,
+        companion_address: companionAddress,
+        companion_key_enc: companionKeyEnc,
+        burner_sol_address: burnerAddress,
+        burner_sol_key_enc: burnerKeyEnc,
+        num_tickets: numTickets,
+        cost_usdc: costUsdc,
+        status: 'sent',
+        sender_tx_hash: senderTxHash,
+        is_gift: false,
+        funded_privately: false,
+      })
+      .select('id')
+      .single();
+    if (error || !ticket) throw new Error(`Failed to create treasury-funded lottery ticket for ${userId}: ${error?.message}`);
+
+    this.logger.log(`Treasury-funded purchase: user ${userId} ticket ${ticket.id} (${numTickets} tickets, sig=${senderTxHash})`);
+
+    this.magicblockQuest.maybePushLotteryTicketQuest(ticket.id).catch((e) =>
+      this.logger.warn(`MagicBlock quest push failed for treasury ticket ${ticket.id}: ${(e as Error)?.message}`),
+    );
+
+    // Same "don't wait for the cron" reasoning as purchaseGiftTickets — the burner is already
+    // known-funded, so start the bridge immediately; tryStartBridge's own atomic claim makes this
+    // safe even if the cron picks up the same ticket a moment later.
+    this.tryStartBridge({
+      id: ticket.id,
+      status: 'sent',
+      fee_tx_hash: null,
+      is_gift: false,
+      burner_sol_address: burnerAddress,
+      burner_sol_key_enc: burnerKeyEnc,
+      cost_usdc: costUsdc,
+      companion_address: companionAddress,
+    }).catch(e => this.logger.warn(`purchaseTicketsForUser ${userId}: immediate tryStartBridge failed, cron will retry: ${e.message}`));
+
+    return { ticketId: ticket.id };
   }
 
   /**
@@ -2678,6 +2748,18 @@ export class LotteryService {
         const winningNumbers = ticket.round_id
           ? await this.megapot.getWinningNumbersForRound(ticket.round_id)
           : null;
+
+        // This cron and Megapot's draw both land on the same wall-clock minute (both :00/:15/:30/:45-
+        // ish), so the very first check for a freshly-drawn ticket can race Megapot's own settlement —
+        // winningNumbers isn't published yet. Every downstream signal (metadata, Data API, on-chain
+        // claim simulation) is equally blind in that window and would silently read as "no win", which
+        // used to get persisted as a false 'lost'. Real incident: round 124 ticket matched 2 numbers
+        // ($1.11 gross) but was marked lost because this ran 23s before Megapot's settled_at. Skip and
+        // let the next tick (still 15 min out, plenty of settlement time) retry instead of guessing.
+        if (ticket.round_id && !winningNumbers) {
+          this.logger.warn(`checkDailyResults: round ${ticket.round_id} not settled yet (no winning numbers) — leaving ticket ${ticket.id} active for retry`);
+          continue;
+        }
 
         // Read on-chain NFT metadata to check Tier + Win Amount post-draw, cross-checked against
         // Megapot's Data API (see resolveTicketWin) since the metadata read alone has proven unreliable.

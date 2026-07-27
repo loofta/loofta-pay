@@ -1867,6 +1867,48 @@ function GlowPlayAgainButton({ onClick, disabled, children }: {
   );
 }
 
+// Promo banner for the Mystery Pack feature, shown at the top of the Buy tab — this is meant to
+// be a high-conversion traffic driver, so it gets its own subtle animated brand-gradient glow
+// (same technique as GlowPlayAgainButton above, but the pack's own red/orange/yellow palette
+// instead of that button's green/teal, to visually match the pack foil + payment confirm button
+// the user lands on next) rather than the flat bordered card it started as.
+function MysteryPackBanner() {
+  const reduceMotion = useReducedMotion();
+  return (
+    <Link
+      href="/app/megapot/packs"
+      className="relative mb-4 block rounded-2xl active:scale-[0.99] transition-transform"
+    >
+      <style>{`@keyframes packBannerGlow { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }`}</style>
+      <div
+        aria-hidden
+        className="absolute -inset-px rounded-2xl blur-[6px]"
+        style={{
+          background: "linear-gradient(110deg,#FF1301,#FF6A00,#EAB308,#FF4A26,#FF1301)",
+          backgroundSize: "220% 100%",
+          animation: reduceMotion ? undefined : "packBannerGlow 6s linear infinite",
+          opacity: reduceMotion ? 0.5 : 0.7,
+        }}
+      />
+      <div className="relative flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-[#15110d] px-4 py-3.5">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-[#FF1301] to-[#EAB308] shrink-0">
+            <Sparkles className="w-5 h-5 text-white" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-base font-semibold text-slate-100">Mystery Pack</p>
+            <p className="text-sm text-slate-400 truncate">Open a pack, win up to 100 tickets</p>
+          </div>
+        </div>
+        <span className="flex items-center gap-1 rounded-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-3.5 py-2 text-sm font-semibold text-white shrink-0">
+          Open
+          <ArrowUpRight className="w-4 h-4" />
+        </span>
+      </div>
+    </Link>
+  );
+}
+
 // ─── Withdraw tab ─────────────────────────────────────────────────────────────
 
 function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading, previewDone, withdrawMinUsdc }: {
@@ -2390,7 +2432,7 @@ const PREVIEW_WON_TICKETS: TicketSummary[] = [
   },
 ];
 
-/** Returns the next UTC timestamp for 19:10:00 Europe/Paris, handling CET/CEST automatically. */
+/** Returns the next UTC timestamp for 19:00:00 Europe/Paris, handling CET/CEST automatically. */
 function nextParisDrawDate(after = new Date()): Date {
   for (let ahead = 0; ahead <= 2; ahead++) {
     const ref = new Date(after.getTime() + ahead * 86_400_000);
@@ -2400,7 +2442,7 @@ function nextParisDrawDate(after = new Date()): Date {
     // Try UTC+2 (CEST) then UTC+1 (CET)
     for (const offset of [2, 1]) {
       const utcH = String(19 - offset).padStart(2, "0");
-      const candidate = new Date(`${parisDate}T${utcH}:10:00Z`);
+      const candidate = new Date(`${parisDate}T${utcH}:00:00Z`);
       const parisH = parseInt(
         new Intl.DateTimeFormat("en", { timeZone: "Europe/Paris", hour: "numeric", hour12: false }).format(candidate),
       ) % 24;
@@ -3853,19 +3895,7 @@ export default function MegapotPage() {
 
         {tab === "buy" && (
           <>
-            <Link
-              href="/app/megapot/packs"
-              className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-gradient-to-r from-[#FF1301]/15 to-[#EAB308]/15 px-4 py-3 transition-colors hover:from-[#FF1301]/20 hover:to-[#EAB308]/20"
-            >
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-300" />
-                <div>
-                  <p className="text-sm font-semibold text-amber-200">Mystery Pack</p>
-                  <p className="text-sm text-slate-300">Open a pack, win up to 100 tickets</p>
-                </div>
-              </div>
-              <span className="rounded-lg bg-white/10 px-3 py-1.5 text-sm font-semibold text-white">Open</span>
-            </Link>
+            <MysteryPackBanner />
 
             <PrizePoolHero
               prizePool={dashboard?.nextDraw?.prizePool ?? null}

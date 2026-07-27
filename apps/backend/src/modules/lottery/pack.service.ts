@@ -4,6 +4,8 @@ import { randomInt } from 'crypto';
 import { Connection, Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
 import { SupabaseService } from '@/database/supabase.service';
+import { LotteryService } from './lottery.service';
+import { UsersService } from '../users/users.service';
 
 // Same mainnet USDC mint used everywhere else in this module (lottery.service.ts) — this app's
 // money flows run against mainnet USDC regardless of cluster setting, so this is intentionally
@@ -46,6 +48,25 @@ const PACK_PRICE_USDC = 2;
 // published odds, so it never perceptibly shifts a payout.
 const WEIGHT_SCALE = 100_000_000;
 
+// Caps + window for retrying a pack's real ticket purchase after a treasury-funding failure
+// (mirrors MAX_AUTO_RETRIES/AUTO_RETRY_MAX_AGE_MS in lottery.service.ts for the equivalent
+// failed-lottery_ticket retry). A pack win is already recorded by the time this ever runs, so
+// this only ever affects when/whether the actual Megapot ticket gets bought — never the prize.
+const MAX_PACK_PURCHASE_RETRIES = 3;
+const PACK_PURCHASE_RETRY_MAX_AGE_MS = 48 * 60 * 60_000;
+
+// The treasury funds every pack win's real ticket purchase (see LotteryService.
+// purchaseTicketsForUser) on top of sponsoring pack-payment gas/ATA rent. $10 covers the largest
+// payout any CURRENTLY ENABLED tier can hit (10 tickets @ $1) — if the treasury can't cover that,
+// packs are paused before anyone pays, rather than risking a paid-for pack whose ticket purchase
+// can't be funded at all (50/100-ticket tiers are disabled today; raise this if they're enabled).
+const MIN_TREASURY_BALANCE_USDC = 10;
+
+// How far back findRecoverablePayment looks for a stray, unconsumed payment — matches the
+// frontend's own localStorage TTL for the same recovery concept (packs/page.tsx
+// PACK_PAYMENT_TTL_MS), so "recoverable on refresh" and "recoverable server-side" agree.
+const RECOVERABLE_PAYMENT_WINDOW_MS = 60 * 60 * 1000;
+
 @Injectable()
 export class PackService {
   private readonly logger = new Logger(PackService.name);
@@ -55,9 +76,14 @@ export class PackService {
   private tiersCache: { tiers: PackTierConfig[]; loadedAt: number } | null = null;
   private readonly TIERS_CACHE_MS = 10_000;
 
+  // Overlap guard for retryFailedPackPurchases, same pattern as LotteryService's cron methods.
+  private processingPackPurchaseRetry = false;
+
   constructor(
     private readonly supabase: SupabaseService,
     private readonly config: ConfigService,
+    private readonly lottery: LotteryService,
+    private readonly usersService: UsersService,
   ) {}
 
   private async getSolanaConnection(): Promise<Connection> {
@@ -82,6 +108,38 @@ export class PackService {
     return Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey)).publicKey.toBase58();
   }
 
+  /** Raw USDC units currently sitting in the treasury's own token account — 0n if the account
+   *  doesn't exist yet or the RPC call fails, so a transient hiccup reads as "can't confirm
+   *  funded" rather than throwing and taking the whole config/payment endpoint down with it. */
+  private async getTreasuryUsdcBalanceUnits(): Promise<bigint> {
+    const treasury = await this.getTreasuryAddress();
+    const conn = await this.getSolanaConnection();
+    const ata = await getAssociatedTokenAddress(USDC_MINT, new PublicKey(treasury));
+    try {
+      const bal = await conn.getTokenAccountBalance(ata);
+      return BigInt(bal.value.amount);
+    } catch {
+      return 0n;
+    }
+  }
+
+  /** Whether the treasury can currently cover the largest payout an enabled tier could hit —
+   *  gates buildPaymentTx (see below) so a pack is never sold that we can't actually fund the
+   *  win for. */
+  async isTreasuryFunded(): Promise<boolean> {
+    const units = await this.getTreasuryUsdcBalanceUnits();
+    return units >= BigInt(Math.round(MIN_TREASURY_BALANCE_USDC * 1_000_000));
+  }
+
+  /** Admin-only view of the actual treasury balance/threshold — never exposed on the public
+   *  config endpoint (that only ever returns the boolean `available`), since the real balance is
+   *  operational/financial detail. */
+  async getTreasuryStatus(): Promise<{ balanceUsdc: number; minRequiredUsdc: number; sufficient: boolean; treasuryAddress: string }> {
+    const [units, treasuryAddress] = await Promise.all([this.getTreasuryUsdcBalanceUnits(), this.getTreasuryAddress()]);
+    const balanceUsdc = Number(units) / 1_000_000;
+    return { balanceUsdc, minRequiredUsdc: MIN_TREASURY_BALANCE_USDC, sufficient: balanceUsdc >= MIN_TREASURY_BALANCE_USDC, treasuryAddress };
+  }
+
   /**
    * Builds the $2 payment transfer for the user to sign client-side — a plain public USDC
    * transfer (no MagicBlock privacy, no bridging: this only ever needs to land in Loofta's own
@@ -89,8 +147,17 @@ export class PackService {
    * treasury/fee wallet partial-signs as fee payer (sponsoring gas + idempotently creating its
    * own destination ATA if somehow missing) so the user only ever needs to provide one
    * signature, then send the result to POST /packs/open as paymentTxHash.
+   *
+   * Refuses to build the charge at all if the treasury can't currently cover a payout — this is
+   * the enforcement point, not openPack: by the time openPack runs the user has already paid, so
+   * refusing there would just strand ANOTHER payment (see the double-payment incident this
+   * feature is meant to prevent a repeat of). Blocking here means nobody ever pays into a pack we
+   * can't fund the win for in the first place.
    */
   async buildPaymentTx(userSolanaAddress: string): Promise<string> {
+    if (!(await this.isTreasuryFunded())) {
+      throw new BadRequestException('Mystery Packs are temporarily unavailable — please check back soon');
+    }
     const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
     if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
     const bs58Mod = await import('bs58');
@@ -120,12 +187,36 @@ export class PackService {
   }
 
   /**
-   * Verifies ON-CHAIN that `txHash` is a confirmed transaction that credited the treasury
-   * wallet with at least `expectedUsdc` USDC. Mirrors LotteryService.verifyFeePaymentOnChain —
-   * NEVER trust the client-supplied hash or amount. Retries because the frontend posts the hash
-   * immediately after sending, often before the tx reaches 'confirmed'.
+   * Finds, across every token balance touched by the tx (not just the treasury's), the account
+   * that was DEBITED the most USDC, and returns its owner. This is how a payment's real sender
+   * is identified — `preTokenBalances`/`postTokenBalances` never say "who sent this," only what
+   * every touched account held before/after.
    */
-  private async verifyPackPaymentOnChain(txHash: string, expectedUsdc: number, retries = 5): Promise<void> {
+  private findUsdcDebitOwner(tx: NonNullable<Awaited<ReturnType<Connection['getTransaction']>>>, usdcMint: string): { owner: string | null; amount: bigint } {
+    const preByIdx = new Map((tx.meta?.preTokenBalances ?? []).map(b => [b.accountIndex, b]));
+    const postByIdx = new Map((tx.meta?.postTokenBalances ?? []).map(b => [b.accountIndex, b]));
+    let debitOwner: string | null = null;
+    let maxDebit = 0n;
+    for (const [idx, post] of postByIdx) {
+      if (post.mint !== usdcMint) continue;
+      const pre = preByIdx.get(idx);
+      if (!pre || pre.mint !== usdcMint) continue;
+      const delta = BigInt(pre.uiTokenAmount.amount) - BigInt(post.uiTokenAmount.amount); // positive = debited
+      if (delta > maxDebit) { maxDebit = delta; debitOwner = post.owner ?? pre.owner ?? null; }
+    }
+    return { owner: debitOwner, amount: maxDebit };
+  }
+
+  /**
+   * Verifies ON-CHAIN that `txHash` is a confirmed transaction that (a) credited the treasury
+   * wallet with at least `expectedUsdc` USDC AND (b) was actually paid BY `expectedSender` —
+   * without (b), any confirmed transaction that ever moved ≥$2 USDC into the treasury (e.g. an
+   * unrelated ticket-purchase fee from a completely different user) could be replayed as a "pack
+   * payment" by anyone who knows the treasury address is public, opening a free pack that still
+   * triggers a real treasury-funded ticket purchase — i.e. a fee-wallet drain vector. Retries
+   * because the frontend posts the hash immediately after sending, often before it's 'confirmed'.
+   */
+  private async verifyPackPaymentOnChain(txHash: string, expectedUsdc: number, expectedSender: string, retries = 5): Promise<void> {
     const treasury = await this.getTreasuryAddress();
     const conn = await this.getSolanaConnection();
     const usdcMint = USDC_MINT.toBase58();
@@ -141,10 +232,62 @@ export class PackService {
         if (received < expectedUnits) {
           throw new BadRequestException(`Pack payment paid ${received} units, expected ${expectedUnits}`);
         }
+        const debit = this.findUsdcDebitOwner(tx, usdcMint);
+        if (debit.owner !== expectedSender) {
+          throw new BadRequestException('This payment was not sent from your wallet');
+        }
         return;
       }
       if (attempt >= retries) throw new BadRequestException('Payment transaction not found on-chain — wait a few seconds and retry');
       await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
+  /**
+   * Looks for a real, confirmed, unconsumed pack payment this user already sent — e.g. a payment
+   * whose on-chain send actually landed but whose client-side flow never made it to POST
+   * /packs/open (network hiccup, closed tab, refresh mid-request). Without this, that money is
+   * simply lost from the user's perspective and, worse, nothing stops them from paying a SECOND
+   * time for the same intended pack. Scans the treasury's recent incoming USDC transfers rather
+   * than trusting any client-supplied hash, and skips anything already recorded in pack_openings
+   * (already consumed) or not sent from this exact user's own wallet.
+   */
+  async findRecoverablePayment(userId: string): Promise<{ paymentTxHash: string } | null> {
+    try {
+      const userSolanaAddress = await this.usersService.getSolanaWalletAddress(userId);
+      const treasury = await this.getTreasuryAddress();
+      const usdcMint = USDC_MINT.toBase58();
+      const treasuryAta = await getAssociatedTokenAddress(USDC_MINT, new PublicKey(treasury));
+      const conn = await this.getSolanaConnection();
+      const sigs = await conn.getSignaturesForAddress(treasuryAta, { limit: 30 });
+      const cutoffMs = Date.now() - RECOVERABLE_PAYMENT_WINDOW_MS;
+      const db = this.supabase.getClient();
+
+      for (const sigInfo of sigs) {
+        if (sigInfo.err) continue;
+        // Signatures come back newest-first — once we hit one older than the recovery window,
+        // everything after it is too, so stop scanning instead of walking further back.
+        if (!sigInfo.blockTime || sigInfo.blockTime * 1000 < cutoffMs) break;
+
+        const { data: existing } = await db.from('pack_openings').select('id').eq('payment_tx_hash', sigInfo.signature).maybeSingle();
+        if (existing) continue; // already consumed by a real pack open
+
+        const tx = await conn.getTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
+        if (!tx || tx.meta?.err) continue;
+        const pre = tx.meta?.preTokenBalances?.find(b => b.owner === treasury && b.mint === usdcMint);
+        const post = tx.meta?.postTokenBalances?.find(b => b.owner === treasury && b.mint === usdcMint);
+        const received = BigInt(post?.uiTokenAmount?.amount ?? '0') - BigInt(pre?.uiTokenAmount?.amount ?? '0');
+        if (received < BigInt(Math.round(PACK_PRICE_USDC * 1_000_000))) continue;
+
+        const debit = this.findUsdcDebitOwner(tx, usdcMint);
+        if (debit.owner !== userSolanaAddress) continue;
+
+        return { paymentTxHash: sigInfo.signature };
+      }
+      return null;
+    } catch (e: any) {
+      this.logger.warn(`findRecoverablePayment ${userId}: ${e.message}`);
+      return null;
     }
   }
 
@@ -178,12 +321,15 @@ export class PackService {
    * Also carries the treasury address + USDC mint the frontend needs to build the payment
    * transfer — the amount (priceUsdc) is authoritative here; the frontend must not hardcode it.
    */
-  async getPublicConfig(): Promise<{ priceUsdc: number; treasuryAddress: string; usdcMint: string; tiers: PackTierPublic[] }> {
-    const [tiers, treasuryAddress] = await Promise.all([this.loadTiers(), this.getTreasuryAddress()]);
+  async getPublicConfig(): Promise<{ priceUsdc: number; treasuryAddress: string; usdcMint: string; available: boolean; tiers: PackTierPublic[] }> {
+    const [tiers, treasuryAddress, available] = await Promise.all([this.loadTiers(), this.getTreasuryAddress(), this.isTreasuryFunded()]);
     return {
       priceUsdc: PACK_PRICE_USDC,
       treasuryAddress,
       usdcMint: USDC_MINT.toBase58(),
+      // False when the treasury can't currently cover a payout — the frontend should show packs
+      // as paused rather than let anyone pay into one we can't fund the win for.
+      available,
       tiers: tiers.map(t => ({
         tierKey: t.tierKey,
         ticketsAwarded: t.ticketsAwarded,
@@ -228,11 +374,12 @@ export class PackService {
 
   /**
    * Opens a pack for a user after verifying the $2 payment on-chain. `paymentTxHash` must be a
-   * confirmed transaction that sent at least PACK_PRICE_USDC in USDC to the treasury wallet —
-   * verified here, never trusted from the client. A tx hash can only ever fund one pack open:
-   * checked up front (fast path, good error message) and enforced for real by the DB's partial
-   * unique index on payment_tx_hash (pack_openings_payment_tx_hash_uq), which is what actually
-   * closes the race between two concurrent requests reusing the same hash.
+   * confirmed transaction that sent at least PACK_PRICE_USDC in USDC to the treasury wallet FROM
+   * this exact user's own wallet — verified here, never trusted from the client. A tx hash can
+   * only ever fund one pack open: checked up front (fast path, good error message) and enforced
+   * for real by the DB's partial unique index on payment_tx_hash
+   * (pack_openings_payment_tx_hash_uq), which is what actually closes the race between two
+   * concurrent requests reusing the same hash.
    */
   async openPack(userId: string, paymentTxHash: string): Promise<PackOpenResult> {
     const db = this.supabase.getClient();
@@ -244,7 +391,8 @@ export class PackService {
       .maybeSingle();
     if (existing) throw new BadRequestException('This payment has already been used to open a pack');
 
-    await this.verifyPackPaymentOnChain(paymentTxHash, PACK_PRICE_USDC);
+    const userSolanaAddress = await this.usersService.getSolanaWalletAddress(userId);
+    await this.verifyPackPaymentOnChain(paymentTxHash, PACK_PRICE_USDC, userSolanaAddress);
 
     const tier = await this.rollTier();
     const { data, error } = await db
@@ -273,12 +421,108 @@ export class PackService {
     if (!data) throw new Error('Failed to record pack opening: no row returned');
 
     this.logger.log(`Pack opened for user ${userId}: tier=${tier.tierKey} tickets=${tier.ticketsAwarded} payment=${paymentTxHash}`);
+
+    // The prize is already locked in above — a failure here must never take the pack open down
+    // with it. fulfillPackOpening catches internally and leaves the row retryable instead.
+    await this.fulfillPackOpening(data.id, userId, tier.ticketsAwarded);
+
     return {
       id: data.id,
       tierKey: tier.tierKey,
       ticketsAwarded: tier.ticketsAwarded,
       rarity: tier.rarity,
     };
+  }
+
+  /**
+   * Dev-only path for testing the open flow with no money involved at all: same real tier roll
+   * as openPack, but no payment is ever required or verified, and — critically — no treasury-
+   * funded ticket purchase ever fires (fulfillPackOpening is never called), so a demo open can
+   * never cost Loofta's treasury anything either. Hard-blocked outside non-production
+   * environments regardless of what the frontend sends, since this is the one path in the module
+   * that skips the "never trust the client" payment verification on purpose.
+   */
+  async openPackDemo(userId: string): Promise<PackOpenResult> {
+    if (this.config.get<string>('NODE_ENV') === 'production') {
+      throw new BadRequestException('Demo packs are not available in production');
+    }
+
+    const tier = await this.rollTier();
+    const db = this.supabase.getClient();
+    const { data, error } = await db
+      .from('pack_openings')
+      .insert({
+        user_id: userId,
+        tier_key: tier.tierKey,
+        tickets_awarded: tier.ticketsAwarded,
+        rarity: tier.rarity,
+        cost_usdc: 0,
+        is_test: true,
+        payment_tx_hash: null,
+        status: 'opened',
+      })
+      .select('id')
+      .single();
+    if (error || !data) throw new Error(`Failed to record demo pack opening: ${error?.message}`);
+
+    this.logger.log(`Demo pack opened for user ${userId}: tier=${tier.tierKey} tickets=${tier.ticketsAwarded} (no payment, no real ticket purchase)`);
+    return {
+      id: data.id,
+      tierKey: tier.tierKey,
+      ticketsAwarded: tier.ticketsAwarded,
+      rarity: tier.rarity,
+    };
+  }
+
+  /**
+   * Buys the real Megapot ticket(s) a pack win entitles the user to, funded from Loofta's own
+   * treasury (LotteryService.purchaseTicketsForUser — same admin_treasury funding model as an
+   * admin-gifted ticket, minus the gift/claim indirection since the winner is already known).
+   * Never throws: the win is already recorded in pack_openings by the time this runs, so a
+   * failure just leaves the row status='failed' for retryFailedPackPurchases to pick up
+   * instead of losing the user's prize.
+   */
+  private async fulfillPackOpening(openingId: string, userId: string, numTickets: number): Promise<void> {
+    const db = this.supabase.getClient();
+    try {
+      const { ticketId } = await this.lottery.purchaseTicketsForUser(userId, numTickets);
+      await db.from('pack_openings').update({ status: 'fulfilled', lottery_ticket_id: ticketId }).eq('id', openingId);
+      this.logger.log(`Pack opening ${openingId}: fulfilled with real ticket ${ticketId}`);
+    } catch (e: any) {
+      this.logger.error(`Pack opening ${openingId}: ticket purchase failed, will retry: ${e.message}`);
+      await db.from('pack_openings')
+        .update({ status: 'failed', purchase_failure_reason: e.message })
+        .eq('id', openingId);
+    }
+  }
+
+  /**
+   * Cron-driven retry for pack wins whose treasury-funded ticket purchase failed on the first
+   * attempt (e.g. a transient RPC error, fee-wallet hiccup). Capped at MAX_PACK_PURCHASE_RETRIES
+   * and a rolling age window, same shape as LotteryService.autoRetryFailedTickets.
+   */
+  async retryFailedPackPurchases(): Promise<void> {
+    if (this.processingPackPurchaseRetry) return;
+    this.processingPackPurchaseRetry = true;
+    try {
+      const db = this.supabase.getClient();
+      const cutoff = new Date(Date.now() - PACK_PURCHASE_RETRY_MAX_AGE_MS).toISOString();
+      const { data: openings } = await db
+        .from('pack_openings')
+        .select('id, user_id, tickets_awarded, retry_count')
+        .eq('status', 'failed')
+        .lt('retry_count', MAX_PACK_PURCHASE_RETRIES)
+        .gte('created_at', cutoff)
+        .order('created_at', { ascending: true })
+        .limit(10);
+
+      for (const opening of openings ?? []) {
+        await db.from('pack_openings').update({ retry_count: opening.retry_count + 1 }).eq('id', opening.id);
+        await this.fulfillPackOpening(opening.id, opening.user_id, opening.tickets_awarded);
+      }
+    } finally {
+      this.processingPackPurchaseRetry = false;
+    }
   }
 
   /** Admin: full tier config including weight + enabled — powers the enable/disable toggle. */

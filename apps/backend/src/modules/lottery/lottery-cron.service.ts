@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { LotteryService } from './lottery.service';
+import { PackService } from './pack.service';
 
 @Injectable()
 export class LotteryCronService {
@@ -9,6 +10,7 @@ export class LotteryCronService {
 
   constructor(
     private readonly lottery: LotteryService,
+    private readonly pack: PackService,
     private readonly config: ConfigService,
   ) {
     if (!this.isProd) {
@@ -149,6 +151,18 @@ export class LotteryCronService {
     if (!this.isProd) return;
     await this.lottery.cancelAbandonedPendingSends().catch(e =>
       this.logger.error(`cancelAbandonedPendingSends: ${e.message}`),
+    );
+  }
+
+  /** Every 2 minutes: retry the real Megapot ticket purchase for a Mystery Pack win whose
+   *  treasury-funded purchase failed on the first attempt — the win itself was already recorded,
+   *  this only affects when the actual ticket gets bought. Capped per-row (overlap-guarded in
+   *  service). */
+  @Cron('*/2 * * * *')
+  async retryFailedPackPurchases(): Promise<void> {
+    if (!this.isProd) return;
+    await this.pack.retryFailedPackPurchases().catch(e =>
+      this.logger.error(`retryFailedPackPurchases: ${e.message}`),
     );
   }
 }

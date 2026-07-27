@@ -1,10 +1,11 @@
 'use client';
 // MegapotPack.tsx — 3D gacha pack opening for Next.js.
-// Adapted from the designer handoff (handoff 2/nextjs/MegapotPack.tsx.txt) for the real Mystery
-// Pack feature: the handoff's local `ODDS`/`roll()` determined the prize entirely client-side —
-// here the click instead calls `resolveOpen`, which the page wires to a real, authenticated
-// POST /lottery/packs/open. The visual/animation code (pack geometry, canvas artwork, confetti,
-// state machine) is otherwise unchanged from the handoff.
+// Adapted from the designer handoff for the real Mystery Pack feature: the handoff's local
+// `ODDS`/`roll()` determined the prize entirely client-side — here the click instead calls
+// `resolveOpen`, which the page wires to a real, authenticated POST /lottery/packs/open.
+// Pack geometry/material/back-art revamped per handoff 3 (pillow-pouch foil shaping + full
+// branded back face) on top of that integration; camera framing (position/target) stays tuned
+// to this page's own full-screen layout rather than the handoff's defaults.
 //
 //   npm i three
 //
@@ -20,6 +21,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { playShakeSound, playBurstSound, playRevealChime } from '@/lib/packSoundEffects';
 
 const RED = '#FF1301', ORG = '#FF6A00', YEL = '#EAB308', PAPER = '#FFFDF7', INK = '#0B0B0F';
 
@@ -46,11 +48,16 @@ export default function MegapotPack({
   displayFont = 'Clash Display',
   bodyFont = 'Clash Grotesk',
   jackpotLabel = '$1.1M',
-  idleLabel = 'Click the pack to open',
+  // Empty by default — the top hint ("drag to orbit · click the pack to open") already says
+  // this, so repeating it here (right above the hidden "open another" button slot) was pure
+  // redundancy. Still overridable/used for real state changes ("Opening…", "X tickets won!").
+  idleLabel = '',
   idleSubtitle = 'You always win at least 1 ticket — never a loss',
   openingLabel = 'Opening…',
   hintTop = 22,
   canOpen = true,
+  muted = false,
+  showOpenAnotherButton = true,
 }: {
   assets?: PackAssets;
   /** Called when the sealed pack is clicked — must resolve with the real, server-rolled prize. */
@@ -71,6 +78,15 @@ export default function MegapotPack({
   /** Gates the click-to-open interaction — e.g. while a required payment hasn't been confirmed
    *  yet. Dragging/orbiting the pack always still works; only the open action is blocked. */
   canOpen?: boolean;
+  /** Mutes the shake/burst/reveal-chime sound effects — the click that starts an open is a real
+   *  user gesture, which is what lets the AudioContext actually play on every browser. */
+  muted?: boolean;
+  /** Whether the built-in "Open another" button (bottom of the canvas, appears once a pack is
+   *  fully revealed) is shown at all — set false when the host page has its own "Open another"
+   *  action (e.g. a proper result sheet), so there's only ever one button that can actually
+   *  trigger a re-open. The internal reset() logic still runs either way (idle state, glow, etc)
+   *  — this only ever affects whether the button itself is visible/clickable. */
+  showOpenAnotherButton?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const uiRef = useRef<{ lbl: HTMLDivElement | null; sub: HTMLDivElement | null; btn: HTMLButtonElement | null }>({ lbl: null, sub: null, btn: null });
@@ -78,10 +94,12 @@ export default function MegapotPack({
   const onOpenedRef = useRef(onOpened);
   const onErrorRef = useRef(onError);
   const canOpenRef = useRef(canOpen);
+  const mutedRef = useRef(muted);
   useEffect(() => { resolveOpenRef.current = resolveOpen; }, [resolveOpen]);
   useEffect(() => { onOpenedRef.current = onOpened; }, [onOpened]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
   useEffect(() => { canOpenRef.current = canOpen; }, [canOpen]);
+  useEffect(() => { mutedRef.current = muted; }, [muted]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -108,18 +126,22 @@ export default function MegapotPack({
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(38, W / H, 0.1, 100);
-    // Pulled back further than the original handoff (11.6) — at 11.6 the pack halves' peak
-    // fly-apart position sits right at the edge of (and on some aspect ratios just past) the
-    // vertical frustum, which read as the ticket/pack "getting stuck" off-screen. The extra
-    // distance gives real margin regardless of container size.
-    camera.position.set(0, 0.5, 13.2);
+    // Closer than the original handoff's 11.6 for a bigger, more present-feeling pack, while
+    // still keeping real margin above the fly-apart pack-halves' peak height (~4 world units
+    // above target) so nothing clips off-frame the way it did at 11.6 — the actual REVEALED
+    // TICKET never comes close to that peak (it settles at target height), so it was always the
+    // fading, near-transparent pack halves that were tight, not the part that matters visually.
+    camera.position.set(0, 0.5, 11.5);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.enablePan = false;
-    controls.minDistance = 8;
-    controls.maxDistance = 20;
-    controls.target.set(0, 0.55, 0);
+    controls.minDistance = 7;
+    controls.maxDistance = 18;
+    // Target sits below the pack's own rig height (0.55) on purpose — orbiting always looks
+    // exactly at the target, so keeping the look-at point a bit lower makes the pack render in
+    // the upper portion of the frame instead of dead-center, closer to the hint text above it.
+    controls.target.set(0, 0.3, 0);
 
     const pmrem = new THREE.PMREMGenerator(renderer);
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -268,17 +290,46 @@ export default function MegapotPack({
       x.drawImage(_art, 0, part === 'top' ? 0 : AH / 2, AW, AH / 2, 0, 0, AW, AH / 2);
       return tex(c);
     }
-    function packBackFace() {
-      const c = cv(AW, AH / 2), x = c.getContext('2d')!;
-      const g = x.createLinearGradient(0, 0, AW, AH / 2);
+    function backArt() { // full-height back sheet, drawn once
+      const c = cv(AW, AH), x = c.getContext('2d')!;
+      const g = x.createLinearGradient(0, 0, AW, AH);
       g.addColorStop(0, '#FF1301'); g.addColorStop(0.5, '#FF6A00'); g.addColorStop(1, '#EAB308');
-      x.fillStyle = g; x.fillRect(0, 0, AW, AH / 2);
-      x.save(); x.translate(AW / 2, AH / 4); x.rotate(-0.6); x.globalCompositeOperation = 'screen';
+      x.fillStyle = g; x.fillRect(0, 0, AW, AH);
+      x.save(); x.translate(AW / 2, AH / 2); x.rotate(-0.6); x.globalCompositeOperation = 'screen';
       const hg = x.createLinearGradient(-AW, 0, AW, 0);
       for (let i = 0; i <= 8; i++) hg.addColorStop(i / 8, `hsla(${i * 44},95%,62%,.1)`);
-      x.fillStyle = hg; x.fillRect(-AW, -150, AW * 2, 300); x.restore();
-      x.globalAlpha = 0.28; x.fillStyle = '#4A0C02';
-      x.fillRect(0, 0, AW, 26); x.fillRect(0, AH / 2 - 26, AW, 26);
+      x.fillStyle = hg; x.fillRect(-AW, -260, AW * 2, 520); x.restore();
+      x.globalCompositeOperation = 'source-over';
+      crimp(x, 0, 52, 1); crimp(x, AH - 52, 52, -1); // seals at the true top/bottom only
+      const mid = AH / 2;
+      x.textAlign = 'center';
+      if (logoWhiteImg) {
+        const w = 180, hh = w * logoWhiteImg.height / logoWhiteImg.width;
+        x.save(); x.shadowColor = '#5A1002'; x.shadowBlur = 16;
+        for (let i = 0; i < 2; i++) x.drawImage(logoWhiteImg, (AW - w) / 2, mid - 190, w, hh);
+        x.restore(); x.drawImage(logoWhiteImg, (AW - w) / 2, mid - 190, w, hh);
+      }
+      x.globalAlpha = 0.5; x.fillStyle = '#fff'; x.fillRect(AW / 2 - 48, mid - 112, 96, 4); x.globalAlpha = 1;
+      x.font = `600 24px "${bodyFont}"`; (x as any).letterSpacing = '10px';
+      x.lineWidth = 7; x.strokeStyle = '#5A1002'; x.lineJoin = 'round';
+      x.strokeText('MYSTERY PACK', AW / 2, mid - 56); x.fillStyle = '#fff'; x.fillText('MYSTERY PACK', AW / 2, mid - 56);
+      if (megapotDarkImg) {
+        const mw = 130, mh = mw * megapotDarkImg.height / megapotDarkImg.width;
+        const bw = 176, bh = mh + 24, bx = (AW - bw) / 2, by = mid + 16;
+        x.beginPath();
+        if ((x as any).roundRect) (x as any).roundRect(bx, by, bw, bh, 12); else x.rect(bx, by, bw, bh);
+        x.fillStyle = '#FFFDF7'; x.fill();
+        x.drawImage(megapotDarkImg, (AW - mw) / 2, by + 12, mw, mh);
+      }
+      x.globalAlpha = 0.6; x.fillStyle = '#fff'; x.font = `500 18px "${bodyFont}"`; (x as any).letterSpacing = '3px';
+      x.fillText('1 ENTRY MINIMUM · NO PURCHASE VALUE', AW / 2, AH - 96); x.globalAlpha = 1;
+      return c;
+    }
+    let _backArt: HTMLCanvasElement | null = null;
+    function packBackFace(part: 'top' | 'bot') { // slice the shared back sheet
+      if (!_backArt) _backArt = backArt();
+      const c = cv(AW, AH / 2), x = c.getContext('2d')!;
+      x.drawImage(_backArt, 0, part === 'top' ? 0 : AH / 2, AW, AH / 2, 0, 0, AW, AH / 2);
       return tex(c);
     }
     function packEdge() {
@@ -336,7 +387,7 @@ export default function MegapotPack({
     }
 
     /* ---------- geometry ---------- */
-    const PW = 2.35, PH = 3.6, PD = 0.34;
+    const PW = 2.32, PH = 3.6, PD = 0.4;
     function hash2(i: number, j: number) { const s = Math.sin(i * 127.1 + j * 311.7) * 43758.5453; return s - Math.floor(s); }
     function vnoise(x: number, y: number) {
       const i = Math.floor(x), j = Math.floor(y), fx = x - i, fy = y - j;
@@ -345,23 +396,29 @@ export default function MegapotPack({
       const top = a + (b - a) * sx, bot = c + (d - c) * sx;
       return top + (bot - top) * sy;
     }
-    // displacement must be a pure function of position or the mesh tears
-    function crumple(geo: THREE.BufferGeometry, amt = 0.011) {
+    // Shape a flat foil POUCH, not a box: z scaled by a pillow profile (middle bulges,
+    // sealed edges pinch flat) + a gentle taper into the seals. Displacement must be a
+    // pure function of position or the non-indexed mesh tears.
+    function pouch(geo: THREE.BufferGeometry, part: 'top' | 'bot', amt = 0.006) {
       const p = geo.attributes.position, n = geo.attributes.normal;
+      const hy = PH / 2, yOff = part === 'top' ? PH / 4 : -PH / 4;
       for (let i = 0; i < p.count; i++) {
         const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+        const u = Math.min(1, Math.abs(x) / (PW / 2));
+        const v = Math.min(1, Math.abs(y + yOff) / hy);
+        const prof = Math.max(0.3, Math.pow((1 - Math.pow(u, 4)) * (1 - Math.pow(v, 6)), 0.45));
         const w = (vnoise(x * 3.7 + 11.3, y * 3.1 + 5.9) - 0.5) * 2
           + (vnoise(x * 8.3 - 3.1, y * 7.1 + 17.7) - 0.5) * 1.1
           + (vnoise(x * 19.7 + 2.3, y * 16.1 - 8.9) - 0.5) * 0.45;
-        const d = w * amt, edge = Math.sin(y * 9.1 + x * 5.3) * amt * 0.35;
-        p.setXYZ(i, x + n.getX(i) * d + edge * Math.sign(x) * 0.5, y + n.getY(i) * d, z + n.getZ(i) * d * 1.7);
+        const d = w * amt, seal = 1 - 0.055 * Math.pow(v, 6);
+        p.setXYZ(i, x * seal + n.getX(i) * d, y + n.getY(i) * d, z * prof + n.getZ(i) * d * 1.7);
       }
       (p as THREE.BufferAttribute).needsUpdate = true; geo.computeVertexNormals(); return geo;
     }
     const foilMat = (map: THREE.Texture) => new THREE.MeshPhysicalMaterial({
-      map, metalness: 0.42, roughness: 0.16,
-      clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 1.5,
-      bumpMap: crinkleT, bumpScale: 0.16, side: THREE.FrontSide,
+      map, metalness: 0.42, roughness: 0.18,
+      clearcoat: 0.95, clearcoatRoughness: 0.1, envMapIntensity: 1.35,
+      bumpMap: crinkleT, bumpScale: 0.09, side: THREE.FrontSide,
     });
     const edgeT = packEdge(), tornT = tornEdge();
 
@@ -371,13 +428,13 @@ export default function MegapotPack({
     function makeHalf(part: 'top' | 'bot') {
       const hh = PH / 2;
       // BoxGeometry keeps per-face 0..1 UVs so artwork maps upright
-      const geo = crumple(new THREE.BoxGeometry(PW, hh, PD, 30, 22, 2));
+      const geo = pouch(new THREE.BoxGeometry(PW, hh, PD, 40, 30, 3), part);
       const cut = new THREE.MeshPhysicalMaterial({ map: tornT, metalness: 0.2, roughness: 0.6 });
       const side = foilMat(edgeT);
       const m = new THREE.Mesh(geo, [
         side, side,
         part === 'top' ? side : cut, part === 'top' ? cut : side,
-        foilMat(packFace(part)), foilMat(packBackFace()),
+        foilMat(packFace(part)), foilMat(packBackFace(part)),
       ]);
       m.castShadow = true; m.receiveShadow = true;
       m.position.y = part === 'top' ? hh / 2 : -hh / 2;
@@ -443,6 +500,7 @@ export default function MegapotPack({
       rayc.setFromCamera(ptr, camera);
       if (rayc.intersectObjects([topHalf, botHalf], true).length) {
         phase = 'shake'; t0 = clock.getElapsedTime();
+        playShakeSound(mutedRef.current);
         pendingResult = null; pendingError = null;
         if (ui.lbl) ui.lbl.textContent = openingLabel;
         if (ui.sub) ui.sub.textContent = 'Good luck';
@@ -492,6 +550,7 @@ export default function MegapotPack({
         } else if (e > 1.2 && pendingResult) {
           entries = pendingResult.ticketsAwarded;
           phase = 'burst'; t0 = t; parts.visible = true;
+          playBurstSound(mutedRef.current);
           const p = parts.geometry.attributes.position as THREE.BufferAttribute;
           for (let i = 0; i < P; i++) { p.array[i * 3] = 0; p.array[i * 3 + 1] = 0; p.array[i * 3 + 2] = 0; }
           p.needsUpdate = true; ticketGroup.visible = true;
@@ -522,6 +581,7 @@ export default function MegapotPack({
           if (ui.lbl) ui.lbl.textContent = `${entries} free ${entries === 1 ? 'ticket' : 'tickets'}`;
           if (ui.sub) ui.sub.textContent = "Added to today's Megapot draw";
           if (ui.btn) ui.btn.style.visibility = 'visible';
+          playRevealChime(pendingResult.rarity, mutedRef.current);
           onOpenedRef.current?.(pendingResult);
         }
       } else {
@@ -554,9 +614,9 @@ export default function MegapotPack({
       [logoImg, logoWhiteImg, megapotDarkImg] = await Promise.all([
         loadImg(A.logo), loadImg(A.logoWhite), loadImg(A.megapotDark),
       ]);
-      _art = null;
-      topHalf.material[4].map = packFace('top'); topHalf.material[5].map = packBackFace();
-      botHalf.material[4].map = packFace('bot'); botHalf.material[5].map = packBackFace();
+      _art = null; _backArt = null;
+      topHalf.material[4].map = packFace('top'); topHalf.material[5].map = packBackFace('top');
+      botHalf.material[4].map = packFace('bot'); botHalf.material[5].map = packBackFace('bot');
       (topHalf.material as THREE.Material[]).forEach(m => (m.needsUpdate = true));
       (botHalf.material as THREE.Material[]).forEach(m => (m.needsUpdate = true));
       frontMat.map = ticketFront(1); frontMat.needsUpdate = true;
@@ -598,7 +658,17 @@ export default function MegapotPack({
           {idleSubtitle}
         </div>
         <button ref={el => { uiRef.current.btn = el; }}
-          style={{ pointerEvents: 'auto', fontFamily: `'${displayFont}', sans-serif`, fontWeight: 500, fontSize: 17, padding: '15px 32px', border: 'none', borderRadius: 999, cursor: 'pointer', background: 'linear-gradient(90deg,#FF1301,#EAB308)', color: '#fff', marginTop: 10, visibility: 'hidden' }}>
+          style={{
+            pointerEvents: 'auto', fontFamily: `'${displayFont}', sans-serif`, fontWeight: 500, fontSize: 17,
+            padding: '15px 32px', border: 'none', borderRadius: 999, cursor: 'pointer',
+            background: 'linear-gradient(90deg,#FF1301,#EAB308)', color: '#fff', marginTop: 10,
+            visibility: 'hidden',
+            // Overrides the ref-driven visibility toggle above (tick loop only ever sets
+            // 'visible'/'hidden') — display:none also strips interactivity, so a host page with
+            // its own "Open another" action can fully suppress this one instead of ending up
+            // with two buttons that both claim to do the same thing.
+            display: showOpenAnotherButton ? undefined : 'none',
+          }}>
           Open another
         </button>
       </div>

@@ -53,7 +53,7 @@ function MobileMenu({
   const navLinks = [
     { href: "/", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
-    { href: "/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
+    { href: "/megapot", label: "Lottery", description: "Play the daily jackpot privately" },
   ];
 
   return (
@@ -298,7 +298,7 @@ export function MinimalHeader() {
                       : "text-slate-300 hover:text-white hover:bg-white/10",
                   ].join(" ")}
                 >
-                  <span>Megapot</span>
+                  <span>Lottery</span>
                 </Link>
 
                 {/* Desktop: Balance button */}

@@ -11,14 +11,14 @@
 // Rare/Epic, regardless of whether they're currently enabled server-side, so enabling them
 // later needs zero change here.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { motion, AnimatePresence } from "framer-motion";
-import { X, Info } from "lucide-react";
+import { motion, AnimatePresence, useDragControls } from "framer-motion";
+import { X, Info, Volume2, VolumeX } from "lucide-react";
 import SlideToPay from "@/components/megapot/SlideToPay";
 import type { PackOpenResult, PackRarity } from "@/components/megapot/MegapotPack";
 
@@ -41,7 +41,24 @@ const RARITY_STYLE: Record<PackRarity, string> = {
 };
 
 const sheetTransition = { type: "spring" as const, damping: 30, stiffness: 300 };
+// Gives the just-revealed ticket a moment on screen, unobscured, before the result sheet slides
+// up over the bottom of it — MegapotPack's own reveal animation already finished by the time
+// onOpened fires, so showing the sheet instantly cut that moment short.
+const RESULT_SHEET_DELAY_MS = 1400;
 const FALLBACK_PRICE_USDC = 2;
+
+// Same recovery pattern as megapot/page.tsx's WITHDRAWAL_STORAGE_KEY: a real on-chain payment
+// must never be "lost" just because /packs/open failed for an unrelated reason (a transient DB
+// error, a refresh mid-request, etc.) — that tx hash is still valid and reusable, so a reload
+// should restore the paid gate instead of asking the user to pay a second time.
+const PACK_PAYMENT_STORAGE_KEY = "megapot_pack_payment";
+const PACK_PAYMENT_TTL_MS = 60 * 60 * 1000;
+const SOUND_MUTED_STORAGE_KEY = "megapot_pack_sound_muted";
+
+// Same convention as megapot/page.tsx's IS_LOCALHOST — gates the demo-open toggle to local dev
+// only. The backend independently hard-blocks openPackDemo outside non-production environments
+// regardless of what this sends, so this check is purely about not showing dev UI to real users.
+const IS_LOCALHOST = typeof window !== "undefined" && window.location.hostname === "localhost";
 
 export default function MegapotPacksPage() {
   const { user, authenticated, login, getAccessToken } = usePrivy();
@@ -57,6 +74,8 @@ export default function MegapotPacksPage() {
 
   const [tiers, setTiers] = useState<PackTierPublic[] | null>(null);
   const [priceUsdc, setPriceUsdc] = useState<number | null>(null);
+  // null = not loaded yet (don't show the unavailable state prematurely), true/false once known.
+  const [available, setAvailable] = useState<boolean | null>(null);
   const [result, setResult] = useState<PackOpenResult | null>(null);
   const [openCount, setOpenCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +88,29 @@ export default function MegapotPacksPage() {
   const [payError, setPayError] = useState<string | null>(null);
 
   const [infoOpen, setInfoOpen] = useState(false);
+  // Drag-to-peek on the result sheet — started only from the handle bar (dragListener={false}),
+  // so the buttons underneath stay perfectly tap-safe with zero risk of an accidental drag.
+  const resultSheetDragControls = useDragControls();
+  const resultDelayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (resultDelayTimeoutRef.current) clearTimeout(resultDelayTimeoutRef.current); }, []);
+
+  // Dev-only: skips the whole payment gate and calls POST /packs/demo-open instead of /packs/open
+  // — same real tier roll, no money involved in either direction (no charge, no treasury-funded
+  // ticket purchase). Never shown/usable off localhost; the backend enforces this independently.
+  const [demoMode, setDemoMode] = useState(false);
+
+  // Sound effects default ON — persisted so a mute choice survives across packs/sessions.
+  const [muted, setMuted] = useState(false);
+  useEffect(() => {
+    try { setMuted(localStorage.getItem(SOUND_MUTED_STORAGE_KEY) === "1"); } catch { /* ignore */ }
+  }, []);
+  const toggleMuted = useCallback(() => {
+    setMuted(prev => {
+      const next = !prev;
+      try { localStorage.setItem(SOUND_MUTED_STORAGE_KEY, next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     fetch("/api/lottery/packs/config")
@@ -76,25 +118,88 @@ export default function MegapotPacksPage() {
       .then(data => {
         setTiers(data.tiers ?? []);
         setPriceUsdc(typeof data.priceUsdc === "number" ? data.priceUsdc : null);
+        // Treasury can't currently cover a payout — never let anyone pay into a pack we can't
+        // fund the win for (backend also refuses buildPaymentTx regardless, this is just so the
+        // user sees why up front instead of hitting an error after tapping to pay).
+        setAvailable(data.available !== false);
       })
       .catch(() => setTiers([]));
   }, []);
 
-  const priceLabel = `$${priceUsdc ?? FALLBACK_PRICE_USDC}`;
+  // Restore an already-paid-but-not-yet-opened payment across a refresh (see constant comment
+  // above) — cleared once /packs/open actually succeeds or the user starts over.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(PACK_PAYMENT_STORAGE_KEY);
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as { paymentTxHash?: string; paidAt?: number };
+      if (!parsed?.paymentTxHash || !parsed?.paidAt) return;
+      if (Date.now() - parsed.paidAt > PACK_PAYMENT_TTL_MS) {
+        localStorage.removeItem(PACK_PAYMENT_STORAGE_KEY);
+        return;
+      }
+      setPaymentTxHash(parsed.paymentTxHash);
+      setPaid(true);
+    } catch { /* ignore malformed/missing storage */ }
+  }, []);
+
+  // Server-side recovery of a REAL payment localStorage doesn't know about — e.g. the on-chain
+  // send actually landed but the client never got as far as writing to localStorage (closed tab,
+  // crashed, cleared storage, different device). Without this, that money is just gone from the
+  // user's perspective and nothing stops them paying again for the same intended pack — this is
+  // exactly what happened when a payment landed on-chain but the app dropped it (see
+  // findRecoverablePayment on the backend). Runs once paid isn't already true from localStorage.
+  const checkRecoverablePayment = useCallback(async () => {
+    if (paid) return;
+    try {
+      const token = await getAccessToken();
+      const res = await fetch("/api/lottery/packs/pending-payment", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.paymentTxHash) {
+        setPaymentTxHash(data.paymentTxHash);
+        setPaid(true);
+        try {
+          localStorage.setItem(PACK_PAYMENT_STORAGE_KEY, JSON.stringify({ paymentTxHash: data.paymentTxHash, paidAt: Date.now() }));
+        } catch { /* ignore storage failures */ }
+      }
+    } catch { /* best-effort — worst case the user just sees the normal pay gate */ }
+  }, [paid, getAccessToken]);
+
+  useEffect(() => {
+    if (authenticated) checkRecoverablePayment();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated]);
+
+  const priceLabel = demoMode ? "$0" : `$${priceUsdc ?? FALLBACK_PRICE_USDC}`;
 
   const resolveOpen = useCallback(async (): Promise<PackOpenResult> => {
     setError(null);
-    if (!paymentTxHash) throw new Error("Payment not completed");
     const token = await getAccessToken();
+    const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
+    if (demoMode) {
+      const res = await fetch("/api/lottery/packs/demo-open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Failed to open demo pack");
+      const data = await res.json();
+      return { ticketsAwarded: data.ticketsAwarded, rarity: data.rarity };
+    }
+
+    if (!paymentTxHash) throw new Error("Payment not completed");
     const res = await fetch("/api/lottery/packs/open", {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { "Content-Type": "application/json", ...authHeader },
       body: JSON.stringify({ paymentTxHash }),
     });
     if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Failed to open pack");
     const data = await res.json();
     return { ticketsAwarded: data.ticketsAwarded, rarity: data.rarity };
-  }, [getAccessToken, paymentTxHash]);
+  }, [getAccessToken, paymentTxHash, demoMode]);
 
   // Real on-chain payment: build the transfer server-side (treasury sponsors gas + its own ATA),
   // sign+send it with the user's embedded wallet, then hand the signature to resolveOpen above —
@@ -103,9 +208,37 @@ export default function MegapotPacksPage() {
     setPaying(true);
     setPayError(null);
     try {
-      if (!embeddedWallet?.address) throw new Error("No Solana wallet found");
+      if (demoMode) {
+        // Same slide-to-pay UX as a real payment (so it's actually useful for testing the flow),
+        // but no wallet signature and no on-chain transfer at all — demo packs cost $0 by design
+        // (see PackService.openPackDemo, which resolveOpen already calls in demo mode instead of
+        // verifying a real tx hash). Tiny artificial delay so "Confirming…" doesn't just flash.
+        await new Promise(r => setTimeout(r, 350));
+        setPaid(true);
+        return;
+      }
+
+      // Guard against paying twice for one intended pack: if a payment from THIS wallet already
+      // landed on-chain but was never redeemed (e.g. a prior attempt here looked like it failed
+      // client-side after actually broadcasting successfully), reuse it instead of charging
+      // again. Real incident: exactly this happened once already — a confirmed $2 payment never
+      // made it into paymentTxHash/localStorage and the user paid a second time for one pack.
       const token = await getAccessToken();
       const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const pendingRes = await fetch("/api/lottery/packs/pending-payment", { headers: authHeader });
+      if (pendingRes.ok) {
+        const pending = await pendingRes.json();
+        if (pending.paymentTxHash) {
+          setPaymentTxHash(pending.paymentTxHash);
+          setPaid(true);
+          try {
+            localStorage.setItem(PACK_PAYMENT_STORAGE_KEY, JSON.stringify({ paymentTxHash: pending.paymentTxHash, paidAt: Date.now() }));
+          } catch { /* ignore storage failures */ }
+          return;
+        }
+      }
+
+      if (!embeddedWallet?.address) throw new Error("No Solana wallet found");
 
       const payTxRes = await fetch("/api/lottery/packs/pay-tx", {
         method: "POST",
@@ -124,14 +257,29 @@ export default function MegapotPacksPage() {
 
       setPaymentTxHash(signature);
       setPaid(true);
+      try {
+        localStorage.setItem(PACK_PAYMENT_STORAGE_KEY, JSON.stringify({ paymentTxHash: signature, paidAt: Date.now() }));
+      } catch { /* ignore storage failures — worst case, a refresh asks to pay again */ }
     } catch (err: any) {
       setPayError(err?.message ?? "Payment failed — please try again.");
     } finally {
       setPaying(false);
     }
-  }, [embeddedWallet, getAccessToken, signAndSendTransaction]);
+  }, [embeddedWallet, getAccessToken, signAndSendTransaction, demoMode]);
+
+  // A pack actually opening is the only thing that should ever consume the stored payment —
+  // an /open error must NOT clear paid/paymentTxHash, so the user can just tap the pack again
+  // and retry with the same already-verified payment instead of being asked to pay twice.
+  const handleOpened = useCallback((r: PackOpenResult) => {
+    try { localStorage.removeItem(PACK_PAYMENT_STORAGE_KEY); } catch { /* ignore */ }
+    // Delayed so the ticket reveal itself gets a beat unobscured before the sheet slides up over
+    // the bottom of it (see RESULT_SHEET_DELAY_MS).
+    if (resultDelayTimeoutRef.current) clearTimeout(resultDelayTimeoutRef.current);
+    resultDelayTimeoutRef.current = setTimeout(() => setResult(r), RESULT_SHEET_DELAY_MS);
+  }, []);
 
   const handleOpenAnother = useCallback(() => {
+    try { localStorage.removeItem(PACK_PAYMENT_STORAGE_KEY); } catch { /* ignore */ }
     setResult(null);
     setPaid(false);
     setPaymentTxHash(null);
@@ -168,11 +316,27 @@ export default function MegapotPacksPage() {
           <span className="sr-only">Exit</span>
         </Link>
         <span className="text-sm font-semibold tracking-wide text-slate-200">Mystery Pack</span>
-        {/* Same info box on both breakpoints — just more visible on desktop (icon + label vs. icon-only on mobile). */}
-        <button onClick={() => setInfoOpen(true)} className="flex items-center justify-center gap-1.5 h-9 w-9 sm:w-auto sm:px-3.5 rounded-full bg-white/10 backdrop-blur hover:bg-white/15 transition-colors">
-          <Info className="w-4 h-4" />
-          <span className="hidden sm:inline text-sm font-medium text-slate-200">Odds</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {IS_LOCALHOST && (
+            <button
+              onClick={() => setDemoMode(d => !d)}
+              className={`flex items-center justify-center h-9 px-3 rounded-full text-xs font-bold tracking-wide transition-colors ${
+                demoMode ? "bg-emerald-500/20 text-emerald-300 border border-emerald-400/40" : "bg-white/10 text-slate-400 hover:bg-white/15"
+              }`}
+            >
+              DEMO
+            </button>
+          )}
+          <button onClick={toggleMuted} className="flex items-center justify-center w-9 h-9 rounded-full bg-white/10 backdrop-blur hover:bg-white/15 transition-colors">
+            {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            <span className="sr-only">{muted ? "Unmute sound" : "Mute sound"}</span>
+          </button>
+          {/* Same info box on both breakpoints — just more visible on desktop (icon + label vs. icon-only on mobile). */}
+          <button onClick={() => setInfoOpen(true)} className="flex items-center justify-center gap-1.5 h-9 w-9 sm:w-auto sm:px-3.5 rounded-full bg-white/10 backdrop-blur hover:bg-white/15 transition-colors">
+            <Info className="w-4 h-4" />
+            <span className="hidden sm:inline text-sm font-medium text-slate-200">Odds</span>
+          </button>
+        </div>
       </div>
 
       {/* Full-bleed canvas fills everything below the header — the pack-opening scene now gets
@@ -183,11 +347,14 @@ export default function MegapotPacksPage() {
         {authenticated ? (
           <MegapotPack
             resolveOpen={resolveOpen}
-            onOpened={setResult}
-            onError={() => setError("Couldn't open your pack — please try again.")}
+            onOpened={handleOpened}
+            onError={(err) => setError(err instanceof Error && err.message ? err.message : "Couldn't open your pack — please try again.")}
             assets={{ logo: "/loofta.svg", logoWhite: "/loofta_white.svg", megapotDark: "/images/megapot/logo.svg" }}
             canOpen={paid}
-            idleSubtitle={paid ? "You always win at least 1 ticket — never a loss" : "Slide below to pay, then tap the pack"}
+            idleLabel={paid ? "Tap the pack to open" : ""}
+            idleSubtitle={paid ? (demoMode ? "Demo mode — $0, no real ticket" : "You always win at least 1 ticket") : ""}
+            muted={muted}
+            showOpenAnotherButton={false}
           />
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
@@ -200,11 +367,26 @@ export default function MegapotPacksPage() {
       </div>
 
       {/* Payment gate — persistent until paid; the pack stays visible/draggable behind it but
-          cannot be opened (see canOpen above) until this is completed. */}
+          cannot be opened (see canOpen above) until this is completed. If the treasury can't
+          currently cover a payout (available === false), don't offer payment at all — the
+          backend refuses to build the charge anyway, so this just tells the user why up front
+          instead of letting them tap "pay" into a dead end. Already-paid users are unaffected:
+          this only ever replaces the pre-payment control. Demo mode still shows the same
+          slide-to-pay control (so the flow itself is actually testable) — it just never touches
+          the treasury either way, so the low-balance pause doesn't apply to it. */}
       {authenticated && !paid && !result && (
         <div className="absolute inset-x-4 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-80 z-30" style={{ bottom: "calc(env(safe-area-inset-bottom) + 20px)" }}>
-          <SlideToPay amountLabel={priceLabel} onConfirm={handleConfirmPayment} busy={paying} error={payError} />
-          {payError && <p className="mt-2 text-center text-sm text-red-400">{payError}</p>}
+          {!demoMode && available === false ? (
+            <div className="rounded-2xl border border-white/10 bg-[#111114]/95 backdrop-blur px-5 py-4 text-center">
+              <p className="text-base font-semibold text-slate-200">Mystery Packs are paused</p>
+              <p className="text-sm text-slate-400 mt-1">We&apos;re topping up prize funds — check back soon.</p>
+            </div>
+          ) : (
+            <>
+              <SlideToPay amountLabel={priceLabel} onConfirm={handleConfirmPayment} busy={paying} error={payError} />
+              {payError && <p className="mt-2 text-center text-sm text-red-400">{payError}</p>}
+            </>
+          )}
         </div>
       )}
 
@@ -224,10 +406,28 @@ export default function MegapotPacksPage() {
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={sheetTransition}
+            // Draggable down so the won ticket rendered in the 3D scene behind this sheet isn't
+            // permanently half-covered — drag the handle down to peek at the full ticket, it
+            // springs back to place on release (dragSnapToOrigin) rather than staying stuck open.
+            // dragListener={false} + dragControls means ONLY the handle bar below can start this
+            // drag — the buttons stay ordinary, un-draggable tap targets.
+            drag="y"
+            dragListener={false}
+            dragControls={resultSheetDragControls}
+            dragConstraints={{ top: 0, bottom: 260 }}
+            dragElastic={0.15}
+            dragSnapToOrigin
             className="absolute inset-x-0 bottom-0 z-[60] rounded-t-3xl border-t border-white/10 bg-[#111114] px-5 pt-5 shadow-[0_-20px_60px_rgba(0,0,0,0.5)]"
             style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 20px)" }}
           >
-            <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-white/15" />
+            {/* Padded well beyond the visible bar itself — a 6px-tall strip is much too small a
+                target to reliably grab on a touchscreen. */}
+            <div
+              onPointerDown={(e) => resultSheetDragControls.start(e)}
+              className="flex justify-center pt-1 pb-4 -mt-1 cursor-grab active:cursor-grabbing touch-none"
+            >
+              <div className="h-1.5 w-10 rounded-full bg-white/25" />
+            </div>
             <div className="flex flex-col items-center text-center gap-1 mb-4">
               <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wide border ${RARITY_STYLE[result.rarity]}`}>
                 {RARITY_LABEL[result.rarity]}
@@ -236,12 +436,15 @@ export default function MegapotPacksPage() {
               <p className="text-base text-slate-400">Added to today&apos;s Megapot draw</p>
             </div>
             {/* No second ticket here — the 3D scene behind this sheet already reveals the ticket,
-                a duplicate 2D one below it just repeated the same information. */}
-            <div className="flex flex-col sm:flex-row-reverse gap-3 mt-1">
-              <button onClick={handleOpenAnother} className="w-full sm:flex-1 py-3 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] font-semibold text-white">
+                a duplicate 2D one below it just repeated the same information. Stacked (not
+                side-by-side) on every breakpoint — on desktop the sheet spans the full width of
+                the page, so a side-by-side row stretched both buttons uncomfortably wide; capped
+                + centered instead of full-bleed there. */}
+            <div className="flex flex-col gap-3 mt-1 sm:max-w-xs sm:mx-auto">
+              <button onClick={handleOpenAnother} className="w-full py-3 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] font-semibold text-white hover:brightness-110 active:scale-[0.98] transition-[filter,transform]">
                 Open another
               </button>
-              <Link href="/app/megapot" className="w-full sm:flex-1 py-3 rounded-xl bg-white/10 text-center font-semibold text-slate-200 hover:bg-white/15 transition-colors">
+              <Link href="/app/megapot" className="w-full py-3 rounded-xl bg-white/10 text-center font-semibold text-slate-200 hover:bg-white/15 transition-colors">
                 Exit
               </Link>
             </div>

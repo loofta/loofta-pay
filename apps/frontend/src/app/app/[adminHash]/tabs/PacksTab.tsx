@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertTriangle } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 
 interface AdminPackTier {
@@ -16,6 +16,13 @@ interface AdminPackTier {
   rarity: string;
   enabled: boolean;
   displayOrder: number;
+}
+
+interface TreasuryStatus {
+  balanceUsdc: number;
+  minRequiredUsdc: number;
+  sufficient: boolean;
+  treasuryAddress: string;
 }
 
 function oddsLabel(weight: number): string {
@@ -29,6 +36,7 @@ export function PacksTab() {
   const [loading, setLoading] = useState(false);
   const [togglingKey, setTogglingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [treasury, setTreasury] = useState<TreasuryStatus | null>(null);
 
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const token = await getAccessToken().catch(() => null);
@@ -49,7 +57,15 @@ export function PacksTab() {
     }
   }, [authHeaders]);
 
-  useEffect(() => { fetchTiers(); }, [fetchTiers]);
+  const fetchTreasury = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/lottery/packs/treasury", { headers: await authHeaders() });
+      if (!res.ok) return;
+      setTreasury(await res.json());
+    } catch { /* non-critical — tier list above still loads/works without this */ }
+  }, [authHeaders]);
+
+  useEffect(() => { fetchTiers(); fetchTreasury(); }, [fetchTiers, fetchTreasury]);
 
   // Toggling a tier never touches any other tier's weight — a disabled tier's roll just falls
   // back to the next-lower enabled one (see PackService.rollTier) — so this is always a safe,
@@ -75,12 +91,34 @@ export function PacksTab() {
 
   return (
     <div className="space-y-3">
+      {/* Treasury funds every pack win's real ticket purchase — if it can't cover the largest
+          payout an enabled tier could hit, buildPaymentTx refuses to charge anyone (see
+          pack.service.ts) and the consumer page shows packs as paused. This is the "add funds"
+          signal so that's caught here, before a real user ever hits it. */}
+      {treasury && !treasury.sufficient && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-1.5">
+          <div className="flex items-center gap-2 text-base font-semibold text-amber-300">
+            <AlertTriangle className="w-4 h-4" /> Add funds — treasury balance low
+          </div>
+          <div className="text-sm text-amber-200/80">
+            Treasury holds ${treasury.balanceUsdc.toFixed(2)} USDC, below the ${treasury.minRequiredUsdc} needed to
+            cover the largest current payout. Packs are paused for users until this is topped up.
+          </div>
+          <div className="text-sm font-mono text-amber-200/60 break-all">{treasury.treasuryAddress}</div>
+        </div>
+      )}
+
       <div className="rounded-xl border border-gray-800 p-4 space-y-1">
         <div className="text-base font-semibold text-gray-200">Mystery Pack tiers</div>
         <div className="text-sm text-gray-500">
           Disabling a tier doesn&apos;t change any odds shown to users or any other tier&apos;s weight —
           its roll just falls back to the next-lower enabled tier. Safe to flip on/off any time.
         </div>
+        {treasury && (
+          <div className="text-sm text-gray-500 tabular-nums pt-1">
+            Treasury balance: <span className={treasury.sufficient ? "text-emerald-400" : "text-amber-300"}>${treasury.balanceUsdc.toFixed(2)}</span> USDC
+          </div>
+        )}
       </div>
 
       {error && <div className="text-sm text-red-400">{error}</div>}

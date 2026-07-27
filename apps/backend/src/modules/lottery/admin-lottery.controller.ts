@@ -104,4 +104,10 @@ export class AdminLotteryController {
   async setPackTierEnabled(@Param('tierKey') tierKey: string, @Body() dto: SetPackTierEnabledDto): Promise<PackTierConfig> {
     return this.packs.setTierEnabled(tierKey, dto.enabled);
   }
+
+  @Get('packs/treasury')
+  @ApiOperation({ summary: "Mystery Pack treasury balance + funding threshold — the public config endpoint only exposes a boolean, this is the actual number + address for admin visibility ('add funds' if below threshold)." })
+  async packTreasury() {
+    return this.packs.getTreasuryStatus();
+  }
 }
