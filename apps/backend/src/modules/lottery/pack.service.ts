@@ -218,16 +218,39 @@ export class PackService {
   }
 
   /** Admin: recent pack openings (real + demo), newest first — paginated the same way
-   *  listGifts is in admin-lottery.controller.ts. */
-  async getAdminOpenings(page: number, pageSize: number): Promise<{ data: any[]; total: number; page: number; limit: number }> {
+   *  listGifts is in admin-lottery.controller.ts. Each row is annotated with `username` (looked
+   *  up from app_users, null if not found) so the admin sees who opened it, not just a raw Privy
+   *  id. `total` is every row (real+demo, what pagination is based on); `realTotal` excludes demo
+   *  opens — that's the number that should be shown as "how many packs have actually been
+   *  opened," since demo opens don't represent real usage. */
+  async getAdminOpenings(page: number, pageSize: number): Promise<{ data: any[]; total: number; realTotal: number; page: number; limit: number }> {
     const db = this.supabase.getClient();
-    const { data, count, error } = await db
-      .from('pack_openings')
-      .select('id, created_at, user_id, tier_key, tickets_awarded, rarity, cost_usdc, is_test, payment_tx_hash, lottery_ticket_id, status, purchase_failure_reason, retry_count', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range((page - 1) * pageSize, page * pageSize - 1);
+    const [{ data, count, error }, { count: realTotal, error: realCountError }] = await Promise.all([
+      db
+        .from('pack_openings')
+        .select('id, created_at, user_id, tier_key, tickets_awarded, rarity, cost_usdc, is_test, payment_tx_hash, lottery_ticket_id, status, purchase_failure_reason, retry_count', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range((page - 1) * pageSize, page * pageSize - 1),
+      db.from('pack_openings').select('id', { count: 'exact', head: true }).eq('is_test', false),
+    ]);
     if (error) throw new Error(`Failed to load pack openings: ${error.message}`);
-    return { data: data ?? [], total: count ?? 0, page, limit: pageSize };
+    if (realCountError) throw new Error(`Failed to count real pack openings: ${realCountError.message}`);
+
+    const rows = data ?? [];
+    const uniqueUserIds = Array.from(new Set(rows.map(r => r.user_id)));
+    let usernameByUserId: Record<string, string | null> = {};
+    if (uniqueUserIds.length) {
+      const { data: users } = await db.from('app_users').select('privy_user_id, username').in('privy_user_id', uniqueUserIds);
+      usernameByUserId = Object.fromEntries((users ?? []).map((u: any) => [u.privy_user_id, u.username ?? null]));
+    }
+
+    return {
+      data: rows.map(r => ({ ...r, username: usernameByUserId[r.user_id] ?? null })),
+      total: count ?? 0,
+      realTotal: realTotal ?? 0,
+      page,
+      limit: pageSize,
+    };
   }
 
   /**

@@ -22,7 +22,7 @@ export function UnclaimedPaymentToast({
   const totalAmount = payments.reduce((sum, p) => sum + parseFloat(p.amount || "0"), 0);
 
   return (
-    <div className="fixed bottom-20 right-4 sm:bottom-4 z-[100] w-[calc(100%-2rem)] max-w-sm animate-in slide-in-from-bottom-4 fade-in duration-300">
+    <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:bottom-4 z-[100] sm:max-w-sm animate-in slide-in-from-bottom-4 fade-in duration-300">
       <div className="relative rounded-2xl border border-white/10 bg-[#0f0f12]/95 backdrop-blur-xl shadow-2xl shadow-black/50 p-4">
         <button
           type="button"
@@ -40,13 +40,13 @@ export function UnclaimedPaymentToast({
             <p className="text-white font-semibold font-sans text-base">
               {count === 1 ? t("titleOne") : t("titleMany", { count })}
             </p>
-            <p className="text-slate-400 text-sm mt-0.5">
+            <p className="text-slate-400 text-base mt-0.5">
               {t("amountWaiting", { amount: totalAmount.toFixed(2) })}
             </p>
             <Link
               href={href}
               onClick={onDismiss}
-              className="inline-flex items-center gap-1 mt-3 rounded-xl px-3 py-1.5 text-sm font-medium bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 transition-opacity"
+              className="inline-flex items-center gap-1 mt-3 rounded-xl px-3 py-1.5 text-base font-medium bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 transition-opacity"
             >
               {count === 1 ? t("claimOne") : t("claimMany")}
             </Link>

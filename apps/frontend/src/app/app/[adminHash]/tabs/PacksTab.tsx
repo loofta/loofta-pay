@@ -29,6 +29,7 @@ interface AdminPackOpening {
   id: string;
   created_at: string;
   user_id: string;
+  username: string | null;
   tier_key: string;
   tickets_awarded: number;
   rarity: string;
@@ -64,7 +65,10 @@ export function PacksTab() {
   const [savingLimit, setSavingLimit] = useState(false);
 
   const [openings, setOpenings] = useState<AdminPackOpening[] | null>(null);
+  // total = every row (real+demo), what pagination is based on; realTotal excludes demo opens —
+  // that's the number shown as "how many packs have actually been opened."
   const [openingsTotal, setOpeningsTotal] = useState(0);
+  const [openingsRealTotal, setOpeningsRealTotal] = useState(0);
   const [openingsPage, setOpeningsPage] = useState(1);
   const [openingsLoading, setOpeningsLoading] = useState(false);
 
@@ -113,6 +117,7 @@ export function PacksTab() {
       const data = await res.json();
       setOpenings(data.data ?? []);
       setOpeningsTotal(data.total ?? 0);
+      setOpeningsRealTotal(data.realTotal ?? 0);
       setOpeningsPage(page);
     } catch (e: any) {
       setError(e?.message ?? "Failed to load pack openings");
@@ -269,7 +274,7 @@ export function PacksTab() {
           no real ticket purchase (see PackService.openPackDemo), kept visually distinct here. */}
       <div className="rounded-xl border border-gray-800 p-4 space-y-1">
         <div className="text-base font-semibold text-gray-200">Recent pack openings</div>
-        <div className="text-sm text-gray-500">{openingsTotal} total</div>
+        <div className="text-sm text-gray-500">{openingsRealTotal} total (excludes demo opens)</div>
       </div>
       <div className="rounded-xl border border-gray-800 divide-y divide-gray-800">
         {openingsLoading && !openings && (
@@ -293,7 +298,9 @@ export function PacksTab() {
                   <span className="text-xs uppercase tracking-wide text-red-400 border border-red-400/30 bg-red-400/10 rounded-full px-1.5 py-0.5">purchase failed</span>
                 )}
               </div>
-              <div className="text-sm text-gray-500 font-mono truncate">{shortUserId(o.user_id)}</div>
+              <div className="text-sm text-gray-500 truncate">
+                {o.username ? <span className="font-medium text-gray-400">@{o.username}</span> : <span className="font-mono">{shortUserId(o.user_id)}</span>}
+              </div>
             </div>
             <div className="text-right shrink-0">
               <div className="text-sm text-gray-400 tabular-nums">${o.cost_usdc.toFixed(2)}</div>

@@ -25,14 +25,15 @@ import { playShakeSound, playBurstSound, playRevealChime, warmUpAudio } from '@/
 
 const RED = '#FF1301', ORG = '#FF6A00', YEL = '#EAB308', PAPER = '#FFFDF7', INK = '#0B0B0F';
 
-// Real-time soft shadows + clearcoat PBR materials run every frame, even while the pack just sits
-// idle — on a weaker/older phone GPU that's enough sustained load to lag the whole OS. A STATIC
-// guess at this (userAgent + hardwareConcurrency/deviceMemory) was tried first and produced false
-// positives on genuinely capable phones (e.g. iPhone 14 — iOS's reported core count isn't a
-// reliable proxy for real GPU headroom), degrading a device that never actually needed it. This
-// now always STARTS at full quality and only measures real, actual frame times — if a rolling
-// window is genuinely janky, it downgrades once, live, mid-session. Every device gets the good
-// version by default; only ones that demonstrably can't keep up ever see the lighter one.
+// Clearcoat PBR materials run every frame, even while the pack just sits idle — on a weaker/older
+// phone GPU that's enough sustained load to lag the whole OS. (Real-time shadows used to be part
+// of this too but were dropped entirely — not worth the cost for what they added visually.) A
+// STATIC guess at device capability (userAgent + hardwareConcurrency/deviceMemory) was tried first
+// and produced false positives on genuinely capable phones (e.g. iPhone 14 — iOS's reported core
+// count isn't a reliable proxy for real GPU headroom), degrading a device that never actually
+// needed it. This now always STARTS at full quality and only measures real, actual frame times —
+// if a rolling window is genuinely janky, it downgrades once, live, mid-session. Every device gets
+// the good version by default; only ones that demonstrably can't keep up ever see the lighter one.
 const QUALITY_MONITOR_WINDOW_SEC = 2.5;
 const SLOW_FRAME_MS = 32; // ~31fps — below this consistently is real, user-visible jank
 const SLOW_FRAME_RATIO = 0.35; // share of frames in a window that must be slow to trigger a downgrade
@@ -100,9 +101,10 @@ export default function MegapotPack({
    *  trigger a re-open. The internal reset() logic still runs either way (idle state, glow, etc)
    *  — this only ever affects whether the button itself is visible/clickable. */
   showOpenAnotherButton?: boolean;
-  /** Overrides the automatic isLowPowerDevice() detection when set — true forces the reduced-
-   *  quality render path (no shadows/clearcoat/AA, 1x pixel ratio) regardless of the actual
-   *  device, so it can be previewed on any machine. Leave unset for the real per-device check. */
+  /** Skips the automatic frame-time-based quality monitor and starts straight at the medium
+   *  quality tier (thin clearcoat, 1.5x pixel ratio) when true — so it can be manually previewed
+   *  on any machine instead of waiting for real jank to be measured. Leave unset for the normal
+   *  reactive behavior (always starts full quality, escalates live only if actually needed). */
   forceLowPower?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -140,11 +142,10 @@ export default function MegapotPack({
     // 1x read as genuinely blurry (half the linear resolution, then upscaled by CSS) rather than
     // just "less shiny" — 1.5x keeps real sharpness on a phone screen while still cutting
     // fragment-shader work by ~44% vs full 2x. Resolution was never the actual lag driver; the
-    // shadow map re-render + clearcoat's extra specular pass below are.
+    // clearcoat's extra specular pass below is. Real-time shadows were dropped entirely (not
+    // worth the cost for what they added here) rather than only tiered down.
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, lowPower ? 1.5 : 2));
     renderer.setSize(W, H);
-    renderer.shadowMap.enabled = !lowPower;
-    if (!lowPower) renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.92;
     host.appendChild(renderer.domElement);
@@ -174,20 +175,10 @@ export default function MegapotPack({
 
     const key = new THREE.DirectionalLight(0xfff2e0, 3.1);
     key.position.set(3.4, 5, 4.6);
-    key.castShadow = !lowPower;
-    if (!lowPower) {
-      key.shadow.mapSize.set(2048, 2048);
-      key.shadow.camera.near = 1; key.shadow.camera.far = 22; key.shadow.bias = -0.0005;
-    }
     scene.add(key);
     const rim = new THREE.DirectionalLight(0xff5a1e, 2.2); rim.position.set(-4.4, 1.6, -3.4); scene.add(rim);
     const fill = new THREE.PointLight(0xEAB308, 26, 14); fill.position.set(0, -1.6, 3); scene.add(fill);
     const glowLight = new THREE.PointLight(0xffa03c, 0, 12); glowLight.position.set(0, 0.55, 1.2); scene.add(glowLight);
-
-    // Shadow-catcher plane — pointless (and free-ish to skip) with shadows off.
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(9, 64), new THREE.ShadowMaterial({ opacity: 0.42 }));
-    ground.rotation.x = -Math.PI / 2; ground.position.y = -2.55; ground.receiveShadow = !lowPower; ground.visible = !lowPower;
-    scene.add(ground);
 
     /* ---------- canvas helpers ---------- */
     const cv = (w: number, h: number) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
@@ -475,7 +466,6 @@ export default function MegapotPack({
         part === 'top' ? side : cut, part === 'top' ? cut : side,
         foilMat(packFace(part)), foilMat(packBackFace(part)),
       ]);
-      m.castShadow = !lowPower; m.receiveShadow = !lowPower;
       m.position.y = part === 'top' ? hh / 2 : -hh / 2;
       return m;
     }
@@ -488,24 +478,16 @@ export default function MegapotPack({
     const paperEdge = new THREE.MeshStandardMaterial({ color: 0xEDE6D6, roughness: 0.85 });
     const ticket = new THREE.Mesh(new THREE.BoxGeometry(2.1, 4.35, 0.045, 2, 2, 1),
       [paperEdge, paperEdge, paperEdge, paperEdge, frontMat, backMat]);
-    ticket.castShadow = !lowPower; ticketGroup.add(ticket);
+    ticketGroup.add(ticket);
 
-    // Reactive quality ladder — 0 (full) -> 1 (medium: no shadows, 1.5x DPR, thin clearcoat) ->
-    // 2 (minimal: 1x DPR, no clearcoat, no bump). Starts at 1 only if forceLowPower is set (the
-    // LITE preview toggle); otherwise starts at 0 and the frame-time monitor in tick() escalates
-    // it live if — and only if — a device demonstrably can't keep up, rather than guessing up
-    // front. A phone that's still janky even at tier 1 (reported: some low-end Android devices)
-    // needs this second, more aggressive step rather than medium being the permanent floor.
+    // Reactive quality ladder — 0 (full) -> 1 (medium: 1.5x DPR, thin clearcoat) -> 2 (minimal: 1x
+    // DPR, no clearcoat, no bump). Starts at 1 only if forceLowPower is set (the LITE preview
+    // toggle); otherwise starts at 0 and the frame-time monitor in tick() escalates it live if —
+    // and only if — a device demonstrably can't keep up, rather than guessing up front. A phone
+    // that's still janky even at tier 1 (reported: some low-end Android devices) needs this
+    // second, more aggressive step rather than medium being the permanent floor.
     let qualityTier = forceLowPower === true ? 1 : 0;
     function applyQualityTier(tier: number) {
-      const shadowsOn = tier === 0;
-      renderer.shadowMap.enabled = shadowsOn;
-      key.castShadow = shadowsOn;
-      ground.visible = shadowsOn;
-      topHalf.castShadow = shadowsOn; topHalf.receiveShadow = shadowsOn;
-      botHalf.castShadow = shadowsOn; botHalf.receiveShadow = shadowsOn;
-      ticket.castShadow = shadowsOn;
-
       const dpr = tier >= 2 ? 1 : tier >= 1 ? 1.5 : 2;
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, dpr));
       renderer.setSize(W, H);
