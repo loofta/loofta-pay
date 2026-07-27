@@ -613,6 +613,19 @@ export default function MegapotPack({
     // the quality tier once; a clean window just resets the counters and keeps watching. Only
     // active when nothing was explicitly forced (the LITE toggle already fixes the tier).
     let monitorLastT = 0, monitorFrames = 0, monitorSlowFrames = 0, monitorWindowStartT = 0;
+    // rAF pauses while the tab/app is backgrounded (exactly the "checked notifications" scenario
+    // that was originally reported) — without this, the multi-second gap on resume would count as
+    // one very slow frame. A single frame is normally diluted by the 35%-of-window ratio, but
+    // explicitly discarding it here means a backgrounding event can never contribute to a
+    // downgrade at all, rather than relying on the ratio to paper over it.
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      monitorLastT = 0;
+      monitorFrames = 0;
+      monitorSlowFrames = 0;
+      monitorWindowStartT = 0;
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
     function tick() {
       const t = clock.getElapsedTime(), e = t - t0;
 
@@ -728,6 +741,7 @@ export default function MegapotPack({
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener('click', onClick);
       renderer.domElement.removeEventListener('pointerdown', onPointerDownWarmUp);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       ui.btn?.removeEventListener('click', reset);
       controls.dispose();
       pmrem.dispose();
