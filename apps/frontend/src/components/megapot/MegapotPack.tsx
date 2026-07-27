@@ -37,6 +37,14 @@ const RED = '#FF1301', ORG = '#FF6A00', YEL = '#EAB308', PAPER = '#FFFDF7', INK 
 const QUALITY_MONITOR_WINDOW_SEC = 2.5;
 const SLOW_FRAME_MS = 32; // ~31fps — below this consistently is real, user-visible jank
 const SLOW_FRAME_RATIO = 0.35; // share of frames in a window that must be slow to trigger a downgrade
+// One-time startup costs — WebGL/PMREM environment-map generation, font loading, the async
+// texture-regeneration pass once fonts/images arrive (see the asset-loading effect below) — make
+// the first second or so of ANY session measurably heavier than steady state, on any device. If
+// the monitor's first window overlapped that burst, it misread a one-time cost as sustained
+// device weakness and downgraded permanently (there's no re-upgrade path) — a capable phone could
+// get stuck on the lighter tier for the rest of the session every single load. Frames during this
+// grace period are never counted at all.
+const QUALITY_MONITOR_GRACE_SEC = 2.0;
 
 export type PackRarity = 'common' | 'uncommon' | 'rare' | 'epic';
 export interface PackOpenResult { ticketsAwarded: number; rarity: PackRarity }
@@ -591,9 +599,11 @@ export default function MegapotPack({
     const ease = (t: number) => 1 - Math.pow(1 - t, 3);
     // Rolling frame-time monitor for the reactive quality ladder above — measures real wall-clock
     // time between ticks (not tied to clock.getDelta(), which getElapsedTime() already consumes
-    // internally) over repeated windows. A window with too high a share of slow frames escalates
-    // the quality tier once; a clean window just resets the counters and keeps watching. Only
-    // active when nothing was explicitly forced (the LITE toggle already fixes the tier).
+    // internally) over repeated windows, starting only after QUALITY_MONITOR_GRACE_SEC has passed
+    // (see that constant — the first second or so is never representative of steady state). A
+    // window with too high a share of slow frames escalates the quality tier once; a clean window
+    // just resets the counters and keeps watching. Only active when nothing was explicitly forced
+    // (the LITE toggle already fixes the tier).
     let monitorLastT = 0, monitorFrames = 0, monitorSlowFrames = 0, monitorWindowStartT = 0;
     // rAF pauses while the tab/app is backgrounded (exactly the "checked notifications" scenario
     // that was originally reported) — without this, the multi-second gap on resume would count as
@@ -611,7 +621,7 @@ export default function MegapotPack({
     function tick() {
       const t = clock.getElapsedTime(), e = t - t0;
 
-      if (forceLowPower === undefined && qualityTier < 2) {
+      if (forceLowPower === undefined && qualityTier < 2 && t > QUALITY_MONITOR_GRACE_SEC) {
         if (monitorLastT > 0) {
           const frameMs = (t - monitorLastT) * 1000;
           monitorFrames++;
