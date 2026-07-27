@@ -124,6 +124,11 @@ export default function MegapotPacksPage() {
   // ticket purchase). Never shown/usable off localhost; the backend enforces this independently.
   const [demoMode, setDemoMode] = useState(false);
 
+  // Dev-only: manually preview MegapotPack's reduced-quality render path (no shadows/clearcoat/
+  // AA, 1x pixel ratio) regardless of the actual device — otherwise there's no way to see it on
+  // a desktop dev machine, since isLowPowerDevice() only ever trips on mobile.
+  const [lowPowerPreview, setLowPowerPreview] = useState(false);
+
   // Sound effects default ON — persisted so a mute choice survives across packs/sessions.
   const [muted, setMuted] = useState(false);
   useEffect(() => {
@@ -362,6 +367,16 @@ export default function MegapotPacksPage() {
               DEMO
             </button>
           )}
+          {IS_LOCALHOST && (
+            <button
+              onClick={() => setLowPowerPreview(p => !p)}
+              className={`flex items-center justify-center h-9 px-3 rounded-full text-xs font-bold tracking-wide transition-colors ${
+                lowPowerPreview ? "bg-amber-500/20 text-amber-300 border border-amber-400/40" : "bg-white/10 text-slate-400 hover:bg-white/15"
+              }`}
+            >
+              LITE
+            </button>
+          )}
           <button onClick={toggleMuted} className="flex items-center justify-center w-9 h-9 rounded-full bg-white/10 backdrop-blur hover:bg-white/15 transition-colors">
             {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             <span className="sr-only">{muted ? "Unmute sound" : "Mute sound"}</span>
@@ -378,7 +393,9 @@ export default function MegapotPacksPage() {
           the whole remaining viewport instead of a small bounded card, and MegapotPack's own
           ResizeObserver keeps the camera/renderer matched to it as that space changes (mobile
           address-bar collapse, orientation, etc). */}
-      <div key={openCount} className="relative flex-1 min-h-0">
+      {/* lowPowerPreview is in the key so flipping the LITE toggle actually remounts the canvas —
+          MegapotPack only reads forceLowPower once, at scene-setup time, not per-frame. */}
+      <div key={`${openCount}-${lowPowerPreview}`} className="relative flex-1 min-h-0">
         {authenticated ? (
           <MegapotPack
             resolveOpen={resolveOpen}
@@ -390,6 +407,7 @@ export default function MegapotPacksPage() {
             idleSubtitle={paid ? (demoMode ? "Demo mode — $0, no real ticket" : "You always win at least 1 ticket") : ""}
             muted={muted}
             showOpenAnotherButton={false}
+            forceLowPower={lowPowerPreview || undefined}
           />
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">

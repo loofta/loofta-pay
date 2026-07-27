@@ -25,6 +25,23 @@ import { playShakeSound, playBurstSound, playRevealChime, warmUpAudio } from '@/
 
 const RED = '#FF1301', ORG = '#FF6A00', YEL = '#EAB308', PAPER = '#FFFDF7', INK = '#0B0B0F';
 
+// Real-time soft shadows + clearcoat PBR materials + 2x pixel ratio run EVERY frame, even while
+// the pack just sits idle — on a weaker/older phone GPU that's enough sustained load to lag the
+// whole OS (reported: other apps/notifications feel laggy while this page is merely open), not
+// just this page. Rather than a separate stripped-down page, this single component scales its
+// own quality down for devices likely to struggle: no shadows, no clearcoat/bump, no AA, 1x pixel
+// ratio. hardwareConcurrency is the one CPU-tier signal available on both iOS and Android; iOS
+// doesn't expose deviceMemory, so this is deliberately the more conservative of the two checks
+// rather than requiring both to agree.
+function isLowPowerDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (!isMobile) return false;
+  const cores = navigator.hardwareConcurrency || 4;
+  const mem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+  return cores <= 4 || (typeof mem === 'number' && mem <= 4);
+}
+
 export type PackRarity = 'common' | 'uncommon' | 'rare' | 'epic';
 export interface PackOpenResult { ticketsAwarded: number; rarity: PackRarity }
 
@@ -58,6 +75,7 @@ export default function MegapotPack({
   canOpen = true,
   muted = false,
   showOpenAnotherButton = true,
+  forceLowPower,
 }: {
   assets?: PackAssets;
   /** Called when the sealed pack is clicked — must resolve with the real, server-rolled prize. */
@@ -87,6 +105,10 @@ export default function MegapotPack({
    *  trigger a re-open. The internal reset() logic still runs either way (idle state, glow, etc)
    *  — this only ever affects whether the button itself is visible/clickable. */
   showOpenAnotherButton?: boolean;
+  /** Overrides the automatic isLowPowerDevice() detection when set — true forces the reduced-
+   *  quality render path (no shadows/clearcoat/AA, 1x pixel ratio) regardless of the actual
+   *  device, so it can be previewed on any machine. Leave unset for the real per-device check. */
+  forceLowPower?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const uiRef = useRef<{ lbl: HTMLDivElement | null; sub: HTMLDivElement | null; btn: HTMLButtonElement | null }>({ lbl: null, sub: null, btn: null });
@@ -114,12 +136,18 @@ export default function MegapotPack({
     let W = host.clientWidth || window.innerWidth;
     let H = host.clientHeight || window.innerHeight;
 
+    const lowPower = forceLowPower ?? isLowPowerDevice();
+
     /* ---------- renderer / scene ---------- */
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const renderer = new THREE.WebGLRenderer({ antialias: !lowPower, alpha: true });
+    // 1x read as genuinely blurry (half the linear resolution, then upscaled by CSS) rather than
+    // just "less shiny" — 1.5x keeps real sharpness on a phone screen while still cutting
+    // fragment-shader work by ~44% vs full 2x. Resolution was never the actual lag driver; the
+    // shadow map re-render + clearcoat's extra specular pass below are.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, lowPower ? 1.5 : 2));
     renderer.setSize(W, H);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.enabled = !lowPower;
+    if (!lowPower) renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.92;
     host.appendChild(renderer.domElement);
@@ -131,7 +159,7 @@ export default function MegapotPack({
     // above target) so nothing clips off-frame the way it did at 11.6 — the actual REVEALED
     // TICKET never comes close to that peak (it settles at target height), so it was always the
     // fading, near-transparent pack halves that were tight, not the part that matters visually.
-    camera.position.set(0, 0.5, 11.5);
+    camera.position.set(0, 0.5, 8.3);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -149,16 +177,20 @@ export default function MegapotPack({
 
     const key = new THREE.DirectionalLight(0xfff2e0, 3.1);
     key.position.set(3.4, 5, 4.6);
-    key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
-    key.shadow.camera.near = 1; key.shadow.camera.far = 22; key.shadow.bias = -0.0005;
+    key.castShadow = !lowPower;
+    if (!lowPower) {
+      key.shadow.mapSize.set(2048, 2048);
+      key.shadow.camera.near = 1; key.shadow.camera.far = 22; key.shadow.bias = -0.0005;
+    }
     scene.add(key);
     const rim = new THREE.DirectionalLight(0xff5a1e, 2.2); rim.position.set(-4.4, 1.6, -3.4); scene.add(rim);
     const fill = new THREE.PointLight(0xEAB308, 26, 14); fill.position.set(0, -1.6, 3); scene.add(fill);
     const glowLight = new THREE.PointLight(0xffa03c, 0, 12); glowLight.position.set(0, 0.55, 1.2); scene.add(glowLight);
 
+    // Shadow-catcher plane — pointless (and free-ish to skip) with shadows off.
     const ground = new THREE.Mesh(new THREE.CircleGeometry(9, 64), new THREE.ShadowMaterial({ opacity: 0.42 }));
-    ground.rotation.x = -Math.PI / 2; ground.position.y = -2.55; ground.receiveShadow = true; scene.add(ground);
+    ground.rotation.x = -Math.PI / 2; ground.position.y = -2.55; ground.receiveShadow = !lowPower; ground.visible = !lowPower;
+    scene.add(ground);
 
     /* ---------- canvas helpers ---------- */
     const cv = (w: number, h: number) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
@@ -415,9 +447,13 @@ export default function MegapotPack({
       }
       (p as THREE.BufferAttribute).needsUpdate = true; geo.computeVertexNormals(); return geo;
     }
+    // Clearcoat is the expensive one — a whole extra specular lobe per pixel, over most of the
+    // visible scene. Cut way down (not zeroed — a sliver keeps the foil from looking flat/plasticky)
+    // on low-power devices. The bump map is just one extra texture sample — genuinely cheap — so
+    // it stays on at full strength; dropping it earlier was cutting detail for no real perf gain.
     const foilMat = (map: THREE.Texture) => new THREE.MeshPhysicalMaterial({
-      map, metalness: 0.42, roughness: 0.18,
-      clearcoat: 0.95, clearcoatRoughness: 0.1, envMapIntensity: 1.35,
+      map, metalness: 0.42, roughness: lowPower ? 0.24 : 0.18,
+      clearcoat: lowPower ? 0.2 : 0.95, clearcoatRoughness: 0.1, envMapIntensity: lowPower ? 1.1 : 1.35,
       bumpMap: crinkleT, bumpScale: 0.09, side: THREE.FrontSide,
     });
     const edgeT = packEdge(), tornT = tornEdge();
@@ -436,7 +472,7 @@ export default function MegapotPack({
         part === 'top' ? side : cut, part === 'top' ? cut : side,
         foilMat(packFace(part)), foilMat(packBackFace(part)),
       ]);
-      m.castShadow = true; m.receiveShadow = true;
+      m.castShadow = !lowPower; m.receiveShadow = !lowPower;
       m.position.y = part === 'top' ? hh / 2 : -hh / 2;
       return m;
     }
@@ -444,12 +480,12 @@ export default function MegapotPack({
     packGroup.add(topHalf, botHalf);
 
     const ticketGroup = new THREE.Group(); ticketGroup.visible = false; scene.add(ticketGroup);
-    const frontMat = new THREE.MeshPhysicalMaterial({ map: ticketFront(1), roughness: 0.52, metalness: 0.05, clearcoat: 0.35 });
-    const backMat = new THREE.MeshPhysicalMaterial({ map: ticketBack(), roughness: 0.52, metalness: 0.05, clearcoat: 0.35 });
+    const frontMat = new THREE.MeshPhysicalMaterial({ map: ticketFront(1), roughness: 0.52, metalness: 0.05, clearcoat: lowPower ? 0.1 : 0.35 });
+    const backMat = new THREE.MeshPhysicalMaterial({ map: ticketBack(), roughness: 0.52, metalness: 0.05, clearcoat: lowPower ? 0.1 : 0.35 });
     const paperEdge = new THREE.MeshStandardMaterial({ color: 0xEDE6D6, roughness: 0.85 });
     const ticket = new THREE.Mesh(new THREE.BoxGeometry(2.1, 4.35, 0.045, 2, 2, 1),
       [paperEdge, paperEdge, paperEdge, paperEdge, frontMat, backMat]);
-    ticket.castShadow = true; ticketGroup.add(ticket);
+    ticket.castShadow = !lowPower; ticketGroup.add(ticket);
 
     /* ---------- confetti ---------- */
     const P = 150;

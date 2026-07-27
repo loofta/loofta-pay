@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, VenetianMask, Sparkles } from "lucide-react";
+import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, VenetianMask } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { getMyGifts, updateGiftRecipient, type MyGiftItem } from "@/services/api/lotteryGift";
 import { MessageInput } from "@/components/MessageInput";
@@ -1892,9 +1892,11 @@ function MysteryPackBanner() {
       />
       <div className="relative flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-[#15110d] px-4 py-3.5">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-[#FF1301] to-[#EAB308] shrink-0">
-            <Sparkles className="w-5 h-5 text-white" />
-          </div>
+          {/* Hand-built glossy 3D-style badge (public/images/icons/mystery-pack-icon.svg) matching
+              the look of the app's other 3D icon assets (target-icon.png etc.) — gradient depth,
+              gloss highlight, drop shadow — with a "?" medallion mirroring the actual pack's own
+              mystery-circle treatment in MegapotPack.tsx's packArt(). */}
+          <img src="/images/icons/mystery-pack-icon.svg" alt="" className="w-10 h-10 shrink-0" />
           <div className="min-w-0">
             <p className="text-base font-semibold text-slate-100">Mystery Pack</p>
             <p className="text-sm text-slate-400 truncate">Open a pack, win up to 100 tickets</p>

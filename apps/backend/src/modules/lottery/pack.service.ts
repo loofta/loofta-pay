@@ -114,22 +114,36 @@ export class PackService {
 
   /** Raw USDC units currently sitting in the treasury's own token account — 0n if the account
    *  doesn't exist yet or the RPC call fails, so a transient hiccup reads as "can't confirm
-   *  funded" rather than throwing and taking the whole config/payment endpoint down with it. */
-  private async getTreasuryUsdcBalanceUnits(): Promise<bigint> {
+   *  funded" rather than throwing and taking the whole config/payment endpoint down with it.
+   *  Cached briefly (same pattern as loadTiers' tiersCache) since GET /packs/config hits this on
+   *  every single page load — without caching, that's a real Solana RPC round trip in the
+   *  critical path of the page just loading, every time. `fresh: true` bypasses the cache for
+   *  the admin treasury-status view, where a stale reading isn't acceptable. */
+  private treasuryBalanceCache: { units: bigint; loadedAt: number } | null = null;
+  private readonly TREASURY_BALANCE_CACHE_MS = 20_000;
+  private async getTreasuryUsdcBalanceUnits(opts?: { fresh?: boolean }): Promise<bigint> {
+    if (!opts?.fresh && this.treasuryBalanceCache && Date.now() - this.treasuryBalanceCache.loadedAt < this.TREASURY_BALANCE_CACHE_MS) {
+      return this.treasuryBalanceCache.units;
+    }
     const treasury = await this.getTreasuryAddress();
     const conn = await this.getSolanaConnection();
     const ata = await getAssociatedTokenAddress(USDC_MINT, new PublicKey(treasury));
+    let units: bigint;
     try {
       const bal = await conn.getTokenAccountBalance(ata);
-      return BigInt(bal.value.amount);
+      units = BigInt(bal.value.amount);
     } catch {
-      return 0n;
+      units = 0n;
     }
+    this.treasuryBalanceCache = { units, loadedAt: Date.now() };
+    return units;
   }
 
   /** Whether the treasury can currently cover the largest payout an enabled tier could hit —
    *  gates buildPaymentTx (see below) so a pack is never sold that we can't actually fund the
-   *  win for. */
+   *  win for. Uses the cached balance — a payment 0-20s de-synced with the real balance is an
+   *  acceptable trade-off for not hitting Solana RPC on every page load; the actual treasury-
+   *  funded ticket purchase already has its own independent retry-on-failure path regardless. */
   async isTreasuryFunded(): Promise<boolean> {
     const units = await this.getTreasuryUsdcBalanceUnits();
     return units >= BigInt(Math.round(MIN_TREASURY_BALANCE_USDC * 1_000_000));
@@ -137,9 +151,10 @@ export class PackService {
 
   /** Admin-only view of the actual treasury balance/threshold — never exposed on the public
    *  config endpoint (that only ever returns the boolean `available`), since the real balance is
-   *  operational/financial detail. */
+   *  operational/financial detail. Always reads fresh (not the cached value) since an admin
+   *  deciding whether to add funds needs the real current number, not a 0-20s-old one. */
   async getTreasuryStatus(): Promise<{ balanceUsdc: number; minRequiredUsdc: number; sufficient: boolean; treasuryAddress: string }> {
-    const [units, treasuryAddress] = await Promise.all([this.getTreasuryUsdcBalanceUnits(), this.getTreasuryAddress()]);
+    const [units, treasuryAddress] = await Promise.all([this.getTreasuryUsdcBalanceUnits({ fresh: true }), this.getTreasuryAddress()]);
     const balanceUsdc = Number(units) / 1_000_000;
     return { balanceUsdc, minRequiredUsdc: MIN_TREASURY_BALANCE_USDC, sufficient: balanceUsdc >= MIN_TREASURY_BALANCE_USDC, treasuryAddress };
   }

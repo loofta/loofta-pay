@@ -1,0 +1,40 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="mpBase" x1="10%" y1="6%" x2="92%" y2="96%">
+      <stop offset="0%" stop-color="#FF8A2E"/>
+      <stop offset="45%" stop-color="#FF1301"/>
+      <stop offset="100%" stop-color="#A80B00"/>
+    </linearGradient>
+    <linearGradient id="mpRibbon" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFD75E"/>
+      <stop offset="100%" stop-color="#EAB308"/>
+    </linearGradient>
+    <radialGradient id="mpMedallion" cx="38%" cy="32%" r="68%">
+      <stop offset="0%" stop-color="#FFF6D8"/>
+      <stop offset="55%" stop-color="#FFD349"/>
+      <stop offset="100%" stop-color="#E08A00"/>
+    </radialGradient>
+    <radialGradient id="mpGloss" cx="32%" cy="22%" r="45%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.75"/>
+      <stop offset="60%" stop-color="#FFFFFF" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="mpShadow" x="-40%" y="-20%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.2" flood-color="#5A0A00" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- box body -->
+  <g filter="url(#mpShadow)">
+    <rect x="6" y="6" width="52" height="52" rx="14" fill="url(#mpBase)"/>
+    <!-- ribbon -->
+    <rect x="27" y="6" width="10" height="52" fill="url(#mpRibbon)" opacity="0.9"/>
+    <rect x="6" y="27" width="52" height="10" fill="url(#mpRibbon)" opacity="0.9"/>
+    <rect x="6" y="6" width="52" height="52" rx="14" fill="url(#mpGloss)"/>
+  </g>
+
+  <!-- mystery medallion, matching the pack's own "?" treatment -->
+  <circle cx="32" cy="32" r="15.5" fill="url(#mpMedallion)" stroke="#FFFDF7" stroke-width="2.5"/>
+  <circle cx="32" cy="32" r="12.5" fill="none" stroke="#7A3A00" stroke-opacity="0.35" stroke-width="1"/>
+  <text x="32" y="41" text-anchor="middle" font-family="Clash Display, Arial, sans-serif" font-weight="700" font-size="22" fill="#B23A00">?</text>
+</svg>
