@@ -2389,11 +2389,17 @@ export function BalanceModal({
       {/* modal={false} (see "fix modal blink") makes Radix's own DialogOverlay a no-op,
           so the backdrop is rendered by hand here instead. */}
       <DialogPortal>
-        <div className="fixed inset-0 z-50 bg-black/80 animate-in fade-in-0" aria-hidden />
+        <div className="fixed inset-0 z-[100] bg-black/80 animate-in fade-in-0" aria-hidden />
       </DialogPortal>
       <DialogContent
         ref={dialogContentRef}
         onInteractOutside={(e) => e.preventDefault()}
+        // BalanceModal is a global, app-level modal that can be opened from the header on top of
+        // ANY page — including the Mystery Pack page, whose result/info sheets use z-[60]/z-[70]
+        // for their own internal layering. The shared dialog wrapper's default z-50 sat below
+        // those, so opening the balance modal while a pack sheet was showing rendered it behind
+        // the sheet instead of on top like every other modal in the app.
+        wrapperZIndexClassName="z-[100]"
         className={cn(
           contentCls,
           "left-0 right-0 top-0 [transform:none] h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col data-[state=open]:!zoom-in-100 data-[state=open]:!animate-none",

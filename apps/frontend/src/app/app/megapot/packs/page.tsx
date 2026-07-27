@@ -326,7 +326,13 @@ export default function MegapotPacksPage() {
     // inset-0` page starts at the true viewport top and fights that header for the same screen
     // region no matter what offset math is layered on top of it. Plain flow makes the overlap
     // structurally impossible: this div can only ever start right after the real header.
-    <div className="relative w-full bg-[#08060A] text-white overflow-hidden mobile-first flex flex-col" style={{ height: "calc(100dvh - var(--header-h, 0px))" }}>
+    // `100svh` (small viewport height), not `100dvh` — this page never scrolls (overflow-hidden,
+    // fixed full-bleed canvas), so it should lock to the smallest guaranteed-visible viewport
+    // rather than the dynamic one. Real incident: on Brave iOS, 100dvh computed taller than the
+    // actually-visible area, pushing the slide-to-pay button up into a dead gap of black space
+    // above the browser's own bottom chrome. Matches the same 100svh fix already used by
+    // megapot/page.tsx's own full-screen mobile layout.
+    <div className="relative w-full bg-[#08060A] text-white overflow-hidden mobile-first flex flex-col" style={{ height: "calc(100svh - var(--header-h, 0px))" }}>
       {/* Top chrome — a normal flex item (not absolutely positioned), so the canvas below is
           guaranteed to start after it. */}
       <div className="shrink-0 flex items-center justify-between px-4 pb-2 pt-3">

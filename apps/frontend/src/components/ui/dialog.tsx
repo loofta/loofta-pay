@@ -31,11 +31,18 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+    // The z-index actually lives on this wrapper div, not on the content element itself — plain
+    // `className` on DialogContent has no way to reach it. Defaults to the existing z-50 so every
+    // other dialog in the app is unaffected; only a caller that explicitly needs to sit above
+    // some other page-level overlay (e.g. BalanceModal, which must stay on top even over the
+    // Mystery Pack page's own high-z-index sheets) needs to pass this.
+    wrapperZIndexClassName?: string;
+  }
+>(({ className, children, wrapperZIndexClassName = "z-50", ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
-    <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+    <div className={cn("fixed inset-0 flex items-center justify-center pointer-events-none", wrapperZIndexClassName)}>
       <DialogPrimitive.Content
         ref={ref}
         className={cn(

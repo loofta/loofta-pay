@@ -74,6 +74,21 @@ export default function SlideToPay({
 
   return (
     <div className="w-full">
+      {/* Always rendered above the track (never conditionally mounted) so its height is
+          permanently reserved there — toggling only opacity/interactivity means the track/confirm
+          box's on-screen position never shifts whether Cancel is showing or not. Sits ABOVE, not
+          below: this whole block is positioned via `bottom: ...` in the parent, so reserved space
+          below the track would push the visible pay button up off the true bottom anchor by
+          Cancel's height even while Cancel itself is invisible — putting the reserved space above
+          instead means the track (last child) is what actually sits flush at that anchor. */}
+      <button
+        onClick={reset}
+        aria-hidden={!showCancel}
+        tabIndex={showCancel ? 0 : -1}
+        className={`mb-3 w-full py-3 text-center text-base font-medium text-slate-400 hover:text-slate-200 transition-opacity ${showCancel ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+      >
+        Cancel
+      </button>
       <div className="relative h-16 w-full">
         <AnimatePresence mode="wait" initial={false}>
           {!slid ? (
@@ -178,19 +193,6 @@ export default function SlideToPay({
           )}
         </AnimatePresence>
       </div>
-      {/* Always rendered (never conditionally mounted) so its height is permanently reserved
-          below the track/confirm box — toggling only opacity/interactivity means that box's
-          on-screen position never shifts whether Cancel is showing or not. It's the appearance
-          of Cancel that would otherwise grow this whole block (positioned via `bottom: ...` in
-          packs/page.tsx) and visually shove the confirm button upward the instant it appears. */}
-      <button
-        onClick={reset}
-        aria-hidden={!showCancel}
-        tabIndex={showCancel ? 0 : -1}
-        className={`mt-3 w-full py-3 text-center text-base font-medium text-slate-400 hover:text-slate-200 transition-opacity ${showCancel ? "opacity-100" : "opacity-0 pointer-events-none"}`}
-      >
-        Cancel
-      </button>
     </div>
   );
 }

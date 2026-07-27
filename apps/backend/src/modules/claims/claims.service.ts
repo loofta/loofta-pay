@@ -1392,7 +1392,7 @@ export class ClaimsService {
       // Attempt sweep before writing recipient_address — if sweep throws (e.g. fee payer has no SOL)
       // we must not have overwritten the PENDING_EMAIL/PENDING_USERNAME address, otherwise the user
       // cannot retry because the pending-claim detection no longer matches.
-      const { sweepTxHash, sweptAmount, feeAmountUsdc } = await this.sweepClaimBurnerToWallet(
+      const { sweepTxHash, sweptAmount, feeAmountUsdc, deliveredPrivately } = await this.sweepClaimBurnerToWallet(
         claimId, claim, sweepDestination, { claimPrivately: opts?.claimPrivately },
       );
 
@@ -1412,7 +1412,7 @@ export class ClaimsService {
       }
 
       if (sweepTxHash) {
-        await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
+        await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true, deliveredPrivately }, privyUserId);
         this.notifyRecipientAfterPayment(claimId);
         this.logger.log(`Claim ${claimId}: sweep completed immediately, marked SUCCESS`);
       } else if (claimStatus === 'SUCCESS') {
@@ -1597,9 +1597,9 @@ export class ClaimsService {
         const freshClaim = await this.findOneRaw(claimId);
         const st = (freshClaim.status || '').toUpperCase();
         if (st === 'SUCCESS' || st === 'CANCELLED') return;
-        const { sweepTxHash } = await this.sweepClaimBurnerToWallet(claimId, freshClaim, wallet, opts);
+        const { sweepTxHash, deliveredPrivately } = await this.sweepClaimBurnerToWallet(claimId, freshClaim, wallet, opts);
         if (sweepTxHash) {
-          await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
+          await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true, deliveredPrivately }, privyUserId);
           this.notifyRecipientAfterPayment(claimId);
           this.logger.log(`Claim ${claimId}: background poll sweep succeeded, marked SUCCESS`);
           return;
@@ -1665,9 +1665,9 @@ export class ClaimsService {
     if (!wallet?.trim() || recipientAddress !== wallet.trim().toLowerCase()) {
       throw new ForbiddenException('You are not the recipient wallet for this payment.');
     }
-    const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
+    const { sweepTxHash, sweptAmount, deliveredPrivately } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
     if (sweepTxHash) {
-      await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true }, privyUserId);
+      await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true, deliveredPrivately }, privyUserId);
     }
     return { swept: !!sweepTxHash, sweepTxHash, sweptAmount };
   }
@@ -2038,7 +2038,7 @@ export class ClaimsService {
     claim: Claim & { recipient_address?: string },
     destination: string,
     opts?: { claimPrivately?: boolean },
-  ): Promise<{ sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
+  ): Promise<{ sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number; deliveredPrivately?: boolean }> {
     const rawClaim = claim as { claim_burner_address?: string | null; claim_burner_encrypted_secret?: string | null };
     const burnerAddr = (rawClaim.claim_burner_address || '').trim();
     let sweepTxHash: string | undefined;
@@ -2068,14 +2068,16 @@ export class ClaimsService {
       // raw, unwrapped error instead of a clean BadRequestException (a real bug this once was).
       const isCrossChain = await this.isCrossChainPayment(claimId);
       if (isCrossChain) {
-        return await this.sweepClaimBurnerPrivately(claimId, claim, destination, burnerKeypair, conn, { feeOnSender: true });
+        const result = await this.sweepClaimBurnerPrivately(claimId, claim, destination, burnerKeypair, conn, { feeOnSender: true });
+        return { ...result, deliveredPrivately: true };
       }
 
       // Recipient chose to upgrade this publicly-sent payment to a private claim — burner never
       // reaches this branch already-private (sender-chosen-private payments deliver directly and
       // never touch a burner), so this is always the "fee comes out of the claim" case.
       if (opts?.claimPrivately) {
-        return await this.sweepClaimBurnerPrivately(claimId, claim, destination, burnerKeypair, conn, { feeOnSender: false });
+        const result = await this.sweepClaimBurnerPrivately(claimId, claim, destination, burnerKeypair, conn, { feeOnSender: false });
+        return { ...result, deliveredPrivately: true };
       }
 
       // Always attempt PER withdraw first. This also recovers older claims that
@@ -2190,7 +2192,9 @@ export class ClaimsService {
         `Claim transfer failed: ${e?.message ?? 'unknown error'}. Please try again.`,
       );
     }
-    return { sweepTxHash, sweptAmount };
+    // Both branches that can set sweepTxHash here (the direct SPL sweep and the already-landed-sweep
+    // recovery) are always plain public transfers — private delivery returns earlier, above.
+    return { sweepTxHash, sweptAmount, deliveredPrivately: false };
   }
 
   /**
@@ -2817,6 +2821,9 @@ export class ClaimsService {
     fromToken?: string;
     /** Pass true when the recipient sweep has completed — skips the intermediary-pending guard so SUCCESS is stored as-is. */
     recipientSwept?: boolean;
+    /** Whether the just-completed burner→recipient delivery leg was actually private (MagicBlock) vs a
+     * plain public SPL sweep. Only meaningful alongside recipientSwept:true — see updateData.is_private below. */
+    deliveredPrivately?: boolean;
     /** Total fee charged to sender in USDC (loofta BPS + SOL recovery). Persisted to claim_events. */
     feeAmountUsdc?: number;
     /** Fee breakdown snapshot at payment time. Persisted to claim_events. */
@@ -2871,6 +2878,14 @@ export class ClaimsService {
     // (e.g. buildPrivateTransferForPayer's own is_private stamp).
     if (extra?.isPrivate === true) {
       updateData.is_private = true;
+    }
+
+    // The moment a burner sweep actually completes we know definitively whether that specific
+    // delivery leg was private or public — safe to write is_private in either direction here
+    // (unlike the intent-only flag above) because this only ever fires from the sweep-completion
+    // call sites confirming genuine, completed on-chain delivery, not an earlier/weaker signal.
+    if (extra?.recipientSwept === true && extra?.deliveredPrivately !== undefined) {
+      updateData.is_private = extra.deliveredPrivately;
     }
 
     // from_chain / from_token stored on payments; legacy claims fallback uses paid_with_chain
@@ -3139,9 +3154,9 @@ export class ClaimsService {
       const destination = rawRow.claim_requested_destination?.trim() || recipientWallet;
       const claimPrivately = rawRow.claim_requested_privately === true;
       try {
-        const { sweepTxHash } = await this.sweepClaimBurnerToWallet(claim.id, claim, destination, { claimPrivately });
+        const { sweepTxHash, deliveredPrivately } = await this.sweepClaimBurnerToWallet(claim.id, claim, destination, { claimPrivately });
         if (sweepTxHash) {
-          await this.updateStatus(claim.id, 'SUCCESS', { recipientSwept: true });
+          await this.updateStatus(claim.id, 'SUCCESS', { recipientSwept: true, deliveredPrivately });
           this.notifyRecipientAfterPayment(claim.id);
           this.logger.log(`[cronSweep] Claim ${claim.id}: sweep succeeded → SUCCESS`);
         } else {

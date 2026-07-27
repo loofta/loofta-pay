@@ -3222,10 +3222,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       .then(async () => {
         console.info(`[TxRecovery] tx confirmed — upgrading claim ${id} to SUCCESS`);
         const perToken = await getAccessToken().catch(() => null);
+        // is_private was already set correctly at claim-creation time — don't overwrite it here.
+        // This recovery path fires for any pending claim with a saved tx hash regardless of
+        // whether the original send was public or private.
         await updateClaimStatus(id, "SUCCESS", {
           txHash,
           paidWith: "USDC (Private)",
-          isPrivate: true,
           paidWithToken: "USDC",
           paidWithChain: "solana",
         }, perToken);
@@ -4253,7 +4255,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 );
               })()
-            ) : isRecipient ? (
+            ) : isRecipient && !["SUCCESS", "CLAIMED"].includes(String(claim?.status || "").toUpperCase()) ? (
               <div className="mt-6 text-center pt-12 pb-6 px-4">
                 <div className="text-6xl font-sans font-semibold">
                   + ${parseFloat(claim?.amount || "0").toFixed(2)}

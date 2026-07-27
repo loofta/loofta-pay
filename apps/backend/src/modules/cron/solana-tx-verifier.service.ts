@@ -103,9 +103,12 @@ export class SolanaTxVerifierService {
       status?.confirmationStatus === 'processed'
     ) {
       this.logger.log(`[SolanaTxVerifier] ✅ ${txHash.slice(0, 12)}… confirmed — upgrading claim ${claimId} to SUCCESS`);
+      // getPendingTxHashClaims() only ever returns burner_address IS NULL rows — a single-leg
+      // sender→recipient transfer with no burner hop, which can never be private.
       await this.claimsService.updateStatus(claimId, 'SUCCESS', {
         txHash,
-        isPrivate: true,
+        recipientSwept: true,
+        deliveredPrivately: false,
         paidWithToken: 'USDC',
         paidWithChain: 'solana',
       });

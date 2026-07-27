@@ -28,7 +28,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
-  // Mystery Pack is a full-screen immersive page sized as calc(100dvh - var(--header-h,0px)) —
+  // Mystery Pack is a full-screen immersive page sized as calc(100svh - var(--header-h,0px)) —
   // that var only tracks MinimalHeader's own height, not this banner's, so showing it here would
   // push the pack canvas down by an unaccounted amount (the same overlap bug the header itself
   // used to have, one layer up).
