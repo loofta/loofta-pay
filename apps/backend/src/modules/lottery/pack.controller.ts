@@ -31,8 +31,8 @@ export class PackController {
 
   @Post('pay-tx')
   @ApiOperation({ summary: 'Build the $2 USDC payment transfer for the caller to sign client-side (gas + destination ATA sponsored by the treasury wallet)' })
-  async payTx(@Body() dto: BuildPaymentTxDto): Promise<{ txBase64: string }> {
-    const txBase64 = await this.packs.buildPaymentTx(dto.userSolanaAddress);
+  async payTx(@Body() dto: BuildPaymentTxDto, @Request() req: any): Promise<{ txBase64: string }> {
+    const txBase64 = await this.packs.buildPaymentTx(dto.userSolanaAddress, req.user.id);
     return { txBase64 };
   }
 
@@ -53,5 +53,11 @@ export class PackController {
   async pendingPayment(@Request() req: any): Promise<{ paymentTxHash: string | null }> {
     const found = await this.packs.findRecoverablePayment(req.user.id);
     return { paymentTxHash: found?.paymentTxHash ?? null };
+  }
+
+  @Get('my-status')
+  @ApiOperation({ summary: "Caller's own daily pack-open usage — lets the frontend show a 'you've hit today's limit' message before ever offering payment" })
+  async myStatus(@Request() req: any): Promise<{ opensToday: number; dailyLimit: number | null; limitReached: boolean }> {
+    return this.packs.getMyPackStatus(req.user.id);
   }
 }

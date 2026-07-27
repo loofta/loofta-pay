@@ -21,9 +21,12 @@ import { motion, AnimatePresence, useDragControls } from "framer-motion";
 import { X, Info, Volume2, VolumeX } from "lucide-react";
 import SlideToPay from "@/components/megapot/SlideToPay";
 import { warmUpAudio } from "@/lib/packSoundEffects";
+import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
+import { useAuthStore } from "@/store/auth";
 import type { PackOpenResult, PackRarity } from "@/components/megapot/MegapotPack";
 
 const MegapotPack = dynamic(() => import("@/components/megapot/MegapotPack"), { ssr: false });
+const BalanceModal = dynamic(() => import("@/components/BalanceModal").then(m => ({ default: m.BalanceModal })), { ssr: false });
 
 interface PackTierPublic {
   tierKey: string;
@@ -97,10 +100,25 @@ export default function MegapotPacksPage() {
       (a.walletClientType === "privy" || a.walletClientType === "privy-v2")) as any)?.address ?? "";
   const embeddedWallet = wallets.find(w => w.address === embeddedSolAddress) ?? wallets[0];
 
+  // Own USDC balance — checked up front (same "tell the user why before they try to pay"
+  // approach as the treasury/daily-limit checks) so a real insufficient-funds case shows a
+  // "top up your balance" action instead of a generic on-chain failure after tapping to pay.
+  const {
+    balanceUSD: ownBalance,
+    walletAddress: ownSolanaAddress,
+    isLoading: loadingOwnBalance,
+    refetch: refetchOwnBalance,
+  } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated });
+  const [showBalanceModal, setShowBalanceModal] = useState(false);
+  const networkMode = useAuthStore((s) => s.networkMode);
+
   const [tiers, setTiers] = useState<PackTierPublic[] | null>(null);
   const [priceUsdc, setPriceUsdc] = useState<number | null>(null);
   // null = not loaded yet (don't show the unavailable state prematurely), true/false once known.
   const [available, setAvailable] = useState<boolean | null>(null);
+  // Whether the caller has hit their own daily open cap (admin-configurable, see PacksTab) —
+  // null = not checked yet.
+  const [dailyLimitReached, setDailyLimitReached] = useState<boolean | null>(null);
   const [result, setResult] = useState<PackOpenResult | null>(null);
   const [openCount, setOpenCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -198,12 +216,30 @@ export default function MegapotPacksPage() {
     } catch { /* best-effort — worst case the user just sees the normal pay gate */ }
   }, [paid, getAccessToken]);
 
+  // Own daily-limit status — checked up front, same "tell the user why before they try to pay"
+  // approach as the treasury-availability check, instead of only discovering it after a failed
+  // buildPaymentTx call. Demo mode never checks this (demo opens don't count toward the limit
+  // server-side either, see PackService.getOpensToday).
+  const checkDailyLimit = useCallback(async () => {
+    if (demoMode) return;
+    try {
+      const token = await getAccessToken();
+      const res = await fetch("/api/lottery/packs/my-status", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setDailyLimitReached(!!data.limitReached);
+    } catch { /* best-effort — worst case the backend still enforces it at payment time */ }
+  }, [demoMode, getAccessToken]);
+
   useEffect(() => {
-    if (authenticated) checkRecoverablePayment();
+    if (authenticated) { checkRecoverablePayment(); checkDailyLimit(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated]);
 
   const priceLabel = demoMode ? "$0" : `$${priceUsdc ?? FALLBACK_PRICE_USDC}`;
+  const insufficientBalance = !demoMode && !loadingOwnBalance && ownBalance < (priceUsdc ?? FALLBACK_PRICE_USDC);
 
   const resolveOpen = useCallback(async (): Promise<PackOpenResult> => {
     setError(null);
@@ -306,11 +342,14 @@ export default function MegapotPacksPage() {
   // and retry with the same already-verified payment instead of being asked to pay twice.
   const handleOpened = useCallback((r: PackOpenResult) => {
     try { localStorage.removeItem(PACK_PAYMENT_STORAGE_KEY); } catch { /* ignore */ }
+    // Re-check now — this open may have been the last one allowed today, so "Open another"
+    // should correctly show the limit message instead of offering a payment gate doomed to fail.
+    checkDailyLimit();
     // Delayed so the ticket reveal itself gets a beat unobscured before the sheet slides up over
     // the bottom of it (see RESULT_SHEET_DELAY_MS).
     if (resultDelayTimeoutRef.current) clearTimeout(resultDelayTimeoutRef.current);
     resultDelayTimeoutRef.current = setTimeout(() => setResult(r), RESULT_SHEET_DELAY_MS);
-  }, []);
+  }, [checkDailyLimit]);
 
   const handleOpenAnother = useCallback(() => {
     try { localStorage.removeItem(PACK_PAYMENT_STORAGE_KEY); } catch { /* ignore */ }
@@ -420,16 +459,36 @@ export default function MegapotPacksPage() {
       </div>
 
       {/* Payment gate — persistent until paid; the pack stays visible/draggable behind it but
-          cannot be opened (see canOpen above) until this is completed. If the treasury can't
-          currently cover a payout (available === false), don't offer payment at all — the
-          backend refuses to build the charge anyway, so this just tells the user why up front
-          instead of letting them tap "pay" into a dead end. Already-paid users are unaffected:
-          this only ever replaces the pre-payment control. Demo mode still shows the same
-          slide-to-pay control (so the flow itself is actually testable) — it just never touches
-          the treasury either way, so the low-balance pause doesn't apply to it. */}
+          cannot be opened (see canOpen above) until this is completed. Three independent reasons
+          can replace the slide-to-pay control with a message instead of a dead-end payment
+          attempt: the caller's own USDC balance can't cover it (checked first — the only one of
+          the three that's actually actionable by the user themselves, via the top-up button),
+          the caller already hit today's open limit, or the treasury can't cover a payout
+          (available === false) — the backend refuses to build the charge in the last two cases
+          regardless. Already-paid users are unaffected: this only ever replaces the pre-payment
+          control. Demo mode always shows the real slide-to-pay control (so the flow itself is
+          actually testable) since it costs $0 and never touches the treasury or daily limit. */}
       {authenticated && !paid && !result && (
         <div className="absolute inset-x-4 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-80 z-30" style={{ bottom: "calc(env(safe-area-inset-bottom) + 20px)" }}>
-          {!demoMode && available === false ? (
+          {insufficientBalance ? (
+            <div className="rounded-2xl border border-white/10 bg-[#111114]/95 backdrop-blur px-5 py-4 text-center space-y-3">
+              <div>
+                <p className="text-base font-semibold text-slate-200">Not enough USDC</p>
+                <p className="text-sm text-slate-400 mt-1">Top up your balance to open a pack.</p>
+              </div>
+              <button
+                onClick={() => setShowBalanceModal(true)}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] font-semibold text-white hover:brightness-110 active:scale-[0.98] transition-[filter,transform]"
+              >
+                Top up balance
+              </button>
+            </div>
+          ) : !demoMode && dailyLimitReached === true ? (
+            <div className="rounded-2xl border border-white/10 bg-[#111114]/95 backdrop-blur px-5 py-4 text-center">
+              <p className="text-base font-semibold text-slate-200">You&apos;ve reached today&apos;s pack limit</p>
+              <p className="text-sm text-slate-400 mt-1">Come back tomorrow for more Mystery Packs!</p>
+            </div>
+          ) : !demoMode && available === false ? (
             <div className="rounded-2xl border border-white/10 bg-[#111114]/95 backdrop-blur px-5 py-4 text-center">
               <p className="text-base font-semibold text-slate-200">Mystery Packs are paused</p>
               <p className="text-sm text-slate-400 mt-1">We&apos;re topping up prize funds — check back soon.</p>
@@ -542,6 +601,20 @@ export default function MegapotPacksPage() {
           </>
         )}
       </AnimatePresence>
+
+      <BalanceModal
+        open={showBalanceModal}
+        onClose={() => setShowBalanceModal(false)}
+        balanceUSD={ownBalance.toFixed(2)}
+        balanceExact={ownBalance}
+        loadingBalance={loadingOwnBalance}
+        solanaAddress={ownSolanaAddress}
+        onRefresh={() => refetchOwnBalance()}
+        dark
+        devnetMode={networkMode === "devnet"}
+        initialTab="topup"
+        lockInitialTab
+      />
     </div>
   );
 }

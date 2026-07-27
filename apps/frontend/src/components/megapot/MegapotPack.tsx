@@ -25,22 +25,17 @@ import { playShakeSound, playBurstSound, playRevealChime, warmUpAudio } from '@/
 
 const RED = '#FF1301', ORG = '#FF6A00', YEL = '#EAB308', PAPER = '#FFFDF7', INK = '#0B0B0F';
 
-// Real-time soft shadows + clearcoat PBR materials + 2x pixel ratio run EVERY frame, even while
-// the pack just sits idle — on a weaker/older phone GPU that's enough sustained load to lag the
-// whole OS (reported: other apps/notifications feel laggy while this page is merely open), not
-// just this page. Rather than a separate stripped-down page, this single component scales its
-// own quality down for devices likely to struggle: no shadows, no clearcoat/bump, no AA, 1x pixel
-// ratio. hardwareConcurrency is the one CPU-tier signal available on both iOS and Android; iOS
-// doesn't expose deviceMemory, so this is deliberately the more conservative of the two checks
-// rather than requiring both to agree.
-function isLowPowerDevice(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-  if (!isMobile) return false;
-  const cores = navigator.hardwareConcurrency || 4;
-  const mem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
-  return cores <= 4 || (typeof mem === 'number' && mem <= 4);
-}
+// Real-time soft shadows + clearcoat PBR materials run every frame, even while the pack just sits
+// idle — on a weaker/older phone GPU that's enough sustained load to lag the whole OS. A STATIC
+// guess at this (userAgent + hardwareConcurrency/deviceMemory) was tried first and produced false
+// positives on genuinely capable phones (e.g. iPhone 14 — iOS's reported core count isn't a
+// reliable proxy for real GPU headroom), degrading a device that never actually needed it. This
+// now always STARTS at full quality and only measures real, actual frame times — if a rolling
+// window is genuinely janky, it downgrades once, live, mid-session. Every device gets the good
+// version by default; only ones that demonstrably can't keep up ever see the lighter one.
+const QUALITY_MONITOR_WINDOW_SEC = 2.5;
+const SLOW_FRAME_MS = 32; // ~31fps — below this consistently is real, user-visible jank
+const SLOW_FRAME_RATIO = 0.35; // share of frames in a window that must be slow to trigger a downgrade
 
 export type PackRarity = 'common' | 'uncommon' | 'rare' | 'epic';
 export interface PackOpenResult { ticketsAwarded: number; rarity: PackRarity }
@@ -136,7 +131,9 @@ export default function MegapotPack({
     let W = host.clientWidth || window.innerWidth;
     let H = host.clientHeight || window.innerHeight;
 
-    const lowPower = forceLowPower ?? isLowPowerDevice();
+    // Only ever starts low if explicitly forced (the LITE preview toggle) — otherwise always
+    // full quality; see the reactive frame-time monitor further down for the real downgrade path.
+    let lowPower = forceLowPower === true;
 
     /* ---------- renderer / scene ---------- */
     const renderer = new THREE.WebGLRenderer({ antialias: !lowPower, alpha: true });
@@ -451,11 +448,17 @@ export default function MegapotPack({
     // visible scene. Cut way down (not zeroed — a sliver keeps the foil from looking flat/plasticky)
     // on low-power devices. The bump map is just one extra texture sample — genuinely cheap — so
     // it stays on at full strength; dropping it earlier was cutting detail for no real perf gain.
-    const foilMat = (map: THREE.Texture) => new THREE.MeshPhysicalMaterial({
-      map, metalness: 0.42, roughness: lowPower ? 0.24 : 0.18,
-      clearcoat: lowPower ? 0.2 : 0.95, clearcoatRoughness: 0.1, envMapIntensity: lowPower ? 1.1 : 1.35,
-      bumpMap: crinkleT, bumpScale: 0.09, side: THREE.FrontSide,
-    });
+    // Collected in foilMaterials so the reactive quality monitor below can mutate them live.
+    const foilMaterials: THREE.MeshPhysicalMaterial[] = [];
+    const foilMat = (map: THREE.Texture) => {
+      const mat = new THREE.MeshPhysicalMaterial({
+        map, metalness: 0.42, roughness: lowPower ? 0.24 : 0.18,
+        clearcoat: lowPower ? 0.2 : 0.95, clearcoatRoughness: 0.1, envMapIntensity: lowPower ? 1.1 : 1.35,
+        bumpMap: crinkleT, bumpScale: 0.09, side: THREE.FrontSide,
+      });
+      foilMaterials.push(mat);
+      return mat;
+    };
     const edgeT = packEdge(), tornT = tornEdge();
 
     const packRig = new THREE.Group(); packRig.position.y = 0.55; scene.add(packRig);
@@ -486,6 +489,37 @@ export default function MegapotPack({
     const ticket = new THREE.Mesh(new THREE.BoxGeometry(2.1, 4.35, 0.045, 2, 2, 1),
       [paperEdge, paperEdge, paperEdge, paperEdge, frontMat, backMat]);
     ticket.castShadow = !lowPower; ticketGroup.add(ticket);
+
+    // Reactive quality ladder — 0 (full) -> 1 (medium: no shadows, 1.5x DPR, thin clearcoat) ->
+    // 2 (minimal: 1x DPR, no clearcoat, no bump). Starts at 1 only if forceLowPower is set (the
+    // LITE preview toggle); otherwise starts at 0 and the frame-time monitor in tick() escalates
+    // it live if — and only if — a device demonstrably can't keep up, rather than guessing up
+    // front. A phone that's still janky even at tier 1 (reported: some low-end Android devices)
+    // needs this second, more aggressive step rather than medium being the permanent floor.
+    let qualityTier = forceLowPower === true ? 1 : 0;
+    function applyQualityTier(tier: number) {
+      const shadowsOn = tier === 0;
+      renderer.shadowMap.enabled = shadowsOn;
+      key.castShadow = shadowsOn;
+      ground.visible = shadowsOn;
+      topHalf.castShadow = shadowsOn; topHalf.receiveShadow = shadowsOn;
+      botHalf.castShadow = shadowsOn; botHalf.receiveShadow = shadowsOn;
+      ticket.castShadow = shadowsOn;
+
+      const dpr = tier >= 2 ? 1 : tier >= 1 ? 1.5 : 2;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, dpr));
+      renderer.setSize(W, H);
+
+      const foilClearcoat = tier >= 2 ? 0 : tier >= 1 ? 0.2 : 0.95;
+      const ticketClearcoat = tier >= 2 ? 0 : tier >= 1 ? 0.1 : 0.35;
+      foilMaterials.forEach(m => {
+        m.clearcoat = foilClearcoat;
+        m.bumpMap = tier >= 2 ? null : crinkleT;
+        m.needsUpdate = true;
+      });
+      frontMat.clearcoat = ticketClearcoat; frontMat.needsUpdate = true;
+      backMat.clearcoat = ticketClearcoat; backMat.needsUpdate = true;
+    }
 
     /* ---------- confetti ---------- */
     const P = 150;
@@ -573,8 +607,32 @@ export default function MegapotPack({
 
     /* ---------- loop ---------- */
     const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+    // Rolling frame-time monitor for the reactive quality ladder above — measures real wall-clock
+    // time between ticks (not tied to clock.getDelta(), which getElapsedTime() already consumes
+    // internally) over repeated windows. A window with too high a share of slow frames escalates
+    // the quality tier once; a clean window just resets the counters and keeps watching. Only
+    // active when nothing was explicitly forced (the LITE toggle already fixes the tier).
+    let monitorLastT = 0, monitorFrames = 0, monitorSlowFrames = 0, monitorWindowStartT = 0;
     function tick() {
       const t = clock.getElapsedTime(), e = t - t0;
+
+      if (forceLowPower === undefined && qualityTier < 2) {
+        if (monitorLastT > 0) {
+          const frameMs = (t - monitorLastT) * 1000;
+          monitorFrames++;
+          if (frameMs > SLOW_FRAME_MS) monitorSlowFrames++;
+        }
+        monitorLastT = t;
+        if (monitorWindowStartT === 0) monitorWindowStartT = t;
+        if (t - monitorWindowStartT > QUALITY_MONITOR_WINDOW_SEC) {
+          if (monitorFrames > 10 && monitorSlowFrames / monitorFrames > SLOW_FRAME_RATIO) {
+            qualityTier += 1;
+            applyQualityTier(qualityTier);
+          }
+          monitorFrames = 0; monitorSlowFrames = 0; monitorWindowStartT = t;
+        }
+      }
+
       if (phase === 'idle') {
         packGroup.position.y = Math.sin(t * 1.3) * 0.13;
         packGroup.rotation.y = Math.sin(t * 0.55) * 0.34;

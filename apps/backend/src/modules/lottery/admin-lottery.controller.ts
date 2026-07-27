@@ -29,6 +29,15 @@ class SetPackTierEnabledDto {
   enabled: boolean;
 }
 
+class SetPackDailyLimitDto {
+  // Null clears the limit (unlimited); when set, PackService.setDailyOpenLimit itself enforces
+  // "positive integer" — kept optional/loose here so null round-trips through validation.
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  dailyOpenLimit: number | null;
+}
+
 @ApiTags('admin/lottery')
 @Controller('admin/lottery')
 @UseGuards(AdminGuard)
@@ -109,5 +118,25 @@ export class AdminLotteryController {
   @ApiOperation({ summary: "Mystery Pack treasury balance + funding threshold — the public config endpoint only exposes a boolean, this is the actual number + address for admin visibility ('add funds' if below threshold)." })
   async packTreasury() {
     return this.packs.getTreasuryStatus();
+  }
+
+  @Get('packs/settings')
+  @ApiOperation({ summary: 'Mystery Pack global settings (currently: daily open limit per user, null = unlimited)' })
+  async packSettings(): Promise<{ dailyOpenLimit: number | null }> {
+    return { dailyOpenLimit: await this.packs.getDailyOpenLimit() };
+  }
+
+  @Patch('packs/settings')
+  @ApiOperation({ summary: 'Set (or clear, with null) the daily open limit per user' })
+  async setPackSettings(@Body() dto: SetPackDailyLimitDto): Promise<{ dailyOpenLimit: number | null }> {
+    return this.packs.setDailyOpenLimit(dto.dailyOpenLimit ?? null);
+  }
+
+  @Get('packs/openings')
+  @ApiOperation({ summary: 'Recent Mystery Pack openings (real + demo), paginated, newest first' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  async packOpenings(@Query('page') pageRaw?: string) {
+    const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
+    return this.packs.getAdminOpenings(page, 50);
   }
 }

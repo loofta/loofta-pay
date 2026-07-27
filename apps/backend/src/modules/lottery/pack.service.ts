@@ -80,6 +80,10 @@ export class PackService {
   private tiersCache: { tiers: PackTierConfig[]; loadedAt: number } | null = null;
   private readonly TIERS_CACHE_MS = 10_000;
 
+  // Same reasoning as tiersCache — the daily limit only ever changes via an admin edit.
+  private settingsCache: { dailyOpenLimit: number | null; loadedAt: number } | null = null;
+  private readonly SETTINGS_CACHE_MS = 10_000;
+
   // Overlap guard for retryFailedPackPurchases, same pattern as LotteryService's cron methods.
   private processingPackPurchaseRetry = false;
 
@@ -159,6 +163,73 @@ export class PackService {
     return { balanceUsdc, minRequiredUsdc: MIN_TREASURY_BALANCE_USDC, sufficient: balanceUsdc >= MIN_TREASURY_BALANCE_USDC, treasuryAddress };
   }
 
+  private async loadSettings(): Promise<{ dailyOpenLimit: number | null }> {
+    if (this.settingsCache && Date.now() - this.settingsCache.loadedAt < this.SETTINGS_CACHE_MS) {
+      return { dailyOpenLimit: this.settingsCache.dailyOpenLimit };
+    }
+    const db = this.supabase.getClient();
+    const { data, error } = await db.from('pack_settings').select('daily_open_limit').eq('id', true).maybeSingle();
+    if (error) throw new Error(`Failed to load pack settings: ${error.message}`);
+    const dailyOpenLimit = data?.daily_open_limit ?? null;
+    this.settingsCache = { dailyOpenLimit, loadedAt: Date.now() };
+    return { dailyOpenLimit };
+  }
+
+  /** Admin: current daily-open-limit-per-user setting (null = unlimited). */
+  async getDailyOpenLimit(): Promise<number | null> {
+    return (await this.loadSettings()).dailyOpenLimit;
+  }
+
+  /** Admin: set (or clear, with null) the daily-open-limit-per-user. */
+  async setDailyOpenLimit(limit: number | null): Promise<{ dailyOpenLimit: number | null }> {
+    if (limit !== null && (!Number.isInteger(limit) || limit < 1)) {
+      throw new BadRequestException('dailyOpenLimit must be a positive integer or null');
+    }
+    const db = this.supabase.getClient();
+    const { error } = await db.from('pack_settings').update({ daily_open_limit: limit, updated_at: new Date().toISOString() }).eq('id', true);
+    if (error) throw new Error(`Failed to update pack settings: ${error.message}`);
+    this.settingsCache = null;
+    return { dailyOpenLimit: limit };
+  }
+
+  /** Real (non-demo) packs this user has opened since the start of the current UTC day — demo
+   *  opens (is_test=true) never count, so testers/admins previewing the flow never eat into
+   *  their own or anyone else's real daily allowance. */
+  private async getOpensToday(userId: string): Promise<number> {
+    const startOfDayUtc = new Date();
+    startOfDayUtc.setUTCHours(0, 0, 0, 0);
+    const db = this.supabase.getClient();
+    const { count, error } = await db
+      .from('pack_openings')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('is_test', false)
+      .gte('created_at', startOfDayUtc.toISOString());
+    if (error) throw new Error(`Failed to count today's pack openings: ${error.message}`);
+    return count ?? 0;
+  }
+
+  /** Authenticated per-user status the frontend uses to show/hide the "you've hit today's limit"
+   *  message before ever offering payment — mirrors isTreasuryFunded's "tell the user why up
+   *  front" approach rather than letting them tap pay into a guaranteed rejection. */
+  async getMyPackStatus(userId: string): Promise<{ opensToday: number; dailyLimit: number | null; limitReached: boolean }> {
+    const [opensToday, dailyLimit] = await Promise.all([this.getOpensToday(userId), this.getDailyOpenLimit()]);
+    return { opensToday, dailyLimit, limitReached: dailyLimit !== null && opensToday >= dailyLimit };
+  }
+
+  /** Admin: recent pack openings (real + demo), newest first — paginated the same way
+   *  listGifts is in admin-lottery.controller.ts. */
+  async getAdminOpenings(page: number, pageSize: number): Promise<{ data: any[]; total: number; page: number; limit: number }> {
+    const db = this.supabase.getClient();
+    const { data, count, error } = await db
+      .from('pack_openings')
+      .select('id, created_at, user_id, tier_key, tickets_awarded, rarity, cost_usdc, is_test, payment_tx_hash, lottery_ticket_id, status, purchase_failure_reason, retry_count', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range((page - 1) * pageSize, page * pageSize - 1);
+    if (error) throw new Error(`Failed to load pack openings: ${error.message}`);
+    return { data: data ?? [], total: count ?? 0, page, limit: pageSize };
+  }
+
   /**
    * Builds the $2 payment transfer for the user to sign client-side — a plain public USDC
    * transfer (no MagicBlock privacy, no bridging: this only ever needs to land in Loofta's own
@@ -167,15 +238,19 @@ export class PackService {
    * own destination ATA if somehow missing) so the user only ever needs to provide one
    * signature, then send the result to POST /packs/open as paymentTxHash.
    *
-   * Refuses to build the charge at all if the treasury can't currently cover a payout — this is
-   * the enforcement point, not openPack: by the time openPack runs the user has already paid, so
-   * refusing there would just strand ANOTHER payment (see the double-payment incident this
-   * feature is meant to prevent a repeat of). Blocking here means nobody ever pays into a pack we
-   * can't fund the win for in the first place.
+   * Refuses to build the charge at all if the treasury can't currently cover a payout, or if this
+   * user has already hit today's per-user open limit — this is the enforcement point, not
+   * openPack: by the time openPack runs the user has already paid, so refusing there would just
+   * strand ANOTHER payment (see the double-payment incident this feature is meant to prevent a
+   * repeat of). Blocking here means nobody ever pays into a pack we can't/won't let them open.
    */
-  async buildPaymentTx(userSolanaAddress: string): Promise<string> {
+  async buildPaymentTx(userSolanaAddress: string, userId: string): Promise<string> {
     if (!(await this.isTreasuryFunded())) {
       throw new BadRequestException('Mystery Packs are temporarily unavailable — please check back soon');
+    }
+    const { limitReached } = await this.getMyPackStatus(userId);
+    if (limitReached) {
+      throw new BadRequestException("You've reached today's Mystery Pack limit — come back tomorrow!");
     }
     const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
     if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');
