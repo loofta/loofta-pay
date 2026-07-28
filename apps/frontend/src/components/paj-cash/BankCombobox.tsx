@@ -73,7 +73,11 @@ export function BankCombobox({ dark, banks, value, onChange, placeholder = "Sele
                   onSelect={() => { onChange(bank.id); setOpen(false); }}
                   className={cn(
                     "gap-2.5 py-2.5",
-                    dark ? "text-white data-[selected=true]:bg-white/10" : "data-[selected=true]:bg-gray-100"
+                    // The base CommandItem sets data-[selected=true]:text-accent-foreground (a
+                    // light-theme color) which otherwise wins over a plain text-white class here
+                    // due to selector specificity — must override it at the same data-attribute
+                    // level or hovering an item goes dark-text-on-dark-background.
+                    dark ? "text-white data-[selected=true]:bg-white/10 data-[selected=true]:text-white" : "data-[selected=true]:bg-gray-100"
                   )}
                 >
                   {bank.logo ? (
