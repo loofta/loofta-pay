@@ -219,6 +219,91 @@ export class EmailService {
     }
   }
 
+  /** Sent when a Megapot ticket resolves to status 'won' — invites the recipient to claim their
+   *  winnings (which land in their Loofta balance, withdrawable as USDC or cashed out to Naira/
+   *  USD/EUR/GBP). Non-throwing/best-effort, matching sendPaymentReceivedEmail — this is meant to
+   *  be called in a loop over many winners (per-round broadcast or settlement-time trigger), and
+   *  one recipient's bad email shouldn't abort the rest. */
+  async sendMegapotWinEmail(data: {
+    recipientEmail: string;
+    winAmountUsdc: number;
+    roundId: string;
+    username?: string | null;
+    numTickets?: number;
+  }): Promise<void> {
+    if (!this.resend) return;
+    const amountStr = `$${data.winAmountUsdc.toFixed(2)}`;
+    const subject = `You won ${amountStr} on Megapot 🎉`;
+    const html = this.buildMegapotWinHtml({ ...data, amountStr });
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject,
+        html,
+      });
+      this.logger.log(`Megapot win email sent to ${data.recipientEmail} (${amountStr}, round ${data.roundId})`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send Megapot win email to ${data.recipientEmail}: ${err?.message ?? err}`);
+    }
+  }
+
+  private buildMegapotWinHtml(data: { amountStr: string; roundId: string; username?: string | null; numTickets?: number }): string {
+    const dashboardUrl = 'https://pay.loofta.xyz/app/megapot';
+    const greeting = data.username ? `Hey @${data.username},` : 'Hey,';
+    const ticketLine = data.numTickets && data.numTickets > 1 ? ` (across ${data.numTickets} tickets)` : '';
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>You won on Megapot</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Won 🎉</span>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px 32px;">
+              <p style="margin:0 0 24px;font-size:18px;color:#ffffff;font-weight:500;text-align:center;">Your ticket for round ${data.roundId} hit${ticketLine}</p>
+              <div style="background:#0f0f12;border:1px solid #0d3b2e;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px;">
+                <p style="margin:0 0 4px;font-size:12px;color:#6b7280;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;">You won</p>
+                <p style="margin:0;font-size:40px;font-weight:500;color:#5EEAD4;letter-spacing:-1px;">${data.amountStr}</p>
+              </div>
+              <p style="margin:0 0 24px;font-size:14px;color:#9ca3af;text-align:center;line-height:1.6;">
+                ${greeting} claim it and it lands straight in your Loofta balance. Withdraw as USDC, or cash out directly to your bank.
+              </p>
+              <div style="text-align:center;margin-bottom:8px;">
+                <a href="${dashboardUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Claim your winnings
+                </a>
+              </div>
+              <p style="margin:20px 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
   private buildTicketRecoveredHtml(data: { numTickets: number; roundId: string }): string {
     const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
     const dashboardUrl = 'https://pay.loofta.xyz/app/megapot';

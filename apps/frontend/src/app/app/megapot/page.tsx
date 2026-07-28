@@ -2127,14 +2127,13 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
     </div>
   );
 
-  if (!wonTickets.length) return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
-      <Trophy className="w-10 h-10 text-slate-700 mx-auto mb-3" />
-      <p className="text-slate-300 text-lg font-medium">No winnings yet</p>
-      <p className="text-slate-500 text-base mt-1">Win the daily draw and your prize lands here, ready to redeem privately.</p>
-    </div>
-  );
-
+  // Checked BEFORE !wonTickets.length below — handleWithdraw() sets done=true and then
+  // refetches the dashboard (onWithdrawn), which now excludes the just-redeemed ticket from
+  // wonTickets (it's in-flight, no longer "won and unclaimed"). With the guards in the other
+  // order, that refetch made wonTickets empty right as the progress tracker should appear,
+  // so the "No winnings yet" card flashed in instead — the redeem progress steps looked like
+  // they vanished the instant you clicked. `done` is local state driven by the withdrawal
+  // itself, so it must win over the derived `wonTickets` prop once a withdrawal is underway.
   if (done) {
     type StepState = "done" | "active" | "pending";
     const steps: { label: string; state: StepState }[] = [
@@ -2224,6 +2223,14 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
     );
   }
 
+  if (!wonTickets.length) return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
+      <Trophy className="w-10 h-10 text-slate-700 mx-auto mb-3" />
+      <p className="text-slate-300 text-lg font-medium">No winnings yet</p>
+      <p className="text-slate-500 text-base mt-1">Win the daily draw and your prize lands here, ready to redeem privately.</p>
+    </div>
+  );
+
   return (
     <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.07] via-white/[0.04] to-white/[0.02] p-6 space-y-6">
       {/* Celebration header */}
@@ -2285,7 +2292,13 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
       {!isFreeTicket && (
         <>
           {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
-          <IncognitoModeToggle checked={sendPrivately} onCheckedChange={handleToggleSendPrivately} />
+          <IncognitoModeToggle
+            checked={sendPrivately}
+            onCheckedChange={handleToggleSendPrivately}
+            onLabel="Withdraw privately"
+            offLabel="Withdraw privately"
+            ariaLabel="Withdraw privately"
+          />
           <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
             <ShieldCheck className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
             <div>
