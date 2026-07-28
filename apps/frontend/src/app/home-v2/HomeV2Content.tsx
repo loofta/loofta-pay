@@ -429,11 +429,11 @@ function ClaimSection() {
               Straight to the bank
             </h3>
             <p className={`mt-3.5 font-grotesk text-lg leading-[1.55] ${INK_2}`}>
-              Cash out to a real bank account in USD, EUR, GBP or JPY, no exchange, no manual
+              Cash out to a real bank account in USD, EUR, GBP, NGN or JPY, no exchange, no manual
               off-ramp. Money lands where they already spend it.
             </p>
             <div className="mt-7 flex flex-wrap gap-3.5">
-              {["USD", "EUR", "GBP"].map((cur) => (
+              {["USD", "EUR", "GBP", "NGN"].map((cur) => (
                 <span
                   key={cur}
                   className={`inline-flex items-center gap-2.5 rounded-2xl border ${BORDER_LINE} bg-[rgba(255,255,255,0.04)] px-[22px] py-4 font-display text-[22px] font-medium ${INK}`}
