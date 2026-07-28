@@ -36,7 +36,9 @@ const RED = '#FF1301', ORG = '#FF6A00', YEL = '#EAB308', PAPER = '#FFFDF7', INK 
 // the good version by default; only ones that demonstrably can't keep up ever see the lighter one.
 const QUALITY_MONITOR_WINDOW_SEC = 2.5;
 const SLOW_FRAME_MS = 32; // ~31fps — below this consistently is real, user-visible jank
-const SLOW_FRAME_RATIO = 0.35; // share of frames in a window that must be slow to trigger a downgrade
+// Bumped from 0.35 after repeat false positives on a genuinely fine iPhone 14 — needs a clear
+// majority of a window to be slow, not just over a third, before believing the device can't keep up.
+const SLOW_FRAME_RATIO = 0.5;
 // One-time startup costs — WebGL/PMREM environment-map generation, font loading, the async
 // texture-regeneration pass once fonts/images arrive (see the asset-loading effect below) — make
 // the first second or so of ANY session measurably heavier than steady state, on any device. If
@@ -605,17 +607,19 @@ export default function MegapotPack({
     // just resets the counters and keeps watching. Only active when nothing was explicitly forced
     // (the LITE toggle already fixes the tier).
     let monitorLastT = 0, monitorFrames = 0, monitorSlowFrames = 0, monitorWindowStartT = 0;
+    function resetQualityMonitor() {
+      monitorLastT = 0;
+      monitorFrames = 0;
+      monitorSlowFrames = 0;
+      monitorWindowStartT = 0;
+    }
     // rAF pauses while the tab/app is backgrounded (exactly the "checked notifications" scenario
     // that was originally reported) — without this, the multi-second gap on resume would count as
     // one very slow frame. A single frame is normally diluted by the 35%-of-window ratio, but
     // explicitly discarding it here means a backgrounding event can never contribute to a
     // downgrade at all, rather than relying on the ratio to paper over it.
     const onVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') return;
-      monitorLastT = 0;
-      monitorFrames = 0;
-      monitorSlowFrames = 0;
-      monitorWindowStartT = 0;
+      if (document.visibilityState === 'visible') resetQualityMonitor();
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
     function tick() {
@@ -630,7 +634,7 @@ export default function MegapotPack({
         monitorLastT = t;
         if (monitorWindowStartT === 0) monitorWindowStartT = t;
         if (t - monitorWindowStartT > QUALITY_MONITOR_WINDOW_SEC) {
-          if (monitorFrames > 10 && monitorSlowFrames / monitorFrames > SLOW_FRAME_RATIO) {
+          if (monitorFrames > 30 && monitorSlowFrames / monitorFrames > SLOW_FRAME_RATIO) {
             qualityTier += 1;
             applyQualityTier(qualityTier);
           }
@@ -713,7 +717,12 @@ export default function MegapotPack({
     resizeObserver.observe(host);
     onResize();
 
-    // brand assets load in the background, then artwork is rebuilt
+    // brand assets load in the background, then artwork is rebuilt. On a slow connection this can
+    // easily finish well after QUALITY_MONITOR_GRACE_SEC — the regeneration below is a real,
+    // synchronous burst of canvas work (6 textures redrawn at once), and if it landed inside an
+    // already-active monitoring window it could misread that one-time, network-timing-dependent
+    // cost as sustained device jank. Resetting the monitor right after means this can never
+    // contribute to a downgrade regardless of how long the asset load took.
     (async () => {
       try { await (document as any).fonts?.ready; } catch { }
       [logoImg, logoWhiteImg, megapotDarkImg] = await Promise.all([
@@ -726,6 +735,7 @@ export default function MegapotPack({
       (botHalf.material as THREE.Material[]).forEach(m => (m.needsUpdate = true));
       frontMat.map = ticketFront(1); frontMat.needsUpdate = true;
       backMat.map = ticketBack(); backMat.needsUpdate = true;
+      resetQualityMonitor();
     })();
 
     return () => {
