@@ -66,6 +66,10 @@ export type PajSavedBankAccount = {
   bank_name: string;
   account_number: string;
   account_name: string;
+  /** Abstracted Solana wallet address tied to this bank account — USDC sent here is
+   * automatically converted and paid out to the bank account on PAJ's side. */
+  wallet_address: string | null;
+  is_default: boolean;
   created_at: string;
 };
 
@@ -84,6 +88,7 @@ export type PajCashOrder = {
   amount_usdc: number | null;
   rate: number | null;
   fee_usdc: number | null;
+  loofta_fee_usdc: number | null;
   onramp_bank_name: string | null;
   onramp_account_number: string | null;
   onramp_account_name: string | null;
@@ -145,6 +150,10 @@ export async function pajSaveBankAccount(bankId: string, bankName: string, accou
 
 export async function pajListBankAccounts(accessToken: string | null): Promise<PajSavedBankAccount[]> {
   return pajCashFetch('/paj-cash/bank-account', { accessToken });
+}
+
+export async function pajSetDefaultBankAccount(accountId: string, accessToken: string | null): Promise<PajSavedBankAccount> {
+  return pajCashFetch(`/paj-cash/bank-account/${accountId}/default`, { method: 'PATCH', accessToken });
 }
 
 export async function pajSubmitKyc(idNumber: string, idType: 'BVN' | 'NIN', accessToken: string | null): Promise<{ message: string }> {

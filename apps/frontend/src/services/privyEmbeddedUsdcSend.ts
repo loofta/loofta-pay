@@ -74,6 +74,9 @@ export async function sendUsdcWithBackendFeePayer(params: {
   chain?: PrivySolanaChain;
   accessToken?: string | null;
   network?: "mainnet" | "devnet";
+  /** Loofta's cut on this send (e.g. PAJ Cash Naira withdraw fee) — sent to the same backend
+   * fee-payer wallet as a second transfer leg in the same transaction/signature. */
+  looftaFeeUsdc?: number;
 }): Promise<string> {
   const {
     senderAddress,
@@ -87,6 +90,7 @@ export async function sendUsdcWithBackendFeePayer(params: {
     signTransaction,
     accessToken,
     network,
+    looftaFeeUsdc,
   } = params;
   const chain = params.chain ?? getPrivySolanaChain();
 
@@ -101,6 +105,9 @@ export async function sendUsdcWithBackendFeePayer(params: {
     memo: memo ?? undefined,
     usdcMint,
     feePayerAddress,
+    extraTransfer: looftaFeeUsdc && looftaFeeUsdc > 0
+      ? { recipientAddress: feePayerAddress, amountUSDC: looftaFeeUsdc }
+      : undefined,
   });
 
   // showWalletUIs: false — skip Privy's SOL-balance preflight.

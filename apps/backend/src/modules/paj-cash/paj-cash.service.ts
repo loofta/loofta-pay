@@ -54,6 +54,9 @@ export interface PajSavedBankAccount {
   accountName: string;
   accountNumber: string;
   bank: string;
+  /** Abstracted Solana wallet address tied to this bank account — any USDC sent here is
+   * automatically converted and paid out to the bank account on PAJ's side. */
+  address?: string;
 }
 
 export interface PajRateInfo {

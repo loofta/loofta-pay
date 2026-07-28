@@ -18,6 +18,6 @@ import { PajCashProcessorService } from './paj-cash-processor.service';
     PajCashOrdersService,
     PajCashProcessorService,
   ],
-  exports: [PajCashService],
+  exports: [PajCashService, PajCashBankService, PajCashOrdersService],
 })
 export class PajCashModule {}

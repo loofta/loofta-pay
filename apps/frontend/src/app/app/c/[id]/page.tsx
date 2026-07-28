@@ -42,12 +42,30 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
+import {
+  pajLinkStatus,
+  pajListBankAccounts,
+  pajGetValue,
+  pajListBanks,
+  pajConfirmBankAccount,
+  pajSaveBankAccount,
+  pajSetDefaultBankAccount,
+  PajCashApiError,
+  type PajSavedBankAccount,
+  type PajBank,
+  type PajResolvedBankAccount,
+} from "@/services/pajCash";
+import { computeLooftaFeeUsdc } from "@/lib/pajCashFee";
+import { getClientGeo } from "@/lib/geo";
+import { PajCashLinkFlow } from "@/components/paj-cash/PajCashLinkFlow";
+import { BankCombobox } from "@/components/paj-cash/BankCombobox";
+const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
 const EVM_CHAIN_SET = new Set(["eth", "ethereum", "arb", "arbitrum", "base", "op", "optimism", "bsc", "avax", "avalanche", "polygon", "matic", "fantom", "ftm", "gnosis", "linea", "scroll", "zksync", "zk", "blast", "pol"]);
 function isEvmChainId(chain?: string): boolean { return EVM_CHAIN_SET.has(String(chain || "").toLowerCase()); }
 import { usePrivy, useWallets as useEvmWallets, useLinkAccount } from "@privy-io/react-auth";
@@ -1572,7 +1590,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     }
   };
   const claimAsRecipientMutation = useMutation({
-    mutationFn: async (opts?: { claimPrivately?: boolean; destinationAddress?: string }) => {
+    mutationFn: async (opts?: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean }) => {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
       console.info("[Claim] Initiating claim for:", id, "user:", user?.id?.slice(0, 12), "opts:", opts);
       const claimToken = await getAccessToken();
@@ -1684,6 +1702,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     onError: (error: unknown, _vars, context: any) => {
       // Roll back optimistic claim data.
       setOptimisticClaimedAt(null);
+      // claimInitiated drives the optimistic success celebration below — it was set true right
+      // before this mutation fired, so a genuine failure must clear it, or the success screen
+      // and the error toast show at the same time with no way to tell which one is real.
+      setClaimInitiated(false);
       if (context?.prevClaim !== undefined) {
         queryClient.setQueryData(["claim", id], context.prevClaim);
       }
@@ -1725,6 +1747,359 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     }, 500);
     return () => clearTimeout(t);
   }, [externalClaimAddress]);
+  // "Claim in Naira" — only fetched once we know the caller is the recipient, to avoid firing
+  // PAJ Cash calls for every claim-page visit (including the sender's own share view).
+  const [pajDefaultBankAccount, setPajDefaultBankAccount] = useState<PajSavedBankAccount | null>(null);
+  const [pajLinked, setPajLinked] = useState(false);
+  const [pajNigeria, setPajNigeria] = useState(false);
+  const [nairaQuote, setNairaQuote] = useState<number | null>(null);
+  useEffect(() => {
+    if (!PAJ_CASH_ENABLED || !isRecipient || !user?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const status = await pajLinkStatus(accessToken);
+        if (cancelled) return;
+        setPajLinked(status.linked);
+        if (status.linked) {
+          const accounts = await pajListBankAccounts(accessToken);
+          if (!cancelled) setPajDefaultBankAccount(accounts.find((a) => a.is_default) ?? null);
+        }
+      } catch {
+        // leave hidden — claim-to-wallet remains the primary path regardless
+      }
+      try {
+        const geo = await getClientGeo();
+        if (!cancelled) setPajNigeria(geo.countryCode === "NG");
+      } catch {
+        // default to non-prominent placement
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isRecipient, user?.id, getAccessToken]);
+  useEffect(() => {
+    if (!pajDefaultBankAccount || !claim?.amount) { setNairaQuote(null); return; }
+    const netAmountUsdc = parseFloat(claim.amount) - computeLooftaFeeUsdc(parseFloat(claim.amount));
+    if (!(netAmountUsdc > 0)) { setNairaQuote(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const q = await pajGetValue("offramp", netAmountUsdc, "NGN", accessToken);
+        if (!cancelled) setNairaQuote(q.fiatAmount);
+      } catch {
+        if (!cancelled) setNairaQuote(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pajDefaultBankAccount, claim?.amount, getAccessToken]);
+
+  // Two-way "claim to wallet / claim to bank" layout — only for recipients in Nigeria (by IP) or
+  // who already have a default Naira payout account set up (i.e. have done this before). Being
+  // merely PAJ-linked with no bank account saved yet does NOT count — everyone else keeps the
+  // plain single "Claim publicly" button, unchanged.
+  const showBankClaimOption = PAJ_CASH_ENABLED && isRecipient && (pajNigeria || !!pajDefaultBankAccount);
+  // Once the recipient picks "Claim to wallet", drop into the original public/private choice —
+  // "Claim to bank" no longer shows alongside it, matching the pre-bank-option flow exactly.
+  const [walletClaimChosen, setWalletClaimChosen] = useState(false);
+
+  // Inline "set up a bank account" dialog — shown when "Claim to bank" is clicked but no default
+  // account exists yet, instead of bouncing the recipient away to the withdraw modal mid-claim.
+  // If the recipient already has bank accounts saved from a previous withdrawal, offer to set one
+  // of those as default before falling back to the add-a-new-account form.
+  const [nairaSetupOpen, setNairaSetupOpen] = useState(false);
+  // Confirm step shown after a default account is resolved (picked, added, or already set) and
+  // before actually claiming — always shows the live ₦ rate first, never auto-claims.
+  const [nairaClaimConfirmOpen, setNairaClaimConfirmOpen] = useState(false);
+  const [nairaSetupStep, setNairaSetupStep] = useState<"link" | "bank">("link");
+  const [nairaBankStep, setNairaBankStep] = useState<"pick" | "add">("add");
+  const [nairaExistingAccounts, setNairaExistingAccounts] = useState<PajSavedBankAccount[]>([]);
+  const [nairaAccountsLoading, setNairaAccountsLoading] = useState(false);
+  const [nairaSettingDefaultId, setNairaSettingDefaultId] = useState<string | null>(null);
+  const [nairaBanks, setNairaBanks] = useState<PajBank[]>([]);
+  const [nairaBankId, setNairaBankId] = useState<string | null>(null);
+  const [nairaAccountNumber, setNairaAccountNumber] = useState("");
+  const [nairaResolved, setNairaResolved] = useState<PajResolvedBankAccount | null>(null);
+  const [nairaResolving, setNairaResolving] = useState(false);
+  const [nairaSaving, setNairaSaving] = useState(false);
+
+  const openNairaSetup = () => {
+    setNairaSetupStep(pajLinked ? "bank" : "link");
+    setNairaSetupOpen(true);
+  };
+
+  // Load the recipient's already-saved bank accounts (from a previous withdrawal, or an earlier
+  // "claim to bank" that never finished) as soon as we reach the "bank" step, so we can offer to
+  // set one as default instead of always asking them to re-add one from scratch.
+  useEffect(() => {
+    if (!nairaSetupOpen || nairaSetupStep !== "bank") return;
+    let cancelled = false;
+    setNairaAccountsLoading(true);
+    (async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const accounts = await pajListBankAccounts(accessToken);
+        if (cancelled) return;
+        setNairaExistingAccounts(accounts);
+        setNairaBankStep(accounts.length > 0 ? "pick" : "add");
+      } catch {
+        if (!cancelled) setNairaBankStep("add");
+      } finally {
+        if (!cancelled) setNairaAccountsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [nairaSetupOpen, nairaSetupStep, getAccessToken]);
+
+  useEffect(() => {
+    if (!nairaSetupOpen || nairaSetupStep !== "bank" || nairaBankStep !== "add" || nairaBanks.length > 0) return;
+    (async () => {
+      try {
+        const accessToken = await getAccessToken();
+        setNairaBanks(await pajListBanks(accessToken));
+      } catch (err: unknown) {
+        const msg = err instanceof PajCashApiError ? err.message : "Could not load banks.";
+        toast({ variant: "destructive", title: "PAJ Cash", description: msg });
+      }
+    })();
+  }, [nairaSetupOpen, nairaSetupStep, nairaBankStep, nairaBanks.length, getAccessToken, toast]);
+
+  const handleNairaPickExisting = async (accountId: string) => {
+    setNairaSettingDefaultId(accountId);
+    try {
+      const accessToken = await getAccessToken();
+      const updated = await pajSetDefaultBankAccount(accountId, accessToken);
+      setPajDefaultBankAccount(updated);
+      setNairaSetupOpen(false);
+      setNairaClaimConfirmOpen(true);
+    } catch (err: unknown) {
+      const msg = err instanceof PajCashApiError ? err.message : "Could not set default account.";
+      toast({ variant: "destructive", title: "PAJ Cash", description: msg });
+    } finally {
+      setNairaSettingDefaultId(null);
+    }
+  };
+
+  const handleNairaResolve = async () => {
+    if (!nairaBankId || !nairaAccountNumber.trim()) return;
+    setNairaResolving(true);
+    setNairaResolved(null);
+    try {
+      const accessToken = await getAccessToken();
+      setNairaResolved(await pajConfirmBankAccount(nairaBankId, nairaAccountNumber.trim(), accessToken));
+    } catch (err: unknown) {
+      const msg = err instanceof PajCashApiError ? err.message : "Could not resolve this account.";
+      toast({ variant: "destructive", title: "PAJ Cash", description: msg });
+    } finally {
+      setNairaResolving(false);
+    }
+  };
+
+  const handleNairaSaveAndClaim = async () => {
+    if (!nairaBankId || !nairaResolved) return;
+    setNairaSaving(true);
+    try {
+      const accessToken = await getAccessToken();
+      const bankName = nairaBanks.find((b) => b.id === nairaBankId)?.name ?? nairaResolved.bank.name;
+      const saved = await pajSaveBankAccount(nairaBankId, bankName, nairaResolved.accountNumber, accessToken);
+      // saveAccount only auto-defaults a user's very first account — explicitly promote it
+      // here too, since the whole point of this flow is "use this account for Naira claims".
+      const defaulted = saved.is_default ? saved : await pajSetDefaultBankAccount(saved.id, accessToken);
+      setPajDefaultBankAccount(defaulted);
+      setNairaSetupOpen(false);
+      setNairaClaimConfirmOpen(true);
+    } catch (err: unknown) {
+      const msg = err instanceof PajCashApiError ? err.message : "Could not save this account.";
+      toast({ variant: "destructive", title: "PAJ Cash", description: msg });
+    } finally {
+      setNairaSaving(false);
+    }
+  };
+
+  const renderNairaSetupDialog = () => (
+    <Dialog open={nairaSetupOpen} onOpenChange={(open) => setNairaSetupOpen(open)}>
+      <DialogContent className="border-white/10 bg-[#0f0f12] text-white sm:max-w-md max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Set up Naira payouts</DialogTitle>
+          <DialogDescription className="text-slate-400">
+            {nairaSetupStep === "bank" && nairaBankStep === "pick"
+              ? "Choose which bank account should receive your Naira claims."
+              : "Link your PAJ Cash account and add a bank account to claim this payment straight to Naira."}
+          </DialogDescription>
+        </DialogHeader>
+        {nairaSetupStep === "link" ? (
+          <PajCashLinkFlow
+            dark
+            prefillEmail={user?.email?.address ?? null}
+            getAccessToken={getAccessToken}
+            onBack={() => setNairaSetupOpen(false)}
+            onLinked={() => { setPajLinked(true); setNairaSetupStep("bank"); }}
+          />
+        ) : nairaAccountsLoading ? (
+          <div className="flex justify-center py-6">
+            <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+          </div>
+        ) : nairaBankStep === "pick" ? (
+          <div className="space-y-2">
+            {nairaExistingAccounts.map((acc) => (
+              <button
+                key={acc.id}
+                type="button"
+                onClick={() => handleNairaPickExisting(acc.id)}
+                disabled={nairaSettingDefaultId === acc.id}
+                className="w-full flex items-center justify-between gap-3 p-4 rounded-xl border-2 border-white/10 bg-white/5 text-left transition-all hover:bg-white/10 hover:border-white/20 disabled:opacity-50"
+              >
+                <div className="min-w-0">
+                  <p className="text-base font-semibold text-white">{acc.account_name}</p>
+                  <p className="text-base mt-0.5 text-slate-400">{acc.bank_name} · {acc.account_number}</p>
+                </div>
+                {nairaSettingDefaultId === acc.id ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" />
+                ) : (
+                  <ArrowRight className="h-4 w-4 shrink-0 text-slate-500" />
+                )}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setNairaBankStep("add")}
+              className="w-full p-4 rounded-xl border-2 border-dashed border-white/20 text-base font-medium text-slate-300 transition-all hover:bg-white/5"
+            >
+              + Add a new bank account
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {nairaExistingAccounts.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setNairaBankStep("pick")}
+                className="flex items-center gap-1 text-base font-medium text-slate-400 hover:text-white transition-colors"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Back to your saved accounts
+              </button>
+            )}
+            <div>
+              <Label className="text-slate-300">Bank</Label>
+              <div className="mt-1">
+                <BankCombobox
+                  dark
+                  banks={nairaBanks}
+                  value={nairaBankId}
+                  onChange={(bankId) => { setNairaBankId(bankId); setNairaResolved(null); }}
+                  disabled={nairaBanks.length === 0}
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-slate-300">Account number</Label>
+              <Input
+                inputMode="numeric"
+                placeholder="0123456789"
+                value={nairaAccountNumber}
+                onChange={(e) => { setNairaAccountNumber(e.target.value); setNairaResolved(null); }}
+                className="mt-1 font-mono text-base bg-white/10 border-white/20 text-white placeholder:text-slate-400"
+              />
+            </div>
+            {nairaResolved ? (
+              <div className="rounded-xl border-2 border-white/10 bg-white/5 p-4">
+                <p className="text-base text-slate-400">Account holder</p>
+                <p className="text-base font-semibold text-white">{nairaResolved.accountName}</p>
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={handleNairaResolve}
+                disabled={nairaResolving || !nairaBankId || !nairaAccountNumber.trim()}
+                className="w-full border-white/20 !bg-transparent text-slate-200 hover:!bg-white/10 hover:text-white"
+              >
+                {nairaResolving ? (
+                  <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Looking up account…</span>
+                ) : "Look up account"}
+              </Button>
+            )}
+            {nairaResolved && (
+              <Button
+                onClick={handleNairaSaveAndClaim}
+                disabled={nairaSaving}
+                className="w-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] hover:opacity-90 text-white disabled:opacity-50"
+              >
+                {nairaSaving ? (
+                  <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Saving & claiming…</span>
+                ) : "Save & claim in Naira"}
+              </Button>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+
+  /** Always shown before actually claiming to Naira — never auto-claims the moment a default
+   *  account is resolved. Shows the live ₦ rate (nairaQuote, fetched from PAJ's own quote
+   *  endpoint) and the Loofta fee breakdown so the recipient sees exactly what they'll get. */
+  const renderNairaClaimConfirmDialog = () => {
+    const grossUsd = parseFloat(claim?.amount || "0") || 0;
+    const feeUsd = computeLooftaFeeUsdc(grossUsd);
+    const netUsd = grossUsd - feeUsd;
+    return (
+      <Dialog open={nairaClaimConfirmOpen} onOpenChange={(open) => setNairaClaimConfirmOpen(open)}>
+        <DialogContent className="border-white/10 bg-[#0f0f12] text-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Claim in Naira</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              {pajDefaultBankAccount ? `To ${pajDefaultBankAccount.bank_name} ····${pajDefaultBankAccount.account_number.slice(-4)}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-2">
+            <div className="flex items-center justify-between text-base text-slate-400">
+              <span>Claim amount</span>
+              <span className="font-sans text-slate-200">${grossUsd.toFixed(2)}</span>
+            </div>
+            {feeUsd > 0 && (
+              <div className="flex items-center justify-between text-base text-slate-400">
+                <span>Loofta fee</span>
+                <span className="font-sans text-slate-200">- ${feeUsd.toFixed(2)}</span>
+              </div>
+            )}
+            <div className="h-px bg-white/10 my-1" />
+            <div className="flex items-center justify-between text-lg font-semibold">
+              <span className="text-white">You&apos;ll receive</span>
+              <span className="font-sans text-amber-300">
+                {nairaQuote != null ? `≈ ₦${nairaQuote.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : <Loader2 className="h-4 w-4 animate-spin inline" />}
+              </span>
+            </div>
+            <div className="text-right text-xs text-slate-500">${netUsd.toFixed(2)} USDC after fees</div>
+          </div>
+          <div className="flex flex-col-reverse sm:flex-row gap-2 mt-2">
+            <button
+              type="button"
+              onClick={() => setNairaClaimConfirmOpen(false)}
+              disabled={claimActionDisabled}
+              className="flex-1 h-12 rounded-xl text-base font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setNairaClaimConfirmOpen(false);
+                setClaimInitiated(true);
+                claimAsRecipientMutation.mutate({ claimToNaira: true });
+              }}
+              disabled={claimActionDisabled || nairaQuote == null}
+              className="flex-1 h-12 rounded-xl text-lg font-semibold bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-md hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
+            >
+              Confirm & claim
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
   /** Redundant to offer once the payment already arrived privately — the burner's incoming leg
    *  already broke any on-chain link back to the sender, so a plain public sweep out reveals
    *  nothing new (see the Context section of the universal-claim plan). */
@@ -1751,59 +2126,136 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
    *  first-claim-only "claim privately" button) with the full set of choices, for every claim. */
   const renderClaimPanel = (mobile: boolean) => (
     <div className={mobile ? "w-full" : "hidden md:flex flex-col w-full max-w-md mx-auto"}>
-      <button
-        type="button"
-        onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate({}); }}
-        disabled={claimActionDisabled}
-        className={cn(
-          "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
-          mobile ? "py-4 text-base" : "py-3",
-          "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-          claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
-        )}
-      >
-        {claimAsRecipientMutation.isPending ? (
-          <><Loader2 className={mobile ? "h-5 w-5 animate-spin" : "h-4 w-4 animate-spin"} /><span>Claiming…</span></>
-        ) : (
-          <>
-            <CheckCircle2 className={mobile ? "h-5 w-5" : "h-4 w-4"} />
-            {/* "Claim now" when the payment already arrived privately — "publicly" would be
-                misleading there. "Claim publicly" only makes sense as a contrast to the
-                "Claim privately" option, which only appears for a publicly-sent payment anyway. */}
-            <span>{canClaimPrivately ? "Claim publicly" : "Claim now"}{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
-          </>
-        )}
-      </button>
-
-      {/* Dark secondary button — this card is a dark surface (bg-white/5, forced-white text via
-          ClaimPayLayout's overrides). A confetti burst on click (same PrivacyConfettiBurst used
-          for the sender's incognito toggle) so going private still feels like a distinct choice —
-          no glow or bright color on the button itself though, an earlier amber-pulsing version
-          read as a privacy red flag in user feedback. One under the other, same as mobile, full
-          width so it's grounded at the card's edges instead of floating as a narrow pill. */}
-      {canClaimPrivately && (
+      {showBankClaimOption && !walletClaimChosen ? (
         <>
+          <button
+            type="button"
+            onClick={() => setWalletClaimChosen(true)}
+            disabled={claimActionDisabled}
+            className={cn(
+              "w-full flex flex-col items-center justify-center gap-0.5 rounded-xl font-semibold transition-all",
+              mobile ? "py-4 text-base" : "py-3",
+              "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+              claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
+            )}
+          >
+            <span className="flex items-center gap-1.5"><CheckCircle2 className={mobile ? "h-5 w-5" : "h-4 w-4"} />Claim to wallet</span>
+            {(walletNotReady || waitingForBurnerFunds) && (
+              <span className="text-xs font-normal opacity-80">{walletNotReady ? "setting up wallet…" : "not ready"}</span>
+            )}
+          </button>
+
           <div className="flex items-center gap-3 my-2.5 w-full">
             <div className="h-px flex-1 bg-white/10" />
             <span className="text-xs font-medium tracking-widest text-slate-500 uppercase">or</span>
             <div className="h-px flex-1 bg-white/10" />
           </div>
-          <motion.button
+
+          <button
             type="button"
-            onClick={() => { setPrivacyBurstKey(Date.now()); setPrivateClaimConfirm({}); }}
+            onClick={() => {
+              if (pajDefaultBankAccount) {
+                setNairaClaimConfirmOpen(true);
+              } else {
+                openNairaSetup();
+              }
+            }}
             disabled={claimActionDisabled}
-            whileHover={claimActionDisabled ? undefined : { scale: 1.02 }}
-            whileTap={claimActionDisabled ? undefined : { scale: 0.98 }}
             className={cn(
-              "w-full flex items-center justify-center gap-2 rounded-2xl bg-black/30 border border-white/15 font-display font-semibold text-slate-200 transition-colors hover:bg-black/40 hover:border-white/25",
-              mobile ? "py-3 text-base" : "py-3 text-sm",
-              claimActionDisabled && "opacity-50 cursor-not-allowed hover:bg-black/30",
+              "w-full rounded-2xl p-[1.5px] bg-gradient-to-r from-orange-500 via-amber-400 to-red-500 transition-opacity",
+              claimActionDisabled ? "opacity-50 cursor-not-allowed" : "hover:opacity-90",
             )}
           >
-            <PrivacyGlyph size={mobile ? 20 : 18} opacity={1} />
-            <span>Claim privately</span>
-          </motion.button>
+            <span
+              className={cn(
+                "flex items-center justify-center gap-2 rounded-[calc(1rem-1.5px)] bg-[#0f0f12] font-semibold text-slate-100 transition-colors",
+                mobile ? "py-4 text-base" : "py-3 text-base",
+              )}
+            >
+              {claimAsRecipientMutation.isPending && claimAsRecipientMutation.variables?.claimToNaira ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Landmark className="h-4 w-4" />
+              )}
+              <span>
+                {claimAsRecipientMutation.isPending && claimAsRecipientMutation.variables?.claimToNaira ? "Claiming…" : "Claim to bank"}
+              </span>
+            </span>
+          </button>
         </>
+      ) : (
+        <>
+        <button
+          type="button"
+          onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate({}); }}
+          disabled={claimActionDisabled}
+          className={cn(
+            "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
+            mobile ? "py-4 text-base" : "py-3",
+            "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+            claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
+          )}
+        >
+          {claimAsRecipientMutation.isPending ? (
+            <><Loader2 className={mobile ? "h-5 w-5 animate-spin" : "h-4 w-4 animate-spin"} /><span>Claiming…</span></>
+          ) : (
+            <>
+              <CheckCircle2 className={mobile ? "h-5 w-5" : "h-4 w-4"} />
+              {/* "Claim now" when the payment already arrived privately — "publicly" would be
+                  misleading there. "Claim publicly" only makes sense as a contrast to the
+                  "Claim privately" option, which only appears for a publicly-sent payment anyway. */}
+              <span>{canClaimPrivately ? "Claim publicly" : "Claim now"}{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
+            </>
+          )}
+        </button>
+
+          {/* Dark secondary button — this card is a dark surface (bg-white/5, forced-white text via
+              ClaimPayLayout's overrides). A confetti burst on click (same PrivacyConfettiBurst used
+              for the sender's incognito toggle) so going private still feels like a distinct choice —
+              no glow or bright color on the button itself though, an earlier amber-pulsing version
+              read as a privacy red flag in user feedback. Lives inside the "claim to wallet" branch
+              only — once "Claim to bank" is an option, it must never show alongside it; it only
+              appears after the recipient has specifically chosen the wallet path (or there was never
+              a bank option to begin with). */}
+          {canClaimPrivately && (
+            <>
+              <div className="flex items-center gap-3 my-2.5 w-full">
+                <div className="h-px flex-1 bg-white/10" />
+                <span className="text-xs font-medium tracking-widest text-slate-500 uppercase">or</span>
+                <div className="h-px flex-1 bg-white/10" />
+              </div>
+              <motion.button
+                type="button"
+                onClick={() => { setPrivacyBurstKey(Date.now()); setPrivateClaimConfirm({}); }}
+                disabled={claimActionDisabled}
+                whileHover={claimActionDisabled ? undefined : { scale: 1.02 }}
+                whileTap={claimActionDisabled ? undefined : { scale: 0.98 }}
+                className={cn(
+                  "w-full flex items-center justify-center gap-2 rounded-2xl bg-black/30 border border-white/15 font-display font-semibold text-slate-200 transition-colors hover:bg-black/40 hover:border-white/25",
+                  mobile ? "py-3 text-base" : "py-3 text-sm",
+                  claimActionDisabled && "opacity-50 cursor-not-allowed hover:bg-black/30",
+                )}
+              >
+                <PrivacyGlyph size={mobile ? 20 : 18} opacity={1} />
+                <span>Claim privately</span>
+              </motion.button>
+            </>
+          )}
+        </>
+      )}
+
+      {/* Small, unobtrusive discovery link for anyone who's started linking PAJ Cash but hasn't
+          saved a bank account yet — the prominent two-button "Claim to wallet / Claim to bank"
+          layout only shows for Nigeria-by-IP or an already-saved default account (see
+          showBankClaimOption above), so this is how everyone else still finds their way in. */}
+      {PAJ_CASH_ENABLED && isRecipient && !showBankClaimOption && pajLinked && (
+        <button
+          type="button"
+          onClick={openNairaSetup}
+          className={cn("text-base md:text-sm text-slate-400 hover:text-slate-200 underline underline-offset-2", mobile ? "mt-3" : "mt-2")}
+        >
+          Set up a bank account to receive payouts in Naira
+        </button>
       )}
 
       {/* Claim-to-external-wallet: disabled for now — set SHOW_EXTERNAL_CLAIM to re-enable. */}
@@ -3432,6 +3884,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     <>
       {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
       {renderPrivateClaimConfirmDialog()}
+      {renderNairaSetupDialog()}
+      {renderNairaClaimConfirmDialog()}
 
       <ClaimPayLayout
         embedInApp={embedInApp}
@@ -3562,8 +4016,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               {pendingSocialPlatformHint === "telegram" && telegramClaimVerified === true
                 ? "Telegram confirmed — sign in to finish."
                 : pendingSocialPlatformHint
-                ? `This was sent to a ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "social"} username. Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "that account"} to check.`
-                : "This payment may be waiting for you. Sign in to check."}
+                  ? `This was sent to a ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "social"} username. Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "that account"} to check.`
+                  : "This payment may be waiting for you. Sign in to check."}
             </p>
             <button
               onClick={() => {
@@ -3640,6 +4094,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   <div className={"text-xl text-gray-500 mt-3 mb-5"}>
                     from {getSenderDisplay(claim)}
                   </div>
+                  {claim?.naira_claim_bank_name && (
+                    <p className="text-base text-emerald-600 font-medium">
+                      Claimed to {claim.naira_claim_bank_name} ····{claim.naira_claim_bank_last4}
+                    </p>
+                  )}
                 </div>
                 <ClaimDescriptionMessageBox description={claim?.description} />
                 {/* Troubleshoot payment (localhost-only debug panel) — disabled for now, keep for later.
@@ -3779,7 +4238,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       transition={{ delay: 0.15 }}
                       className="text-xl sm:text-2xl font-semibold mb-6 bg-gradient-to-r from-[#FF1301] to-[#EAB308] bg-clip-text text-transparent"
                     >
-                      On its way to your wallet ✨
+                      On its way to your {claimAsRecipientMutation.variables?.claimToNaira ? "bank" : "wallet"} ✨
                     </motion.p>
                     <div className="flex justify-center gap-2">
                       {["#FF1301", "#EAB308", "#22c55e"].map((color, i) => (
@@ -3835,6 +4294,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                           from <span className="font-medium text-gray-700">{senderLabel}</span>
                         </motion.p>
                       )}
+                      {claimAsRecipientMutation.variables?.claimToNaira && pajDefaultBankAccount && (
+                        <motion.p
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.25 }}
+                          className="text-base text-gray-500 mt-1"
+                        >
+                          Your Naira payout to {pajDefaultBankAccount.bank_name} ····{pajDefaultBankAccount.account_number.slice(-4)} is on its way.
+                        </motion.p>
+                      )}
                     </div>
                     <ClaimDescriptionMessageBox description={claim?.description} />
                     <motion.div
@@ -3885,6 +4354,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       <div className="text-5xl font-bold text-gray-900 mb-3">+ ${amt}</div>
                       {senderLabel && (
                         <p className="text-xl text-gray-500">from <span className="font-medium text-gray-700">{senderLabel}</span></p>
+                      )}
+                      {claim?.naira_claim_bank_name && (
+                        <p className="text-base text-emerald-600 font-medium mt-2">
+                          Claimed to {claim.naira_claim_bank_name} ····{claim.naira_claim_bank_last4}
+                        </p>
                       )}
                     </div>
                     <ClaimDescriptionMessageBox description={claim?.description} />
@@ -3942,7 +4416,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         </>
                       ) : (
                         <>
-          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+                          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                           <span className="text-gray-500">
                             {waitingForFundsCopy(claim?.is_private)}
                           </span>
@@ -4265,6 +4739,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   {claim?.creator_username
                     ? `@${claim.creator_username}`
                     : claim?.creator_email || "Anonymous"}
+                </div>
+                <div className="text-left max-w-md mx-auto">
+                  <ClaimDescriptionMessageBox description={claim?.description} />
                 </div>
                 <div className="flex items-center justify-center gap-2 text-base md:text-sm mb-4">
                   {burnerIsChecking ? (
@@ -4670,7 +5147,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
                 {/* Wallet-exposure nudge — this recipient has already seen this sender's wallet
                     address via a past public payment, so paying privately now doesn't undo that. */}
-                {hasPaidRecipientPublicly && (
+                {/*      {hasPaidRecipientPublicly && (
                   <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0 mt-0.5">
                       <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
@@ -4688,7 +5165,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       </button>
                     </div>
                   </div>
-                )}
+                )} */}
 
                 {/* Minimum amount notice */}
                 {claimAmountUSD > 0 && claimAmountUSD < 5 && (

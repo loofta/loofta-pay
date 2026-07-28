@@ -6,5 +6,7 @@ export interface PajCashBankAccountRow {
   bank_name: string;
   account_number: string;
   account_name: string;
+  wallet_address: string | null;
+  is_default: boolean;
   created_at: string;
 }

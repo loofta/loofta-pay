@@ -5,6 +5,7 @@ import { PajCashService, PajApiError, type PajCurrency } from './paj-cash.servic
 import { PajCashSessionService, PajLinkRequiredError } from './paj-cash-session.service';
 import { PajCashBankService } from './paj-cash-bank.service';
 import type { PajCashOrderRow, PajOrderStatus } from './entities/paj-order.entity';
+import { computeLooftaFeeUsdc } from '@/common/paj-cash-fee';
 
 export { PajLinkRequiredError };
 
@@ -56,6 +57,50 @@ export class PajCashOrdersService {
 
   private table() {
     return this.supabase.getClient().from('paj_cash_orders');
+  }
+
+  /** After a "claim in Naira" sweep succeeds, mirror it into paj_cash_orders as a completed
+   * OFF_RAMP entry — purely so it shows up in the recipient's own withdrawal history (and for
+   * admin/support visibility). No PAJ order is ever created for this path (see
+   * claims.service.ts claimAsRecipient) — the burner is swept directly to the bank account's
+   * abstracted wallet_address — so paj_order_id stays null here; the unique index on
+   * paj_order_id only applies to non-null values, so multiple null rows are fine. Best-effort:
+   * never let this bookkeeping insert fail a claim that has already succeeded on-chain. */
+  async recordNairaClaimOrder(params: {
+    userId: string;
+    bankAccountId: string;
+    walletAddress: string;
+    amountUsdc: number;
+    looftaFeeUsdc: number;
+    sweepTxHash: string;
+  }): Promise<void> {
+    let fiatAmount: number | null = null;
+    let rate: number | null = null;
+    try {
+      const token = await this.session.getValidSessionToken(params.userId);
+      const quote = await this.pajCash.getOfframpValue(token, params.amountUsdc, SOLANA_USDC_MINT, 'NGN');
+      fiatAmount = quote.fiatAmount;
+      rate = quote.rate;
+    } catch (e) {
+      this.logger.warn(`recordNairaClaimOrder: failed to fetch NGN quote (non-fatal): ${(e as Error)?.message}`);
+    }
+
+    const { error } = await this.table().insert({
+      user_id: params.userId,
+      direction: 'OFF_RAMP',
+      paj_order_id: null,
+      currency: 'NGN',
+      fiat_amount: fiatAmount,
+      amount_usdc: params.amountUsdc,
+      rate,
+      loofta_fee_usdc: params.looftaFeeUsdc,
+      offramp_deposit_address: params.walletAddress,
+      offramp_bank_account_id: params.bankAccountId,
+      offramp_tx_signature: params.sweepTxHash,
+      status: 'COMPLETE',
+      completed_at: new Date().toISOString(),
+    });
+    if (error) this.logger.error(`recordNairaClaimOrder: insert failed: ${error.message}`);
   }
 
   async createOnramp(userId: string, params: { amountUsdc: number; currency?: PajCurrency }): Promise<PajCashOrderRow> {
@@ -119,13 +164,20 @@ export class PajCashOrdersService {
 
     const token = await this.session.getValidSessionToken(userId);
 
+    // params.amountUsdc is the gross amount debited from the user's balance. Loofta's cut is
+    // taken by ordering PAJ the *net* amount — what actually gets deposited to order.address —
+    // while the fee itself is sent on-chain to Loofta's fee wallet in the same withdraw
+    // transaction (see PajCashOfframpView.tsx's sendUsdcWithBackendFeePayer).
+    const looftaFeeUsdc = computeLooftaFeeUsdc(params.amountUsdc);
+    const netAmountUsdc = params.amountUsdc - looftaFeeUsdc;
+
     let order;
     try {
       order = await this.pajCash.createOfframp(token, {
         bank: bankAccount.bank_id,
         accountNumber: bankAccount.account_number,
         currency,
-        amount: params.amountUsdc,
+        amount: netAmountUsdc,
         mint: SOLANA_USDC_MINT,
         chain: 'SOLANA',
         description: 'Loofta withdrawal',
@@ -149,6 +201,7 @@ export class PajCashOrdersService {
         amount_usdc: order.amount,
         rate: order.rate,
         fee_usdc: order.fee ?? null,
+        loofta_fee_usdc: looftaFeeUsdc,
         offramp_deposit_address: order.address,
         offramp_bank_account_id: bankAccount.id,
         status: 'CREATED',

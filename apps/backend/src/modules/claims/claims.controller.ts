@@ -274,13 +274,14 @@ export class ClaimsController {
   async claimAsRecipient(
     @Param('id') id: string,
     @Req() req: { user?: { id: string } },
-    @Body() body: { claimPrivately?: boolean; destinationAddress?: string },
+    @Body() body: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean },
   ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
     const privyUserId = req.user?.id;
     if (!privyUserId) throw new UnauthorizedException('Login required to claim.');
     return this.claimsService.claimAsRecipient(id, privyUserId, {
       claimPrivately: body?.claimPrivately,
       destinationAddress: body?.destinationAddress,
+      claimToNaira: body?.claimToNaira,
     });
   }
 

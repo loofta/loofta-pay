@@ -17,6 +17,7 @@ import {
   pajListBankAccounts,
   pajConfirmBankAccount,
   pajSaveBankAccount,
+  pajSetDefaultBankAccount,
   pajGetValue,
   pajCreateOfframp,
   pajConfirmOfframpSent,
@@ -28,6 +29,7 @@ import {
   type PajSavedBankAccount,
   type PajResolvedBankAccount,
 } from "@/services/pajCash";
+import { computeLooftaFeeUsdc } from "@/lib/pajCashFee";
 import { PajCashLinkFlow } from "./PajCashLinkFlow";
 import { PajCashKycStep } from "./PajCashKycStep";
 import { BankCombobox } from "./BankCombobox";
@@ -67,6 +69,7 @@ export function PajCashOfframpView({
   const [savedAccounts, setSavedAccounts] = useState<PajSavedBankAccount[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
 
   const [banks, setBanks] = useState<PajBank[]>([]);
   const [bankId, setBankId] = useState<string | null>(null);
@@ -77,6 +80,7 @@ export function PajCashOfframpView({
 
   const [amount, setAmount] = useState("");
   const [quote, setQuote] = useState<number | null>(null);
+  const looftaFee = computeLooftaFeeUsdc(parseFloat(amount) || 0);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [order, setOrder] = useState<PajCashOrder | null>(null);
@@ -141,12 +145,13 @@ export function PajCashOfframpView({
   useEffect(() => {
     const amountNum = parseFloat(amount);
     if (!(amountNum > 0)) { setQuote(null); return; }
+    const netAmountNum = amountNum - computeLooftaFeeUsdc(amountNum);
     let cancelled = false;
     const t = setTimeout(async () => {
       setQuoteLoading(true);
       try {
         const accessToken = await getAccessToken();
-        const q = await pajGetValue("offramp", amountNum, "NGN", accessToken);
+        const q = await pajGetValue("offramp", netAmountNum, "NGN", accessToken);
         if (!cancelled) setQuote(q.fiatAmount);
       } catch {
         if (!cancelled) setQuote(null);
@@ -215,6 +220,20 @@ export function PajCashOfframpView({
     }
   };
 
+  const handleSetDefault = async (accountId: string) => {
+    setSettingDefaultId(accountId);
+    try {
+      const accessToken = await getAccessToken();
+      await pajSetDefaultBankAccount(accountId, accessToken);
+      setSavedAccounts((prev) => prev.map((acc) => ({ ...acc, is_default: acc.id === accountId })));
+    } catch (err: unknown) {
+      const msg = err instanceof PajCashApiError ? err.message : "Could not set default account.";
+      toast({ variant: "destructive", title: "PAJ Cash", description: msg });
+    } finally {
+      setSettingDefaultId(null);
+    }
+  };
+
   const handleCreateOrder = async () => {
     const amountNum = parseFloat(amount);
     if (!selectedAccountId || !(amountNum > 0)) return;
@@ -248,6 +267,7 @@ export function PajCashOfframpView({
         chain: getPrivySolanaChainForMode(mode),
         accessToken,
         network: mode,
+        looftaFeeUsdc: created.loofta_fee_usdc ?? 0,
       });
 
       const confirmed = await pajConfirmOfframpSent(created.id, sig, accessToken);
@@ -309,18 +329,38 @@ export function PajCashOfframpView({
         ) : (
           <div className="space-y-2">
             {savedAccounts.map((acc) => (
-              <button
+              <div
                 key={acc.id}
-                type="button"
-                onClick={() => { setSelectedAccountId(acc.id); setStep("amount"); }}
-                className={`w-full flex items-center justify-between gap-3 p-4 rounded-xl border-2 text-left transition-all ${dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm"}`}
+                className={`w-full flex items-center justify-between gap-3 p-4 rounded-xl border-2 transition-all ${dark ? "border-white/10 bg-white/5 hover:border-white/20" : "border-gray-100 bg-white hover:border-orange-100 shadow-sm"}`}
               >
-                <div className="min-w-0">
-                  <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>{acc.account_name}</p>
+                <button
+                  type="button"
+                  onClick={() => { setSelectedAccountId(acc.id); setStep("amount"); }}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>{acc.account_name}</p>
+                    {acc.is_default && (
+                      <span className={`text-sm font-medium px-2 py-0.5 rounded-full ${dark ? "bg-white/10 text-slate-300" : "bg-gray-100 text-gray-600"}`}>Default</span>
+                    )}
+                  </div>
                   <p className={`text-base mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>{acc.bank_name} · {acc.account_number}</p>
-                </div>
-                <ArrowRight className={`h-4 w-4 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-              </button>
+                </button>
+                {!acc.is_default && (
+                  <button
+                    type="button"
+                    onClick={() => handleSetDefault(acc.id)}
+                    disabled={settingDefaultId === acc.id}
+                    className={`text-sm font-medium shrink-0 ${dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"}`}
+                  >
+                    {settingDefaultId === acc.id ? "Setting…" : "Set as default"}
+                  </button>
+                )}
+                <ArrowRight
+                  onClick={() => { setSelectedAccountId(acc.id); setStep("amount"); }}
+                  className={`h-4 w-4 shrink-0 cursor-pointer ${dark ? "text-slate-500" : "text-gray-300"}`}
+                />
+              </div>
             ))}
           </div>
         )}
@@ -424,9 +464,12 @@ export function PajCashOfframpView({
             {quoteLoading ? (
               <p className={`text-base mt-2 ${dark ? "text-slate-500" : "text-gray-400"}`}>Getting quote…</p>
             ) : quote !== null ? (
-              <p className={`text-base mt-2 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                ≈ ₦{quote.toLocaleString(undefined, { maximumFractionDigits: 2 })} · before PAJ&apos;s fee, confirmed on the next step
-              </p>
+              <div className={`text-base mt-2 space-y-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                <p>≈ ₦{quote.toLocaleString(undefined, { maximumFractionDigits: 2 })} to your bank · before PAJ&apos;s fee, confirmed on the next step</p>
+                {looftaFee > 0 && (
+                  <p>Loofta fee: ${looftaFee.toFixed(2)}</p>
+                )}
+              </div>
             ) : null}
           </div>
         </div>

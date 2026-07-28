@@ -1,6 +1,6 @@
 import {
   BadRequestException, Body, ConflictException, Controller, Get, HttpCode, HttpStatus,
-  Param, Post, Query, Req, UseGuards,
+  Param, Patch, Post, Query, Req, UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@/common/guards';
@@ -152,6 +152,16 @@ export class PajCashController {
   @ApiOperation({ summary: 'List saved bank accounts for the current user' })
   async listBankAccounts(@Req() req: any) {
     return this.bank.listSavedAccounts(req.user.id);
+  }
+
+  @Patch('bank-account/:id/default')
+  @ApiOperation({ summary: 'Mark a saved bank account as the default Naira payout destination' })
+  async setDefaultBankAccount(@Req() req: any, @Param('id') id: string) {
+    try {
+      return await this.bank.setDefaultAccount(req.user.id, id);
+    } catch (err) {
+      rethrowAsHttp(err);
+    }
   }
 
   @Post('kyc')

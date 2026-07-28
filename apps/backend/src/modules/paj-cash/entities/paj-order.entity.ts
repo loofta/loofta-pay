@@ -20,6 +20,7 @@ export interface PajCashOrderRow {
   amount_usdc: number | null;
   rate: number | null;
   fee_usdc: number | null;
+  loofta_fee_usdc: number | null;
   onramp_bank_name: string | null;
   onramp_account_number: string | null;
   onramp_account_name: string | null;

@@ -1,13 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { useAuthStore } from "@/store/auth";
 import { useRouter } from "next/navigation";
-import { Settings } from "lucide-react";
+import { Settings, Landmark } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { TIERS, getTierForVolume } from "@/lib/tiers";
+import { getClientGeo } from "@/lib/geo";
+import { pajLinkStatus, pajListBankAccounts, type PajSavedBankAccount } from "@/services/pajCash";
+
+const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
 
 function CopyIcon({ className }: { className?: string }) {
   return (
@@ -55,7 +59,7 @@ function formatVol(n: number): string {
 export default function ProfilePage() {
   const t = useTranslations('SettingsPage');
   const router = useRouter();
-  const { authenticated, logout } = useAuth();
+  const { authenticated, logout, getAccessToken } = useAuth();
   const username = useAuthStore((s) => s.username ?? null);
   const email = useAuthStore((s) => s.email);
   const tier = useAuthStore((s) => s.tier);
@@ -63,6 +67,33 @@ export default function ProfilePage() {
   const setOpenShareModal = useAuthStore((s) => s.setOpenShareModal);
   const setOpenSettingsModal = useAuthStore((s) => s.setOpenSettingsModal);
   const [statusOpen, setStatusOpen] = useState(false);
+
+  // Naira payout card — shown for users in Nigeria (by IP) or already linked to PAJ Cash, so it
+  // doesn't clutter profiles for the vast majority this never applies to.
+  const [showNairaCard, setShowNairaCard] = useState(false);
+  const [defaultBankAccount, setDefaultBankAccount] = useState<PajSavedBankAccount | null>(null);
+  useEffect(() => {
+    if (!PAJ_CASH_ENABLED || !authenticated) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const status = await pajLinkStatus(accessToken);
+        if (cancelled) return;
+        if (status.linked) {
+          setShowNairaCard(true);
+          const accounts = await pajListBankAccounts(accessToken);
+          if (!cancelled) setDefaultBankAccount(accounts.find((a) => a.is_default) ?? null);
+          return;
+        }
+        const geo = await getClientGeo();
+        if (!cancelled && geo.countryCode === "NG") setShowNairaCard(true);
+      } catch {
+        // leave hidden — this is a nice-to-have surface, not critical path
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authenticated, getAccessToken]);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -180,6 +211,28 @@ export default function ProfilePage() {
             </div>
           );
         })()}
+
+        {showNairaCard && (
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab: "withdraw" } }))}
+            className="w-full rounded-xl bg-white/5 border border-white/10 p-4 mb-4 text-left hover:bg-white/10 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <Landmark className="w-5 h-5 text-orange-400 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-medium text-slate-400">Naira payout account</p>
+                {defaultBankAccount ? (
+                  <p className="text-base font-semibold text-white truncate">
+                    {defaultBankAccount.bank_name} · ····{defaultBankAccount.account_number.slice(-4)}
+                  </p>
+                ) : (
+                  <p className="text-base font-semibold text-white">Set up Naira payouts</p>
+                )}
+              </div>
+            </div>
+          </button>
+        )}
 
         <div className="h-px bg-white/10 my-2" />
 

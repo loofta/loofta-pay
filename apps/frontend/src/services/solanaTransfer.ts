@@ -66,6 +66,9 @@ export async function buildUSDCTransferTransaction(params: {
   feePayerAddress?: string | null;
   /** Override USDC mint (for networkMode-aware callers). Defaults to cluster-based getUsdcMint(). */
   usdcMint?: PublicKey;
+  /** Optional second transfer leg in the same transaction/signature — used for the Loofta fee
+   * cut on PAJ Cash Naira withdrawals (fee wallet + net amount to PAJ, one user signature). */
+  extraTransfer?: { recipientAddress: string; amountUSDC: number };
 }): Promise<VersionedTransaction> {
   const connection =
     params.connection || new Connection(getSolanaHttpRpc(), "confirmed");
@@ -150,6 +153,46 @@ export async function buildUSDCTransferTransaction(params: {
       TOKEN_PROGRAM_ID
     )
   );
+
+  if (params.extraTransfer) {
+    const extraAmountRaw = Math.round(params.extraTransfer.amountUSDC * 10 ** USDC_DECIMALS);
+    if (extraAmountRaw > 0) {
+      const extraRecipient = new PublicKey(params.extraTransfer.recipientAddress);
+      const extraRecipientAta = getAssociatedTokenAddressSync(
+        mint,
+        extraRecipient,
+        false,
+        TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID
+      );
+      const extraAccountInfo = await rpcWithRetry(
+        () => connection.getAccountInfo(extraRecipientAta),
+        "getAccountInfo(extraRecipientAta)"
+      );
+      if (!extraAccountInfo) {
+        instructions.push(
+          createAssociatedTokenAccountInstruction(
+            ataPayer,
+            extraRecipientAta,
+            extraRecipient,
+            mint,
+            TOKEN_PROGRAM_ID,
+            ASSOCIATED_TOKEN_PROGRAM_ID
+          )
+        );
+      }
+      instructions.push(
+        createTransferInstruction(
+          senderAta,
+          extraRecipientAta,
+          sender,
+          extraAmountRaw,
+          [],
+          TOKEN_PROGRAM_ID
+        )
+      );
+    }
+  }
 
   // Use a real blockhash so RPC simulation succeeds; Privy still handles signing/broadcast.
   const { blockhash } = await rpcWithRetry(

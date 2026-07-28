@@ -10,9 +10,10 @@ import { CronModule } from '../cron/cron.module';
 import { SendPaymentModule } from '../send-payment/send-payment.module';
 import { EmailModule } from '../email/email.module';
 import { MagicblockQuestModule } from '../magicblock-quest/magicblock-quest.module';
+import { PajCashModule } from '../paj-cash/paj-cash.module';
 
 @Module({
-  imports: [IntentsModule, UsersModule, forwardRef(() => CronModule), forwardRef(() => SendPaymentModule), EmailModule, MagicblockQuestModule],
+  imports: [IntentsModule, UsersModule, forwardRef(() => CronModule), forwardRef(() => SendPaymentModule), EmailModule, MagicblockQuestModule, PajCashModule],
   controllers: [ClaimsController, AdminClaimsController],
   providers: [ClaimsService, DepositService, SolanaSponsorService],
   exports: [ClaimsService, DepositService, SolanaSponsorService],

@@ -10,6 +10,7 @@ import {
   getAccount,
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
+  createCloseAccountInstruction,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
@@ -35,6 +36,9 @@ import {
   type MagicblockPrivateTransferClientResponse,
 } from '@/common/magicblock-private-transfer';
 import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
+import { PajCashBankService } from '../paj-cash/paj-cash-bank.service';
+import { PajCashOrdersService } from '../paj-cash/paj-cash-orders.service';
+import { computeLooftaFeeUsdc } from '@/common/paj-cash-fee';
 
 const DEPOSIT_SEED = 'deposit';
 const VAULT_SEED = 'vault';
@@ -90,6 +94,8 @@ export class ClaimsService {
     private readonly solanaSponsor: SolanaSponsorService,
     private readonly emailService: EmailService,
     private readonly magicblockQuest: MagicblockQuestService,
+    private readonly pajCashBank: PajCashBankService,
+    private readonly pajCashOrders: PajCashOrdersService,
   ) {
     const defaultUsdcMint = isSolanaDevnetFromConfig(this.configService)
       ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
@@ -921,6 +927,17 @@ export class ClaimsService {
       const creator = await this.usersService.findByPrivyId(claim.created_by);
       (claim as Claim & { creator_username?: string | null }).creator_username = creator?.username ?? null;
     }
+    // Embed which bank account a "claim in Naira" was routed to, so the recipient sees durable,
+    // reload-proof confirmation on the claim page itself — not just the transient toast/copy
+    // shown at the moment they claimed, which is lost on refresh.
+    const nairaBankAccountId = (claim as Claim & { naira_claim_bank_account_id?: string | null }).naira_claim_bank_account_id;
+    if (nairaBankAccountId) {
+      const bankAccount = await this.pajCashBank.getAccountById(nairaBankAccountId).catch(() => null);
+      if (bankAccount) {
+        (claim as Claim & { naira_claim_bank_name?: string; naira_claim_bank_last4?: string }).naira_claim_bank_name = bankAccount.bank_name;
+        (claim as Claim & { naira_claim_bank_last4?: string }).naira_claim_bank_last4 = bankAccount.account_number.slice(-4);
+      }
+    }
     // Mask pending-email claims: don't expose email to client, expose flag so UI can show "Sign in to claim"
     if (claim.recipient_address?.startsWith(ClaimsService.PENDING_EMAIL_PREFIX)) {
       const pendingEmail = claim.recipient_address.slice(ClaimsService.PENDING_EMAIL_PREFIX.length).trim().toLowerCase();
@@ -1302,7 +1319,7 @@ export class ClaimsService {
   async claimAsRecipient(
     claimId: string,
     privyUserId: string,
-    opts?: { claimPrivately?: boolean; destinationAddress?: string },
+    opts?: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean },
   ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
     const claim = await this.findOneRaw(claimId);
     // Guard: do not re-claim a completed or cancelled payment
@@ -1342,6 +1359,31 @@ export class ClaimsService {
       }
       sweepDestination = dest;
     }
+    // "Claim in Naira" — resolve the recipient's default PAJ Cash bank account server-side
+    // (never trust a client-supplied address for this path) and sweep straight to its
+    // abstracted wallet_address instead of the recipient's own wallet. PAJ auto-converts and
+    // pays out to the linked bank account once the USDC lands there — no PAJ order needed.
+    let nairaBankAccountId: string | undefined;
+    let nairaLooftaFeeUsdc: number | undefined;
+    if (opts?.claimToNaira) {
+      const defaultAccount = await this.pajCashBank.getDefaultAccount(privyUserId);
+      if (!defaultAccount) {
+        throw new BadRequestException('No default Naira payout account set up.');
+      }
+      if (!defaultAccount.wallet_address) {
+        // setDefaultAccount heals this on promote-to-default, so reaching here means either the
+        // healing re-registration genuinely failed, or is_default was set some other way. Either
+        // way, retrying setDefaultAccount is the fix — surface a distinct, actionable message.
+        throw new BadRequestException('Your default bank account needs to be reconnected — please set it as default again to refresh it.');
+      }
+      sweepDestination = defaultAccount.wallet_address;
+      nairaBankAccountId = defaultAccount.id;
+      nairaLooftaFeeUsdc = computeLooftaFeeUsdc(parseFloat(String(claim.amount || '0')));
+      this.logger.log(
+        `Claim ${claimId}: [MONEY] claim-to-Naira — routing payout to PAJ abstracted wallet_address=${sweepDestination} ` +
+        `(bankAccountId=${nairaBankAccountId}, looftaFeeUsdc=${nairaLooftaFeeUsdc})`,
+      );
+    }
 
     // Lock the recipient identity for the duration of this claim attempt — otherwise the
     // sender's "edit recipient" action (updateClaimRecipient) could overwrite recipient_address
@@ -1375,12 +1417,19 @@ export class ClaimsService {
     // Persist that the verified recipient actually asked to claim this, and how — the cron sweep
     // retry (cronSweepPendingBurners) only resumes claims where this is set, so a funded-but-
     // never-claimed burner never gets auto-delivered to a recipient who hasn't chosen anything.
+    // Stamp the fully-RESOLVED sweepDestination (not just the raw destinationAddress opt) — for
+    // claimToNaira this is the PAJ abstracted wallet_address, not the recipient's own wallet.
+    // Getting this wrong sends a stuck/retried claim to the wrong place: a real incident (claim
+    // 3d05bc19) swept to the recipient's own wallet on cron retry instead of their bank account,
+    // because this used to only ever record raw destinationAddress and left claimToNaira as null,
+    // and cronSweepPendingBurners falls back to the recipient's own wallet when this is null.
     // Best-effort: never block the claim itself on this bookkeeping write.
     await this.supabaseService.payments
       .update({
         claim_requested_at: new Date().toISOString(),
         claim_requested_privately: opts?.claimPrivately ?? false,
-        claim_requested_destination: opts?.destinationAddress?.trim() || null,
+        claim_requested_destination: sweepDestination !== wallet ? sweepDestination : null,
+        claim_requested_naira_fee_usdc: nairaLooftaFeeUsdc ?? null,
       })
       .eq('id', claimId)
       .then(
@@ -1393,7 +1442,7 @@ export class ClaimsService {
       // we must not have overwritten the PENDING_EMAIL/PENDING_USERNAME address, otherwise the user
       // cannot retry because the pending-claim detection no longer matches.
       const { sweepTxHash, sweptAmount, feeAmountUsdc, deliveredPrivately } = await this.sweepClaimBurnerToWallet(
-        claimId, claim, sweepDestination, { claimPrivately: opts?.claimPrivately },
+        claimId, claim, sweepDestination, { claimPrivately: opts?.claimPrivately, looftaFeeUsdc: nairaLooftaFeeUsdc },
       );
 
       // Sweep didn't throw — safe to commit the resolved wallet to DB. Always the caller's own
@@ -1412,8 +1461,24 @@ export class ClaimsService {
       }
 
       if (sweepTxHash) {
-        await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true, deliveredPrivately }, privyUserId);
+        await this.updateStatus(claimId, 'SUCCESS', {
+          recipientSwept: true,
+          deliveredPrivately,
+          nairaClaim: nairaBankAccountId ? { bankAccountId: nairaBankAccountId, feeAmountUsdc: feeAmountUsdc ?? 0 } : undefined,
+        }, privyUserId);
         this.notifyRecipientAfterPayment(claimId);
+        if (nairaBankAccountId) {
+          // Best-effort — this only powers the recipient's withdrawal-history visibility, never
+          // block/fail an already-succeeded on-chain claim on it.
+          this.pajCashOrders.recordNairaClaimOrder({
+            userId: privyUserId,
+            bankAccountId: nairaBankAccountId,
+            walletAddress: sweepDestination,
+            amountUsdc: parseFloat(sweptAmount || '0'),
+            looftaFeeUsdc: feeAmountUsdc ?? 0,
+            sweepTxHash,
+          }).catch((e) => this.logger.warn(`Claim ${claimId}: recordNairaClaimOrder failed (non-fatal): ${(e as Error)?.message}`));
+        }
         this.logger.log(`Claim ${claimId}: sweep completed immediately, marked SUCCESS`);
       } else if (claimStatus === 'SUCCESS') {
         // Status was already SUCCESS (prematurely set by sender) and burner is now empty —
@@ -1421,7 +1486,7 @@ export class ClaimsService {
         // Don't downgrade; schedule a background retry to catch late-arriving funds.
         this.logger.log(`Claim ${claimId}: burner empty but status already SUCCESS — scheduling background retry`);
         if (claimBurnerAddress) {
-          this.scheduleBackgroundSweepRetry(claimId, sweepDestination, privyUserId, { claimPrivately: opts?.claimPrivately });
+          this.scheduleBackgroundSweepRetry(claimId, sweepDestination, privyUserId, { claimPrivately: opts?.claimPrivately, looftaFeeUsdc: nairaLooftaFeeUsdc });
         }
       } else {
         // Funds still in-flight on MagicBlock private leg (devnet: random delay up to ~15 min). Mark
@@ -1430,7 +1495,7 @@ export class ClaimsService {
         this.logger.log(`Claim ${claimId}: burner empty at claim time — marked PRIVATE_TRANSFER_PENDING, scheduling background sweep retry`);
         const rawForRetry = claim as { claim_burner_address?: string | null };
         if (rawForRetry.claim_burner_address) {
-          this.scheduleBackgroundSweepRetry(claimId, sweepDestination, privyUserId, { claimPrivately: opts?.claimPrivately });
+          this.scheduleBackgroundSweepRetry(claimId, sweepDestination, privyUserId, { claimPrivately: opts?.claimPrivately, looftaFeeUsdc: nairaLooftaFeeUsdc });
         }
       }
 
@@ -1584,7 +1649,7 @@ export class ClaimsService {
     claimId: string,
     wallet: string,
     privyUserId: string,
-    opts?: { claimPrivately?: boolean },
+    opts?: { claimPrivately?: boolean; looftaFeeUsdc?: number },
   ): void {
     const started = Date.now();
     const backgroundMaxMs = this.getBurnerInboundBackgroundMaxMs();
@@ -1597,9 +1662,24 @@ export class ClaimsService {
         const freshClaim = await this.findOneRaw(claimId);
         const st = (freshClaim.status || '').toUpperCase();
         if (st === 'SUCCESS' || st === 'CANCELLED') return;
-        const { sweepTxHash, deliveredPrivately } = await this.sweepClaimBurnerToWallet(claimId, freshClaim, wallet, opts);
+        const { sweepTxHash, sweptAmount, deliveredPrivately } = await this.sweepClaimBurnerToWallet(claimId, freshClaim, wallet, opts);
         if (sweepTxHash) {
-          await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true, deliveredPrivately }, privyUserId);
+          let nairaClaim: { bankAccountId: string; feeAmountUsdc: number } | undefined;
+          if (opts?.looftaFeeUsdc != null) {
+            const bankAccount = await this.pajCashBank.getAccountByWalletAddress(wallet).catch(() => null);
+            if (bankAccount) {
+              nairaClaim = { bankAccountId: bankAccount.id, feeAmountUsdc: opts.looftaFeeUsdc };
+              this.pajCashOrders.recordNairaClaimOrder({
+                userId: privyUserId,
+                bankAccountId: bankAccount.id,
+                walletAddress: wallet,
+                amountUsdc: parseFloat(sweptAmount || '0'),
+                looftaFeeUsdc: opts.looftaFeeUsdc,
+                sweepTxHash,
+              }).catch((e) => this.logger.warn(`Claim ${claimId}: recordNairaClaimOrder failed (non-fatal): ${(e as Error)?.message}`));
+            }
+          }
+          await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true, deliveredPrivately, nairaClaim }, privyUserId);
           this.notifyRecipientAfterPayment(claimId);
           this.logger.log(`Claim ${claimId}: background poll sweep succeeded, marked SUCCESS`);
           return;
@@ -2037,12 +2117,13 @@ export class ClaimsService {
     claimId: string,
     claim: Claim & { recipient_address?: string },
     destination: string,
-    opts?: { claimPrivately?: boolean },
+    opts?: { claimPrivately?: boolean; looftaFeeUsdc?: number },
   ): Promise<{ sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number; deliveredPrivately?: boolean }> {
     const rawClaim = claim as { claim_burner_address?: string | null; claim_burner_encrypted_secret?: string | null };
     const burnerAddr = (rawClaim.claim_burner_address || '').trim();
     let sweepTxHash: string | undefined;
     let sweptAmount: string | undefined;
+    let feeAmountUsdc: number | undefined;
     if (!burnerAddr || !rawClaim.claim_burner_encrypted_secret) {
       return {};
     }
@@ -2111,7 +2192,13 @@ export class ClaimsService {
         // Direct SPL sweep: burner → recipient (public). Payer→burner was already private via MagicBlock.
         const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
         const recipientPubkey = new PublicKey(destination.trim());
-        const recipientAta = await getAssociatedTokenAddress(claimMint, recipientPubkey);
+        // allowOwnerOffCurve: true — a "claim in Naira" destination is PAJ's abstracted payout
+        // address, which is program-derived (off-curve) rather than a real wallet. Without this,
+        // getAssociatedTokenAddress throws TokenOwnerOffCurveError — an spl-token error class
+        // constructed with no message, so it surfaced as "Claim transfer failed: . Please try
+        // again." (real incident, claim 3d05bc19, 2026-07-28). Safe for normal on-curve wallets
+        // too: this only skips a validation check, it doesn't change the derived ATA address.
+        const recipientAta = await getAssociatedTokenAddress(claimMint, recipientPubkey, true);
         const sweepTx = new Transaction();
         try {
           await getAccount(conn, recipientAta);
@@ -2141,7 +2228,35 @@ export class ClaimsService {
             );
           }
         }
-        sweepTx.add(createTransferInstruction(burnerAta, recipientAta, burnerKeypair.publicKey, balance));
+        // Loofta fee ("claim in Naira" only, for now) — split the sweep into two transfer
+        // instructions in the same transaction/signature rather than asking PAJ to deduct
+        // anything: PAJ pays out 100% of whatever lands at `destination`. The fee payer's own
+        // wallet doubles as the protocol-fee collector (same wallet as platformFeeAccount
+        // elsewhere) — its USDC ATA is expected to already exist (see magicblock-private-transfer.ts)
+        // but we create it if missing anyway, cheap insurance against a broadcast-time failure.
+        const looftaFeeUnits = feePayerKp && opts?.looftaFeeUsdc
+          ? BigInt(Math.round(opts.looftaFeeUsdc * 1_000_000))
+          : BigInt(0);
+        const netUnits = balance - looftaFeeUnits;
+        if (looftaFeeUnits > BigInt(0) && feePayerKp) {
+          const feeAta = await getAssociatedTokenAddress(claimMint, feePayerKp.publicKey);
+          try {
+            await getAccount(conn, feeAta);
+          } catch {
+            sweepTx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, feeAta, feePayerKp.publicKey, claimMint));
+          }
+          sweepTx.add(createTransferInstruction(burnerAta, feeAta, burnerKeypair.publicKey, looftaFeeUnits));
+        }
+        sweepTx.add(createTransferInstruction(burnerAta, recipientAta, burnerKeypair.publicKey, netUnits));
+        // Reclaim the burner's own token-account rent (~0.002 SOL) back to the fee payer in the
+        // same transaction — the transfers above always drain the burner ATA to exactly zero
+        // (looftaFeeUnits + netUnits == balance), so it's safe to close right after. Burners are
+        // single-use and never touched again, so this rent was otherwise gone for good; recovering
+        // it directly offsets the ATA-creation costs the fee payer pays elsewhere in this same
+        // function (recipient/fee ATA creation) instead of those being a pure one-way cost.
+        if (feePayerKp) {
+          sweepTx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burnerKeypair.publicKey));
+        }
         const feePayerPubkey = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
         const sweepSigners = feePayerKp ? [burnerKeypair, feePayerKp] : [burnerKeypair];
         // Guard: fee payer must have SOL or the tx will be silently dropped (causes "timed out" not "failed").
@@ -2160,7 +2275,8 @@ export class ClaimsService {
           `Claim ${claimId}: [MONEY] ✅ swept ${balance} base-units USDC (${(Number(balance) / 1_000_000).toFixed(6)} USDC) burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} -> recipient=${destination.slice(0, 8)} tx=${sig}`,
         );
         sweepTxHash = sig;
-        sweptAmount = (Number(balance) / 1_000_000).toFixed(6);
+        sweptAmount = (Number(netUnits) / 1_000_000).toFixed(6);
+        if (looftaFeeUnits > BigInt(0)) feeAmountUsdc = Number(looftaFeeUnits) / 1_000_000;
       } else if (perWithdraw.attempted && !perWithdraw.success) {
         // PER deposit existed but we could not withdraw – do not silently succeed.
         throw new Error(
@@ -2187,14 +2303,17 @@ export class ClaimsService {
         }
       }
     } catch (e: any) {
-      this.logger.warn(`Claim ${claimId}: burner sweep failed – ${e?.message ?? e}`);
+      // e?.message can legitimately be '' (e.g. spl-token's TokenOwnerOffCurveError is
+      // constructed with no message) — log the constructor name too so an empty-message
+      // failure is still diagnosable instead of surfacing as a bare "Claim transfer failed: .".
+      this.logger.warn(`Claim ${claimId}: burner sweep failed – [${e?.name ?? e?.constructor?.name ?? typeof e}] ${e?.message || '(no message)'}`);
       throw new BadRequestException(
-        `Claim transfer failed: ${e?.message ?? 'unknown error'}. Please try again.`,
+        `Claim transfer failed: ${e?.message || e?.name || 'unknown error'}. Please try again.`,
       );
     }
     // Both branches that can set sweepTxHash here (the direct SPL sweep and the already-landed-sweep
     // recovery) are always plain public transfers — private delivery returns earlier, above.
-    return { sweepTxHash, sweptAmount, deliveredPrivately: false };
+    return { sweepTxHash, sweptAmount, feeAmountUsdc, deliveredPrivately: false };
   }
 
   /**
@@ -2833,6 +2952,9 @@ export class ClaimsService {
       solLamports: number;
       solPriceUsd: number;
     };
+    /** Set when this claim was delivered via "claim in Naira" — which default PAJ Cash bank
+     * account it was swept to and the Loofta fee taken on that sweep. payments-only column. */
+    nairaClaim?: { bankAccountId: string; feeAmountUsdc: number };
   }, createdByUserId?: string): Promise<Claim> {
     // Ownership check for destructive transitions
     if ((status as string).toUpperCase() === 'CANCELLED' && createdByUserId) {
@@ -2907,6 +3029,11 @@ export class ClaimsService {
       updateData.fee_paid_usdc = extra.feeAmountUsdc;
     }
 
+    if (extra?.nairaClaim) {
+      updateData.naira_claim_bank_account_id = extra.nairaClaim.bankAccountId;
+      updateData.naira_claim_fee_usdc = extra.nairaClaim.feeAmountUsdc;
+    }
+
     // Legacy claims table uses paid_with_chain instead of from_chain/from_token
     const legacyUpdateData: Record<string, unknown> = { ...updateData };
     if (legacyUpdateData.from_chain !== undefined) {
@@ -2915,6 +3042,8 @@ export class ClaimsService {
     }
     delete legacyUpdateData.from_token;
     delete legacyUpdateData.fee_paid_usdc;
+    delete legacyUpdateData.naira_claim_bank_account_id;
+    delete legacyUpdateData.naira_claim_fee_usdc;
 
     const { error, table: updatedTable } = await this.updateRow(id, updateData, legacyUpdateData);
 
@@ -3143,20 +3272,44 @@ export class ClaimsService {
 
     for (const raw of pendingClaims) {
       const claim = this.normalizeFromPayments(raw as Record<string, unknown>) as unknown as Claim & { recipient_address?: string };
-      const rawRow = raw as { claim_requested_privately?: boolean | null; claim_requested_destination?: string | null };
+      const rawRow = raw as {
+        claim_requested_privately?: boolean | null;
+        claim_requested_destination?: string | null;
+        claim_requested_naira_fee_usdc?: number | null;
+        recipient_user_id?: string | null;
+      };
       const recipientWallet = (claim.recipient_address || '').trim();
       if (!recipientWallet || this.isPendingRecipientAddress(recipientWallet)) {
         this.logger.warn(`[cronSweep] Claim ${claim.id}: recipient not resolved yet, skipping`);
         continue;
       }
       // Resume with the SAME choice the recipient originally made — never silently downgrade
-      // a requested private/external claim to a plain public sweep to their default wallet.
+      // a requested private/external claim (or a "claim in Naira" routed to a PAJ abstracted
+      // wallet_address) to a plain public sweep to their default wallet. Losing this destination
+      // was a real incident (claim 3d05bc19): it swept to the recipient's own wallet instead of
+      // their bank account because claim_requested_destination was never stamped for claimToNaira.
       const destination = rawRow.claim_requested_destination?.trim() || recipientWallet;
       const claimPrivately = rawRow.claim_requested_privately === true;
+      const looftaFeeUsdc = rawRow.claim_requested_naira_fee_usdc ?? undefined;
       try {
-        const { sweepTxHash, deliveredPrivately } = await this.sweepClaimBurnerToWallet(claim.id, claim, destination, { claimPrivately });
+        const { sweepTxHash, sweptAmount, deliveredPrivately } = await this.sweepClaimBurnerToWallet(claim.id, claim, destination, { claimPrivately, looftaFeeUsdc });
         if (sweepTxHash) {
-          await this.updateStatus(claim.id, 'SUCCESS', { recipientSwept: true, deliveredPrivately });
+          let nairaClaim: { bankAccountId: string; feeAmountUsdc: number } | undefined;
+          if (looftaFeeUsdc != null) {
+            const bankAccount = await this.pajCashBank.getAccountByWalletAddress(destination).catch(() => null);
+            if (bankAccount && rawRow.recipient_user_id) {
+              nairaClaim = { bankAccountId: bankAccount.id, feeAmountUsdc: looftaFeeUsdc };
+              this.pajCashOrders.recordNairaClaimOrder({
+                userId: rawRow.recipient_user_id || '',
+                bankAccountId: bankAccount.id,
+                walletAddress: destination,
+                amountUsdc: parseFloat(sweptAmount || '0'),
+                looftaFeeUsdc,
+                sweepTxHash,
+              }).catch((e) => this.logger.warn(`[cronSweep] Claim ${claim.id}: recordNairaClaimOrder failed (non-fatal): ${(e as Error)?.message}`));
+            }
+          }
+          await this.updateStatus(claim.id, 'SUCCESS', { recipientSwept: true, deliveredPrivately, nairaClaim });
           this.notifyRecipientAfterPayment(claim.id);
           this.logger.log(`[cronSweep] Claim ${claim.id}: sweep succeeded → SUCCESS`);
         } else {
