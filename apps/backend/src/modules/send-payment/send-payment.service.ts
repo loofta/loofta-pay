@@ -459,7 +459,7 @@ export class SendPaymentService {
 
     // Fetch rows first so we can split registered vs unregistered and compute per-row fees
     const { data: rows, error: fetchError } = await this.supabaseService.payments
-      .select('id, amount, recipient_email, recipient_username, recipient_was_unregistered, description')
+      .select('id, amount, recipient_email, recipient_username, recipient_was_unregistered, burner_address, description')
       .in('id', paymentIds);
     if (fetchError) {
       this.logger.warn(`[MultiSend] confirmMultiSend fetch failure: ${fetchError.message}`);
@@ -489,7 +489,15 @@ export class SendPaymentService {
       const paymentId = row.id as string;
       const rowFee = computedFeeByPaymentId.get(paymentId);
       const isUnregistered = !!row.recipient_was_unregistered;
-      const status = isUnregistered ? 'PRIVATE_TRANSFER_PENDING' : 'SUCCESS';
+      // A registered recipient can still have a burner_address set — the private hub fan-out
+      // (fanOutMultiSendHubTransfer) routes every recipient through their own dedicated burner,
+      // registered or not, unlike the direct combined-tx path (buildMultiPrivateTransfer) which
+      // sends registered recipients straight to their real wallet with no burner at all. Landing
+      // in a burner is not the same as the recipient having the money — they still have to claim
+      // it (see claimAsRecipient's existing "SUCCESS but burner still set" handling), so treat any
+      // row with a burner the same as an unregistered one instead of trusting isUnregistered alone.
+      const hasBurner = !!row.burner_address;
+      const status = (isUnregistered || hasBurner) ? 'PRIVATE_TRANSFER_PENDING' : 'SUCCESS';
       const updatePayload: Record<string, unknown> = {
         status,
         sender_user_id: senderUserId,
