@@ -37,6 +37,7 @@ import {
 } from '@/common/magicblock-private-transfer';
 import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
 import { PajCashBankService } from '../paj-cash/paj-cash-bank.service';
+import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { PajCashOrdersService } from '../paj-cash/paj-cash-orders.service';
 import { computeLooftaFeeUsdc } from '@/common/paj-cash-fee';
 
@@ -2081,36 +2082,11 @@ export class ClaimsService {
     return { sweepTxHash: sig, sweptAmount: (transferUnits / 1_000_000).toFixed(6), feeAmountUsdc };
   }
 
-  /**
-   * Anti-drain guard for sponsor-paid ATA creation. Whenever our fee payer pays the rent to
-   * create a wallet's USDC ATA, that rent is only ours to lose once — the wallet's owner can
-   * close the account later and reclaim the rent for themselves, then get sponsored again the
-   * next time they receive a payment. Without this guard, that create→close→repeat cycle is
-   * a free, repeatable drain on the fee payer (see project memory: solana sponsor security
-   * hardening, and the recurring drains that predate this).
-   *
-   * Records a first-ever sponsorship in ata_sponsorships via an insert that fails on conflict.
-   * Returns true the first time (safe to sponsor), false every time after (already paid for
-   * once — refuse to pay again). Fails OPEN (returns true) only on a genuine DB error, since a
-   * false negative here blocks a legitimate claim entirely; a missed guard insert is a much
-   * smaller risk than that.
-   */
-  private async guardAtaSponsorship(walletAddress: string, mint: string, context: string): Promise<boolean> {
-    const { error } = await this.supabaseService.ataSponsorships.insert({
-      wallet_address: walletAddress,
-      mint,
-      context,
-    });
-    if (!error) return true;
-    // Postgres unique-violation — this (wallet, mint) was already sponsored once before.
-    if (error.code === '23505') {
-      this.logger.warn(
-        `[AtaSponsorship] BLOCKED repeat sponsorship for wallet=${walletAddress.slice(0, 8)}… mint=${mint.slice(0, 8)}… context=${context} — ATA was already paid for once; refusing to pay rent again.`,
-      );
-      return false;
-    }
-    this.logger.warn(`[AtaSponsorship] guard insert failed (failing open): ${error.message}`);
-    return true;
+  /** Anti-drain guard for sponsor-paid ATA creation — shared with lottery.service.ts and
+   *  private-balance-processor.service.ts (see @/common/ata-sponsorship-guard). Kept as a thin
+   *  delegate here so this file's existing call sites don't all need touching. */
+  private guardAtaSponsorship(walletAddress: string, mint: string, context: string): Promise<boolean> {
+    return guardAtaSponsorship(this.supabaseService, walletAddress, mint, context);
   }
 
   private async sweepClaimBurnerToWallet(

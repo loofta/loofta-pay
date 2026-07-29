@@ -24,6 +24,7 @@ import { UsersService } from '../users/users.service';
 import { EmailService } from '../email/email.service';
 import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
+import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 // Exported so pack.service.ts can compute Mystery Pack net revenue (pack cost - ticket cost)
@@ -4814,6 +4815,23 @@ export class LotteryService {
     try {
       await getAccount(conn, toAta);
     } catch {
+      // Anti-drain guard — this is the exact path a real fee-payer drain went through
+      // (2026-07-29): `toAddress` here is a client-suppliable lottery withdrawal destination
+      // (withdrawal.destination_address), and this call site's sponsored ATA creation had no
+      // guard against the create->close->repeat rent-farming cycle that claims.ts and
+      // private-balance were already protected against via this same shared guard.
+      const allowed = await guardAtaSponsorship(
+        this.supabase,
+        toPubkey.toBase58(),
+        USDC_MINT.toBase58(),
+        `lottery-withdrawal:${toAddress}`,
+      );
+      if (!allowed) {
+        throw new Error(
+          'This wallet already received a sponsored token account once before and closed it. ' +
+            'Further free account creation is blocked to prevent abuse. Please contact support.',
+        );
+      }
       tx.add(createAssociatedTokenAccountInstruction(
         feePayerKeypair.publicKey,
         toAta,
