@@ -4013,8 +4013,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             </div>
             <h3 className="text-xl font-semibold text-white mb-2">Sign in to view details</h3>
             <p className="text-slate-400 text-base mb-6 max-w-xs">
-              {pendingSocialPlatformHint === "telegram" && telegramClaimVerified === true
-                ? "Telegram confirmed — sign in to finish."
+              {pendingSocialPlatformHint === "telegram"
+                ? "This was sent to a Telegram username. Sign in, then connect your Telegram account to check."
                 : pendingSocialPlatformHint
                   ? `This was sent to a ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "social"} username. Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "that account"} to check.`
                   : "This payment may be waiting for you. Sign in to check."}
@@ -4024,22 +4024,19 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 if (pendingEmailHint) login({ loginMethods: ["email"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "github") login({ loginMethods: ["github"], disableSignup: false });
-                // Telegram's login widget doesn't work on this (.xyz) domain. First prove
-                // ownership of the pending handle via the loofta.com relay (no account needed
-                // yet); once verified, sign in and attach-verified redeems it automatically.
-                else if (pendingSocialPlatformHint === "telegram") {
-                  if (telegramClaimVerified === true) login({ disableSignup: false });
-                  else openTelegramClaimVerifyRelay();
-                }
+                // Telegram's login widget doesn't work on this (.xyz) domain, so it can't be a
+                // Privy loginMethods target like discord/github above — sign in normally, then
+                // connect Telegram from the account afterwards (connectSocialPlatform below).
+                else if (pendingSocialPlatformHint === "telegram") login({ disableSignup: false });
                 else login();
               }}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white hover:opacity-90 transition-opacity"
               style={{ background: "linear-gradient(to right, #FF1301, #EAB308)" }}
             >
               <LogIn className="w-4 h-4" />
-              {pendingSocialPlatformHint === "telegram"
-                ? telegramClaimVerified === true ? "Sign in" : "Sign in with Telegram"
-                : pendingSocialPlatformHint ? `Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "account"}` : "Sign in"}
+              {pendingSocialPlatformHint && pendingSocialPlatformHint !== "telegram"
+                ? `Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "account"}`
+                : "Sign in"}
             </button>
           </div>
         ) : claim ? (

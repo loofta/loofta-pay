@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { usePrivy, useLoginWithOAuth } from "@privy-io/react-auth";
+import { AlertCircle, AlertTriangle, CheckCircle2, Link2, Loader2, Send } from "lucide-react";
 
 /**
  * Hosted on loofta.com (not pay.loofta.xyz) because Telegram's Login Widget doesn't work on
