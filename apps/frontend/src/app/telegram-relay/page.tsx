@@ -25,7 +25,7 @@ import { usePrivy, useLoginWithOAuth } from "@privy-io/react-auth";
  * being a valid value in @privy-io/api-types' OAuthProviderID) doesn't depend on that flag at all.
  */
 export default function TelegramRelayPage() {
-  const { ready, authenticated, user, getAccessToken } = usePrivy();
+  const { ready, authenticated, user, getAccessToken, logout } = usePrivy();
   const { initOAuth: loginWithTelegram } = useLoginWithOAuth({
     onError: (e) => console.error("[telegram-relay] useLoginWithOAuth error:", e),
   });
@@ -96,6 +96,18 @@ export default function TelegramRelayPage() {
       setStatus("error");
       setErrorMessage(e instanceof Error ? e.message : null);
     });
+
+  // The "mismatch" case leaves this tab authenticated (via this relay domain's own throwaway
+  // Privy session) as the WRONG Telegram account, with no way to retry — logout() clears that
+  // session so `authenticated` flips back to false, letting the visitor pick a different Telegram
+  // account. submittedRef must be reset too, since it otherwise permanently blocks the
+  // verify-claim effect from running again for this tab.
+  const logoutAndRetry = async () => {
+    submittedRef.current = false;
+    setErrorMessage(null);
+    setStatus("idle");
+    await logout().catch((e) => console.error("[telegram-relay] logout failed:", e));
+  };
 
   // Skip the extra manual click — trigger the Telegram login as soon as this page is ready, so
   // opening this tab immediately shows Telegram's own prompt instead of an intermediate "Log in
@@ -195,7 +207,16 @@ export default function TelegramRelayPage() {
         </p>
       )}
       {hasIdentifier && status === "mismatch" && (
-        <p className="text-sm text-red-400 max-w-sm">{errorMessage ?? "This Telegram account doesn't match."}</p>
+        <>
+          <p className="text-sm text-red-400 max-w-sm">{errorMessage ?? "This Telegram account doesn't match."}</p>
+          <button
+            type="button"
+            onClick={() => void logoutAndRetry()}
+            className="px-5 py-2.5 rounded-xl bg-[#26A5E4] text-white font-semibold hover:opacity-90"
+          >
+            Log out &amp; use a different account
+          </button>
+        </>
       )}
       {hasIdentifier && status === "done" && (
         <p className="text-sm text-slate-400 max-w-sm">Connected! You can close this tab and go back to Loofta.</p>
