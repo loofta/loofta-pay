@@ -16,6 +16,7 @@ import {
   fetchSolPriceUsd,
 } from '@/common/magicblock-private-transfer';
 import { quoteAtaRentRecoveryUsdc } from '@/common/ata-rent-recovery';
+import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService, type SocialPlatform } from '../users/users.service';
@@ -354,6 +355,23 @@ export class SendPaymentService {
       const recipientAtaExists = accountInfos[i + 2] !== null;
 
       if (!recipientAtaExists) {
+        // Anti-drain guard — this cost IS recovered from the sender (recovery.totalUsdcUnits
+        // below), so unlike the other sponsor-paid-ATA sites this isn't free money for a
+        // recipient on its own. Still guarded as a backstop: don't rely solely on the rent-
+        // recovery estimate being exactly right, and don't let a recipient farm free sponsored
+        // accounts across many different senders' multi-sends just because no single sender
+        // notices the pattern.
+        const allowed = await guardAtaSponsorship(
+          this.supabaseService,
+          info.toPubkey.toBase58(),
+          this.usdcMint.toBase58(),
+          `multi-send:${info.toPubkey.toBase58()}`,
+        );
+        if (!allowed) {
+          throw new BadRequestException(
+            `Recipient ${info.toPubkey.toBase58().slice(0, 8)}… already received a sponsored token account once before and closed it. Remove them from this send or ask them to fund their own account first.`,
+          );
+        }
         instructions.push(
           createAssociatedTokenAccountInstruction(
             this.feePayerKeypair.publicKey,

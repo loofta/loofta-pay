@@ -2330,6 +2330,15 @@ export class LotteryService {
 
     const tx = new Transaction();
     try { await getAccount(conn, destAta); } catch {
+      // Anti-drain guard — destinationSolAddress is ticket.user_solana_address (see the comment
+      // above), tied to an authenticated user, but still a repeatable target if they close their
+      // own ATA between rescues. Same shared guard as every other sponsor-paid ATA creation.
+      const allowed = await guardAtaSponsorship(this.supabase, destPubkey.toBase58(), USDC_MINT.toBase58(), `rescue:${ticketId}`);
+      if (!allowed) {
+        throw new BadRequestException(
+          'This wallet already received a sponsored token account once before and closed it. Further free account creation is blocked to prevent abuse. Please contact support.',
+        );
+      }
       tx.add(createAssociatedTokenAccountInstruction(
         feePayerKeypair.publicKey, destAta, destPubkey, USDC_MINT, TOKEN_PROGRAM_ID,
       ));
@@ -4562,6 +4571,17 @@ export class LotteryService {
     try {
       await getAccount(conn, toAta);
     } catch {
+      // Anti-drain guard — shared with claims/private-balance/lottery-withdrawal. Most callers
+      // pass a burner we just generated ourselves (Keypair.generate()), which can never have a
+      // prior sponsorship on record, so this is a no-op cost for them. refundFeeIfNeeded passes
+      // ticket.user_solana_address instead — the user's own registered wallet, which they could
+      // otherwise farm by cancelling+refunding repeatedly against a wallet they keep closing.
+      const allowed = await guardAtaSponsorship(this.supabase, toPubkey.toBase58(), USDC_MINT.toBase58(), `topup:${toAddress}`);
+      if (!allowed) {
+        throw new Error(
+          'This wallet already received a sponsored token account once before and closed it. Further free account creation is blocked to prevent abuse.',
+        );
+      }
       tx.add(createAssociatedTokenAccountInstruction(feePayerKeypair.publicKey, toAta, toPubkey, USDC_MINT, TOKEN_PROGRAM_ID));
     }
     tx.add(createTransferInstruction(feeWalletAta, toAta, feePayerKeypair.publicKey, amount));
