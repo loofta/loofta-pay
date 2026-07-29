@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { Wrench } from "lucide-react";
 
 export default function MaintenancePage() {
@@ -8,7 +9,13 @@ export default function MaintenancePage() {
       </div>
 
       <div className="relative flex flex-col items-center">
-        <p className="text-sm font-medium tracking-wide text-white/40 uppercase mb-8">Loofta</p>
+        <Image
+          src="/images/logo/loofta-icon-white.svg"
+          alt="Loofta"
+          width={40}
+          height={41}
+          className="mb-8"
+        />
 
         <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-r from-[#FF0F00] to-yellow-500 shadow-lg">
           <Wrench className="h-7 w-7 text-white" />

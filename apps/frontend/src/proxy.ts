@@ -19,7 +19,7 @@ export function proxy(request: NextRequest) {
 
   // Global kill switch: set MAINTENANCE_MODE=true on Railway/Vercel to rewrite every
   // page on every domain to the maintenance screen without touching DNS or deploys.
-  if (process.env.MAINTENANCE_MODE === "true" && pathname !== "/maintenance") {
+  if (process.env.MAINTENANCE_MODE?.trim().toLowerCase() === "true" && pathname !== "/maintenance") {
     return NextResponse.rewrite(new URL("/maintenance", request.url));
   }
 
