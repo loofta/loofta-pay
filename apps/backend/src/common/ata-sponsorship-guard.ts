@@ -10,6 +10,18 @@ const log = new Logger('AtaSponsorshipGuard');
 const alertedWallets = new Set<string>();
 const ATA_ABUSE_ALERT_EMAIL = 'lisa.bechina@gmail.com';
 
+// Hard ceiling on the alert itself, independent of the per-wallet de-dupe above — that de-dupe
+// does nothing against an attacker who cycles through many DIFFERENT wallets (trivial and free
+// to generate), which would otherwise mean one email per new wallet with no upper bound. This
+// email pool is shared with real user-facing sends (win notifications, payment claims) that ride
+// the same Resend account and monthly quota — an alert storm must never be able to starve those.
+// Past this cap within the window, blocks continue exactly as before (the guard's actual
+// protection is untouched); only the notification is suppressed, logged instead.
+const MAX_ABUSE_ALERTS_PER_WINDOW = 1;
+const ALERT_WINDOW_MS = 60 * 60_000; // 1 hour
+let alertWindowStartedAt = 0;
+let alertsSentInWindow = 0;
+
 /**
  * Anti-drain guard for sponsor-paid ATA creation. Whenever our fee payer pays the rent to
  * create a wallet's USDC ATA, that rent is only ours to lose once — the wallet's owner can
@@ -31,7 +43,11 @@ const ATA_ABUSE_ALERT_EMAIL = 'lisa.bechina@gmail.com';
  * guard correctly blocking abuse in one place while the same fee payer was actively being
  * drained through an unguarded sibling call site, and nobody noticed until a manual on-chain
  * review days later — a warn-level log line alone isn't enough for something this financially
- * sensitive. Best-effort: never let the alert itself affect the guard's return value.
+ * sensitive. Best-effort: never let the alert itself affect the guard's return value. Both a
+ * per-wallet de-dupe and a global hourly cap bound how many of these emails can ever go out, so
+ * an attack can't burn through the shared Resend quota that real user-facing emails also use —
+ * see MAX_ABUSE_ALERTS_PER_WINDOW below. The guard's actual protection (refusing to sponsor) is
+ * completely unaffected by that cap; only the notification is throttled.
  */
 export async function guardAtaSponsorship(
   supabaseService: SupabaseService,
@@ -52,10 +68,20 @@ export async function guardAtaSponsorship(
       `BLOCKED repeat sponsorship for wallet=${walletAddress.slice(0, 8)}… mint=${mint.slice(0, 8)}… context=${context} — ATA was already paid for once; refusing to pay rent again.`,
     );
     if (emailService && !alertedWallets.has(walletAddress)) {
-      alertedWallets.add(walletAddress);
-      emailService
-        .sendAtaSponsorshipAbuseAlertEmail({ to: ATA_ABUSE_ALERT_EMAIL, walletAddress, mint, context })
-        .catch((e) => log.warn(`abuse alert email failed (non-fatal): ${(e as Error)?.message}`));
+      const now = Date.now();
+      if (now - alertWindowStartedAt > ALERT_WINDOW_MS) {
+        alertWindowStartedAt = now;
+        alertsSentInWindow = 0;
+      }
+      if (alertsSentInWindow >= MAX_ABUSE_ALERTS_PER_WINDOW) {
+        log.warn(`abuse alert SUPPRESSED (hourly cap ${MAX_ABUSE_ALERTS_PER_WINDOW} reached) for wallet=${walletAddress.slice(0, 8)}… — guard is still blocking the sponsorship, only the email is throttled`);
+      } else {
+        alertedWallets.add(walletAddress);
+        alertsSentInWindow++;
+        emailService
+          .sendAtaSponsorshipAbuseAlertEmail({ to: ATA_ABUSE_ALERT_EMAIL, walletAddress, mint, context })
+          .catch((e) => log.warn(`abuse alert email failed (non-fatal): ${(e as Error)?.message}`));
+      }
     }
     return false;
   }

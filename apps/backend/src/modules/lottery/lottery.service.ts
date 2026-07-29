@@ -25,6 +25,7 @@ import { EmailService } from '../email/email.service';
 import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
+import { tokenAccountExists } from '@/common/token-account-exists';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 // Exported so pack.service.ts can compute Mystery Pack net revenue (pack cost - ticket cost)
@@ -2329,7 +2330,7 @@ export class LotteryService {
     const destAta = await getAssociatedTokenAddress(USDC_MINT, destPubkey);
 
     const tx = new Transaction();
-    try { await getAccount(conn, destAta); } catch {
+    if (!(await tokenAccountExists(conn, destAta))) {
       // Anti-drain guard — destinationSolAddress is ticket.user_solana_address (see the comment
       // above), tied to an authenticated user, but still a repeatable target if they close their
       // own ATA between rescues. Same shared guard as every other sponsor-paid ATA creation.
@@ -4568,9 +4569,7 @@ export class LotteryService {
 
     const toAta = await getAssociatedTokenAddress(USDC_MINT, toPubkey);
     const tx = new Transaction();
-    try {
-      await getAccount(conn, toAta);
-    } catch {
+    if (!(await tokenAccountExists(conn, toAta))) {
       // Anti-drain guard — shared with claims/private-balance/lottery-withdrawal. Most callers
       // pass a burner we just generated ourselves (Keypair.generate()), which can never have a
       // prior sponsorship on record, so this is a no-op cost for them. refundFeeIfNeeded passes
@@ -4832,9 +4831,7 @@ export class LotteryService {
     const tx = new Transaction();
 
     // Create recipient ATA if needed
-    try {
-      await getAccount(conn, toAta);
-    } catch {
+    if (!(await tokenAccountExists(conn, toAta))) {
       // Anti-drain guard — this is the exact path a real fee-payer drain went through
       // (2026-07-29): `toAddress` here is a client-suppliable lottery withdrawal destination
       // (withdrawal.destination_address), and this call site's sponsored ATA creation had no

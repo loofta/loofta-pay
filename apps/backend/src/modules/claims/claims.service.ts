@@ -38,6 +38,7 @@ import {
 import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
 import { PajCashBankService } from '../paj-cash/paj-cash-bank.service';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
+import { tokenAccountExists } from '@/common/token-account-exists';
 import { PajCashOrdersService } from '../paj-cash/paj-cash-orders.service';
 import { computeLooftaFeeUsdc } from '@/common/paj-cash-fee';
 
@@ -2176,9 +2177,11 @@ export class ClaimsService {
         // too: this only skips a validation check, it doesn't change the derived ATA address.
         const recipientAta = await getAssociatedTokenAddress(claimMint, recipientPubkey, true);
         const sweepTx = new Transaction();
-        try {
-          await getAccount(conn, recipientAta);
-        } catch {
+        // tokenAccountExists absorbs transient RPC blips with a couple of short retries before
+        // concluding "genuinely doesn't exist" — a plain getAccount() try/catch would otherwise
+        // mistake a rate-limited RPC call for a missing account, wrongly tripping the abuse guard
+        // on a legitimate repeat-claim wallet on a false premise.
+        if (!(await tokenAccountExists(conn, recipientAta))) {
           if (feePayerKp) {
             const allowed = await this.guardAtaSponsorship(
               recipientPubkey.toBase58(),
@@ -2661,9 +2664,7 @@ export class ClaimsService {
             const creatorPubkey = new PublicKey(creatorWallet.trim());
             const creatorAta = await getAssociatedTokenAddress(claimMint, creatorPubkey);
             const tx = new Transaction();
-            try {
-              await getAccount(conn, creatorAta);
-            } catch {
+            if (!(await tokenAccountExists(conn, creatorAta))) {
               const feePayer = this.solanaSponsor.getFeePayerKeypair();
               if (feePayer) {
                 const allowed = await this.guardAtaSponsorship(

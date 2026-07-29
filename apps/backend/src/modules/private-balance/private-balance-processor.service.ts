@@ -10,6 +10,7 @@ import { StatusService } from '../intents/status.service';
 import { PrivateBalanceService, PRIVATE_BALANCE_PLATFORM_FEE_BPS } from './private-balance.service';
 import { requestMagicblockPrivateTransfer, MAGICBLOCK_GAS_USDC, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
+import { tokenAccountExists } from '@/common/token-account-exists';
 import { EmailService } from '../email/email.service';
 import type { PrivateTransfer } from './entities/private-transfer.entity';
 
@@ -231,9 +232,7 @@ export class PrivateBalanceProcessorService {
     const destinationPubkey = new PublicKey(row.destination_address!);
     const destinationAta = await getAssociatedTokenAddress(mint, destinationPubkey);
     const sweepTx = new Transaction();
-    try {
-      await getAccount(conn, destinationAta);
-    } catch {
+    if (!(await tokenAccountExists(conn, destinationAta))) {
       // Anti-drain guard: the destination is a raw client-supplied address with no ownership
       // check (that's the point — private withdrawal can go anywhere). Without this, a wallet
       // could create -> close -> get sponsored again indefinitely, draining the fee payer.
@@ -307,9 +306,7 @@ export class PrivateBalanceProcessorService {
     const bridgeDestPubkey = new PublicKey(quote.depositAddress);
     const bridgeDestAta = await getAssociatedTokenAddress(mint, bridgeDestPubkey);
     const fundTx = new Transaction();
-    try {
-      await getAccount(conn, bridgeDestAta);
-    } catch {
+    if (!(await tokenAccountExists(conn, bridgeDestAta))) {
       const allowed = await guardAtaSponsorship(this.supabaseService, bridgeDestPubkey.toBase58(), mint.toBase58(), `private-withdrawal-bridge:${row.id}`, this.emailService);
       if (!allowed) {
         await this.supabaseService.privateTransfers.update({
