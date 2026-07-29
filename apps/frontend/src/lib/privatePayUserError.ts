@@ -27,6 +27,13 @@ export function isRawOnChainProgramError(message: string): boolean {
   );
 }
 
+/** Our own confirmSignature.ts timeout — internal diagnostic (RPC host, cluster, signature),
+ *  never meant for an end user. The underlying transfer frequently already landed; this just
+ *  means our polling gave up, so point the user at retrying rather than a raw timeout dump. */
+export function isConfirmPollingTimeout(message: string): boolean {
+  return /^\[PER confirm\]/.test(message);
+}
+
 /** Typical simulation failure when the fee payer has no SOL / account never funded. */
 export function isInsufficientSolOrNoPriorCreditError(message: string): boolean {
   const s = message.toLowerCase();
@@ -60,6 +67,10 @@ export function privatePayErrorMessageForUser(message: string, cluster: string):
 
   if (isRawOnChainProgramError(cleaned)) {
     return "This private transfer couldn't be completed right now. Please try again in a moment — if it keeps happening, contact support.";
+  }
+
+  if (isConfirmPollingTimeout(cleaned)) {
+    return "This is taking longer than expected to confirm. It may have already gone through — please try again before assuming it failed, and check your balance first if you're unsure.";
   }
 
   if (cleaned.length > 400) {

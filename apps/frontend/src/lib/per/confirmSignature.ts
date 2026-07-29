@@ -1,6 +1,18 @@
 import { Connection } from "@solana/web3.js";
 import { getSolanaCluster } from "@/lib/solanaCluster";
 
+/** Strip query string (api-key, etc.) before an RPC URL ever reaches a log line or thrown
+ *  Error — several of our RPC URLs embed a live provider API key (e.g. Helius), and thrown
+ *  Errors here have previously surfaced verbatim in user-facing toasts. */
+function redactRpcUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname}`;
+  } catch {
+    return url.split("?")[0];
+  }
+}
+
 /**
  * Wait until a signature reaches confirmed/finalized using HTTP polling.
  * More reliable than Connection.confirmTransaction on devnet (avoids WS flakes / 30s cap).
@@ -12,13 +24,13 @@ async function getStatusWithFallback(
 ): Promise<{ status: Awaited<ReturnType<Connection["getSignatureStatuses"]>>["value"][0]; rpc: string }> {
   try {
     const { value } = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true });
-    if (value[0] != null || !fallback) return { status: value[0], rpc: connection.rpcEndpoint };
+    if (value[0] != null || !fallback) return { status: value[0], rpc: redactRpcUrl(connection.rpcEndpoint) };
   } catch (err) {
     if (!fallback) throw err;
   }
   // Primary returned null or threw — try fallback RPC
   const { value } = await fallback!.getSignatureStatuses([signature], { searchTransactionHistory: true });
-  return { status: value[0], rpc: fallback!.rpcEndpoint };
+  return { status: value[0], rpc: redactRpcUrl(fallback!.rpcEndpoint) };
 }
 
 export async function waitForSignatureConfirmation(

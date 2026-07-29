@@ -82,6 +82,8 @@ import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 import { usePerPrivateTransfer, type PerTransferProgress } from "@/hooks/usePerPrivateTransfer";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
+import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
+import { getSolanaCluster } from "@/lib/solanaCluster";
 import { phantomWalletToAnchorWallet, privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
 import { PaymentHistoryClaim } from "@/app/app/history/page";
 import type { NearToken } from "@/services/nearIntents";
@@ -3499,50 +3501,91 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       const payPrivately = payingPrivately;
       let sig: string;
       if (payPrivately) {
-        sig = await perTransfer(anchorWallet, {
-          privyUserId: user.id,
-          accessToken: looFtaToken,
-          claimId: claim.id,
-          onProgress: setPerTransferPhase,
-          isBurnerRecipient: isBurnerForLoofta,
-          gasless,
-          onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
-            looftaFeeUsdc = feeAmountUsdc;
-            looftaFeeBreakdown = feeBreakdown ?? null;
-            setPaidFeeUsdc(feeAmountUsdc);
-            setPendingFeeUsdc(feeAmountUsdc);
-            if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
-          },
-          privySignAndSend: async (txBytes) => {
-            // MagicBlock gasless=true: the validator is already the fee payer (pre-signed).
-            // Use sign-only so Privy doesn't run a gas-policy SOL-balance preflight check.
-            // We broadcast directly after signing.
-            console.info("[PrivySign] signing tx", {
-              walletAddress: wallet.address,
-              chain,
-              txBytesLen: txBytes.length,
-            });
-            let signedTxBytes: Uint8Array;
-            try {
-              const result = await privySolanaSignTransaction({
-                transaction: txBytes,
-                wallet,
+        // Saved immediately after broadcast, before confirmation polling — mirrors onPayPrivately's
+        // recovery pattern below. Confirmation polling can time out (e.g. MagicBlock's own
+        // randomized private-delivery delay) on a transfer that already landed; without this we'd
+        // otherwise have no way to distinguish "actually failed" from "just slow to confirm", and
+        // showing a hard failure here risks the user retrying into a genuine double-send.
+        let broadcastedSignature: string | null = null;
+        try {
+          sig = await perTransfer(anchorWallet, {
+            privyUserId: user.id,
+            accessToken: looFtaToken,
+            claimId: claim.id,
+            onProgress: setPerTransferPhase,
+            isBurnerRecipient: isBurnerForLoofta,
+            gasless,
+            onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
+              looftaFeeUsdc = feeAmountUsdc;
+              looftaFeeBreakdown = feeBreakdown ?? null;
+              setPaidFeeUsdc(feeAmountUsdc);
+              setPendingFeeUsdc(feeAmountUsdc);
+              if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
+            },
+            onSignature: async (broadcastSig) => {
+              broadcastedSignature = broadcastSig;
+              const statusToken = await getAccessToken().catch(() => null);
+              updateClaimStatus(claim.id, "IN_FLIGHT", { txHash: broadcastSig }, statusToken).catch((e) =>
+                console.warn("[PayWithLoofta] Failed to save tx hash early:", e),
+              );
+            },
+            privySignAndSend: async (txBytes) => {
+              // MagicBlock gasless=true: the validator is already the fee payer (pre-signed).
+              // Use sign-only so Privy doesn't run a gas-policy SOL-balance preflight check.
+              // We broadcast directly after signing.
+              console.info("[PrivySign] signing tx", {
+                walletAddress: wallet.address,
                 chain,
-                options: { uiOptions: { showWalletUIs: false } },
+                txBytesLen: txBytes.length,
               });
-              signedTxBytes = result.signedTransaction;
-            } catch (e: unknown) {
-              console.error("[PrivySign] sign error:", e);
-              throw e;
-            }
-            const sig = await connection.sendRawTransaction(signedTxBytes, {
-              skipPreflight: false,
-              preflightCommitment: "confirmed",
+              let signedTxBytes: Uint8Array;
+              try {
+                const result = await privySolanaSignTransaction({
+                  transaction: txBytes,
+                  wallet,
+                  chain,
+                  options: { uiOptions: { showWalletUIs: false } },
+                });
+                signedTxBytes = result.signedTransaction;
+              } catch (e: unknown) {
+                console.error("[PrivySign] sign error:", e);
+                throw e;
+              }
+              const sig = await connection.sendRawTransaction(signedTxBytes, {
+                skipPreflight: false,
+                preflightCommitment: "confirmed",
+              });
+              console.info("[PrivySign] broadcast | sig=", sig.slice(0, 12) + "…");
+              return sig;
+            },
+          });
+        } catch (confirmErr: any) {
+          // Broadcast succeeded but confirmation polling didn't — the transfer may well have
+          // landed. Don't show a failure (which invites a retry and a possible double-send);
+          // mark it pending instead and let the existing PRIVATE_TRANSFER_PENDING recovery
+          // machinery (txHashRecoveryRef / cron) resolve it once it actually confirms.
+          if (broadcastedSignature) {
+            console.warn("[PayWithLoofta] Confirmation polling failed but tx was broadcast — marking as pending:", confirmErr?.message);
+            const statusToken = await getAccessToken().catch(() => null);
+            await updateClaimStatus(
+              claim.id,
+              "PRIVATE_TRANSFER_PENDING",
+              { txHash: broadcastedSignature, paidWith: "USDC (Private)", isPrivate: true, paidWithToken: "USDC", paidWithChain: "solana" },
+              statusToken,
+            );
+            setStatus("PRIVATE_TRANSFER_PENDING");
+            useClaimPayStore.getState().setStatus(id, "PRIVATE_TRANSFER_PENDING");
+            txHashRecoveryRef.current = broadcastedSignature;
+            await claimQuery.refetch();
+            setShowPayNowModal(false);
+            toast({
+              title: "Transfer submitted!",
+              description: "Your payment was sent. Confirmation is taking longer than usual — it will update automatically.",
             });
-            console.info("[PrivySign] broadcast | sig=", sig.slice(0, 12) + "…");
-            return sig;
-          },
-        });
+            return;
+          }
+          throw confirmErr;
+        }
       } else {
         // Not private: plain SPL USDC transfer, gasless via our backend fee payer (same
         // sponsorship model as the private path, just no MagicBlock PER session).
@@ -3621,8 +3664,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           : `$${amountUSD.toFixed(2)} USDC sent.`,
       });
     } catch (e: any) {
+      // Full raw error (may include RPC URLs, signatures) stays in the console for debugging —
+      // never in the toast/inline banner, which end users see.
       console.error("[PayWithLoofta] Error:", e);
-      const message = e?.message || "Could not send from Loofta balance. Try again.";
+      const rawMessage = e?.message || "Could not send from Loofta balance. Try again.";
+      const message = privatePayErrorMessageForUser(rawMessage, getSolanaCluster());
       setPayWithLooftaError(message);
       toast({
         variant: "destructive",
