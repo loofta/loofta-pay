@@ -366,6 +366,7 @@ export class SendPaymentService {
           info.toPubkey.toBase58(),
           this.usdcMint.toBase58(),
           `multi-send:${info.toPubkey.toBase58()}`,
+          this.emailService,
         );
         if (!allowed) {
           throw new BadRequestException(

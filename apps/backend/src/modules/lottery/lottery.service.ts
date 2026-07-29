@@ -2333,7 +2333,7 @@ export class LotteryService {
       // Anti-drain guard — destinationSolAddress is ticket.user_solana_address (see the comment
       // above), tied to an authenticated user, but still a repeatable target if they close their
       // own ATA between rescues. Same shared guard as every other sponsor-paid ATA creation.
-      const allowed = await guardAtaSponsorship(this.supabase, destPubkey.toBase58(), USDC_MINT.toBase58(), `rescue:${ticketId}`);
+      const allowed = await guardAtaSponsorship(this.supabase, destPubkey.toBase58(), USDC_MINT.toBase58(), `rescue:${ticketId}`, this.emailService);
       if (!allowed) {
         throw new BadRequestException(
           'This wallet already received a sponsored token account once before and closed it. Further free account creation is blocked to prevent abuse. Please contact support.',
@@ -4576,7 +4576,7 @@ export class LotteryService {
       // prior sponsorship on record, so this is a no-op cost for them. refundFeeIfNeeded passes
       // ticket.user_solana_address instead — the user's own registered wallet, which they could
       // otherwise farm by cancelling+refunding repeatedly against a wallet they keep closing.
-      const allowed = await guardAtaSponsorship(this.supabase, toPubkey.toBase58(), USDC_MINT.toBase58(), `topup:${toAddress}`);
+      const allowed = await guardAtaSponsorship(this.supabase, toPubkey.toBase58(), USDC_MINT.toBase58(), `topup:${toAddress}`, this.emailService);
       if (!allowed) {
         throw new Error(
           'This wallet already received a sponsored token account once before and closed it. Further free account creation is blocked to prevent abuse.',
@@ -4845,6 +4845,7 @@ export class LotteryService {
         toPubkey.toBase58(),
         USDC_MINT.toBase58(),
         `lottery-withdrawal:${toAddress}`,
+        this.emailService,
       );
       if (!allowed) {
         throw new Error(

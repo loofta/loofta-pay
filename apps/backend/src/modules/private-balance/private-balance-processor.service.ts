@@ -10,6 +10,7 @@ import { StatusService } from '../intents/status.service';
 import { PrivateBalanceService, PRIVATE_BALANCE_PLATFORM_FEE_BPS } from './private-balance.service';
 import { requestMagicblockPrivateTransfer, MAGICBLOCK_GAS_USDC, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
+import { EmailService } from '../email/email.service';
 import type { PrivateTransfer } from './entities/private-transfer.entity';
 
 const BATCH_LIMIT = 25;
@@ -26,6 +27,7 @@ export class PrivateBalanceProcessorService {
     private readonly privateBalanceService: PrivateBalanceService,
     private readonly nearIntentsService: NearIntentsService,
     private readonly statusService: StatusService,
+    private readonly emailService: EmailService,
   ) {}
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -235,7 +237,7 @@ export class PrivateBalanceProcessorService {
       // Anti-drain guard: the destination is a raw client-supplied address with no ownership
       // check (that's the point — private withdrawal can go anywhere). Without this, a wallet
       // could create -> close -> get sponsored again indefinitely, draining the fee payer.
-      const allowed = await guardAtaSponsorship(this.supabaseService, destinationPubkey.toBase58(), mint.toBase58(), `private-withdrawal:${row.id}`);
+      const allowed = await guardAtaSponsorship(this.supabaseService, destinationPubkey.toBase58(), mint.toBase58(), `private-withdrawal:${row.id}`, this.emailService);
       if (!allowed) {
         await this.supabaseService.privateTransfers.update({
           status: 'failed',
@@ -308,7 +310,7 @@ export class PrivateBalanceProcessorService {
     try {
       await getAccount(conn, bridgeDestAta);
     } catch {
-      const allowed = await guardAtaSponsorship(this.supabaseService, bridgeDestPubkey.toBase58(), mint.toBase58(), `private-withdrawal-bridge:${row.id}`);
+      const allowed = await guardAtaSponsorship(this.supabaseService, bridgeDestPubkey.toBase58(), mint.toBase58(), `private-withdrawal-bridge:${row.id}`, this.emailService);
       if (!allowed) {
         await this.supabaseService.privateTransfers.update({
           status: 'failed',

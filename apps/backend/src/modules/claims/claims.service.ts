@@ -2086,7 +2086,7 @@ export class ClaimsService {
    *  private-balance-processor.service.ts (see @/common/ata-sponsorship-guard). Kept as a thin
    *  delegate here so this file's existing call sites don't all need touching. */
   private guardAtaSponsorship(walletAddress: string, mint: string, context: string): Promise<boolean> {
-    return guardAtaSponsorship(this.supabaseService, walletAddress, mint, context);
+    return guardAtaSponsorship(this.supabaseService, walletAddress, mint, context, this.emailService);
   }
 
   private async sweepClaimBurnerToWallet(

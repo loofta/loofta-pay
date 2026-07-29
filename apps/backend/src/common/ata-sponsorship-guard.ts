@@ -1,7 +1,14 @@
 import { Logger } from '@nestjs/common';
 import type { SupabaseService } from '@/database/supabase.service';
+import type { EmailService } from '@/modules/email/email.service';
 
 const log = new Logger('AtaSponsorshipGuard');
+
+// Per-process de-dupe so a hammering attacker doesn't spam the inbox — one alert per wallet is
+// enough to know it's happening; the guard itself still blocks every single attempt regardless.
+// Resets on deploy/restart, which is an acceptable trade-off for an alert (not a money control).
+const alertedWallets = new Set<string>();
+const ATA_ABUSE_ALERT_EMAIL = 'lisa.bechina@gmail.com';
 
 /**
  * Anti-drain guard for sponsor-paid ATA creation. Whenever our fee payer pays the rent to
@@ -18,12 +25,20 @@ const log = new Logger('AtaSponsorshipGuard');
  * first time (safe to sponsor), false every time after (already paid for once — refuse to
  * pay again). Fails OPEN (returns true) only on a genuine DB error, since a false negative
  * here blocks a legitimate transfer entirely; a missed guard insert is a much smaller risk.
+ *
+ * `emailService` is optional — pass it when the caller already has one injected (most do) so a
+ * blocked attempt actually gets *seen*, not just logged. A real incident (2026-07-29) had this
+ * guard correctly blocking abuse in one place while the same fee payer was actively being
+ * drained through an unguarded sibling call site, and nobody noticed until a manual on-chain
+ * review days later — a warn-level log line alone isn't enough for something this financially
+ * sensitive. Best-effort: never let the alert itself affect the guard's return value.
  */
 export async function guardAtaSponsorship(
   supabaseService: SupabaseService,
   walletAddress: string,
   mint: string,
   context: string,
+  emailService?: EmailService,
 ): Promise<boolean> {
   const { error } = await supabaseService.ataSponsorships.insert({
     wallet_address: walletAddress,
@@ -36,6 +51,12 @@ export async function guardAtaSponsorship(
     log.warn(
       `BLOCKED repeat sponsorship for wallet=${walletAddress.slice(0, 8)}… mint=${mint.slice(0, 8)}… context=${context} — ATA was already paid for once; refusing to pay rent again.`,
     );
+    if (emailService && !alertedWallets.has(walletAddress)) {
+      alertedWallets.add(walletAddress);
+      emailService
+        .sendAtaSponsorshipAbuseAlertEmail({ to: ATA_ABUSE_ALERT_EMAIL, walletAddress, mint, context })
+        .catch((e) => log.warn(`abuse alert email failed (non-fatal): ${(e as Error)?.message}`));
+    }
     return false;
   }
   log.warn(`guard insert failed (failing open): ${error.message}`);

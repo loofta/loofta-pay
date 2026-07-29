@@ -7,9 +7,10 @@ import { SendPaymentModule } from '../send-payment/send-payment.module';
 import { ClaimsModule } from '../claims/claims.module';
 import { IntentsModule } from '../intents/intents.module';
 import { DatabaseModule } from '@/database/database.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
-  imports: [UsersModule, SendPaymentModule, ClaimsModule, IntentsModule, DatabaseModule],
+  imports: [UsersModule, SendPaymentModule, ClaimsModule, IntentsModule, DatabaseModule, EmailModule],
   controllers: [PrivateBalanceController],
   providers: [PrivateBalanceService, PrivateBalanceProcessorService],
   exports: [PrivateBalanceService],

@@ -407,6 +407,56 @@ export class EmailService {
     }
   }
 
+  /**
+   * Operational alert (to the team, not a user) — fires when `guardAtaSponsorship`
+   * (@/common/ata-sponsorship-guard) BLOCKS a repeat sponsored-ATA-creation request. Before this,
+   * the guard only logged a warning — real incident, 2026-07-29: the guard was doing its job
+   * silently while the fee payer was actively being farmed elsewhere, and nobody found out until
+   * a manual wallet-export review days later. This makes a blocked attempt visible the moment it
+   * happens instead of requiring someone to go looking for it.
+   */
+  async sendAtaSponsorshipAbuseAlertEmail(data: {
+    to: string;
+    walletAddress: string;
+    mint: string;
+    context: string;
+  }): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`ATA-sponsorship abuse alert NOT sent (RESEND_API_KEY unset): wallet=${data.walletAddress}, context=${data.context}`);
+      return;
+    }
+    const subject = `⚠️ Sponsored ATA abuse blocked — ${data.walletAddress.slice(0, 8)}…`;
+    const html = `
+      <div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+        <h2 style="color:#0f172a;margin:0 0 4px;">Sponsored account-creation abuse blocked</h2>
+        <p style="color:#64748b;margin:0 0 16px;font-size:14px;">
+          This wallet already received a fee-payer-sponsored USDC token account once before and closed it
+          (reclaiming the rent to itself) — the create→close→re-sponsor drain pattern. The guard refused to
+          pay for it again, so the underlying claim/withdrawal/transfer to this wallet failed rather than
+          costing us anything further. No action required unless this keeps recurring for the same wallet.
+        </p>
+        <table style="border-collapse:collapse;width:100%;background:#f8fafc;border-radius:8px;font-size:14px;">
+          <tr><td style="padding:6px 12px;color:#475569;">Wallet</td><td style="padding:6px 12px;font-weight:600;color:#dc2626;">${data.walletAddress}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Mint</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.mint}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Context</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.context}</td></tr>
+        </table>
+        <p style="color:#94a3b8;margin:16px 0 0;font-size:12px;">
+          Automated alert from the Loofta backend · <a href="https://solscan.io/account/${data.walletAddress}" style="color:#6366f1;">view wallet on Solscan</a>
+        </p>
+      </div>`;
+    try {
+      await this.resend.emails.send({
+        from: `Loofta Ops <${this.fromEmail}>`,
+        to: data.to,
+        subject,
+        html,
+      });
+      this.logger.log(`ATA-sponsorship abuse alert sent to ${data.to} (wallet=${data.walletAddress}, context=${data.context})`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send ATA-sponsorship abuse alert to ${data.to}: ${err?.message ?? err}`);
+    }
+  }
+
   private buildGiftTicketHtml(data: { numTickets: number; claimUrl: string; note?: string | null }): string {
     const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
     const { text: noteText, gifUrl } = data.note ? this.extractGifUrl(data.note) : { text: '', gifUrl: null };
