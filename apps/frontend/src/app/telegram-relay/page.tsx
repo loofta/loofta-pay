@@ -196,50 +196,91 @@ export default function TelegramRelayPage() {
   }, [ready, authenticated, user, hasIdentifier, token, claimId, getAccessToken]);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-[#0b0d12] text-white px-6 text-center">
-      <h1 className="text-lg font-semibold">Connect Telegram to Loofta</h1>
-      {!hasIdentifier && (
-        <p className="text-sm text-slate-400 max-w-sm">
-          This link is missing or expired. Go back to Loofta and click &quot;Connect Telegram&quot; again.
-        </p>
-      )}
-      {hasIdentifier && status === "error" && (
-        <p className="text-sm text-red-400 max-w-sm">
-          {errorMessage || "Something went wrong."} Go back to Loofta and try again.
-        </p>
-      )}
-      {hasIdentifier && status === "mismatch" && (
-        <>
-          <p className="text-sm text-red-400 max-w-sm">{errorMessage ?? "This Telegram account doesn't match."}</p>
-          <button
-            type="button"
-            onClick={() => void logoutAndRetry()}
-            className="px-5 py-2.5 rounded-xl bg-[#26A5E4] text-white font-semibold hover:opacity-90"
-          >
-            Log out &amp; use a different account
-          </button>
-        </>
-      )}
-      {hasIdentifier && status === "done" && (
-        <p className="text-sm text-slate-400 max-w-sm">Connected! You can close this tab and go back to Loofta.</p>
-      )}
-      {hasIdentifier && (status === "idle" || status === "connecting") && (
-        <>
-          {!ready ? (
-            <p className="text-sm text-slate-400">Loading…</p>
-          ) : !authenticated ? (
-            <button
-              type="button"
-              onClick={() => void startTelegramLogin()}
-              className="px-5 py-2.5 rounded-xl bg-[#26A5E4] text-white font-semibold hover:opacity-90"
-            >
-              Log in with Telegram
-            </button>
+    <div className="relative min-h-screen overflow-hidden bg-[#0f0f12] flex flex-col items-center justify-center px-4 text-center">
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div className="h-[420px] w-[420px] rounded-full bg-gradient-to-r from-[#FF0F00]/20 to-yellow-500/20 blur-[120px]" />
+      </div>
+
+      <div className="relative flex flex-col items-center w-full max-w-sm">
+        <Image src="/images/logo/loofta-icon-white.svg" alt="Loofta" width={56} height={57} className="mb-8" />
+
+        <div className="w-full rounded-2xl border border-white/10 bg-white/5 p-8">
+          {!hasIdentifier ? (
+            <>
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/[0.06]">
+                <Link2 className="h-7 w-7 text-slate-400" />
+              </div>
+              <h1 className="text-2xl font-semibold text-white">Link expired</h1>
+              <p className="mt-2 text-base text-slate-400">
+                This link is missing or expired. Go back to Loofta and click &quot;Connect Telegram&quot; again.
+              </p>
+            </>
+          ) : status === "error" ? (
+            <>
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-500/10">
+                <AlertCircle className="h-7 w-7 text-red-400" />
+              </div>
+              <h1 className="text-2xl font-semibold text-white">Something went wrong</h1>
+              <p className="mt-2 text-base text-slate-400">
+                {errorMessage || "Something went wrong."} Go back to Loofta and try again.
+              </p>
+            </>
+          ) : status === "mismatch" ? (
+            <>
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10">
+                <AlertTriangle className="h-7 w-7 text-amber-400" />
+              </div>
+              <h1 className="text-2xl font-semibold text-white">Wrong Telegram account</h1>
+              <p className="mt-2 text-base text-slate-400">{errorMessage ?? "This Telegram account doesn't match."}</p>
+              <button
+                type="button"
+                onClick={() => void logoutAndRetry()}
+                className="mt-6 w-full h-12 rounded-xl font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all"
+              >
+                Log out &amp; use a different account
+              </button>
+            </>
+          ) : status === "done" ? (
+            <>
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10">
+                <CheckCircle2 className="h-7 w-7 text-emerald-400" />
+              </div>
+              <h1 className="text-2xl font-semibold text-white">Connected!</h1>
+              <p className="mt-2 text-base text-slate-400">You can close this tab and go back to Loofta.</p>
+            </>
           ) : (
-            <p className="text-sm text-slate-400">Connecting your handle…</p>
+            <>
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#26A5E4]/15">
+                <Send className="h-7 w-7 text-[#26A5E4]" />
+              </div>
+              <h1 className="text-2xl font-semibold text-white">Connect Telegram to Loofta</h1>
+              {!ready ? (
+                <div className="mt-6 flex flex-col items-center gap-3">
+                  <Loader2 className="h-7 w-7 animate-spin text-white/30" />
+                  <p className="text-base text-slate-400">Loading…</p>
+                </div>
+              ) : !authenticated ? (
+                <>
+                  <p className="mt-2 text-base text-slate-400">Verify your handle to continue.</p>
+                  <button
+                    type="button"
+                    onClick={() => void startTelegramLogin()}
+                    className="mt-6 w-full h-12 rounded-xl font-semibold text-white bg-[#26A5E4] hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
+                  >
+                    <Send className="h-4 w-4" />
+                    Log in with Telegram
+                  </button>
+                </>
+              ) : (
+                <div className="mt-6 flex flex-col items-center gap-3">
+                  <Loader2 className="h-7 w-7 animate-spin text-white/30" />
+                  <p className="text-base text-slate-400">Connecting your handle…</p>
+                </div>
+              )}
+            </>
           )}
-        </>
-      )}
+        </div>
+      </div>
     </div>
   );
 }
