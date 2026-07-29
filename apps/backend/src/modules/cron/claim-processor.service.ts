@@ -18,6 +18,7 @@ export class ClaimProcessorService {
   private readonly logger = new Logger(ClaimProcessorService.name);
   private isProcessing = false;
   private isSweeping = false;
+  private isReclaiming = false;
 
   constructor(
     private readonly claimsService: ClaimsService,
@@ -62,6 +63,24 @@ export class ClaimProcessorService {
       this.logger.error('[handleBurnerSweepRetries] Error:', e?.message);
     } finally {
       this.isSweeping = false;
+    }
+  }
+
+  /**
+   * Every 10 minutes: reclaim ATA rent from terminal claim burners (backstop for the inline
+   * closeAccount instructions — see @/common/burner-reclaim and the 2026-07-29 rent audit).
+   */
+  @Cron('0 */10 * * * *')
+  async handleBurnerRentReclaim() {
+    if (!this.isAutoProcessClaimsEnabled()) return;
+    if (this.isReclaiming) return;
+    this.isReclaiming = true;
+    try {
+      await this.claimsService.cronReclaimFinishedClaimBurners();
+    } catch (e: any) {
+      this.logger.error('[handleBurnerRentReclaim] Error:', e?.message);
+    } finally {
+      this.isReclaiming = false;
     }
   }
 

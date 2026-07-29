@@ -17,12 +17,6 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Global kill switch: set MAINTENANCE_MODE=true on Railway/Vercel to rewrite every
-  // page on every domain to the maintenance screen without touching DNS or deploys.
-  if (process.env.MAINTENANCE_MODE?.trim().toLowerCase() === "true" && pathname !== "/maintenance") {
-    return NextResponse.rewrite(new URL("/maintenance", request.url));
-  }
-
   // loofta.com exists solely to host the Telegram Connect widget — Privy/Telegram's login
   // widget doesn't work on .xyz domains, so this relay domain hands the handle back to
   // pay.loofta.xyz via a one-time token (see telegram-relay/page.tsx + api/telegram-relay).
@@ -70,6 +64,19 @@ export function proxy(request: NextRequest) {
     isLocalhost &&
     !marketingPaths.has(pathname) &&
     !pathname.startsWith("/app");
+
+  // App-only kill switch: set MAINTENANCE_MODE=true on Railway/Vercel to rewrite the
+  // app (pay.loofta.xyz, or its localhost equivalent) to the maintenance screen. Marketing
+  // pages — loofta.xyz, and marketing paths mirrored onto the app domain — stay untouched.
+  const isMaintenanceModeOn = process.env.MAINTENANCE_MODE?.trim().toLowerCase() === "true";
+  if (
+    isMaintenanceModeOn &&
+    (isAppDomain || isLocalAppPath) &&
+    !marketingPaths.has(pathname) &&
+    pathname !== "/maintenance"
+  ) {
+    return NextResponse.rewrite(new URL("/maintenance", request.url));
+  }
 
   // On app domain, redirect /app/* → /* so URLs are always clean
   if (isAppDomain && pathname.startsWith("/app/")) {

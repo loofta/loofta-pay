@@ -6,6 +6,7 @@ import { MAINNET_WALLET_UPDATE_ID } from '@/common/force-update';
 import { RedisService } from '@/redis/redis.service';
 import { Connection } from '@solana/web3.js';
 import { TldParser } from '@onsol/tldparser';
+import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 
 const FORCE_UPDATE_TTL = 60 * 60 * 24 * 7; // 7 days — completed state is permanent
 function forceUpdateKey(privyUserId: string, updateId: string) {
@@ -645,12 +646,12 @@ export class UsersService {
       process.env.NEXT_PUBLIC_SOLANA_CLUSTER?.trim() ||
       'mainnet-beta';
     const isDevnet = cluster === 'devnet' || cluster === 'testnet';
-    const heliusKey = process.env.HELIUS_API_KEY?.trim();
-    return isDevnet
-      ? (process.env.SOLANA_DEVNET_RPC_URL?.trim() ||
-         (heliusKey ? `https://devnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.devnet.solana.com'))
-      : (process.env.SOLANA_RPC_URL?.trim() ||
-         (heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com'));
+    if (isDevnet) {
+      const heliusKey = process.env.HELIUS_API_KEY?.trim();
+      return process.env.SOLANA_DEVNET_RPC_URL?.trim() ||
+        (heliusKey ? `https://devnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.devnet.solana.com');
+    }
+    return getMainnetSolanaRpcUrl(this.configService);
   }
 
   /**
@@ -681,8 +682,7 @@ export class UsersService {
     const solanaRpcUrl = isDevnet
       ? (process.env.SOLANA_DEVNET_RPC_URL?.trim() ||
          (heliusKey ? `https://devnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.devnet.solana.com'))
-      : (process.env.SOLANA_RPC_URL?.trim() ||
-         (heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com'));
+      : getMainnetSolanaRpcUrl(this.configService);
 
     const usdcMint = isDevnet
       ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
@@ -733,8 +733,7 @@ export class UsersService {
     const solanaRpcUrl = isDevnet
       ? (process.env.SOLANA_DEVNET_RPC_URL?.trim() ||
          (heliusKey ? `https://devnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.devnet.solana.com'))
-      : (process.env.SOLANA_RPC_URL?.trim() ||
-         (heliusKey ? `https://mainnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.mainnet-beta.solana.com'));
+      : getMainnetSolanaRpcUrl(this.configService);
 
     const usdcMint = isDevnet
       ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
 import { PajCashOrdersService } from './paj-cash-orders.service';
 
 /**
@@ -14,11 +15,23 @@ export class PajCashProcessorService {
   private readonly logger = new Logger(PajCashProcessorService.name);
   private isProcessing = false;
 
-  constructor(private readonly orders: PajCashOrdersService) {}
+  constructor(
+    private readonly orders: PajCashOrdersService,
+    private readonly config: ConfigService,
+  ) {
+    if (!this.isProd) {
+      this.logger.warn('PajCashProcessorService: NODE_ENV != production — cron disabled on this instance (avoids racing production for the same orders and doubling calls to PAJ\'s API)');
+    }
+  }
+
+  private get isProd(): boolean {
+    return this.config.get<string>('NODE_ENV') === 'production';
+  }
 
   // Every 20s — active orders should feel close to real-time without hammering PAJ's API.
   @Cron('*/20 * * * * *')
   async handleCron() {
+    if (!this.isProd) return;
     if (this.isProcessing) return;
     this.isProcessing = true;
     try {

@@ -13,6 +13,7 @@ import {
 } from '@solana/spl-token';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Address } from 'viem';
+import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
@@ -26,6 +27,7 @@ import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK
 import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
+import { reclaimBurnerFunds } from '@/common/burner-reclaim';
 
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 // Exported so pack.service.ts can compute Mystery Pack net revenue (pack cost - ticket cost)
@@ -4002,6 +4004,26 @@ export class LotteryService {
     }
 
     this.logger.log(`${W} step 3/3 complete: sig=${sig}`);
+
+    // Gasless path: MagicBlock built the transfer tx, so no closeAccount could ride along —
+    // reclaim the burner's ATA rent (+ any dust MagicBlock's fee accounting left) in a
+    // follow-up tx. The direct-SPL fallback (sendUsdcFromBurner) already closed inline.
+    // Best-effort: sweepFinishedWithdrawalBurners is the cron backstop for missed ones.
+    if (canUseGasless) {
+      void (async () => {
+        try {
+          await new Promise((r) => setTimeout(r, 4_000));
+          const feePayerKeyForReclaim = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+          if (!feePayerKeyForReclaim) return;
+          const bs58ModR = await import('bs58');
+          const feePayerKpR = Keypair.fromSecretKey(bs58ModR.default.decode(feePayerKeyForReclaim));
+          await reclaimBurnerFunds(await this.getSolanaConnection(), burnerKeypair, feePayerKpR);
+        } catch (e: any) {
+          this.logger.warn(`${W} burner rent reclaim failed (non-fatal, cron backstop will retry): ${e?.message ?? e}`);
+        }
+      })();
+    }
+
     // The actual USDC that landed in the user's wallet — exactOut guarantees the gasless path
     // delivers exactly `transferAmount`; the direct-SPL fallback sends the full burner balance.
     const deliveredUsdc = (canUseGasless ? transferAmount : Number(burnerBalance)) / 1_000_000;
@@ -4492,12 +4514,7 @@ export class LotteryService {
   }
 
   private async getSolanaConnection(): Promise<Connection> {
-    const rpc =
-      this.config.get<string>('SOLANA_RPC_URL') ||
-      (this.config.get<string>('HELIUS_API_KEY')
-        ? `https://mainnet.helius-rpc.com/?api-key=${this.config.get('HELIUS_API_KEY')}`
-        : 'https://api.mainnet-beta.solana.com');
-    return new Connection(rpc, 'confirmed');
+    return new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
   }
 
   private decryptKey(enc: string, context: string): Buffer {
@@ -4673,12 +4690,17 @@ export class LotteryService {
     this.sweepRunning = true;
     try {
       const db = this.supabase.getClient();
+      // STALLED_REFUNDED is deliberately included alongside DONE/RESCUED: the stall refund was
+      // already paid to the user from the fee wallet (payStalledRefund), so anything still on
+      // that burner — bridge gas top-up, ATA rent, late-arriving bridge output — belongs to the
+      // fee wallet as reimbursement. Excluding it double-charged us: refund paid AND ~0.005 SOL
+      // (0.003 gas + 0.002 rent) stranded per stalled ticket (rent audit 2026-07-29).
       const { data: tickets } = await db
         .from('lottery_tickets')
         .select('*')
         .not('burner_sol_address', 'is', null)
         .is('burner_swept_at', null)
-        .in('bridge_status', ['DONE', 'RESCUED'])
+        .in('bridge_status', ['DONE', 'RESCUED', 'STALLED_REFUNDED'])
         .order('created_at', { ascending: true })
         .limit(20);
 
@@ -4687,8 +4709,72 @@ export class LotteryService {
           this.logger.warn(`sweepBurner ${ticket.id}: ${e.message}`),
         );
       }
+
+      await this.sweepFinishedWithdrawalBurners().catch(e =>
+        this.logger.warn(`sweepFinishedWithdrawalBurners: ${e.message}`),
+      );
     } finally {
       this.sweepRunning = false;
+    }
+  }
+
+  /**
+   * Cron backstop reclaiming ATA rent from finished WITHDRAWAL burners — the inline closes
+   * (sendUsdcFromBurner) and post-MagicBlock reclaim (doMagicBlockTransfer) handle the happy
+   * path; this catches anything they missed plus the historical backlog. Withdrawal burners
+   * previously had NO reclaim path at all: the 2026-07-29 rent audit found 59% of terminal
+   * withdrawal burners still holding their ~0.002 SOL rent.
+   *
+   * Only 'complete' withdrawals: a 'failed' withdrawal's burner may still hold the user's
+   * winnings, which must never be swept to the fee wallet.
+   *
+   * Requires migration 20260729130000 (burner_reclaimed_at on lottery_withdrawals) — until it's
+   * applied, the query fails with "column does not exist" and this logs + skips harmlessly.
+   */
+  private async sweepFinishedWithdrawalBurners(): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: rows, error } = await db
+      .from('lottery_withdrawals')
+      .select('id, batch_id, withdrawal_burner_sol_address, withdrawal_burner_sol_key_enc')
+      .eq('status', 'complete')
+      .not('withdrawal_burner_sol_address', 'is', null)
+      .is('burner_reclaimed_at', null)
+      .order('created_at', { ascending: true })
+      .limit(20);
+    if (error) {
+      this.logger.warn(`sweepFinishedWithdrawalBurners: query failed (migration 20260729130000 applied yet?): ${error.message}`);
+      return;
+    }
+    if (!rows?.length) return;
+
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    if (!feePayerKey) return;
+    const bs58Mod = await import('bs58');
+    const feePayerKeypair = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
+    const conn = await this.getSolanaConnection();
+
+    // A batch shares one burner across all its rows — reclaim each burner once, stamp every row.
+    const byBurner = new Map<string, { keyEnc: string }>();
+    for (const r of rows) {
+      if (!byBurner.has(r.withdrawal_burner_sol_address)) {
+        byBurner.set(r.withdrawal_burner_sol_address, { keyEnc: r.withdrawal_burner_sol_key_enc });
+      }
+    }
+
+    for (const [burnerAddress, { keyEnc }] of byBurner) {
+      try {
+        const burnerKeypair = Keypair.fromSecretKey(this.decryptKey(keyEnc, burnerAddress));
+        const result = await reclaimBurnerFunds(conn, burnerKeypair, feePayerKeypair);
+        await db.from('lottery_withdrawals')
+          .update({ burner_reclaimed_at: new Date().toISOString() })
+          .eq('withdrawal_burner_sol_address', burnerAddress)
+          .eq('status', 'complete');
+        if (result.signature) {
+          this.logger.log(`sweepFinishedWithdrawalBurners: reclaimed burner ${burnerAddress.slice(0, 8)}… (${result.closedTokenAccounts} ATA(s) closed)`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`sweepFinishedWithdrawalBurners: burner ${burnerAddress.slice(0, 8)}… failed (will retry next cron): ${e?.message ?? e}`);
+      }
     }
   }
 
@@ -4860,6 +4946,15 @@ export class LotteryService {
     }
 
     tx.add(createTransferInstruction(burnerAta, toAta, burnerKeypair.publicKey, amount));
+    // When this transfer drains the burner ATA to exactly zero (both callers pass the full
+    // balance), close it in the same tx — its ~0.002 SOL rent goes back to the fee payer.
+    // Withdrawal burners previously had NO reclaim path at all: the 2026-07-29 rent audit found
+    // 59% of terminal withdrawal burners still holding their rent, the single biggest leak.
+    const burnerAtaBalance = BigInt((usdcAccount.account.data as any).parsed?.info?.tokenAmount?.amount ?? '0');
+    const drainsCompletely = amount >= burnerAtaBalance;
+    if (drainsCompletely) {
+      tx.add(createCloseAccountInstruction(burnerAta, feePayerKeypair.publicKey, burnerKeypair.publicKey));
+    }
     tx.feePayer = feePayerKeypair.publicKey;
     const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash();
     tx.recentBlockhash = blockhash;
@@ -4870,7 +4965,7 @@ export class LotteryService {
     if (confirmation.value.err) {
       throw new Error(`Burner transfer failed on-chain (${sig}): ${JSON.stringify(confirmation.value.err)}`);
     }
-    this.logger.log(`Burner transfer complete: ${sig}, amount: ${amount}`);
+    this.logger.log(`Burner transfer complete: ${sig}, amount: ${amount}${drainsCompletely ? ' (burner ATA closed, rent → fee payer)' : ''}`);
     return sig;
   }
 

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { StatusService } from '../intents/status.service';
 
@@ -20,10 +21,20 @@ export class UserDepositsProcessorService {
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly statusService: StatusService,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    if (!this.isProd) {
+      this.logger.warn('UserDepositsProcessorService: NODE_ENV != production — cron disabled on this instance (avoids racing production for the same deposit rows and doubling RPC/bridge-status load)');
+    }
+  }
+
+  private get isProd(): boolean {
+    return this.config.get<string>('NODE_ENV') === 'production';
+  }
 
   @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
+    if (!this.isProd) return;
     if (this.isProcessing) return;
     this.isProcessing = true;
     try {

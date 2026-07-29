@@ -39,6 +39,7 @@ import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.ser
 import { PajCashBankService } from '../paj-cash/paj-cash-bank.service';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
+import { reclaimBurnerFunds } from '@/common/burner-reclaim';
 import { PajCashOrdersService } from '../paj-cash/paj-cash-orders.service';
 import { computeLooftaFeeUsdc } from '@/common/paj-cash-fee';
 
@@ -2044,30 +2045,37 @@ export class ClaimsService {
       (e: unknown) => this.logger.warn(`[PrivateSweep] ${claimId}: failed to stamp claimed_privately (non-fatal): ${String(e)}`),
     );
 
-    // Sweep dust (fee + gas pre-paid into burner) to fee-payer wallet — fire-and-forget
+    // Sweep dust (fee + gas pre-paid into burner) to fee-payer wallet AND close the burner's
+    // now-finished ATA (~0.002 SOL rent → fee payer) — fire-and-forget. The close used to be
+    // missing on this private/cross-chain path (only the public sweep closed), which a
+    // 2026-07-29 rent audit measured as ~11% of terminal claim burners still holding their
+    // rent. The MagicBlock transfer above is built by MagicBlock's relay so we can't append
+    // the close there — this follow-up tx (which we do build) is the right place.
     const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
     if (feePayerKp && feePayerAddress) {
       void (async () => {
         try {
           await new Promise((r) => setTimeout(r, 4_000));
           const remaining = await getAccount(conn, burnerAta).catch(() => null);
-          const dust = remaining?.amount ?? BigInt(0);
+          if (!remaining) return; // ATA already closed or unreadable — nothing to reclaim
+          const dust = remaining.amount ?? BigInt(0);
+          const dustTx = new Transaction();
           if (dust > BigInt(0)) {
             const feePayerPubkey = new PublicKey(feePayerAddress);
             const feePayerAta = await getAssociatedTokenAddress(this.usdcMint, feePayerPubkey);
-            const dustTx = new Transaction();
             try { await getAccount(conn, feePayerAta); } catch {
               dustTx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, feePayerAta, feePayerPubkey, this.usdcMint));
             }
             dustTx.add(createTransferInstruction(burnerAta, feePayerAta, burnerKeypair.publicKey, dust));
-            dustTx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
-            dustTx.feePayer = feePayerKp.publicKey;
-            dustTx.sign(burnerKeypair, feePayerKp);
-            const dustSig = await conn.sendRawTransaction(dustTx.serialize(), { skipPreflight: true });
-            this.logger.log(`[PrivateSweep] ${claimId}: dust swept (${dust} units) → fee payer tx=${dustSig}`);
           }
+          dustTx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burnerKeypair.publicKey));
+          dustTx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
+          dustTx.feePayer = feePayerKp.publicKey;
+          dustTx.sign(burnerKeypair, feePayerKp);
+          const dustSig = await conn.sendRawTransaction(dustTx.serialize(), { skipPreflight: true });
+          this.logger.log(`[PrivateSweep] ${claimId}: dust swept (${dust} units) + burner ATA closed (rent → fee payer) tx=${dustSig}`);
         } catch (e) {
-          this.logger.warn(`[PrivateSweep] ${claimId}: dust sweep failed (non-fatal): ${String(e)}`);
+          this.logger.warn(`[PrivateSweep] ${claimId}: dust sweep/ATA close failed (non-fatal): ${String(e)}`);
         }
       })();
     }
@@ -2088,6 +2096,59 @@ export class ClaimsService {
    *  delegate here so this file's existing call sites don't all need touching. */
   private guardAtaSponsorship(walletAddress: string, mint: string, context: string): Promise<boolean> {
     return guardAtaSponsorship(this.supabaseService, walletAddress, mint, context, this.emailService);
+  }
+
+  /**
+   * Cron backstop reclaiming ATA rent (+ residual fee/gas dust) from TERMINAL claim burners —
+   * the inline closes (public sweep, private-sweep dust tx, reclaimByCreator) handle the happy
+   * paths going forward; this catches anything they missed plus the historical backlog from
+   * before those closes existed (rent audit 2026-07-29: ~11% of terminal claim burners still
+   * held their ~0.002 SOL rent).
+   *
+   * Only SUCCESS/CANCELLED rows: both mean the user's money already left the burner, so any
+   * residue is fee/gas prepayment surplus that belongs to the fee wallet — the same rationale as
+   * the existing private-sweep dust sweep. OPEN funded-but-unclaimed burners hold user money and
+   * are never touched.
+   *
+   * Requires migration 20260729130000 (burner_reclaimed_at on payments) — until it's applied the
+   * query fails with "column does not exist" and this logs + skips harmlessly.
+   */
+  async cronReclaimFinishedClaimBurners(): Promise<void> {
+    if (!this.canDecryptBurnerSecret()) return;
+    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+    if (!feePayerKp) return;
+
+    const { data: rows, error } = await this.supabaseService.payments
+      .select('id, burner_address, burner_encrypted_secret')
+      .in('status', ['SUCCESS', 'CANCELLED'])
+      .not('burner_address', 'is', null)
+      .not('burner_encrypted_secret', 'is', null)
+      .eq('is_devnet', false)
+      .is('burner_reclaimed_at', null)
+      .order('created_at', { ascending: true })
+      .limit(10);
+    if (error) {
+      this.logger.warn(`[BurnerReclaim] query failed (migration 20260729130000 applied yet?): ${error.message}`);
+      return;
+    }
+    if (!rows?.length) return;
+
+    const conn = this.solanaSponsor.getConnectionForCluster('mainnet');
+    for (const row of rows) {
+      try {
+        const secretKey = this.decryptClaimBurnerSecret(row.burner_encrypted_secret as string, row.burner_address as string);
+        const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
+        const result = await reclaimBurnerFunds(conn, burnerKeypair, feePayerKp);
+        await this.supabaseService.payments
+          .update({ burner_reclaimed_at: new Date().toISOString() })
+          .eq('id', row.id);
+        if (result.signature) {
+          this.logger.log(`[BurnerReclaim] claim ${row.id}: reclaimed burner ${String(row.burner_address).slice(0, 8)}… (${result.closedTokenAccounts} ATA(s) closed)`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`[BurnerReclaim] claim ${row.id}: failed (will retry next cron): ${e?.message ?? e}`);
+      }
+    }
   }
 
   private async sweepClaimBurnerToWallet(
@@ -2692,6 +2753,12 @@ export class ClaimsService {
             }
             tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, balance));
             const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+            // The transfer above drains the burner ATA to exactly zero, and a cancelled claim's
+            // burner is never reused — close it in the same tx so its ~0.002 SOL rent returns to
+            // the fee payer instead of being stranded (rent audit 2026-07-29).
+            if (feePayerKp) {
+              tx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burnerKeypair.publicKey));
+            }
             const reclaimFeePayerPubkey = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
             const reclaimSigners = feePayerKp ? [burnerKeypair, feePayerKp] : [burnerKeypair];
             this.logger.log(`Claim ${claimId}: sending reclaim transfer ${balance} USDC burner->creator ${creatorWallet.slice(0, 8)}...`);

@@ -23,6 +23,8 @@ interface SharePaymentPreview {
   status: string
   is_devnet: boolean
   is_private: boolean
+  is_viewer_sender: boolean
+  is_viewer_recipient: boolean
 }
 
 const PAID_STATUSES = new Set(['SUCCESS', 'PRIVATE_TRANSFER_PENDING', 'CLAIMED', 'FUNDED']);
@@ -33,7 +35,7 @@ const PAID_STATUSES = new Set(['SUCCESS', 'PRIVATE_TRANSFER_PENDING', 'CLAIMED',
  *  the real `/c/:short_id` page, which owns all pay/claim logic. Mirrors `/tw/[short_id]`'s UI. */
 export default function ShareClient({ short_id }: { short_id: string }) {
   const router = useRouter()
-  const { ready, authenticated, login, user } = usePrivy()
+  const { ready, authenticated, login, user, getAccessToken } = usePrivy()
   const { linkEmail } = useLinkAccount({})
   const networkMode = useAuthStore((s) => s.networkMode)
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode)
@@ -42,16 +44,27 @@ export default function ShareClient({ short_id }: { short_id: string }) {
   const hasEmail = user?.linkedAccounts?.some((a: any) => a.type === 'email' || a.type === 'google' || a.type === 'apple')
 
   const { data: request, isLoading } = useQuery<SharePaymentPreview>({
-    queryKey: ['share-payment', short_id],
+    queryKey: ['share-payment', short_id, authenticated],
+    enabled: ready,
     queryFn: async () => {
-      const res = await fetch(`/api/share/${short_id}`)
+      const headers: HeadersInit = {}
+      if (authenticated) {
+        const token = await getAccessToken()
+        if (token) headers.Authorization = `Bearer ${token}`
+      }
+      const res = await fetch(`/api/share/${short_id}`, { headers })
       if (!res.ok) throw new Error('Not found')
       return res.json()
     },
   })
 
-  const isSender = !!myUsername && !!request?.sender_username && myUsername.toLowerCase() === request.sender_username.toLowerCase()
-  const isRecipient = !!myUsername && !!request?.recipient_username && myUsername.toLowerCase() === request.recipient_username.toLowerCase()
+  // Prefer the server-verified match (race-free — doesn't wait on the client's own username
+  // hydration); fall back to the username-string compare so unauthenticated-token edge cases
+  // still resolve once `myUsername` catches up.
+  const isSender = !!request?.is_viewer_sender ||
+    (!!myUsername && !!request?.sender_username && myUsername.toLowerCase() === request.sender_username.toLowerCase())
+  const isRecipient = !!request?.is_viewer_recipient ||
+    (!!myUsername && !!request?.recipient_username && myUsername.toLowerCase() === request.recipient_username.toLowerCase())
   const isPaid = !!request && PAID_STATUSES.has(request.status)
   const isWrongNetwork = !!request && networkMode !== (request.is_devnet ? 'devnet' : 'mainnet')
 
@@ -144,7 +157,7 @@ export default function ShareClient({ short_id }: { short_id: string }) {
               <Lock className="h-4 w-4 text-white/60" />
             )}
             <span className="text-base font-semibold text-white">
-              {isPaid ? (isRecipient ? 'Payment received' : 'Payment sent') : 'Payment on Loofta'}
+              {isPaid ? (isRecipient ? 'Payment received' : isSender ? 'Payment sent' : 'Payment on Loofta') : 'Payment on Loofta'}
             </span>
           </div>
 

@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
 import { Keypair, PublicKey, Transaction, VersionedTransaction, Connection } from '@solana/web3.js';
-import { getAssociatedTokenAddress, getAccount, createTransferInstruction, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
+import { getAssociatedTokenAddress, getAccount, createTransferInstruction, createAssociatedTokenAccountInstruction, createCloseAccountInstruction } from '@solana/spl-token';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
 import { SolanaSponsorService } from '../claims/solana-sponsor.service';
@@ -11,6 +12,7 @@ import { PrivateBalanceService, PRIVATE_BALANCE_PLATFORM_FEE_BPS } from './priva
 import { requestMagicblockPrivateTransfer, MAGICBLOCK_GAS_USDC, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
+import { reclaimBurnerFunds } from '@/common/burner-reclaim';
 import { EmailService } from '../email/email.service';
 import type { PrivateTransfer } from './entities/private-transfer.entity';
 
@@ -29,10 +31,26 @@ export class PrivateBalanceProcessorService {
     private readonly nearIntentsService: NearIntentsService,
     private readonly statusService: StatusService,
     private readonly emailService: EmailService,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    if (!this.isProd) {
+      this.logger.warn('PrivateBalanceProcessorService: NODE_ENV != production — cron disabled on this instance (avoids racing production for the same burner/transfer rows and doubling RPC load)');
+    }
+  }
+
+  /**
+   * Same rationale as LotteryCronService.isProd: this cron drives real burner wallets and
+   * MagicBlock transfers keyed only by DB row against the shared production Supabase project.
+   * A local/dev instance polling the same rows races production and doubles RPC call volume
+   * against the same rate-limited key.
+   */
+  private get isProd(): boolean {
+    return this.config.get<string>('NODE_ENV') === 'production';
+  }
 
   @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
+    if (!this.isProd) return;
     if (this.isProcessing) {
       this.logger.debug('[PrivateBalanceProcessor] previous run still in progress, skipping');
       return;
@@ -41,10 +59,50 @@ export class PrivateBalanceProcessorService {
     try {
       await this.processDeposits();
       await this.processWithdrawals();
+      await this.reclaimFinishedBurners();
     } catch (e) {
       this.logger.error(`[PrivateBalanceProcessor] cron error: ${String(e)}`);
     } finally {
       this.isProcessing = false;
+    }
+  }
+
+  /**
+   * Backstop reclaiming ATA rent from terminal ('complete' only) burners — the inline close in
+   * sweepDirectToDestination and the post-delivery/post-bridge reclaims handle the happy path;
+   * this catches misses plus the historical backlog (rent audit 2026-07-29: 39% of terminal
+   * private-balance burners still held their ~0.002 SOL rent). 'failed' rows are deliberately
+   * excluded — their burner may still hold the user's funds, which must never be swept.
+   * Requires migration 20260729130000 (burner_reclaimed_at on private_transfers); until applied,
+   * the query fails with "column does not exist" and this logs + skips harmlessly.
+   */
+  private async reclaimFinishedBurners() {
+    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+    if (!feePayerKp) return;
+    const { data: rows, error } = await this.supabaseService.privateTransfers
+      .select('id, burner_address, burner_encrypted_secret, cluster')
+      .eq('status', 'complete')
+      .is('burner_reclaimed_at', null)
+      .order('created_at', { ascending: true })
+      .limit(10);
+    if (error) {
+      this.logger.warn(`[BurnerReclaim] query failed (migration 20260729130000 applied yet?): ${error.message}`);
+      return;
+    }
+    for (const row of (rows ?? []) as PrivateTransfer[]) {
+      try {
+        const burnerKeypair = this.privateBalanceService.decryptBurnerSecret(row.burner_encrypted_secret, row.burner_address);
+        const conn = this.solanaSponsor.getConnectionForCluster(row.cluster);
+        const result = await reclaimBurnerFunds(conn, burnerKeypair, feePayerKp);
+        await this.supabaseService.privateTransfers
+          .update({ burner_reclaimed_at: new Date().toISOString() })
+          .eq('id', row.id);
+        if (result.signature) {
+          this.logger.log(`[BurnerReclaim] ${row.id}: reclaimed burner ${row.burner_address.slice(0, 8)}… (${result.closedTokenAccounts} ATA(s) closed)`);
+        }
+      } catch (e) {
+        this.logger.warn(`[BurnerReclaim] ${row.id}: failed (will retry next tick): ${String(e)}`);
+      }
     }
   }
 
@@ -146,6 +204,26 @@ export class PrivateBalanceProcessorService {
 
     await this.supabaseService.privateTransfers.update({ status: 'complete', leg2_tx_signature: sig }).eq('id', row.id);
     this.logger.log(`[PrivateDeposit] ${row.id}: complete, tx=${sig}`);
+
+    // The delivery tx above is built by MagicBlock's relay, so we can't append a closeAccount to
+    // it — reclaim the burner's ATA rent (+ any dust MagicBlock's fee accounting left behind) in
+    // a follow-up tx instead, after a short settle delay. Best-effort: the deposit itself is
+    // already complete; a failed reclaim only postpones rent recovery, never the user's money.
+    this.reclaimBurnerLater(row.id, burnerKeypair, conn);
+  }
+
+  /** Fire-and-forget rent reclaim for a finished burner (see @/common/burner-reclaim). */
+  private reclaimBurnerLater(rowId: string, burnerKeypair: Keypair, conn: Connection): void {
+    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+    if (!feePayerKp) return;
+    void (async () => {
+      try {
+        await new Promise((r) => setTimeout(r, 4_000));
+        await reclaimBurnerFunds(conn, burnerKeypair, feePayerKp);
+      } catch (e) {
+        this.logger.warn(`[BurnerReclaim] ${rowId}: reclaim failed (non-fatal, rent stays until manually swept): ${String(e)}`);
+      }
+    })();
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -248,6 +326,10 @@ export class PrivateBalanceProcessorService {
       sweepTx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, destinationAta, destinationPubkey, mint));
     }
     sweepTx.add(createTransferInstruction(burnerAta, destinationAta, burnerKeypair.publicKey, balance));
+    // The transfer above drains the burner ATA to exactly zero and the burner is single-use —
+    // close it in the same tx so its ~0.002 SOL rent returns to the fee payer instead of being
+    // stranded (rent audit 2026-07-29: 39% of terminal private-balance burners still held rent).
+    sweepTx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burnerKeypair.publicKey));
     sweepTx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
     sweepTx.feePayer = feePayerKp.publicKey;
     sweepTx.sign(burnerKeypair, feePayerKp);
@@ -349,6 +431,17 @@ export class PrivateBalanceProcessorService {
     if (!statusResult.isComplete) return; // still bridging — checked again next tick
     await this.supabaseService.privateTransfers.update({ status: 'complete' }).eq('id', row.id);
     this.logger.log(`[PrivateWithdrawal] ${row.id}: complete (bridged to destination)`);
+
+    // Bridge delivered — the burner is finished for good. Reclaim its ATA rent now; deliberately
+    // NOT done when the bridge fails (isFailed above), because a failed bridge may refund USDC
+    // back to the burner and closing its ATA first would complicate that recovery.
+    try {
+      const burnerKeypair = this.privateBalanceService.decryptBurnerSecret(row.burner_encrypted_secret, row.burner_address);
+      const conn = this.solanaSponsor.getConnectionForCluster(row.cluster);
+      this.reclaimBurnerLater(row.id, burnerKeypair, conn);
+    } catch (e) {
+      this.logger.warn(`[PrivateWithdrawal] ${row.id}: could not schedule burner reclaim (non-fatal): ${String(e)}`);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────

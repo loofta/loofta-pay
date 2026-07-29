@@ -19,6 +19,12 @@ export interface SharePreview {
   status: string;
   is_devnet: boolean;
   is_private: boolean;
+  /** True only when `viewerUserId` (the verified caller) is this payment's sender/recipient.
+   *  Computed server-side against the same did:privy: ids the backend's checkIsRecipient uses —
+   *  doesn't depend on the client's username having hydrated yet, unlike the username-string
+   *  fallback the client also does. Always false for an unauthenticated/unverified viewer. */
+  is_viewer_sender: boolean;
+  is_viewer_recipient: boolean;
 }
 
 /**
@@ -26,8 +32,11 @@ export interface SharePreview {
  * that predate short links). Shared by the `/api/share/:short_id` data route and the
  * `/api/share/:short_id/og` image route so username-resolution logic doesn't drift between them.
  * Never returns email or wallet address.
+ *
+ * `viewerUserId`, if given, is the verified `did:privy:...` id of the caller (from a bearer token) —
+ * used only to compute `is_viewer_sender`/`is_viewer_recipient`, never echoed back raw.
  */
-export async function getSharePreview(shortIdOrUuid: string): Promise<SharePreview | null> {
+export async function getSharePreview(shortIdOrUuid: string, viewerUserId?: string | null): Promise<SharePreview | null> {
   const supabase = getSupabaseAdmin();
   const SELECT = "id, short_id, amount, status, is_devnet, is_private, direction, created_by, sender_user_id, recipient_address, recipient_username, recipient_user_id";
 
@@ -95,5 +104,7 @@ export async function getSharePreview(shortIdOrUuid: string): Promise<SharePrevi
     status,
     is_devnet: !!payment.is_devnet,
     is_private: !!payment.is_private,
+    is_viewer_sender: !!viewerUserId && viewerUserId === senderId,
+    is_viewer_recipient: !!viewerUserId && viewerUserId === trueRecipientId,
   };
 }

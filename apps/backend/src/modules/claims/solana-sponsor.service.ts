@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
+import { isSolanaDevnetFromConfig, getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -192,6 +192,8 @@ export class SolanaSponsorService {
     const helius = this.config.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
 
     if (isDevnet) {
+      // Alchemy has no devnet Solana endpoint — Helius is primary here, same as other backend
+      // RPC resolvers (see project_alchemy_rpc_fallback memory).
       const devnetRpc =
         this.config.get<string>('SOLANA_DEVNET_RPC_URL') ??
         process.env.SOLANA_DEVNET_RPC_URL ??
@@ -201,14 +203,7 @@ export class SolanaSponsorService {
       return 'https://api.devnet.solana.com';
     }
 
-    // Mainnet: Helius key > explicit RPC > public fallback
-    if (helius) return `https://mainnet.helius-rpc.com/?api-key=${helius}`;
-    const mainnetRpc =
-      this.config.get<string>('SOLANA_RPC_URL') ??
-      process.env.SOLANA_RPC_URL ??
-      getEnvFromFile('SOLANA_RPC_URL');
-    if (mainnetRpc?.trim()) return mainnetRpc.trim();
-    return 'https://api.mainnet-beta.solana.com';
+    return getMainnetSolanaRpcUrl(this.config);
   }
 
   isAvailable(): boolean {
@@ -222,12 +217,7 @@ export class SolanaSponsorService {
   getConnectionForCluster(cluster: 'mainnet' | 'devnet'): Connection {
     const helius = this.config.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
     if (cluster === 'mainnet') {
-      if (helius) return new Connection(`https://mainnet.helius-rpc.com/?api-key=${helius}`, 'confirmed');
-      const mainnetRpc =
-        this.config.get<string>('SOLANA_RPC_URL') ??
-        process.env.SOLANA_RPC_URL ??
-        getEnvFromFile('SOLANA_RPC_URL');
-      return new Connection(mainnetRpc?.trim() || 'https://api.mainnet-beta.solana.com', 'confirmed');
+      return new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
     }
     // devnet
     const devnetRpc =

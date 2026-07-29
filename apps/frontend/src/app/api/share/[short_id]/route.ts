@@ -2,6 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { getSharePreview } from "@/lib/sharePreview";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 const ALLOWED_ORIGINS = [
   "https://pay.loofta.xyz",
@@ -68,7 +69,10 @@ export async function GET(
   }
 
   const { short_id } = await params;
-  const preview = await getSharePreview(short_id);
+  // Optional — an anonymous/unauthenticated viewer still gets the public preview, just with
+  // is_viewer_sender/is_viewer_recipient both false.
+  const viewerUserId = await getVerifiedUserId(req);
+  const preview = await getSharePreview(short_id, viewerUserId);
   if (!preview) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }

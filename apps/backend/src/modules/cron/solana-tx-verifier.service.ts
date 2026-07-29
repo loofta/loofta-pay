@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { Connection } from '@solana/web3.js';
 import { ClaimsService } from '../claims/claims.service';
 import { RedisService } from '@/redis/redis.service';
+import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 
 export interface TxVerifierResult {
   claimId: string;
@@ -23,12 +24,7 @@ export class SolanaTxVerifierService {
     private readonly redisService: RedisService,
     private readonly configService: ConfigService,
   ) {
-    const rpcUrl =
-      this.configService.get<string>('SOLANA_RPC_URL') ||
-      (this.configService.get<string>('HELIUS_API_KEY')
-        ? `https://mainnet.helius-rpc.com/?api-key=${this.configService.get('HELIUS_API_KEY')}`
-        : 'https://api.mainnet-beta.solana.com');
-    this.connection = new Connection(rpcUrl, 'confirmed');
+    this.connection = new Connection(getMainnetSolanaRpcUrl(this.configService), 'confirmed');
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
