@@ -17,6 +17,12 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Global kill switch: set MAINTENANCE_MODE=true on Railway/Vercel to rewrite every
+  // page on every domain to the maintenance screen without touching DNS or deploys.
+  if (process.env.MAINTENANCE_MODE === "true" && pathname !== "/maintenance") {
+    return NextResponse.rewrite(new URL("/maintenance", request.url));
+  }
+
   // loofta.com exists solely to host the Telegram Connect widget — Privy/Telegram's login
   // widget doesn't work on .xyz domains, so this relay domain hands the handle back to
   // pay.loofta.xyz via a one-time token (see telegram-relay/page.tsx + api/telegram-relay).
