@@ -1084,10 +1084,18 @@ export class LotteryService {
     const burnerKeypair = Keypair.generate();
     const burnerAddress = burnerKeypair.publicKey.toBase58();
     const burnerKeyEnc = this.enc.encrypt(Buffer.from(burnerKeypair.secretKey), burnerAddress);
-    const senderTxHash = await this.topUpFromFeeWallet(burnerAddress, BigInt(costUnits));
 
     const db = this.supabase.getClient();
-    const { data: ticket, error } = await db
+    // Persist the burner's key BEFORE spending any treasury funds into it, same 'pending_send'
+    // convention buildPurchaseTransferTx uses for user-funded tickets. topUpFromFeeWallet can
+    // still throw on a transfer that actually lands (block-height-race false negatives) — if that
+    // happens after this insert, the row (and processSentTickets' existing closed-tab-resilience
+    // check, which promotes any pending_send ticket whose burner shows a balance) can recover it.
+    // Before this fix the burner/key lived only in this function's local scope and a throw here
+    // meant it was gone forever the moment topUpFromFeeWallet's promise rejected — confirmed twice
+    // in production on 2026-07-29 (two Mystery Pack purchases each lost $2 of real treasury USDC
+    // to an address whose key was never written down).
+    const { data: ticket, error: insertError } = await db
       .from('lottery_tickets')
       .insert({
         user_id: userId,
@@ -1098,14 +1106,26 @@ export class LotteryService {
         burner_sol_key_enc: burnerKeyEnc,
         num_tickets: numTickets,
         cost_usdc: costUsdc,
-        status: 'sent',
-        sender_tx_hash: senderTxHash,
+        status: 'pending_send',
         is_gift: false,
         funded_privately: false,
       })
       .select('id')
       .single();
-    if (error || !ticket) throw new Error(`Failed to create treasury-funded lottery ticket for ${userId}: ${error?.message}`);
+    if (insertError || !ticket) throw new Error(`Failed to create treasury-funded lottery ticket for ${userId}: ${insertError?.message}`);
+
+    const senderTxHash = await this.topUpFromFeeWallet(burnerAddress, BigInt(costUnits));
+
+    const { error: updateError } = await db
+      .from('lottery_tickets')
+      .update({ status: 'sent', sender_tx_hash: senderTxHash })
+      .eq('id', ticket.id);
+    if (updateError) {
+      // The transfer landed (topUpFromFeeWallet already threw otherwise) — leave it in
+      // pending_send with no sender_tx_hash rather than lose track of it; processSentTickets'
+      // balance check will still promote it once it revisits this row.
+      this.logger.error(`Treasury-funded ticket ${ticket.id}: funded on-chain (sig=${senderTxHash}) but status update failed: ${updateError.message}`);
+    }
 
     this.logger.log(`Treasury-funded purchase: user ${userId} ticket ${ticket.id} (${numTickets} tickets, sig=${senderTxHash})`);
 
@@ -4606,12 +4626,34 @@ export class LotteryService {
     tx.recentBlockhash = blockhash;
     tx.sign(feePayerKeypair);
     const sig = await conn.sendRawTransaction(tx.serialize());
-    const topUpConfirmation = await conn.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
-    if (topUpConfirmation.value.err) {
-      throw new Error(`topUpFromFeeWallet failed on-chain (${sig}): ${JSON.stringify(topUpConfirmation.value.err)}`);
-    }
+    // Poll signature status directly rather than conn.confirmTransaction({blockhash,
+    // lastValidBlockHeight}) — that call races real confirmation against blockhash expiry and
+    // throws "signature has expired: block height exceeded" the moment the window passes, even
+    // when the transaction goes on to land moments later (confirmed on-chain in the 2026-07-29
+    // incident: real treasury transfers reported as failed here had actually finalized). Callers
+    // of topUpFromFeeWallet must persist the destination's key BEFORE calling this, precisely
+    // because this can still throw on a transfer that lands anyway.
+    await this.waitForSignatureFinality(conn, sig);
     this.logger.log(`topUpFromFeeWallet: sent ${(Number(amount) / 1_000_000).toFixed(6)} USDC → ${toAddress.slice(0, 8)}…, sig=${sig}`);
     return sig;
+  }
+
+  /**
+   * Poll getSignatureStatuses directly instead of racing blockhash expiry (see topUpFromFeeWallet
+   * for why that distinction matters). Throws only on a genuine on-chain error or a real timeout —
+   * a timeout here means "unconfirmed after Nms," not "failed," so callers that persist state
+   * before calling this can safely leave it for later reconciliation rather than assuming loss.
+   */
+  private async waitForSignatureFinality(conn: Connection, signature: string, timeoutMs = 60_000, pollMs = 1000): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const { value } = await conn.getSignatureStatuses([signature], { searchTransactionHistory: true });
+      const st = value[0];
+      if (st?.err) throw new Error(`Transaction failed on-chain (${signature}): ${JSON.stringify(st.err)}`);
+      if (st?.confirmationStatus === 'confirmed' || st?.confirmationStatus === 'finalized') return;
+      await new Promise(r => setTimeout(r, pollMs));
+    }
+    throw new Error(`Signature ${signature} not confirmed after ${timeoutMs}ms — status still unknown, not necessarily failed.`);
   }
 
   // In-memory de-dupe so the alert cron doesn't email on every tick — 0 means "not currently in a

@@ -157,8 +157,17 @@ export class LotteryCronService {
   /** Every 2 minutes: retry the real Megapot ticket purchase for a Mystery Pack win whose
    *  treasury-funded purchase failed on the first attempt — the win itself was already recorded,
    *  this only affects when the actual ticket gets bought. Capped per-row (overlap-guarded in
-   *  service). */
-  @Cron('*/2 * * * *')
+   *  service).
+   *
+   *  TEMPORARILY DISABLED (2026-07-29): topUpFromFeeWallet's old confirmTransaction call could
+   *  throw a false "expired: block height exceeded" on a transfer that had actually landed, and
+   *  purchaseTicketsForUser only persisted the freshly-generated burner's key *after* that call
+   *  returned — so every retry against a row stuck in this false-negative state re-spent real
+   *  treasury USDC into a brand-new burner whose key was then lost the same way, unrecoverably,
+   *  on the next false negative. Fixed in the same change (see purchaseTicketsForUser /
+   *  topUpFromFeeWallet) by persisting the burner before spending and polling signature status
+   *  properly instead of racing block height. Re-enable the @Cron below once that fix has been
+   *  running in production long enough to trust it. */
   async retryFailedPackPurchases(): Promise<void> {
     if (!this.isProd) return;
     await this.pack.retryFailedPackPurchases().catch(e =>
