@@ -6,6 +6,7 @@ import { createAssociatedTokenAccountIdempotentInstruction, createTransferInstru
 import { SupabaseService } from '@/database/supabase.service';
 import { LotteryService, TICKET_PRICE_USDC } from './lottery.service';
 import { UsersService } from '../users/users.service';
+import { EmailService } from '../email/email.service';
 
 // Same mainnet USDC mint used everywhere else in this module (lottery.service.ts) — this app's
 // money flows run against mainnet USDC regardless of cluster setting, so this is intentionally
@@ -92,6 +93,7 @@ export class PackService {
     private readonly config: ConfigService,
     private readonly lottery: LotteryService,
     private readonly usersService: UsersService,
+    private readonly emailService: EmailService,
   ) {}
 
   private async getSolanaConnection(): Promise<Connection> {
@@ -672,6 +674,49 @@ export class PackService {
     } finally {
       this.processingPackPurchaseRetry = false;
     }
+  }
+
+  /**
+   * Manual remediation for a pack whose treasury-funded ticket purchase permanently failed
+   * (retries exhausted, or otherwise judged unsafe to keep retrying) — refunds the user's
+   * original pack cost straight to their own registered wallet and emails them to try again.
+   * Only ever call this against a row confirmed NOT to have actually landed a ticket
+   * (lottery_ticket_id null) — this does not touch or cancel any ticket that did go through.
+   */
+  async refundFailedPackOpening(openingId: string): Promise<{ refundTxHash: string }> {
+    const db = this.supabase.getClient();
+    const { data: opening, error } = await db
+      .from('pack_openings')
+      .select('id, user_id, cost_usdc, status, lottery_ticket_id')
+      .eq('id', openingId)
+      .maybeSingle();
+    if (error || !opening) throw new BadRequestException('Pack opening not found');
+    if (opening.status !== 'failed') {
+      throw new BadRequestException(`Can only refund a 'failed' pack opening (this one is '${opening.status}')`);
+    }
+    if (opening.lottery_ticket_id) {
+      throw new BadRequestException('This pack opening already has a ticket attached — refunding would double-pay the user');
+    }
+
+    const userSolanaAddress = await this.usersService.getSolanaWalletAddress(opening.user_id);
+    const refundTxHash = await this.lottery.refundToUserWallet(userSolanaAddress, opening.cost_usdc);
+
+    await db.from('pack_openings').update({
+      status: 'refunded',
+      refund_tx_hash: refundTxHash,
+      refunded_at: new Date().toISOString(),
+    }).eq('id', openingId);
+
+    this.logger.log(`Pack opening ${openingId}: refunded $${opening.cost_usdc} to user ${opening.user_id}, sig=${refundTxHash}`);
+
+    const recipientEmail = await this.usersService.getEmailByPrivyId(opening.user_id);
+    if (recipientEmail) {
+      this.emailService.sendPackRefundEmail({ recipientEmail, costUsdc: opening.cost_usdc }).catch((e) =>
+        this.logger.warn(`Pack refund email failed for opening ${openingId}: ${e?.message ?? e}`),
+      );
+    }
+
+    return { refundTxHash };
   }
 
   /** Admin: full tier config including weight + enabled — powers the enable/disable toggle. */

@@ -145,4 +145,10 @@ export class AdminLotteryController {
     const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
     return this.packs.getAdminOpenings(page, 50);
   }
+
+  @Post('packs/openings/:id/refund')
+  @ApiOperation({ summary: "Refund a 'failed' pack opening's cost to the user's wallet and email them (only when its treasury ticket purchase never landed)" })
+  async refundPackOpening(@Param('id') id: string) {
+    return this.packs.refundFailedPackOpening(id);
+  }
 }

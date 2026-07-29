@@ -1070,6 +1070,17 @@ export class LotteryService {
    * rather than swallowing it — PackService is responsible for catching this and marking the
    * pack_openings row retryable instead of losing the user's prize.
    */
+  /**
+   * Refund a USDC amount straight to a user's own registered wallet from the treasury fee wallet.
+   * Safe to reuse topUpFromFeeWallet here specifically because the destination is a permanent,
+   * already-known wallet (not a freshly generated burner) — unlike purchaseTicketsForUser, there's
+   * no key to lose if this throws after the transfer actually lands; the caller can just retry.
+   */
+  async refundToUserWallet(userSolanaAddress: string, amountUsdc: number): Promise<string> {
+    const units = BigInt(Math.round(amountUsdc * 1_000_000));
+    return this.topUpFromFeeWallet(userSolanaAddress, units);
+  }
+
   async purchaseTicketsForUser(userId: string, numTickets: number): Promise<{ ticketId: string }> {
     await this.assertNotInDrawCutoff();
     const userSolanaAddress = await this.usersService.getSolanaWalletAddress(userId);
