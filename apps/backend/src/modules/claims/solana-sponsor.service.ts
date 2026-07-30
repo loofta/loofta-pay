@@ -382,6 +382,7 @@ export class SolanaSponsorService {
         d.mint,
         `sponsor-broadcast:${label}:user:${userId ?? 'unknown'}`,
         this.emailService,
+        userId,
       );
       if (!allowed) {
         this.logger.warn(

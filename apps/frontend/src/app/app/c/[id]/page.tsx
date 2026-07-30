@@ -3317,29 +3317,37 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           },
         });
       } catch (confirmErr: any) {
-        // If the tx was broadcast but RPC confirmation failed, the signature is already saved
-        // in the backend. Mark the claim as pending instead of showing a hard failure.
-        if (broadcastedSignature) {
-          console.warn("[PrivateTransfer] Confirmation polling failed but tx was broadcast — marking as pending:", confirmErr?.message);
+        // "Transaction failed on-chain" from waitForSignatureConfirmation is a definitive,
+        // verified failure (status.err was set) — never true-up a definite failure into a
+        // pending/success state, no matter what broadcastedSignature holds.
+        const definitivelyFailed = String(confirmErr?.message || "").includes("failed on-chain");
+        if (broadcastedSignature && !definitivelyFailed) {
+          // Genuinely ambiguous: we broadcast, but couldn't confirm landing or failure within
+          // the timeout (Solana blockhashes expire in ~60-90s, well inside our poll window, so
+          // this is much more likely "dropped" than "just slow" — do NOT claim success here).
+          // Leave it at IN_FLIGHT (never PRIVATE_TRANSFER_PENDING, which would make this look
+          // claimable to the recipient) and let the backend's own RPC-verifying cron
+          // (cronVerifyInFlightPrivateTransfers) resolve the true outcome — confirmed landed →
+          // PRIVATE_TRANSFER_PENDING, confirmed-dead/timed-out → EXPIRED. See incident
+          // 2026-07-30 (claim 49fe1d56): this branch used to write PRIVATE_TRANSFER_PENDING +
+          // an unverified hash and tell the user "Transfer submitted!" for a broadcast that had
+          // in fact never landed — permanently stuck, no funds ever moved.
+          console.warn("[PrivateTransfer] Confirmation polling inconclusive — leaving IN_FLIGHT for backend verification:", confirmErr?.message);
           toast({
-            title: "Transfer submitted!",
-            description: "Your payment was sent. Confirmation is taking longer than usual — it will update automatically.",
+            title: "Confirming your transfer…",
+            description: "We couldn't confirm it landed yet — we're verifying on-chain and will update this automatically.",
           });
           await updateClaimStatus(
             claim.id,
-            "PRIVATE_TRANSFER_PENDING",
-            {
-              txHash: broadcastedSignature,
-              paidWith: "USDC (Private)",
-              isPrivate: true,
-              paidWithToken: "USDC",
-              paidWithChain: "solana",
-            },
+            "IN_FLIGHT",
+            { txHash: broadcastedSignature },
             perToken,
-          );
-          setStatus("PRIVATE_TRANSFER_PENDING");
-          useClaimPayStore.getState().setStatus(id, "PRIVATE_TRANSFER_PENDING");
+          ).catch((e) => console.warn("[PrivateTransfer] Failed to record IN_FLIGHT after inconclusive confirm:", e));
+          setStatus("IN_FLIGHT");
+          useClaimPayStore.getState().setStatus(id, "IN_FLIGHT");
           await claimQuery.refetch();
+          // Don't fall through to the outer catch — that would immediately fire a contradictory
+          // "Payment failed" toast right after the honest "still confirming" one above.
           return;
         }
         throw confirmErr;
@@ -3560,28 +3568,30 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             },
           });
         } catch (confirmErr: any) {
-          // Broadcast succeeded but confirmation polling didn't — the transfer may well have
-          // landed. Don't show a failure (which invites a retry and a possible double-send);
-          // mark it pending instead and let the existing PRIVATE_TRANSFER_PENDING recovery
-          // machinery (txHashRecoveryRef / cron) resolve it once it actually confirms.
-          if (broadcastedSignature) {
-            console.warn("[PayWithLoofta] Confirmation polling failed but tx was broadcast — marking as pending:", confirmErr?.message);
+          // See the matching branch in onPayPrivately for the full incident writeup (claim
+          // 49fe1d56, 2026-07-30): a definite on-chain failure must never be reported as
+          // success, and an ambiguous timeout must not be either — only the backend's own
+          // RPC-verifying cron gets to decide IN_FLIGHT → PRIVATE_TRANSFER_PENDING/EXPIRED.
+          const definitivelyFailed = String(confirmErr?.message || "").includes("failed on-chain");
+          if (broadcastedSignature && !definitivelyFailed) {
+            console.warn("[PayWithLoofta] Confirmation polling inconclusive — leaving IN_FLIGHT for backend verification:", confirmErr?.message);
             const statusToken = await getAccessToken().catch(() => null);
             await updateClaimStatus(
               claim.id,
-              "PRIVATE_TRANSFER_PENDING",
-              { txHash: broadcastedSignature, paidWith: "USDC (Private)", isPrivate: true, paidWithToken: "USDC", paidWithChain: "solana" },
+              "IN_FLIGHT",
+              { txHash: broadcastedSignature },
               statusToken,
-            );
-            setStatus("PRIVATE_TRANSFER_PENDING");
-            useClaimPayStore.getState().setStatus(id, "PRIVATE_TRANSFER_PENDING");
-            txHashRecoveryRef.current = broadcastedSignature;
+            ).catch((e) => console.warn("[PayWithLoofta] Failed to record IN_FLIGHT after inconclusive confirm:", e));
+            setStatus("IN_FLIGHT");
+            useClaimPayStore.getState().setStatus(id, "IN_FLIGHT");
             await claimQuery.refetch();
             setShowPayNowModal(false);
             toast({
-              title: "Transfer submitted!",
-              description: "Your payment was sent. Confirmation is taking longer than usual — it will update automatically.",
+              title: "Confirming your transfer…",
+              description: "We couldn't confirm it landed yet — we're verifying on-chain and will update this automatically.",
             });
+            // Don't fall through to the outer catch — that would immediately fire a
+            // contradictory "Payment failed" toast right after the honest one above.
             return;
           }
           throw confirmErr;

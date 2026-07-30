@@ -1653,6 +1653,10 @@ export class LotteryService {
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id).eq('status', 'pending_send');
           this.logger.log(`Ticket ${ticket.id}: burner funded while still pending_send (user likely closed the tab) — promoted to sent`);
+
+          this.magicblockQuest.maybePushLotteryTicketQuest(ticket.id).catch((e) =>
+            this.logger.warn(`MagicBlock quest push failed for cron-recovered ticket ${ticket.id}: ${(e as Error)?.message}`),
+          );
         }
       }
     } finally {
