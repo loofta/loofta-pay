@@ -645,14 +645,16 @@ export class ClaimsController {
       // NOTE: we deliberately do NOT require an ATA-creation destination to be one of the caller's
       // own linked wallets — withdraw-to-external-wallet is a legitimate flow where the destination
       // is never linked to the sender's account (confirmed broken in production 2026-07-17 by an
-      // earlier version of this check). The actual drain protection lives in
-      // SolanaSponsorService.assertAtaNeverExistedBefore, which refuses to re-fund an ATA our own
-      // fee payer already paid to create once before and that's now missing again — that's ownership-
-      // agnostic and doesn't block a first-time payment to any destination.
+      // earlier version of this check). ATA-rent drain protection is enforced inside
+      // SolanaSponsorService.signAndBroadcast itself (assertAtaCreationsAllowed), not here — it is
+      // ownership-agnostic, refuses only *repeat* rent for a (wallet, mint) we already paid for,
+      // and lives in the broadcast path so no controller can forget to call it. An earlier version
+      // of this comment pointed at an `assertAtaNeverExistedBefore` that was never actually
+      // written, which left both sponsor routes with no rent protection at all until 2026-07-30.
     }
 
     try {
-      return await this.solanaSponsor.signAndBroadcast(body.transaction, body.network);
+      return await this.solanaSponsor.signAndBroadcast(body.transaction, body.network, userId);
     } catch (e: any) {
       if (e?.message?.includes('not configured')) {
         throw new ServiceUnavailableException('Solana sponsorship is not configured');
@@ -720,11 +722,11 @@ export class ClaimsController {
 
       // See the matching note in signAndBroadcastSponsored above — ATA-creation destination is
       // deliberately not restricted to the caller's own linked wallets (breaks withdraw-to-external-
-      // wallet); assertAtaNeverExistedBefore in SolanaSponsorService is the real drain guard.
+      // wallet); assertAtaCreationsAllowed inside signAndBroadcastPER is the real drain guard.
     }
 
     try {
-      return await this.solanaSponsor.signAndBroadcastPER(body.transaction);
+      return await this.solanaSponsor.signAndBroadcastPER(body.transaction, undefined, userId);
     } catch (e: any) {
       if (e?.message?.includes('not configured')) {
         throw new ServiceUnavailableException('Solana sponsorship is not configured');

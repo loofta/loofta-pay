@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { isSolanaDevnetFromConfig, getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
+import { SupabaseService } from '@/database/supabase.service';
+import { EmailService } from '@/modules/email/email.service';
+import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
+import { tokenAccountExists } from '@/common/token-account-exists';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -11,6 +15,7 @@ import {
   AddressLookupTableAccount,
   Connection,
   SystemProgram,
+  PublicKey,
 } from '@solana/web3.js';
 // bs58 may export default depending on bundler/runtime
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -87,7 +92,11 @@ export class SolanaSponsorService {
   private readonly connection: Connection;
   public readonly feePayerAddress: string | null = null;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly supabaseService: SupabaseService,
+    private readonly emailService: EmailService,
+  ) {
     // Load same way as SendPaymentService so ClaimsService sponsor is available when key is set
     let privateKeyBase58: string | null =
       this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY') ?? process.env.SOLANA_FEE_PAYER_PRIVATE_KEY ?? null;
@@ -266,32 +275,28 @@ export class SolanaSponsorService {
   }
 
   /**
-   * Every wallet an Associated-Token-Account "create" instruction in this transaction would fund
-   * a brand-new account for — the fee payer pays real SOL rent for each one. The mint/program
-   * whitelist in signAndBroadcast only checks instruction *shape* (right program, right mint), not
-   * *who benefits* — a caller could otherwise get us to sponsor creating a USDC ATA for any wallet
-   * they name, then close it themselves outside our system and pocket the rent, repeatably, for
-   * free. The caller (claims.controller.ts) must verify every address returned here belongs to the
-   * authenticated user, exactly like it already does for getRequiredUserSigners.
+   * Every Associated-Token-Account "create" instruction in this transaction, with the wallet it
+   * benefits, the mint, the ATA address, and who funds the rent. Account layout for both the plain
+   * and the idempotent create is [payer, ata, owner, mint, systemProgram, tokenProgram].
    */
-  getAtaCreationOwners(serializedBase64: string): string[] {
-    return this.getAtaCreationDetails(serializedBase64).map((d) => d.owner);
-  }
-
-  /** Same as getAtaCreationOwners but also keeps the mint and the ATA address itself — the latter
-   * is what assertAtaNeverExistedBefore checks on-chain. */
-  private getAtaCreationDetails(serializedBase64: string): { owner: string; mint: string; ata: string }[] {
+  private getAtaCreationDetails(
+    serializedBase64: string,
+  ): { payer: string; owner: string; mint: string; ata: string }[] {
+    type Detail = { payer: string; owner: string; mint: string; ata: string };
+    const complete = (d: Partial<Detail>): d is Detail =>
+      Boolean(d.payer && d.owner && d.mint && d.ata);
     const txBuffer = Buffer.from(serializedBase64, 'base64');
     try {
       const tx = Transaction.from(txBuffer);
       return tx.instructions
         .filter((ix) => ix.programId.toBase58() === ATA_PROGRAM_ID)
         .map((ix) => ({
+          payer: ix.keys[0]?.pubkey?.toBase58(),
+          ata: ix.keys[1]?.pubkey?.toBase58(),
           owner: ix.keys[2]?.pubkey?.toBase58(),
           mint: ix.keys[3]?.pubkey?.toBase58(),
-          ata: ix.keys[1]?.pubkey?.toBase58(),
         }))
-        .filter((d): d is { owner: string; mint: string; ata: string } => Boolean(d.owner && d.mint && d.ata));
+        .filter(complete);
     } catch {
       // not a legacy tx — try versioned
     }
@@ -301,13 +306,91 @@ export class SolanaSponsorService {
       return vtx.message.compiledInstructions
         .filter((ix) => accountKeys[ix.programIdIndex]?.toBase58() === ATA_PROGRAM_ID)
         .map((ix) => ({
+          payer: accountKeys[ix.accountKeyIndexes[0]]?.toBase58(),
+          ata: accountKeys[ix.accountKeyIndexes[1]]?.toBase58(),
           owner: accountKeys[ix.accountKeyIndexes[2]]?.toBase58(),
           mint: accountKeys[ix.accountKeyIndexes[3]]?.toBase58(),
-          ata: accountKeys[ix.accountKeyIndexes[1]]?.toBase58(),
         }))
-        .filter((d): d is { owner: string; mint: string; ata: string } => Boolean(d.owner && d.mint && d.ata));
+        .filter(complete);
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * Refuse to pay ATA rent twice for the same (wallet, mint).
+   *
+   * The program/mint whitelist below only checks instruction *shape* — right program, right mint.
+   * It says nothing about *who benefits*, so on its own it happily lets a caller have us fund a
+   * USDC ATA for any wallet they name. Rent (~0.00204 SOL) is only ours to lose once: the wallet's
+   * owner can close that account whenever they like and keep the rent, then ask us to fund it
+   * again. That create → close → repeat cycle is a free, unbounded drain, and it is exactly what
+   * happened on 2026-07-28/29 — ~60 sponsored creations of the single ATA
+   * GHzjnYmAHfnpHHtyT9wx7JPoR1XNKoXhWaPFDwyiskoM, one every ~10s, each a bare creation with no
+   * transfer attached. Two earlier attempts at this protection existed only on paper: a
+   * `getAtaCreationOwners` helper nothing ever called, and an `assertAtaNeverExistedBefore` that
+   * was described in controller comments but never written. Hence this being enforced *here*,
+   * inside the broadcast path itself, where it cannot be bypassed by a caller that forgets it.
+   *
+   * Deliberately ownership-agnostic: the destination of a legitimate withdraw-to-external-wallet
+   * or first-time payment is never linked to the sender's account, so requiring the ATA owner to
+   * be one of the caller's own wallets breaks real flows (confirmed in production 2026-07-17).
+   * Keyed on (wallet, mint) via `ata_sponsorships` instead, so the first creation for any
+   * destination is free and every repeat is refused.
+   *
+   * Only guards creations our fee payer actually funds, and only when the ATA does not already
+   * exist on-chain — an idempotent create against a live ATA is a no-op that costs no rent, so
+   * consuming the one-shot for it would block legitimate repeat sends to the same recipient.
+   */
+  private async assertAtaCreationsAllowed(
+    serializedBase64: string,
+    conn: Connection,
+    label: string,
+    userId?: string,
+  ): Promise<void> {
+    const details = this.getAtaCreationDetails(serializedBase64);
+    if (details.length === 0) return;
+
+    // Which creations we would actually be paying rent for right now.
+    const chargeable: typeof details = [];
+    for (const d of details) {
+      if (d.payer !== this.feePayerAddress) continue; // caller funds their own rent — not our loss
+      let exists = false;
+      try {
+        exists = await tokenAccountExists(conn, new PublicKey(d.ata));
+      } catch (e) {
+        // Fail closed: we could not prove the ATA is already funded, so we cannot prove this
+        // creation is free. Refusing costs a retry; guessing wrong costs real SOL, repeatably.
+        this.logger.warn(
+          `SolanaSponsor[${label}]: ATA existence check failed for ${d.ata.slice(0, 8)}… (${(e as Error)?.message}) — refusing to sponsor rather than risk paying rent twice`,
+        );
+        throw new Error('Could not verify token account state; please retry');
+      }
+      if (!exists) chargeable.push(d);
+    }
+    if (chargeable.length === 0) return;
+
+    // Deliberately NOT capped per user. Creating a new ATA is what a normal payment to a new
+    // recipient does, so any per-caller ceiling on it just converts a security problem into a
+    // support problem for legitimate heavy senders. The volume-independent control is pricing
+    // (see quoteAtaRentRecoveryUsdc / ata-rent-recovery.ts): recover the rent from the sender so
+    // an unbounded number of creations is fine because none of them is free to the requester.
+    for (const d of chargeable) {
+      const allowed = await guardAtaSponsorship(
+        this.supabaseService,
+        d.owner,
+        d.mint,
+        `sponsor-broadcast:${label}:user:${userId ?? 'unknown'}`,
+        this.emailService,
+      );
+      if (!allowed) {
+        this.logger.warn(
+          `SolanaSponsor[${label}]: BLOCKED repeat sponsored ATA creation owner=${d.owner.slice(0, 8)}… ata=${d.ata.slice(0, 8)}… — rent for this account was already paid once`,
+        );
+        throw new Error(
+          'This token account has already been funded once at our expense and cannot be funded again.',
+        );
+      }
     }
   }
 
@@ -499,7 +582,11 @@ export class SolanaSponsorService {
    *
    * Pass network: "devnet" to route the broadcast to the devnet RPC with skipPreflight.
    */
-  async signAndBroadcast(serializedTransactionBase64: string, network?: string): Promise<{ signature: string }> {
+  async signAndBroadcast(
+    serializedTransactionBase64: string,
+    network?: string,
+    userId?: string,
+  ): Promise<{ signature: string }> {
     if (!this.feePayerKeypair || !this.feePayerAddress) {
       throw new Error('Solana fee sponsorship is not configured');
     }
@@ -510,6 +597,15 @@ export class SolanaSponsorService {
     const broadcastConn = isDevnet ? this.getConnectionForCluster('devnet') : this.connection;
     this.logger.log(
       `SolanaSponsor[sign-and-broadcast]: incoming bytes=${transactionBuffer.length} network=${network ?? 'mainnet'} rpc=${broadcastConn.rpcEndpoint}`,
+    );
+
+    // Before anything else: never pay the same ATA's rent twice. Runs ahead of the legacy/v0
+    // split so a single call covers both encodings.
+    await this.assertAtaCreationsAllowed(
+      serializedTransactionBase64,
+      broadcastConn,
+      'sign-and-broadcast',
+      userId,
     );
 
     let legacy: Transaction | null = null;
@@ -722,7 +818,11 @@ export class SolanaSponsorService {
    * the shuttle SOL top-up prepended by prepareAndPartialSignTransaction). The total SOL the
    * fee payer can transfer is capped at 5_000_000 lamports (0.005 SOL) to prevent abuse.
    */
-  async signAndBroadcastPER(userSignedTxBase64: string, conn?: Connection): Promise<{ signature: string }> {
+  async signAndBroadcastPER(
+    userSignedTxBase64: string,
+    conn?: Connection,
+    userId?: string,
+  ): Promise<{ signature: string }> {
     const broadcastConn = conn ?? this.connection;
     const transactionBuffer = Buffer.from(userSignedTxBase64, 'base64');
     const reqStart = Date.now();
@@ -746,6 +846,15 @@ export class SolanaSponsorService {
       await this.waitUntilSignatureVisible(sig, 12_000, 400, 'sign-and-broadcast-per:gasless', broadcastConn).catch(() => {});
       return { signature: sig };
     }
+
+    // Past the gasless early-return our fee payer is the one paying, so the same
+    // never-pay-rent-twice rule as sign-and-broadcast applies here too.
+    await this.assertAtaCreationsAllowed(
+      userSignedTxBase64,
+      broadcastConn,
+      'sign-and-broadcast-per',
+      userId,
+    );
 
     if (!this.feePayerKeypair) {
       throw new Error('Solana fee sponsorship is not configured');

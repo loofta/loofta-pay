@@ -1071,6 +1071,25 @@ export class LotteryService {
    * pack_openings row retryable instead of losing the user's prize.
    */
   /**
+   * Fire-and-forget win notification — sendMegapotWinEmail is itself non-throwing/best-effort, so
+   * this only needs to guard the email lookup. Called from every place a ticket's status becomes
+   * (or is corrected to) 'won' so a winner always hears about it instead of having to think to
+   * check back on a ticket they may have forgotten about.
+   */
+  private notifyTicketWon(ticket: { user_id: string; round_id?: string | null }, winAmountUsdc: number): void {
+    this.usersService.getEmailByPrivyId(ticket.user_id)
+      .then((email) => {
+        if (!email) return;
+        return this.emailService.sendMegapotWinEmail({
+          recipientEmail: email,
+          winAmountUsdc,
+          roundId: String(ticket.round_id ?? ''),
+        });
+      })
+      .catch((e) => this.logger.warn(`notifyTicketWon: failed for user ${ticket.user_id}: ${e?.message ?? e}`));
+  }
+
+  /**
    * Refund a USDC amount straight to a user's own registered wallet from the treasury fee wallet.
    * Safe to reuse topUpFromFeeWallet here specifically because the destination is a permanent,
    * already-known wallet (not a freshly generated burner) — unlike purchaseTicketsForUser, there's
@@ -2824,6 +2843,7 @@ export class LotteryService {
             updated_at: new Date().toISOString(),
           }).eq('id', ticket.id);
           this.logger.log(`Ticket ${ticket.id}: WON $${totalWinUsdc} net (tier ${winTier})`);
+          this.notifyTicketWon(ticket, totalWinUsdc);
         } else {
           await db.from('lottery_tickets').update({
             status: 'lost',
@@ -2904,6 +2924,7 @@ export class LotteryService {
           updated_at: new Date().toISOString(),
         }).eq('id', ticket.id);
         this.logger.warn(`${logPrefix}: ticket ${ticket.id} was under-recorded — $${storedWin} → $${totalWinUsdc}`);
+        this.notifyTicketWon(ticket, totalWinUsdc);
         return { totalWinUsdc, tier: tier ?? ticket.win_tier };
       }
       return null;
@@ -3013,6 +3034,7 @@ export class LotteryService {
             updated_at: new Date().toISOString(),
           }).eq('id', ticketId);
           this.logger.log(`checkTicketResult ${ticketId}: WON $${apiWin.winAmountUsdc} gross → $${netApiWin} net (Data API, claimFactor=${apiClaimFactor})`);
+          this.notifyTicketWon(ticket, netApiWin);
           return { status: 'won', winAmountUsdc: netApiWin, winTier: apiWin.tier, winningNumbers: winningNumbers ?? null, ticketNumbers: ticket.ticket_numbers ?? null };
         }
       }
@@ -3042,6 +3064,7 @@ export class LotteryService {
         updated_at: new Date().toISOString(),
       }).eq('id', ticketId);
       this.logger.log(`checkTicketResult ${ticketId}: WON $${totalWinUsdc} net (tier ${winTier})`);
+      this.notifyTicketWon(ticket, totalWinUsdc);
       return { status: 'won', winAmountUsdc: totalWinUsdc, winTier, winningNumbers: winningNumbers ?? null, ticketNumbers: ticket.ticket_numbers ?? null };
     } else {
       await db.from('lottery_tickets').update({
