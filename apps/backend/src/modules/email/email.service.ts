@@ -322,6 +322,85 @@ export class EmailService {
 </html>`;
   }
 
+  async sendUnclaimedWinningsReminderEmail(data: {
+    recipientEmail: string;
+    totalWinAmountUsdc: number;
+    numTickets: number;
+    username?: string | null;
+  }): Promise<void> {
+    if (!this.resend) return;
+    const amountStr = `$${data.totalWinAmountUsdc.toFixed(2)}`;
+    const subject = `${amountStr} still waiting for you on Loofta`;
+    const html = this.buildUnclaimedWinningsReminderHtml({ ...data, amountStr });
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject,
+        html,
+      });
+      this.logger.log(`Unclaimed winnings reminder sent to ${data.recipientEmail} (${amountStr}, ${data.numTickets} ticket(s))`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send unclaimed winnings reminder to ${data.recipientEmail}: ${err?.message ?? err}`);
+    }
+  }
+
+  private buildUnclaimedWinningsReminderHtml(data: { amountStr: string; numTickets: number; username?: string | null }): string {
+    const dashboardUrl = 'https://pay.loofta.xyz/app/megapot';
+    const greeting = data.username ? `Hey @${data.username},` : 'Hey,';
+    const ticketLine = data.numTickets > 1 ? `across ${data.numTickets} winning tickets` : 'from a winning ticket';
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Your Megapot winnings are still waiting</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Still unclaimed</span>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px 32px;">
+              <p style="margin:0 0 24px;font-size:18px;color:#ffffff;font-weight:500;text-align:center;">${greeting} you've got winnings ${ticketLine} sitting unclaimed</p>
+              <div style="background:#0f0f12;border:1px solid #0d3b2e;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px;">
+                <p style="margin:0 0 4px;font-size:12px;color:#6b7280;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;">Waiting for you</p>
+                <p style="margin:0;font-size:40px;font-weight:500;color:#5EEAD4;letter-spacing:-1px;">${data.amountStr}</p>
+              </div>
+              <p style="margin:0 0 24px;font-size:14px;color:#9ca3af;text-align:center;line-height:1.6;">
+                It's already in your Loofta balance. Withdraw it as USDC, or cash out directly to your bank whenever you're ready.
+              </p>
+              <div style="text-align:center;margin-bottom:8px;">
+                <a href="${dashboardUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Withdraw your winnings
+                </a>
+              </div>
+              <p style="margin:20px 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
   private buildTicketRecoveredHtml(data: { numTickets: number; roundId: string }): string {
     const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
     const dashboardUrl = 'https://pay.loofta.xyz/app/megapot';

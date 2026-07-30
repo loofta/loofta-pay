@@ -2765,13 +2765,30 @@ export class LotteryService {
   private async checkDailyResultsInner(): Promise<void> {
     const db = this.supabase.getClient();
 
-    const { data: tickets } = await db
+    const { data: activeTickets } = await db
       .from('lottery_tickets')
       .select('*')
-      .eq('status', 'active')
-      .lt('draw_time', new Date().toISOString());
+      .eq('status', 'active');
 
-    if (!tickets?.length) {
+    if (!activeTickets?.length) {
+      this.logger.log('checkDailyResults: no active tickets');
+      return;
+    }
+
+    // draw_time is only as reliable as the getActiveRound() call made at purchase time (four
+    // call sites, each wrapped in an empty catch{} — see purchaseTickets/playAgain/etc.) — a
+    // transient Megapot API failure or a response missing ended_at/draw_time/drawTime leaves it
+    // permanently null, which makes a `.lt('draw_time', now)` filter permanently blind to that
+    // ticket. Real incident: an entire round's worth of tickets stuck 'active' forever because of
+    // this. round_id vs. the current active round is the same fallback staleness check
+    // refreshDashboard already relies on (see there) — mirror it here instead of trusting
+    // draw_time alone.
+    const activeRoundId = await this.megapot.getActiveRound().then(r => r?.id ?? null).catch(() => null);
+    const tickets = activeTickets.filter((t) =>
+      (t.draw_time && new Date(t.draw_time) < new Date())
+      || (t.round_id && activeRoundId && t.round_id !== activeRoundId));
+
+    if (!tickets.length) {
       this.logger.log('checkDailyResults: no expired active tickets');
       return;
     }

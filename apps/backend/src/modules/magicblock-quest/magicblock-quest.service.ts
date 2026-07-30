@@ -161,7 +161,7 @@ export class MagicblockQuestService {
       .from('payments')
       .select('id')
       .eq('sender_user_id', userId)
-      .eq('status', 'SUCCESS')
+      .in('status', ['SUCCESS', 'PRIVATE_TRANSFER_PENDING'])
       .eq('is_private', true)
       .eq('is_devnet', false)
       .neq('direction', 'from_recipient');
@@ -278,8 +278,14 @@ export class MagicblockQuestService {
       .maybeSingle();
     if (!payment) return;
 
+    // PRIVATE_TRANSFER_PENDING counts alongside SUCCESS: for a burner-mediated private send the
+    // sender's own leg (into the burner) is already confirmed on-chain at that status — the claim
+    // only stays "pending" because the recipient hasn't swept yet. Waiting for the claim's own
+    // eventual SUCCESS doesn't work: the recipient's later non-private claim overwrites is_private
+    // back to false first (see updateStatus's deliveredPrivately write in claims.service.ts),
+    // silently erasing a payment that already qualified.
     const qualifies =
-      payment.status === 'SUCCESS' &&
+      (payment.status === 'SUCCESS' || payment.status === 'PRIVATE_TRANSFER_PENDING') &&
       !!payment.from_chain &&
       payment.is_devnet === false &&
       payment.direction !== 'from_recipient' &&

@@ -3100,7 +3100,13 @@ export class ClaimsService {
 
     // Only the primary `payments` table carries the from_chain/is_devnet/direction columns the
     // quest qualifies on — legacy `claims` rows (read-only backward-compat) never qualify anyway.
-    if (effectiveStatus === 'SUCCESS' && updatedTable === 'payments') {
+    // Also check on the sender's own private-intent stamp (extra.isPrivate===true above), not just
+    // the claim's eventual SUCCESS: for a burner-mediated send the claim sits at
+    // PRIVATE_TRANSFER_PENDING until the recipient sweeps, and that later sweep can overwrite
+    // is_private back to false based on the recipient's OWN delivery choice (deliveredPrivately) —
+    // unrelated to whether the sender actually paid privately. Pushing here, at the moment the
+    // sender's leg is confirmed, means the quest is recorded before that overwrite can erase it.
+    if ((effectiveStatus === 'SUCCESS' || extra?.isPrivate === true) && updatedTable === 'payments') {
       this.magicblockQuest.maybePushPrivatePaymentQuest(id).catch((e) =>
         this.logger.warn(`MagicBlock quest push failed for payment ${id}: ${(e as Error)?.message}`),
       );
