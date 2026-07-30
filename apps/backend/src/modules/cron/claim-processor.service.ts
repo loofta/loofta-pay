@@ -19,7 +19,6 @@ export class ClaimProcessorService {
   private isProcessing = false;
   private isSweeping = false;
   private isReclaiming = false;
-  private isVerifyingInFlight = false;
 
   constructor(
     private readonly claimsService: ClaimsService,
@@ -64,26 +63,6 @@ export class ClaimProcessorService {
       this.logger.error('[handleBurnerSweepRetries] Error:', e?.message);
     } finally {
       this.isSweeping = false;
-    }
-  }
-
-  /**
-   * Verify IN_FLIGHT burner-destined private transfers against real on-chain state every minute
-   * — see ClaimsService.cronVerifyInFlightPrivateTransfers for the full incident writeup
-   * (2026-07-30, claim 49fe1d56). Gated like handleCron since it's money-adjacent: it decides
-   * whether a claim ever becomes claimable (PRIVATE_TRANSFER_PENDING) or dead (EXPIRED).
-   */
-  @Cron(CronExpression.EVERY_MINUTE)
-  async handleVerifyInFlightPrivateTransfers() {
-    if (!this.isAutoProcessClaimsEnabled()) return;
-    if (this.isVerifyingInFlight) return;
-    this.isVerifyingInFlight = true;
-    try {
-      await this.claimsService.cronVerifyInFlightPrivateTransfers();
-    } catch (e: any) {
-      this.logger.error('[handleVerifyInFlightPrivateTransfers] Error:', e?.message);
-    } finally {
-      this.isVerifyingInFlight = false;
     }
   }
 

@@ -3317,39 +3317,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           },
         });
       } catch (confirmErr: any) {
-        // "Transaction failed on-chain" from waitForSignatureConfirmation is a definitive,
-        // verified failure (status.err was set) — never true-up a definite failure into a
-        // pending/success state, no matter what broadcastedSignature holds.
-        const definitivelyFailed = String(confirmErr?.message || "").includes("failed on-chain");
-        if (broadcastedSignature && !definitivelyFailed) {
-          // Genuinely ambiguous: we broadcast, but couldn't confirm landing or failure within
-          // the timeout (Solana blockhashes expire in ~60-90s, well inside our poll window, so
-          // this is much more likely "dropped" than "just slow" — do NOT claim success here).
-          // Leave it at IN_FLIGHT (never PRIVATE_TRANSFER_PENDING, which would make this look
-          // claimable to the recipient) and let the backend's own RPC-verifying cron
-          // (cronVerifyInFlightPrivateTransfers) resolve the true outcome — confirmed landed →
-          // PRIVATE_TRANSFER_PENDING, confirmed-dead/timed-out → EXPIRED. See incident
-          // 2026-07-30 (claim 49fe1d56): this branch used to write PRIVATE_TRANSFER_PENDING +
-          // an unverified hash and tell the user "Transfer submitted!" for a broadcast that had
-          // in fact never landed — permanently stuck, no funds ever moved.
-          console.warn("[PrivateTransfer] Confirmation polling inconclusive — leaving IN_FLIGHT for backend verification:", confirmErr?.message);
-          toast({
-            title: "Confirming your transfer…",
-            description: "We couldn't confirm it landed yet — we're verifying on-chain and will update this automatically.",
-          });
-          await updateClaimStatus(
-            claim.id,
-            "IN_FLIGHT",
-            { txHash: broadcastedSignature },
-            perToken,
-          ).catch((e) => console.warn("[PrivateTransfer] Failed to record IN_FLIGHT after inconclusive confirm:", e));
-          setStatus("IN_FLIGHT");
-          useClaimPayStore.getState().setStatus(id, "IN_FLIGHT");
-          await claimQuery.refetch();
-          // Don't fall through to the outer catch — that would immediately fire a contradictory
-          // "Payment failed" toast right after the honest "still confirming" one above.
-          return;
-        }
+        // Broadcast may have gone out (broadcastedSignature/onSignature above already saved it
+        // for support to look up if needed), but we could not confirm it landed — don't upgrade
+        // status or claim success on an unconfirmed/failed broadcast. Just fail honestly, same
+        // as before this flow grew a "maybe it's just slow" optimistic branch: that branch
+        // ended up marking a broadcast that never landed as PRIVATE_TRANSFER_PENDING and telling
+        // the user it was sent — see incident 2026-07-30, claim 49fe1d56.
+        console.warn("[PrivateTransfer] Confirmation failed:", confirmErr?.message, { broadcastedSignature });
         throw confirmErr;
       }
 
@@ -3569,31 +3543,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           });
         } catch (confirmErr: any) {
           // See the matching branch in onPayPrivately for the full incident writeup (claim
-          // 49fe1d56, 2026-07-30): a definite on-chain failure must never be reported as
-          // success, and an ambiguous timeout must not be either — only the backend's own
-          // RPC-verifying cron gets to decide IN_FLIGHT → PRIVATE_TRANSFER_PENDING/EXPIRED.
-          const definitivelyFailed = String(confirmErr?.message || "").includes("failed on-chain");
-          if (broadcastedSignature && !definitivelyFailed) {
-            console.warn("[PayWithLoofta] Confirmation polling inconclusive — leaving IN_FLIGHT for backend verification:", confirmErr?.message);
-            const statusToken = await getAccessToken().catch(() => null);
-            await updateClaimStatus(
-              claim.id,
-              "IN_FLIGHT",
-              { txHash: broadcastedSignature },
-              statusToken,
-            ).catch((e) => console.warn("[PayWithLoofta] Failed to record IN_FLIGHT after inconclusive confirm:", e));
-            setStatus("IN_FLIGHT");
-            useClaimPayStore.getState().setStatus(id, "IN_FLIGHT");
-            await claimQuery.refetch();
-            setShowPayNowModal(false);
-            toast({
-              title: "Confirming your transfer…",
-              description: "We couldn't confirm it landed yet — we're verifying on-chain and will update this automatically.",
-            });
-            // Don't fall through to the outer catch — that would immediately fire a
-            // contradictory "Payment failed" toast right after the honest one above.
-            return;
-          }
+          // 49fe1d56, 2026-07-30). Fail honestly on any unconfirmed/failed broadcast — do not
+          // upgrade status or claim success.
+          console.warn("[PayWithLoofta] Confirmation failed:", confirmErr?.message, { broadcastedSignature });
           throw confirmErr;
         }
       } else {
