@@ -25,7 +25,6 @@ import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/
 import { isValidSolanaAddress } from '@/common/solana-address';
 import {
   MAGICBLOCK_GAS_SOL,
-  MAGICBLOCK_GAS_USDC,
   MAGICBLOCK_VOLUME_FEE_BPS,
   MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS,
   SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS,
@@ -33,6 +32,8 @@ import {
   estimateMagicblockGrossUp,
   requestMagicblockPrivateTransfer,
   decodeActualSenderDebit,
+  resolveMagicblockRelayFeeUsdc,
+  fetchSolPriceUsd,
   type MagicblockPrivateTransferClientResponse,
 } from '@/common/magicblock-private-transfer';
 import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
@@ -1150,9 +1151,14 @@ export class ClaimsService {
       .eq('id', claimId);
     this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}${isNonPrivateLink ? ' is_private=true (sender opted into private on a non-private link)' : ''}`);
 
-    // MagicBlock cost = 10 BPS volume fee + flat 0.2 USDC gasless relay fee, plus (disabled, see
-    // ENABLE_SINGLE_PAYMENT_PLATFORM_FEE) Loofta's own cut via platformFeeBps.
-    const relayFeeUnits = gasless ? Math.round(MAGICBLOCK_GAS_USDC * 1_000_000) : 0;
+    // MagicBlock cost = 10 BPS volume fee + gasless relay fee (0.002 SOL priced live), plus
+    // (disabled, see ENABLE_SINGLE_PAYMENT_PLATFORM_FEE) Loofta's own cut via platformFeeBps.
+    const relayFeeUnits = gasless ? Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000) : 0;
+    // Separate call purely to report the price actually used in the response below — hits the
+    // same in-memory cache resolveMagicblockRelayFeeUsdc() just populated, no extra network call
+    // in the common case. Lets a caller verify from the response itself that this used a live
+    // price rather than the flat fallback (0 here means the price feed failed for this request).
+    const relaySolPriceUsd = gasless ? await fetchSolPriceUsd() : null;
     const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + (ENABLE_SINGLE_PAYMENT_PLATFORM_FEE ? SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS : 0);
     // MagicBlock confirmed the InvalidAccountData cause: platformFeeAccount must be the fee
     // collector's *initialized USDC ATA*, not its wallet address (undocumented on their side,
@@ -1202,7 +1208,7 @@ export class ClaimsService {
         looftaBpsUsdc: estimatedMbVolumeFeeUnits / 1_000_000,
         solRecoveryUsdc: relayFeeUnits / 1_000_000,
         solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
-        solPriceUsd: 0,
+        solPriceUsd: relaySolPriceUsd ?? 0,
       },
     });
   }
@@ -1946,7 +1952,7 @@ export class ClaimsService {
       return {};
     }
 
-    const relayFeeUnits = Math.round(MAGICBLOCK_GAS_USDC * 1_000_000);
+    const relayFeeUnits = Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000);
     // feeOnSender=true (exact-out, e.g. cross-chain): send the clean amount, MagicBlock grosses
     //   up its own internal debit so the destination nets exactly baseUnits — the fee was
     //   already pre-funded into the burner separately (handleCrossChainDeposit's gross-up).

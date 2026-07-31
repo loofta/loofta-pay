@@ -10,11 +10,13 @@ import { NearIntentsService } from '../intents/near-intents.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import { isValidSolanaAddress } from '@/common/solana-address';
 import {
-  MAGICBLOCK_GAS_USDC,
+  MAGICBLOCK_GAS_SOL,
   estimateMagicblockGrossUp,
   requestMagicblockPrivateTransfer,
   decodeActualSenderDebit,
   toClientResponse,
+  resolveMagicblockRelayFeeUsdc,
+  fetchSolPriceUsd,
   type MagicblockPrivateTransferClientResponse,
 } from '@/common/magicblock-private-transfer';
 import { StartPrivateDepositDto, BuildPrivateWithdrawalDto } from './dto';
@@ -270,7 +272,10 @@ export class PrivateBalanceService {
       throw new BadRequestException('Could not start private withdrawal. Please try again.');
     }
 
-    const relayFeeUnits = Math.round(MAGICBLOCK_GAS_USDC * 1_000_000);
+    const relayFeeUnits = Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000);
+    // Reports the price actually used below — hits the cache resolveMagicblockRelayFeeUsdc()
+    // just populated, no extra network call in the common case.
+    const relaySolPriceUsd = await fetchSolPriceUsd();
     const mbVolumeFeeUnits = estimateMagicblockGrossUp(baseUnits) - baseUnits;
     const conn = this.solanaSponsor.getConnectionForCluster(cluster);
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, userWallet, mint, conn);
@@ -288,8 +293,8 @@ export class PrivateBalanceService {
         feeBreakdown: {
           looftaBpsUsdc: mbVolumeFeeUnits / 1_000_000,
           solRecoveryUsdc: relayFeeUnits / 1_000_000,
-          solLamports: Math.round(MAGICBLOCK_GAS_USDC * 1e9),
-          solPriceUsd: 0,
+          solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
+          solPriceUsd: relaySolPriceUsd ?? 0,
         },
       }),
     };

@@ -46,8 +46,17 @@ export const SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS = 10;
  */
 export const ENABLE_SINGLE_PAYMENT_PLATFORM_FEE = true;
 export const ENABLE_MULTI_SEND_PLATFORM_FEE = true;
-/** Cache TTL: 60 seconds. */
-const SOL_PRICE_CACHE_TTL_MS = 60_000;
+/**
+ * Cache TTL: 10 minutes. Trades some price staleness for far fewer Jupiter/Binance calls — a
+ * fee-estimate use case tolerates a stale price much better than the raw magnitude of drift that
+ * caused the real underfunding incident this fee-calc logic already had (see
+ * resolveMagicblockRelayFeeUsdc's doc comment): that was caused by using a flat *never-updating*
+ * $0.20 constant, not by a price that's merely up to 10 minutes old. Still, 10 minutes is longer
+ * than SOL/USD can reasonably be assumed static — callers building an actual on-chain transfer
+ * that's sensitive to underfunding (e.g. a burner with no gross-up padding) should keep their own
+ * safety margin on top rather than assume this price is current-to-the-second.
+ */
+const SOL_PRICE_CACHE_TTL_MS = 600_000;
 
 let _solPriceCached: number | null = null;
 let _solPriceCachedAt = 0;
@@ -55,7 +64,7 @@ let _solPriceCachedAt = 0;
 /**
  * Fetch current SOL/USD price. Tries Jupiter, then Binance. Returns null if both fail.
  * Never uses a hardcoded fallback — callers must handle null.
- * Caches result for 60 seconds.
+ * Caches result for SOL_PRICE_CACHE_TTL_MS.
  */
 export async function fetchSolPriceUsd(): Promise<number | null> {
   const now = Date.now();
@@ -76,6 +85,7 @@ export async function fetchSolPriceUsd(): Promise<number | null> {
     const data = await res.json() as { So11111111111111111111111111111111111111112?: { usdPrice?: number } };
     const price = Number(data?.['So11111111111111111111111111111111111111112']?.usdPrice);
     if (Number.isFinite(price) && price > 0) {
+      log.log(`fetchSolPriceUsd: refreshed from Jupiter — $${price.toFixed(2)} (cached ${SOL_PRICE_CACHE_TTL_MS / 1000}s)`);
       _solPriceCached = price;
       _solPriceCachedAt = now;
       return price;
@@ -91,7 +101,7 @@ export async function fetchSolPriceUsd(): Promise<number | null> {
     const data = await res.json() as { price?: string };
     const price = Number(data?.price);
     if (Number.isFinite(price) && price > 0) {
-      log.warn(`fetchSolPriceUsd: Jupiter failed — using Binance price $${price.toFixed(2)}`);
+      log.warn(`fetchSolPriceUsd: Jupiter failed — using Binance price $${price.toFixed(2)} (cached ${SOL_PRICE_CACHE_TTL_MS / 1000}s)`);
       _solPriceCached = price;
       _solPriceCachedAt = now;
       return price;
@@ -100,6 +110,21 @@ export async function fetchSolPriceUsd(): Promise<number | null> {
 
   log.warn('fetchSolPriceUsd: all price APIs failed — SOL recovery will be skipped');
   return null;
+}
+
+/**
+ * MagicBlock's gasless relay charge, priced in USD at the live SOL/USD rate. Its actual cost is
+ * MAGICBLOCK_GAS_SOL (0.002 SOL), not a fixed dollar figure — SOL/USD moves, so pricing off the
+ * flat MAGICBLOCK_GAS_USDC constant drifts wrong over time. This already caused a real incident
+ * (see lottery.service.ts git history: a private withdrawal assumed the flat figure always
+ * covered MagicBlock's real cost, and once SOL/USD had drifted, the relay rejected the transfer
+ * as underfunded even though the burner plainly had the money). Falls back to the flat constant
+ * only if the price feed is unreachable — every caller building an actual on-chain transfer
+ * should go through this instead of reading MAGICBLOCK_GAS_USDC directly.
+ */
+export async function resolveMagicblockRelayFeeUsdc(): Promise<number> {
+  const solPriceUsd = await fetchSolPriceUsd();
+  return solPriceUsd ? MAGICBLOCK_GAS_SOL * solPriceUsd : MAGICBLOCK_GAS_USDC;
 }
 
 /**

@@ -9,7 +9,7 @@ import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { StatusService } from '../intents/status.service';
 import { PrivateBalanceService, PRIVATE_BALANCE_PLATFORM_FEE_BPS } from './private-balance.service';
-import { requestMagicblockPrivateTransfer, MAGICBLOCK_GAS_USDC, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { reclaimBurnerFunds } from '@/common/burner-reclaim';
@@ -164,8 +164,8 @@ export class PrivateBalanceProcessorService {
     let balance = BigInt(0);
     try { balance = (await getAccount(conn, burnerAta)).amount; } catch { /* not funded yet */ }
 
-    const relayFeeUnits = BigInt(Math.round(MAGICBLOCK_GAS_USDC * 1_000_000));
-    if (balance <= relayFeeUnits) return; // nothing yet, or not even enough to cover the flat relay fee
+    const relayFeeUnits = BigInt(Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000));
+    if (balance <= relayFeeUnits) return; // nothing yet, or not even enough to cover the relay fee
 
     if (opts.requireExpected) {
       // Direct deposits only — don't sweep a still-arriving partial transfer early. Cross-chain
