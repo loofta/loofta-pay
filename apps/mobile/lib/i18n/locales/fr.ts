@@ -247,6 +247,37 @@ const fr: Translations = {
       .filter(Boolean)
       .join(' et ')}`,
   ticketNumberLabel: (n) => `Ticket ${n}`,
+
+  // ── Mystery Pack ────────────────────────────────────────────────────────
+  mysteryPackBannerTitle: 'Pack Mystère',
+  mysteryPackBannerSubtitle: "Ouvrez un pack, gagnez jusqu'à 100 tickets",
+  mysteryPackTitle: 'Pack Mystère',
+  mysteryPackTapToOpen: "Touchez le pack pour l'ouvrir",
+  mysteryPackAlwaysWin: 'Vous gagnez toujours au moins 1 ticket',
+  mysteryPackDemo: 'DÉMO',
+  mysteryPackDemoSubtitle: 'Mode démo — 0 $, pas de vrai ticket',
+  mysteryPackPayCta: (amount) => `Payer ${amount} pour ouvrir`,
+  mysteryPackConfirming: 'Confirmation…',
+  mysteryPackInsufficientTitle: 'USDC insuffisant',
+  mysteryPackInsufficientSubtitle: 'Ajoutez plus de USDC à votre portefeuille Seeker pour ouvrir un pack.',
+  mysteryPackLimitTitle: 'Vous avez atteint la limite de packs du jour',
+  mysteryPackLimitSubtitle: 'Revenez demain pour plus de Packs Mystère !',
+  mysteryPackUnavailableTitle: 'Les Packs Mystère sont en pause',
+  mysteryPackUnavailableSubtitle: 'Nous rechargeons les fonds de prix — revenez bientôt.',
+  mysteryPackTicketsWon: (n) => `${n} ticket${n === 1 ? '' : 's'} gagné${n === 1 ? '' : 's'} !`,
+  mysteryPackAddedToDraw: "Ajouté au tirage Megapot d'aujourd'hui",
+  mysteryPackOpenAnother: 'Ouvrir un autre',
+  mysteryPackDone: 'Terminé',
+  mysteryPackOdds: 'Probabilités',
+  mysteryPackOddsTitle: 'Échelle des probabilités',
+  mysteryPackOddsIntro: (amount) => `${amount} le pack. Vous gagnez toujours au moins 1 ticket — jamais une perte.`,
+  mysteryPackTicketsSuffix: 'tickets',
+  mysteryPackRarity: { common: 'Commun', uncommon: 'Peu commun', rare: 'Rare', epic: 'Épique' },
+  mysteryPackGenericError: "Impossible d'ouvrir votre pack — veuillez réessayer.",
+  mysteryPackPaymentCancelled: 'Paiement annulé.',
+  mysteryPackPaymentFailed: 'Paiement échoué — veuillez réessayer.',
+  mysteryPackInsufficientFundsError: (amount) => `USDC insuffisant dans votre portefeuille — ouvrir un pack coûte ${amount}.`,
+  mysteryPackNoWalletFound: 'Aucun portefeuille Seeker trouvé.',
 };
 
 export default fr;

@@ -1,6 +1,6 @@
 import { usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
-import { ChevronDown, ChevronUp, Shuffle, X } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, ChevronUp, Gift, Shuffle, X } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, AppState, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AuthGate } from '../../components/AuthGate';
@@ -21,6 +21,28 @@ import { FONT_TITLE, FONT_TITLE_SEMIBOLD, FONT_BODY, FONT_BODY_MEDIUM, FONT_BODY
 const PRESETS = [5, 10, 50, 100];
 const MIN_TICKETS = 1;
 const MAX_TICKETS = 100;
+
+// ── Mystery Pack banner ──────────────────────────────────────────────────────
+// Promo entry point for the Mystery Pack feature — mirrors web's MysteryPackBanner
+// (megapot/page.tsx), same placement (directly above PrizePoolHero) and copy.
+function MysteryPackBanner() {
+  const router = useRouter();
+  const { t } = useTranslation();
+  return (
+    <TouchableOpacity style={styles.packBanner} onPress={() => router.push('/mystery-pack')} activeOpacity={0.85}>
+      <View style={styles.packBannerIcon}>
+        <Gift size={22} color={color.fg} />
+      </View>
+      <View style={styles.packBannerText}>
+        <Text style={styles.packBannerTitle}>{t.mysteryPackBannerTitle}</Text>
+        <Text style={styles.packBannerSubtitle} numberOfLines={1}>
+          {t.mysteryPackBannerSubtitle}
+        </Text>
+      </View>
+      <ChevronRight size={20} color={color.fg3} />
+    </TouchableOpacity>
+  );
+}
 
 // ── Prize pool + countdown ──────────────────────────────────────────────────
 // Ported from apps/frontend/src/app/app/megapot/page.tsx's PrizePoolHero — same field names
@@ -537,6 +559,7 @@ function BuyScreenInner() {
 
   return (
     <View style={styles.screen}>
+      <MysteryPackBanner />
       <PrizePoolHero prizePool={nextDraw.prizePool} drawTime={nextDraw.drawTime} />
 
       <View style={styles.card}>
@@ -773,6 +796,28 @@ export default function BuyScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: color.bgInk },
   screen: { flex: 1, paddingHorizontal: space[4], paddingTop: space[2], paddingBottom: space[4], gap: space[2] },
+  packBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space[3],
+    padding: space[3],
+    borderRadius: radius.lg,
+    backgroundColor: color.surface1,
+    borderWidth: 1,
+    borderColor: color.borderSoft,
+    marginBottom: space[2],
+  },
+  packBannerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.pill,
+    backgroundColor: color.brandOrange,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  packBannerText: { flex: 1, gap: 2 },
+  packBannerTitle: { color: color.fg, fontFamily: FONT_TITLE_SEMIBOLD, fontSize: 15 },
+  packBannerSubtitle: { color: color.fg3, fontFamily: FONT_BODY_MEDIUM, fontSize: 13 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.bgInk, padding: space[6], gap: 10 },
   progressScreen: { flex: 1, alignItems: 'center', backgroundColor: color.bgInk, paddingHorizontal: space[6], paddingTop: space[6], paddingBottom: space[8] },
 

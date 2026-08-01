@@ -247,6 +247,37 @@ const pt: Translations = {
       .filter(Boolean)
       .join(' e ')}`,
   ticketNumberLabel: (n) => `Bilhete ${n}`,
+
+  // ── Mystery Pack ────────────────────────────────────────────────────────
+  mysteryPackBannerTitle: 'Pacote Mistério',
+  mysteryPackBannerSubtitle: 'Abra um pacote, ganhe até 100 bilhetes',
+  mysteryPackTitle: 'Pacote Mistério',
+  mysteryPackTapToOpen: 'Toque no pacote para abrir',
+  mysteryPackAlwaysWin: 'Você sempre ganha pelo menos 1 bilhete',
+  mysteryPackDemo: 'DEMO',
+  mysteryPackDemoSubtitle: 'Modo demo — $0, sem bilhete real',
+  mysteryPackPayCta: (amount) => `Pagar ${amount} para abrir`,
+  mysteryPackConfirming: 'Confirmando…',
+  mysteryPackInsufficientTitle: 'USDC insuficiente',
+  mysteryPackInsufficientSubtitle: 'Adicione mais USDC à sua carteira Seeker para abrir um pacote.',
+  mysteryPackLimitTitle: 'Você atingiu o limite de pacotes de hoje',
+  mysteryPackLimitSubtitle: 'Volte amanhã para mais Pacotes Mistério!',
+  mysteryPackUnavailableTitle: 'Pacotes Mistério estão pausados',
+  mysteryPackUnavailableSubtitle: 'Estamos reabastecendo os fundos de prêmios — volte em breve.',
+  mysteryPackTicketsWon: (n) => `${n} bilhete${n === 1 ? '' : 's'} ganho${n === 1 ? '' : 's'}!`,
+  mysteryPackAddedToDraw: 'Adicionado ao sorteio Megapot de hoje',
+  mysteryPackOpenAnother: 'Abrir outro',
+  mysteryPackDone: 'Concluído',
+  mysteryPackOdds: 'Chances',
+  mysteryPackOddsTitle: 'Escala de chances',
+  mysteryPackOddsIntro: (amount) => `${amount} por pacote. Você sempre ganha pelo menos 1 bilhete — nunca uma perda.`,
+  mysteryPackTicketsSuffix: 'bilhetes',
+  mysteryPackRarity: { common: 'Comum', uncommon: 'Incomum', rare: 'Raro', epic: 'Épico' },
+  mysteryPackGenericError: 'Não foi possível abrir seu pacote — tente novamente.',
+  mysteryPackPaymentCancelled: 'Pagamento cancelado.',
+  mysteryPackPaymentFailed: 'Pagamento falhou — tente novamente.',
+  mysteryPackInsufficientFundsError: (amount) => `USDC insuficiente na sua carteira — abrir um pacote custa ${amount}.`,
+  mysteryPackNoWalletFound: 'Nenhuma carteira Seeker encontrada.',
 };
 
 export default pt;

@@ -236,6 +236,37 @@ const en = {
   pickerRemainingLabel: (mainRemaining: number, bonusMissing: boolean) =>
     `${[mainRemaining > 0 && `${mainRemaining} main`, bonusMissing && 'bonus'].filter(Boolean).join(' + ')} left`,
   ticketNumberLabel: (n: number) => `Ticket ${n}`,
+
+  // ── Mystery Pack ────────────────────────────────────────────────────────
+  mysteryPackBannerTitle: 'Mystery Pack',
+  mysteryPackBannerSubtitle: 'Open a pack, win up to 100 tickets',
+  mysteryPackTitle: 'Mystery Pack',
+  mysteryPackTapToOpen: 'Tap the pack to open',
+  mysteryPackAlwaysWin: 'You always win at least 1 ticket',
+  mysteryPackDemo: 'DEMO',
+  mysteryPackDemoSubtitle: 'Demo mode — $0, no real ticket',
+  mysteryPackPayCta: (amount: string) => `Pay ${amount} to open`,
+  mysteryPackConfirming: 'Confirming…',
+  mysteryPackInsufficientTitle: 'Not enough USDC',
+  mysteryPackInsufficientSubtitle: 'Add more USDC to your Seeker wallet to open a pack.',
+  mysteryPackLimitTitle: "You've reached today's pack limit",
+  mysteryPackLimitSubtitle: 'Come back tomorrow for more Mystery Packs!',
+  mysteryPackUnavailableTitle: 'Mystery Packs are paused',
+  mysteryPackUnavailableSubtitle: "We're topping up prize funds — check back soon.",
+  mysteryPackTicketsWon: (n: number) => `${n} ticket${n === 1 ? '' : 's'} won!`,
+  mysteryPackAddedToDraw: "Added to today's Megapot draw",
+  mysteryPackOpenAnother: 'Open another',
+  mysteryPackDone: 'Done',
+  mysteryPackOdds: 'Odds',
+  mysteryPackOddsTitle: 'Odds ladder',
+  mysteryPackOddsIntro: (amount: string) => `${amount} a pack. You always win at least 1 ticket — never a loss.`,
+  mysteryPackTicketsSuffix: 'tickets',
+  mysteryPackRarity: { common: 'Common', uncommon: 'Uncommon', rare: 'Rare', epic: 'Epic' },
+  mysteryPackGenericError: "Couldn't open your pack — please try again.",
+  mysteryPackPaymentCancelled: 'Payment cancelled.',
+  mysteryPackPaymentFailed: 'Payment failed — please try again.',
+  mysteryPackInsufficientFundsError: (amount: string) => `Not enough USDC in your wallet — opening a pack costs ${amount}.`,
+  mysteryPackNoWalletFound: 'No Seeker wallet found.',
 };
 
 export type Translations = typeof en;

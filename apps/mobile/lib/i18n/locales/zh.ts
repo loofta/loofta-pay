@@ -229,6 +229,37 @@ const zh: Translations = {
   pickerRemainingLabel: (mainRemaining, bonusMissing) =>
     `还差${[mainRemaining > 0 && `${mainRemaining} 个主号码`, bonusMissing && '特别号码'].filter(Boolean).join('和')}`,
   ticketNumberLabel: (n) => `第 ${n} 张彩票`,
+
+  // ── Mystery Pack ────────────────────────────────────────────────────────
+  mysteryPackBannerTitle: '神秘包',
+  mysteryPackBannerSubtitle: '开启神秘包，最多可赢 100 张彩票',
+  mysteryPackTitle: '神秘包',
+  mysteryPackTapToOpen: '点击神秘包开启',
+  mysteryPackAlwaysWin: '你至少能赢得 1 张彩票',
+  mysteryPackDemo: '演示',
+  mysteryPackDemoSubtitle: '演示模式 — $0，非真实彩票',
+  mysteryPackPayCta: (amount) => `支付 ${amount} 开启`,
+  mysteryPackConfirming: '确认中…',
+  mysteryPackInsufficientTitle: 'USDC 余额不足',
+  mysteryPackInsufficientSubtitle: '请为你的 Seeker 钱包充值更多 USDC 以开启神秘包。',
+  mysteryPackLimitTitle: '你今日的开包次数已达上限',
+  mysteryPackLimitSubtitle: '明天再来开启更多神秘包吧！',
+  mysteryPackUnavailableTitle: '神秘包暂停开放',
+  mysteryPackUnavailableSubtitle: '我们正在补充奖金池 — 请稍后再来查看。',
+  mysteryPackTicketsWon: (n) => `获得 ${n} 张彩票！`,
+  mysteryPackAddedToDraw: '已加入今日 Megapot 抽奖',
+  mysteryPackOpenAnother: '再开一个',
+  mysteryPackDone: '完成',
+  mysteryPackOdds: '概率',
+  mysteryPackOddsTitle: '概率等级',
+  mysteryPackOddsIntro: (amount) => `每个神秘包 ${amount}。你至少能赢得 1 张彩票 — 绝不会亏。`,
+  mysteryPackTicketsSuffix: '张彩票',
+  mysteryPackRarity: { common: '普通', uncommon: '罕见', rare: '稀有', epic: '史诗' },
+  mysteryPackGenericError: '开启神秘包失败 — 请重试。',
+  mysteryPackPaymentCancelled: '支付已取消。',
+  mysteryPackPaymentFailed: '支付失败 — 请重试。',
+  mysteryPackInsufficientFundsError: (amount) => `钱包中的 USDC 不足 — 开启神秘包需要 ${amount}。`,
+  mysteryPackNoWalletFound: '未找到 Seeker 钱包。',
 };
 
 export default zh;

@@ -242,6 +242,37 @@ const id: Translations = {
   pickerRemainingLabel: (mainRemaining, bonusMissing) =>
     `Kurang ${[mainRemaining > 0 && `${mainRemaining} nomor utama`, bonusMissing && 'bonus'].filter(Boolean).join(' + ')}`,
   ticketNumberLabel: (n) => `Tiket ${n}`,
+
+  // ── Mystery Pack ────────────────────────────────────────────────────────
+  mysteryPackBannerTitle: 'Paket Misteri',
+  mysteryPackBannerSubtitle: 'Buka paket, menangkan hingga 100 tiket',
+  mysteryPackTitle: 'Paket Misteri',
+  mysteryPackTapToOpen: 'Ketuk paket untuk membuka',
+  mysteryPackAlwaysWin: 'Kamu selalu menang minimal 1 tiket',
+  mysteryPackDemo: 'DEMO',
+  mysteryPackDemoSubtitle: 'Mode demo — $0, bukan tiket asli',
+  mysteryPackPayCta: (amount) => `Bayar ${amount} untuk membuka`,
+  mysteryPackConfirming: 'Mengonfirmasi…',
+  mysteryPackInsufficientTitle: 'USDC tidak cukup',
+  mysteryPackInsufficientSubtitle: 'Tambahkan lebih banyak USDC ke dompet Seeker-mu untuk membuka paket.',
+  mysteryPackLimitTitle: 'Kamu sudah mencapai batas paket hari ini',
+  mysteryPackLimitSubtitle: 'Kembali besok untuk Paket Misteri lainnya!',
+  mysteryPackUnavailableTitle: 'Paket Misteri sedang dijeda',
+  mysteryPackUnavailableSubtitle: 'Kami sedang mengisi ulang dana hadiah — kembali lagi nanti.',
+  mysteryPackTicketsWon: (n) => `${n} tiket menang!`,
+  mysteryPackAddedToDraw: 'Ditambahkan ke undian Megapot hari ini',
+  mysteryPackOpenAnother: 'Buka lagi',
+  mysteryPackDone: 'Selesai',
+  mysteryPackOdds: 'Peluang',
+  mysteryPackOddsTitle: 'Tingkat peluang',
+  mysteryPackOddsIntro: (amount) => `${amount} per paket. Kamu selalu menang minimal 1 tiket — tidak pernah rugi.`,
+  mysteryPackTicketsSuffix: 'tiket',
+  mysteryPackRarity: { common: 'Umum', uncommon: 'Tidak umum', rare: 'Langka', epic: 'Epik' },
+  mysteryPackGenericError: 'Gagal membuka paketmu — silakan coba lagi.',
+  mysteryPackPaymentCancelled: 'Pembayaran dibatalkan.',
+  mysteryPackPaymentFailed: 'Pembayaran gagal — silakan coba lagi.',
+  mysteryPackInsufficientFundsError: (amount) => `USDC di dompetmu tidak cukup — membuka paket seharga ${amount}.`,
+  mysteryPackNoWalletFound: 'Dompet Seeker tidak ditemukan.',
 };
 
 export default id;
