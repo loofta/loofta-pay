@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { join } from 'path';
 
 // Core modules
@@ -30,6 +31,7 @@ import { X402PaymentsModule } from './modules/x402-payments/x402-payments.module
 import { PrivateBalanceModule } from './modules/private-balance/private-balance.module';
 import { PajCashModule } from './modules/paj-cash/paj-cash.module';
 import { UserDepositsModule } from './modules/user-deposits/user-deposits.module';
+import { GachaModule } from './modules/gacha/gacha.module';
 
 @Module({
   imports: [
@@ -66,6 +68,11 @@ import { UserDepositsModule } from './modules/user-deposits/user-deposits.module
 
     // Scheduling for cron jobs
     ScheduleModule.forRoot(),
+    // Global event bus — currently only used to decouple GachaService from GachaGateway (the
+    // service emits room/bid state-change events; the gateway listens and broadcasts them over
+    // its websocket) so those two providers don't hold a genuine circular constructor-injection
+    // dependency on each other. See gacha.service.ts / gacha.gateway.ts.
+    EventEmitterModule.forRoot(),
 
     // Core
     DatabaseModule,
@@ -92,6 +99,7 @@ import { UserDepositsModule } from './modules/user-deposits/user-deposits.module
     PrivateBalanceModule,
     PajCashModule,
     UserDepositsModule,
+    GachaModule,
   ],
   providers: [
     {
