@@ -68,9 +68,9 @@ export class IntegratorsService {
   }
 
   /**
-   * Internal provisioning only (no public self-serve yet) — mints a new integrator plus its
-   * first API key, returning the raw key exactly once. Nothing else ever reconstructs it;
-   * only its hash is persisted.
+   * Mints a new integrator plus its first API key, returning the raw key exactly once.
+   * Nothing else ever reconstructs it; only its hash is persisted. Called both by admin
+   * provisioning and by the self-serve org dashboard (params.organizationId set in that case).
    */
   async provision(params: {
     name: string;
@@ -78,6 +78,7 @@ export class IntegratorsService {
     isDevnetOnly?: boolean;
     rateLimitPerMin?: number;
     createdByAdmin: string;
+    organizationId?: string;
   }): Promise<{ integratorId: string; rawKey: string; keyPrefix: string }> {
     const isDevnetOnly = params.isDevnetOnly ?? true;
 
@@ -88,6 +89,7 @@ export class IntegratorsService {
         is_devnet_only: isDevnetOnly,
         rate_limit_per_min: params.rateLimitPerMin ?? 60,
         created_by_admin: params.createdByAdmin,
+        ...(params.organizationId ? { organization_id: params.organizationId } : {}),
       })
       .select('id')
       .single();

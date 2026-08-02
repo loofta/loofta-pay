@@ -98,12 +98,13 @@ export function PayButton({
     const params = new URLSearchParams();
     params.set('organizationId', organizationId);
     if (amount) params.set('amount', String(amount));
-    if (pageBgColor) params.set('bgColor', encodeURIComponent(pageBgColor));
+    // pageBgColor isn't read by /checkout today — branding comes from the organization's own
+    // bg_color (set via the self-serve dashboard), not a per-embed URL override.
     const effectiveCallback = callbackUrl ?? (typeof window !== 'undefined' ? window.location.href : '');
-    if (effectiveCallback) params.set('callback', encodeURIComponent(effectiveCallback));
+    if (effectiveCallback) params.set('callbackUrl', effectiveCallback);
 
     return `${baseUrl}?${params.toString()}`;
-  }, [organizationId, amount, pageBgColor, callbackUrl]);
+  }, [organizationId, amount, callbackUrl]);
 
   const handleClick = useCallback(() => {
     if (disabled || loading || paid) return;

@@ -18,6 +18,7 @@ export class ClaimProcessorService {
   private readonly logger = new Logger(ClaimProcessorService.name);
   private isProcessing = false;
   private isSweeping = false;
+  private isSweepingOrgPayments = false;
   private isReclaiming = false;
 
   constructor(
@@ -63,6 +64,27 @@ export class ClaimProcessorService {
       this.logger.error('[handleBurnerSweepRetries] Error:', e?.message);
     } finally {
       this.isSweeping = false;
+    }
+  }
+
+  /**
+   * Auto-settle organization checkout payments every minute — no recipient claim step exists
+   * for these (see ClaimsService.cronSweepOrganizationPayments for why that's deliberate), so
+   * this is the only thing that ever sweeps a funded checkout payment to the org's wallet.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleOrganizationPaymentSweeps() {
+    if (this.isSweepingOrgPayments) {
+      this.logger.debug('[handleOrganizationPaymentSweeps] Previous sweep still running, skipping');
+      return;
+    }
+    this.isSweepingOrgPayments = true;
+    try {
+      await this.claimsService.cronSweepOrganizationPayments();
+    } catch (e: any) {
+      this.logger.error('[handleOrganizationPaymentSweeps] Error:', e?.message);
+    } finally {
+      this.isSweepingOrgPayments = false;
     }
   }
 

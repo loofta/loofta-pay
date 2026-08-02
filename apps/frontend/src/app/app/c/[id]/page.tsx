@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState, type SVGProps } from "reac
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
+import { ClaimPageBrandBar } from "./ClaimPageBrandBar";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import type { TokenSelection } from "@/app/utils/types";
@@ -162,6 +163,7 @@ function ClaimPayLayout({
   topRight,
   from,
   incognito,
+  hideBackLink,
   children,
 }: {
   embedInApp?: boolean;
@@ -173,6 +175,9 @@ function ClaimPayLayout({
    *  an earlier version pulsed an amber glow and floated a ghost mascot, which read as a privacy
    *  red flag in user feedback rather than a reassurance. */
   incognito?: boolean;
+  /** Checkout sessions (organization payments) have no "Send" page to go back to — this isn't a
+   *  peer-to-peer claim link the viewer navigated away from, it's a business's checkout page. */
+  hideBackLink?: boolean;
   children: React.ReactNode;
 }) {
   const backHref = from === "history" ? "/history" : "/";
@@ -194,9 +199,11 @@ function ClaimPayLayout({
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-2">
-          <Link href={backHref} className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors">
-            {backLabel}
-          </Link>
+          {hideBackLink ? <div /> : (
+            <Link href={backHref} className="inline-flex items-center gap-2 text-base md:text-sm font-medium text-slate-400 hover:text-white transition-colors">
+              {backLabel}
+            </Link>
+          )}
           {topRight}
         </div>
         <div className="relative">
@@ -1033,7 +1040,9 @@ const CLAIM_PRIVACY_FAQ_ITEMS: { question: string; answer: React.ReactNode }[] =
   },
 ];
 
-function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
+/** checkoutMode: rendered from /checkout for an organization payment — hides the "Back to Send"
+ *  link, which only makes sense for a peer-to-peer claim link the viewer navigated away from. */
+export function ClaimPayView({ claimId, embedInApp, checkoutMode }: { claimId: string; embedInApp?: boolean; checkoutMode?: boolean }) {
   const id = claimId;
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -2591,6 +2600,20 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
+  // checkoutMode only: PayButton's popup/tab embed modes wait for this exact postMessage before
+  // closing the popup and firing the merchant's onSuccess callback (see PayButton.tsx). Regular
+  // /c/[id] visits (not checkoutMode) never post this — window.opener is normally null there anyway.
+  const checkoutSuccessPostedRef = React.useRef(false);
+  useEffect(() => {
+    if (!checkoutMode || checkoutSuccessPostedRef.current) return;
+    const upper = String(status || claim?.status || "").toUpperCase();
+    if (upper !== "SUCCESS") return;
+    checkoutSuccessPostedRef.current = true;
+    try {
+      window.opener?.postMessage({ type: "loofta-payment-success", paymentId: id }, "*");
+    } catch { /* opener may be cross-origin/closed — non-fatal */ }
+  }, [checkoutMode, status, claim?.status, id]);
+
   // Covers the plain "already claimed" view (isRecipient + SUCCESS, no pending flags) —
   // reachable directly via optimistic status updates or a fresh page load without ever
   // passing through the claimCompleted branch above, so it needs its own refresh trigger.
@@ -3899,6 +3922,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         embedInApp={embedInApp}
         from={from}
         incognito={showingPrivatePayForm || showingPrivateRecipientView}
+        hideBackLink={checkoutMode}
         topRight={
           user?.id && claim?.created_by === user.id && ["OPEN", "PENDING_DEPOSIT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
             <>
@@ -6055,6 +6079,7 @@ export default function ClaimPayPage({ params }: { params: Promise<{ id: string 
   const { id } = React.use(params);
   return (
     <React.Suspense fallback={<ClaimPayPageFallback />}>
+      <ClaimPageBrandBar />
       <ClaimPayView claimId={id} />
     </React.Suspense>
   );

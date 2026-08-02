@@ -37,6 +37,15 @@ export class Organization {
   @ApiPropertyOptional({ description: 'Payment configuration' })
   payment_config: Record<string, unknown> | null;
 
+  @ApiPropertyOptional({ description: 'Privy user ID of the self-serve owner (null for admin-created orgs)' })
+  owner_privy_user_id: string | null;
+
+  @ApiPropertyOptional({ description: 'Business contact email' })
+  contact_email: string | null;
+
+  @ApiPropertyOptional({ description: 'Website or app where checkout will be embedded/linked' })
+  website_url: string | null;
+
   @ApiProperty({ description: 'Creation timestamp' })
   created_at: string;
 

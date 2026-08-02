@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsEnum, IsNotEmpty, MaxLength } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNotEmpty, IsEmail, IsUrl, MaxLength } from 'class-validator';
 
 export enum CheckoutStatus {
   ACTIVE = 'active',
@@ -54,4 +54,16 @@ export class CreateOrganizationDto {
   @IsString()
   @MaxLength(20)
   bg_color?: string;
+
+  @ApiPropertyOptional({ description: 'Business contact email — required for self-serve signup, used for approval/support contact' })
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(200)
+  contact_email?: string;
+
+  @ApiPropertyOptional({ description: 'Website or app where checkout will be embedded/linked' })
+  @IsOptional()
+  @IsUrl({ require_tld: false })
+  @MaxLength(500)
+  website_url?: string;
 }

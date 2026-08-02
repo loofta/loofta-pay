@@ -44,6 +44,9 @@ import { reclaimBurnerFunds } from '@/common/burner-reclaim';
 import { PajCashOrdersService } from '../paj-cash/paj-cash-orders.service';
 import { computeLooftaFeeUsdc } from '@/common/paj-cash-fee';
 
+/** Flat Loofta fee charged on organization checkout-session payments (linked via organization_payments.payment_id). */
+const ORG_CHECKOUT_LOOFTA_FEE_USDC = 0.01;
+
 const DEPOSIT_SEED = 'deposit';
 const VAULT_SEED = 'vault';
 const MODIFY_BALANCE_DISCRIMINATOR = Buffer.from([148, 232, 7, 240, 55, 51, 121, 115]);
@@ -136,7 +139,7 @@ export class ClaimsService {
    * Create a new payment claim
    */
   async create(dto: CreateClaimDto): Promise<{ id: string; short_id: string; link: string }> {
-    const { amount, toSel, recipient, userId, cluster } = dto;
+    const { amount, toSel, recipient, userId, cluster, isPrivate } = dto;
 
     if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
       throw new BadRequestException('Missing required fields');
@@ -167,6 +170,7 @@ export class ClaimsService {
         to_token: 'USDC',
         is_devnet: isDevnet,
         short_id: shortId,
+        ...(isPrivate !== undefined ? { is_private: isPrivate } : {}),
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id')
@@ -181,6 +185,63 @@ export class ClaimsService {
     const link = `${this.baseUrl}/c/${shortId}`;
 
     this.logger.log(`Created claim: ${id}`);
+    return { id, short_id: shortId, link };
+  }
+
+  /**
+   * Create a checkout-session payment for an organization, settling to whatever token/chain the
+   * org has configured (org.token_symbol/token_chain) — NOT hardcoded Solana/USDC like create()
+   * and every other creation path. A separate method rather than extending create() itself: this
+   * lets an organization receive payouts on any chain DepositService/NearIntentsService support,
+   * without changing behavior for create()'s other callers (the public POST /claims/create
+   * endpoint, used by integrators too), who all still get the existing Solana/USDC guarantee.
+   *
+   * Still always mints a burner for consistency with every other creation path. For a Solana
+   * destination this is load-bearing (DepositService routes cross-chain deposits to the burner
+   * for privacy, then a private PER sweep delivers to recipient_address — see
+   * handleCrossChainDeposit's isDestSolana branch). For a non-Solana destination the burner sits
+   * unused — NEAR Intents delivers straight to recipient_address in that case — but keeping it
+   * avoids a special case and matches the "every payment has a burner" policy documented on
+   * create()/createFromUsername/createFromSocial above.
+   */
+  async createForOrganizationCheckout(params: {
+    amount: number;
+    recipient: string;
+    toChain: string;
+    toSymbol: string;
+    isPrivate?: boolean;
+  }): Promise<{ id: string; short_id: string; link: string }> {
+    const { amount, recipient, toChain, toSymbol, isPrivate } = params;
+    const shortId = generateShortId();
+    const isDevnet = isSolanaDevnetFromConfig(this.configService);
+    const burner = this.createClaimBurner();
+    if (!burner) {
+      this.logger.warn('Creating organization checkout payment without burner: SEND_PAYMENT_ENC_KEY may be missing.');
+    }
+    const { data, error } = await this.supabaseService.payments
+      .insert({
+        amount: Number(amount),
+        direction: 'from_sender',
+        recipient_address: recipient,
+        status: 'OPEN',
+        to_chain: toChain,
+        to_token: toSymbol,
+        is_devnet: isDevnet,
+        short_id: shortId,
+        ...(isPrivate !== undefined ? { is_private: isPrivate } : {}),
+        ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      this.logger.error('Failed to create organization checkout payment:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    const id = data.id;
+    const link = `${this.baseUrl}/c/${shortId}`;
+    this.logger.log(`Created organization checkout payment: ${id} (${toSymbol} on ${toChain})`);
     return { id, short_id: shortId, link };
   }
 
@@ -1394,6 +1455,23 @@ export class ClaimsService {
       );
     }
 
+    // Flat Loofta fee on organization checkout-session payments — additive with any Naira fee
+    // above (a checkout payment can also be claimed to Naira; both deductions land in the same
+    // sweep transaction via the same looftaFeeUsdc opt). NOTE: this opt is only honored by the
+    // direct same-chain SPL sweep branch below (sweepClaimBurnerToWallet's non-cross-chain,
+    // non-claimPrivately path) — cross-chain and claim-privately sweeps route through
+    // sweepClaimBurnerPrivately/MagicBlock's own bps platform fee instead and don't yet pick up
+    // this flat fee. Fine for phase 1 (those payments still aren't free), but worth closing later.
+    // Deliberately no organization_id column on `payments` — organization_payments.payment_id
+    // is the only link back, kept in one place instead of duplicated onto the high-traffic
+    // payments table.
+    const { data: orgPaymentRow } = await this.supabaseService.organizationPayments
+      .select('id')
+      .eq('payment_id', claimId)
+      .maybeSingle();
+    const checkoutFeeUsdc = orgPaymentRow ? ORG_CHECKOUT_LOOFTA_FEE_USDC : 0;
+    const totalLooftaFeeUsdc = (nairaLooftaFeeUsdc ?? 0) + checkoutFeeUsdc;
+
     // Lock the recipient identity for the duration of this claim attempt — otherwise the
     // sender's "edit recipient" action (updateClaimRecipient) could overwrite recipient_address
     // in the window between reading `ra` above and committing the resolved wallet below (the
@@ -1451,7 +1529,7 @@ export class ClaimsService {
       // we must not have overwritten the PENDING_EMAIL/PENDING_USERNAME address, otherwise the user
       // cannot retry because the pending-claim detection no longer matches.
       const { sweepTxHash, sweptAmount, feeAmountUsdc, deliveredPrivately } = await this.sweepClaimBurnerToWallet(
-        claimId, claim, sweepDestination, { claimPrivately: opts?.claimPrivately, looftaFeeUsdc: nairaLooftaFeeUsdc },
+        claimId, claim, sweepDestination, { claimPrivately: opts?.claimPrivately, looftaFeeUsdc: totalLooftaFeeUsdc },
       );
 
       // Sweep didn't throw — safe to commit the resolved wallet to DB. Always the caller's own
@@ -1495,7 +1573,7 @@ export class ClaimsService {
         // Don't downgrade; schedule a background retry to catch late-arriving funds.
         this.logger.log(`Claim ${claimId}: burner empty but status already SUCCESS — scheduling background retry`);
         if (claimBurnerAddress) {
-          this.scheduleBackgroundSweepRetry(claimId, sweepDestination, privyUserId, { claimPrivately: opts?.claimPrivately, looftaFeeUsdc: nairaLooftaFeeUsdc });
+          this.scheduleBackgroundSweepRetry(claimId, sweepDestination, privyUserId, { claimPrivately: opts?.claimPrivately, looftaFeeUsdc: totalLooftaFeeUsdc });
         }
       } else {
         // Funds still in-flight on MagicBlock private leg (devnet: random delay up to ~15 min). Mark
@@ -1504,7 +1582,7 @@ export class ClaimsService {
         this.logger.log(`Claim ${claimId}: burner empty at claim time — marked PRIVATE_TRANSFER_PENDING, scheduling background sweep retry`);
         const rawForRetry = claim as { claim_burner_address?: string | null };
         if (rawForRetry.claim_burner_address) {
-          this.scheduleBackgroundSweepRetry(claimId, sweepDestination, privyUserId, { claimPrivately: opts?.claimPrivately, looftaFeeUsdc: nairaLooftaFeeUsdc });
+          this.scheduleBackgroundSweepRetry(claimId, sweepDestination, privyUserId, { claimPrivately: opts?.claimPrivately, looftaFeeUsdc: totalLooftaFeeUsdc });
         }
       }
 
@@ -3104,6 +3182,23 @@ export class ClaimsService {
 
     this.logger.log(`Updated claim ${id} status to ${effectiveStatus}`);
 
+    // Keep the organization_payments ledger row (if this payment was created as a checkout
+    // session — see OrganizationsService.createCheckoutSession) in sync for org-scoped
+    // reporting. No-ops for every other payment since payment_id won't match any row.
+    // Best-effort: never block the underlying payment update on this bookkeeping write.
+    if (updatedTable === 'payments') {
+      const ledgerUpdate: Record<string, unknown> = { status: effectiveStatus };
+      if (extra?.txHash) ledgerUpdate.tx_hash = extra.txHash;
+      if (extra?.feeAmountUsdc != null) ledgerUpdate.loofta_fee_usdc = extra.feeAmountUsdc;
+      this.supabaseService.organizationPayments
+        .update(ledgerUpdate)
+        .eq('payment_id', id)
+        .then(
+          () => {},
+          (e: unknown) => this.logger.warn(`Payment ${id}: failed to sync organization_payments (non-fatal): ${String(e)}`),
+        );
+    }
+
     // Only the primary `payments` table carries the from_chain/is_devnet/direction columns the
     // quest qualifies on — legacy `claims` rows (read-only backward-compat) never qualify anyway.
     // Also check on the sender's own private-intent stamp (extra.isPrivate===true above), not just
@@ -3373,6 +3468,72 @@ export class ClaimsService {
         }
       } catch (e: any) {
         this.logger.warn(`[cronSweep] Claim ${claim.id}: sweep error — ${e?.message ?? e}`);
+      }
+    }
+  }
+
+  /**
+   * Cron-safe auto-settle for organization checkout payments: sweep PRIVATE_TRANSFER_PENDING
+   * payments linked from organization_payments (via payment_id) straight to the org's
+   * recipient_wallet (already stamped as recipient_address at checkout-session creation, see
+   * OrganizationsService.createCheckoutSession). No organization_id column on `payments` itself
+   * — organization_payments.payment_id is the only place that link lives.
+   *
+   * Deliberately does NOT gate on claim_requested_at like cronSweepPendingBurners does — that
+   * gate exists because a human recipient must explicitly choose to claim before Loofta
+   * auto-delivers to them. A checkout payment has no such recipient: the org pre-authorized
+   * settlement to recipient_wallet the moment they configured it, so there's nothing left to
+   * wait for once the burner is funded.
+   */
+  async cronSweepOrganizationPayments(): Promise<void> {
+    const cutoff = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { data: orgPaymentRows, error } = await this.supabaseService.organizationPayments
+      .select('payment_id')
+      .eq('status', 'PRIVATE_TRANSFER_PENDING')
+      .not('payment_id', 'is', null)
+      .gte('updated_at', cutoff);
+
+    if (error) {
+      this.logger.error('[cronSweepOrg] Query error:', error);
+      return;
+    }
+    const paymentIds = (orgPaymentRows || []).map((r) => (r as { payment_id: string }).payment_id);
+    if (!paymentIds.length) return;
+
+    const { data: pendingPayments, error: paymentsError } = await this.supabaseService.payments
+      .select('*')
+      .in('id', paymentIds)
+      .eq('status', 'PRIVATE_TRANSFER_PENDING')
+      .not('burner_address', 'is', null)
+      .not('burner_encrypted_secret', 'is', null);
+
+    if (paymentsError) {
+      this.logger.error('[cronSweepOrg] Payments lookup error:', paymentsError);
+      return;
+    }
+    if (!pendingPayments?.length) return;
+
+    this.logger.log(`[cronSweepOrg] Found ${pendingPayments.length} organization checkout payments to sweep`);
+
+    for (const raw of pendingPayments) {
+      const claim = this.normalizeFromPayments(raw as Record<string, unknown>) as unknown as Claim & { recipient_address?: string };
+      const destination = (claim.recipient_address || '').trim();
+      if (!destination || this.isPendingRecipientAddress(destination)) {
+        this.logger.warn(`[cronSweepOrg] Payment ${claim.id}: recipient wallet not resolved, skipping`);
+        continue;
+      }
+      try {
+        const { sweepTxHash, deliveredPrivately, feeAmountUsdc } = await this.sweepClaimBurnerToWallet(
+          claim.id, claim, destination, { looftaFeeUsdc: ORG_CHECKOUT_LOOFTA_FEE_USDC },
+        );
+        if (sweepTxHash) {
+          await this.updateStatus(claim.id, 'SUCCESS', { recipientSwept: true, deliveredPrivately, txHash: sweepTxHash, feeAmountUsdc });
+          this.logger.log(`[cronSweepOrg] Payment ${claim.id}: sweep succeeded → SUCCESS`);
+        } else {
+          this.logger.debug(`[cronSweepOrg] Payment ${claim.id}: burner still empty, will retry next tick`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`[cronSweepOrg] Payment ${claim.id}: sweep error — ${e?.message ?? e}`);
       }
     }
   }

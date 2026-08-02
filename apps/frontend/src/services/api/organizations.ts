@@ -23,6 +23,9 @@ export interface Organization {
   token_symbol: string | null;
   token_chain: string | null;
   bg_color: string | null;
+  contact_email: string | null;
+  website_url: string | null;
+  owner_privy_user_id?: string | null;
   payment_config?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string | null;
@@ -46,6 +49,8 @@ export interface CreateOrganizationInput {
   token_symbol?: string;
   token_chain?: string;
   bg_color?: string;
+  contact_email?: string;
+  website_url?: string;
 }
 
 export interface UpdateOrganizationInput {
@@ -82,6 +87,97 @@ export async function getOrganizationByOrganizationId(
   return fetchApi<{ organization: Organization }>(
     `/organizations/public/by-id?organizationId=${encodeURIComponent(organizationId)}`
   );
+}
+
+export interface CreateCheckoutSessionInput {
+  amount: number;
+  description?: string;
+  isPrivate?: boolean;
+  callbackUrl?: string;
+}
+
+export interface CheckoutSessionResult {
+  id: string;
+  short_id: string;
+  link: string;
+}
+
+/**
+ * Create a checkout session (payment link) for an organization — public, called by the
+ * hosted /checkout page and PayButton. Funds settle to the org's own recipient_wallet.
+ */
+export async function createCheckoutSession(
+  organizationId: string,
+  data: CreateCheckoutSessionInput
+): Promise<CheckoutSessionResult> {
+  return fetchApi<CheckoutSessionResult>(
+    `/organizations/${encodeURIComponent(organizationId)}/checkout-sessions`,
+    { method: 'POST', body: JSON.stringify(data) }
+  );
+}
+
+// ===========================================
+// Self-serve API (auth required, org owner)
+// ===========================================
+
+/**
+ * Self-serve organization signup — lands as 'pending' until an admin approves it.
+ */
+export async function createOrganizationSelfServe(
+  data: CreateOrganizationInput,
+  accessToken: string
+): Promise<{ organization: Organization }> {
+  return fetchApi<{ organization: Organization }>('/organizations/self-serve', {
+    method: 'POST',
+    body: JSON.stringify(data),
+    accessToken,
+  });
+}
+
+/**
+ * List organizations owned by the calling user.
+ */
+export async function getMyOrganizations(accessToken: string): Promise<{ organizations: Organization[] }> {
+  return fetchApi<{ organizations: Organization[] }>('/organizations/mine', { accessToken });
+}
+
+export interface UpdateOrganizationSelfServeInput {
+  name?: string;
+  logo_url?: string;
+  recipient_wallet?: string;
+  token_symbol?: string;
+  token_chain?: string;
+  bg_color?: string;
+  contact_email?: string;
+  website_url?: string;
+}
+
+/**
+ * Update settings for an organization you own (name/logo/wallet/branding — not checkout_status).
+ */
+export async function updateOrganizationSelfServe(
+  id: string,
+  data: UpdateOrganizationSelfServeInput,
+  accessToken: string
+): Promise<{ organization: Organization }> {
+  return fetchApi<{ organization: Organization }>(`/organizations/${encodeURIComponent(id)}/self-serve`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+    accessToken,
+  });
+}
+
+/**
+ * Mint a new API key for an organization you own (must already be admin-approved).
+ */
+export async function createOrganizationApiKey(
+  id: string,
+  accessToken: string
+): Promise<{ apiKey: string; keyPrefix: string }> {
+  return fetchApi<{ apiKey: string; keyPrefix: string }>(`/organizations/${encodeURIComponent(id)}/api-keys`, {
+    method: 'POST',
+    accessToken,
+  });
 }
 
 // ===========================================
@@ -154,6 +250,10 @@ export const organizationsApi = {
   // Public
   getByReferral: getOrganizationByReferral,
   getByOrganizationId: getOrganizationByOrganizationId,
+  createCheckoutSession,
+  // Self-serve
+  createSelfServe: createOrganizationSelfServe,
+  createApiKey: createOrganizationApiKey,
   // Admin
   list: listOrganizations,
   getById: getOrganizationById,

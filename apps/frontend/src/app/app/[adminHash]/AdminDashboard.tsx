@@ -31,6 +31,7 @@ const CashoutTab = dynamic(() => import("./tabs/CashoutTab").then((m) => m.Casho
 const LotteryTab = dynamic(() => import("./tabs/LotteryTab").then((m) => m.LotteryTab), { loading: tabLoading, ssr: false });
 const PacksTab = dynamic(() => import("./tabs/PacksTab").then((m) => m.PacksTab), { loading: tabLoading, ssr: false });
 const AnalyticsTab = dynamic(() => import("./tabs/AnalyticsTab").then((m) => m.AnalyticsTab), { loading: tabLoading, ssr: false });
+const OrganizationsTab = dynamic(() => import("./tabs/OrganizationsTab").then((m) => m.OrganizationsTab), { loading: tabLoading, ssr: false });
 
 export default function AdminDashboard() {
   const { authenticated, userId, login, ready } = useAuth();
@@ -73,7 +74,7 @@ export default function AdminDashboard() {
   const [saving, setSaving] = useState(false);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout" | "lottery" | "packs">("payments");
+  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout" | "lottery" | "packs" | "organizations">("payments");
 
   // Sparks leaderboard
   const [sparksData, setSparksData] = useState<any[]>([]);
@@ -834,6 +835,13 @@ export default function AdminDashboard() {
         >
           Mystery Packs
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("organizations")}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "organizations" ? "border-indigo-500 text-indigo-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          Organizations
+        </button>
         <Link
           href={outreachUrl}
           className="px-4 py-2 text-base md:text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-orange-400 hover:border-orange-500/50 transition-colors flex items-center gap-1.5 ml-auto"
@@ -889,6 +897,8 @@ export default function AdminDashboard() {
       )}
 
       {activeTab === "packs" && <PacksTab />}
+
+      {activeTab === "organizations" && <OrganizationsTab />}
 
       {activeTab === "analytics" && (
         <AnalyticsTab

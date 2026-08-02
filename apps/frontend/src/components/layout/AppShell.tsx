@@ -28,22 +28,26 @@ function ShellContent({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
+  // Payment links (/c/[id]) get the same seamless, chrome-free treatment as /checkout — no
+  // Loofta nav/header, just the page content and the small "Powered by Loofta" mark, same as
+  // Stripe Payment Links. Covers both the app-domain path and the pay.loofta.xyz-rewritten one.
+  const isPaymentLinkPage = pathname?.startsWith('/c/') === true || pathname?.startsWith('/app/c/') === true;
+  const isMinimalChromePage = isCheckoutPage || isPaymentLinkPage;
   // Mystery Pack is a full-screen immersive page sized as calc(100svh - var(--header-h,0px)) —
   // that var only tracks MinimalHeader's own height, not this banner's, so showing it here would
   // push the pack canvas down by an unaccounted amount (the same overlap bug the header itself
   // used to have, one layer up).
   const isImmersivePage = pathname?.startsWith('/megapot/packs') || pathname?.startsWith('/app/megapot/packs');
-  const showBottomNav = !isCheckoutPage && (
+  const showBottomNav = !isMinimalChromePage && (
     pathname === '/' || pathname === '/app' ||
     pathname === '/history' || pathname === '/app/history' ||
     pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' || pathname === '/profile' ||
-    pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
     pathname === '/sparks' || pathname === '/app/sparks' ||
     pathname === '/megapot' || pathname === '/app/megapot'
   );
-  const showMinimalHeader = !isCheckoutPage;
+  const showMinimalHeader = !isMinimalChromePage;
   const showBanner = showMinimalHeader && !bannerDismissed && !isImmersivePage;
-  const showFooter = !isCheckoutPage;
+  const showFooter = !isMinimalChromePage;
 
   const bannerText = networkMode === "mainnet" ? t('bannerMainnet') : t('bannerDevnet');
   const bannerLink = (

@@ -43,6 +43,10 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('organizations');
   }
 
+  get organizationPayments() {
+    return this.client.from('organization_payments');
+  }
+
   get claims() {
     return this.client.from('claims');
   }
