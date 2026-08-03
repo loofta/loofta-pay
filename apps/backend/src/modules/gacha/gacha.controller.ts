@@ -53,10 +53,28 @@ export class GachaController {
     return this.gacha.listOpenRooms();
   }
 
+  @Get('my-devnet-balance')
+  @ApiOperation({ summary: "Caller's own devnet USDC-Dev balance at the mint Gacha actually uses (separate from the app's general devnet toggle, which points at a different mint)" })
+  async myDevnetBalance(@Request() req: any) {
+    return this.gacha.getMyDevnetUsdcBalance(req.user.id);
+  }
+
   @Get('rooms/:id')
   @ApiOperation({ summary: "Full room detail plus the caller's own participation/payout/bid state" })
   async room(@Param('id') id: string, @Request() req: any) {
     return this.gacha.getRoomDetail(id, req.user.id);
+  }
+
+  @Post('rooms/:id/fill-with-bots')
+  @ApiOperation({ summary: 'Devnet testing only — fills every open seat with fake, treasury-funded participants. Blocked in production.' })
+  async fillWithBots(@Param('id') id: string) {
+    return this.gacha.fillRemainingSeatsWithBots(id);
+  }
+
+  @Post('rooms/:id/force-settle')
+  @ApiOperation({ summary: 'Devnet testing only — settles a bidding/settling room immediately instead of waiting for the (production-only) cron sweep. Blocked in production.' })
+  async forceSettle(@Param('id') id: string) {
+    return this.gacha.devForceSettleRoom(id);
   }
 
   @Post('rooms/join-tx')

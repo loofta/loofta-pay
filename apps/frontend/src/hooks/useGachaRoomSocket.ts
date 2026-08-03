@@ -29,6 +29,7 @@ export interface GachaRoomSettledEvent {
 }
 export interface GachaReadyUpdateEvent {
   readyCount: number;
+  seatNumber?: number;
 }
 export interface GachaEmojiUpdateEvent {
   seatNumber: number;
@@ -56,6 +57,7 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
   const [lastReadyUpdate, setLastReadyUpdate] = useState<GachaReadyUpdateEvent | null>(null);
   const [allReadyTick, setAllReadyTick] = useState(0);
   const [emojiBySeat, setEmojiBySeat] = useState<Record<number, string>>({});
+  const [readySeats, setReadySeats] = useState<number[]>([]);
   const socketRef = useRef<Socket | null>(null);
   const roomIdRef = useRef(roomId);
   useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
@@ -76,7 +78,13 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
     socket.on("room:opened", (data: GachaRoomOpenedEvent) => setLastOpened(data));
     socket.on("bid:placed", (data: GachaBidPlacedEvent) => setLastBid(data));
     socket.on("room:settled", (data: GachaRoomSettledEvent) => setLastSettled(data));
-    socket.on("room:ready_update", (data: GachaReadyUpdateEvent) => setLastReadyUpdate(data));
+    socket.on("room:ready_update", (data: GachaReadyUpdateEvent) => {
+      setLastReadyUpdate(data);
+      if (data.seatNumber !== undefined) {
+        setReadySeats((prev) => (prev.includes(data.seatNumber!) ? prev : [...prev, data.seatNumber!]));
+      }
+    });
+    socket.on("room:ready_snapshot", (data: { readySeats: number[] }) => setReadySeats(data.readySeats ?? []));
     socket.on("room:all_ready", () => setAllReadyTick((n) => n + 1));
     socket.on("room:emoji_snapshot", (data: Record<number, string>) => setEmojiBySeat((prev) => ({ ...prev, ...data })));
     socket.on("room:emoji_update", (data: GachaEmojiUpdateEvent) => setEmojiBySeat((prev) => ({ ...prev, [data.seatNumber]: data.emoji })));
@@ -98,5 +106,5 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
     socketRef.current?.emit("pick_emoji", { roomId: roomIdRef.current, emoji });
   }, []);
 
-  return { connected, snapshot, lastUpdate, lastOpened, lastBid, lastSettled, lastReadyUpdate, allReadyTick, emojiBySeat, markReady, pickEmoji };
+  return { connected, snapshot, lastUpdate, lastOpened, lastBid, lastSettled, lastReadyUpdate, allReadyTick, emojiBySeat, readySeats, markReady, pickEmoji };
 }

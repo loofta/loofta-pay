@@ -11,6 +11,7 @@ import dynamic from "next/dynamic";
 const BalanceModal = dynamic(() => import("@/components/BalanceModal").then(m => ({ default: m.BalanceModal })), { ssr: false });
 import { LooftaPayLogoLink } from "@/components/layout/LooftaPayLogoLink";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
+import { useGachaDevnetBalance } from "@/hooks/useGachaDevnetBalance";
 import { Switch } from "@/components/ui/switch";
 import { useTranslations } from "next-intl";
 import { TIERS, getTierForVolume } from "@/lib/tiers";
@@ -208,6 +209,12 @@ export function MinimalHeader() {
     [balanceNumber]
   );
 
+  // Gacha devnet USDC-Dev balance — a separate readout from the real balance above (different
+  // mint, devnet-only). Opt-in via env so it never shows for anyone who hasn't deliberately
+  // turned it on for local/devnet testing; set NEXT_PUBLIC_SHOW_GACHA_DEV_TOOLS=true to see it.
+  const showGachaDevTools = process.env.NEXT_PUBLIC_SHOW_GACHA_DEV_TOOLS === "true";
+  const { balance: gachaDevnetBalance, refresh: refreshGachaDevnetBalance } = useGachaDevnetBalance({ enabled: showGachaDevTools && authenticated });
+
   useEffect(() => {
     if (!headerRef.current) return;
     const setVar = () => {
@@ -314,6 +321,21 @@ export function MinimalHeader() {
                     {loadingBalance ? "…" : `$${balanceUSD}`}
                   </span>
                 </button>
+
+                {/* Desktop: Gacha devnet balance — dev-tools only, see NEXT_PUBLIC_SHOW_GACHA_DEV_TOOLS.
+                    Separate mint/network from the real balance button above; deliberately not wired
+                    through the app's own (retired) devnet toggle — see useGachaDevnetBalance. */}
+                {showGachaDevTools && gachaDevnetBalance && (
+                  <button
+                    type="button"
+                    onClick={() => refreshGachaDevnetBalance()}
+                    title={gachaDevnetBalance.address}
+                    className="hidden sm:flex items-center gap-3 px-3 py-2 rounded-lg bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/15 transition-colors border border-emerald-400/20 text-left"
+                  >
+                    <span className="text-sm font-medium leading-tight">Devnet</span>
+                    <span className="text-sm font-semibold tabular-nums shrink-0">${gachaDevnetBalance.usdcBalance.toFixed(2)}</span>
+                  </button>
+                )}
 
                 {/* Desktop: UserMenu */}
                 <UserMenu

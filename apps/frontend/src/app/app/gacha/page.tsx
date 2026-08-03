@@ -84,12 +84,20 @@ export default function GachaLobbyPage() {
           body: JSON.stringify({ configKey, userSolanaAddress: embeddedWallet.address }),
         });
         if (!joinTxRes.ok) throw new Error((await joinTxRes.json().catch(() => null))?.message ?? "Failed to prepare entry payment");
-        const { txBase64, roomId } = await joinTxRes.json();
+        const { txBase64, roomId, alreadyJoined } = await joinTxRes.json();
+
+        // Already have a seat in a waiting room for this config — nothing to sign, just go there.
+        if (alreadyJoined) { router.push(`/app/gacha/${roomId}`); return; }
 
         const txBytes = Buffer.from(txBase64, "base64");
         const { signature: sigBytes } = await signAndSendTransaction({
           transaction: txBytes as unknown as Uint8Array,
           wallet: embeddedWallet as any,
+          // Gacha Pooled Packs is devnet-only end to end (see gacha.service.ts) — this tx's
+          // blockhash and every account it references only exist on devnet. Omitting `chain`
+          // defaults to solana:mainnet (same default the rest of this app relies on elsewhere),
+          // which fails simulation outright against a devnet transaction.
+          chain: "solana:devnet",
         });
         const paymentTxHash = bs58.encode(sigBytes as Uint8Array);
 

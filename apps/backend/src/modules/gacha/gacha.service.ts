@@ -21,13 +21,22 @@ import { UsersService } from '../users/users.service';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc } from '@/common/magicblock-private-transfer';
-import { CollectorCryptClient, CollectorCryptPackType, NftMetadata, PackRarityTier } from './collectorcrypt.client';
+import { CollectorCryptClient, CollectorCryptPackType, NftMetadata, OpenPackResponse, PackRarityTier } from './collectorcrypt.client';
 import { GACHA_EVENTS } from './gacha.events';
 
 // Gacha Pooled Packs is devnet-only for now (Collector Crypt pack source, treasury payments, and
 // MagicBlock private payouts all target devnet) — regardless of the app-wide SOLANA_CLUSTER/
 // SOLANA_RPC_URL, which stay on mainnet for the rest of the app (lottery, claims, etc.).
-const DEFAULT_DEVNET_USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+//
+// This mint is NOT documented anywhere by Collector Crypt (their devnet docs point at the
+// spl-token-faucet.com "USDC-Dev" faucet but never state the resulting mint address). Recovered
+// empirically 2026-08 by calling their live dev-gacha.collectorcrypt.com/api/generatePack with a
+// throwaway devnet pubkey (no API key needed on devnet — confirmed working) and decoding the
+// returned unsigned transaction's SPL TransferChecked instruction, whose mint account is this
+// address. Confirmed on-chain: real, initialized SPL mint, 6 decimals, mint authority is the
+// mint itself and supply is astronomically large — consistent with a permissionless faucet token.
+// If Collector Crypt ever rotates their devnet token, this will need re-deriving the same way.
+const DEFAULT_DEVNET_USDC_MINT = 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr';
 const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 
 // Prefix a room/bid id so verifyOnChainMemo can tell a Gacha entry/bid payment apart from any
@@ -40,6 +49,9 @@ const BID_PAYMENT_GRACE_MS = 5 * 60_000;
 
 const OPEN_POLL_INTERVAL_MS = 3_000;
 const OPEN_POLL_MAX_ATTEMPTS = 20; // ~1 minute total — openPack's "waiting_for_webhook" state
+
+// See ensureDevnetTestFunds — devnet-only test-wallet funding, covers several room joins/bids.
+const DEVNET_TEST_TOPUP_USDC = 100;
 
 export interface RoomConfigPublic {
   configKey: string;
@@ -173,6 +185,42 @@ export class GachaService {
     }));
   }
 
+  /**
+   * Every room this caller has ever actually joined, regardless of status — listOpenRooms
+   * deliberately excludes settled/cancelled/failed rooms (that's a lobby list, not a history),
+   * which meant a settled room — precisely the moment there's a payout to claim — became
+   * unreachable from the UI the instant it left listOpenRooms, unless you'd saved its URL.
+   */
+  async getMyRooms(userId: string): Promise<RoomSummary[]> {
+    const db = this.supabase.getClient();
+    const { data: myRows } = await db.from('gacha_room_participants').select('room_id').eq('user_id', userId);
+    const roomIds = Array.from(new Set((myRows ?? []).map((r: any) => r.room_id)));
+    if (!roomIds.length) return [];
+
+    const { data: rooms, error } = await db
+      .from('gacha_rooms')
+      .select('id, config_key, pack_type, seats, entry_usdc, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
+      .in('id', roomIds)
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(`Failed to load your gacha rooms: ${error.message}`);
+
+    const countByRoom = await this.countParticipantsByRoom(roomIds);
+    return (rooms ?? []).map((r: any) => ({
+      id: r.id,
+      configKey: r.config_key,
+      packType: r.pack_type,
+      seats: r.seats,
+      entryUsdc: Number(r.entry_usdc),
+      status: r.status,
+      seatsFilled: countByRoom[r.id] ?? 0,
+      nftMetadata: r.nft_metadata,
+      rarity: r.rarity,
+      buybackAmountUsdc: r.buyback_amount_usdc !== null ? Number(r.buyback_amount_usdc) : null,
+      bidWindowEndsAt: r.bid_window_ends_at,
+      createdAt: r.created_at,
+    }));
+  }
+
   private async countParticipantsByRoom(roomIds: string[]): Promise<Record<string, number>> {
     if (!roomIds.length) return {};
     const db = this.supabase.getClient();
@@ -196,6 +244,26 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data } = await db.from('gacha_room_participants').select('seat_number').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
     return data?.seat_number ?? null;
+  }
+
+  /**
+   * Powers a small balance readout on the Gacha pages — the app's general devnet/mainnet toggle
+   * (store/auth.ts networkMode) doesn't help here: it's effectively retired (forced back to
+   * mainnet on every rehydrate) and even when set, queries a DIFFERENT devnet USDC mint
+   * (lib/solanaRpc.ts's DEVNET_USDC_MINT) than the one Gacha/Collector Crypt actually uses
+   * (this.usdcMint). This is deliberately its own read path, scoped to Gacha, rather than trying
+   * to fix that broader system.
+   */
+  async getMyDevnetUsdcBalance(userId: string): Promise<{ address: string; usdcBalance: number }> {
+    const address = await this.usersService.getSolanaWalletAddress(userId);
+    const conn = await this.getSolanaConnection();
+    const ata = await getAssociatedTokenAddress(this.usdcMint, new PublicKey(address));
+    let units = 0n;
+    try {
+      const bal = await conn.getTokenAccountBalance(ata);
+      units = BigInt(bal.value.amount);
+    } catch { /* no ATA yet — balance is 0 */ }
+    return { address, usdcBalance: Number(units) / 1_000_000 };
   }
 
   /** Full detail for one room regardless of status (listOpenRooms only ever returns
@@ -265,9 +333,32 @@ export class GachaService {
    * because, unlike Mystery Pack, many rooms share this one treasury address at once, so a
    * payment must be attributable to a specific room, not just "≥$X arrived" (see confirmJoin).
    */
-  async buildJoinTx(configKey: string, userSolanaAddress: string, userId: string): Promise<{ txBase64: string; roomId: string; entryUsdc: number }> {
+  async buildJoinTx(configKey: string, userSolanaAddress: string, userId: string): Promise<{ txBase64: string | null; roomId: string; entryUsdc: number; alreadyJoined?: boolean }> {
     const cfg = await this.getConfig(configKey);
+
+    // Without this, a user re-clicking Join for the same config (e.g. after navigating away and
+    // back, before their room has filled) gets routed by findOrCreateWaitingRoom straight back
+    // into the SAME room they already paid into — building and signing a genuinely NEW, real
+    // payment for a seat they already hold. The second payment lands on-chain (real money moved)
+    // but confirmJoin's insert then fails on the (room_id, user_id) unique constraint, so it's
+    // never recorded — a real, silently-lost payment. Block it before any transaction exists.
+    const db = this.supabase.getClient();
+    const { data: myRoomIds } = await db.from('gacha_room_participants').select('room_id').eq('user_id', userId);
+    if (myRoomIds?.length) {
+      const { data: existingSeat } = await db
+        .from('gacha_rooms')
+        .select('id')
+        .in('id', myRoomIds.map((r: any) => r.room_id))
+        .eq('config_key', configKey)
+        .eq('status', 'waiting')
+        .maybeSingle();
+      // No transaction to sign — the caller already has a seat here. Send them straight back to
+      // it (alreadyJoined: true, txBase64 omitted) instead of erroring into a dead end.
+      if (existingSeat) return { txBase64: null, roomId: existingSeat.id, entryUsdc: cfg.entryUsdc, alreadyJoined: true };
+    }
+
     const room = await this.findOrCreateWaitingRoom(cfg);
+    await this.ensureDevnetTestFunds(userSolanaAddress, cfg.entryUsdc);
 
     const treasuryKeypair = await this.getTreasuryKeypair();
     const conn = await this.getSolanaConnection();
@@ -312,6 +403,155 @@ export class GachaService {
       .single();
     if (insertError || !created) throw new Error(`Failed to create gacha room: ${insertError?.message}`);
     return { id: created.id };
+  }
+
+  /**
+   * Devnet testing convenience — Gacha is devnet-only end to end (see the class header), so
+   * nothing here ever touches real money. A brand-new embedded wallet has zero devnet USDC-Dev
+   * by default (there's no way for a tester to get it themselves besides a third-party faucet),
+   * which would otherwise fail every join/bid-payment attempt on "insufficient funds" before
+   * anyone gets anywhere. If the caller's balance is already short of what they're about to be
+   * asked to pay, the treasury tops them up from its own (also devnet-only, faucet-funded)
+   * balance first. There is no equivalent of this on mainnet and there must never be one — it
+   * only exists because getSolanaConnection/this.usdcMint are hardcoded to devnet for this
+   * entire module.
+   */
+  private async ensureDevnetTestFunds(userSolanaAddress: string, minUsdc: number): Promise<void> {
+    const conn = await this.getSolanaConnection();
+    const pubkey = new PublicKey(userSolanaAddress);
+    const ata = await getAssociatedTokenAddress(this.usdcMint, pubkey);
+
+    let currentUnits = 0n;
+    try {
+      const bal = await conn.getTokenAccountBalance(ata);
+      currentUnits = BigInt(bal.value.amount);
+    } catch { /* no ATA yet — balance is 0 */ }
+
+    const minUnits = BigInt(Math.round(minUsdc * 1_000_000));
+    if (currentUnits >= minUnits) return;
+
+    const treasuryKeypair = await this.getTreasuryKeypair();
+    const fromAta = await getAssociatedTokenAddress(this.usdcMint, treasuryKeypair.publicKey);
+    const topUpUnits = BigInt(Math.round(DEVNET_TEST_TOPUP_USDC * 1_000_000));
+
+    const tx = new Transaction();
+    tx.add(createAssociatedTokenAccountIdempotentInstruction(treasuryKeypair.publicKey, ata, pubkey, this.usdcMint));
+    tx.add(createTransferInstruction(fromAta, ata, treasuryKeypair.publicKey, topUpUnits));
+    tx.feePayer = treasuryKeypair.publicKey;
+    const { blockhash } = await conn.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    tx.sign(treasuryKeypair);
+    const sig = await conn.sendRawTransaction(tx.serialize());
+    await conn.confirmTransaction(sig, 'confirmed');
+    this.logger.log(`Devnet test top-up: sent ${DEVNET_TEST_TOPUP_USDC} USDC-Dev to ${userSolanaAddress} (sig=${sig})`);
+  }
+
+  /**
+   * Devnet testing convenience — fills every open seat in a `waiting` room with fake
+   * participants so a room can be tested solo, without needing that many real people/wallets.
+   * Each "bot" is a real, freshly generated throwaway Solana keypair: the treasury funds its
+   * entry share directly ("fee payer covers the balance"), and the bot then genuinely signs and
+   * submits the exact same on-chain entry payment a real participant would — no shortcuts, no
+   * bypassed verification, the money trail is fully real (just devnet-only, fake-value money).
+   * Bots trickle in with a short randomized delay between each (matching demo mode's pacing)
+   * rather than all landing in one instant. Hard-blocked outside non-production environments —
+   * there is no legitimate reason this should ever be reachable in production.
+   */
+  async fillRemainingSeatsWithBots(roomId: string): Promise<{ queued: number }> {
+    if (this.config.get<string>('NODE_ENV') === 'production') {
+      throw new BadRequestException('Bots are not available in production');
+    }
+    const db = this.supabase.getClient();
+    const { data: room } = await db.from('gacha_rooms').select('id, seats, entry_usdc, status').eq('id', roomId).maybeSingle();
+    if (!room) throw new NotFoundException('Room not found');
+    if (room.status !== 'waiting') throw new BadRequestException('This room is no longer accepting joins');
+
+    const currentCount = await this.getParticipantCount(roomId);
+    const openSeats = room.seats - currentCount;
+    if (openSeats <= 0) return { queued: 0 };
+
+    // Fire-and-forget — the caller gets an immediate response; bots join one at a time in the
+    // background so the lobby visibly fills instead of jumping straight to full.
+    (async () => {
+      for (let i = 0; i < openSeats; i++) {
+        await new Promise((r) => setTimeout(r, 800 + Math.random() * 2200));
+        await this.addBotParticipant(roomId, Number(room.entry_usdc)).catch((e) =>
+          this.logger.error(`Room ${roomId}: bot join failed: ${e.message}`),
+        );
+      }
+    })();
+
+    return { queued: openSeats };
+  }
+
+  private async addBotParticipant(roomId: string, entryUsdc: number): Promise<void> {
+    const db = this.supabase.getClient();
+    // Re-check on every bot in case the room filled via a REAL join (or another bot) while this
+    // one was waiting out its stagger delay — never oversell past a room's real seat count.
+    const { data: room } = await db.from('gacha_rooms').select('id, seats, status').eq('id', roomId).maybeSingle();
+    if (!room || room.status !== 'waiting') return;
+    const currentCount = await this.getParticipantCount(roomId);
+    if (currentCount >= room.seats) return;
+
+    const treasuryKeypair = await this.getTreasuryKeypair();
+    const conn = await this.getSolanaConnection();
+    const bot = Keypair.generate();
+    const botUserId = `bot-${bot.publicKey.toBase58().slice(0, 12)}`;
+
+    const botAta = await getAssociatedTokenAddress(this.usdcMint, bot.publicKey);
+    const treasuryFromAta = await getAssociatedTokenAddress(this.usdcMint, treasuryKeypair.publicKey);
+    const entryUnits = BigInt(Math.round(entryUsdc * 1_000_000));
+
+    // Fund the bot's entry share directly from the treasury — this IS "the fee payer covering
+    // the balance"; everything after this point is a completely normal, independently
+    // verifiable on-chain payment, same as buildJoinTx/confirmJoin.
+    const fundTx = new Transaction();
+    fundTx.add(createAssociatedTokenAccountIdempotentInstruction(treasuryKeypair.publicKey, botAta, bot.publicKey, this.usdcMint));
+    fundTx.add(createTransferInstruction(treasuryFromAta, botAta, treasuryKeypair.publicKey, entryUnits));
+    fundTx.feePayer = treasuryKeypair.publicKey;
+    fundTx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+    fundTx.sign(treasuryKeypair);
+    const fundSig = await conn.sendRawTransaction(fundTx.serialize());
+    await conn.confirmTransaction(fundSig, 'confirmed');
+
+    const treasuryToAta = await getAssociatedTokenAddress(this.usdcMint, treasuryKeypair.publicKey);
+    const joinTx = new Transaction();
+    joinTx.add(new TransactionInstruction({ programId: MEMO_PROGRAM_ID, keys: [], data: Buffer.from(`${ROOM_MEMO_PREFIX}${roomId}`, 'utf8') }));
+    joinTx.add(createAssociatedTokenAccountIdempotentInstruction(treasuryKeypair.publicKey, treasuryToAta, treasuryKeypair.publicKey, this.usdcMint));
+    joinTx.add(createTransferInstruction(botAta, treasuryToAta, bot.publicKey, entryUnits));
+    joinTx.feePayer = treasuryKeypair.publicKey;
+    joinTx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+    joinTx.sign(treasuryKeypair, bot);
+    const joinSig = await conn.sendRawTransaction(joinTx.serialize());
+    await conn.confirmTransaction(joinSig, 'confirmed');
+
+    // seat_number is NOT set here — the enforce_gacha_room_seat_cap trigger assigns it
+    // atomically under a row lock on the room (see that migration) and ignores whatever's
+    // passed, precisely to close the race that used to let two concurrent joins land on the
+    // same seat number. Read back whatever the trigger actually assigned.
+    const { data: inserted, error: insertError } = await db.from('gacha_room_participants').insert({
+      room_id: roomId,
+      user_id: botUserId,
+      payment_tx_hash: joinSig,
+    }).select('seat_number').single();
+    if (insertError || !inserted) {
+      this.logger.error(`Room ${roomId}: failed to record bot participant after a real on-chain join (sig=${joinSig}): ${insertError?.message}`);
+      return;
+    }
+    const seatNumber = inserted.seat_number;
+
+    this.logger.log(`Room ${roomId}: bot ${botUserId} joined seat ${seatNumber} (sig=${joinSig})`);
+    // Bots never connect a websocket, so they can never call mark_ready themselves — without
+    // this, a bot-filled room's ready count could never reach the total participant count, and
+    // the real participant(s) marking themselves ready would wait forever. Simulates the bot
+    // being instantly ready the moment it joins.
+    this.events.emit(GACHA_EVENTS.BOT_READY, { roomId, botUserId });
+    const roomFilled = seatNumber === room.seats;
+    if (roomFilled) {
+      await db.from('gacha_rooms').update({ status: 'purchasing', updated_at: new Date().toISOString() }).eq('id', roomId);
+      this.purchaseAndOpenRoom(roomId).catch((e) => this.logger.error(`Room ${roomId}: purchase/open failed: ${e.message}`));
+    }
+    this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: seatNumber, seats: room.seats, status: roomFilled ? 'purchasing' : 'waiting' });
   }
 
   /** Debits the account that lost the most USDC in `tx` and returns its owner — same technique
@@ -396,20 +636,26 @@ export class GachaService {
     const userSolanaAddress = await this.usersService.getSolanaWalletAddress(userId);
     await this.verifyOnChainPayment(paymentTxHash, Number(room.entry_usdc), userSolanaAddress, `${ROOM_MEMO_PREFIX}${roomId}`);
 
-    const { count } = await db.from('gacha_room_participants').select('id', { count: 'exact', head: true }).eq('room_id', roomId);
-    const seatNumber = (count ?? 0) + 1;
-
-    const { error: insertError } = await db.from('gacha_room_participants').insert({
+    // seat_number is NOT set here — enforce_gacha_room_seat_cap assigns it atomically under a
+    // row lock on the room (see that migration), closing a real race where two near-simultaneous
+    // joins (e.g. this one racing a bot's) could both compute and insert the same seat number.
+    const { data: inserted, error: insertError } = await db.from('gacha_room_participants').insert({
       room_id: roomId,
       user_id: userId,
-      seat_number: seatNumber,
       payment_tx_hash: paymentTxHash,
-    });
-    if (insertError) {
-      if ((insertError as any).code === '23505') throw new BadRequestException('This payment has already been used to join a room');
+    }).select('seat_number').single();
+    if (insertError || !inserted) {
+      // Two different unique constraints can both raise 23505 here, and they mean different
+      // things — buildJoinTx's own pre-check (see there) should catch the (room_id, user_id)
+      // case before a payment is ever built, but this is the last line of defense against a
+      // genuine race (e.g. two concurrent requests for the same already-seated user).
+      const message = (insertError as any)?.message ?? '';
+      if (message.includes('room_id_user_id')) throw new BadRequestException("You're already in this room.");
+      if ((insertError as any)?.code === '23505') throw new BadRequestException('This payment has already been used to join a room');
       // Trigger-raised exception (room full) also lands here — Postgres reports it as a generic error, not 23505.
       throw new BadRequestException('This room just filled up — try another room');
     }
+    const seatNumber = inserted.seat_number;
 
     const roomFilled = seatNumber === room.seats;
     if (roomFilled) {
@@ -436,7 +682,7 @@ export class GachaService {
     const treasuryKeypair = await this.getTreasuryKeypair();
     const conn = await this.getSolanaConnection();
 
-    const generated = await this.collectorCrypt.generatePack(room.pack_type as CollectorCryptPackType);
+    const generated = await this.collectorCrypt.generatePack(room.pack_type as CollectorCryptPackType, treasuryKeypair.publicKey.toBase58());
     const purchaseTxSig = await this.signAndSubmit(generated.transaction, treasuryKeypair, conn);
     await db.from('gacha_rooms').update({
       collectorcrypt_memo: generated.memo,
@@ -445,23 +691,39 @@ export class GachaService {
       updated_at: new Date().toISOString(),
     }).eq('id', roomId);
 
-    let opened = null;
+    // result.success + result.nftWon is the real completion signal (confirmed live — see
+    // OpenPackResponse's comment); result.status === 'waiting_for_webhook' is kept as a pending
+    // signal per the docs prose but was never actually observed in testing.
+    let opened: OpenPackResponse | null = null;
     for (let attempt = 0; attempt < OPEN_POLL_MAX_ATTEMPTS; attempt++) {
       const result = await this.collectorCrypt.openPack(generated.memo);
-      if (result.status === 'success' || result.status === 'already_opened') { opened = result; break; }
+      if (result.success && result.nftWon) { opened = result; break; }
       await new Promise((r) => setTimeout(r, OPEN_POLL_INTERVAL_MS));
     }
-    if (!opened?.nft) {
+    if (!opened?.nftWon) {
       await db.from('gacha_rooms').update({ status: 'failed', failure_reason: 'openPack never confirmed', updated_at: new Date().toISOString() }).eq('id', roomId);
       throw new Error(`Room ${roomId}: openPack never confirmed (timed out polling)`);
     }
 
+    const nftWon = opened.nftWon;
+    const mint = opened.nft_address ?? nftWon.id ?? null;
+    const rarityRaw = (nftWon.rarity ?? '').toLowerCase();
+    const rarity: PackRarityTier | null = (['common', 'uncommon', 'rare', 'epic'] as const).includes(rarityRaw as PackRarityTier)
+      ? (rarityRaw as PackRarityTier)
+      : null;
+    const nftMetadata: NftMetadata = {
+      mint: mint ?? undefined,
+      name: nftWon.content?.metadata?.name,
+      image: nftWon.content?.links?.image,
+      insuredValueUsdc: nftWon.content?.metadata?.insuredValue ? Number(nftWon.content.metadata.insuredValue) : undefined,
+    };
+
     const treasuryAddress = treasuryKeypair.publicKey.toBase58();
     let buybackAmountUsdc: number | null = null;
-    if (opened.nft.mint) {
+    if (mint) {
       try {
-        const avail = await this.collectorCrypt.buybackAvailable(opened.nft.mint, treasuryAddress);
-        if (avail.available) buybackAmountUsdc = Number(avail.amountUnits) / 1_000_000;
+        const avail = await this.collectorCrypt.buybackAvailable(mint, treasuryAddress);
+        if (avail.available && avail.amount !== undefined) buybackAmountUsdc = avail.amount / 1_000_000;
       } catch (e: any) {
         this.logger.warn(`Room ${roomId}: buybackAvailable check failed (non-fatal, starting bid at $0): ${e.message}`);
       }
@@ -469,9 +731,9 @@ export class GachaService {
 
     const bidWindowEndsAt = new Date(Date.now() + BID_WINDOW_MS).toISOString();
     await db.from('gacha_rooms').update({
-      nft_metadata: opened.nft,
-      rarity: opened.rarity ?? null,
-      open_tx_sig: opened.signature ?? null,
+      nft_metadata: nftMetadata,
+      rarity,
+      open_tx_sig: opened.transactionSignature ?? null,
       buyback_amount_usdc: buybackAmountUsdc,
       status: 'bidding',
       bid_window_ends_at: bidWindowEndsAt,
@@ -479,8 +741,8 @@ export class GachaService {
       updated_at: new Date().toISOString(),
     }).eq('id', roomId);
 
-    this.logger.log(`Room ${roomId}: opened rarity=${opened.rarity} buyback=$${buybackAmountUsdc} — bidding window open`);
-    this.events.emit(GACHA_EVENTS.ROOM_OPENED, { roomId, nftMetadata: opened.nft, rarity: opened.rarity ?? null, buybackAmountUsdc, bidWindowEndsAt });
+    this.logger.log(`Room ${roomId}: opened rarity=${rarity} buyback=$${buybackAmountUsdc} — bidding window open`);
+    this.events.emit(GACHA_EVENTS.ROOM_OPENED, { roomId, nftMetadata, rarity, buybackAmountUsdc, bidWindowEndsAt });
   }
 
   private async signAndSubmit(unsignedTxBase64: string, signer: Keypair, conn: Connection): Promise<string> {
@@ -529,6 +791,27 @@ export class GachaService {
   // ── Settlement ─────────────────────────────────────────────────────────────────────
   // NOTE: driven by a cron sweep (settleDueRooms), gated NODE_ENV=production per this repo's
   // cron convention — see gacha.cron.ts. A missed tick only delays settlement, never loses money.
+
+  /** Dev-only escape hatch: settlement is ONLY ever driven by GachaCronService's sweep, which is
+   *  hard-gated to NODE_ENV=production (two instances — local dev + Railway — settling the same
+   *  room against the same Supabase project would race). That's correct for prod, but it also
+   *  means a local dev room can sit in "bidding" forever with no way to ever see the buyback/
+   *  bid-win path actually run. This settles ONE specific room immediately, regardless of whether
+   *  its bid window has actually elapsed — same non-production-only guard as fillRemainingSeatsWithBots. */
+  async devForceSettleRoom(roomId: string): Promise<{ status: string }> {
+    if (this.config.get<string>('NODE_ENV') === 'production') {
+      throw new BadRequestException('Force-settle is not available in production');
+    }
+    const db = this.supabase.getClient();
+    const { data: room } = await db.from('gacha_rooms').select('id, status').eq('id', roomId).maybeSingle();
+    if (!room) throw new NotFoundException('Room not found');
+    if (room.status !== 'bidding' && room.status !== 'settling') {
+      throw new BadRequestException(`Room isn't in a settleable state (status: ${room.status})`);
+    }
+    await this.advanceToNextBidCandidate(roomId);
+    const { data: after } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
+    return { status: after?.status ?? room.status };
+  }
 
   /** Cron entrypoint — advances every room whose bidding window has closed or whose current
    *  bid-payment grace window has expired. Safe to call repeatedly; each branch is idempotent
@@ -594,6 +877,7 @@ export class GachaService {
     if (!bid || bid.user_id !== userId) throw new BadRequestException('You are not the current winning bidder on this room');
 
     const userSolanaAddress = await this.usersService.getSolanaWalletAddress(userId);
+    await this.ensureDevnetTestFunds(userSolanaAddress, Number(bid.amount_usdc));
     const treasuryKeypair = await this.getTreasuryKeypair();
     const conn = await this.getSolanaConnection();
     const fromPubkey = new PublicKey(userSolanaAddress);
@@ -646,7 +930,7 @@ export class GachaService {
 
     const built = await this.collectorCrypt.buyback(room.nft_metadata.mint, treasuryAddress);
     const preBalance = await this.getTreasuryUsdcUnits(conn, treasuryKeypair.publicKey);
-    const buybackTxSig = await this.signAndSubmit(built.transaction, treasuryKeypair, conn);
+    const buybackTxSig = await this.signAndSubmit(built.serializedTransaction, treasuryKeypair, conn);
     await this.pollConfirmed(conn, buybackTxSig);
     const postBalance = await this.getTreasuryUsdcUnits(conn, treasuryKeypair.publicKey);
     const receivedUnits = postBalance - preBalance;

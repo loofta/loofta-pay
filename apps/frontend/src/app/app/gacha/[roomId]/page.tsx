@@ -120,6 +120,9 @@ export default function GachaRoomPage() {
   // "all ready" is authoritative from the server (room:all_ready), never inferred client-side.
   const [iAmReady, setIAmReady] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
+  const showGachaDevTools = process.env.NEXT_PUBLIC_SHOW_GACHA_DEV_TOOLS === "true";
+  const [fillingBots, setFillingBots] = useState(false);
+  const [forceSettling, setForceSettling] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!accessToken) return;
@@ -136,7 +139,7 @@ export default function GachaRoomPage() {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  const { lastUpdate, lastOpened, lastBid, lastSettled, lastReadyUpdate, allReadyTick, emojiBySeat, markReady, pickEmoji } = useGachaRoomSocket(roomId, accessToken);
+  const { lastUpdate, lastOpened, lastBid, lastSettled, lastReadyUpdate, allReadyTick, emojiBySeat, readySeats, markReady, pickEmoji } = useGachaRoomSocket(roomId, accessToken);
   useEffect(() => { refresh(); }, [lastUpdate, lastOpened, lastBid, lastSettled]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (allReadyTick > 0) setAutoOpen(true); }, [allReadyTick]);
 
@@ -179,10 +182,18 @@ export default function GachaRoomPage() {
         body: JSON.stringify({ configKey: room.configKey, userSolanaAddress: embeddedWallet.address }),
       });
       if (!joinTxRes.ok) throw new Error((await joinTxRes.json().catch(() => null))?.message ?? "Failed to prepare entry payment");
-      const { txBase64, roomId: targetRoomId } = await joinTxRes.json();
+      const { txBase64, roomId: targetRoomId, alreadyJoined } = await joinTxRes.json();
+
+      // Already have a seat in a waiting room for this config — nothing to sign, just go there.
+      if (alreadyJoined) {
+        if (targetRoomId !== roomId) router.replace(`/app/gacha/${targetRoomId}`); else refresh();
+        return;
+      }
 
       const txBytes = Buffer.from(txBase64, "base64");
-      const { signature: sigBytes } = await signAndSendTransaction({ transaction: txBytes as unknown as Uint8Array, wallet: embeddedWallet as any });
+      // Gacha Pooled Packs is devnet-only end to end — omitting `chain` defaults to
+      // solana:mainnet, which fails simulation against this devnet-built transaction.
+      const { signature: sigBytes } = await signAndSendTransaction({ transaction: txBytes as unknown as Uint8Array, wallet: embeddedWallet as any, chain: "solana:devnet" });
       const paymentTxHash = bs58.encode(sigBytes as Uint8Array);
 
       const joinRes = await fetch(`/api/gacha/rooms/${targetRoomId}/join`, {
@@ -202,6 +213,50 @@ export default function GachaRoomPage() {
       setBusy(false);
     }
   }, [authenticated, login, embeddedWallet, room, roomId, getAccessToken, signAndSendTransaction, router, refresh]);
+
+  const handleFillWithBots = useCallback(async () => {
+    setFillingBots(true);
+    setError(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`/api/gacha/rooms/${roomId}/fill-with-bots`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Failed to fill with bots");
+      // Bots trickle in server-side over the next several seconds — the existing 5s poll +
+      // websocket room:update events pick each one up as it lands, same as a real join. Stay
+      // disabled ("Filling…") through that whole trickle, not just this request's own round
+      // trip: the backend computes how many bots to add ONCE per call, so re-clicking mid-trickle
+      // used to fire a second overlapping fill that raced the first (confirmed live — one bot's
+      // real on-chain join lands, then its DB insert 400s with "room is full" because a bot from
+      // the other overlapping call already took the last seat). The button naturally disappears
+      // once room.status leaves "waiting" (see its render guard below), so this only needs to
+      // stay true through a successful call — only reset it on failure, so a real error lets you
+      // retry immediately.
+    } catch (err: any) {
+      setError(err?.message?.length < 200 ? err.message : "Failed to fill with bots.");
+      setFillingBots(false);
+    }
+  }, [roomId, getAccessToken]);
+
+  const handleForceSettle = useCallback(async () => {
+    setForceSettling(true);
+    setError(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`/api/gacha/rooms/${roomId}/force-settle`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Failed to force-settle");
+      refresh();
+    } catch (err: any) {
+      setError(err?.message?.length < 200 ? err.message : "Failed to force-settle.");
+    } finally {
+      setForceSettling(false);
+    }
+  }, [roomId, getAccessToken, refresh]);
 
   const handleMarkReady = useCallback(() => {
     setIAmReady(true);
@@ -242,7 +297,7 @@ export default function GachaRoomPage() {
       const { txBase64 } = await payTxRes.json();
 
       const txBytes = Buffer.from(txBase64, "base64");
-      const { signature: sigBytes } = await signAndSendTransaction({ transaction: txBytes as unknown as Uint8Array, wallet: embeddedWallet as any });
+      const { signature: sigBytes } = await signAndSendTransaction({ transaction: txBytes as unknown as Uint8Array, wallet: embeddedWallet as any, chain: "solana:devnet" });
       const paymentTxHash = bs58.encode(sigBytes as Uint8Array);
 
       const res = await fetch(`/api/gacha/rooms/${roomId}/pay-bid`, {
@@ -300,9 +355,16 @@ export default function GachaRoomPage() {
   // See the refs/state above: the 3D rip experience only ever plays once, for whoever is
   // actually watching live — everyone else (already-revealed on first load, or already watched
   // it once this session) gets the flat settled view straight away.
-  const show3D = !arrivedAlreadyRevealedRef.current && !played3DReveal;
+  // Terminal failure states never get a card to reveal — fall straight to the flat/back-face
+  // view + statusCaption instead of leaving the idle pack animation spinning on a "waiting for
+  // everyone" message that will never resolve.
+  const show3D = !arrivedAlreadyRevealedRef.current && !played3DReveal && room.status !== "failed" && room.status !== "cancelled";
   const cardResult: GachaOpenResult | null = revealedCard ?? (room.nftMetadata ? { nftMetadata: room.nftMetadata, rarity: (room.rarity ?? "common") as GachaRarity } : null);
-  const showReadyGate = show3D && room.status !== "waiting" && !!detail.myParticipant && !autoOpen;
+  // Gated on nftMetadata actually existing (not just status !== "waiting") — the room sits in
+  // "purchasing"/"opening" for real seconds-to-a-minute before the pack API even returns a card,
+  // and showing "waiting for everyone to be ready" during that window is misleading: there is
+  // nothing yet for anyone to be ready to watch.
+  const showReadyGate = show3D && !!room.nftMetadata && !!detail.myParticipant && !autoOpen;
 
   return (
     <div className="relative w-full min-h-[calc(100vh-var(--header-h,0px))] bg-[#111114] text-slate-100">
@@ -322,6 +384,7 @@ export default function GachaRoomPage() {
               seats={room.seats}
               participants={detail.participants.map((p) => ({ ...p, emoji: emojiBySeat[p.seatNumber] }))}
               onPickEmoji={detail.myParticipant && room.status !== "settled" ? pickEmoji : undefined}
+              readySeats={readySeats}
             />
           </div>
           {show3D ? (
@@ -367,6 +430,28 @@ export default function GachaRoomPage() {
             className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors disabled:opacity-50"
           >
             {busy ? "Joining…" : `Join for $${room.entryUsdc.toFixed(2)}`}
+          </button>
+        )}
+
+        {showGachaDevTools && room.status === "waiting" && (
+          <button
+            type="button"
+            onClick={handleFillWithBots}
+            disabled={fillingBots}
+            className="w-full h-10 mt-2 rounded-full border border-emerald-400/30 bg-emerald-500/10 text-emerald-200 text-base font-medium hover:bg-emerald-500/15 transition-colors disabled:opacity-50"
+          >
+            {fillingBots ? "Filling…" : "Dev: fill remaining seats with bots"}
+          </button>
+        )}
+
+        {showGachaDevTools && (room.status === "bidding" || room.status === "settling") && (
+          <button
+            type="button"
+            onClick={handleForceSettle}
+            disabled={forceSettling}
+            className="w-full h-10 mt-2 rounded-full border border-emerald-400/30 bg-emerald-500/10 text-emerald-200 text-base font-medium hover:bg-emerald-500/15 transition-colors disabled:opacity-50"
+          >
+            {forceSettling ? "Settling…" : "Dev: force settle now (skip cron wait)"}
           </button>
         )}
 

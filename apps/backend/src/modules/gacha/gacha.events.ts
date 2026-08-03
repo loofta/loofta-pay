@@ -9,6 +9,7 @@ export const GACHA_EVENTS = {
   ROOM_OPENED: 'gacha.room.opened',
   BID_PLACED: 'gacha.bid.placed',
   ROOM_SETTLED: 'gacha.room.settled',
+  BOT_READY: 'gacha.bot.ready',
 } as const;
 
 export interface GachaRoomUpdatePayload {
@@ -34,4 +35,9 @@ export interface GachaBidPlacedPayload {
 export interface GachaRoomSettledPayload {
   roomId: string;
   won: boolean;
+}
+
+export interface GachaBotReadyPayload {
+  roomId: string;
+  botUserId: string;
 }

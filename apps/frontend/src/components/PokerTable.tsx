@@ -51,25 +51,49 @@ export default function PokerTable({
   seats,
   participants,
   onPickEmoji,
+  readySeats,
 }: {
   seats: number;
   participants: TableSeat[];
   /** Present -> tapping your own bubble opens an emoji picker instead of doing nothing. */
   onPickEmoji?: (emoji: string) => void;
+  /** Seat numbers that have marked themselves ready — draws a green ring + check badge directly
+   *  on that seat's avatar instead of only surfacing readiness as a bare "3/10 ready" count. */
+  readySeats?: number[];
 }) {
   // Everyone else stays sorted by seat number, but "me" is pulled out and reinserted at the
-  // middle index — that's the arc's highest/most-central point (see the bulge math below) — so
-  // you're always front and center regardless of which seat you actually landed in.
+  // middle of the FRONT row (see below) — the arc's highest/most-central point — so you're
+  // always front and center regardless of which seat you actually landed in.
   const sorted = [...participants].sort((a, b) => a.seatNumber - b.seatNumber);
   const meIndex = sorted.findIndex((p) => p.isMe);
-  let ordered = sorted;
-  if (meIndex !== -1) {
-    const me = sorted[meIndex];
-    const others = sorted.filter((_, i) => i !== meIndex);
+  const me = meIndex !== -1 ? sorted[meIndex] : null;
+  const others = me ? sorted.filter((_, i) => i !== meIndex) : sorted;
+  const n = sorted.length;
+
+  // Above ~6 SEATS (room capacity, not how many have joined yet — a room going from one row to
+  // two mid-fill, right as the 7th person lands, would be a jarring layout jump), spreading
+  // everyone across one arc packs avatars closer together than their own diameter on a
+  // phone-width screen — confirmed overlapping in practice at 10. Splitting into two depth rows
+  // (front: closer/bigger, back: farther/smaller, poker-table style) roughly doubles the
+  // effective per-avatar spacing for the same footprint instead of shrinking avatars below a
+  // usable size. "Me" always lands in the front row.
+  const twoRows = seats > 6;
+  let frontRow: TableSeat[];
+  let backRow: TableSeat[];
+  if (!twoRows) {
     const mid = Math.floor(others.length / 2);
-    ordered = [...others.slice(0, mid), me, ...others.slice(mid)];
+    frontRow = me ? [...others.slice(0, mid), me, ...others.slice(mid)] : others;
+    backRow = [];
+  } else {
+    const frontOthersCount = Math.ceil(n / 2) - (me ? 1 : 0);
+    const frontOthers = others.slice(0, frontOthersCount);
+    backRow = others.slice(frontOthersCount);
+    const mid = Math.floor(frontOthers.length / 2);
+    frontRow = me ? [...frontOthers.slice(0, mid), me, ...frontOthers.slice(mid)] : frontOthers;
   }
-  const n = ordered.length;
+
+  const readySet = new Set(readySeats ?? []);
+
   const [revealedSeat, setRevealedSeat] = useState<number | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -77,62 +101,74 @@ export default function PokerTable({
 
   if (n === 0) return null;
 
-  const compact = seats > 6;
-  const size = compact ? 30 : 38; // px
-
   const reveal = (seatNumber: number) => {
     setRevealedSeat(seatNumber);
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => setRevealedSeat(null), 2000);
   };
 
-  return (
-    <div className="relative w-full h-16 sm:h-20 mb-1 select-none">
-      {ordered.map((seat, i) => {
-        const t = n === 1 ? 0.5 : i / (n - 1); // 0..1 across the arc
-        const leftPct = 10 + t * 80; // keep a margin so end avatars never clip the container edge
-        const bulge = Math.sin(t * Math.PI); // 0 at the ends, 1 in the middle
-        const topPct = (1 - bulge) * 55 + 4; // dome shape: middle sits highest, ends sit lowest
-        const seed = seat.username ?? `seat-${seat.seatNumber}`;
-        const emoji = seat.emoji ?? fallbackEmoji(seed);
-        const bg = bgForSeat(seat.seatNumber);
-        return (
-          <div
-            key={seat.seatNumber}
-            className="absolute"
-            style={{ left: `${leftPct}%`, top: `${topPct}%`, transform: 'translate(-50%,-50%)', zIndex: seat.isMe ? 50 : 10 + i }}
+  function renderRow(row: TableSeat[], opts: { size: number; fontSize: number; topBase: number; topSpread: number; zBase: number }) {
+    const rn = row.length;
+    return row.map((seat, i) => {
+      const t = rn === 1 ? 0.5 : i / (rn - 1); // 0..1 across the row
+      const leftPct = 10 + t * 80; // margin so end avatars never clip the container edge
+      const bulge = Math.sin(t * Math.PI); // 0 at the ends, 1 in the middle
+      const topPct = opts.topBase + (1 - bulge) * opts.topSpread; // dome: middle highest, ends lowest
+      const seed = seat.username ?? `seat-${seat.seatNumber}`;
+      const emoji = seat.emoji ?? fallbackEmoji(seed);
+      const bg = bgForSeat(seat.seatNumber);
+      const isReady = readySet.has(seat.seatNumber);
+      return (
+        <div
+          key={seat.seatNumber}
+          className="absolute"
+          style={{ left: `${leftPct}%`, top: `${topPct}%`, transform: 'translate(-50%,-50%)', zIndex: seat.isMe ? 100 : opts.zBase + i }}
+        >
+          {revealedSeat === seat.seatNumber && !seat.isMe && (
+            <div className="absolute left-1/2 bottom-full mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/85 border border-white/10 px-2.5 py-1 text-sm text-slate-100">
+              {seat.username ?? `Seat ${seat.seatNumber}`}
+            </div>
+          )}
+          {seat.isMe && pickerOpen && onPickEmoji && (
+            <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 w-[248px] flex flex-wrap justify-center gap-2 rounded-2xl bg-black/90 border border-white/10 p-3">
+              {AVATAR_EMOJIS.map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  onClick={() => { onPickEmoji(e); setPickerOpen(false); }}
+                  className={`w-11 h-11 rounded-full flex items-center justify-center text-xl transition-colors ${emoji === e ? "bg-amber-500/30 ring-2 ring-amber-400" : "bg-white/10 hover:bg-white/15 active:bg-white/20"}`}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => (seat.isMe && onPickEmoji ? setPickerOpen((o) => !o) : reveal(seat.seatNumber))}
+            aria-label={seat.isMe ? 'Pick your emoji' : seat.username ?? `Seat ${seat.seatNumber}`}
+            className={`relative rounded-full flex items-center justify-center ring-2 shadow-md cursor-pointer transition-shadow ${isReady ? 'ring-emerald-400' : seat.isMe ? 'ring-amber-400' : 'ring-white/20'}`}
+            style={{ width: opts.size, height: opts.size, background: bg, fontSize: opts.fontSize, opacity: opts.zBase === 10 ? 0.85 : 1 }}
           >
-            {revealedSeat === seat.seatNumber && !seat.isMe && (
-              <div className="absolute left-1/2 bottom-full mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/85 border border-white/10 px-2.5 py-1 text-sm text-slate-100">
-                {seat.username ?? `Seat ${seat.seatNumber}`}
-              </div>
+            {emoji}
+            {isReady && (
+              <span
+                className="absolute -bottom-0.5 -right-0.5 rounded-full bg-emerald-500 border border-black/40 flex items-center justify-center text-white leading-none"
+                style={{ width: Math.max(12, opts.size * 0.4), height: Math.max(12, opts.size * 0.4), fontSize: Math.max(8, opts.size * 0.26) }}
+              >
+                ✓
+              </span>
             )}
-            {seat.isMe && pickerOpen && onPickEmoji && (
-              <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 w-[248px] flex flex-wrap justify-center gap-2 rounded-2xl bg-black/90 border border-white/10 p-3">
-                {AVATAR_EMOJIS.map((e) => (
-                  <button
-                    key={e}
-                    type="button"
-                    onClick={() => { onPickEmoji(e); setPickerOpen(false); }}
-                    className={`w-11 h-11 rounded-full flex items-center justify-center text-xl transition-colors ${emoji === e ? "bg-amber-500/30 ring-2 ring-amber-400" : "bg-white/10 hover:bg-white/15 active:bg-white/20"}`}
-                  >
-                    {e}
-                  </button>
-                ))}
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => (seat.isMe && onPickEmoji ? setPickerOpen((o) => !o) : reveal(seat.seatNumber))}
-              aria-label={seat.isMe ? 'Pick your emoji' : seat.username ?? `Seat ${seat.seatNumber}`}
-              className={`rounded-full flex items-center justify-center ring-2 shadow-md cursor-pointer ${seat.isMe ? 'ring-amber-400' : 'ring-white/20'}`}
-              style={{ width: size, height: size, background: bg, fontSize: compact ? 15 : 18 }}
-            >
-              {emoji}
-            </button>
-          </div>
-        );
-      })}
+          </button>
+        </div>
+      );
+    });
+  }
+
+  return (
+    <div className={`relative w-full mb-1 select-none ${twoRows ? 'h-24 sm:h-28' : 'h-16 sm:h-20'}`}>
+      {twoRows && renderRow(backRow, { size: 24, fontSize: 12, topBase: 2, topSpread: 30, zBase: 10 })}
+      {renderRow(frontRow, twoRows ? { size: 32, fontSize: 16, topBase: 32, topSpread: 45, zBase: 50 } : { size: 38, fontSize: 18, topBase: 4, topSpread: 55, zBase: 10 })}
     </div>
   );
 }
