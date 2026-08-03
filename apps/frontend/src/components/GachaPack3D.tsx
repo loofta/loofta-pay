@@ -42,8 +42,20 @@ import { drawGachaPack, loadSvg, AW, AH } from './gachaArt';
 const GOLD_L = '#FFE9A8', GOLD_M = '#E8B23A';
 
 export type GachaRarity = 'common' | 'uncommon' | 'rare' | 'epic';
+export interface GachaNftAttribute {
+  trait_type: string;
+  value: string;
+}
 export interface GachaOpenResult {
-  nftMetadata: { name?: string; image?: string } | null;
+  nftMetadata: {
+    name?: string;
+    /** Front (recto) real card scan. */
+    image?: string;
+    /** Back (verso) real card scan. */
+    backImage?: string;
+    insuredValueUsdc?: number;
+    attributes?: GachaNftAttribute[];
+  } | null;
   rarity: GachaRarity;
 }
 

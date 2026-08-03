@@ -23,7 +23,8 @@ import { ChevronLeft } from "lucide-react";
 import GachaPack from "@/components/GachaPack";
 import GachaCard from "@/components/GachaCard";
 import PokerTable from "@/components/PokerTable";
-import type { GachaOpenResult, GachaRarity } from "@/components/GachaPack3D";
+import CardAttributesPanel from "@/components/CardAttributesPanel";
+import type { GachaOpenResult, GachaRarity, GachaNftAttribute } from "@/components/GachaPack3D";
 import { useGachaRoomSocket } from "@/hooks/useGachaRoomSocket";
 
 // Client-only (touches window/WebGL) — same ssr:false convention as MegapotPack's own usage.
@@ -38,7 +39,7 @@ interface RoomDetail {
     entryUsdc: number;
     status: string;
     seatsFilled: number;
-    nftMetadata: { image?: string; name?: string } | null;
+    nftMetadata: { image?: string; backImage?: string; name?: string; insuredValueUsdc?: number; attributes?: GachaNftAttribute[] } | null;
     rarity: string | null;
     buybackAmountUsdc: number | null;
     bidWindowEndsAt: string | null;
@@ -403,14 +404,26 @@ export default function GachaRoomPage() {
               </div>
             )
           ) : cardResult ? (
-            <GachaCard
-              width={220}
-              card={{
-                name: cardResult.nftMetadata?.name ?? "Mystery Card",
-                rarity: cardResult.rarity,
-                image: cardResult.nftMetadata?.image,
-              }}
-            />
+            <div className="w-full flex flex-col sm:flex-row items-center sm:items-start justify-center gap-6">
+              <GachaCard
+                width={220}
+                card={{
+                  name: cardResult.nftMetadata?.name ?? "Mystery Card",
+                  rarity: cardResult.rarity,
+                  // faceImage/backImage render the actual Collector Crypt scan edge-to-edge, no
+                  // Loofta frame — `image` alone would cover the illustration in the branded pack
+                  // art instead, which is exactly what real card reveals shouldn't look like.
+                  faceImage: cardResult.nftMetadata?.image,
+                  backImage: cardResult.nftMetadata?.backImage,
+                }}
+              />
+              <CardAttributesPanel
+                attributes={cardResult.nftMetadata?.attributes}
+                insuredValueUsdc={cardResult.nftMetadata?.insuredValueUsdc}
+                rarity={cardResult.rarity}
+                className="sm:mt-2"
+              />
+            </div>
           ) : (
             <GachaPack width={180} face="back" />
           )}

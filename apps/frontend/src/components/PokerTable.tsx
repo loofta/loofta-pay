@@ -61,14 +61,30 @@ export default function PokerTable({
    *  on that seat's avatar instead of only surfacing readiness as a bare "3/10 ready" count. */
   readySeats?: number[];
 }) {
-  // Everyone else stays sorted by seat number, but "me" is pulled out and reinserted at the
-  // middle of the FRONT row (see below) — the arc's highest/most-central point — so you're
-  // always front and center regardless of which seat you actually landed in.
+  // Everyone else stays sorted by seat number for a stable, non-jittery order, but "me" is
+  // pulled out and everyone else is fanned out ALTERNATELY left/right of me (nearest seat next
+  // to me on alternating sides, next-nearest just outside that, etc.) — a genuinely
+  // left-right-symmetric arrangement with me as the true center column, not just "me happens to
+  // land somewhere near the middle of one row while everyone else is elsewhere." This is also
+  // what keeps "me" reliably near horizontal center (~50%), which matters beyond looks: the
+  // emoji picker popup opens centered under my own avatar (see below) and clips off a narrow
+  // phone's edge if I land too close to either side.
   const sorted = [...participants].sort((a, b) => a.seatNumber - b.seatNumber);
   const meIndex = sorted.findIndex((p) => p.isMe);
   const me = meIndex !== -1 ? sorted[meIndex] : null;
   const others = me ? sorted.filter((_, i) => i !== meIndex) : sorted;
   const n = sorted.length;
+
+  const radial: TableSeat[] = [];
+  if (me) {
+    const left: TableSeat[] = [];
+    const right: TableSeat[] = [];
+    others.forEach((o, i) => (i % 2 === 0 ? right : left).push(o));
+    radial.push(...left.slice().reverse(), me, ...right); // left reversed: nearest-to-me stays adjacent
+  } else {
+    radial.push(...others);
+  }
+  const centerIdx = me ? radial.indexOf(me) : Math.floor(radial.length / 2);
 
   // Above ~6 SEATS (room capacity, not how many have joined yet — a room going from one row to
   // two mid-fill, right as the 7th person lands, would be a jarring layout jump), spreading
@@ -76,20 +92,22 @@ export default function PokerTable({
   // phone-width screen — confirmed overlapping in practice at 10. Splitting into two depth rows
   // (front: closer/bigger, back: farther/smaller, poker-table style) roughly doubles the
   // effective per-avatar spacing for the same footprint instead of shrinking avatars below a
-  // usable size. "Me" always lands in the front row.
+  // usable size. The front row is a CENTERED WINDOW around me within `radial` (not just "the
+  // first half"), so both rows stay left-right symmetric around the same center column and my
+  // nearest neighbors — not an arbitrary seat-number-ordered chunk — are the ones up close with me.
   const twoRows = seats > 6;
   let frontRow: TableSeat[];
   let backRow: TableSeat[];
   if (!twoRows) {
-    const mid = Math.floor(others.length / 2);
-    frontRow = me ? [...others.slice(0, mid), me, ...others.slice(mid)] : others;
+    frontRow = radial;
     backRow = [];
   } else {
-    const frontOthersCount = Math.ceil(n / 2) - (me ? 1 : 0);
-    const frontOthers = others.slice(0, frontOthersCount);
-    backRow = others.slice(frontOthersCount);
-    const mid = Math.floor(frontOthers.length / 2);
-    frontRow = me ? [...frontOthers.slice(0, mid), me, ...frontOthers.slice(mid)] : frontOthers;
+    const frontCount = Math.min(n, Math.max(3, Math.ceil(n / 2) + 1));
+    const half = Math.floor(frontCount / 2);
+    const start = Math.max(0, Math.min(centerIdx - half, n - frontCount));
+    const end = Math.min(n, start + frontCount);
+    frontRow = radial.slice(start, end);
+    backRow = [...radial.slice(0, start), ...radial.slice(end)];
   }
 
   const readySet = new Set(readySeats ?? []);
@@ -118,6 +136,8 @@ export default function PokerTable({
       const emoji = seat.emoji ?? fallbackEmoji(seed);
       const bg = bgForSeat(seat.seatNumber);
       const isReady = readySet.has(seat.seatNumber);
+      const size = seat.isMe ? Math.round(opts.size * 1.22) : opts.size;
+      const fontSize = seat.isMe ? Math.round(opts.fontSize * 1.15) : opts.fontSize;
       return (
         <div
           key={seat.seatNumber}
@@ -148,13 +168,13 @@ export default function PokerTable({
             onClick={() => (seat.isMe && onPickEmoji ? setPickerOpen((o) => !o) : reveal(seat.seatNumber))}
             aria-label={seat.isMe ? 'Pick your emoji' : seat.username ?? `Seat ${seat.seatNumber}`}
             className={`relative rounded-full flex items-center justify-center ring-2 shadow-md cursor-pointer transition-shadow ${isReady ? 'ring-emerald-400' : seat.isMe ? 'ring-amber-400' : 'ring-white/20'}`}
-            style={{ width: opts.size, height: opts.size, background: bg, fontSize: opts.fontSize, opacity: opts.zBase === 10 ? 0.85 : 1 }}
+            style={{ width: size, height: size, background: bg, fontSize, opacity: opts.zBase === 10 ? 0.85 : 1 }}
           >
             {emoji}
             {isReady && (
               <span
                 className="absolute -bottom-0.5 -right-0.5 rounded-full bg-emerald-500 border border-black/40 flex items-center justify-center text-white leading-none"
-                style={{ width: Math.max(12, opts.size * 0.4), height: Math.max(12, opts.size * 0.4), fontSize: Math.max(8, opts.size * 0.26) }}
+                style={{ width: Math.max(12, size * 0.4), height: Math.max(12, size * 0.4), fontSize: Math.max(8, size * 0.26) }}
               >
                 ✓
               </span>

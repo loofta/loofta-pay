@@ -237,6 +237,11 @@ body {
 @keyframes marquee { from { transform: translateX(0) } to { transform: translateX(-50%) } }
 .animate-marquee { animation: marquee 18s linear infinite; }
 
+/* Gacha card stat-line reveal — CardAttributesPanel.tsx reveals one line at a time; each new
+   line plays this once as it mounts, video-game stat-screen style. */
+@keyframes statLineIn { from { opacity: 0; transform: translateX(-6px) } to { opacity: 1; transform: translateX(0) } }
+.animate-stat-line-in { animation: statLineIn .22s ease-out; }
+
 /* Gradient bullets utility */
 .boost-bullets { list-style: none; margin: 0; padding: 0; }
 .boost-bullets li { position: relative; padding-left: 1.25rem; }

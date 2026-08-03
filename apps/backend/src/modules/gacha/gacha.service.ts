@@ -238,6 +238,20 @@ export class GachaService {
     return counts[roomId] ?? 0;
   }
 
+  /** Bot participants (see addBotParticipant) are treated as ALWAYS ready — computed here from
+   *  the `bot-` user id prefix rather than tracked via an in-memory "bot just joined" event.
+   *  Tracking it as an event (the previous design) was fragile: a bot never reconnects a socket,
+   *  so if the backend process restarts for ANY reason after it joins — a dev-server hot reload
+   *  being the common case, but equally a real prod redeploy — its one-time ready signal is gone
+   *  for good, and the room's real participant(s) end up waiting forever for a ready count that
+   *  can now never be reached. Computing it structurally from who's a bot removes that failure
+   *  mode entirely: it's correct on every read, independent of process uptime. */
+  async getBotSeatNumbers(roomId: string): Promise<number[]> {
+    const db = this.supabase.getClient();
+    const { data } = await db.from('gacha_room_participants').select('seat_number, user_id').eq('room_id', roomId);
+    return (data ?? []).filter((r: any) => typeof r.user_id === 'string' && r.user_id.startsWith('bot-')).map((r: any) => r.seat_number);
+  }
+
   /** Used by GachaGateway's pick_emoji handler — broadcasts an emoji pick by seat number, never
    *  by raw user id (seat number is already public in the room UI; a Privy user id isn't). */
   async getMySeatNumber(roomId: string, userId: string): Promise<number | null> {
@@ -541,11 +555,10 @@ export class GachaService {
     const seatNumber = inserted.seat_number;
 
     this.logger.log(`Room ${roomId}: bot ${botUserId} joined seat ${seatNumber} (sig=${joinSig})`);
-    // Bots never connect a websocket, so they can never call mark_ready themselves — without
-    // this, a bot-filled room's ready count could never reach the total participant count, and
-    // the real participant(s) marking themselves ready would wait forever. Simulates the bot
-    // being instantly ready the moment it joins.
-    this.events.emit(GACHA_EVENTS.BOT_READY, { roomId, botUserId });
+    // Bots never connect a websocket, so they can never call mark_ready themselves — GachaGateway
+    // treats every bot seat as always-ready by computing it from getBotSeatNumbers (the `bot-`
+    // user id prefix) rather than from an event fired here, so there's nothing to emit at join
+    // time anymore — see getBotSeatNumbers' comment for why the event-based version was fragile.
     const roomFilled = seatNumber === room.seats;
     if (roomFilled) {
       await db.from('gacha_rooms').update({ status: 'purchasing', updated_at: new Date().toISOString() }).eq('id', roomId);
@@ -711,11 +724,16 @@ export class GachaService {
     const rarity: PackRarityTier | null = (['common', 'uncommon', 'rare', 'epic'] as const).includes(rarityRaw as PackRarityTier)
       ? (rarityRaw as PackRarityTier)
       : null;
+    const files = nftWon.content?.files ?? [];
+    const frontFile = files.find((f) => f.uri?.includes('/front/')) ?? files[0];
+    const backFile = files.find((f) => f.uri?.includes('/back/')) ?? files[1];
     const nftMetadata: NftMetadata = {
       mint: mint ?? undefined,
       name: nftWon.content?.metadata?.name,
-      image: nftWon.content?.links?.image,
+      image: nftWon.content?.links?.image ?? frontFile?.uri,
+      backImage: backFile?.uri,
       insuredValueUsdc: nftWon.content?.metadata?.insuredValue ? Number(nftWon.content.metadata.insuredValue) : undefined,
+      attributes: nftWon.content?.metadata?.attributes,
     };
 
     const treasuryAddress = treasuryKeypair.publicKey.toBase58();

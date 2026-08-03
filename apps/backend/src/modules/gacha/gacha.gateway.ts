@@ -12,7 +12,7 @@ import {
 import type { Server, Socket } from 'socket.io';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { GachaService } from './gacha.service';
-import { GACHA_EVENTS, GachaRoomUpdatePayload, GachaRoomOpenedPayload, GachaBidPlacedPayload, GachaRoomSettledPayload, GachaBotReadyPayload } from './gacha.events';
+import { GACHA_EVENTS, GachaRoomUpdatePayload, GachaRoomOpenedPayload, GachaBidPlacedPayload, GachaRoomSettledPayload } from './gacha.events';
 
 // Mirrors main.ts's own CORS logic (see bootstrap()) — read directly from process.env since
 // @WebSocketGateway's cors option is evaluated at class-decoration time, before Nest's DI
@@ -38,8 +38,7 @@ const ALLOWED_EMOJIS = new Set(['🦊', '🐼', '🐨', '🦁', '🐯', '🐸', 
  * `join_room`, and receive `room:update` / `room:opened` / `bid:placed` / `room:settled` /
  * `room:ready_update` / `room:ready_snapshot` / `room:all_ready` events scoped to it. Every event
  * payload here is intentionally non-sensitive (seat counts, NFT metadata, bid amounts, which seat
- * numbers are ready) — a
- * participant's own payout amount is fetched over authenticated REST
+ * numbers are ready) — a participant's own payout amount is fetched over authenticated REST
  * (GachaService.getRoomDetail), never broadcast to the room.
  *
  * GachaService never calls this class directly — it emits GACHA_EVENTS via EventEmitter2
@@ -117,8 +116,14 @@ export class GachaGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
     const emojiMap = this.emojiByRoom.get(body.roomId);
     if (emojiMap?.size) client.emit('room:emoji_snapshot', Object.fromEntries(emojiMap));
+
+    // Bot seats are always-ready (see getBotSeatNumbers) and merged in alongside whatever real
+    // participants have actually clicked ready, so a late joiner's avatars render correctly
+    // without waiting for another ready_update broadcast.
     const readySet = this.readyByRoom.get(body.roomId);
-    if (readySet?.size) client.emit('room:ready_snapshot', { readySeats: Array.from(readySet) });
+    const botSeats = await this.gacha.getBotSeatNumbers(body.roomId).catch(() => [] as number[]);
+    const mergedReady = new Set([...(readySet ?? []), ...botSeats]);
+    if (mergedReady.size) client.emit('room:ready_snapshot', { readySeats: Array.from(mergedReady) });
   }
 
   @SubscribeMessage('leave_room')
@@ -145,30 +150,25 @@ export class GachaGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.markReady(roomId, userId);
   }
 
-  /**
-   * Bots (see GachaService.addBotParticipant) never connect a websocket, so they can never call
-   * mark_ready themselves — without this, a bot-filled room's ready count could never reach the
-   * total participant count (bots are counted in the total but would never contribute to the
-   * numerator), and a real participant marking themselves ready would wait forever for
-   * room:all_ready. Simulates each bot being instantly ready the moment it joins.
-   */
-  @OnEvent(GACHA_EVENTS.BOT_READY)
-  async onBotReady(payload: GachaBotReadyPayload): Promise<void> {
-    await this.markReady(payload.roomId, payload.botUserId);
-  }
-
-  private async markReady(roomId: string, participantKey: string): Promise<void> {
-    const seatNumber = await this.gacha.getMySeatNumber(roomId, participantKey).catch(() => null);
+  /** Only ever called for a REAL participant's own socket — bots never connect one, so they
+   *  never reach here; their readiness is computed structurally instead (getBotSeatNumbers). */
+  private async markReady(roomId: string, userId: string): Promise<void> {
+    const seatNumber = await this.gacha.getMySeatNumber(roomId, userId).catch(() => null);
     if (seatNumber === null) return;
 
     let set = this.readyByRoom.get(roomId);
     if (!set) { set = new Set(); this.readyByRoom.set(roomId, set); }
     set.add(seatNumber);
 
-    this.server?.to(roomId).emit('room:ready_update', { readyCount: set.size, seatNumber });
+    const [botSeats, total] = await Promise.all([
+      this.gacha.getBotSeatNumbers(roomId).catch(() => [] as number[]),
+      this.gacha.getParticipantCount(roomId).catch(() => 0),
+    ]);
+    const readyCount = new Set([...set, ...botSeats]).size;
 
-    const total = await this.gacha.getParticipantCount(roomId).catch(() => 0);
-    if (total > 0 && set.size >= total) {
+    this.server?.to(roomId).emit('room:ready_update', { readyCount, seatNumber });
+
+    if (total > 0 && readyCount >= total) {
       this.server?.to(roomId).emit('room:all_ready', {});
       this.readyByRoom.delete(roomId);
     }

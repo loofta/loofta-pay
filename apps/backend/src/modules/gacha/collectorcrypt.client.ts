@@ -41,11 +41,25 @@ export interface GeneratePackResponse {
   transaction: string; // base64-encoded, unsigned (player-signature-required) transaction
 }
 
+export interface NftCardAttribute {
+  trait_type: string;
+  value: string;
+}
+
 export interface NftMetadata {
   mint?: string;
   name?: string;
+  /** Front (recto) — the real card scan, confirmed live under nftWon.content.links.image. */
   image?: string;
+  /** Back (verso) — the real card scan, pulled from nftWon.content.files (front/back pair; see
+   *  OpenPackResponse's comment). Both are the actual Collector Crypt scans, never Loofta-branded
+   *  artwork — GachaCard renders these edge-to-edge via its faceImage/backImage props specifically
+   *  to skip the branded-frame treatment `image` alone would otherwise get. */
+  backImage?: string;
   insuredValueUsdc?: number;
+  /** Full grading/set/serial attribute list straight from Collector Crypt — used to drive the
+   *  line-by-line stat reveal next to the card (CardAttributesPanel.tsx on the frontend). */
+  attributes?: NftCardAttribute[];
   [key: string]: unknown; // pass-through — unverified full shape, don't drop fields we don't model yet
 }
 
@@ -68,7 +82,10 @@ export interface OpenPackResponse {
     points?: number;
     content?: {
       links?: { image?: string };
-      metadata?: { name?: string; insuredValue?: string; [key: string]: unknown };
+      /** Front/back scan pair — confirmed live as exactly 2 entries, `uri` containing `/front/`
+       *  or `/back/` respectively (there's no explicit "side" field, so match on the URL path). */
+      files?: Array<{ uri?: string; cdn_uri?: string; mime?: string }>;
+      metadata?: { name?: string; insuredValue?: string; attributes?: NftCardAttribute[]; [key: string]: unknown };
     };
     [key: string]: unknown;
   };
