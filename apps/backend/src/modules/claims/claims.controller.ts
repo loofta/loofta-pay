@@ -51,6 +51,25 @@ export class ClaimsController {
   ) {}
 
   /**
+   * Gate for internal-only routes that must have come through our Next.js BFF, never called
+   * directly. Fails CLOSED: if LOOFTA_INTERNAL_SECRET isn't configured, the route is unusable
+   * rather than silently unprotected — the 2026-08-03 x402 drain happened on a route with no
+   * secret check at all, and this fail-open variant (skip-and-log if unset) was found on these
+   * three routes during that incident's cleanup. Never revert to fail-open.
+   */
+  private assertInternalCaller(internalKey: string | undefined, routeLabel: string): void {
+    const expectedSecret = this.configService.get<string>('LOOFTA_INTERNAL_SECRET') ?? process.env.LOOFTA_INTERNAL_SECRET;
+    if (!expectedSecret) {
+      this.logger.error(`ClaimsController[${routeLabel}]: LOOFTA_INTERNAL_SECRET is not set — refusing all calls until it is configured in Railway`);
+      throw new ServiceUnavailableException('Internal auth is not configured');
+    }
+    if (!internalKey || internalKey !== expectedSecret) {
+      this.logger.warn(`ClaimsController[${routeLabel}]: blocked direct call — missing/invalid X-Loofta-Internal`);
+      throw new ForbiddenException('Direct API access not permitted');
+    }
+  }
+
+  /**
    * Create a new payment claim.
    * The caller's Privy user ID is derived from auth (verified), never from the request body.
    */
@@ -606,17 +625,7 @@ export class ClaimsController {
     @Req() req: { user?: { id: string } },
   ): Promise<{ signature: string }> {
     // Require the request to have come through our Next.js BFF, not directly.
-    const expectedSecret =
-      this.configService.get<string>('LOOFTA_INTERNAL_SECRET') ??
-      process.env.LOOFTA_INTERNAL_SECRET;
-    if (expectedSecret) {
-      if (!internalKey || internalKey !== expectedSecret) {
-        this.logger.warn('ClaimsController[sign-and-broadcast]: blocked direct call — missing/invalid X-Loofta-Internal');
-        throw new ForbiddenException('Direct API access not permitted');
-      }
-    } else {
-      this.logger.warn('ClaimsController[sign-and-broadcast]: LOOFTA_INTERNAL_SECRET not set — skipping internal-key check (set it in Railway to enable protection)');
-    }
+    this.assertInternalCaller(internalKey, 'sign-and-broadcast');
 
     if (!body?.transaction || typeof body.transaction !== 'string') {
       throw new BadRequestException('Missing or invalid transaction');
@@ -682,19 +691,8 @@ export class ClaimsController {
     @Headers('x-loofta-internal') internalKey: string | undefined,
     @Req() req: { user?: { id: string } },
   ): Promise<{ signature: string }> {
-    // Require the request to have come through our Next.js BFF, not directly — this endpoint had
-    // been missing this check entirely (unlike the sibling sign-and-broadcast route above).
-    const expectedSecret =
-      this.configService.get<string>('LOOFTA_INTERNAL_SECRET') ??
-      process.env.LOOFTA_INTERNAL_SECRET;
-    if (expectedSecret) {
-      if (!internalKey || internalKey !== expectedSecret) {
-        this.logger.warn('ClaimsController[sign-and-broadcast-per]: blocked direct call — missing/invalid X-Loofta-Internal');
-        throw new ForbiddenException('Direct API access not permitted');
-      }
-    } else {
-      this.logger.warn('ClaimsController[sign-and-broadcast-per]: LOOFTA_INTERNAL_SECRET not set — skipping internal-key check (set it in Railway to enable protection)');
-    }
+    // Require the request to have come through our Next.js BFF, not directly.
+    this.assertInternalCaller(internalKey, 'sign-and-broadcast-per');
 
     if (!body?.transaction || typeof body.transaction !== 'string') {
       throw new BadRequestException('Missing or invalid transaction');
@@ -772,17 +770,7 @@ export class ClaimsController {
   async createBurnerInternal(
     @Headers('x-loofta-internal') internalKey: string | undefined,
   ): Promise<{ burner_address: string; burner_encrypted_secret: string }> {
-    const expectedSecret =
-      this.configService.get<string>('LOOFTA_INTERNAL_SECRET') ??
-      process.env.LOOFTA_INTERNAL_SECRET;
-    if (expectedSecret) {
-      if (!internalKey || internalKey !== expectedSecret) {
-        this.logger.warn('ClaimsController[internal/create-burner]: blocked direct call — missing/invalid X-Loofta-Internal');
-        throw new ForbiddenException('Direct API access not permitted');
-      }
-    } else {
-      this.logger.warn('ClaimsController[internal/create-burner]: LOOFTA_INTERNAL_SECRET not set — skipping internal-key check (set it in Railway to enable protection)');
-    }
+    this.assertInternalCaller(internalKey, 'internal/create-burner');
     const burner = this.claimsService.mintBurnerForExternalCreation();
     if (!burner) {
       throw new BadRequestException('Burner creation is unavailable (SEND_PAYMENT_ENC_KEY not configured).');

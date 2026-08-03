@@ -1,4 +1,13 @@
-import { BadRequestException, Body, Controller, Post, Req, Res, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Post,
+  Req,
+  Res,
+  ServiceUnavailableException,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { HTTPFacilitatorClient } from '@x402/core/server';
@@ -66,16 +75,14 @@ export class X402PaymentsController {
   @Post('pay-human')
   @UseGuards(RateLimitGuard)
   @RateLimit(30, 60, 'x402:pay-human', 'ip')
-  async payHuman(@Body() dto: PayHumanDto, @Req() req: Request, @Res() res: Response) {
-    const xPaymentHeader = req.headers['x-payment'] as string | undefined;
-    const isDevnet = isSolanaDevnetFromConfig(this.configService);
-
-    if (!xPaymentHeader) {
-      await this.respondWithPaymentRequired(dto, isDevnet, res);
-      return;
-    }
-
-    await this.settleAndRespond(xPaymentHeader, res);
+  async payHuman(@Body() _dto: PayHumanDto, @Req() _req: Request, @Res() _res: Response): Promise<never> {
+    // DISABLED 2026-08-03: this route let anyone mint + fund a burner with zero auth (only a
+    // 30/60s/IP limit, weaker than the observed attack cadence and trivially beaten by IP
+    // rotation), and was actively draining the fee payer's SOL every ~20-30s. Do not re-enable
+    // without first: requiring the recipient to resolve to a real registered user, deferring
+    // burner/ATA creation until real payment intent is seen, and a rate limit tied to spend, not
+    // just request count.
+    throw new ServiceUnavailableException('x402 pay-human is temporarily disabled');
   }
 
   private buildPaymentRequirements(
