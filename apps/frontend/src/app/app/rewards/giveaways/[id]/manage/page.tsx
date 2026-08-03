@@ -10,6 +10,7 @@ import { Connection, SendTransactionError } from "@solana/web3.js";
 import { useToast } from "@/components/ui/use-toast";
 import { useAuthStore } from "@/store/auth";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
+import { useSolPrice } from "@/hooks/useSolPrice";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 import { PrivacyGlyph } from "@/components/PrivacyGlyph";
@@ -22,6 +23,13 @@ import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
 import { buildGiveawayFundingPrivateTransfer } from "@/services/api/claims";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+
+// MagicBlock's own fee, same figures as backend MAGICBLOCK_VOLUME_FEE_BPS / MAGICBLOCK_GAS_SOL
+// (apps/backend/src/common/magicblock-private-transfer.ts) — duplicated client-side only to
+// show a fee estimate before the private transfer is actually built, same convention MultiSendFlow
+// uses. No extra Loofta cut here — giveaway funding is a pure MagicBlock cost passthrough.
+const MAGICBLOCK_VOLUME_FEE_BPS = 10;
+const MAGICBLOCK_GAS_SOL = 0.002;
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",
@@ -82,6 +90,7 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   const { wallets: solanaWallets } = useWallets();
   const { signTransaction } = useSignTransaction();
   const solanaPayment = useSolanaPayment();
+  const solPriceUsd = useSolPrice();
   const [payPrivately, setPayPrivately] = useState(false);
   const [paying, setPaying] = useState(false);
   const [showManualAddress, setShowManualAddress] = useState(false);
@@ -263,7 +272,17 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
             const requiredUsd = Number(giveaway.funding_required_usd ?? 0);
             const confirmedUsd = Number(funding?.fundingConfirmedUsd ?? giveaway.funding_confirmed_usd ?? 0);
             const remainingUsd = Math.max(0, requiredUsd - confirmedUsd);
-            const insufficientBalance = !payPrivately && !solanaPayment.isBalanceLoading && !solanaPayment.hasEnoughBalance(remainingUsd);
+
+            // Client-side estimate only (used for display before the tx is actually built) — same
+            // approach MultiSendFlow uses for its private-mode fee preview.
+            const netUnits = Math.round(remainingUsd * 1_000_000);
+            const grossUnits = netUnits > 0 ? Math.ceil((netUnits * 10_000) / (10_000 - MAGICBLOCK_VOLUME_FEE_BPS)) : 0;
+            const bpsFeeUsdc = (grossUnits - netUnits) / 1_000_000;
+            const flatFeeUsdc = MAGICBLOCK_GAS_SOL * solPriceUsd;
+            const privateFeeUsdc = bpsFeeUsdc + flatFeeUsdc;
+            const totalDueUsdc = payPrivately ? remainingUsd + privateFeeUsdc : remainingUsd;
+
+            const insufficientBalance = !solanaPayment.isBalanceLoading && !solanaPayment.hasEnoughBalance(totalDueUsdc);
             return (
               <div className="relative">
                 {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
@@ -285,9 +304,12 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                     onLabel="Pay privately"
                     offLabel="Pay privately"
                   />
+                  <p className="text-base text-slate-400">
+                    {payPrivately ? `+$${privateFeeUsdc.toFixed(2)} fees (MagicBlock) · $${totalDueUsdc.toFixed(2)} total` : "Normal funding is a plain on-chain transfer, free of charge."}
+                  </p>
 
                   {insufficientBalance ? (
-                    <InsufficientBalanceCard balanceUSD={solanaPayment.balanceUSD} neededUSD={remainingUsd} showFeesLabel={false} />
+                    <InsufficientBalanceCard balanceUSD={solanaPayment.balanceUSD} neededUSD={totalDueUsdc} showFeesLabel={payPrivately} />
                   ) : (
                     <GradientActionButton
                       disabled={paying || remainingUsd <= 0}
@@ -295,34 +317,27 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                       loadingText="Paying…"
                       onClick={() => handleFund(remainingUsd, giveaway.burner_address!)}
                     >
-                      Pay ${remainingUsd.toFixed(2)} now
+                      Pay ${totalDueUsdc.toFixed(2)} now
                     </GradientActionButton>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={() => setShowManualAddress((s) => !s)}
-                    className="flex items-center gap-1 text-base text-slate-500 hover:text-slate-300 transition-colors"
-                  >
-                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showManualAddress ? "rotate-180" : ""}`} />
-                    Or send USDC manually from another wallet
-                  </button>
-                  {showManualAddress && (
-                    <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
-                      <span className="flex-1 min-w-0 truncate text-base text-slate-300 font-mono">{giveaway.burner_address}</span>
-                    </div>
+                  {!payPrivately && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setShowManualAddress((s) => !s)}
+                        className="flex items-center gap-1 text-base text-slate-500 hover:text-slate-300 transition-colors"
+                      >
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showManualAddress ? "rotate-180" : ""}`} />
+                        Or send USDC manually from another wallet
+                      </button>
+                      {showManualAddress && (
+                        <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
+                          <span className="flex-1 min-w-0 truncate text-base text-slate-300 font-mono">{giveaway.burner_address}</span>
+                        </div>
+                      )}
+                    </>
                   )}
-
-                  <button
-                    type="button"
-                    onClick={() => { refetchFunding(); refetchGiveaway(); }}
-                    className="text-base text-slate-400 hover:text-white underline"
-                  >
-                    Refresh funding status
-                  </button>
-                  <p className="text-base text-slate-500">
-                    Budget can&apos;t be changed after submission — contact support if this needs to change.
-                  </p>
                 </div>
               </div>
             );
