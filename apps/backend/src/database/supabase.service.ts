@@ -138,4 +138,28 @@ export class SupabaseService implements OnModuleInit {
   get integratorApiKeys() {
     return this.client.from('integrator_api_keys');
   }
+
+  get giveaways() {
+    return this.client.from('giveaways');
+  }
+
+  get giveawaysSafe() {
+    return this.client.from('giveaways_safe');
+  }
+
+  get giveawayTasks() {
+    return this.client.from('giveaway_tasks');
+  }
+
+  get giveawayEntries() {
+    return this.client.from('giveaway_entries');
+  }
+
+  get giveawayTaskCompletions() {
+    return this.client.from('giveaway_task_completions');
+  }
+
+  get giveawayEvents() {
+    return this.client.from('giveaway_events');
+  }
 }

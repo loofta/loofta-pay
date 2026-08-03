@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <defs>
+    <radialGradient id="body" cx="36%" cy="28%" r="72%">
+      <stop offset="0%" stop-color="#FFD9B0"/>
+      <stop offset="38%" stop-color="#FF8832"/>
+      <stop offset="100%" stop-color="#C84200"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="36%" cy="24%" r="44%">
+      <stop offset="0%" stop-color="white" stop-opacity="0.60"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="edge" cx="50%" cy="50%" r="50%">
+      <stop offset="80%" stop-color="transparent"/>
+      <stop offset="100%" stop-color="#8C2C00" stop-opacity="0.4"/>
+    </radialGradient>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#B03800" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+  <!-- Ground shadow -->
+  <ellipse cx="60" cy="113" rx="30" ry="6" fill="#B03800" opacity="0.12"/>
+  <!-- Main sphere -->
+  <circle cx="60" cy="55" r="46" fill="url(#body)" filter="url(#sh)"/>
+  <circle cx="60" cy="55" r="46" fill="url(#edge)"/>
+  <circle cx="60" cy="55" r="46" fill="url(#glow)"/>
+  <!-- Trophy glyph -->
+  <path d="M45 38 H75 V50 C75 60 68 66 60 66 C52 66 45 60 45 50 Z" stroke="white" stroke-width="4.5" fill="none" stroke-linejoin="round" stroke-opacity="0.95"/>
+  <path d="M45 41 H36 C36 50 41 55 45 55" stroke="white" stroke-width="4" fill="none" stroke-linecap="round" stroke-opacity="0.85"/>
+  <path d="M75 41 H84 C84 50 79 55 75 55" stroke="white" stroke-width="4" fill="none" stroke-linecap="round" stroke-opacity="0.85"/>
+  <line x1="60" y1="66" x2="60" y2="74" stroke="white" stroke-width="4.5" stroke-linecap="round" stroke-opacity="0.95"/>
+  <line x1="49" y1="80" x2="71" y2="80" stroke="white" stroke-width="4.5" stroke-linecap="round" stroke-opacity="0.95"/>
+</svg>

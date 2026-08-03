@@ -350,9 +350,9 @@ export default function RewardsMagicblockPage() {
         <div className="max-w-lg mx-auto px-4 pt-4 pb-2">
           <Link
             href="/rewards"
-            className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors"
+            className="inline-flex items-center gap-1.5 text-base text-slate-400 hover:text-white transition-colors"
           >
-            <ArrowLeft size={15} />
+            <ArrowLeft size={16} />
             <span>Back to rewards</span>
           </Link>
         </div>
