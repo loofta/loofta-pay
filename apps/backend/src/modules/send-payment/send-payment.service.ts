@@ -514,7 +514,11 @@ export class SendPaymentService {
       } else {
         this.logger.log(`[MultiSend] marked payment=${paymentId} ${status} fee=${rowFee?.toFixed(4) ?? 'n/a'} txHash=${txHash?.slice(0, 12) ?? 'n/a'}`);
         successfullyUpdatedIds.add(paymentId);
-        if (status === 'SUCCESS') {
+        // PRIVATE_TRANSFER_PENDING qualifies too, same as claims.service.ts's updateStatus — the
+        // sender's leg into the burner is already confirmed at that status, and waiting for
+        // SUCCESS risks the recipient's later non-private claim overwriting is_private back to
+        // false first (see maybePushPrivatePaymentQuest's comment), silently dropping the push.
+        if (status === 'SUCCESS' || status === 'PRIVATE_TRANSFER_PENDING') {
           this.magicblockQuest.maybePushPrivatePaymentQuest(paymentId).catch((e) =>
             this.logger.warn(`MagicBlock quest push failed for payment ${paymentId}: ${(e as Error)?.message}`),
           );
