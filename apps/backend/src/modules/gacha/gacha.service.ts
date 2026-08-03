@@ -35,7 +35,7 @@ const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfc
 const ROOM_MEMO_PREFIX = 'gacha-room:';
 const BID_MEMO_PREFIX = 'gacha-bid:';
 
-const BID_WINDOW_MS = 2 * 60_000;
+const BID_WINDOW_MS = 4 * 60_000;
 const BID_PAYMENT_GRACE_MS = 5 * 60_000;
 
 const OPEN_POLL_INTERVAL_MS = 3_000;
@@ -183,6 +183,21 @@ export class GachaService {
     return counts;
   }
 
+  /** Used by GachaGateway to know how many "ready" marks a room needs before it auto-opens —
+   *  see the mark_ready/room:all_ready flow there. */
+  async getParticipantCount(roomId: string): Promise<number> {
+    const counts = await this.countParticipantsByRoom([roomId]);
+    return counts[roomId] ?? 0;
+  }
+
+  /** Used by GachaGateway's pick_emoji handler — broadcasts an emoji pick by seat number, never
+   *  by raw user id (seat number is already public in the room UI; a Privy user id isn't). */
+  async getMySeatNumber(roomId: string, userId: string): Promise<number | null> {
+    const db = this.supabase.getClient();
+    const { data } = await db.from('gacha_room_participants').select('seat_number').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
+    return data?.seat_number ?? null;
+  }
+
   /** Full detail for one room regardless of status (listOpenRooms only ever returns
    *  active-lifecycle rooms) plus the caller's own participation/payout/bid state, so a single
    *  room screen can poll one endpoint through the whole lobby -> bidding -> settled flow. */
@@ -191,6 +206,7 @@ export class GachaService {
     myParticipant: { seatNumber: number; payoutUsdc: number | null; payoutIsPrivate: boolean | null; claimed: boolean } | null;
     bestBid: { amountUsdc: number } | null;
     pendingBid: { bidId: string; userId: string; amountUsdc: number; deadline: string } | null;
+    participants: Array<{ seatNumber: number; username: string | null; isMe: boolean }>;
   }> {
     const db = this.supabase.getClient();
     const { data: room, error } = await db
@@ -203,6 +219,21 @@ export class GachaService {
     const counts = await this.countParticipantsByRoom([roomId]);
     const { data: mine } = await db.from('gacha_room_participants').select('seat_number, payout_usdc, payout_is_private, payout_tx_sig').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
     const { data: bestBid } = await db.from('gacha_bids').select('amount_usdc').eq('room_id', roomId).order('amount_usdc', { ascending: false }).limit(1).maybeSingle();
+
+    // Seat + username only, for the round-table UI — never the wallet or full user id, same
+    // "don't leak more than the UI needs" posture as bid amounts already being anonymous.
+    const { data: seatRows } = await db.from('gacha_room_participants').select('seat_number, user_id').eq('room_id', roomId).order('seat_number', { ascending: true });
+    const uniqueUserIds = Array.from(new Set((seatRows ?? []).map((r: any) => r.user_id)));
+    let usernameByUserId: Record<string, string | null> = {};
+    if (uniqueUserIds.length) {
+      const { data: users } = await db.from('app_users').select('privy_user_id, username').in('privy_user_id', uniqueUserIds);
+      usernameByUserId = Object.fromEntries((users ?? []).map((u: any) => [u.privy_user_id, u.username ?? null]));
+    }
+    const participants = (seatRows ?? []).map((r: any) => ({
+      seatNumber: r.seat_number,
+      username: usernameByUserId[r.user_id] ?? null,
+      isMe: r.user_id === userId,
+    }));
 
     let pendingBid: { bidId: string; userId: string; amountUsdc: number; deadline: string } | null = null;
     if (room.pending_bid_id) {
@@ -221,6 +252,7 @@ export class GachaService {
       myParticipant: mine ? { seatNumber: mine.seat_number, payoutUsdc: mine.payout_usdc !== null ? Number(mine.payout_usdc) : null, payoutIsPrivate: mine.payout_is_private, claimed: !!mine.payout_tx_sig } : null,
       bestBid: bestBid ? { amountUsdc: Number(bestBid.amount_usdc) } : null,
       pendingBid,
+      participants,
     };
   }
 

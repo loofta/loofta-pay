@@ -23,12 +23,22 @@ const corsOrigins = (process.env.CORS_ORIGIN ?? (isProduction ? '' : 'http://loc
   .map((o) => o.trim())
   .filter(Boolean);
 
+// Closed whitelist matching the frontend's AVATAR_EMOJIS (apps/frontend/src/components/
+// PokerTable.tsx) — never trust an arbitrary client-supplied string into a broadcast every other
+// socket in the room receives.
+const ALLOWED_EMOJIS = new Set(['🦊', '🐼', '🐨', '🦁', '🐯', '🐸', '🐙', '🦉', '🐺', '🐵', '🐰', '🐹', '🦝', '🐻', '🐧', '🦄']);
+
 /**
- * First WebSocket gateway in this backend — live room lobby + bidding updates. Namespace
- * `/gacha`; clients join a Socket.IO room keyed by the Gacha room's own id via `join_room`, and
- * receive `room:update` / `room:opened` / `bid:placed` / `room:settled` events scoped to it.
- * Every event payload here is intentionally non-sensitive (seat counts, NFT metadata, bid
- * amounts) — a participant's own payout amount is fetched over authenticated REST
+ * First WebSocket gateway in this backend — live room lobby + bidding updates, plus the
+ * "everyone ready" gate that starts the pack-opening animation for every participant at once
+ * (see onMarkReady below — there is no click-to-open in Gacha; the reveal starts automatically
+ * once every current participant has marked themselves ready).
+ *
+ * Namespace `/gacha`; clients join a Socket.IO room keyed by the Gacha room's own id via
+ * `join_room`, and receive `room:update` / `room:opened` / `bid:placed` / `room:settled` /
+ * `room:ready_update` / `room:all_ready` events scoped to it. Every event payload here is
+ * intentionally non-sensitive (seat counts, NFT metadata, bid amounts, ready counts) — a
+ * participant's own payout amount is fetched over authenticated REST
  * (GachaService.getRoomDetail), never broadcast to the room.
  *
  * GachaService never calls this class directly — it emits GACHA_EVENTS via EventEmitter2
@@ -40,8 +50,8 @@ const corsOrigins = (process.env.CORS_ORIGIN ?? (isProduction ? '' : 'http://loc
  * constructor's parameter types (a literal class reference) immediately at file-load time,
  * before either class has finished being defined. forwardRef alone doesn't fix that when BOTH
  * sides hold a real (non-lazy) top-level import of the other's class. The event bus removes the
- * cycle entirely: this file still imports GachaService (one-directional, for getRoomDetail — see
- * onJoinRoom), but GachaService no longer imports this file at all.
+ * cycle entirely: this file still imports GachaService (one-directional, for getRoomDetail/
+ * getParticipantCount), but GachaService no longer imports this file at all.
  *
  * Operational note: if this backend ever runs multiple instances, Socket.IO needs a shared
  * adapter (e.g. @socket.io/redis-adapter) so an event emitted from one instance reaches clients
@@ -53,6 +63,17 @@ export class GachaGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @WebSocketServer()
   server: Server;
+
+  // In-memory only, on purpose — "who's currently ready to watch the reveal" is presence, not a
+  // durable business fact worth a migration/column. Bounded and self-cleaning: cleared once a
+  // room fully settles (onRoomSettled below), and every room this ever grows an entry for is a
+  // real, already-paid-for room (there's no way to spam entries here).
+  private readonly readyByRoom = new Map<string, Set<string>>();
+  // Same in-memory-only reasoning as readyByRoom — a chosen avatar emoji is cosmetic presence,
+  // not a durable fact, and doesn't need a migration/column. Keyed by seat number (never by raw
+  // Privy user id — see onPickEmoji) so a late joiner's `room:emoji_snapshot` never leaks other
+  // participants' identities beyond what the REST participants list already exposes.
+  private readonly emojiByRoom = new Map<string, Map<number, string>>();
 
   constructor(
     private readonly privy: PrivyVerificationService,
@@ -91,12 +112,62 @@ export class GachaGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (e: any) {
       this.logger.warn(`join_room ${body.roomId}: failed to send initial snapshot: ${e.message}`);
     }
+    const emojiMap = this.emojiByRoom.get(body.roomId);
+    if (emojiMap?.size) client.emit('room:emoji_snapshot', Object.fromEntries(emojiMap));
   }
 
   @SubscribeMessage('leave_room')
   async onLeaveRoom(@ConnectedSocket() client: Socket, @MessageBody() body: { roomId: string }): Promise<void> {
     if (!body?.roomId) return;
     await client.leave(body.roomId);
+  }
+
+  /**
+   * No click-to-open in Gacha — every participant marks themselves ready, and once ALL of them
+   * have (compared against the real paid-seat count, not just however many are currently
+   * connected), the reveal animation starts automatically for everyone watching. Known gap: if a
+   * participant paid for a seat but never opens/keeps open the room page, this never reaches
+   * "all ready" and the room's animation trigger stalls — there's no timeout/fallback yet. The
+   * underlying purchase/open/settlement already happened automatically server-side regardless
+   * (see GachaService.purchaseAndOpenRoom/settleDueRooms), so no money or real state is stuck —
+   * only the client-side "everyone watches the rip together" moment is.
+   */
+  @SubscribeMessage('mark_ready')
+  async onMarkReady(@ConnectedSocket() client: Socket, @MessageBody() body: { roomId: string }): Promise<void> {
+    const roomId = body?.roomId;
+    const userId = client.data?.userId;
+    if (!roomId || !userId) return;
+
+    let set = this.readyByRoom.get(roomId);
+    if (!set) { set = new Set(); this.readyByRoom.set(roomId, set); }
+    set.add(userId);
+
+    this.server?.to(roomId).emit('room:ready_update', { readyCount: set.size });
+
+    const total = await this.gacha.getParticipantCount(roomId).catch(() => 0);
+    if (total > 0 && set.size >= total) {
+      this.server?.to(roomId).emit('room:all_ready', {});
+      this.readyByRoom.delete(roomId);
+    }
+  }
+
+  /** Lets a participant pick which animal avatar represents them in the room's PokerTable arc —
+   *  broadcast by SEAT NUMBER, never by their raw Privy user id (seat number is already public
+   *  UI; a user id isn't, and every socket in the room receives this event). */
+  @SubscribeMessage('pick_emoji')
+  async onPickEmoji(@ConnectedSocket() client: Socket, @MessageBody() body: { roomId: string; emoji: string }): Promise<void> {
+    const roomId = body?.roomId;
+    const userId = client.data?.userId;
+    if (!roomId || !userId || !ALLOWED_EMOJIS.has(body?.emoji)) return;
+
+    const seatNumber = await this.gacha.getMySeatNumber(roomId, userId).catch(() => null);
+    if (seatNumber === null) return;
+
+    let map = this.emojiByRoom.get(roomId);
+    if (!map) { map = new Map(); this.emojiByRoom.set(roomId, map); }
+    map.set(seatNumber, body.emoji);
+
+    this.server?.to(roomId).emit('room:emoji_update', { seatNumber, emoji: body.emoji });
   }
 
   @OnEvent(GACHA_EVENTS.ROOM_UPDATE)
@@ -120,6 +191,8 @@ export class GachaGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @OnEvent(GACHA_EVENTS.ROOM_SETTLED)
   onRoomSettled(payload: GachaRoomSettledPayload): void {
     const { roomId, ...rest } = payload;
+    this.readyByRoom.delete(roomId);
+    this.emojiByRoom.delete(roomId);
     this.server?.to(roomId).emit('room:settled', rest);
   }
 }

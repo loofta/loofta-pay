@@ -1,10 +1,29 @@
-// gachaArt.ts — Loofta Gacha Pack artwork.
+// gachaArt.ts — Loofta Gacha Pack + collectible-card artwork.
 // Classic white/black/gold gacha booster layout, Loofta brand, pokéball medallion.
-// Single source of truth: GachaPack.tsx draws from here. Ported from the design handoff at
-// /gacha/gachaArt.js.txt (same drawing code, just typed for this TS project).
+// Single source of truth: GachaPack.tsx, GachaPack3D.tsx and GachaCard.tsx all draw from here.
+// Ported from the design handoff at /react/gachaArt.js.txt (superset of the earlier /gacha/
+// handoff — adds the card-drawing functions), with two adaptations:
+//  - RARITIES uses this app's real 4-tier scale (common/uncommon/rare/epic, matching
+//    Collectorcrypt's own tiers and the RARITY_STYLE badges already used on the room page)
+//    instead of the handoff's generic 3-tier common/rare/legendary.
+//  - drawCardFront drops the Megapot-specific "entries" pip and "$1.1M daily prize pool" footer
+//    copy (neither concept exists in Gacha — there's no entries, no nightly draw) in favor of a
+//    plain rarity-only footer. The user asked to use this component for the opening experience
+//    now and wire real NFT metadata into it later — this only touches copy, not structure.
 
 export const AW = 760;
 export const AH = 1120;
+// trading-card artwork (2.5 : 3.5 ratio, the real card proportion)
+export const CW = 800;
+export const CH = 1120;
+
+export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic';
+export const RARITIES: Record<Rarity, { label: string; ink: string; a: string; b: string }> = {
+  common: { label: 'COMMON', ink: '#6B6B78', a: '#C9C4B6', b: '#F2EEE4' },
+  uncommon: { label: 'UNCOMMON', ink: '#065F46', a: '#34D399', b: '#A7F3D0' },
+  rare: { label: 'RARE', ink: '#4C1D95', a: '#A78BFA', b: '#DDD6FE' },
+  epic: { label: 'EPIC', ink: '#7A3A00', a: '#E8B23A', b: '#FFE9A8' },
+};
 
 const RED = '#FF1301';
 const ORG = '#FF6A00';
@@ -29,6 +48,18 @@ export function loadSvg(url: string): Promise<HTMLImageElement | null> {
         }),
     )
     .catch(() => null);
+}
+
+/** Load any raster/vector image URL (for real card art). */
+export function loadImage(url?: string | null): Promise<HTMLImageElement | null> {
+  return new Promise((res) => {
+    if (!url) { res(null); return; }
+    const i = new Image();
+    i.crossOrigin = 'anonymous';
+    i.onload = () => res(i);
+    i.onerror = () => res(null);
+    i.src = url;
+  });
 }
 
 function goldGrad(x: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number) {
@@ -86,7 +117,6 @@ function crimp(x: CanvasRenderingContext2D, y: number, h: number, dir: number) {
 /** Pokéball-style medallion: brand-gradient dome, cream base, black band, mystery button. */
 function medallion(x: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
   x.save();
-  // outer gold bezel
   x.beginPath();
   x.arc(cx, cy, r, 0, 7);
   x.fillStyle = goldGrad(x, cx - r, cy - r, cx + r, cy + r);
@@ -96,7 +126,6 @@ function medallion(x: CanvasRenderingContext2D, cx: number, cy: number, r: numbe
   x.stroke();
 
   const ri = r - 26;
-  // upper dome
   x.save();
   x.beginPath();
   x.arc(cx, cy, ri, Math.PI, 0);
@@ -110,7 +139,6 @@ function medallion(x: CanvasRenderingContext2D, cx: number, cy: number, r: numbe
   x.ellipse(cx - ri * 0.3, cy - ri * 0.55, ri * 0.42, ri * 0.22, -0.5, 0, 7);
   x.fill();
   x.restore();
-  // lower half
   x.save();
   x.beginPath();
   x.arc(cx, cy, ri, 0, Math.PI);
@@ -122,7 +150,6 @@ function medallion(x: CanvasRenderingContext2D, cx: number, cy: number, r: numbe
   x.fillStyle = lg;
   x.fillRect(cx - ri, cy, ri * 2, ri);
   x.restore();
-  // equator band
   x.save();
   x.beginPath();
   x.arc(cx, cy, ri, 0, 7);
@@ -133,7 +160,6 @@ function medallion(x: CanvasRenderingContext2D, cx: number, cy: number, r: numbe
   x.fillRect(cx - ri, cy - ri * 0.152, ri * 2, 4);
   x.fillRect(cx - ri, cy + ri * 0.135, ri * 2, 4);
   x.restore();
-  // mystery button
   const br = r * 0.3;
   x.beginPath();
   x.arc(cx, cy, br + 12, 0, 7);
@@ -157,14 +183,11 @@ export interface GachaPackImages {
   logoWhite: HTMLImageElement | null;
 }
 
-/**
- * Draw the pack onto a 2D context sized AW×AH.
- */
+/** Draw the pack onto a 2D context sized AW×AH. */
 export function drawGachaPack(x: CanvasRenderingContext2D, face: 'front' | 'back' = 'front', imgs: Partial<GachaPackImages> = {}) {
   const { logoWhite } = imgs;
   x.clearRect(0, 0, AW, AH);
 
-  // pearl-white foil body
   const base = x.createLinearGradient(0, 0, AW, AH);
   base.addColorStop(0, '#FFFFFF');
   base.addColorStop(0.44, '#F4F1E9');
@@ -172,7 +195,6 @@ export function drawGachaPack(x: CanvasRenderingContext2D, face: 'front' | 'back
   base.addColorStop(1, '#E9E5DA');
   x.fillStyle = base;
   x.fillRect(0, 0, AW, AH);
-  // diagonal sheen
   x.save();
   x.translate(AW / 2, AH / 2);
   x.rotate(-0.62);
@@ -185,7 +207,6 @@ export function drawGachaPack(x: CanvasRenderingContext2D, face: 'front' | 'back
   x.fillRect(-AW, -170, AW * 2, 340);
   x.restore();
 
-  // ---- black sweeps ----
   x.fillStyle = INK;
   x.beginPath();
   x.moveTo(0, 0);
@@ -202,7 +223,6 @@ export function drawGachaPack(x: CanvasRenderingContext2D, face: 'front' | 'back
   x.closePath();
   x.fill();
 
-  // gold hairlines tracing the sweeps
   x.lineWidth = 6;
   x.strokeStyle = goldGrad(x, 0, 0, AW, 0);
   x.beginPath();
@@ -214,7 +234,6 @@ export function drawGachaPack(x: CanvasRenderingContext2D, face: 'front' | 'back
   x.bezierCurveTo(AW * 0.6, AH - 450, AW * 0.26, AH - 412, 0, AH - 306);
   x.stroke();
 
-  // arcs framing the medallion
   const cx = AW / 2;
   const cy = face === 'front' ? 556 : 470;
   const r = face === 'front' ? 186 : 120;
@@ -235,7 +254,6 @@ export function drawGachaPack(x: CanvasRenderingContext2D, face: 'front' | 'back
   x.stroke();
   x.globalAlpha = 1;
 
-  // ---- brand marks ----
   x.textAlign = 'center';
   if (logoWhite) {
     const w = 300;
@@ -246,7 +264,6 @@ export function drawGachaPack(x: CanvasRenderingContext2D, face: 'front' | 'back
   medallion(x, cx, cy, r);
 
   if (face === 'front') {
-    // five gold stars
     const sy = 826;
     const gap = 96;
     for (let i = 0; i < 5; i++) {
@@ -264,7 +281,6 @@ export function drawGachaPack(x: CanvasRenderingContext2D, face: 'front' | 'back
       star(x, sx, sy, 34);
       x.stroke();
     }
-    // bottom lockup: GACHA | PACK
     const ly = AH - 128;
     x.font = '500 62px "Clash Display"';
     const gw = x.measureText('GACHA').width;
@@ -282,16 +298,12 @@ export function drawGachaPack(x: CanvasRenderingContext2D, face: 'front' | 'back
     x.textAlign = 'left';
     x.fillStyle = '#fff';
     x.fillText('PACK', AW / 2 + 4, ly);
-    // divider
     x.fillStyle = goldGrad(x, 0, 0, 0, AH);
     x.fillRect(AW / 2 - 10, ly - 46, 3, 62);
   }
-  // back: brand mark + medallion only
 
-  // sealed edges
   crimp(x, 0, 46, 1);
   crimp(x, AH - 46, 46, -1);
-  // hang hole
   x.save();
   x.globalAlpha = 0.55;
   x.fillStyle = '#3A3A44';
@@ -299,4 +311,248 @@ export function drawGachaPack(x: CanvasRenderingContext2D, face: 'front' | 'back
   x.ellipse(AW / 2, 74, 30, 13, 0, 0, 7);
   x.fill();
   x.restore();
+}
+
+/* ============================ COLLECTIBLE CARD ============================
+   Trading-card face (800 × 1120). `art` is a real image drawn into the frame
+   window — pass an <img> from loadImage(url). Everything else is brand chrome. */
+
+function roundPath(x: CanvasRenderingContext2D, rx: number, ry: number, w: number, h: number, r: number) {
+  x.beginPath();
+  x.moveTo(rx + r, ry);
+  x.arcTo(rx + w, ry, rx + w, ry + h, r);
+  x.arcTo(rx + w, ry + h, rx, ry + h, r);
+  x.arcTo(rx, ry + h, rx, ry, r);
+  x.arcTo(rx, ry, rx + w, ry, r);
+  x.closePath();
+}
+
+/** Draw an image cover-cropped into a rect (never squashed). */
+function drawCover(x: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, rx: number, ry: number, w: number, h: number) {
+  const s = Math.max(w / img.width, h / img.height);
+  const dw = img.width * s;
+  const dh = img.height * s;
+  x.drawImage(img, rx + (w - dw) / 2, ry + (h - dh) / 2, dw, dh);
+}
+
+/** Paint an image as the ENTIRE card face (for real card scans), with a metallic rim. */
+function drawFullFace(x: CanvasRenderingContext2D, img: HTMLImageElement, rimA: string, rimB: string) {
+  const ob = x.createLinearGradient(0, 0, CW, CH);
+  ob.addColorStop(0, rimA);
+  ob.addColorStop(0.45, rimB);
+  ob.addColorStop(1, rimA);
+  roundPath(x, 0, 0, CW, CH, 44);
+  x.fillStyle = ob;
+  x.fill();
+  const m = 14;
+  x.save();
+  roundPath(x, m, m, CW - m * 2, CH - m * 2, 34);
+  x.clip();
+  drawCover(x, img, m, m, CW - m * 2, CH - m * 2);
+  x.restore();
+}
+
+export interface CardFrontOptions {
+  name?: string;
+  rarity?: Rarity;
+  art?: HTMLImageElement | null;
+  faceImage?: HTMLImageElement | null;
+  logoDark?: HTMLImageElement | null;
+}
+
+/**
+ * Card front. `art` is drawn into the framed Loofta card's art window; `faceImage` makes the
+ * image the whole card face (a real, owned card scan) with the frame skipped entirely.
+ */
+export function drawCardFront(x: CanvasRenderingContext2D, opts: CardFrontOptions = {}) {
+  const { name = 'Mystery', rarity = 'common', art = null, faceImage = null, logoDark = null } = opts;
+  if (faceImage) {
+    const Rf = RARITIES[rarity] || RARITIES.common;
+    x.clearRect(0, 0, CW, CH);
+    drawFullFace(x, faceImage, Rf.a, Rf.b);
+    return;
+  }
+  const R = RARITIES[rarity] || RARITIES.common;
+  x.clearRect(0, 0, CW, CH);
+
+  const ob = x.createLinearGradient(0, 0, CW, CH);
+  ob.addColorStop(0, R.a);
+  ob.addColorStop(0.42, R.b);
+  ob.addColorStop(0.72, R.a);
+  ob.addColorStop(1, R.b);
+  roundPath(x, 0, 0, CW, CH, 44);
+  x.fillStyle = ob;
+  x.fill();
+
+  const m = 26;
+  roundPath(x, m, m, CW - m * 2, CH - m * 2, 30);
+  const body = x.createLinearGradient(0, m, 0, CH - m);
+  body.addColorStop(0, '#FFFFFF');
+  body.addColorStop(1, '#EFEBE0');
+  x.fillStyle = body;
+  x.fill();
+  x.lineWidth = 3;
+  x.strokeStyle = 'rgba(11,11,15,.14)';
+  x.stroke();
+
+  x.save();
+  roundPath(x, m, m, CW - m * 2, CH - m * 2, 30);
+  x.clip();
+  x.fillStyle = INK;
+  x.fillRect(m, m, CW - m * 2, 118);
+  x.fillStyle = goldGrad(x, m, 0, CW - m, 0);
+  x.fillRect(m, m + 118, CW - m * 2, 5);
+  x.restore();
+
+  x.textAlign = 'left';
+  x.fillStyle = '#fff';
+  x.font = '500 60px "Clash Display"';
+  x.fillText(name, 62, 122);
+
+  const ax = 62;
+  const ay = 178;
+  const aw = CW - 124;
+  const ah = 596;
+  x.save();
+  roundPath(x, ax, ay, aw, ah, 18);
+  x.clip();
+  if (art) {
+    drawCover(x, art, ax, ay, aw, ah);
+  } else {
+    const ph = x.createLinearGradient(ax, ay, ax + aw, ay + ah);
+    ph.addColorStop(0, R.b);
+    ph.addColorStop(1, R.a);
+    x.fillStyle = ph;
+    x.fillRect(ax, ay, aw, ah);
+    x.fillStyle = 'rgba(11,11,15,.35)';
+    x.textAlign = 'center';
+    x.font = '600 26px "Clash Grotesk"';
+    (x as any).letterSpacing = '8px';
+    x.fillText('ARTWORK', ax + aw / 2, ay + ah / 2 + 9);
+    (x as any).letterSpacing = '0px';
+  }
+  x.globalAlpha = 0.16;
+  const hs = x.createLinearGradient(ax, ay, ax + aw, ay + ah);
+  hs.addColorStop(0, 'rgba(255,255,255,0)');
+  hs.addColorStop(0.45, '#fff');
+  hs.addColorStop(0.55, 'rgba(255,255,255,0)');
+  x.fillStyle = hs;
+  x.fillRect(ax, ay, aw, ah);
+  x.globalAlpha = 1;
+  x.restore();
+  x.lineWidth = 5;
+  x.strokeStyle = goldGrad(x, ax, ay, ax + aw, ay + ah);
+  roundPath(x, ax, ay, aw, ah, 18);
+  x.stroke();
+
+  // rarity plate
+  x.save();
+  const pw = 300;
+  const px = (CW - pw) / 2;
+  const py = 812;
+  roundPath(x, px, py, pw, 64, 14);
+  const rp = x.createLinearGradient(px, py, px + pw, py + 64);
+  rp.addColorStop(0, R.a);
+  rp.addColorStop(0.5, R.b);
+  rp.addColorStop(1, R.a);
+  x.fillStyle = rp;
+  x.fill();
+  x.lineWidth = 2.5;
+  x.strokeStyle = 'rgba(11,11,15,.28)';
+  x.stroke();
+  x.fillStyle = R.ink;
+  x.textAlign = 'center';
+  x.font = '600 27px "Clash Grotesk"';
+  (x as any).letterSpacing = '9px';
+  x.fillText(R.label, CW / 2 + 4, py + 42);
+  (x as any).letterSpacing = '0px';
+  x.restore();
+
+  // footer: pokéball + brand mark — no entries pip / jackpot copy, neither concept applies here
+  medallion(x, 128, 962, 62);
+  if (logoDark) {
+    const w = 220;
+    const h = (w * logoDark.height) / logoDark.width;
+    x.drawImage(logoDark, CW / 2 - w / 2 + 24, 934, w, h);
+  }
+  x.textAlign = 'center';
+  x.fillStyle = '#6B6B78';
+  x.font = '500 21px "Clash Grotesk"';
+  (x as any).letterSpacing = '4px';
+  x.fillText('POOLED PACK · LOOFTA', CW / 2, 1046);
+  (x as any).letterSpacing = '0px';
+}
+
+export interface CardBackOptions {
+  logoWhite?: HTMLImageElement | null;
+  backImage?: HTMLImageElement | null;
+}
+
+/** Card back. `backImage` uses a real card back full-bleed; otherwise brand pattern + pokéball. */
+export function drawCardBack(x: CanvasRenderingContext2D, opts: CardBackOptions = {}) {
+  const { logoWhite = null, backImage = null } = opts;
+  x.clearRect(0, 0, CW, CH);
+  if (backImage) {
+    drawFullFace(x, backImage, GOLD_D, GOLD_L);
+    return;
+  }
+
+  const ob = x.createLinearGradient(0, 0, CW, CH);
+  ob.addColorStop(0, GOLD_D);
+  ob.addColorStop(0.4, GOLD_M);
+  ob.addColorStop(0.7, GOLD_L);
+  ob.addColorStop(1, GOLD_M);
+  roundPath(x, 0, 0, CW, CH, 44);
+  x.fillStyle = ob;
+  x.fill();
+
+  const m = 26;
+  x.save();
+  roundPath(x, m, m, CW - m * 2, CH - m * 2, 30);
+  x.clip();
+  const body = x.createLinearGradient(0, m, CW, CH);
+  body.addColorStop(0, '#141018');
+  body.addColorStop(0.5, '#241826');
+  body.addColorStop(1, '#120E14');
+  x.fillStyle = body;
+  x.fillRect(0, 0, CW, CH);
+
+  x.save();
+  x.translate(CW / 2, CH / 2);
+  x.rotate(-Math.PI / 4);
+  x.globalAlpha = 0.07;
+  x.fillStyle = '#fff';
+  for (let i = -20; i < 20; i++) x.fillRect(i * 58, -CH, 16, CH * 2);
+  x.restore();
+
+  x.lineWidth = 5;
+  x.strokeStyle = goldGrad(x, 0, 0, CW, 0);
+  x.globalAlpha = 0.55;
+  const corners: Array<[number, number, number]> = [
+    [m + 90, m + 90, Math.PI],
+    [CW - m - 90, m + 90, -Math.PI / 2],
+    [m + 90, CH - m - 90, Math.PI / 2],
+    [CW - m - 90, CH - m - 90, 0],
+  ];
+  for (const [cx2, cy2, a0] of corners) {
+    x.beginPath();
+    x.arc(cx2, cy2, 74, a0, a0 + Math.PI / 2);
+    x.stroke();
+  }
+  x.globalAlpha = 1;
+  x.restore();
+
+  medallion(x, CW / 2, CH / 2 - 46, 196);
+
+  if (logoWhite) {
+    const w = 250;
+    const h = (w * logoWhite.height) / logoWhite.width;
+    x.drawImage(logoWhite, (CW - w) / 2, CH - 300, w, h);
+  }
+  x.textAlign = 'center';
+  x.fillStyle = GOLD_L;
+  x.font = '600 25px "Clash Grotesk"';
+  (x as any).letterSpacing = '11px';
+  x.fillText('GACHA', CW / 2 + 5, CH - 176);
+  (x as any).letterSpacing = '0px';
 }

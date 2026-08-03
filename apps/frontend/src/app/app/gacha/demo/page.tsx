@@ -1,28 +1,44 @@
 "use client";
 
 // Gacha demo — pure UI walkthrough, zero backend calls. Simulates the whole lobby -> open ->
-// bid -> settle -> claim lifecycle entirely in local state with timers, using the exact same
-// visual states as the real /app/gacha/[roomId] page, so this is genuinely useful for reviewing
-// the UI/UX without a Collectorcrypt key, a database, or any real money moving. Nothing here
-// ever touches /api/gacha/* — see the real room page for the version wired to the backend.
+// ready check -> 3D rip -> bid -> settle -> claim lifecycle entirely in local state with timers,
+// using the exact same components as the real /app/gacha/[roomId] page (GachaPack3D, GachaCard),
+// so this is genuinely useful for reviewing the UI/UX without a Collectorcrypt key, a database,
+// or any real money moving. Nothing here ever touches /api/gacha/* — see the real room page for
+// the version wired to the backend.
+//
+// The lobby fills slowly and randomly (1.5-4s per seat) rather than instantly, so the "waiting
+// for players" moment actually reads as other people trickling in rather than a flash-cut. The
+// ready check simulates the other seats (bots) marking themselves ready on their own staggered
+// timers, same as the real room's participants would — only the real seat (you) requires an
+// actual click, matching the real page's "no click to open, only to mark ready" flow.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import GachaPack from "@/components/GachaPack";
+import GachaCard from "@/components/GachaCard";
+import PokerTable, { AVATAR_EMOJIS } from "@/components/PokerTable";
+import type { GachaOpenResult, GachaRarity } from "@/components/GachaPack3D";
 
-type DemoStatus = "waiting" | "purchasing" | "opening" | "bidding" | "settling" | "settled";
+const GachaPack3D = dynamic(() => import("@/components/GachaPack3D"), { ssr: false });
+
+type DemoStatus = "waiting" | "purchasing" | "opening" | "readying" | "bidding" | "settling" | "settled";
 
 const SEATS = 5;
 const ENTRY_USDC = 10;
-const RARITIES: Array<{ rarity: "common" | "uncommon" | "rare" | "epic"; buybackUsdc: number }> = [
-  { rarity: "common", buybackUsdc: 8 },
-  { rarity: "uncommon", buybackUsdc: 20 },
-  { rarity: "rare", buybackUsdc: 60 },
-  { rarity: "epic", buybackUsdc: 150 },
+const RARITIES: Array<{ rarity: GachaRarity; buybackUsdc: number; name: string }> = [
+  { rarity: "common", buybackUsdc: 8, name: "Common Card" },
+  { rarity: "uncommon", buybackUsdc: 20, name: "Uncommon Card" },
+  { rarity: "rare", buybackUsdc: 60, name: "Rare Card" },
+  { rarity: "epic", buybackUsdc: 150, name: "Epic Card" },
 ];
-const BID_WINDOW_S = 20;
-const PAY_WINDOW_S = 15;
+const BID_WINDOW_S = 60;
+const PAY_WINDOW_S = 20;
+const MIN_SEAT_DELAY_MS = 1500;
+const MAX_SEAT_DELAY_MS = 4000;
+const BOT_NAMES = ["Nova", "Ziggy", "Marlowe", "Kip", "Sable", "Orion", "Finch", "Remy"];
 
 const RARITY_STYLE: Record<string, string> = {
   common: "border-slate-500/30 bg-slate-500/10 text-slate-300",
@@ -49,12 +65,19 @@ export default function GachaDemoPage() {
   const [payWindowLeft, setPayWindowLeft] = useState(PAY_WINDOW_S);
   const [claimed, setClaimed] = useState(false);
   const [isPrivate, setIsPrivate] = useState(true);
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  // Ready check — real seat needs a real click; bot seats ready up on their own staggered timers.
+  const [iAmReady, setIAmReady] = useState(false);
+  const [botsReady, setBotsReady] = useState(0);
+  const [autoOpen, setAutoOpen] = useState(false);
+  const [revealedCard, setRevealedCard] = useState<GachaOpenResult | null>(null);
+
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
   const after = (ms: number, fn: () => void) => { const t = setTimeout(fn, ms); timers.current.push(t); };
+  useEffect(() => clearTimers, []);
 
-  const reset = useCallback(() => {
+  const reset = () => {
     clearTimers();
     setStatus("waiting");
     setSeatsFilled(1);
@@ -65,9 +88,13 @@ export default function GachaDemoPage() {
     setBidWindowLeft(BID_WINDOW_S);
     setPayWindowLeft(PAY_WINDOW_S);
     setClaimed(false);
-  }, []);
+    setIAmReady(false);
+    setBotsReady(0);
+    setAutoOpen(false);
+    setRevealedCard(null);
+  };
 
-  // Lobby: simulate other demo players trickling in.
+  // Lobby: other demo players trickle in slowly, at random intervals — not instantly.
   useEffect(() => {
     if (status !== "waiting") return;
     if (seatsFilled >= SEATS) {
@@ -77,14 +104,28 @@ export default function GachaDemoPage() {
         const picked = RARITIES[Math.floor(Math.random() * RARITIES.length)];
         setRarity(picked);
         setBestBid(picked.buybackUsdc);
-        setStatus("bidding");
+        setStatus("readying");
       });
       return;
     }
-    after(700 + Math.random() * 600, () => setSeatsFilled((n) => Math.min(SEATS, n + 1)));
+    after(MIN_SEAT_DELAY_MS + Math.random() * (MAX_SEAT_DELAY_MS - MIN_SEAT_DELAY_MS), () => setSeatsFilled((n) => Math.min(SEATS, n + 1)));
     return clearTimers;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, seatsFilled]);
+
+  // Ready check: the other (SEATS - 1) bot seats ready up on their own staggered timers.
+  useEffect(() => {
+    if (status !== "readying") return;
+    const otherSeats = SEATS - 1;
+    const botTimers = Array.from({ length: otherSeats }, (_, i) =>
+      setTimeout(() => setBotsReady((n) => n + 1), 800 + i * (600 + Math.random() * 900)),
+    );
+    return () => botTimers.forEach(clearTimeout);
+  }, [status]);
+
+  useEffect(() => {
+    if (status === "readying" && iAmReady && botsReady >= SEATS - 1) setAutoOpen(true);
+  }, [status, iAmReady, botsReady]);
 
   // Bidding countdown.
   useEffect(() => {
@@ -110,41 +151,45 @@ export default function GachaDemoPage() {
     return () => clearTimeout(t);
   }, [status, payWindowLeft]);
 
-  const handleBid = useCallback(() => {
+  const handleBid = () => {
     const amount = parseFloat(bidInput);
     const floor = bestBid ?? rarity?.buybackUsdc ?? 0;
     if (!Number.isFinite(amount) || amount <= floor) return;
     setBestBid(amount);
     setIWon(true);
     setBidInput("");
-  }, [bidInput, bestBid, rarity]);
+  };
 
-  const handlePay = useCallback(() => {
-    setStatus("settled");
-  }, []);
+  const handlePay = () => setStatus("settled");
+  const handleClaim = () => after(500, () => setClaimed(true));
 
-  const handleClaim = useCallback(() => {
-    after(500, () => setClaimed(true));
-  }, []);
+  const payoutUsdc = useMemo(() => (bestBid ? bestBid / SEATS : 0), [bestBid]);
 
-  const payoutUsdc = useMemo(() => {
-    if (!bestBid) return 0;
-    return bestBid / SEATS;
-  }, [bestBid]);
+  const [myEmoji, setMyEmoji] = useState<string | null>(null);
+  const participants = useMemo(
+    () => Array.from({ length: seatsFilled }, (_, i) => ({
+      seatNumber: i + 1,
+      username: i === 0 ? "You" : BOT_NAMES[(i - 1) % BOT_NAMES.length],
+      isMe: i === 0,
+      emoji: i === 0 ? myEmoji ?? undefined : undefined,
+    })),
+    [seatsFilled, myEmoji],
+  );
 
   const statusCaption = useMemo(() => {
     switch (status) {
       case "waiting": return `Waiting for ${SEATS - seatsFilled} more player${SEATS - seatsFilled === 1 ? "" : "s"}…`;
       case "purchasing": return "Buying the pack…";
       case "opening": return "Opening the pack…";
+      case "readying": return autoOpen ? "Everyone's ready…" : "Waiting for everyone to be ready…";
       case "bidding": return "Bidding is open";
       case "settling": return "Settling…";
       case "settled": return "Settled";
       default: return status;
     }
-  }, [status, seatsFilled]);
+  }, [status, seatsFilled, autoOpen]);
 
-  const revealed = status === "bidding" || status === "settling" || status === "settled";
+  const show3D = status === "opening" || status === "readying";
 
   return (
     <div className="relative w-full min-h-[calc(100vh-var(--header-h,0px))] bg-[#111114] text-slate-100">
@@ -156,19 +201,72 @@ export default function GachaDemoPage() {
           <span className="text-slate-400 text-base">{seatsFilled}/{SEATS} players · ${ENTRY_USDC.toFixed(2)} each</span>
         </div>
 
-        <div className="mb-5 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-base text-amber-200">
-          Demo mode — nothing here is real. No backend calls, no money, no other players.
-        </div>
-
         <div className="flex flex-col items-center gap-4 mb-8">
-          {revealed ? <GachaPack width={180} face="back" /> : <GachaPack width={180} />}
-          {rarity && (
+          <div className="w-full -mb-4 relative z-10">
+            <PokerTable seats={SEATS} participants={participants} />
+          </div>
+
+          <div className="flex flex-wrap justify-center gap-1.5 max-w-xs">
+            {AVATAR_EMOJIS.map((e) => (
+              <button
+                key={e}
+                type="button"
+                onClick={() => setMyEmoji(e)}
+                className={`w-9 h-9 rounded-full flex items-center justify-center text-lg transition-colors ${myEmoji === e ? "bg-amber-500/30 ring-2 ring-amber-400" : "bg-white/5 hover:bg-white/10"}`}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+
+          {status === "waiting" ? (
+            <GachaPack width={180} />
+          ) : show3D ? (
+            <div className="w-full h-[380px] rounded-2xl overflow-hidden border border-white/10">
+              <GachaPack3D
+                autoOpen={autoOpen}
+                resolveOpen={() => new Promise<GachaOpenResult>((resolve) => {
+                  // Demo has no server round trip — the rarity is already known locally the
+                  // instant the pack "opens," same shape as the real page's waitForReveal.
+                  const check = () => (rarity ? resolve({ nftMetadata: { name: rarity.name }, rarity: rarity.rarity }) : setTimeout(check, 200));
+                  check();
+                })}
+                onOpened={(result) => { setRevealedCard(result); setStatus("bidding"); }}
+                idleSubtitle={autoOpen ? statusCaption : "Waiting for everyone to be ready…"}
+                openingLabel={statusCaption}
+              />
+            </div>
+          ) : revealedCard ? (
+            <GachaCard width={220} card={{ name: revealedCard.nftMetadata?.name ?? "Mystery Card", rarity: revealedCard.rarity }} />
+          ) : (
+            <GachaPack width={180} face="back" />
+          )}
+          {rarity && !show3D && (
             <span className={`text-sm font-semibold uppercase tracking-wide px-3 py-1 rounded-full border ${RARITY_STYLE[rarity.rarity]}`}>
               {rarity.rarity}
             </span>
           )}
-          <p className="text-slate-300 text-base font-medium">{statusCaption}</p>
+          {!show3D && <p className="text-slate-300 text-base font-medium">{statusCaption}</p>}
         </div>
+
+        {status === "readying" && !autoOpen && (
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 text-center space-y-3">
+            {iAmReady ? (
+              <p className="text-slate-300 text-base">Waiting for everyone to be ready — {1 + botsReady}/{SEATS} ready.</p>
+            ) : (
+              <>
+                <p className="text-slate-300 text-base">Everyone marks ready, then the pack opens for the whole room at once.</p>
+                <button
+                  type="button"
+                  onClick={() => setIAmReady(true)}
+                  className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors"
+                >
+                  I&apos;m ready
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         {status === "bidding" && (
           <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">

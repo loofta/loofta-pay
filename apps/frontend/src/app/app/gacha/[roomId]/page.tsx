@@ -1,11 +1,16 @@
 "use client";
 
 // Gacha room — the whole pooled-pack lifecycle on one page: lobby (waiting for seats) -> pack
-// purchase/open -> room-participants-only bidding -> settlement -> claim (public or private).
-// Backend contract: apps/backend/src/modules/gacha/{gacha.service,gacha.controller,gacha.gateway}.ts.
+// purchase/open -> ready check -> 3D rip -> room-participants-only bidding -> settlement ->
+// claim (public or private). Backend contract:
+// apps/backend/src/modules/gacha/{gacha.service,gacha.controller,gacha.gateway}.ts.
 // Live updates come from useGachaRoomSocket (GachaGateway); every event just triggers a REST
 // refetch rather than trying to hand-merge partial deltas into local state — events are
 // infrequent (a handful over a room's whole lifetime), so simplicity wins over shaving a request.
+//
+// No click-to-open: every participant marks themselves ready (see the ready UI below), and once
+// the backend sees everyone has, `room:all_ready` fires and the 3D rip plays automatically for
+// everyone watching, in sync — nobody taps anything to start it.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -16,7 +21,9 @@ import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/sola
 import bs58 from "bs58";
 import { ChevronLeft } from "lucide-react";
 import GachaPack from "@/components/GachaPack";
-import type { GachaOpenResult } from "@/components/GachaPack3D";
+import GachaCard from "@/components/GachaCard";
+import PokerTable, { AVATAR_EMOJIS } from "@/components/PokerTable";
+import type { GachaOpenResult, GachaRarity } from "@/components/GachaPack3D";
 import { useGachaRoomSocket } from "@/hooks/useGachaRoomSocket";
 
 // Client-only (touches window/WebGL) — same ssr:false convention as MegapotPack's own usage.
@@ -40,6 +47,7 @@ interface RoomDetail {
   myParticipant: { seatNumber: number; payoutUsdc: number | null; payoutIsPrivate: boolean | null; claimed: boolean } | null;
   bestBid: { amountUsdc: number } | null;
   pendingBid: { bidId: string; userId: string; amountUsdc: number; deadline: string } | null;
+  participants: Array<{ seatNumber: number; username: string | null; isMe: boolean }>;
 }
 
 const RARITY_STYLE: Record<string, string> = {
@@ -100,11 +108,18 @@ export default function GachaRoomPage() {
   // 3D rip experience is skipped entirely in favor of just showing the settled result. Only set
   // once, from the very first fetch.
   const arrivedAlreadyRevealedRef = useRef<boolean | null>(null);
-  // Flips true once GachaPack3D's own reveal animation (shake -> burst -> reveal) has actually
-  // finished playing for a user who WAS watching live — separate from the room's own
-  // `nftMetadata` becoming non-null, which typically lands slightly earlier (mid-shake) and
-  // would otherwise cut the animation off before it gets to play.
+  // Flips true once GachaPack3D's own reveal animation (shake -> burst) has actually finished
+  // playing for a user who WAS watching live — separate from the room's own `nftMetadata`
+  // becoming non-null, which typically lands slightly earlier (mid-shake).
   const [played3DReveal, setPlayed3DReveal] = useState(false);
+  // Captured directly from GachaPack3D's onOpened callback — shown via GachaCard regardless of
+  // whether this page's own polling has caught up to the same data yet.
+  const [revealedCard, setRevealedCard] = useState<GachaOpenResult | null>(null);
+
+  // Ready-to-open gate — see the file header comment. Marking ready is a one-way local action;
+  // "all ready" is authoritative from the server (room:all_ready), never inferred client-side.
+  const [iAmReady, setIAmReady] = useState(false);
+  const [autoOpen, setAutoOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!accessToken) return;
@@ -121,17 +136,27 @@ export default function GachaRoomPage() {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  // GachaPack3D's resolveOpen contract: unlike Mystery Pack, clicking the pack here doesn't
-  // START a purchase (the room already bought and is opening the pack automatically the moment
-  // it filled) — it just waits for that already-in-flight process to finish, polling the same
-  // `detail` state this page's own 5s interval + websocket-triggered refreshes keep current.
+  const { lastUpdate, lastOpened, lastBid, lastSettled, lastReadyUpdate, allReadyTick, emojiBySeat, markReady, pickEmoji } = useGachaRoomSocket(roomId, accessToken);
+  useEffect(() => { refresh(); }, [lastUpdate, lastOpened, lastBid, lastSettled]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (allReadyTick > 0) setAutoOpen(true); }, [allReadyTick]);
+
+  const bidDeadlineMs = useCountdown(detail?.room.status === "bidding" ? detail.room.bidWindowEndsAt : null);
+  const payDeadlineMs = useCountdown(detail?.pendingBid?.deadline ?? null);
+
+  const room = detail?.room;
+  const isWinningBidder = !!detail?.pendingBid && detail.pendingBid.userId === user?.id;
+
+  // GachaPack3D's resolveOpen contract: unlike Mystery Pack, the pack doesn't START a purchase
+  // when the reveal triggers (the room already bought and is opening the pack automatically the
+  // moment it filled) — it just waits for that already-in-flight process to finish, polling the
+  // same `detail` state this page's own 5s interval + websocket-triggered refreshes keep current.
   const waitForReveal = useCallback((): Promise<GachaOpenResult> => {
     return new Promise((resolve, reject) => {
       const deadline = Date.now() + 90_000; // generous — matches the backend's own ~60s openPack poll ceiling plus buffer
       const check = () => {
         const nft = detailRef.current?.room.nftMetadata;
         const rarity = detailRef.current?.room.rarity;
-        if (nft && rarity) { resolve({ nftMetadata: nft, rarity: rarity as GachaOpenResult["rarity"] }); return; }
+        if (nft && rarity) { resolve({ nftMetadata: nft, rarity: rarity as GachaRarity }); return; }
         if (detailRef.current?.room.status === "failed") { reject(new Error("This room ran into a problem opening the pack.")); return; }
         if (Date.now() > deadline) { reject(new Error("Taking longer than expected — check back in a moment.")); return; }
         setTimeout(check, 700);
@@ -139,15 +164,6 @@ export default function GachaRoomPage() {
       check();
     });
   }, []);
-
-  const { lastUpdate, lastOpened, lastBid, lastSettled } = useGachaRoomSocket(roomId, accessToken);
-  useEffect(() => { refresh(); }, [lastUpdate, lastOpened, lastBid, lastSettled]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const bidDeadlineMs = useCountdown(detail?.room.status === "bidding" ? detail.room.bidWindowEndsAt : null);
-  const payDeadlineMs = useCountdown(detail?.pendingBid?.deadline ?? null);
-
-  const room = detail?.room;
-  const isWinningBidder = !!detail?.pendingBid && detail.pendingBid.userId === user?.id;
 
   const handleJoin = useCallback(async () => {
     if (!authenticated) { login(); return; }
@@ -186,6 +202,11 @@ export default function GachaRoomPage() {
       setBusy(false);
     }
   }, [authenticated, login, embeddedWallet, room, roomId, getAccessToken, signAndSendTransaction, router, refresh]);
+
+  const handleMarkReady = useCallback(() => {
+    setIAmReady(true);
+    markReady();
+  }, [markReady]);
 
   const handleBid = useCallback(async () => {
     const amount = parseFloat(bidInput);
@@ -276,11 +297,12 @@ export default function GachaRoomPage() {
     return <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#111114] text-slate-100 flex items-center justify-center text-base">Loading room…</div>;
   }
 
-  const revealed = !!room.nftMetadata;
   // See the refs/state above: the 3D rip experience only ever plays once, for whoever is
   // actually watching live — everyone else (already-revealed on first load, or already watched
   // it once this session) gets the flat settled view straight away.
   const show3D = !arrivedAlreadyRevealedRef.current && !played3DReveal;
+  const cardResult: GachaOpenResult | null = revealedCard ?? (room.nftMetadata ? { nftMetadata: room.nftMetadata, rarity: (room.rarity ?? "common") as GachaRarity } : null);
+  const showReadyGate = show3D && room.status !== "waiting" && !!detail.myParticipant && !autoOpen;
 
   return (
     <div className="relative w-full min-h-[calc(100vh-var(--header-h,0px))] bg-[#111114] text-slate-100">
@@ -295,28 +317,55 @@ export default function GachaRoomPage() {
         {error && <div className="mb-5 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-base text-red-300">{error}</div>}
 
         <div className="flex flex-col items-center gap-4 mb-8">
-          {show3D ? (
-            <div className="w-full h-[380px] rounded-2xl overflow-hidden border border-white/10">
-              <GachaPack3D
-                canOpen={room.status !== "waiting"}
-                resolveOpen={waitForReveal}
-                onOpened={() => setPlayed3DReveal(true)}
-                onError={(err: unknown) => setError(err instanceof Error ? err.message : "Couldn't open the pack right now.")}
-                idleSubtitle={room.status === "waiting" ? statusCaption : "Tap the pack once it's ready"}
-                openingLabel={statusCaption}
-              />
+          <div className="w-full -mb-4 relative z-10">
+            <PokerTable
+              seats={room.seats}
+              participants={detail.participants.map((p) => ({ ...p, emoji: emojiBySeat[p.seatNumber] }))}
+            />
+          </div>
+
+          {detail.myParticipant && room.status !== "settled" && (
+            <div className="flex flex-wrap justify-center gap-1.5 max-w-xs">
+              {AVATAR_EMOJIS.map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  onClick={() => pickEmoji(e)}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center text-lg transition-colors ${emojiBySeat[detail.myParticipant!.seatNumber] === e ? "bg-amber-500/30 ring-2 ring-amber-400" : "bg-white/5 hover:bg-white/10"}`}
+                >
+                  {e}
+                </button>
+              ))}
             </div>
-          ) : revealed ? (
-            room.nftMetadata?.image ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={room.nftMetadata.image} alt={room.nftMetadata.name ?? "Revealed card"} className="w-48 rounded-xl border border-white/10 shadow-lg" />
-            ) : (
-              <GachaPack width={180} face="back" />
-            )
-          ) : (
-            <GachaPack width={180} />
           )}
-          {room.rarity && (
+          {show3D ? (
+            room.status === "waiting" ? (
+              <GachaPack width={180} />
+            ) : (
+              <div className="w-full h-[380px] rounded-2xl overflow-hidden border border-white/10">
+                <GachaPack3D
+                  autoOpen={autoOpen}
+                  resolveOpen={waitForReveal}
+                  onOpened={(result) => { setRevealedCard(result); setPlayed3DReveal(true); }}
+                  onError={(err: unknown) => setError(err instanceof Error ? err.message : "Couldn't open the pack right now.")}
+                  idleSubtitle={autoOpen ? statusCaption : "Waiting for everyone to be ready…"}
+                  openingLabel={statusCaption}
+                />
+              </div>
+            )
+          ) : cardResult ? (
+            <GachaCard
+              width={220}
+              card={{
+                name: cardResult.nftMetadata?.name ?? "Mystery Card",
+                rarity: cardResult.rarity,
+                image: cardResult.nftMetadata?.image,
+              }}
+            />
+          ) : (
+            <GachaPack width={180} face="back" />
+          )}
+          {room.rarity && !show3D && (
             <span className={`text-sm font-semibold uppercase tracking-wide px-3 py-1 rounded-full border ${RARITY_STYLE[room.rarity] ?? RARITY_STYLE.common}`}>
               {room.rarity}
             </span>
@@ -333,6 +382,27 @@ export default function GachaRoomPage() {
           >
             {busy ? "Joining…" : `Join for $${room.entryUsdc.toFixed(2)}`}
           </button>
+        )}
+
+        {showReadyGate && (
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 text-center space-y-3">
+            {iAmReady ? (
+              <p className="text-slate-300 text-base">
+                Waiting for everyone to be ready — {lastReadyUpdate?.readyCount ?? 1}/{room.seatsFilled} ready. The reveal starts automatically once everyone is.
+              </p>
+            ) : (
+              <>
+                <p className="text-slate-300 text-base">Everyone marks ready, then the pack opens for the whole room at once.</p>
+                <button
+                  type="button"
+                  onClick={handleMarkReady}
+                  className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors"
+                >
+                  I&apos;m ready
+                </button>
+              </>
+            )}
+          </div>
         )}
 
         {room.status === "bidding" && detail.myParticipant && (

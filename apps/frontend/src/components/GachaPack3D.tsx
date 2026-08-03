@@ -1,32 +1,35 @@
 'use client';
-// GachaPack3D.tsx — the real 3D "rip" experience for Gacha Pooled Packs.
+// GachaPack3D.tsx — the 3D "rip" spectacle for Gacha Pooled Packs: idle float, shake, then the
+// pack bursts open with a confetti/gold particle burst. No click, no in-3D card reveal — see the
+// header comment further down for why both were removed. The actual revealed card is shown by
+// the separate, DOM-based <GachaCard> component once this fires onOpened; this component's job
+// ends at "the pack is now open."
 //
 // Ported from the design handoff at `/gacha/Gacha Pack 3D (standalone).html` (a plain-Three.js
 // prototype reusing Mystery Pack's own pouch/foil pack rig, reskinned with the Gacha pack art —
 // see gachaArt.ts) and re-architected to match this codebase's real production pattern for this
 // exact kind of component: apps/frontend/src/components/megapot/MegapotPack.tsx. Same shape —
 // refs for every prop (the mount effect below runs once; a stale closure over changing props
-// would silently freeze them), a phase state machine driven by requestAnimationFrame, and a
-// `resolveOpen` contract the host page controls.
+// would silently freeze them), a phase state machine driven by requestAnimationFrame.
 //
-// One real difference from MegapotPack: there, clicking the pack IS the purchase (resolveOpen
-// calls the real payment-verified POST /packs/open). Here, a Gacha room's pack purchase already
-// happened automatically server-side the moment the room filled — nobody clicks to pay. So
-// `resolveOpen` instead means "wait until the room's real state (via the room page's own
-// polling/websocket) has a revealed card," and clicking just triggers/plays that reveal once
-// it's ready — the shake phase's existing "keep shaking until pendingResult lands" behavior
-// (borrowed as-is from MegapotPack) turns out to be exactly the right primitive for that.
+// Two real differences from both the handoff and MegapotPack:
+//  1. No click-to-open. A Gacha room opens for every participant at once, once everyone marks
+//     themselves ready (see the room page's `mark_ready`/`room:all_ready` websocket flow) — there
+//     is no single "the person who taps this pack" the way Mystery Pack's own real-money click
+//     works. This component is driven entirely by the `autoOpen` prop instead: it flips true and
+//     the shake/burst sequence starts on its own, in sync for everyone watching.
+//  2. No in-3D card mesh/texture. Rendering a nicely swipeable, readable trading card inside a
+//     WebGL scene (readable text, real cover-cropped artwork, drag-to-flip) duplicates real work
+//     the DOM-based GachaCard component already does well with actual CSS 3D transforms — so the
+//     3D scene's job stops at "the pack burst open," and the parent page swaps in <GachaCard> for
+//     the actual reveal display right after onOpened fires.
 //
 // Trimmed relative to MegapotPack on purpose, to land this as a working first pass:
 //  - No adaptive frame-time quality monitor (always renders at full quality/clearcoat).
 //  - No sound effects (no Gacha-specific sound assets exist yet — see packSoundEffects.ts,
 //    which is Megapot-branded).
-// Both are pure polish layers, not core functionality — revisit once this is confirmed working.
 //
-//   <GachaPack3D
-//     resolveOpen={() => waitForRoomReveal(roomId)}
-//     onOpened={(r) => showReveal(r)}
-//   />
+//   <GachaPack3D autoOpen={allReady} resolveOpen={() => waitForRoomReveal(roomId)} onOpened={(r) => showCard(r)} />
 //
 // Client-only (touches window/WebGL) — import via next/dynamic with ssr:false.
 
@@ -36,7 +39,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { drawGachaPack, loadSvg, AW, AH } from './gachaArt';
 
-const GOLD_L = '#FFE9A8', GOLD_M = '#E8B23A', GOLD_D = '#9A6B12', INK = '#0B0B0F', PAPER = '#FFFDF7';
+const GOLD_L = '#FFE9A8', GOLD_M = '#E8B23A';
 
 export type GachaRarity = 'common' | 'uncommon' | 'rare' | 'epic';
 export interface GachaOpenResult {
@@ -44,9 +47,8 @@ export interface GachaOpenResult {
   rarity: GachaRarity;
 }
 
-const RARITY_LABEL: Record<GachaRarity, string> = { common: 'Common', uncommon: 'Uncommon', rare: 'Rare', epic: 'Epic' };
-
 export default function GachaPack3D({
+  autoOpen,
   resolveOpen,
   onOpened,
   onError,
@@ -57,10 +59,11 @@ export default function GachaPack3D({
   idleSubtitle = 'Pool up, then rip the pack together',
   openingLabel = 'Opening…',
   hintTop = 22,
-  canOpen = true,
-  showOpenAnotherButton = false,
   assets = {},
 }: {
+  /** Flips true once everyone watching is ready — starts the shake/burst sequence. Never reset
+   *  to false by this component; the parent unmounts/replaces it once onOpened fires. */
+  autoOpen: boolean;
   resolveOpen: () => Promise<GachaOpenResult>;
   onOpened?: (result: GachaOpenResult) => void;
   onError?: (err: unknown) => void;
@@ -71,21 +74,18 @@ export default function GachaPack3D({
   idleSubtitle?: string;
   openingLabel?: string;
   hintTop?: string | number;
-  /** Gates the click-to-open interaction — dragging/orbiting always still works. */
-  canOpen?: boolean;
-  showOpenAnotherButton?: boolean;
   assets?: { logoWhite?: string };
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const uiRef = useRef<{ lbl: HTMLDivElement | null; sub: HTMLDivElement | null; btn: HTMLButtonElement | null }>({ lbl: null, sub: null, btn: null });
+  const uiRef = useRef<{ lbl: HTMLDivElement | null; sub: HTMLDivElement | null }>({ lbl: null, sub: null });
   const resolveOpenRef = useRef(resolveOpen);
   const onOpenedRef = useRef(onOpened);
   const onErrorRef = useRef(onError);
-  const canOpenRef = useRef(canOpen);
+  const autoOpenRef = useRef(autoOpen);
   useEffect(() => { resolveOpenRef.current = resolveOpen; }, [resolveOpen]);
   useEffect(() => { onOpenedRef.current = onOpened; }, [onOpened]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
-  useEffect(() => { canOpenRef.current = canOpen; }, [canOpen]);
+  useEffect(() => { autoOpenRef.current = autoOpen; }, [autoOpen]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -156,7 +156,6 @@ export default function GachaPack3D({
       x.lineTo(760, 64); x.closePath(); x.fill();
       return tex(c);
     }
-    // Subtle foil creases — same bump map baked once and reused across every foil-material face.
     function crinkle() {
       const S = 1024, c = cv(S, S), x = c.getContext('2d')!;
       x.fillStyle = '#808080'; x.fillRect(0, 0, S, S);
@@ -174,27 +173,6 @@ export default function GachaPack3D({
         g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.45, 'rgba(255,255,255,.5)');
         g.addColorStop(0.55, 'rgba(0,0,0,.46)'); g.addColorStop(1, 'rgba(0,0,0,0)');
         x.fillStyle = g; x.fillRect(-len / 2, -9, len, 18); x.restore();
-      }
-      return tex(c);
-    }
-
-    /* card back (fallback, or shown while the real image is still loading) */
-    function cardFallbackTex(rarity: GachaRarity, name?: string) {
-      const W2 = 500, H2 = 700, c = cv(W2, H2), x = c.getContext('2d')!;
-      const g = x.createLinearGradient(0, 0, W2, H2);
-      g.addColorStop(0, GOLD_D); g.addColorStop(0.5, GOLD_M); g.addColorStop(1, GOLD_L);
-      x.fillStyle = g; x.fillRect(0, 0, W2, H2);
-      x.fillStyle = INK; x.globalAlpha = 0.88; x.fillRect(18, 18, W2 - 36, H2 - 36); x.globalAlpha = 1;
-      x.textAlign = 'center';
-      if (logoWhiteImg) {
-        const w = 160, h = w * logoWhiteImg.height / logoWhiteImg.width;
-        x.drawImage(logoWhiteImg, (W2 - w) / 2, 60, w, h);
-      }
-      x.fillStyle = g; x.font = `600 40px "${displayFont}"`;
-      x.fillText(RARITY_LABEL[rarity].toUpperCase(), W2 / 2, H2 / 2 - 10);
-      if (name) {
-        x.fillStyle = PAPER; x.font = `400 24px "${bodyFont}"`;
-        x.fillText(name, W2 / 2, H2 / 2 + 34);
       }
       return tex(c);
     }
@@ -254,18 +232,6 @@ export default function GachaPack3D({
     const topHalf = makeHalf('top'), botHalf = makeHalf('bot');
     packGroup.add(topHalf, botHalf);
 
-    /* revealed card — standard trading-card aspect (2.5:3.5), not the Mystery Pack ticket's */
-    const CARD_W = 2.1, CARD_H = (CARD_W * 3.5) / 2.5;
-    const cardGroup = new THREE.Group(); cardGroup.visible = false; scene.add(cardGroup);
-    const cardFrontMat = new THREE.MeshPhysicalMaterial({ roughness: 0.4, metalness: 0.05, clearcoat: 0.5 });
-    const cardBackMat = new THREE.MeshPhysicalMaterial({ color: 0x1a1a22, roughness: 0.5 });
-    const cardEdgeMat = new THREE.MeshStandardMaterial({ color: 0xe8e4d8, roughness: 0.8 });
-    const card = new THREE.Mesh(
-      new THREE.BoxGeometry(CARD_W, CARD_H, 0.035, 2, 2, 1),
-      [cardEdgeMat, cardEdgeMat, cardEdgeMat, cardEdgeMat, cardFrontMat, cardBackMat],
-    );
-    card.castShadow = true; cardGroup.add(card);
-
     /* confetti */
     const P = 150, pGeo = new THREE.BufferGeometry();
     const pPos = new Float32Array(P * 3), pCol = new Float32Array(P * 3);
@@ -282,61 +248,26 @@ export default function GachaPack3D({
     parts.visible = false; parts.position.y = 0.5; scene.add(parts);
 
     /* ---------- state ---------- */
-    let phase: 'idle' | 'shake' | 'burst' | 'reveal' | 'done' = 'idle';
+    let phase: 'idle' | 'shake' | 'burst' | 'done' = 'idle';
     let t0 = 0, raf = 0;
     const clock = new THREE.Clock();
     // Same "keep shaking until it lands" pattern as MegapotPack — except here resolveOpen isn't
     // starting a purchase, it's waiting for the room's ALREADY-IN-FLIGHT purchase/open to finish
-    // (see the host page's implementation), so a slower shake-through is just as correct.
+    // (see the room page's implementation), so a slower shake-through is just as correct.
     let pendingResult: GachaOpenResult | null = null;
     let pendingError: unknown = null;
     const ui = uiRef.current;
 
-    const rayc = new THREE.Raycaster(), ptr = new THREE.Vector2();
-    function onClick(ev: MouseEvent) {
-      if (phase !== 'idle' || !canOpenRef.current) return;
-      const r = renderer.domElement.getBoundingClientRect();
-      ptr.x = ((ev.clientX - r.left) / r.width) * 2 - 1;
-      ptr.y = -((ev.clientY - r.top) / r.height) * 2 + 1;
-      rayc.setFromCamera(ptr, camera);
-      if (rayc.intersectObjects([topHalf, botHalf], true).length) {
-        phase = 'shake'; t0 = clock.getElapsedTime();
-        pendingResult = null; pendingError = null;
-        if (ui.lbl) ui.lbl.textContent = openingLabel;
-        if (ui.sub) ui.sub.textContent = 'Good luck';
-        resolveOpenRef.current()
-          .then((result) => {
-            pendingResult = result;
-            const image = result.nftMetadata?.image;
-            if (cardFrontMat.map) cardFrontMat.map.dispose();
-            cardFrontMat.map = cardFallbackTex(result.rarity, result.nftMetadata?.name);
-            cardFrontMat.needsUpdate = true;
-            if (image) {
-              new THREE.TextureLoader().setCrossOrigin('anonymous').load(image, (loaded) => {
-                loaded.colorSpace = THREE.SRGBColorSpace;
-                if (cardFrontMat.map) cardFrontMat.map.dispose();
-                cardFrontMat.map = loaded; cardFrontMat.needsUpdate = true;
-              });
-            }
-          })
-          .catch((err) => { pendingError = err ?? new Error('Failed to open pack'); });
-      }
+    function startOpen() {
+      if (phase !== 'idle') return;
+      phase = 'shake'; t0 = clock.getElapsedTime();
+      pendingResult = null; pendingError = null;
+      if (ui.lbl) ui.lbl.textContent = openingLabel;
+      if (ui.sub) ui.sub.textContent = '';
+      resolveOpenRef.current()
+        .then((result) => { pendingResult = result; })
+        .catch((err) => { pendingError = err ?? new Error('Failed to open pack'); });
     }
-    renderer.domElement.addEventListener('click', onClick);
-
-    function reset() {
-      phase = 'idle';
-      if (ui.btn) ui.btn.style.visibility = 'hidden';
-      cardGroup.visible = false; parts.visible = false;
-      topHalf.position.set(0, PH / 4, 0); topHalf.rotation.set(0, 0, 0);
-      botHalf.position.set(0, -PH / 4, 0); botHalf.rotation.set(0, 0, 0);
-      (topHalf.material as THREE.Material[]).forEach((mt) => { mt.opacity = 1; mt.transparent = false; });
-      (botHalf.material as THREE.Material[]).forEach((mt) => { mt.opacity = 1; mt.transparent = false; });
-      packRig.visible = true; packGroup.visible = true; glowLight.intensity = 0;
-      if (ui.lbl) ui.lbl.textContent = idleLabel;
-      if (ui.sub) ui.sub.textContent = idleSubtitle;
-    }
-    ui.btn?.addEventListener('click', reset);
 
     /* ---------- loop ---------- */
     const ease = (t: number) => 1 - Math.pow(1 - t, 3);
@@ -347,6 +278,7 @@ export default function GachaPack3D({
         packGroup.position.y = Math.sin(t * 1.3) * 0.13;
         packGroup.rotation.y = Math.sin(t * 0.55) * 0.34;
         packGroup.rotation.z = Math.sin(t * 0.8) * 0.035;
+        if (autoOpenRef.current) startOpen();
       } else if (phase === 'shake') {
         const k = Math.min(e / 1.2, 1);
         packGroup.position.x = (Math.random() - 0.5) * 0.14 * k;
@@ -356,14 +288,14 @@ export default function GachaPack3D({
         glowLight.intensity = k * 70;
         if (pendingError) {
           onErrorRef.current?.(pendingError);
-          reset();
+          phase = 'done';
         } else if (e > 1.2 && pendingResult) {
           phase = 'burst'; t0 = t; parts.visible = true;
           const p = parts.geometry.attributes.position as THREE.BufferAttribute;
           for (let i = 0; i < P; i++) { p.array[i * 3] = 0; p.array[i * 3 + 1] = 0; p.array[i * 3 + 2] = 0; }
-          p.needsUpdate = true; cardGroup.visible = true;
+          p.needsUpdate = true;
         }
-      } else if (phase === 'burst' || phase === 'reveal') {
+      } else if (phase === 'burst') {
         const k = Math.min(e / 0.85, 1), q = ease(k);
         topHalf.position.y = PH / 4 + q * 3.1; topHalf.rotation.x = -q * 1.5; topHalf.rotation.z = -q * 0.5;
         botHalf.position.y = -PH / 4 - q * 3.1; botHalf.rotation.x = q * 1.5; botHalf.rotation.z = q * 0.5;
@@ -378,24 +310,12 @@ export default function GachaPack3D({
         }
         p.needsUpdate = true;
         (parts.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - e / 1.5);
-        const rk = Math.min(Math.max((e - 0.15) / 1.15, 0), 1), rq = ease(rk);
-        cardGroup.position.y = -1.2 + rq * 1.7;
-        cardGroup.rotation.y = (1 - rq) * Math.PI * 2.4;
-        cardGroup.scale.setScalar(0.5 + rq * 0.36);
         glowLight.intensity = 70 * (1 - k * 0.55);
-        if (k >= 1 && phase === 'burst') phase = 'reveal';
-        if (e > 1.5 && phase === 'reveal' && pendingResult) {
+        if (e > 1.5 && pendingResult) {
           phase = 'done';
           packRig.visible = false; parts.visible = false;
-          if (ui.lbl) ui.lbl.textContent = RARITY_LABEL[pendingResult.rarity];
-          if (ui.sub) ui.sub.textContent = pendingResult.nftMetadata?.name ?? '';
-          if (ui.btn) ui.btn.style.visibility = 'visible';
           onOpenedRef.current?.(pendingResult);
         }
-      } else {
-        cardGroup.rotation.y = Math.sin(t * 0.7) * 0.42;
-        cardGroup.position.y = 0.5 + Math.sin(t * 1.2) * 0.07;
-        glowLight.intensity = 22 + Math.sin(t * 2) * 4;
       }
       controls.update();
       renderer.render(scene, camera);
@@ -425,8 +345,6 @@ export default function GachaPack3D({
     return () => {
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();
-      renderer.domElement.removeEventListener('click', onClick);
-      ui.btn?.removeEventListener('click', reset);
       controls.dispose();
       pmrem.dispose();
       scene.traverse((o) => {
@@ -445,7 +363,7 @@ export default function GachaPack3D({
     <div className={className} style={{ position: 'relative', width: '100%', height: '100%', background: '#111114', overflow: 'hidden' }}>
       <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
       <div style={{ position: 'absolute', top: hintTop, left: 0, right: 0, textAlign: 'center', fontSize: 14, color: '#6f6c66', letterSpacing: '.14em', textTransform: 'uppercase', pointerEvents: 'none', zIndex: 2 }}>
-        drag to orbit · click the pack to open
+        drag to orbit
       </div>
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 8, textAlign: 'center', pointerEvents: 'none', zIndex: 2 }}>
         <div ref={(el) => { uiRef.current.lbl = el; }}
@@ -456,16 +374,6 @@ export default function GachaPack3D({
           style={{ fontFamily: `'${bodyFont}', sans-serif`, fontSize: 16, color: '#c9c5be', marginTop: 6, textShadow: '0 2px 14px rgba(8,6,10,.95)' }}>
           {idleSubtitle}
         </div>
-        <button ref={(el) => { uiRef.current.btn = el; }}
-          style={{
-            pointerEvents: 'auto', fontFamily: `'${displayFont}', sans-serif`, fontWeight: 500, fontSize: 17,
-            padding: '15px 32px', border: 'none', borderRadius: 999, cursor: 'pointer',
-            background: 'linear-gradient(90deg,#E8B23A,#FFE9A8)', color: '#0B0B0F', marginTop: 10,
-            visibility: 'hidden',
-            display: showOpenAnotherButton ? undefined : 'none',
-          }}>
-          Open another
-        </button>
       </div>
     </div>
   );
