@@ -136,7 +136,7 @@ export class ClaimsService {
    * Create a new payment claim
    */
   async create(dto: CreateClaimDto): Promise<{ id: string; short_id: string; link: string }> {
-    const { amount, toSel, recipient, userId, cluster } = dto;
+    const { amount, toSel, recipient, userId, cluster, isPrivate = false } = dto;
 
     if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
       throw new BadRequestException('Missing required fields');
@@ -166,6 +166,7 @@ export class ClaimsService {
         to_chain: 'solana',
         to_token: 'USDC',
         is_devnet: isDevnet,
+        is_private: isPrivate,
         short_id: shortId,
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
@@ -3052,12 +3053,15 @@ export class ClaimsService {
       updateData.is_private = true;
     }
 
-    // The moment a burner sweep actually completes we know definitively whether that specific
-    // delivery leg was private or public — safe to write is_private in either direction here
-    // (unlike the intent-only flag above) because this only ever fires from the sweep-completion
-    // call sites confirming genuine, completed on-chain delivery, not an earlier/weaker signal.
-    if (extra?.recipientSwept === true && extra?.deliveredPrivately !== undefined) {
-      updateData.is_private = extra.deliveredPrivately;
+    // The moment a burner sweep completes we know whether THAT delivery leg was private or
+    // public — but that's a separate leg from the sender's own funding leg above, so it must
+    // never downgrade an already-true is_private: a payment the sender funded privately via
+    // MagicBlock stays private even if the recipient's own sweep choice was public (confirmed
+    // real-world case 2026-08-03 — sender's on-chain tx was a genuine MagicBlock Ephemeral
+    // private transfer, but the recipient's public sweep silently flipped is_private back to
+    // false). Only ever promote to true here, same rule as the block above.
+    if (extra?.recipientSwept === true && extra?.deliveredPrivately === true) {
+      updateData.is_private = true;
     }
 
     // from_chain / from_token stored on payments; legacy claims fallback uses paid_with_chain
