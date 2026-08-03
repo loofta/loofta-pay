@@ -22,7 +22,7 @@ import bs58 from "bs58";
 import { ChevronLeft } from "lucide-react";
 import GachaPack from "@/components/GachaPack";
 import GachaCard from "@/components/GachaCard";
-import PokerTable, { AVATAR_EMOJIS } from "@/components/PokerTable";
+import PokerTable from "@/components/PokerTable";
 import type { GachaOpenResult, GachaRarity } from "@/components/GachaPack3D";
 import { useGachaRoomSocket } from "@/hooks/useGachaRoomSocket";
 
@@ -321,23 +321,9 @@ export default function GachaRoomPage() {
             <PokerTable
               seats={room.seats}
               participants={detail.participants.map((p) => ({ ...p, emoji: emojiBySeat[p.seatNumber] }))}
+              onPickEmoji={detail.myParticipant && room.status !== "settled" ? pickEmoji : undefined}
             />
           </div>
-
-          {detail.myParticipant && room.status !== "settled" && (
-            <div className="flex flex-wrap justify-center gap-1.5 max-w-xs">
-              {AVATAR_EMOJIS.map((e) => (
-                <button
-                  key={e}
-                  type="button"
-                  onClick={() => pickEmoji(e)}
-                  className={`w-9 h-9 rounded-full flex items-center justify-center text-lg transition-colors ${emojiBySeat[detail.myParticipant!.seatNumber] === e ? "bg-amber-500/30 ring-2 ring-amber-400" : "bg-white/5 hover:bg-white/10"}`}
-                >
-                  {e}
-                </button>
-              ))}
-            </div>
-          )}
           {show3D ? (
             room.status === "waiting" ? (
               <GachaPack width={180} />

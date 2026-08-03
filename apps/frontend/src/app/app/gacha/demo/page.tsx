@@ -19,7 +19,7 @@ import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import GachaPack from "@/components/GachaPack";
 import GachaCard from "@/components/GachaCard";
-import PokerTable, { AVATAR_EMOJIS } from "@/components/PokerTable";
+import PokerTable from "@/components/PokerTable";
 import type { GachaOpenResult, GachaRarity } from "@/components/GachaPack3D";
 
 const GachaPack3D = dynamic(() => import("@/components/GachaPack3D"), { ssr: false });
@@ -203,20 +203,7 @@ export default function GachaDemoPage() {
 
         <div className="flex flex-col items-center gap-4 mb-8">
           <div className="w-full -mb-4 relative z-10">
-            <PokerTable seats={SEATS} participants={participants} />
-          </div>
-
-          <div className="flex flex-wrap justify-center gap-1.5 max-w-xs">
-            {AVATAR_EMOJIS.map((e) => (
-              <button
-                key={e}
-                type="button"
-                onClick={() => setMyEmoji(e)}
-                className={`w-9 h-9 rounded-full flex items-center justify-center text-lg transition-colors ${myEmoji === e ? "bg-amber-500/30 ring-2 ring-amber-400" : "bg-white/5 hover:bg-white/10"}`}
-              >
-                {e}
-              </button>
-            ))}
+            <PokerTable seats={SEATS} participants={participants} onPickEmoji={setMyEmoji} />
           </div>
 
           {status === "waiting" ? (

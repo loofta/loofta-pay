@@ -4,12 +4,14 @@
 // around the pack" rather than a dry seat counter.
 //
 // Compact and label-free by default — usernames don't sit permanently under each bubble (that
-// breaks down fast at 10 seats on a narrow phone); tap/click a bubble to reveal that person's
-// username in a small floating tag for a couple seconds instead.
+// breaks down fast at 10 seats on a narrow phone); tap/click ANOTHER seat's bubble to reveal
+// their username in a small floating tag for a couple seconds. Tap/click YOUR OWN bubble instead
+// opens a small emoji picker right there, so choosing your avatar is discoverable without a
+// permanently-visible picker row taking up space below the table.
 //
-// Each seat's avatar is either the emoji that participant actually picked (see the emoji picker
-// wired into the room/demo pages — `emoji` prop below) or, until they pick one, a deterministic
-// fallback hashed from their username/seat so it's never blank.
+// Each seat's avatar is either the emoji that participant actually picked (see onPickEmoji) or,
+// until they pick one, a deterministic fallback hashed from their username/seat so it's never
+// blank.
 
 import { useEffect, useRef, useState } from 'react';
 
@@ -22,7 +24,9 @@ export interface TableSeat {
 }
 
 export const AVATAR_EMOJIS = ['🦊', '🐼', '🐨', '🦁', '🐯', '🐸', '🐙', '🦉', '🐺', '🐵', '🐰', '🐹', '🦝', '🐻', '🐧', '🦄'];
-const BG_COLORS = ['#F59E0B', '#10B981', '#8B5CF6', '#EC4899', '#3B82F6', '#EF4444', '#14B8A6', '#F97316'];
+// 10 entries — matches the largest room config (10 seats) so assigning by seat number (below)
+// can never repeat a color within one room, unlike hashing each person's seed independently.
+const BG_COLORS = ['#F59E0B', '#10B981', '#8B5CF6', '#EC4899', '#3B82F6', '#EF4444', '#14B8A6', '#F97316', '#84CC16', '#0EA5E9'];
 
 function hashSeed(seed: string): number {
   let h = 0;
@@ -30,22 +34,44 @@ function hashSeed(seed: string): number {
   return h;
 }
 
-function fallbackAvatar(seed: string) {
-  const h = hashSeed(seed);
-  return { emoji: AVATAR_EMOJIS[h % AVATAR_EMOJIS.length], bg: BG_COLORS[Math.floor(h / AVATAR_EMOJIS.length) % BG_COLORS.length] };
+function fallbackEmoji(seed: string): string {
+  return AVATAR_EMOJIS[hashSeed(seed) % AVATAR_EMOJIS.length];
 }
-function bgFor(seed: string) {
-  return BG_COLORS[Math.floor(hashSeed(seed) / 7) % BG_COLORS.length];
+/** Assigned by seat number, not hashed from username — guarantees every seat in the room gets a
+ *  visually distinct color (a hash-per-person approach can and did collide once seats > ~4). */
+function bgForSeat(seatNumber: number): string {
+  return BG_COLORS[(seatNumber - 1) % BG_COLORS.length];
 }
 
 /** seats is only used to pick a size that still fits ~10 across a narrow phone without
  *  overlapping too much — the arc itself is spaced across however many participants there
  *  actually are, not the room's full seat count (an arc stretched to fit 2 people into a 10-seat
  *  span would just look sparse/broken). */
-export default function PokerTable({ seats, participants }: { seats: number; participants: TableSeat[] }) {
-  const ordered = [...participants].sort((a, b) => a.seatNumber - b.seatNumber);
+export default function PokerTable({
+  seats,
+  participants,
+  onPickEmoji,
+}: {
+  seats: number;
+  participants: TableSeat[];
+  /** Present -> tapping your own bubble opens an emoji picker instead of doing nothing. */
+  onPickEmoji?: (emoji: string) => void;
+}) {
+  // Everyone else stays sorted by seat number, but "me" is pulled out and reinserted at the
+  // middle index — that's the arc's highest/most-central point (see the bulge math below) — so
+  // you're always front and center regardless of which seat you actually landed in.
+  const sorted = [...participants].sort((a, b) => a.seatNumber - b.seatNumber);
+  const meIndex = sorted.findIndex((p) => p.isMe);
+  let ordered = sorted;
+  if (meIndex !== -1) {
+    const me = sorted[meIndex];
+    const others = sorted.filter((_, i) => i !== meIndex);
+    const mid = Math.floor(others.length / 2);
+    ordered = [...others.slice(0, mid), me, ...others.slice(mid)];
+  }
   const n = ordered.length;
   const [revealedSeat, setRevealedSeat] = useState<number | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (hideTimer.current) clearTimeout(hideTimer.current); }, []);
 
@@ -68,23 +94,37 @@ export default function PokerTable({ seats, participants }: { seats: number; par
         const bulge = Math.sin(t * Math.PI); // 0 at the ends, 1 in the middle
         const topPct = (1 - bulge) * 55 + 4; // dome shape: middle sits highest, ends sit lowest
         const seed = seat.username ?? `seat-${seat.seatNumber}`;
-        const emoji = seat.emoji ?? fallbackAvatar(seed).emoji;
-        const bg = bgFor(seed);
+        const emoji = seat.emoji ?? fallbackEmoji(seed);
+        const bg = bgForSeat(seat.seatNumber);
         return (
           <div
             key={seat.seatNumber}
             className="absolute"
             style={{ left: `${leftPct}%`, top: `${topPct}%`, transform: 'translate(-50%,-50%)', zIndex: seat.isMe ? 50 : 10 + i }}
           >
-            {revealedSeat === seat.seatNumber && (
+            {revealedSeat === seat.seatNumber && !seat.isMe && (
               <div className="absolute left-1/2 bottom-full mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/85 border border-white/10 px-2.5 py-1 text-sm text-slate-100">
-                {seat.isMe ? 'You' : seat.username ?? `Seat ${seat.seatNumber}`}
+                {seat.username ?? `Seat ${seat.seatNumber}`}
+              </div>
+            )}
+            {seat.isMe && pickerOpen && onPickEmoji && (
+              <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 w-[200px] flex flex-wrap justify-center gap-1 rounded-2xl bg-black/90 border border-white/10 p-2">
+                {AVATAR_EMOJIS.map((e) => (
+                  <button
+                    key={e}
+                    type="button"
+                    onClick={() => { onPickEmoji(e); setPickerOpen(false); }}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-base transition-colors ${emoji === e ? "bg-amber-500/30 ring-2 ring-amber-400" : "bg-white/5 hover:bg-white/10"}`}
+                  >
+                    {e}
+                  </button>
+                ))}
               </div>
             )}
             <button
               type="button"
-              onClick={() => reveal(seat.seatNumber)}
-              aria-label={seat.isMe ? 'You' : seat.username ?? `Seat ${seat.seatNumber}`}
+              onClick={() => (seat.isMe && onPickEmoji ? setPickerOpen((o) => !o) : reveal(seat.seatNumber))}
+              aria-label={seat.isMe ? 'Pick your emoji' : seat.username ?? `Seat ${seat.seatNumber}`}
               className={`rounded-full flex items-center justify-center ring-2 shadow-md cursor-pointer ${seat.isMe ? 'ring-amber-400' : 'ring-white/20'}`}
               style={{ width: size, height: size, background: bg, fontSize: compact ? 15 : 18 }}
             >
