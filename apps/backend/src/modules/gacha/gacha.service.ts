@@ -20,12 +20,14 @@ import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
-import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc } from '@/common/magicblock-private-transfer';
 import { CollectorCryptClient, CollectorCryptPackType, NftMetadata, PackRarityTier } from './collectorcrypt.client';
 import { GACHA_EVENTS } from './gacha.events';
 
-const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+// Gacha Pooled Packs is devnet-only for now (Collector Crypt pack source, treasury payments, and
+// MagicBlock private payouts all target devnet) — regardless of the app-wide SOLANA_CLUSTER/
+// SOLANA_RPC_URL, which stay on mainnet for the rest of the app (lottery, claims, etc.).
+const DEFAULT_DEVNET_USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
 const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 
 // Prefix a room/bid id so verifyOnChainMemo can tell a Gacha entry/bid payment apart from any
@@ -69,6 +71,7 @@ export class GachaService {
 
   private configsCache: { configs: RoomConfigPublic[]; loadedAt: number } | null = null;
   private readonly CONFIGS_CACHE_MS = 10_000;
+  private readonly usdcMint: PublicKey;
 
   constructor(
     private readonly supabase: SupabaseService,
@@ -76,16 +79,19 @@ export class GachaService {
     private readonly usersService: UsersService,
     private readonly collectorCrypt: CollectorCryptClient,
     private readonly events: EventEmitter2,
-  ) {}
+  ) {
+    this.usdcMint = new PublicKey(this.config.get<string>('SOLANA_USDC_MINT_DEVNET') || DEFAULT_DEVNET_USDC_MINT);
+  }
 
-  // ── Solana plumbing (same pattern as PackService — see pack.service.ts) ──────────────
+  // ── Solana plumbing (same pattern as PackService — see pack.service.ts, EXCEPT this module is
+  // forced to devnet regardless of the app-wide cluster — see DEFAULT_DEVNET_USDC_MINT comment) ──
 
   private async getSolanaConnection(): Promise<Connection> {
     const rpc =
-      this.config.get<string>('SOLANA_RPC_URL') ||
+      this.config.get<string>('SOLANA_DEVNET_RPC_URL') ||
       (this.config.get<string>('HELIUS_API_KEY')
-        ? `https://mainnet.helius-rpc.com/?api-key=${this.config.get('HELIUS_API_KEY')}`
-        : 'https://api.mainnet-beta.solana.com');
+        ? `https://devnet.helius-rpc.com/?api-key=${this.config.get('HELIUS_API_KEY')}`
+        : 'https://api.devnet.solana.com');
     return new Connection(rpc, 'confirmed');
   }
 
@@ -234,12 +240,12 @@ export class GachaService {
     const treasuryKeypair = await this.getTreasuryKeypair();
     const conn = await this.getSolanaConnection();
     const fromPubkey = new PublicKey(userSolanaAddress);
-    const fromAta = await getAssociatedTokenAddress(USDC_MINT, fromPubkey);
-    const toAta = await getAssociatedTokenAddress(USDC_MINT, treasuryKeypair.publicKey);
+    const fromAta = await getAssociatedTokenAddress(this.usdcMint, fromPubkey);
+    const toAta = await getAssociatedTokenAddress(this.usdcMint, treasuryKeypair.publicKey);
 
     const instructions: TransactionInstruction[] = [
       new TransactionInstruction({ programId: MEMO_PROGRAM_ID, keys: [], data: Buffer.from(`${ROOM_MEMO_PREFIX}${room.id}`, 'utf8') }),
-      createAssociatedTokenAccountIdempotentInstruction(treasuryKeypair.publicKey, toAta, treasuryKeypair.publicKey, USDC_MINT),
+      createAssociatedTokenAccountIdempotentInstruction(treasuryKeypair.publicKey, toAta, treasuryKeypair.publicKey, this.usdcMint),
       createTransferInstruction(fromAta, toAta, fromPubkey, Math.round(cfg.entryUsdc * 1_000_000)),
     ];
 
@@ -279,7 +285,7 @@ export class GachaService {
   /** Debits the account that lost the most USDC in `tx` and returns its owner — same technique
    *  PackService.findUsdcDebitOwner uses to identify a payment's real sender. */
   private findUsdcDebitOwner(tx: NonNullable<Awaited<ReturnType<Connection['getTransaction']>>>): { owner: string | null; amount: bigint } {
-    const usdcMint = USDC_MINT.toBase58();
+    const usdcMint = this.usdcMint.toBase58();
     const preByIdx = new Map((tx.meta?.preTokenBalances ?? []).map((b) => [b.accountIndex, b]));
     const postByIdx = new Map((tx.meta?.postTokenBalances ?? []).map((b) => [b.accountIndex, b]));
     let debitOwner: string | null = null;
@@ -318,7 +324,7 @@ export class GachaService {
   private async verifyOnChainPayment(txHash: string, expectedUsdc: number, expectedSender: string, expectedMemo: string, retries = 5): Promise<void> {
     const treasury = await this.getTreasuryAddress();
     const conn = await this.getSolanaConnection();
-    const usdcMint = USDC_MINT.toBase58();
+    const usdcMint = this.usdcMint.toBase58();
 
     for (let attempt = 0; ; attempt++) {
       const tx = await conn.getTransaction(txHash, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
@@ -559,12 +565,12 @@ export class GachaService {
     const treasuryKeypair = await this.getTreasuryKeypair();
     const conn = await this.getSolanaConnection();
     const fromPubkey = new PublicKey(userSolanaAddress);
-    const fromAta = await getAssociatedTokenAddress(USDC_MINT, fromPubkey);
-    const toAta = await getAssociatedTokenAddress(USDC_MINT, treasuryKeypair.publicKey);
+    const fromAta = await getAssociatedTokenAddress(this.usdcMint, fromPubkey);
+    const toAta = await getAssociatedTokenAddress(this.usdcMint, treasuryKeypair.publicKey);
 
     const instructions: TransactionInstruction[] = [
       new TransactionInstruction({ programId: MEMO_PROGRAM_ID, keys: [], data: Buffer.from(`${BID_MEMO_PREFIX}${bid.id}`, 'utf8') }),
-      createAssociatedTokenAccountIdempotentInstruction(treasuryKeypair.publicKey, toAta, treasuryKeypair.publicKey, USDC_MINT),
+      createAssociatedTokenAccountIdempotentInstruction(treasuryKeypair.publicKey, toAta, treasuryKeypair.publicKey, this.usdcMint),
       createTransferInstruction(fromAta, toAta, fromPubkey, Math.round(Number(bid.amount_usdc) * 1_000_000)),
     ];
     const { blockhash } = await conn.getLatestBlockhash();
@@ -660,7 +666,7 @@ export class GachaService {
   }
 
   private async getTreasuryUsdcUnits(conn: Connection, treasury: PublicKey): Promise<bigint> {
-    const ata = await getAssociatedTokenAddress(USDC_MINT, treasury);
+    const ata = await getAssociatedTokenAddress(this.usdcMint, treasury);
     try {
       const bal = await conn.getTokenAccountBalance(ata);
       return BigInt(bal.value.amount);
@@ -746,14 +752,14 @@ export class GachaService {
     const treasuryKeypair = await this.getTreasuryKeypair();
     const conn = await this.getSolanaConnection();
     const toPubkey = new PublicKey(toAddress);
-    const fromAta = await getAssociatedTokenAddress(USDC_MINT, treasuryKeypair.publicKey);
-    const toAta = await getAssociatedTokenAddress(USDC_MINT, toPubkey);
+    const fromAta = await getAssociatedTokenAddress(this.usdcMint, treasuryKeypair.publicKey);
+    const toAta = await getAssociatedTokenAddress(this.usdcMint, toPubkey);
 
     const tx = new Transaction();
     if (!(await tokenAccountExists(conn, toAta))) {
-      const allowed = await guardAtaSponsorship(this.supabase, toAddress, USDC_MINT.toBase58(), `gacha-payout:${toAddress}`);
+      const allowed = await guardAtaSponsorship(this.supabase, toAddress, this.usdcMint.toBase58(), `gacha-payout:${toAddress}`);
       if (!allowed) throw new BadRequestException('This wallet already received a sponsored token account once before and closed it — free account creation is blocked to prevent abuse');
-      tx.add(createAssociatedTokenAccountInstruction(treasuryKeypair.publicKey, toAta, toPubkey, USDC_MINT));
+      tx.add(createAssociatedTokenAccountInstruction(treasuryKeypair.publicKey, toAta, toPubkey, this.usdcMint));
     }
     tx.add(createTransferInstruction(fromAta, toAta, treasuryKeypair.publicKey, Math.round(amountUsdc * 1_000_000)));
     tx.feePayer = treasuryKeypair.publicKey;
@@ -766,14 +772,14 @@ export class GachaService {
   private async sendPrivatePayout(toAddress: string, amountUsdc: number): Promise<string> {
     const treasuryKeypair = await this.getTreasuryKeypair();
     const conn = await this.getSolanaConnection();
-    const cluster = isSolanaDevnetFromConfig(this.config) ? 'devnet' : 'mainnet';
+    const cluster = 'devnet'; // Gacha Pooled Packs is devnet-only — see getSolanaConnection
     const relayFeeUnits = Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000);
     const transferUnits = Math.round(amountUsdc * 1_000_000) - relayFeeUnits; // exact-in: fee comes out of the payout, same as claims.service.ts's "claim privately" branch
 
     const txResponse = await requestMagicblockPrivateTransfer({
       from: treasuryKeypair.publicKey.toBase58(),
       to: toAddress,
-      mint: USDC_MINT.toBase58(),
+      mint: this.usdcMint.toBase58(),
       amount: transferUnits,
       cluster,
       exactOut: false,
