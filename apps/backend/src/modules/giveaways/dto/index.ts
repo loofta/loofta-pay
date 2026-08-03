@@ -4,3 +4,4 @@ export { SubmitTaskCompletionDto } from './submit-task-completion.dto';
 export { ReviewTaskCompletionDto } from './review-task-completion.dto';
 export { SelectWinnersDto } from './select-winners.dto';
 export { SetPayoutChoiceDto } from './set-payout-choice.dto';
+export { BuildFundingPrivateTransferDto } from './build-funding-private-transfer.dto';

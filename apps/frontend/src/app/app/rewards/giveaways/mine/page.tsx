@@ -125,7 +125,7 @@ export default function MyGiveawaysPage() {
                   </p>
 
                   {g.status === "REJECTED" && g.rejection_reason && (
-                    <p className="text-sm text-red-400 mb-3">Reason: {g.rejection_reason}</p>
+                    <p className="text-base text-red-400 mb-3">Reason: {g.rejection_reason}</p>
                   )}
 
                   {g.status === "PENDING_FUNDING" ? (

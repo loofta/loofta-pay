@@ -8,8 +8,11 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/components/ui/use-toast";
 import { Input } from "@/components/ui/input";
+import { GradientActionButton } from "@/components/ui/GradientActionButton";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+// Money-highlight accent (prize amounts), matching the browse-list card — kept for that one use,
+// never for buttons/badges, which use this app's established gradient/semantic tokens instead.
 const ACCENT = "#FB7185";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -208,7 +211,7 @@ export default function GiveawayDetailPage({ params }: { params: Promise<{ id: s
             <span>Back to giveaways</span>
           </Link>
           {isOwner && (
-            <Link href={`/rewards/giveaways/${id}/manage`} className="text-sm font-medium text-slate-300 hover:text-white transition-colors">
+            <Link href={`/rewards/giveaways/${id}/manage`} className="text-base font-medium text-slate-300 hover:text-white transition-colors">
               Manage →
             </Link>
           )}
@@ -231,58 +234,61 @@ export default function GiveawayDetailPage({ params }: { params: Promise<{ id: s
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-5">
             <div className="flex items-end justify-between mb-1">
-              <p className="text-sm font-semibold uppercase tracking-wider" style={{ color: `${ACCENT}99` }}>Prize per winner</p>
-              <p className="text-sm text-slate-500">{giveaway.entry_count} entered</p>
+              <p className="text-base font-semibold uppercase tracking-wider" style={{ color: `${ACCENT}99` }}>Prize per winner</p>
+              <p className="text-base text-slate-500">{giveaway.entry_count} entered</p>
             </div>
             <p className="text-3xl font-medium" style={{ color: ACCENT }}>${giveaway.prize_amount_usd} × {giveaway.winner_count}</p>
-            <p className="text-sm text-slate-500 mt-2">
+            <p className="text-base text-slate-500 mt-2">
               Closes {new Date(giveaway.entries_close_at).toLocaleString()} ·{" "}
               {giveaway.selection_mode === "random" ? "Random draw" : giveaway.selection_mode === "first_come" ? "First come, first serve" : "Picked by creator"}
             </p>
             {(giveaway.status === "PENDING_FUNDING" || giveaway.status === "FUNDED") && giveaway.funding_required_usd && (
               <div className="mt-3">
                 <div className="flex justify-between items-center mb-1">
-                  <span className="text-sm text-slate-400">Funding: ${giveaway.funding_confirmed_usd} / ${giveaway.funding_required_usd}</span>
-                  <span className="text-sm text-slate-400">{fundingPct}%</span>
+                  <span className="text-base text-slate-400">Funding: ${giveaway.funding_confirmed_usd} / ${giveaway.funding_required_usd}</span>
+                  <span className="text-base text-slate-400">{fundingPct}%</span>
                 </div>
                 <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-                  <div className="h-full rounded-full transition-all duration-500" style={{ width: `${fundingPct}%`, backgroundColor: ACCENT }} />
+                  <div
+                    className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-[#FF1301] to-[#EAB308]"
+                    style={{ width: `${fundingPct}%` }}
+                  />
                 </div>
               </div>
             )}
             {giveaway.vrf_fulfilled_at && giveaway.vrf_randomness && (
-              <p className="text-sm text-slate-500 mt-3 break-all">
+              <p className="text-base text-slate-500 mt-3 break-all">
                 Draw proof: randomness <span className="font-mono">{giveaway.vrf_randomness.slice(0, 16)}…</span>, snapshot <span className="font-mono">{giveaway.entry_snapshot_hash?.slice(0, 16)}…</span>
               </p>
             )}
           </div>
 
-          <div className="mb-5">
-            <p className="text-sm font-medium text-slate-400 uppercase tracking-widest mb-2">Tasks</p>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-5">
+            <p className="text-base font-medium text-slate-400 uppercase tracking-widest mb-2">Tasks</p>
             <div className="space-y-2">
               {giveaway.tasks.map((task) => {
                 const completion = myEntry?.completions.find((c) => c.giveaway_task_id === task.id);
                 const verified = completion?.verification_status === "verified" || completion?.verification_status === "auto_verified";
                 const rejected = completion?.verification_status === "rejected";
                 return (
-                  <div key={task.order_index} className="rounded-xl border border-white/10 bg-white/5 p-3">
+                  <div key={task.order_index} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-base font-medium text-white">{TASK_TYPE_LABELS[task.task_type] ?? task.task_type}</p>
-                        {task.config?.target && <p className="text-sm text-slate-500 truncate">{task.config.target}</p>}
+                        {task.config?.target && <p className="text-base text-slate-500 truncate">{task.config.target}</p>}
                       </div>
                       {myEntry && (
                         verified ? (
-                          <span className="shrink-0 inline-flex items-center gap-1 text-sm font-medium text-emerald-400"><Check className="w-3.5 h-3.5" /> Verified</span>
+                          <span className="shrink-0 inline-flex items-center gap-1 text-base font-medium text-emerald-400"><Check className="w-3.5 h-3.5" /> Verified</span>
                         ) : rejected ? (
-                          <span className="shrink-0 text-sm font-medium text-red-400">Rejected</span>
+                          <span className="shrink-0 text-base font-medium text-red-400">Rejected</span>
                         ) : completion?.submission_data ? (
-                          <span className="shrink-0 text-sm font-medium text-amber-400">Pending review</span>
+                          <span className="shrink-0 text-base font-medium text-amber-400">Pending review</span>
                         ) : (
                           <button
                             type="button"
                             onClick={() => markTaskDone(task.id, "")}
-                            className="shrink-0 text-sm font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-2.5 py-1"
+                            className="shrink-0 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-2.5 py-1"
                           >
                             Mark done
                           </button>
@@ -296,28 +302,16 @@ export default function GiveawayDetailPage({ params }: { params: Promise<{ id: s
           </div>
 
           {!authenticated ? (
-            <button
-              type="button"
-              onClick={() => login({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })}
-              className="w-full rounded-xl px-5 py-3 font-semibold text-black hover:opacity-90 transition-opacity"
-              style={{ backgroundColor: ACCENT }}
-            >
+            <GradientActionButton onClick={() => login({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })}>
               Sign in to enter
-            </button>
+            </GradientActionButton>
           ) : canEnter ? (
-            <button
-              type="button"
-              onClick={enter}
-              disabled={entering}
-              className="w-full rounded-xl px-5 py-3 font-semibold text-black hover:opacity-90 transition-opacity disabled:opacity-50 inline-flex items-center justify-center gap-2"
-              style={{ backgroundColor: ACCENT }}
-            >
-              {entering && <Loader2 className="w-4 h-4 animate-spin" />}
+            <GradientActionButton onClick={enter} disabled={entering} loading={entering} loadingText="Entering…">
               Enter giveaway
-            </button>
+            </GradientActionButton>
           ) : myEntry?.status === "winner" && myEntry.payout_status === "pending" && !myEntry.payout_choice ? (
-            <div className="rounded-2xl border p-4" style={{ backgroundColor: `${ACCENT}14`, borderColor: `${ACCENT}4d` }}>
-              <p className="font-semibold text-lg mb-1" style={{ color: ACCENT }}>You won!</p>
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+              <p className="font-semibold text-lg mb-1 text-emerald-400">You won!</p>
               <p className="text-base text-slate-300 mb-3">Choose how you want to be paid out.</p>
               <div className="flex gap-2 mb-3">
                 {(["private", "public"] as const).map((choice) => (
@@ -325,10 +319,9 @@ export default function GiveawayDetailPage({ params }: { params: Promise<{ id: s
                     key={choice}
                     type="button"
                     onClick={() => setPayoutChoice(choice)}
-                    className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium border transition-colors ${
-                      payoutChoice === choice ? "border-transparent text-black" : "border-white/10 text-slate-300 hover:bg-white/[0.06]"
+                    className={`flex-1 rounded-xl px-3 py-2 text-base font-medium border transition-colors ${
+                      payoutChoice === choice ? "border-[#FF7A2A] text-white bg-[#FF7A2A]/10" : "border-white/10 text-slate-300 hover:bg-white/[0.06]"
                     }`}
-                    style={payoutChoice === choice ? { backgroundColor: ACCENT } : undefined}
                   >
                     {choice === "private" ? "Private (default)" : "Public"}
                   </button>
@@ -340,19 +333,13 @@ export default function GiveawayDetailPage({ params }: { params: Promise<{ id: s
                 placeholder="Destination Solana wallet address"
                 className="bg-white/5 border-white/10 text-white placeholder:text-slate-500 mb-3"
               />
-              <button
-                type="button"
-                onClick={savePayoutChoice}
-                disabled={savingPayout}
-                className="w-full rounded-xl px-5 py-2.5 font-semibold text-black hover:opacity-90 transition-opacity disabled:opacity-50"
-                style={{ backgroundColor: ACCENT }}
-              >
-                {savingPayout ? "Saving…" : "Confirm payout"}
-              </button>
+              <GradientActionButton onClick={savePayoutChoice} disabled={savingPayout} loading={savingPayout} loadingText="Saving…">
+                Confirm payout
+              </GradientActionButton>
             </div>
           ) : myEntry?.status === "winner" ? (
-            <div className="rounded-2xl border p-4 text-center" style={{ backgroundColor: `${ACCENT}14`, borderColor: `${ACCENT}4d` }}>
-              <p className="font-semibold text-lg" style={{ color: ACCENT }}>You won! Payout: {myEntry.payout_status}</p>
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
+              <p className="font-semibold text-lg text-emerald-400">You won! Payout: {myEntry.payout_status}</p>
             </div>
           ) : myEntry ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center">

@@ -110,14 +110,14 @@ export default function GiveawaysListPage() {
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="text-2xl font-medium" style={{ color: ACCENT }}>${g.prize_amount_usd}</p>
-                      <p className="text-sm text-slate-500">× {g.winner_count} winner{g.winner_count === 1 ? "" : "s"}</p>
+                      <p className="text-base text-slate-500">× {g.winner_count} winner{g.winner_count === 1 ? "" : "s"}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 mt-3">
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
                       {g.selection_mode === "random" ? "Random draw" : g.selection_mode === "first_come" ? "First come, first serve" : "Picked by creator"}
                     </span>
-                    <span className="text-sm text-slate-500">
+                    <span className="text-base text-slate-500">
                       Closes {new Date(g.entries_close_at).toLocaleDateString()}
                     </span>
                   </div>

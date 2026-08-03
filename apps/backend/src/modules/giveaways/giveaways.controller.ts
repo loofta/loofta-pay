@@ -11,6 +11,7 @@ import { SubmitTaskCompletionDto } from './dto/submit-task-completion.dto';
 import { ReviewTaskCompletionDto } from './dto/review-task-completion.dto';
 import { SelectWinnersDto } from './dto/select-winners.dto';
 import { SetPayoutChoiceDto } from './dto/set-payout-choice.dto';
+import { BuildFundingPrivateTransferDto } from './dto/build-funding-private-transfer.dto';
 import { Giveaway } from './entities/giveaway.entity';
 
 @ApiTags('giveaways')
@@ -57,6 +58,23 @@ export class GiveawaysController {
       funding_required_usd: giveaway.funding_required_usd,
       ...status,
     };
+  }
+
+  @Post(':id/funding/private-transfer')
+  @ApiOperation({ summary: 'Build an unsigned MagicBlock private transfer to fund this giveaway\'s burner (creator only, destination never leaves the backend)' })
+  async buildFundingPrivateTransfer(
+    @Req() req: { user?: { id: string } },
+    @Param('id') id: string,
+    @Body() dto: BuildFundingPrivateTransferDto,
+  ) {
+    const giveaway = await this.giveawaysService.findOneOrThrow(id);
+    return this.fundingService.buildFundingPrivateTransfer(
+      giveaway,
+      req.user!.id,
+      dto.sender_wallet,
+      dto.cluster,
+      dto.gasless ?? true,
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────
