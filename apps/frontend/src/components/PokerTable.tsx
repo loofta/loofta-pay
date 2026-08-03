@@ -108,13 +108,13 @@ export default function PokerTable({
               </div>
             )}
             {seat.isMe && pickerOpen && onPickEmoji && (
-              <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 w-[200px] flex flex-wrap justify-center gap-1 rounded-2xl bg-black/90 border border-white/10 p-2">
+              <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 w-[248px] flex flex-wrap justify-center gap-2 rounded-2xl bg-black/90 border border-white/10 p-3">
                 {AVATAR_EMOJIS.map((e) => (
                   <button
                     key={e}
                     type="button"
                     onClick={() => { onPickEmoji(e); setPickerOpen(false); }}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-base transition-colors ${emoji === e ? "bg-amber-500/30 ring-2 ring-amber-400" : "bg-white/5 hover:bg-white/10"}`}
+                    className={`w-11 h-11 rounded-full flex items-center justify-center text-xl transition-colors ${emoji === e ? "bg-amber-500/30 ring-2 ring-amber-400" : "bg-white/10 hover:bg-white/15 active:bg-white/20"}`}
                   >
                     {e}
                   </button>
