@@ -3248,6 +3248,37 @@ export class ClaimsService {
   }
 
   /**
+   * Returns burner-routed claims stuck at IN_FLIGHT with a saved sender_tx_hash — the sender
+   * broadcast and the frontend optimistically set IN_FLIGHT, but the client-side confirm step
+   * (wait for on-chain confirmation, then PATCH to SUCCESS/PRIVATE_TRANSFER_PENDING) never landed
+   * — tab closed, network drop, or the RPC confirm just timed out. Until this cron existed there
+   * was NO reconciliation for this case: getPendingTxHashClaims above explicitly excludes burner
+   * claims, and cronSweepPendingBurners only resumes claims already at PRIVATE_TRANSFER_PENDING
+   * with claim_requested_at set. A burner claim whose client confirm step died had nothing that
+   * would ever revisit it (confirmed real incident, payment 7f74086a, 2026-08-04 — sender's tx
+   * had long since confirmed on-chain and the burner was funded, but the row sat at IN_FLIGHT
+   * indefinitely, showing the recipient a stale "pay" prompt instead of "claim your money").
+   *
+   * Safe from the infinite-loop incident documented on getPendingTxHashClaims above (2026-07-24,
+   * claim b665e249) because that loop was driven by re-querying the SAME status
+   * (PRIVATE_TRANSFER_PENDING) the write itself produced. This query targets IN_FLIGHT specifically
+   * — updateStatus's own downgrade-to-PRIVATE_TRANSFER_PENDING guard (hasBurner) moves a matched
+   * row OUT of IN_FLIGHT the moment it's processed, so it can never match this query again.
+   */
+  async getBurnerInFlightTxHashClaims(): Promise<{ id: string; sender_tx_hash: string; created_at: string }[]> {
+    const { data, error } = await this.supabaseService.payments
+      .select('id, sender_tx_hash, created_at')
+      .eq('status', 'IN_FLIGHT')
+      .not('sender_tx_hash', 'is', null)
+      .not('burner_address', 'is', null);
+    if (error) {
+      this.logger.error('Failed to query burner in-flight tx hash claims:', error);
+      return [];
+    }
+    return (data || []).filter((c) => !!(c as any).sender_tx_hash) as { id: string; sender_tx_hash: string; created_at: string }[];
+  }
+
+  /**
    * Save the broadcast transaction signature immediately after sendRawTransaction, before
    * confirmation polling completes. Enables recovery if the RPC polling times out.
    */
