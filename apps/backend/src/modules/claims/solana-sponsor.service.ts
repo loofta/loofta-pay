@@ -42,6 +42,22 @@ const USDC_MINT_SET = new Set([
 const ATA_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 const TOKEN_PROGRAM_ID_STR = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
+// Same marker guardAtaSponsorship appends to the stored `context` when a caller identity is
+// known — duplicated here (rather than imported) since it's an implementation detail of that
+// module's storage format, not a public contract.
+const CALLER_CONTEXT_MARKER = '|caller:';
+/** Rolling window + per-caller ceiling on *new* (rent-costing) ATA creations via this endpoint.
+ *  guardAtaSponsorship only blocks the SAME destination wallet being sponsored twice — it does
+ *  nothing against one caller cycling through a fresh destination wallet every time, which costs
+ *  us real rent on every single call and was never actually priced (see assertAtaCreationsAllowed
+ *  below: "the volume-independent control is pricing... recover the rent from the sender" — that
+ *  pricing was implemented for multi-send only, never for this endpoint). Incident 2026-08-04:
+ *  one authenticated caller sponsored 25+ distinct brand-new wallets over ~2 hours (~1/5min,
+ *  intentionally under any reasonable rate/burst threshold) at zero cost recovery. Until real
+ *  per-transaction rent recovery is wired up here, this is a blunt stopgap: cap it outright. */
+const ATA_PER_USER_WINDOW_HOURS = Number(process.env.ATA_PER_USER_WINDOW_HOURS) || 24;
+const ATA_PER_USER_CAP = Number(process.env.ATA_PER_USER_CAP) || 10;
+
 /** Read env var from .env.local on disk when ConfigService doesn't have it (e.g. run from monorepo root). */
 function getEnvFromFile(varName: string): string | null {
   // Match ConfigModule envFilePath: backend root .env.local (same as SendPaymentService key source)
@@ -370,11 +386,32 @@ export class SolanaSponsorService {
     }
     if (chargeable.length === 0) return;
 
-    // Deliberately NOT capped per user. Creating a new ATA is what a normal payment to a new
-    // recipient does, so any per-caller ceiling on it just converts a security problem into a
-    // support problem for legitimate heavy senders. The volume-independent control is pricing
-    // (see quoteAtaRentRecoveryUsdc / ata-rent-recovery.ts): recover the rent from the sender so
-    // an unbounded number of creations is fine because none of them is free to the requester.
+    // NOTE: this function's intended safety net for volume was pricing — recover the rent from
+    // the sender (see quoteAtaRentRecoveryUsdc / ata-rent-recovery.ts) so an unbounded number of
+    // creations would be fine because none of them is free to the requester. That pricing was
+    // built for multi-send only and was never wired up here, so until it is, an unauthenticated-
+    // volume cap is the real control for THIS endpoint — see incident 2026-08-04: one caller used
+    // it to sponsor 25+ distinct new wallets over ~2 hours, deliberately paced to stay under any
+    // rate/burst detection, at zero cost recovery. Skipped when userId is absent (cron/backend-
+    // only callers have no identity to cap against — unchanged from before).
+    if (userId) {
+      const windowStart = new Date(Date.now() - ATA_PER_USER_WINDOW_HOURS * 60 * 60_000).toISOString();
+      const { count, error: capCheckError } = await this.supabaseService.ataSponsorships
+        .select('wallet_address', { count: 'exact', head: true })
+        .ilike('context', `%${CALLER_CONTEXT_MARKER}${userId}`)
+        .gte('first_sponsored_at', windowStart);
+      if (capCheckError) {
+        this.logger.warn(`SolanaSponsor[${label}]: per-user ATA cap check failed (failing open): ${capCheckError.message}`);
+      } else if ((count ?? 0) + chargeable.length > ATA_PER_USER_CAP) {
+        this.logger.error(
+          `SolanaSponsor[${label}]: BLOCKED user=${userId} — would exceed ${ATA_PER_USER_CAP} sponsored new ATAs per ${ATA_PER_USER_WINDOW_HOURS}h (already at ${count}, this request adds ${chargeable.length})`,
+        );
+        throw new Error(
+          `You've reached the limit of ${ATA_PER_USER_CAP} new-recipient sends per ${ATA_PER_USER_WINDOW_HOURS}h that don't already have a token account. Please try again later or use multi-send for bulk payouts.`,
+        );
+      }
+    }
+
     for (const d of chargeable) {
       const allowed = await guardAtaSponsorship(
         this.supabaseService,
