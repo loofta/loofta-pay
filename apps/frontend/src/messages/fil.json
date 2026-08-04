@@ -58,6 +58,7 @@
     "refresh": "I-refresh",
     "refreshList": "I-refresh ang listahan",
     "search": "Maghanap",
+    "sendAgain": "Ipadala ulit",
     "status": {
       "SUCCESS": "Nabayaran",
       "PRIVATE_TRANSFER_PENDING": "Hindi pa nire-claim",

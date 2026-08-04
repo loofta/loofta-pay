@@ -58,6 +58,7 @@
     "refresh": "Yenile",
     "refreshList": "Listeyi yenile",
     "search": "Ara",
+    "sendAgain": "Tekrar gönder",
     "status": {
       "SUCCESS": "Ödendi",
       "PRIVATE_TRANSFER_PENDING": "Talep edilmedi",

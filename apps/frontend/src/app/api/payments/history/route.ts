@@ -378,8 +378,14 @@ export async function GET(request: Request) {
       // Only backfill from recipient_user_id for from_sender payments.
       // from_recipient (payment request links) store the creator's own ID in recipient_user_id,
       // so backfilling there would show the creator's own username as the payee.
-      const recipientUsername = c.recipient_username ||
-        (c.direction === "from_sender" && ec._recipient_user_id && usernameMap[ec._recipient_user_id]) || null;
+      // Live lookup wins over the column stored at send time — a recipient addressed directly by
+      // username (claims.service.ts createFromUsername) gets that value frozen on the row, so
+      // without this a later username switch (switch-username route) would leave "Send again"
+      // targeting a stale handle that no longer resolves to anyone, instead of their current one.
+      const recipientUsername =
+        (c.direction === "from_sender" && ec._recipient_user_id && usernameMap[ec._recipient_user_id]) ||
+        c.recipient_username ||
+        null;
       const creatorUsername = (c.created_by && usernameMap[c.created_by]) || null;
       const senderUsername = (ec.sender_user_id && usernameMap[ec.sender_user_id]) || null;
       // created_by/sender_user_id/_recipient_user_id are raw Privy user IDs used only to look up

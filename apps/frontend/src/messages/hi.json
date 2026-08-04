@@ -57,6 +57,7 @@
     "refresh": "रिफ्रेश",
     "refreshList": "सूची रिफ्रेश करें",
     "search": "खोजें",
+    "sendAgain": "फिर से भेजें",
     "status": {
       "SUCCESS": "भुगतान हुआ",
       "PRIVATE_TRANSFER_PENDING": "अनक्लेम्ड",

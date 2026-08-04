@@ -58,6 +58,7 @@
     "refresh": "تحديث",
     "refreshList": "تحديث القائمة",
     "search": "بحث",
+    "sendAgain": "إرسال مرة أخرى",
     "status": {
       "SUCCESS": "مدفوع",
       "PRIVATE_TRANSFER_PENDING": "لم يُطالَب به",

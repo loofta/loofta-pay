@@ -58,6 +58,7 @@
     "refresh": "Segarkan",
     "refreshList": "Segarkan daftar",
     "search": "Cari",
+    "sendAgain": "Kirim lagi",
     "status": {
       "SUCCESS": "Dibayar",
       "PRIVATE_TRANSFER_PENDING": "Belum diklaim",

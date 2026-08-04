@@ -2,12 +2,13 @@
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, Repeat } from "lucide-react";
 import { useTranslations, useLocale } from "next-intl";
 import { PrivacyGlyph } from "@/components/PrivacyGlyph";
 
@@ -71,6 +72,65 @@ function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string 
   }
   if (claim.recipient_email) return claim.recipient_email;
   return anonymous;
+}
+
+type SendAgainTarget = {
+  identifier: string;
+  method: "email" | "username" | "social";
+  platform?: "twitter" | "discord" | "github" | "telegram";
+};
+
+const LOO_USERNAME_PREFIX = "loo-";
+
+/**
+ * The send form's "username" tab always force-prepends "loo-" before submitting (see
+ * handleSend in app/app/page.tsx and the matching input mask) — it can only ever reach
+ * loo-prefixed usernames. Anyone whose real username is a raw handle (picked directly from
+ * their connected X account at signup, see setup-username/route.ts) can only be reached today
+ * through the Twitter tab, which submits the identifier unprefixed. Route accordingly so a
+ * resend never submits a mangled "loo-loo-x", or worse, silently lands on a different
+ * "loo-x" account than the one actually paid.
+ */
+function targetForUsername(username: string): SendAgainTarget {
+  if (username.startsWith(LOO_USERNAME_PREFIX)) {
+    return { identifier: username.slice(LOO_USERNAME_PREFIX.length), method: "username" };
+  }
+  return { identifier: username, method: "social", platform: "twitter" };
+}
+
+/**
+ * Mirrors getPayeeDisplay's parsing, but returns the raw identifier + send method needed to
+ * pre-fill the send form (see the `to`/`method`/`platform` query params read in app/app/page.tsx)
+ * instead of a display string. Only "sent" rows have a resendable counterparty — you can't
+ * re-send money you received.
+ */
+function getSendAgainTarget(claim: PaymentHistoryClaim): SendAgainTarget | null {
+  if (claim.direction === "from_recipient") {
+    // Paid request link: the real payee is whoever created the request (see getPayeeDisplay).
+    if (claim.creator_username) return targetForUsername(claim.creator_username);
+    if (claim.creator_email) return { identifier: claim.creator_email, method: "email" };
+    return null;
+  }
+  if (claim.recipient_username) return targetForUsername(claim.recipient_username);
+  const ra = (claim.recipient_address || "").trim();
+  if (ra.startsWith(PENDING_USERNAME_PREFIX)) {
+    return targetForUsername(ra.slice(PENDING_USERNAME_PREFIX.length).trim());
+  }
+  if (ra.startsWith(PENDING_EMAIL_PREFIX)) {
+    return { identifier: ra.slice(PENDING_EMAIL_PREFIX.length).trim(), method: "email" };
+  }
+  if (ra.startsWith(PENDING_SOCIAL_PREFIX)) {
+    const rest = ra.slice(PENDING_SOCIAL_PREFIX.length);
+    const sep = rest.indexOf(":");
+    const platform = sep >= 0 ? rest.slice(0, sep).trim() : "";
+    const handle = (sep >= 0 ? rest.slice(sep + 1) : rest).trim();
+    if (!handle || (platform !== "twitter" && platform !== "discord" && platform !== "github" && platform !== "telegram")) {
+      return null;
+    }
+    return { identifier: handle, method: "social", platform };
+  }
+  if (claim.recipient_email) return { identifier: claim.recipient_email, method: "email" };
+  return null;
 }
 
 const REQUEST_LINK_PAID_STATUSES = new Set(["SUCCESS", "PRIVATE_TRANSFER_PENDING"]);
@@ -168,6 +228,7 @@ function IconBubble({
 export default function HistoryPage() {
   const t = useTranslations('HistoryPage');
   const locale = useLocale();
+  const router = useRouter();
   const { authenticated, userId } = useAuth();
   const { login: privyLogin, getAccessToken } = usePrivy();
   const networkMode = useAuthStore((s) => s.networkMode);
@@ -448,11 +509,19 @@ export default function HistoryPage() {
                       const showPrivacyIcon = type === "sent"
                         ? !!claim.is_private
                         : !!claim.is_private || !!claim.claimed_privately;
+                      const sendAgainTarget = type === "sent" && hasKnownCounterparty
+                        ? getSendAgainTarget(claim)
+                        : null;
+                      const sendAgainHref = sendAgainTarget
+                        ? `/app?to=${encodeURIComponent(sendAgainTarget.identifier)}&method=${sendAgainTarget.method}${
+                            sendAgainTarget.platform ? `&platform=${sendAgainTarget.platform}` : ""
+                          }`
+                        : null;
                       return (
-                        <li key={`${type}-${claim.id}`}>
+                        <li key={`${type}-${claim.id}`} className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
                           <Link
                             href={`/c/${claim.id}?from=history`}
-                            className="block rounded-xl border border-white/10 bg-white/5 p-3 hover:bg-white/10 transition-colors"
+                            className="block p-3 hover:bg-white/10 transition-colors"
                           >
                             <div className="flex items-center justify-between gap-2">
                               <span className={`flex items-center gap-1.5 text-base font-semibold ${type === "sent" ? "text-amber-400" : "text-emerald-400"}`}>
@@ -501,6 +570,16 @@ export default function HistoryPage() {
                               </span>
                             </div>
                           </Link>
+                          {sendAgainHref && (
+                            <button
+                              type="button"
+                              onClick={() => router.push(sendAgainHref)}
+                              className="flex w-full items-center justify-center gap-1.5 border-t border-white/10 py-1.5 text-sm font-medium text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+                            >
+                              <Repeat className="h-3.5 w-3.5" />
+                              {t('sendAgain')}
+                            </button>
+                          )}
                         </li>
                       );
                     })}

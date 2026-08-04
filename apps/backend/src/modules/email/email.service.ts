@@ -554,6 +554,54 @@ export class EmailService {
     }
   }
 
+  /** Distinct from sendAtaSponsorshipAbuseAlertEmail: that one fires on a *repeat* sponsorship of
+   *  the SAME wallet, which a Sybil attacker trivially evades by using a fresh throwaway wallet
+   *  every time. This one fires when the sponsored-ATA-creation *rate* itself spikes regardless of
+   *  which wallets are involved — the signal that actually catches that evasion — and reports that
+   *  sponsorship is now paused fleet-wide until manually cleared. */
+  async sendAtaSponsorshipBurstAlertEmail(data: {
+    to: string;
+    count: number;
+    windowSeconds: number;
+    context: string;
+  }): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`ATA-sponsorship BURST alert NOT sent (RESEND_API_KEY unset): ${data.count} in ${data.windowSeconds}s, last context=${data.context}`);
+      return;
+    }
+    const subject = `🚨 Sponsored ATA burst detected — creation paused fleet-wide`;
+    const html = `
+      <div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+        <h2 style="color:#0f172a;margin:0 0 4px;">Sponsored account-creation burst — auto-paused</h2>
+        <p style="color:#64748b;margin:0 0 16px;font-size:14px;">
+          ${data.count} sponsored USDC token accounts were created in the last ${data.windowSeconds} seconds —
+          across possibly many different wallets, so the per-wallet repeat guard alone did not catch it.
+          <strong>All sponsored ATA creation is now paused</strong> fleet-wide until this is manually
+          cleared, so no further SOL can drain through this path in the meantime.
+        </p>
+        <table style="border-collapse:collapse;width:100%;background:#f8fafc;border-radius:8px;font-size:14px;">
+          <tr><td style="padding:6px 12px;color:#475569;">Count</td><td style="padding:6px 12px;font-weight:600;color:#dc2626;">${data.count}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Window</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.windowSeconds}s</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Last context</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.context}</td></tr>
+        </table>
+        <p style="color:#94a3b8;margin:16px 0 0;font-size:12px;">
+          Check the fee payer's recent transactions on Solscan, confirm this is real abuse (not a legitimate
+          traffic spike), then clear the pause via the admin endpoint once safe.
+        </p>
+      </div>`;
+    try {
+      await this.resend.emails.send({
+        from: `Loofta Ops <${this.fromEmail}>`,
+        to: data.to,
+        subject,
+        html,
+      });
+      this.logger.log(`ATA-sponsorship BURST alert sent to ${data.to} (count=${data.count}, window=${data.windowSeconds}s)`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send ATA-sponsorship BURST alert to ${data.to}: ${err?.message ?? err}`);
+    }
+  }
+
   private buildGiftTicketHtml(data: { numTickets: number; claimUrl: string; note?: string | null }): string {
     const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
     const { text: noteText, gifUrl } = data.note ? this.extractGifUrl(data.note) : { text: '', gifUrl: null };

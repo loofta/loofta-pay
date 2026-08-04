@@ -58,6 +58,7 @@
     "refresh": "更新",
     "refreshList": "リストを更新",
     "search": "検索",
+    "sendAgain": "再送信",
     "status": {
       "SUCCESS": "支払済み",
       "PRIVATE_TRANSFER_PENDING": "未請求",
