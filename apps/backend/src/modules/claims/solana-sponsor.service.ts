@@ -347,6 +347,7 @@ export class SolanaSponsorService {
     conn: Connection,
     label: string,
     userId?: string,
+    claimId?: string,
   ): Promise<void> {
     const details = this.getAtaCreationDetails(serializedBase64);
     if (details.length === 0) return;
@@ -370,6 +371,40 @@ export class SolanaSponsorService {
     }
     if (chargeable.length === 0) return;
 
+    // Intent-binding (2026-08-04 fix for the "sign-and-broadcast volume gap" — see project
+    // memory: solana sponsor security hardening, Attack 6). This endpoint used to accept ANY
+    // pre-built transaction with zero context on what it's *for*, so every chargeable creation
+    // looked identical to a legitimate first-time payment. When the caller supplies a claimId,
+    // we now require every chargeable ATA's owner to be the EXACT recipient/burner address that
+    // claim already has on file — not just "some new wallet, first time we've seen it". A caller
+    // can no longer sponsor an arbitrary self-generated wallet: there is no real claim row backing
+    // a destination they invented. Falls through to the (weaker) per-user cap below only when no
+    // claimId is supplied — i.e. the other two callers of this endpoint (near-intents withdraw,
+    // PAJ off-ramp) not yet migrated to pass their own intent id.
+    if (claimId && chargeable.length > 0) {
+      const { data: claimRow, error: claimLookupError } = await this.supabaseService.payments
+        .select('id, recipient_address, burner_address')
+        .eq('id', claimId)
+        .maybeSingle();
+      if (claimLookupError || !claimRow) {
+        this.logger.warn(`SolanaSponsor[${label}]: claimId=${claimId} not found — refusing to sponsor (${claimLookupError?.message ?? 'no row'})`);
+        throw new Error('Claim not found; cannot verify this payment.');
+      }
+      const expectedRecipient = String(claimRow.burner_address || claimRow.recipient_address || '').trim();
+      if (!expectedRecipient) {
+        this.logger.warn(`SolanaSponsor[${label}]: claimId=${claimId} has no resolvable recipient/burner address — refusing to sponsor`);
+        throw new Error('This claim has no resolvable recipient; cannot verify this payment.');
+      }
+      for (const d of chargeable) {
+        if (d.owner !== expectedRecipient) {
+          this.logger.error(
+            `SolanaSponsor[${label}]: BLOCKED — claimId=${claimId} expects recipient ${expectedRecipient.slice(0, 8)}… but tx creates an ATA for ${d.owner.slice(0, 8)}… (user=${userId ?? 'unknown'})`,
+          );
+          throw new Error('This transaction does not match the claim it is being paid against.');
+        }
+      }
+    }
+
     // NOTE: this function's intended safety net for volume was pricing — recover the rent from
     // the sender (see quoteAtaRentRecoveryUsdc / ata-rent-recovery.ts) so an unbounded number of
     // creations would be fine because none of them is free to the requester. That pricing was
@@ -378,8 +413,12 @@ export class SolanaSponsorService {
     // assertPerUserAtaCreationCapNotExceeded) is the real control for THIS endpoint — see incident
     // 2026-08-04: one caller used it to sponsor 25+ distinct new wallets over ~2 hours, deliberately
     // paced to stay under any rate/burst detection, at zero cost recovery. Skipped when userId is
-    // absent (cron/backend-only callers have no identity to cap against — unchanged from before).
-    if (userId) {
+    // absent (cron/backend-only callers have no identity to cap against — unchanged from before),
+    // and skipped when claimId already verified the destination above — that's a strictly stronger
+    // check (tied to a real, pre-existing claim) than "hasn't this caller done this too many times",
+    // and a caller legitimately paying into many different real claims/requests shouldn't be capped
+    // the same way a caller inventing wallets out of thin air should be.
+    if (userId && !claimId) {
       await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, userId, chargeable.length, `SolanaSponsor:${label}`);
     }
 
@@ -595,6 +634,7 @@ export class SolanaSponsorService {
     serializedTransactionBase64: string,
     network?: string,
     userId?: string,
+    claimId?: string,
   ): Promise<{ signature: string }> {
     if (!this.feePayerKeypair || !this.feePayerAddress) {
       throw new Error('Solana fee sponsorship is not configured');
@@ -615,6 +655,7 @@ export class SolanaSponsorService {
       broadcastConn,
       'sign-and-broadcast',
       userId,
+      claimId,
     );
 
     let legacy: Transaction | null = null;

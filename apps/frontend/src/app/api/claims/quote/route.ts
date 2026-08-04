@@ -28,25 +28,13 @@ export async function POST(request: Request) {
     }
 
     const supabase = getSupabaseAdmin();
-    // Try payments table first, fall back to legacy claims
-    let claim: { id: string; amount: string } | null = null;
     const { data: paymentRow } = await supabase
       .from("payments")
       .select("id, amount")
       .eq("id", claimId)
       .maybeSingle();
-    if (paymentRow) {
-      claim = paymentRow as { id: string; amount: string };
-    } else {
-      const { data: claimRow, error } = await supabase
-        .from("claims")
-        .select("id, amount")
-        .eq("id", claimId)
-        .maybeSingle();
-      if (error || !claimRow) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
-      claim = claimRow as { id: string; amount: string };
-    }
-    if (!claim) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+    if (!paymentRow) return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+    const claim = paymentRow as { id: string; amount: string };
 
     // Attempt EXACT_OUTPUT dry quote to find amountIn for payer token
     const toAsset = destToken.tokenId;

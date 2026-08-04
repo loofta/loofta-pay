@@ -43,14 +43,6 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('organizations');
   }
 
-  get claims() {
-    return this.client.from('claims');
-  }
-
-  get claimIntents() {
-    return this.client.from('claim_intents');
-  }
-
   get payments() {
     return this.client.from('payments');
   }
@@ -109,10 +101,6 @@ export class SupabaseService implements OnModuleInit {
 
   get mainnetWaitlist() {
     return this.client.from('mainnet_waitlist');
-  }
-
-  get claimEvents() {
-    return this.client.from('claim_events');
   }
 
   get forceUpdate() {

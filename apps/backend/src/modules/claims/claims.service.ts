@@ -470,50 +470,37 @@ export class ClaimsService {
   }
 
   /**
-   * Fetch raw row by ID: tries payments first (normalized), falls back to claims. Also accepts
-   * an 8-char short_id in place of the UUID (no format collision risk — short_ids and UUIDs
-   * don't overlap in length/charset), so every caller of this method transparently supports
-   * either form without a separate resolve step.
+   * Fetch raw row by ID. Also accepts an 8-char short_id in place of the UUID (no format
+   * collision risk — short_ids and UUIDs don't overlap in length/charset), so every caller of
+   * this method transparently supports either form without a separate resolve step.
    */
   private async fetchRawRow(
     id: string,
-  ): Promise<{ row: Record<string, unknown>; table: 'payments' | 'claims' } | null> {
+  ): Promise<{ row: Record<string, unknown> } | null> {
     const { data: pr } = await this.supabaseService.payments
       .select('*')
       .eq('id', id)
       .maybeSingle();
-    if (pr) return { row: this.normalizeFromPayments(pr as Record<string, unknown>), table: 'payments' };
+    if (pr) return { row: this.normalizeFromPayments(pr as Record<string, unknown>) };
 
     const { data: prByShortId } = await this.supabaseService.payments
       .select('*')
       .eq('short_id', id)
       .maybeSingle();
-    if (prByShortId) return { row: this.normalizeFromPayments(prByShortId as Record<string, unknown>), table: 'payments' };
+    if (prByShortId) return { row: this.normalizeFromPayments(prByShortId as Record<string, unknown>) };
 
-    const { data: cr } = await this.supabaseService.claims
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
-    if (cr) return { row: cr as Record<string, unknown>, table: 'claims' };
     return null;
   }
 
-  /** Update a field set on whichever table holds this ID. Tries payments first. */
+  /** Update a field set on the payments row for this ID. */
   private async updateRow(
     id: string,
     paymentsData: Record<string, unknown>,
-    claimsData: Record<string, unknown>,
-  ): Promise<{ error: string | null; table: 'payments' | 'claims' }> {
-    const { data, error } = await (this.supabaseService.payments as any)
+  ): Promise<{ error: string | null }> {
+    const { error } = await (this.supabaseService.payments as any)
       .update(paymentsData)
-      .eq('id', id)
-      .select('id')
-      .maybeSingle();
-    if (!error && data) return { error: null, table: 'payments' };
-    const { error: claimErr } = await (this.supabaseService.claims as any)
-      .update(claimsData)
       .eq('id', id);
-    return { error: claimErr ? String(claimErr.message) : null, table: 'claims' };
+    return { error: error ? String(error.message) : null };
   }
 
   private formatError(error: unknown): string {
@@ -1021,24 +1008,7 @@ export class ClaimsService {
     delete (claim as unknown as Record<string, unknown>)['claim_burner_encrypted_secret'];
 
     // Attach fee data so the UI can show the payment breakdown on reload.
-    // New payments: fee_paid_usdc column is set directly at payment time.
-    // Legacy claims: fall back to the FEE_CHARGED claim_event payload.
-    if (['SUCCESS', 'PRIVATE_TRANSFER_PENDING'].includes((claim.status || '').toUpperCase())) {
-      if ((claim as any).fee_paid_usdc == null) {
-        try {
-          const { data: feeEvent } = await (this.supabaseService.claimEvents as any)
-            .select('payload')
-            .eq('claim_id', id)
-            .eq('type', 'FEE_CHARGED')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (feeEvent?.payload?.feeAmountUsdc != null) {
-            (claim as any).fee_paid_usdc = feeEvent.payload.feeAmountUsdc;
-          }
-        } catch { /* non-fatal */ }
-      }
-    }
+    // fee_paid_usdc column is set directly at payment time.
 
     return claim;
   }
@@ -1056,7 +1026,6 @@ export class ClaimsService {
     const { error } = await this.updateRow(
       claimId,
       { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret },
-      { claim_burner_address: burner.claim_burner_address, claim_burner_encrypted_secret: burner.claim_burner_encrypted_secret },
     );
     if (error) {
       this.logger.error(`[findOne] Failed to backfill burner for claim ${claimId}:`, error);
@@ -1462,7 +1431,6 @@ export class ClaimsService {
         const { error } = await this.updateRow(
           claimId,
           { recipient_address: wallet.trim(), recipient_user_id: privyUserId },
-          { recipient_address: wallet.trim() },
         );
         if (error) {
           this.logger.error('Failed to claim payment:', error);
@@ -1548,9 +1516,6 @@ export class ClaimsService {
   }): Promise<{ ok: boolean }> {
     const result = await this.fetchRawRow(opts.claimId);
     if (!result) throw new NotFoundException('Payment not found.');
-    if (result.table !== 'payments') {
-      throw new BadRequestException('This payment cannot be edited.');
-    }
     const claim = result.row as {
       created_by?: string | null;
       status?: string;
@@ -1901,17 +1866,6 @@ export class ClaimsService {
       .maybeSingle();
     if (intent?.from_chain) {
       const c = (intent.from_chain as string).toLowerCase();
-      return c !== 'sol' && c !== 'solana';
-    }
-    const { data: legacy } = await supabase
-      .from('claim_intents')
-      .select('from_chain')
-      .eq('claim_id', claimId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (legacy?.from_chain) {
-      const c = (legacy.from_chain as string).toLowerCase();
       return c !== 'sol' && c !== 'solana';
     }
     return false;
@@ -2799,7 +2753,6 @@ export class ClaimsService {
     const { error } = await this.updateRow(
       claimId,
       { status: 'CANCELLED' },
-      { status: 'CANCELLED' },
     );
 
     if (error) {
@@ -2994,9 +2947,9 @@ export class ClaimsService {
     /** Whether the just-completed burner→recipient delivery leg was actually private (MagicBlock) vs a
      * plain public SPL sweep. Only meaningful alongside recipientSwept:true — see updateData.is_private below. */
     deliveredPrivately?: boolean;
-    /** Total fee charged to sender in USDC (loofta BPS + SOL recovery). Persisted to claim_events. */
+    /** Total fee charged to sender in USDC (loofta BPS + SOL recovery). Persisted to payments.fee_paid_usdc. */
     feeAmountUsdc?: number;
-    /** Fee breakdown snapshot at payment time. Persisted to claim_events. */
+    /** Fee breakdown snapshot at payment time. */
     feeBreakdown?: {
       looftaBpsUsdc: number;
       solRecoveryUsdc: number;
@@ -3088,18 +3041,7 @@ export class ClaimsService {
       updateData.naira_claim_fee_usdc = extra.nairaClaim.feeAmountUsdc;
     }
 
-    // Legacy claims table uses paid_with_chain instead of from_chain/from_token
-    const legacyUpdateData: Record<string, unknown> = { ...updateData };
-    if (legacyUpdateData.from_chain !== undefined) {
-      legacyUpdateData.paid_with_chain = legacyUpdateData.from_chain;
-      delete legacyUpdateData.from_chain;
-    }
-    delete legacyUpdateData.from_token;
-    delete legacyUpdateData.fee_paid_usdc;
-    delete legacyUpdateData.naira_claim_bank_account_id;
-    delete legacyUpdateData.naira_claim_fee_usdc;
-
-    const { error, table: updatedTable } = await this.updateRow(id, updateData, legacyUpdateData);
+    const { error } = await this.updateRow(id, updateData);
 
     if (error) {
       this.logger.error('Failed to update claim status:', error);
@@ -3108,33 +3050,10 @@ export class ClaimsService {
 
     this.logger.log(`Updated claim ${id} status to ${effectiveStatus}`);
 
-    // Only the primary `payments` table carries the from_chain/is_devnet/direction columns the
-    // quest qualifies on — legacy `claims` rows (read-only backward-compat) never qualify anyway.
-    // Also check on the sender's own private-intent stamp (extra.isPrivate===true above), not just
-    // the claim's eventual SUCCESS: for a burner-mediated send the claim sits at
-    // PRIVATE_TRANSFER_PENDING until the recipient sweeps, and that later sweep can overwrite
-    // is_private back to false based on the recipient's OWN delivery choice (deliveredPrivately) —
-    // unrelated to whether the sender actually paid privately. Pushing here, at the moment the
-    // sender's leg is confirmed, means the quest is recorded before that overwrite can erase it.
-    if ((effectiveStatus === 'SUCCESS' || extra?.isPrivate === true) && updatedTable === 'payments') {
+    if (effectiveStatus === 'SUCCESS' || extra?.isPrivate === true) {
       this.magicblockQuest.maybePushPrivatePaymentQuest(id).catch((e) =>
         this.logger.warn(`MagicBlock quest push failed for payment ${id}: ${(e as Error)?.message}`),
       );
-    }
-
-    // claim_events FK references the legacy `claims` table only — skip for `payments` table rows
-    // since fee_paid_usdc is already persisted directly on the payments row.
-    if (extra?.feeBreakdown && updatedTable === 'claims') {
-      const eventPayload = {
-        feeAmountUsdc: extra.feeAmountUsdc ?? null,
-        ...extra.feeBreakdown,
-        txHash: extra.txHash ?? null,
-      };
-      const { error: evtErr } = await (this.supabaseService.claimEvents as any)
-        .insert({ claim_id: id, type: 'FEE_CHARGED', payload: eventPayload });
-      if (evtErr) {
-        this.logger.warn(`Failed to insert FEE_CHARGED event for claim ${id}: ${evtErr.message}`);
-      }
     }
 
     return { id, status: effectiveStatus } as unknown as Claim;
@@ -3285,7 +3204,6 @@ export class ClaimsService {
   async saveBroadcastTxHash(id: string, txHash: string): Promise<void> {
     const { error } = await this.updateRow(
       id,
-      { sender_tx_hash: txHash },
       { sender_tx_hash: txHash },
     );
     if (error) {
@@ -3547,16 +3465,11 @@ export class ClaimsService {
    * Delete a claim and its intents (admin)
    */
   async delete(id: string): Promise<void> {
-    // payment_intents cascade-deletes via FK; also clean up claim_intents for legacy records
-    await this.supabaseService.claimIntents.delete().eq('claim_id', id);
-
-    const { error: pErr } = await this.supabaseService.payments.update({ status: 'DELETED' }).eq('id', id);
-    if (pErr) {
-      const { error } = await this.supabaseService.claims.delete().eq('id', id);
-      if (error) {
-        this.logger.error('Failed to delete claim:', error);
-        throw new Error(`Database error: ${error.message}`);
-      }
+    // payment_intents cascade-deletes via FK
+    const { error } = await this.supabaseService.payments.update({ status: 'DELETED' }).eq('id', id);
+    if (error) {
+      this.logger.error('Failed to delete claim:', error);
+      throw new Error(`Database error: ${error.message}`);
     }
 
     this.logger.log(`Deleted claim: ${id}`);

@@ -3571,6 +3571,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           // existing USDC token account (recipients who already had one skipped that
           // instruction entirely, which is why this stayed hidden).
           usdcMint: getUsdcMintForMode(networkMode === "mainnet" ? "mainnet" : "devnet"),
+          claimId: claim.id,
         });
       }
       setPerTransferPhase(null);

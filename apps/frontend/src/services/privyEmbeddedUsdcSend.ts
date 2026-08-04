@@ -77,6 +77,13 @@ export async function sendUsdcWithBackendFeePayer(params: {
   /** Loofta's cut on this send (e.g. PAJ Cash Naira withdraw fee) — sent to the same backend
    * fee-payer wallet as a second transfer leg in the same transaction/signature. */
   looftaFeeUsdc?: number;
+  /** When this send is paying into a specific existing claim/request (e.g. the claim page's
+   *  "Pay with Loofta" button), pass its id so the backend can verify the recipient ATA it's
+   *  about to sponsor matches that claim's own recipient on file, instead of trusting any
+   *  destination the client supplies (see project memory: solana sponsor security hardening,
+   *  Attack 6 / intent-binding fix). Omit for flows with no such backend-tracked intent yet
+   *  (near-intents withdraw, PAJ off-ramp) — falls back to the per-user volume cap. */
+  claimId?: string;
 }): Promise<string> {
   const {
     senderAddress,
@@ -91,6 +98,7 @@ export async function sendUsdcWithBackendFeePayer(params: {
     accessToken,
     network,
     looftaFeeUsdc,
+    claimId,
   } = params;
   const chain = params.chain ?? getPrivySolanaChain();
 
@@ -125,5 +133,6 @@ export async function sendUsdcWithBackendFeePayer(params: {
     "withdrawal",
     accessToken,
     network,
+    claimId,
   );
 }
