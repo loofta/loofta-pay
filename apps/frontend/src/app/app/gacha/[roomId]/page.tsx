@@ -418,6 +418,7 @@ export default function GachaRoomPage() {
                 }}
               />
               <CardAttributesPanel
+                name={cardResult.nftMetadata?.name}
                 attributes={cardResult.nftMetadata?.attributes}
                 insuredValueUsdc={cardResult.nftMetadata?.insuredValueUsdc}
                 rarity={cardResult.rarity}

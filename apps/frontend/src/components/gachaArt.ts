@@ -50,15 +50,25 @@ export function loadSvg(url: string): Promise<HTMLImageElement | null> {
     .catch(() => null);
 }
 
-/** Load any raster/vector image URL (for real card art). */
+/** Load any raster/vector image URL (for real card art). Tries CORS-anonymous first (needed so
+ *  the canvas stays "clean" for renderGachaPackPNG's toDataURL export), but real Collector Crypt
+ *  card scans (nft-dev.collectorcrypt.com, redirecting through CloudFront) send no
+ *  Access-Control-Allow-Origin header at all — confirmed live — so `crossOrigin: 'anonymous'`
+ *  makes the browser refuse the load outright and the card renders with nothing in it. Falls back
+ *  to a plain (non-CORS) load on failure: drawImage() onto a canvas works fine with a tainted
+ *  source, it only blocks LATER pixel readback (toDataURL/getImageData) on that canvas — which
+ *  only the share-image export needs, not simply displaying the card. */
 export function loadImage(url?: string | null): Promise<HTMLImageElement | null> {
   return new Promise((res) => {
     if (!url) { res(null); return; }
-    const i = new Image();
-    i.crossOrigin = 'anonymous';
-    i.onload = () => res(i);
-    i.onerror = () => res(null);
-    i.src = url;
+    const tryLoad = (withCors: boolean) => {
+      const i = new Image();
+      if (withCors) i.crossOrigin = 'anonymous';
+      i.onload = () => res(i);
+      i.onerror = () => (withCors ? tryLoad(false) : res(null));
+      i.src = url;
+    };
+    tryLoad(true);
   });
 }
 

@@ -252,6 +252,20 @@ export class GachaService {
     return (data ?? []).filter((r: any) => typeof r.user_id === 'string' && r.user_id.startsWith('bot-')).map((r: any) => r.seat_number);
   }
 
+  /** The room's FIXED seat capacity — used by GachaGateway as the "everyone ready" threshold.
+   *  Deliberately NOT getParticipantCount (how many have joined so far): comparing against the
+   *  live, still-filling count let a solo early joiner's ready click satisfy "all ready" against
+   *  a total of 1, firing the reveal animation immediately with nothing yet to reveal — confirmed
+   *  live (a 10-seat room whose only real participant marked ready right after joining solo, long
+   *  before the room was bot-filled to capacity, got stuck mid pack-opening animation waiting on a
+   *  card that hadn't been purchased yet). The threshold must be the capacity the room will
+   *  eventually reach, not whatever's true at the instant someone clicks ready. */
+  async getRoomSeats(roomId: string): Promise<number | null> {
+    const db = this.supabase.getClient();
+    const { data } = await db.from('gacha_rooms').select('seats').eq('id', roomId).maybeSingle();
+    return data?.seats ?? null;
+  }
+
   /** Used by GachaGateway's pick_emoji handler — broadcasts an emoji pick by seat number, never
    *  by raw user id (seat number is already public in the room UI; a Privy user id isn't). */
   async getMySeatNumber(roomId: string, userId: string): Promise<number | null> {

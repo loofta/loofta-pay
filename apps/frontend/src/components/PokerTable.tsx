@@ -1,7 +1,14 @@
 'use client';
-// PokerTable.tsx — who's actually in the room, shown as a shallow half-circle of avatar bubbles
+// PokerTable.tsx — who's actually in the room, shown as a fixed 2-row grid of avatar seats
 // arcing over the pack (not a separate table graphic) so it reads as "these people are gathered
 // around the pack" rather than a dry seat counter.
+//
+// The grid is FIXED per room size (5 vs 10 seats), not recomputed from how many people have
+// actually joined — every slot's position is derived purely from `seats`, so the layout never
+// reflows or jumps as people trickle in. Empty slots render as dim placeholder "fake seats" so
+// the room always looks like its final shape, just filling in. YOU always occupy the exact
+// center slot of the front row — never recentered, never displaced by who else has joined —
+// and everyone else fills outward from that center slot, nearest-to-you first.
 //
 // Compact and label-free by default — usernames don't sit permanently under each bubble (that
 // breaks down fast at 10 seats on a narrow phone); tap/click ANOTHER seat's bubble to reveal
@@ -43,16 +50,26 @@ function bgForSeat(seatNumber: number): string {
   return BG_COLORS[(seatNumber - 1) % BG_COLORS.length];
 }
 
-/** seats is only used to pick a size that still fits ~10 across a narrow phone without
- *  overlapping too much — the arc itself is spaced across however many participants there
- *  actually are, not the room's full seat count (an arc stretched to fit 2 people into a 10-seat
- *  span would just look sparse/broken). */
+/** Slot indices ordered by distance from `center` — nearest first, alternating sides on ties —
+ *  so "fill outward from the middle" and "empty seats furthest from me stay empty longest" both
+ *  fall out of the same simple sort. */
+function byDistanceFromCenter(count: number, center: number): number[] {
+  return [...Array(count).keys()].sort((a, b) => {
+    const da = Math.abs(a - center), db = Math.abs(b - center);
+    if (da !== db) return da - db;
+    return a - b; // tie-break: prefer the left side consistently over re-sorting every render
+  });
+}
+
+type Slot = TableSeat | null;
+
 export default function PokerTable({
   seats,
   participants,
   onPickEmoji,
   readySeats,
 }: {
+  /** Room capacity — 5 or 10 today. Drives the FIXED grid shape; never how many have joined. */
   seats: number;
   participants: TableSeat[];
   /** Present -> tapping your own bubble opens an emoji picker instead of doing nothing. */
@@ -61,54 +78,27 @@ export default function PokerTable({
    *  on that seat's avatar instead of only surfacing readiness as a bare "3/10 ready" count. */
   readySeats?: number[];
 }) {
-  // Everyone else stays sorted by seat number for a stable, non-jittery order, but "me" is
-  // pulled out and everyone else is fanned out ALTERNATELY left/right of me (nearest seat next
-  // to me on alternating sides, next-nearest just outside that, etc.) — a genuinely
-  // left-right-symmetric arrangement with me as the true center column, not just "me happens to
-  // land somewhere near the middle of one row while everyone else is elsewhere." This is also
-  // what keeps "me" reliably near horizontal center (~50%), which matters beyond looks: the
-  // emoji picker popup opens centered under my own avatar (see below) and clips off a narrow
-  // phone's edge if I land too close to either side.
-  const sorted = [...participants].sort((a, b) => a.seatNumber - b.seatNumber);
-  const meIndex = sorted.findIndex((p) => p.isMe);
-  const me = meIndex !== -1 ? sorted[meIndex] : null;
-  const others = me ? sorted.filter((_, i) => i !== meIndex) : sorted;
-  const n = sorted.length;
+  const me = participants.find((p) => p.isMe) ?? null;
+  const others = participants.filter((p) => !p.isMe).sort((a, b) => a.seatNumber - b.seatNumber);
 
-  const radial: TableSeat[] = [];
-  if (me) {
-    const left: TableSeat[] = [];
-    const right: TableSeat[] = [];
-    others.forEach((o, i) => (i % 2 === 0 ? right : left).push(o));
-    radial.push(...left.slice().reverse(), me, ...right); // left reversed: nearest-to-me stays adjacent
-  } else {
-    radial.push(...others);
-  }
-  const centerIdx = me ? radial.indexOf(me) : Math.floor(radial.length / 2);
+  // Always 2 rows, always `seats` total slots — front row gets the extra one when seats is odd.
+  const backCount = Math.max(1, Math.floor(seats / 2));
+  const frontCount = Math.max(1, seats - backCount);
+  const meFrontIdx = Math.floor((frontCount - 1) / 2); // dead-center slot, reserved for me
 
-  // Above ~6 SEATS (room capacity, not how many have joined yet — a room going from one row to
-  // two mid-fill, right as the 7th person lands, would be a jarring layout jump), spreading
-  // everyone across one arc packs avatars closer together than their own diameter on a
-  // phone-width screen — confirmed overlapping in practice at 10. Splitting into two depth rows
-  // (front: closer/bigger, back: farther/smaller, poker-table style) roughly doubles the
-  // effective per-avatar spacing for the same footprint instead of shrinking avatars below a
-  // usable size. The front row is a CENTERED WINDOW around me within `radial` (not just "the
-  // first half"), so both rows stay left-right symmetric around the same center column and my
-  // nearest neighbors — not an arbitrary seat-number-ordered chunk — are the ones up close with me.
-  const twoRows = seats > 6;
-  let frontRow: TableSeat[];
-  let backRow: TableSeat[];
-  if (!twoRows) {
-    frontRow = radial;
-    backRow = [];
-  } else {
-    const frontCount = Math.min(n, Math.max(3, Math.ceil(n / 2) + 1));
-    const half = Math.floor(frontCount / 2);
-    const start = Math.max(0, Math.min(centerIdx - half, n - frontCount));
-    const end = Math.min(n, start + frontCount);
-    frontRow = radial.slice(start, end);
-    backRow = [...radial.slice(0, start), ...radial.slice(end)];
-  }
+  const frontSlots: Slot[] = new Array(frontCount).fill(null);
+  const backSlots: Slot[] = new Array(backCount).fill(null);
+  frontSlots[meFrontIdx] = me;
+
+  // Fill the remaining slots outward from center — front row's other seats first (closest to
+  // me), then the back row (also outward from ITS OWN center, for the same symmetric reason) —
+  // so the two or three people who've actually joined so far always land nearest to me, and the
+  // empty "fake seats" are always the ones furthest away, never a random-looking gap.
+  const frontFillOrder = byDistanceFromCenter(frontCount, meFrontIdx).filter((i) => i !== meFrontIdx);
+  const backFillOrder = byDistanceFromCenter(backCount, (backCount - 1) / 2);
+  let oi = 0;
+  for (const idx of frontFillOrder) { if (oi >= others.length) break; frontSlots[idx] = others[oi++]; }
+  for (const idx of backFillOrder) { if (oi >= others.length) break; backSlots[idx] = others[oi++]; }
 
   const readySet = new Set(readySeats ?? []);
 
@@ -117,21 +107,32 @@ export default function PokerTable({
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (hideTimer.current) clearTimeout(hideTimer.current); }, []);
 
-  if (n === 0) return null;
-
   const reveal = (seatNumber: number) => {
     setRevealedSeat(seatNumber);
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => setRevealedSeat(null), 2000);
   };
 
-  function renderRow(row: TableSeat[], opts: { size: number; fontSize: number; topBase: number; topSpread: number; zBase: number }) {
+  function renderRow(row: Slot[], opts: { size: number; fontSize: number; topBase: number; topSpread: number; zBase: number }) {
     const rn = row.length;
     return row.map((seat, i) => {
-      const t = rn === 1 ? 0.5 : i / (rn - 1); // 0..1 across the row
+      const t = rn === 1 ? 0.5 : i / (rn - 1); // 0..1 across the row — fixed by slot index, not fill count
       const leftPct = 10 + t * 80; // margin so end avatars never clip the container edge
       const bulge = Math.sin(t * Math.PI); // 0 at the ends, 1 in the middle
       const topPct = opts.topBase + (1 - bulge) * opts.topSpread; // dome: middle highest, ends lowest
+      const wrapStyle = { left: `${leftPct}%`, top: `${topPct}%`, transform: 'translate(-50%,-50%)', zIndex: seat?.isMe ? 100 : opts.zBase + i };
+
+      if (!seat) {
+        return (
+          <div key={`empty-${i}`} className="absolute" style={wrapStyle}>
+            <div
+              className="rounded-full border-2 border-dashed border-white/10"
+              style={{ width: opts.size, height: opts.size, opacity: 0.5 }}
+            />
+          </div>
+        );
+      }
+
       const seed = seat.username ?? `seat-${seat.seatNumber}`;
       const emoji = seat.emoji ?? fallbackEmoji(seed);
       const bg = bgForSeat(seat.seatNumber);
@@ -139,11 +140,7 @@ export default function PokerTable({
       const size = seat.isMe ? Math.round(opts.size * 1.22) : opts.size;
       const fontSize = seat.isMe ? Math.round(opts.fontSize * 1.15) : opts.fontSize;
       return (
-        <div
-          key={seat.seatNumber}
-          className="absolute"
-          style={{ left: `${leftPct}%`, top: `${topPct}%`, transform: 'translate(-50%,-50%)', zIndex: seat.isMe ? 100 : opts.zBase + i }}
-        >
+        <div key={seat.seatNumber} className="absolute" style={wrapStyle}>
           {revealedSeat === seat.seatNumber && !seat.isMe && (
             <div className="absolute left-1/2 bottom-full mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/85 border border-white/10 px-2.5 py-1 text-sm text-slate-100">
               {seat.username ?? `Seat ${seat.seatNumber}`}
@@ -186,9 +183,9 @@ export default function PokerTable({
   }
 
   return (
-    <div className={`relative w-full mb-1 select-none ${twoRows ? 'h-24 sm:h-28' : 'h-16 sm:h-20'}`}>
-      {twoRows && renderRow(backRow, { size: 24, fontSize: 12, topBase: 2, topSpread: 30, zBase: 10 })}
-      {renderRow(frontRow, twoRows ? { size: 32, fontSize: 16, topBase: 32, topSpread: 45, zBase: 50 } : { size: 38, fontSize: 18, topBase: 4, topSpread: 55, zBase: 10 })}
+    <div className="relative w-full mb-1 select-none h-24 sm:h-28">
+      {renderRow(backSlots, { size: 24, fontSize: 12, topBase: 2, topSpread: 30, zBase: 10 })}
+      {renderRow(frontSlots, { size: 32, fontSize: 16, topBase: 32, topSpread: 45, zBase: 50 })}
     </div>
   );
 }

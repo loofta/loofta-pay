@@ -1,15 +1,15 @@
 'use client';
 // GachaCard.tsx — the collectible card that comes out of a Gacha Pack.
-// Real artwork on the front, brand pattern on the back, and you can SWIPE
-// (drag / trackpad / arrow keys) to flip between the two faces in 3D.
+// Real artwork on the front, and if a real back scan is ALSO available, you can SWIPE (drag /
+// trackpad / arrow keys) to flip between the two faces in 3D. If there's no real back scan, the
+// card is static, front-only — it deliberately never falls back to a generic Loofta-branded back
+// face; a made-up brand pattern standing in for a real collectible's actual back reads as fake.
 //
-//   <GachaCard width={320} card={{ name: 'Charizard', rarity: 'rare', image: nft.image }} />
+//   <GachaCard width={320} card={{ name: 'Charizard', rarity: 'rare', faceImage: nft.image, backImage: nft.backImage }} />
 //
 // Canvas-rendered from the shared `gachaArt` module — no dependencies. Ported from the design
 // handoff at /react/GachaCard.tsx.txt. `rarity` uses this app's real common/uncommon/rare/epic
-// scale (see gachaArt.ts's RARITIES) rather than the handoff's generic common/rare/legendary —
-// today `card` comes from placeholder data (demo mode) or the room's already-known nftMetadata;
-// once Collectorcrypt's real metadata shape is confirmed against a live key, wire it in here.
+// scale (see gachaArt.ts's RARITIES) rather than the handoff's generic common/rare/legendary.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { drawCardFront, drawCardBack, loadSvg, loadImage, CW, CH, type Rarity } from './gachaArt';
@@ -110,6 +110,11 @@ export default function GachaCard({
   );
   const height = (width * CH) / CW;
 
+  // No real back scan -> no flip at all, ever. Drawing the back face with a Loofta brand pattern
+  // as a stand-in for a real collectible's actual back is exactly what this card shouldn't do —
+  // better to just show the one real face you have.
+  const canFlip = !!card.backImage;
+
   // turns, in half-rotations: even = front, odd = back
   const [turn, setTurn] = useState(0);
   const [drag, setDrag] = useState(0); // live drag, in turns
@@ -122,15 +127,16 @@ export default function GachaCard({
   }, [onFlip]);
 
   const onDown = (e: React.PointerEvent) => {
+    if (!canFlip) return;
     dragging.current = true; startX.current = e.clientX;
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
   const onMove = (e: React.PointerEvent) => {
-    if (!dragging.current) return;
+    if (!canFlip || !dragging.current) return;
     setDrag((e.clientX - startX.current) / (width * 0.9));
   };
   const onUp = () => {
-    if (!dragging.current) return;
+    if (!canFlip || !dragging.current) return;
     dragging.current = false;
     commit(Math.round(turn + drag));
     setDrag(0);
@@ -141,34 +147,43 @@ export default function GachaCard({
 
   return (
     <div
-      role="button"
-      tabIndex={0}
-      aria-label={`${card.name} card, ${Math.abs(Math.round(turns) % 2) === 0 ? 'front' : 'back'}. Swipe or press arrow keys to flip.`}
+      role={canFlip ? 'button' : 'img'}
+      tabIndex={canFlip ? 0 : undefined}
+      aria-label={canFlip
+        ? `${card.name} card, ${Math.abs(Math.round(turns) % 2) === 0 ? 'front' : 'back'}. Swipe or press arrow keys to flip.`
+        : `${card.name} card`}
       onPointerDown={onDown}
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerCancel={onUp}
-      onClick={() => { if (!drag) commit(turn + 1); }}
+      onClick={() => { if (canFlip && !drag) commit(turn + 1); }}
       onKeyDown={(e) => {
+        if (!canFlip) return;
         if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Enter') { e.preventDefault(); commit(turn + 1); }
         if (e.key === 'ArrowLeft') { e.preventDefault(); commit(turn - 1); }
       }}
-      style={{ width, height, perspective: 1800, cursor: 'grab', touchAction: 'pan-y', outline: 'none', ...style }}
+      style={{ width, height, perspective: 1800, cursor: canFlip ? 'grab' : 'default', touchAction: 'pan-y', outline: 'none', ...style }}
     >
-      <div
-        style={{
-          position: 'relative', width: '100%', height: '100%', transformStyle: 'preserve-3d',
-          transform: `rotateY(${deg}deg)`,
-          transition: dragging.current ? 'none' : 'transform .75s cubic-bezier(.2,.8,.2,1)',
-        }}
-      >
-        <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', filter: 'drop-shadow(0 24px 46px rgba(0,0,0,.42))' }}>
+      {canFlip ? (
+        <div
+          style={{
+            position: 'relative', width: '100%', height: '100%', transformStyle: 'preserve-3d',
+            transform: `rotateY(${deg}deg)`,
+            transition: dragging.current ? 'none' : 'transform .75s cubic-bezier(.2,.8,.2,1)',
+          }}
+        >
+          <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', filter: 'drop-shadow(0 24px 46px rgba(0,0,0,.42))' }}>
+            <Face width={width} card={card} side="front" assets={assets} />
+          </div>
+          <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', filter: 'drop-shadow(0 24px 46px rgba(0,0,0,.42))' }}>
+            <Face width={width} card={card} side="back" assets={assets} />
+          </div>
+        </div>
+      ) : (
+        <div style={{ filter: 'drop-shadow(0 24px 46px rgba(0,0,0,.42))' }}>
           <Face width={width} card={card} side="front" assets={assets} />
         </div>
-        <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', filter: 'drop-shadow(0 24px 46px rgba(0,0,0,.42))' }}>
-          <Face width={width} card={card} side="back" assets={assets} />
-        </div>
-      </div>
+      )}
     </div>
   );
 }
