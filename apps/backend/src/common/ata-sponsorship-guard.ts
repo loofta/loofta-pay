@@ -134,6 +134,46 @@ function recordSponsorshipAndMaybeTrip(): boolean {
  *  doesn't depend on every call site formatting its label consistently (most don't). */
 const CALLER_MARKER = '|caller:';
 
+/** Rolling window + per-caller ceiling on *new* (rent-costing) ATA creations, shared across every
+ *  call site whose destination is a fresh address every time (bridge deposit addresses, arbitrary
+ *  client-signed destinations, etc.) — guardAtaSponsorship's same-wallet check does nothing there
+ *  since the wallet is never repeated. See incident 2026-08-04 (solana-sponsor.service.ts's
+ *  sign-and-broadcast): one caller sponsored 25+ distinct new wallets over ~2 hours, paced under
+ *  any rate/burst threshold, at zero cost recovery. Call this BEFORE guardAtaSponsorship whenever
+ *  a call site (a) has an authenticated userId available and (b) has no same-transaction cost
+ *  recovery (no compensating burner-close, no upfront pricing) — i.e. exactly the cases flagged
+ *  "GAP" in the 2026-08-04 fee-payer audit. Skip it entirely for call sites that already recover
+ *  cost (claims sweep, lottery/private-balance withdrawals that close their burner, multi-send's
+ *  upfront pricing) — this is a blunt backstop for the unpriced paths, not a universal tax. */
+const ATA_PER_USER_WINDOW_HOURS = Number(process.env.ATA_PER_USER_WINDOW_HOURS) || 24;
+const ATA_PER_USER_CAP = Number(process.env.ATA_PER_USER_CAP) || 10;
+
+export async function assertPerUserAtaCreationCapNotExceeded(
+  supabaseService: SupabaseService,
+  userId: string,
+  newAtaCount: number,
+  label: string,
+): Promise<void> {
+  if (newAtaCount <= 0) return;
+  const windowStart = new Date(Date.now() - ATA_PER_USER_WINDOW_HOURS * 60 * 60_000).toISOString();
+  const { count, error } = await supabaseService.ataSponsorships
+    .select('wallet_address', { count: 'exact', head: true })
+    .ilike('context', `%${CALLER_MARKER}${userId}`)
+    .gte('first_sponsored_at', windowStart);
+  if (error) {
+    log.warn(`[${label}] per-user ATA cap check failed (failing open): ${error.message}`);
+    return;
+  }
+  if ((count ?? 0) + newAtaCount > ATA_PER_USER_CAP) {
+    log.error(
+      `[${label}] BLOCKED user=${userId} — would exceed ${ATA_PER_USER_CAP} sponsored new ATAs per ${ATA_PER_USER_WINDOW_HOURS}h (already at ${count}, this request adds ${newAtaCount})`,
+    );
+    throw new Error(
+      `You've reached the limit of ${ATA_PER_USER_CAP} new-recipient sends per ${ATA_PER_USER_WINDOW_HOURS}h that don't already have a token account. Please try again later or use multi-send for bulk payouts.`,
+    );
+  }
+}
+
 export async function guardAtaSponsorship(
   supabaseService: SupabaseService,
   walletAddress: string,
