@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, Loader2, Trash2, Download } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Trash2, Download, Pencil } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePrivy, useLinkAccount } from "@privy-io/react-auth";
 import { useWallets, useSignTransaction } from "@privy-io/react-auth/solana";
@@ -408,16 +408,27 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">Devnet</span>
               )}
             </div>
-            {isOwner && (giveaway.status === "PENDING_APPROVAL" || giveaway.status === "PENDING_FUNDING") && (
-              <button
-                type="button"
-                onClick={() => setShowDeleteConfirm(true)}
-                aria-label="Delete giveaway"
-                className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
+            <div className="flex items-center gap-1">
+              {isOwner && giveaway.status === "PENDING_APPROVAL" && (
+                <Link
+                  href={`/rewards/giveaways/${id}/edit`}
+                  aria-label="Edit giveaway"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  <Pencil className="w-4 h-4" />
+                </Link>
+              )}
+              {isOwner && (giveaway.status === "PENDING_APPROVAL" || giveaway.status === "PENDING_FUNDING") && (
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  aria-label="Delete giveaway"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </div>
 
           <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
@@ -449,24 +460,23 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
           {giveaway.description && <FormattedText text={giveaway.description} className="text-base text-slate-300 mb-5 leading-relaxed" />}
 
           {canShare && (
-            <div className="flex items-center gap-2 mb-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-5">
               <ShareLinkMenu
                 url={giveawayUrl}
                 title={giveaway.title}
                 text={`$${giveaway.prize_amount_usd} × ${giveaway.winner_count} winner${giveaway.winner_count === 1 ? "" : "s"} — enter "${giveaway.title}" on Loofta 🎁`}
                 ogUrl={`${SITE_URL}/api/giveaways/${id}/og`}
                 triggerLabel="Share"
-                triggerClassName="h-11 flex-1"
+                triggerClassName="h-11 w-full"
               />
               <button
                 type="button"
                 onClick={downloadShareImage}
                 disabled={downloadingImage}
-                aria-label="Download share image"
-                title="Download share image"
-                className="shrink-0 h-11 w-11 flex items-center justify-center rounded-xl border border-white/10 text-slate-300 hover:bg-white/10 hover:text-white transition-colors disabled:opacity-50"
+                className="h-11 w-full flex items-center justify-center gap-2 rounded-xl border border-white/10 text-slate-300 font-semibold hover:bg-white/10 hover:text-white transition-colors disabled:opacity-50"
               >
                 {downloadingImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                <span>Download</span>
               </button>
             </div>
           )}

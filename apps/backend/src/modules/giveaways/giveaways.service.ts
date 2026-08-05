@@ -112,6 +112,58 @@ export class GiveawaysService {
     return giveaway as Giveaway;
   }
 
+  /** Creator self-service edit — full rewrite of the same shape create() accepts, only while
+   *  still PENDING_APPROVAL. Nothing has happened yet at that point (no admin review, no burner,
+   *  no money), so unlike the admin edit (post-approval, deliberately narrow) this can safely
+   *  touch every field including prize/winner-count/tasks. Once approved, this endpoint refuses —
+   *  from there it's the admin edit (narrow) or support (everything else). */
+  async updateBeforeApproval(id: string, userId: string, dto: CreateGiveawayDto): Promise<Giveaway> {
+    const giveaway = await this.findOneOrThrow(id);
+    if (giveaway.created_by !== userId) throw new ForbiddenException('Not your giveaway');
+    if (giveaway.status !== GiveawayStatus.PENDING_APPROVAL) {
+      throw new BadRequestException(`Cannot edit — giveaway is ${giveaway.status}, not pending approval`);
+    }
+
+    const closeAt = new Date(dto.entries_close_at);
+    if (Number.isNaN(closeAt.getTime()) || closeAt.getTime() <= Date.now()) {
+      throw new BadRequestException('entries_close_at must be a valid future date');
+    }
+    const funding_required_usd = this.computeFundingRequiredUsd(dto.prize_amount_usd, dto.winner_count);
+
+    const { data, error } = await this.supabaseService.giveaways
+      .update({
+        title: dto.title,
+        description: dto.description ?? null,
+        winner_count: dto.winner_count,
+        selection_mode: dto.selection_mode,
+        prize_amount_usd: dto.prize_amount_usd,
+        entries_close_at: closeAt.toISOString(),
+        eligibility: dto.eligibility ?? {},
+        funding_required_usd,
+      })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error || !data) throw new BadRequestException(`Failed to update giveaway: ${error?.message ?? 'unknown error'}`);
+
+    // Replace tasks wholesale — simplest correct approach given no entries/completions can exist
+    // yet for a giveaway still awaiting its first admin review.
+    const { error: deleteError } = await this.supabaseService.giveawayTasks.delete().eq('giveaway_id', id);
+    if (deleteError) throw new BadRequestException(`Failed to update tasks: ${deleteError.message}`);
+    const taskRows = dto.tasks.map((t, index) => ({
+      giveaway_id: id,
+      order_index: index,
+      task_type: t.task_type,
+      config: t.config ?? {},
+      verification_mode: GIVEAWAY_TASK_VERIFICATION_MODE[t.task_type],
+    }));
+    const { error: tasksError } = await this.supabaseService.giveawayTasks.insert(taskRows);
+    if (tasksError) throw new BadRequestException(`Failed to update giveaway tasks: ${tasksError.message}`);
+
+    await this.logEvent(id, 'edited_before_approval', { by: userId });
+    return data as Giveaway;
+  }
+
   async findMine(userId: string): Promise<Giveaway[]> {
     // Cancelled giveaways are dropped by self-service delete — the creator's own list should
     // read as "gone", not linger with a Cancelled card forever. Still visible to admins.

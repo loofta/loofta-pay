@@ -47,6 +47,17 @@ export class GiveawaysController {
     return this.giveawaysService.findOneForCreator(id, req.user!.id);
   }
 
+  @Put(':id')
+  @ApiOperation({ summary: 'Edit a giveaway you created — only while still pending admin approval. Once approved, budget/scope changes go through support/admin instead.' })
+  async update(
+    @Req() req: { user?: { id: string } },
+    @Param('id') id: string,
+    @Body() dto: CreateGiveawayDto,
+  ): Promise<{ giveaway: Giveaway }> {
+    const giveaway = await this.giveawaysService.updateBeforeApproval(id, req.user!.id, dto);
+    return { giveaway };
+  }
+
   @Delete(':id')
   @ApiOperation({ summary: 'Delete (before approval) or cancel-and-refund (while awaiting funding) a giveaway you created' })
   async remove(@Req() req: { user?: { id: string } }, @Param('id') id: string) {
