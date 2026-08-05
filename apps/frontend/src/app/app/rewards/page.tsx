@@ -282,16 +282,16 @@ export default function RewardsPage() {
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/15" />
               <div className="relative z-10 p-4 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="mb-1">
                     <span
                       className="text-sm font-bold px-2 py-0.5 rounded-full border"
                       style={{ backgroundColor: `${GIVEAWAYS_ACCENT}26`, color: GIVEAWAYS_ACCENT, borderColor: `${GIVEAWAYS_ACCENT}40` }}
                     >
                       New
                     </span>
-                    <h2 className="text-2xl font-bold text-white truncate">Giveaways</h2>
                   </div>
-                  <p className="text-sm text-slate-400 truncate">
+                  <h2 className="text-2xl font-bold text-white truncate">Giveaways</h2>
+                  <p className="text-base text-slate-300 truncate">
                     Promote your project or earn by entering giveaways
                   </p>
                 </div>
