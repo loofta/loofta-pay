@@ -12,7 +12,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/components/ui/use-toast";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { RichTextEditor } from "@/components/RichTextEditor";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -583,8 +583,8 @@ export default function CreateGiveawayPage() {
                           </div>
                           <div>
                             <FieldLabel optional>Description</FieldLabel>
-                            <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4}
-                              placeholder="What is this giveaway for?" className={`${inputClass} h-auto py-3`} />
+                            <RichTextEditor value={description} onChange={setDescription} rows={6}
+                              maxLength={2000} placeholder="What is this giveaway for?" />
                           </div>
                         </>
                       )}

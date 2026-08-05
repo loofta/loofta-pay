@@ -6,9 +6,10 @@ import { ArrowLeft } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
+import { FormattedText } from "@/components/FormattedText";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-const ACCENT = "#FB7185";
+const ACCENT = "#FF7A2A";
 
 interface PublicGiveawayListItem {
   id: string;
@@ -106,7 +107,7 @@ export default function GiveawaysListPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-lg font-semibold text-white truncate">{g.title}</p>
-                      {g.description && <p className="text-base text-slate-400 mt-0.5 line-clamp-2">{g.description}</p>}
+                      {g.description && <FormattedText text={g.description} className="text-base text-slate-400 mt-0.5 line-clamp-2" />}
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="text-2xl font-medium" style={{ color: ACCENT }}>${g.prize_amount_usd}</p>

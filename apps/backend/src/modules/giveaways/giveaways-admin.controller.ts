@@ -1,9 +1,10 @@
-import { Controller, Get, Put, Body, Param, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Put, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiSecurity } from '@nestjs/swagger';
 import { AdminGuard } from '@/common/guards';
 import { GiveawaysService } from './giveaways.service';
 import { GiveawayEntriesService } from './giveaway-entries.service';
 import { AdminReviewGiveawayDto } from './dto/admin-review-giveaway.dto';
+import { AdminEditGiveawayDto } from './dto/admin-edit-giveaway.dto';
 import { ReviewTaskCompletionDto } from './dto/review-task-completion.dto';
 import { Giveaway } from './entities/giveaway.entity';
 
@@ -22,6 +23,31 @@ export class GiveawaysAdminController {
   async findPending(): Promise<{ giveaways: (Giveaway & { created_by_email: string | null })[] }> {
     const giveaways = await this.giveawaysService.findPendingApproval();
     return { giveaways };
+  }
+
+  @Get('cancelled')
+  @ApiOperation({ summary: 'List cancelled giveaways — hidden from the creator\'s own list once cancelled, still visible here for audit/support' })
+  async findCancelled(): Promise<{ giveaways: (Giveaway & { created_by_email: string | null })[] }> {
+    const giveaways = await this.giveawaysService.findCancelled();
+    return { giveaways };
+  }
+
+  @Get('all')
+  @ApiOperation({ summary: 'Look up any giveaway regardless of status (optional ?search= by title) — the only way to find one to edit once it\'s past PENDING_APPROVAL' })
+  async findAll(@Query('search') search?: string): Promise<{ giveaways: (Giveaway & { created_by_email: string | null })[] }> {
+    const giveaways = await this.giveawaysService.findAllForAdmin(search);
+    return { giveaways };
+  }
+
+  @Put(':id/edit')
+  @ApiOperation({ summary: 'Support-mediated edit (title/description/close date/eligibility only — never prize/winner-count/selection, those need a funding recompute). Blocked once terminal (completed/cancelled/rejected/refunded/expired).' })
+  async edit(
+    @Req() req: { user?: { id: string } },
+    @Param('id') id: string,
+    @Body() dto: AdminEditGiveawayDto,
+  ): Promise<{ giveaway: Giveaway }> {
+    const giveaway = await this.giveawaysService.adminEdit(id, req.user!.id, dto);
+    return { giveaway };
   }
 
   @Put(':id/review')

@@ -2,40 +2,19 @@
 
 import { use, useCallback, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, X, ChevronDown } from "lucide-react";
+import { ArrowLeft, Check, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
-import { useWallets, useSignTransaction } from "@privy-io/react-auth/solana";
-import { Connection, SendTransactionError } from "@solana/web3.js";
 import { useToast } from "@/components/ui/use-toast";
-import { useAuthStore } from "@/store/auth";
-import { useSolanaPayment } from "@/hooks/useSolanaPayment";
-import { useSolPrice } from "@/hooks/useSolPrice";
-import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
-import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
-import { PrivacyGlyph } from "@/components/PrivacyGlyph";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
-import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
-import { getRpcForMode, getRpcFallbackForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
-import { getEphemeralRpcForMode } from "@/lib/per/constants";
-import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
-import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
-import { buildGiveawayFundingPrivateTransfer } from "@/services/api/claims";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-
-// MagicBlock's own fee, same figures as backend MAGICBLOCK_VOLUME_FEE_BPS / MAGICBLOCK_GAS_SOL
-// (apps/backend/src/common/magicblock-private-transfer.ts) — duplicated client-side only to
-// show a fee estimate before the private transfer is actually built, same convention MultiSendFlow
-// uses. No extra Loofta cut here — giveaway funding is a pure MagicBlock cost passthrough.
-const MAGICBLOCK_VOLUME_FEE_BPS = 10;
-const MAGICBLOCK_GAS_SOL = 0.002;
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",
   PENDING_APPROVAL: "Pending review",
   REJECTED: "Rejected",
-  PENDING_FUNDING: "Approved — needs funding",
+  PENDING_FUNDING: "Needs funding",
   FUNDED: "Funded",
   OPEN: "Open",
   ENTRIES_CLOSED: "Entries closed",
@@ -58,8 +37,7 @@ function statusColor(status: string): string {
 
 interface GiveawayDetail {
   id: string; title: string; status: string; selection_mode: string; winner_count: number;
-  prize_amount_usd: string; burner_address: string | null; funding_required_usd: string | null;
-  funding_confirmed_usd: string; mint: string | null; entries_close_at: string;
+  prize_amount_usd: string; entries_close_at: string;
   tasks: Array<{ id: string; task_type: string; config: { target?: string } }>;
 }
 
@@ -80,27 +58,9 @@ async function authHeaders(getAccessToken: () => Promise<string | null>): Promis
 
 export default function ManageGiveawayPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { getAccessToken, user } = usePrivy();
+  const { getAccessToken } = usePrivy();
   const { toast } = useToast();
   const [selectedWinners, setSelectedWinners] = useState<Set<string>>(new Set());
-
-  // Funding — "Pay now" mirrors the app's existing send-payment/multi-send pattern instead of
-  // asking the creator to copy a raw address into another wallet.
-  const networkMode = useAuthStore((s) => s.networkMode);
-  const { wallets: solanaWallets } = useWallets();
-  const { signTransaction } = useSignTransaction();
-  const solanaPayment = useSolanaPayment();
-  const solPriceUsd = useSolPrice();
-  const [payPrivately, setPayPrivately] = useState(false);
-  const [paying, setPaying] = useState(false);
-  const [showManualAddress, setShowManualAddress] = useState(false);
-  // Same "entering incognito mode" celebratory moment as send-payment/multi-send — mount a fresh
-  // burst whenever the toggle flips on, clear it via onDone.
-  const [privacyBurstKey, setPrivacyBurstKey] = useState<number | null>(null);
-  const handleTogglePayPrivately = useCallback((checked: boolean) => {
-    setPayPrivately(checked);
-    if (checked) setPrivacyBurstKey(Date.now());
-  }, []);
 
   const { data: giveaway, refetch: refetchGiveaway } = useQuery({
     queryKey: ["giveaway-manage", id],
@@ -109,16 +69,6 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
       if (!res.ok) throw new Error("Not found or not your giveaway");
       return res.json();
     },
-  });
-
-  const { data: funding, refetch: refetchFunding } = useQuery({
-    queryKey: ["giveaway-manage-funding", id],
-    queryFn: async () => {
-      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/funding`, { headers: await authHeaders(getAccessToken) });
-      if (!res.ok) throw new Error("Failed to load funding status");
-      return res.json();
-    },
-    refetchInterval: 15_000,
   });
 
   const { data: entries, refetch: refetchEntries } = useQuery({
@@ -179,63 +129,6 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
     }
   }, [id, selectedWinners, getAccessToken, toast, refetchEntries, refetchGiveaway]);
 
-  const handleFund = useCallback(async (remainingUsd: number, burnerAddress: string) => {
-    setPaying(true);
-    try {
-      if (payPrivately) {
-        const senderAddress = solanaPayment.senderAddress;
-        const wallet = solanaWallets?.find((w) => w.address === senderAddress);
-        if (!senderAddress || !wallet) throw new Error("Embedded wallet not found. Try logging out and back in.");
-
-        const accessToken = await getAccessToken();
-        const cluster = networkMode === "mainnet" ? "mainnet" : "devnet";
-        const txData = await buildGiveawayFundingPrivateTransfer(id, user?.id ?? "", senderAddress, accessToken, cluster, true);
-
-        const rawTxBytes = Buffer.from(txData.transactionBase64, "base64");
-        const chain = getPrivySolanaChainForMode(networkMode);
-        const ephemeralRpc = getEphemeralRpcForMode(networkMode);
-        const broadcastRpc = txData.sendTo === "ephemeral" ? ephemeralRpc : getRpcForMode(networkMode);
-        const broadcastConn = new Connection(broadcastRpc, "confirmed");
-
-        let signature: string;
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const signedOutput = await (signTransaction as any)({
-            transaction: rawTxBytes,
-            wallet,
-            chain,
-            options: { uiOptions: { showWalletUIs: false } },
-          });
-          signature = await broadcastConn.sendRawTransaction(signedOutput.signedTransaction, { skipPreflight: true, maxRetries: 3 });
-        } catch (e) {
-          if (e instanceof SendTransactionError) {
-            try { const logs = await e.getLogs(broadcastConn); console.error("[GiveawayFunding] broadcast failed:", logs); } catch { /* ignore */ }
-            throw new Error(privatePayErrorMessageForUser(e.message, cluster));
-          }
-          if (e instanceof Error) throw new Error(privatePayErrorMessageForUser(e.message, cluster));
-          throw e;
-        }
-
-        const fallbackRpcUrl = txData.sendTo === "ephemeral" ? null : getRpcFallbackForMode(networkMode);
-        const fallbackConn = fallbackRpcUrl ? new Connection(fallbackRpcUrl, "confirmed") : undefined;
-        try {
-          await waitForSignatureConfirmation(broadcastConn, signature, 120_000, 1500, "giveawayFunding", fallbackConn);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : "";
-          if (!(msg.includes("InstructionError") && msg.includes('"Custom":'))) throw e;
-        }
-      } else {
-        await solanaPayment.makePayment({ amount: remainingUsd, recipientAddress: burnerAddress });
-      }
-      toast({ title: "Payment sent", description: "Confirming on-chain — this can take a few seconds." });
-      await Promise.all([refetchFunding(), refetchGiveaway()]);
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Funding payment failed", description: err.message });
-    } finally {
-      setPaying(false);
-    }
-  }, [id, user?.id, getAccessToken, networkMode, payPrivately, solanaPayment, solanaWallets, signTransaction, toast, refetchFunding, refetchGiveaway]);
-
   if (!giveaway) {
     return (
       <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
@@ -267,81 +160,6 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
               {STATUS_LABELS[giveaway.status] ?? giveaway.status.replace(/_/g, " ")}
             </span>
           </div>
-
-          {giveaway.status === "PENDING_FUNDING" && giveaway.burner_address && (() => {
-            const requiredUsd = Number(giveaway.funding_required_usd ?? 0);
-            const confirmedUsd = Number(funding?.fundingConfirmedUsd ?? giveaway.funding_confirmed_usd ?? 0);
-            const remainingUsd = Math.max(0, requiredUsd - confirmedUsd);
-
-            // Client-side estimate only (used for display before the tx is actually built) — same
-            // approach MultiSendFlow uses for its private-mode fee preview.
-            const netUnits = Math.round(remainingUsd * 1_000_000);
-            const grossUnits = netUnits > 0 ? Math.ceil((netUnits * 10_000) / (10_000 - MAGICBLOCK_VOLUME_FEE_BPS)) : 0;
-            const bpsFeeUsdc = (grossUnits - netUnits) / 1_000_000;
-            const flatFeeUsdc = MAGICBLOCK_GAS_SOL * solPriceUsd;
-            const privateFeeUsdc = bpsFeeUsdc + flatFeeUsdc;
-            const totalDueUsdc = payPrivately ? remainingUsd + privateFeeUsdc : remainingUsd;
-
-            const insufficientBalance = !solanaPayment.isBalanceLoading && !solanaPayment.hasEnoughBalance(totalDueUsdc);
-            return (
-              <div className="relative">
-                {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
-                {payPrivately && (
-                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 z-10 select-none [filter:drop-shadow(0_2px_5px_rgba(0,0,0,0.6))]">
-                    <PrivacyGlyph size={24} opacity={1} className="text-slate-300" />
-                  </div>
-                )}
-                <div className={`rounded-2xl border p-4 space-y-3 transition-colors ${payPrivately ? "border-white/15 bg-black/40" : "border-white/10 bg-white/5"}`}>
-                  <p className="text-base font-medium text-slate-400 uppercase tracking-widest">Fund this giveaway</p>
-                  <p className="text-base text-slate-300">
-                    <span className="font-semibold text-white">${remainingUsd.toFixed(2)} USDC</span> left to fund
-                    {confirmedUsd > 0 && <span className="text-slate-500"> · ${confirmedUsd.toFixed(2)} of ${requiredUsd.toFixed(2)} confirmed</span>}
-                  </p>
-
-                  <IncognitoModeToggle
-                    checked={payPrivately}
-                    onCheckedChange={handleTogglePayPrivately}
-                    onLabel="Pay privately"
-                    offLabel="Pay privately"
-                  />
-                  <p className="text-base text-slate-400">
-                    {payPrivately ? `+$${privateFeeUsdc.toFixed(2)} fees (MagicBlock) · $${totalDueUsdc.toFixed(2)} total` : "Normal funding is a plain on-chain transfer, free of charge."}
-                  </p>
-
-                  {insufficientBalance ? (
-                    <InsufficientBalanceCard balanceUSD={solanaPayment.balanceUSD} neededUSD={totalDueUsdc} showFeesLabel={payPrivately} />
-                  ) : (
-                    <GradientActionButton
-                      disabled={paying || remainingUsd <= 0}
-                      loading={paying}
-                      loadingText="Paying…"
-                      onClick={() => handleFund(remainingUsd, giveaway.burner_address!)}
-                    >
-                      Pay ${totalDueUsdc.toFixed(2)} now
-                    </GradientActionButton>
-                  )}
-
-                  {!payPrivately && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setShowManualAddress((s) => !s)}
-                        className="flex items-center gap-1 text-base text-slate-500 hover:text-slate-300 transition-colors"
-                      >
-                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showManualAddress ? "rotate-180" : ""}`} />
-                        Or send USDC manually from another wallet
-                      </button>
-                      {showManualAddress && (
-                        <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
-                          <span className="flex-1 min-w-0 truncate text-base text-slate-300 font-mono">{giveaway.burner_address}</span>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <p className="text-base font-medium text-slate-400 uppercase tracking-widest mb-2">

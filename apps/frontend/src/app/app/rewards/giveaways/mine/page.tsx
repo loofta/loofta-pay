@@ -8,7 +8,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-const ACCENT = "#FB7185";
 
 interface MyGiveaway {
   id: string;
@@ -25,7 +24,7 @@ const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",
   PENDING_APPROVAL: "Pending review",
   REJECTED: "Rejected",
-  PENDING_FUNDING: "Approved — needs funding",
+  PENDING_FUNDING: "Needs funding",
   FUNDED: "Funded",
   OPEN: "Open",
   ENTRIES_CLOSED: "Entries closed",
@@ -129,7 +128,7 @@ export default function MyGiveawaysPage() {
                   )}
 
                   {g.status === "PENDING_FUNDING" ? (
-                    <Link href={`/rewards/giveaways/${g.id}/manage`}>
+                    <Link href={`/rewards/giveaways/${g.id}`}>
                       <GradientActionButton>
                         <span className="text-base">Fund Giveaway</span>
                       </GradientActionButton>

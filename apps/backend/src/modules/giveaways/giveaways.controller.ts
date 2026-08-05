@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiSecurity } from '@nestjs/swagger';
 import { AuthGuard } from '@/common/guards';
 import { GiveawaysService } from './giveaways.service';
@@ -45,6 +45,12 @@ export class GiveawaysController {
   @ApiOperation({ summary: 'Get a giveaway you created, including its tasks' })
   async findOne(@Req() req: { user?: { id: string } }, @Param('id') id: string) {
     return this.giveawaysService.findOneForCreator(id, req.user!.id);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete (before approval) or cancel-and-refund (while awaiting funding) a giveaway you created' })
+  async remove(@Req() req: { user?: { id: string } }, @Param('id') id: string) {
+    return this.giveawaysService.cancelOrDelete(id, req.user!.id);
   }
 
   @Get(':id/funding')
