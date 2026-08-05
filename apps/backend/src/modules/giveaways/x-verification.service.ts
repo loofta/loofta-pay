@@ -100,10 +100,34 @@ export class XVerificationService {
     return ids;
   }
 
+  /** A quote tweet is a distinct relationship from a plain retweet in X's own data model (it shows
+   *  up under "Quote Tweets Lookup", never in "Retweet Lookup"), but counts the same for our
+   *  purposes — confirmed live 2026-08-05: a genuine entrant quote-tweeted exactly as instructed
+   *  and was still rejected, since only plain retweets were being checked. Union both. */
   private async fetchRetweeterIds(tweetId: string): Promise<Set<string>> {
     if (!this.client) return new Set();
-    const paginator = await this.client.v2.tweetRetweetedBy(tweetId, { asPaginator: true, max_results: 100 });
-    return this.collectUserIds(paginator, `retweetedBy(${tweetId})`);
+    const [retweeterIds, quoteAuthorIds] = await Promise.all([
+      (async () => {
+        const paginator = await this.client!.v2.tweetRetweetedBy(tweetId, { asPaginator: true, max_results: 100 });
+        return this.collectUserIds(paginator, `retweetedBy(${tweetId})`);
+      })(),
+      this.fetchQuoteTweetAuthorIds(tweetId),
+    ]);
+    return new Set([...retweeterIds, ...quoteAuthorIds]);
+  }
+
+  private async fetchQuoteTweetAuthorIds(tweetId: string): Promise<Set<string>> {
+    if (!this.client) return new Set();
+    const paginator = await this.client.v2.quotes(tweetId, { max_results: 100 });
+    const ids = new Set<string>();
+    for await (const tweet of paginator) {
+      if (tweet.author_id) ids.add(tweet.author_id);
+      if (ids.size >= MAX_PAGINATED_USERS) {
+        this.logger.warn(`[XVerification] quotes(${tweetId}): hit MAX_PAGINATED_USERS (${MAX_PAGINATED_USERS}) cap — list may be truncated`);
+        break;
+      }
+    }
+    return ids;
   }
 
   private async fetchLikerIds(tweetId: string): Promise<Set<string>> {
