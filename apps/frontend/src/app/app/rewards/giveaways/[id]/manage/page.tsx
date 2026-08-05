@@ -43,7 +43,7 @@ interface GiveawayDetail {
 
 interface Entry {
   id: string; user_id: string; entry_index: number; x_handle: string; status: string;
-  payout_choice: string | null; payout_status: string | null;
+  payout_status: string | null; claim_payment_id: string | null;
 }
 
 interface ReviewItem {
@@ -174,6 +174,16 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                       #{entry.entry_index} · {entry.status}
                       {entry.payout_status && entry.status === "winner" ? ` · payout ${entry.payout_status}` : ""}
                     </p>
+                    {entry.status === "winner" && entry.claim_payment_id && (
+                      <Link
+                        href={`/c/${entry.claim_payment_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-base text-[#FF7A2A] hover:underline underline-offset-2"
+                      >
+                        View claim link
+                      </Link>
+                    )}
                   </div>
                   {canPickManually && (
                     <button

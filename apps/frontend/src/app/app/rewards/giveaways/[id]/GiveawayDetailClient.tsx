@@ -13,7 +13,6 @@ import { useToast } from "@/components/ui/use-toast";
 import { useAuthStore } from "@/store/auth";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 import { useSolPrice } from "@/hooks/useSolPrice";
-import { Input } from "@/components/ui/input";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -103,8 +102,8 @@ interface TaskCompletion {
 }
 
 interface MyEntry {
-  id: string; status: string; payout_choice: string | null; payout_destination: string | null;
-  payout_status: string | null; completions: TaskCompletion[];
+  id: string; status: string; payout_status: string | null; claim_payment_id: string | null;
+  completions: TaskCompletion[];
 }
 
 async function authHeaders(getAccessToken: () => Promise<string | null>): Promise<Record<string, string>> {
@@ -125,9 +124,6 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [entering, setEntering] = useState(false);
-  const [payoutChoice, setPayoutChoice] = useState<"public" | "private">("private");
-  const [payoutDestination, setPayoutDestination] = useState("");
-  const [savingPayout, setSavingPayout] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [downloadingImage, setDownloadingImage] = useState(false);
@@ -230,28 +226,6 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
       toast({ variant: "destructive", title: "Could not submit task", description: err.message });
     }
   }, [id, getAccessToken, toast, refetchEntry]);
-
-  const savePayoutChoice = useCallback(async () => {
-    if (!payoutDestination.trim()) {
-      toast({ variant: "destructive", title: "Enter a destination wallet" });
-      return;
-    }
-    setSavingPayout(true);
-    try {
-      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/payout-choice`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", ...(await authHeaders(getAccessToken)) },
-        body: JSON.stringify({ choice: payoutChoice, destination: payoutDestination.trim() }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      toast({ title: "Payout choice saved", description: "You'll be paid out automatically once processed." });
-      refetchEntry();
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Could not save payout choice", description: err.message });
-    } finally {
-      setSavingPayout(false);
-    }
-  }, [id, payoutChoice, payoutDestination, getAccessToken, toast, refetchEntry]);
 
   const handleFund = useCallback(async (remainingUsd: number, burnerAddress: string) => {
     setPaying(true);
@@ -627,37 +601,17 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             <GradientActionButton onClick={enter} disabled={entering} loading={entering} loadingText="Entering…">
               Enter giveaway
             </GradientActionButton>
-          ) : myEntry?.status === "winner" && myEntry.payout_status === "pending" && !myEntry.payout_choice ? (
-            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+          ) : myEntry?.status === "winner" && myEntry.claim_payment_id ? (
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
               <p className="font-semibold text-lg mb-1 text-emerald-400">You won!</p>
-              <p className="text-base text-slate-300 mb-3">Choose how you want to be paid out.</p>
-              <div className="flex gap-2 mb-3">
-                {(["private", "public"] as const).map((choice) => (
-                  <button
-                    key={choice}
-                    type="button"
-                    onClick={() => setPayoutChoice(choice)}
-                    className={`flex-1 rounded-xl px-3 py-2 text-base font-medium border transition-colors ${
-                      payoutChoice === choice ? "border-[#FF7A2A] text-white bg-[#FF7A2A]/10" : "border-white/10 text-slate-300 hover:bg-white/[0.06]"
-                    }`}
-                  >
-                    {choice === "private" ? "Private (default)" : "Public"}
-                  </button>
-                ))}
-              </div>
-              <Input
-                value={payoutDestination}
-                onChange={(e) => setPayoutDestination(e.target.value)}
-                placeholder="Destination Solana wallet address"
-                className="bg-white/5 border-white/10 text-white placeholder:text-slate-500 mb-3"
-              />
-              <GradientActionButton onClick={savePayoutChoice} disabled={savingPayout} loading={savingPayout} loadingText="Saving…">
-                Confirm payout
+              <p className="text-base text-slate-300 mb-3">Claim your prize below — you can choose to claim it publicly or privately.</p>
+              <GradientActionButton onClick={() => router.push(`/c/${myEntry.claim_payment_id}`)}>
+                Claim your prize
               </GradientActionButton>
             </div>
           ) : myEntry?.status === "winner" ? (
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
-              <p className="font-semibold text-lg text-emerald-400">You won! Payout: {myEntry.payout_status}</p>
+              <p className="font-semibold text-lg text-emerald-400">You won! Your claim link is being prepared — check back shortly.</p>
             </div>
           ) : myEntry ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center">

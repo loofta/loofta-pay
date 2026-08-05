@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Keypair, PublicKey, Transaction, VersionedTransaction, type Connection } from '@solana/web3.js';
+import { Keypair, PublicKey, Transaction, type Connection } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
   getAccount,
@@ -11,10 +11,9 @@ import { SupabaseService } from '@/database/supabase.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
 import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 import { EmailService } from '../email/email.service';
-import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
+import { guardAtaSponsorship, assertPerUserAtaCreationCapNotExceeded } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { reclaimBurnerFunds } from '@/common/burner-reclaim';
-import { requestMagicblockPrivateTransfer } from '@/common/magicblock-private-transfer';
 
 export interface GiveawayBurner {
   address: string;
@@ -22,17 +21,19 @@ export interface GiveawayBurner {
 }
 
 /**
- * Standalone burner mint/sweep for the Giveaways feature. Deliberately NOT extracted from
- * claims.service.ts (3807 lines, handles live claim/payment money today) — same decrypt/sweep
- * pattern (HKDF-derived per-burner key via SendPaymentEncryptionService, public sweep, private
- * sweep via MagicBlock), zero risk of regressing the existing claims flow. See the "Giveaways
- * Module" plan (project memory) for why this was built new instead of shared.
+ * Standalone burner mint/fund for the Giveaways feature. Deliberately NOT extracted from
+ * claims.service.ts (3807 lines, handles live claim/payment money today) — same decrypt pattern
+ * (HKDF-derived per-burner key via SendPaymentEncryptionService), zero risk of regressing the
+ * existing claims flow. Winner payout no longer sweeps directly to a wallet here — instead
+ * fundNewClaimBurner funds a fresh per-winner burner from the giveaway's own burner, and
+ * giveaway-payout.service.ts turns that into a normal claims-table payments row (a /c/[id] claim
+ * link), reusing the exact claim/sweep mechanism claims.service.ts already has for every other
+ * payment instead of duplicating it here. See the "Giveaways Module" plan (project memory).
  *
  * Every method here that creates a destination ATA follows .claude/skills/solana-sponsor-safety:
- * guard client-suppliable destinations (winner wallet, creator refund wallet) before sponsoring
- * their ATA creation, and always recover the burner's own rent (we hold that key) in the same
- * transaction when we build it ourselves, or via reclaimBurnerFunds as a follow-up when MagicBlock
- * builds the transfer.
+ * guard client-suppliable destinations (creator refund wallet) before sponsoring their ATA
+ * creation; a fresh burner we mint and hold the key for needs no guard (the "we own it" bucket).
+ * Always recover the burner's own rent (we hold that key) in the same transaction when we build it.
  */
 @Injectable()
 export class GiveawayBurnerSweepService {
@@ -85,129 +86,6 @@ export class GiveawayBurnerSweepService {
   }
 
   /**
-   * Public sweep: burner -> destination wallet, plain SPL transfer. Creates the destination ATA
-   * if missing (fee-payer-sponsored, guarded) and closes the burner's own ATA back to the fee
-   * payer in the same transaction (rent recovery — we hold the burner's key, so this is free).
-   */
-  async sweepPublic(params: {
-    conn: Connection;
-    burnerKeypair: Keypair;
-    destination: string;
-    mint: PublicKey;
-    amountBaseUnits: bigint;
-    /** Audit-trail tag for ata_sponsorships, e.g. `giveaway:<id>:entry:<entryId>`. */
-    context: string;
-  }): Promise<{ sweepTxHash: string }> {
-    const { conn, burnerKeypair, destination, mint, amountBaseUnits, context } = params;
-    const feePayerKp = this.requireFeePayer();
-
-    const destinationPubkey = new PublicKey(destination.trim());
-    const burnerAta = await getAssociatedTokenAddress(mint, burnerKeypair.publicKey);
-    // allowOwnerOffCurve: true mirrors claims.service.ts — some payout destinations (e.g. a
-    // program-derived payout address) are off-curve; this only relaxes a client-side check, not
-    // the derived address itself.
-    const destinationAta = await getAssociatedTokenAddress(mint, destinationPubkey, true);
-
-    const tx = new Transaction();
-    if (!(await tokenAccountExists(conn, destinationAta))) {
-      const allowed = await guardAtaSponsorship(
-        this.supabaseService,
-        destinationPubkey.toBase58(),
-        mint.toBase58(),
-        context,
-        this.emailService,
-      );
-      if (!allowed) {
-        throw new Error(
-          'This wallet already received a sponsored token account once before and closed it. Further free account creation is blocked to prevent abuse. Please contact support.',
-        );
-      }
-      tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, destinationAta, destinationPubkey, mint));
-    }
-    tx.add(createTransferInstruction(burnerAta, destinationAta, burnerKeypair.publicKey, amountBaseUnits));
-    tx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burnerKeypair.publicKey));
-
-    tx.feePayer = feePayerKp.publicKey;
-    tx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
-    tx.sign(burnerKeypair, feePayerKp);
-    const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true });
-    await this.pollConfirmTransaction(conn, sig);
-    this.logger.log(`[GiveawaySweep] public sweep ${context} tx=${sig}`);
-    return { sweepTxHash: sig };
-  }
-
-  /**
-   * Private sweep: burner -> destination via MagicBlock's Payments API, decorrelating the payout
-   * from the giveaway's public burner address. MagicBlock builds the transfer transaction; we
-   * only co-sign as burner + fee payer, so rent recovery can't be inlined here — it's swept as a
-   * best-effort follow-up via reclaimBurnerFunds, with giveaway-cron.service.ts's GC pass as the
-   * backstop if this follow-up fails.
-   */
-  async sweepPrivate(params: {
-    conn: Connection;
-    burnerKeypair: Keypair;
-    destination: string;
-    mint: PublicKey;
-    amountBaseUnits: number;
-    cluster: 'devnet' | 'mainnet' | 'localhost';
-  }): Promise<{ sweepTxHash: string }> {
-    const { conn, burnerKeypair, destination, mint, amountBaseUnits, cluster } = params;
-    const feePayerKp = this.requireFeePayer();
-
-    const txResponse = await requestMagicblockPrivateTransfer({
-      from: burnerKeypair.publicKey.toBase58(),
-      to: destination.trim(),
-      mint: mint.toBase58(),
-      amount: amountBaseUnits,
-      cluster,
-      // Winner nets exactly amountBaseUnits; funding_required_usd already sized the burner's
-      // buffer to absorb MagicBlock's fee on top of the announced per-winner prize.
-      exactOut: true,
-      gasless: true,
-    });
-
-    const txBytes = Buffer.from(txResponse.transactionBase64, 'base64');
-    let legacyTx: Transaction | null = null;
-    let versionedTx: VersionedTransaction | null = null;
-    try {
-      legacyTx = Transaction.from(txBytes);
-    } catch {
-      versionedTx = VersionedTransaction.deserialize(txBytes);
-    }
-
-    if (legacyTx) {
-      legacyTx.feePayer = feePayerKp.publicKey;
-      legacyTx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
-      legacyTx.partialSign(burnerKeypair);
-      legacyTx.partialSign(feePayerKp);
-    } else if (versionedTx) {
-      const requiredKeys = new Set(
-        versionedTx.message.staticAccountKeys
-          .slice(0, versionedTx.message.header.numRequiredSignatures)
-          .map((k) => k.toBase58()),
-      );
-      const signers = [burnerKeypair, feePayerKp].filter((kp) => requiredKeys.has(kp.publicKey.toBase58()));
-      versionedTx.sign(signers);
-    }
-
-    const serialized = legacyTx ? legacyTx.serialize({ requireAllSignatures: false }) : versionedTx!.serialize();
-    const sig = await conn.sendRawTransaction(serialized, { skipPreflight: true });
-    await this.pollConfirmTransaction(conn, sig);
-    this.logger.log(`[GiveawaySweep] private sweep tx=${sig}`);
-
-    void (async () => {
-      try {
-        await new Promise((r) => setTimeout(r, 4_000));
-        await reclaimBurnerFunds(conn, burnerKeypair, feePayerKp);
-      } catch (e) {
-        this.logger.warn(`[GiveawaySweep] post-private-sweep reclaim failed (non-fatal, GC cron will retry): ${String(e)}`);
-      }
-    })();
-
-    return { sweepTxHash: sig };
-  }
-
-  /**
    * Refund whatever's left in the burner (unused fee buffer, once all winners are paid) back to
    * the giveaway creator's own wallet. Same anti-drain guard applies — the creator's wallet is
    * client-supplied, not one we hold the key for. Returns null when there's nothing to refund.
@@ -218,8 +96,10 @@ export class GiveawayBurnerSweepService {
     creatorWallet: string;
     mint: PublicKey;
     context: string;
+    /** Giveaway creator's Privy user id — same rationale as sweepPublic's callerUserId. */
+    callerUserId?: string;
   }): Promise<{ sweepTxHash: string } | null> {
-    const { conn, burnerKeypair, creatorWallet, mint, context } = params;
+    const { conn, burnerKeypair, creatorWallet, mint, context, callerUserId } = params;
     const feePayerKp = this.requireFeePayer();
 
     const burnerAta = await getAssociatedTokenAddress(mint, burnerKeypair.publicKey);
@@ -236,12 +116,16 @@ export class GiveawayBurnerSweepService {
 
     const tx = new Transaction();
     if (!(await tokenAccountExists(conn, creatorAta))) {
+      if (callerUserId) {
+        await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, callerUserId, 1, 'GiveawayRefund');
+      }
       const allowed = await guardAtaSponsorship(
         this.supabaseService,
         creatorPubkey.toBase58(),
         mint.toBase58(),
         context,
         this.emailService,
+        callerUserId,
       );
       if (!allowed) {
         throw new Error(
@@ -262,7 +146,46 @@ export class GiveawayBurnerSweepService {
     return { sweepTxHash: sig };
   }
 
-  /** GC backstop for burners whose sweep never got to close the ATA inline (e.g. sweepPrivate's follow-up failed). Mirrors claims.service.ts's cronReclaimFinishedClaimBurners. */
+  /**
+   * Mints a fresh one-time burner and funds it from the giveaway's own (already-funded) burner —
+   * this becomes a winner's dedicated claim-payment burner, same shape as send-payment.service.ts's
+   * fanOutMultiSendHubTransfer (hub -> per-recipient burner), except the giveaway's burner plays the
+   * hub role instead of the platform fee payer. The new burner's ATA needs no guardAtaSponsorship
+   * check — it's an address we generate and hold the key for (the "we own it" bucket), same as
+   * fanOutMultiSendHubTransfer's own comment on this exact pattern. Does NOT close the giveaway
+   * burner's ATA (siblings may still need funding from it); that happens once in
+   * refundRemainingToCreator after every winner is paid.
+   */
+  async fundNewClaimBurner(params: {
+    conn: Connection;
+    giveawayBurnerKeypair: Keypair;
+    mint: PublicKey;
+    amountBaseUnits: bigint;
+  }): Promise<{ burner: GiveawayBurner; txHash: string }> {
+    const { conn, giveawayBurnerKeypair, mint, amountBaseUnits } = params;
+    const feePayerKp = this.requireFeePayer();
+
+    const burner = this.createBurner();
+    if (!burner) throw new Error('Giveaway sweep encryption is not configured (SEND_PAYMENT_ENC_KEY missing).');
+    const newBurnerKeypair = this.decryptBurner(burner.address, burner.encryptedSecret);
+
+    const sourceAta = await getAssociatedTokenAddress(mint, giveawayBurnerKeypair.publicKey);
+    const destAta = await getAssociatedTokenAddress(mint, newBurnerKeypair.publicKey);
+
+    const tx = new Transaction();
+    tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, destAta, newBurnerKeypair.publicKey, mint));
+    tx.add(createTransferInstruction(sourceAta, destAta, giveawayBurnerKeypair.publicKey, amountBaseUnits));
+
+    tx.feePayer = feePayerKp.publicKey;
+    tx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
+    tx.sign(giveawayBurnerKeypair, feePayerKp);
+    const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+    await this.pollConfirmTransaction(conn, sig);
+    this.logger.log(`[GiveawaySweep] funded new claim burner=${burner.address} tx=${sig} amount=${amountBaseUnits}`);
+    return { burner, txHash: sig };
+  }
+
+  /** GC backstop for a giveaway burner whose refund-to-creator sweep never got to close the ATA inline. Mirrors claims.service.ts's cronReclaimFinishedClaimBurners. */
   async reclaimTerminalBurner(conn: Connection, burnerKeypair: Keypair): Promise<void> {
     const feePayerKp = this.requireFeePayer();
     await reclaimBurnerFunds(conn, burnerKeypair, feePayerKp);

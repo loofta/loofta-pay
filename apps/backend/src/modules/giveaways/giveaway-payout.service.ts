@@ -1,24 +1,48 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PublicKey } from '@solana/web3.js';
 import { SupabaseService } from '@/database/supabase.service';
+import { ConfigService } from '@nestjs/config';
 import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 import { UsersService } from '../users/users.service';
-import { isValidSolanaAddress } from '@/common/solana-address';
 import { GiveawayBurnerSweepService } from './giveaway-burner-sweep.service';
+import { GiveawayGiphyService } from './giveaway-giphy.service';
 import { GiveawaysService } from './giveaways.service';
 import { Giveaway, GiveawayStatus, GiveawayEntry } from './entities/giveaway.entity';
+import { randomBytes } from 'crypto';
+
+// Same generator as ClaimsService/SendPaymentService — duplicated rather than shared per this
+// codebase's existing convention (see claims.service.ts, send-payment.service.ts).
+const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SHORT_ID_MAX_VALID = Math.floor(256 / SHORT_ID_ALPHABET.length) * SHORT_ID_ALPHABET.length;
+function generateShortId(length = 8): string {
+  let result = '';
+  while (result.length < length) {
+    const bytes = randomBytes(length - result.length + 4);
+    for (const byte of bytes) {
+      if (byte < SHORT_ID_MAX_VALID && result.length < length) {
+        result += SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length];
+      }
+    }
+  }
+  return result;
+}
 
 @Injectable()
 export class GiveawayPayoutService {
   private readonly logger = new Logger(GiveawayPayoutService.name);
+  private readonly baseUrl: string;
 
   constructor(
     private readonly supabaseService: SupabaseService,
+    private readonly configService: ConfigService,
     private readonly solanaSponsor: SolanaSponsorService,
     private readonly usersService: UsersService,
     private readonly giveawaysService: GiveawaysService,
     private readonly burnerSweep: GiveawayBurnerSweepService,
-  ) {}
+    private readonly giphy: GiveawayGiphyService,
+  ) {
+    this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
+  }
 
   private cluster(giveaway: Giveaway): 'devnet' | 'mainnet' {
     return giveaway.is_devnet ? 'devnet' : 'mainnet';
@@ -27,34 +51,6 @@ export class GiveawayPayoutService {
   private async logEvent(giveawayId: string, type: string, payload?: Record<string, unknown>): Promise<void> {
     const { error } = await this.supabaseService.giveawayEvents.insert({ giveaway_id: giveawayId, type, payload: payload ?? null });
     if (error) this.logger.warn(`[GiveawayPayout] ${giveawayId} ${type}: failed to log event (non-fatal): ${error.message}`);
-  }
-
-  /** Winner picks how they want to be paid — must own the entry and still be pending payout. */
-  async setPayoutChoice(
-    giveawayId: string,
-    userId: string,
-    choice: 'public' | 'private',
-    destination: string,
-  ): Promise<GiveawayEntry> {
-    if (!isValidSolanaAddress(destination)) throw new BadRequestException('Invalid Solana destination address');
-
-    const { data: entry, error } = await this.supabaseService.giveawayEntries
-      .select('*')
-      .eq('giveaway_id', giveawayId)
-      .eq('user_id', userId)
-      .maybeSingle();
-    if (error) throw new BadRequestException(error.message);
-    if (!entry) throw new ForbiddenException('You did not enter this giveaway');
-    if (entry.status !== 'winner') throw new BadRequestException('You are not a winner of this giveaway');
-    if (entry.payout_status !== 'pending') throw new BadRequestException(`Payout is already ${entry.payout_status}`);
-
-    const { data: updated, error: updateError } = await this.supabaseService.giveawayEntries
-      .update({ payout_choice: choice, payout_destination: destination.trim() })
-      .eq('id', entry.id)
-      .select()
-      .single();
-    if (updateError || !updated) throw new BadRequestException(updateError?.message ?? 'Failed to set payout choice');
-    return updated as GiveawayEntry;
   }
 
   /** Every winner entry still waiting on a payout, across giveaways in WINNERS_SELECTED /
@@ -86,7 +82,7 @@ export class GiveawayPayoutService {
     }
 
     const ready = (winners ?? []).filter(
-      (w) => w.payout_status !== 'succeeded' && w.payout_choice && w.payout_destination,
+      (w) => w.payout_status !== 'succeeded' && !w.claim_payment_id,
     ) as GiveawayEntry[];
 
     if (ready.length && giveaway.status === GiveawayStatus.WINNERS_SELECTED) {
@@ -99,35 +95,68 @@ export class GiveawayPayoutService {
     const burnerKeypair = this.burnerSweep.decryptBurner(giveaway.burner_address, giveaway.burner_encrypted_secret);
     const amountBaseUnits = BigInt(Math.round(Number(giveaway.prize_amount_usd) * 1_000_000));
 
+    // Winners no longer choose a payout destination upfront — each gets a normal /c/[id] claim
+    // link (same mechanism as multi-send: a fresh dedicated burner, funded from this giveaway's
+    // burner, backing a `payments` row) and picks public or private claiming on that page, same as
+    // any other Loofta payment.
+    const gifUrl = await this.giphy.getFirstGifUrl('winning');
+    const description = `Congrats on winning "${giveaway.title}"!${gifUrl ? ` ${gifUrl}` : ''}`;
+
     for (const entry of ready) {
       await this.supabaseService.giveawayEntries.update({ payout_status: 'in_progress' }).eq('id', entry.id);
       try {
-        const result =
-          entry.payout_choice === 'private'
-            ? await this.burnerSweep.sweepPrivate({
-                conn,
-                burnerKeypair,
-                destination: entry.payout_destination!,
-                mint,
-                amountBaseUnits: Number(amountBaseUnits),
-                cluster: this.cluster(giveaway),
-              })
-            : await this.burnerSweep.sweepPublic({
-                conn,
-                burnerKeypair,
-                destination: entry.payout_destination!,
-                mint,
-                amountBaseUnits,
-                context: `giveaway:${giveaway.id}:entry:${entry.id}`,
-              });
+        const winnerWallet = await this.usersService.getSolanaWalletAddress(entry.user_id);
+        const { burner, txHash } = await this.burnerSweep.fundNewClaimBurner({
+          conn,
+          giveawayBurnerKeypair: burnerKeypair,
+          mint,
+          amountBaseUnits,
+        });
+
+        const shortId = generateShortId();
+        const { data: payment, error: paymentError } = await this.supabaseService.payments
+          .insert({
+            amount: giveaway.prize_amount_usd,
+            direction: 'from_sender',
+            recipient_address: winnerWallet,
+            recipient_user_id: entry.user_id,
+            recipient_was_unregistered: false,
+            created_by: giveaway.created_by,
+            sender_user_id: giveaway.created_by,
+            status: 'PRIVATE_TRANSFER_PENDING',
+            paid_at: new Date().toISOString(),
+            sender_tx_hash: txHash,
+            description,
+            from_chain: 'solana',
+            from_token: 'USDC',
+            to_chain: 'solana',
+            to_token: 'USDC',
+            is_devnet: giveaway.is_devnet,
+            short_id: shortId,
+            burner_address: burner.address,
+            burner_encrypted_secret: burner.encryptedSecret,
+            is_multi_send: true,
+            is_private: false,
+            multi_send_batch_id: giveaway.id,
+          })
+          .select('id')
+          .single();
+        if (paymentError || !payment) throw new Error(paymentError?.message ?? 'Failed to create claim payment');
+
         await this.supabaseService.giveawayEntries
           .update({
             payout_status: 'succeeded',
-            payout_tx_hash: result.sweepTxHash,
+            payout_tx_hash: txHash,
             payout_amount_usd: giveaway.prize_amount_usd,
+            claim_payment_id: payment.id as string,
           })
           .eq('id', entry.id);
-        await this.logEvent(giveaway.id, 'payout_succeeded', { entry_id: entry.id, tx_hash: result.sweepTxHash, choice: entry.payout_choice });
+        await this.logEvent(giveaway.id, 'payout_succeeded', {
+          entry_id: entry.id,
+          tx_hash: txHash,
+          claim_payment_id: payment.id,
+          claim_url: `${this.baseUrl}/c/${payment.id}`,
+        });
       } catch (e) {
         this.logger.warn(`[GiveawayPayout] ${giveaway.id} entry ${entry.id}: payout failed (will retry next cron): ${String(e)}`);
         await this.supabaseService.giveawayEntries.update({ payout_status: 'failed' }).eq('id', entry.id);
@@ -162,6 +191,7 @@ export class GiveawayPayoutService {
         creatorWallet,
         mint,
         context: `giveaway:${giveaway.id}:refund`,
+        callerUserId: giveaway.created_by,
       });
       if (refund) await this.logEvent(giveaway.id, 'refund_issued', { tx_hash: refund.sweepTxHash });
     } catch (e) {

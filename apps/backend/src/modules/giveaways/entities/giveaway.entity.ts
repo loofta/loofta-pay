@@ -131,6 +131,8 @@ export interface GiveawayEntry {
   payout_status: 'not_applicable' | 'pending' | 'in_progress' | 'succeeded' | 'failed' | null;
   payout_tx_hash: string | null;
   payout_amount_usd: string | null;
+  /** payments.id for this winner's claim link (/c/[id]) once their prize has been delivered as a claimable payment. */
+  claim_payment_id: string | null;
 }
 
 export enum GiveawayTaskCompletionStatus {

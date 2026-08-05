@@ -14,6 +14,7 @@ import { XVerificationService } from './x-verification.service';
 import { GiveawayEntriesService } from './giveaway-entries.service';
 import { GiveawayDrawService } from './giveaway-draw.service';
 import { GiveawayPayoutService } from './giveaway-payout.service';
+import { GiveawayGiphyService } from './giveaway-giphy.service';
 import { GiveawayCronService } from './giveaway-cron.service';
 
 @Module({
@@ -36,6 +37,7 @@ import { GiveawayCronService } from './giveaway-cron.service';
     GiveawayEntriesService,
     GiveawayDrawService,
     GiveawayPayoutService,
+    GiveawayGiphyService,
     GiveawayCronService,
   ],
   exports: [

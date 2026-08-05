@@ -5,12 +5,10 @@ import { GiveawaysService } from './giveaways.service';
 import { GiveawayFundingService } from './giveaway-funding.service';
 import { GiveawayEntriesService } from './giveaway-entries.service';
 import { GiveawayDrawService } from './giveaway-draw.service';
-import { GiveawayPayoutService } from './giveaway-payout.service';
 import { CreateGiveawayDto } from './dto/create-giveaway.dto';
 import { SubmitTaskCompletionDto } from './dto/submit-task-completion.dto';
 import { ReviewTaskCompletionDto } from './dto/review-task-completion.dto';
 import { SelectWinnersDto } from './dto/select-winners.dto';
-import { SetPayoutChoiceDto } from './dto/set-payout-choice.dto';
 import { BuildFundingPrivateTransferDto } from './dto/build-funding-private-transfer.dto';
 import { Giveaway } from './entities/giveaway.entity';
 
@@ -24,7 +22,6 @@ export class GiveawaysController {
     private readonly fundingService: GiveawayFundingService,
     private readonly entriesService: GiveawayEntriesService,
     private readonly drawService: GiveawayDrawService,
-    private readonly payoutService: GiveawayPayoutService,
   ) {}
 
   @Post()
@@ -122,13 +119,6 @@ export class GiveawaysController {
   ) {
     const completion = await this.entriesService.submitTaskCompletion(id, req.user!.id, taskId, dto.submission_data);
     return { completion };
-  }
-
-  @Put(':id/payout-choice')
-  @ApiOperation({ summary: 'Winner: choose public or private payout and a destination wallet' })
-  async setPayoutChoice(@Req() req: { user?: { id: string } }, @Param('id') id: string, @Body() dto: SetPayoutChoiceDto) {
-    const entry = await this.payoutService.setPayoutChoice(id, req.user!.id, dto.choice, dto.destination);
-    return { entry };
   }
 
   // ─────────────────────────────────────────────────────────────────
