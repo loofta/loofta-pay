@@ -21,7 +21,7 @@ const TWITTER_ACCOUNT_TYPES = ['twitter_oauth', 'twitter_oauth2', 'twitter', 'x'
 // costs a real API call (fetch the tweet's retweeter/liker/follower list), so this bounds cost
 // exposure per (entry, task) instead of relying on goodwill. Tracked in the completion row's own
 // verification_detail.attempts (rolling window), no separate table/migration needed.
-const MAX_VERIFY_ATTEMPTS_PER_WINDOW = 2;
+const MAX_VERIFY_ATTEMPTS_PER_WINDOW = 4;
 const VERIFY_ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
 
 @Injectable()
