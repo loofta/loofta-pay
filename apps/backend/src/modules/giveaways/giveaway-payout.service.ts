@@ -185,6 +185,7 @@ export class GiveawayPayoutService {
       const mint = new PublicKey(giveaway.mint);
       const burnerKeypair = this.burnerSweep.decryptBurner(giveaway.burner_address, giveaway.burner_encrypted_secret);
       const creatorWallet = await this.usersService.getSolanaWalletAddress(giveaway.created_by, { skipCache: true });
+      const platformFeeBaseUnits = BigInt(Math.round(Number(giveaway.platform_fee_usd) * 1_000_000));
       const refund = await this.burnerSweep.refundRemainingToCreator({
         conn,
         burnerKeypair,
@@ -192,8 +193,17 @@ export class GiveawayPayoutService {
         mint,
         context: `giveaway:${giveaway.id}:refund`,
         callerUserId: giveaway.created_by,
+        platformFeeBaseUnits,
       });
-      if (refund) await this.logEvent(giveaway.id, 'refund_issued', { tx_hash: refund.sweepTxHash });
+      if (refund) {
+        await this.logEvent(giveaway.id, 'refund_issued', { tx_hash: refund.sweepTxHash });
+        if (refund.platformFeeBaseUnits > 0n) {
+          await this.logEvent(giveaway.id, 'platform_fee_collected', {
+            tx_hash: refund.sweepTxHash,
+            amount_usd: Number(refund.platformFeeBaseUnits) / 1_000_000,
+          });
+        }
+      }
     } catch (e) {
       this.logger.warn(`[GiveawayPayout] ${giveaway.id}: buffer refund failed (non-fatal, GC cron will catch remaining dust): ${String(e)}`);
     }

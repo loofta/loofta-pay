@@ -73,6 +73,7 @@ export interface Giveaway {
   description: string | null;
   logo_url: string | null;
   project_name: string | null;
+  short_id: string | null;
 
   winner_count: number;
   selection_mode: GiveawaySelectionMode;
@@ -87,6 +88,8 @@ export interface Giveaway {
   is_devnet: boolean;
   funding_required_usd: string | null;
   funding_confirmed_usd: string;
+  /** Flat platform fee for posting this giveaway, snapshotted at creation — 0 for an official ("create as Loofta") giveaway. Lands in the Solana fee payer's own wallet at completion. */
+  platform_fee_usd: string;
   burner_reclaimed_at: string | null;
 
   vrf_request_slot: number | null;

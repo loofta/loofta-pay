@@ -570,6 +570,51 @@ export class EmailService {
     }
   }
 
+  /** Fired when a creator submits a new giveaway for review — PENDING_APPROVAL sits invisible
+   *  until someone checks the admin dashboard, so this makes a submission show up immediately
+   *  instead of relying on remembering to look. Not sent for an official ("create as Loofta")
+   *  giveaway, since those auto-approve and skip PENDING_APPROVAL entirely. */
+  async sendGiveawaySubmittedAlertEmail(data: {
+    to: string;
+    title: string;
+    creatorEmail: string | null;
+    prizeAmountUsd: number;
+    winnerCount: number;
+    adminUrl: string;
+  }): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`Giveaway-submitted alert NOT sent (RESEND_API_KEY unset): title=${data.title}`);
+      return;
+    }
+    const subject = `🎁 New giveaway to review — "${data.title}"`;
+    const html = `
+      <div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+        <h2 style="color:#0f172a;margin:0 0 4px;">New giveaway submitted for approval</h2>
+        <p style="color:#64748b;margin:0 0 16px;font-size:14px;">
+          A creator just submitted a giveaway — it stays invisible to entrants until you approve it in the admin dashboard.
+        </p>
+        <table style="border-collapse:collapse;width:100%;background:#f8fafc;border-radius:8px;font-size:14px;">
+          <tr><td style="padding:6px 12px;color:#475569;">Title</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.title}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Creator</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.creatorEmail ?? "no email linked"}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Prize</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">$${data.prizeAmountUsd} × ${data.winnerCount} winner${data.winnerCount === 1 ? "" : "s"}</td></tr>
+        </table>
+        <p style="color:#94a3b8;margin:16px 0 0;font-size:12px;">
+          Open the admin dashboard's Giveaways tab to approve or reject · <a href="${data.adminUrl}" style="color:#6366f1;">${data.adminUrl}</a>
+        </p>
+      </div>`;
+    try {
+      await this.resend.emails.send({
+        from: `Loofta Ops <${this.fromEmail}>`,
+        to: data.to,
+        subject,
+        html,
+      });
+      this.logger.log(`Giveaway-submitted alert sent to ${data.to} (title=${data.title})`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send giveaway-submitted alert to ${data.to}: ${err?.message ?? err}`);
+    }
+  }
+
   /** Distinct from sendAtaSponsorshipAbuseAlertEmail: that one fires on a *repeat* sponsorship of
    *  the SAME wallet, which a Sybil attacker trivially evades by using a fresh throwaway wallet
    *  every time. This one fires when the sponsored-ATA-creation *rate* itself spikes regardless of

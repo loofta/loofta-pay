@@ -829,6 +829,11 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                                 className={`${inputClass} pl-7`}
                               />
                             </div>
+                            {!createAsAdmin && (
+                              <p className="text-sm text-slate-500 mt-1.5">
+                                Plus a flat $5 platform fee to launch — you&apos;ll fund ${totalPool + 5} total.
+                              </p>
+                            )}
                           </div>
 
                           <div>

@@ -86,9 +86,11 @@ export class GiveawayBurnerSweepService {
   }
 
   /**
-   * Refund whatever's left in the burner (unused fee buffer, once all winners are paid) back to
-   * the giveaway creator's own wallet. Same anti-drain guard applies — the creator's wallet is
-   * client-supplied, not one we hold the key for. Returns null when there's nothing to refund.
+   * Refund whatever's left in the burner (once all winners are paid) back to the giveaway
+   * creator's own wallet — MINUS the giveaway's platform fee, if any, which goes to our own fee
+   * payer's wallet instead (an address we hold the key for, so no anti-drain guard needed for
+   * that leg). Same anti-drain guard applies to the creator leg — that wallet is client-supplied,
+   * not one we hold the key for. Returns null when there's nothing to refund.
    */
   async refundRemainingToCreator(params: {
     conn: Connection;
@@ -98,7 +100,9 @@ export class GiveawayBurnerSweepService {
     context: string;
     /** Giveaway creator's Privy user id — same rationale as sweepPublic's callerUserId. */
     callerUserId?: string;
-  }): Promise<{ sweepTxHash: string } | null> {
+    /** Platform fee to withhold from the creator's refund and send to the fee payer's own wallet instead. */
+    platformFeeBaseUnits?: bigint;
+  }): Promise<{ sweepTxHash: string; platformFeeBaseUnits: bigint } | null> {
     const { conn, burnerKeypair, creatorWallet, mint, context, callerUserId } = params;
     const feePayerKp = this.requireFeePayer();
 
@@ -111,30 +115,48 @@ export class GiveawayBurnerSweepService {
     }
     if (remaining === 0n) return null;
 
+    // Never withhold more than the burner actually holds — an underfunded edge case (giveaway
+    // completed with less buffer than expected) should degrade to "creator gets less back", not
+    // "fee sweep fails outright".
+    const requestedFeeUnits = params.platformFeeBaseUnits ?? 0n;
+    const feeUnits = requestedFeeUnits > remaining ? remaining : requestedFeeUnits;
+    const creatorUnits = remaining - feeUnits;
+
     const creatorPubkey = new PublicKey(creatorWallet.trim());
     const creatorAta = await getAssociatedTokenAddress(mint, creatorPubkey, true);
 
     const tx = new Transaction();
-    if (!(await tokenAccountExists(conn, creatorAta))) {
-      if (callerUserId) {
-        await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, callerUserId, 1, 'GiveawayRefund');
-      }
-      const allowed = await guardAtaSponsorship(
-        this.supabaseService,
-        creatorPubkey.toBase58(),
-        mint.toBase58(),
-        context,
-        this.emailService,
-        callerUserId,
-      );
-      if (!allowed) {
-        throw new Error(
-          'This wallet already received a sponsored token account once before and closed it. Further free account creation is blocked to prevent abuse. Please contact support.',
+    if (creatorUnits > 0n) {
+      if (!(await tokenAccountExists(conn, creatorAta))) {
+        if (callerUserId) {
+          await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, callerUserId, 1, 'GiveawayRefund');
+        }
+        const allowed = await guardAtaSponsorship(
+          this.supabaseService,
+          creatorPubkey.toBase58(),
+          mint.toBase58(),
+          context,
+          this.emailService,
+          callerUserId,
         );
+        if (!allowed) {
+          throw new Error(
+            'This wallet already received a sponsored token account once before and closed it. Further free account creation is blocked to prevent abuse. Please contact support.',
+          );
+        }
+        tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, creatorAta, creatorPubkey, mint));
       }
-      tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, creatorAta, creatorPubkey, mint));
+      tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, creatorUnits));
     }
-    tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, remaining));
+    if (feeUnits > 0n) {
+      // Fee payer's own ATA — an address we generate/hold the key for, so no guardAtaSponsorship
+      // needed (the "we own it" bucket, same as fundNewClaimBurner's destination).
+      const feePayerAta = await getAssociatedTokenAddress(mint, feePayerKp.publicKey);
+      if (!(await tokenAccountExists(conn, feePayerAta))) {
+        tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, feePayerAta, feePayerKp.publicKey, mint));
+      }
+      tx.add(createTransferInstruction(burnerAta, feePayerAta, burnerKeypair.publicKey, feeUnits));
+    }
     tx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burnerKeypair.publicKey));
 
     tx.feePayer = feePayerKp.publicKey;
@@ -142,8 +164,8 @@ export class GiveawayBurnerSweepService {
     tx.sign(burnerKeypair, feePayerKp);
     const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: true });
     await this.pollConfirmTransaction(conn, sig);
-    this.logger.log(`[GiveawaySweep] refund-remaining ${context} tx=${sig} amount=${remaining}`);
-    return { sweepTxHash: sig };
+    this.logger.log(`[GiveawaySweep] refund-remaining ${context} tx=${sig} creator=${creatorUnits} platformFee=${feeUnits}`);
+    return { sweepTxHash: sig, platformFeeBaseUnits: feeUnits };
   }
 
   /**

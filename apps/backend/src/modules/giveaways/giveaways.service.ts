@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
-import { MAGICBLOCK_VOLUME_FEE_BPS, MAGICBLOCK_GAS_USDC } from '@/common/magicblock-private-transfer';
 import { GiveawayBurnerSweepService } from './giveaway-burner-sweep.service';
 import { isPrivyUserAdmin } from '@/common/admin-check';
 import { GiveawayFundingService } from './giveaway-funding.service';
@@ -18,6 +17,34 @@ import {
   GiveawayTaskCompletionStatus,
   GIVEAWAY_TASK_VERIFICATION_MODE,
 } from './entities/giveaway.entity';
+import { randomBytes } from 'crypto';
+
+// Same generator as ClaimsService/SendPaymentService/GiveawayPayoutService — duplicated rather
+// than shared per this codebase's existing convention.
+const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SHORT_ID_MAX_VALID = Math.floor(256 / SHORT_ID_ALPHABET.length) * SHORT_ID_ALPHABET.length;
+function generateShortId(length = 8): string {
+  let result = '';
+  while (result.length < length) {
+    const bytes = randomBytes(length - result.length + 4);
+    for (const byte of bytes) {
+      if (byte < SHORT_ID_MAX_VALID && result.length < length) {
+        result += SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length];
+      }
+    }
+  }
+  return result;
+}
+
+// Same convention as ata-sponsorship-guard.ts / lottery.service.ts's own alert-email constants —
+// each caller defines its own address rather than a shared config, overridable via env for staging.
+const GIVEAWAY_REVIEW_ALERT_EMAIL = 'lisa.bechina@gmail.com';
+
+// Flat, deliberate platform fee for posting a giveaway — distinct from the old per-winner
+// MagicBlock buffer (removed; that was accidental overcharge with no real cost behind it). Lands
+// in the Solana fee payer's own wallet at giveaway completion, not refunded to the creator like
+// the rest of the burner's leftover. Waived for an official ("create as Loofta") giveaway.
+const GIVEAWAY_PLATFORM_FEE_USD = 5;
 
 @Injectable()
 export class GiveawaysService {
@@ -45,18 +72,15 @@ export class GiveawaysService {
     this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
   }
 
-  /** Historically sized so the burner never ran short on a direct MagicBlock private sweep to the
-   *  winner's wallet (fee = 10bps USDC + 0.002 SOL-equivalent, deducted from the burner's own
-   *  balance). Winner payout no longer works that way — giveaway-payout.service.ts now funds a
-   *  dedicated claim burner via a plain internal SPL transfer (no MagicBlock hop, no fee out of
-   *  this burner at all; any claim-time MagicBlock fee is the recipient's own /c/[id] claim, paid
-   *  from their claim burner, not this one). The buffer is skipped entirely for an official
-   *  ("create as Loofta") giveaway so admin testing isn't charged a fee that no longer applies —
-   *  kept for regular creators only as a safety margin pending a fuller cleanup. */
-  private computeFundingRequiredUsd(prizeAmountUsd: number, winnerCount: number, includeFeeBuffer = true): number {
-    if (!includeFeeBuffer) return prizeAmountUsd * winnerCount;
-    const perWinnerFee = (prizeAmountUsd * MAGICBLOCK_VOLUME_FEE_BPS) / 10_000 + MAGICBLOCK_GAS_USDC;
-    return prizeAmountUsd * winnerCount + perWinnerFee * winnerCount;
+  /** Historically included a per-winner buffer (10bps USDC + 0.002 SOL-equivalent) sized to cover
+   *  a direct MagicBlock private sweep to each winner's wallet. Winner payout no longer works that
+   *  way — giveaway-payout.service.ts now funds a dedicated claim burner via a plain internal SPL
+   *  transfer (no MagicBlock hop, no fee out of this burner at all; any claim-time MagicBlock fee
+   *  is the recipient's own /c/[id] claim, paid from their claim burner, not this one). Nothing
+   *  spends that buffer anymore for any creator, official or not, so required funding is exactly
+   *  the prize pool — no markup, no "refunded later" surprise. */
+  private computeFundingRequiredUsd(prizeAmountUsd: number, winnerCount: number): number {
+    return prizeAmountUsd * winnerCount;
   }
 
   private async logEvent(giveawayId: string, type: string, payload?: Record<string, unknown>): Promise<void> {
@@ -81,16 +105,15 @@ export class GiveawaysService {
     // "Create as Loofta" — never trust dto.is_official alone; re-check the caller is actually an
     // admin here, server-side, same as every other admin-gated action in this module. An official
     // giveaway auto-approves (mints its burner and skips PENDING_APPROVAL) so the sole admin can
-    // test the full funding -> draw -> claim pipeline without a redundant self-approval click, and
-    // funds with no fee buffer (see computeFundingRequiredUsd) since that buffer no longer reflects
-    // a real cost and shouldn't be charged to an admin test run.
+    // test the full funding -> draw -> claim pipeline without a redundant self-approval click.
     const isOfficial = !!dto.is_official && (await isPrivyUserAdmin(this.supabaseService, this.configService, userId));
     const officialBurner = isOfficial ? this.burnerSweep.createBurner() : null;
     if (isOfficial && !officialBurner) {
       throw new BadRequestException('Giveaway burner minting is not configured (SEND_PAYMENT_ENC_KEY missing). Contact an engineer.');
     }
 
-    const funding_required_usd = this.computeFundingRequiredUsd(dto.prize_amount_usd, dto.winner_count, !isOfficial);
+    const platformFeeUsd = isOfficial ? 0 : GIVEAWAY_PLATFORM_FEE_USD;
+    const funding_required_usd = this.computeFundingRequiredUsd(dto.prize_amount_usd, dto.winner_count) + platformFeeUsd;
 
     const { data: giveaway, error } = await this.supabaseService.giveaways
       .insert({
@@ -99,12 +122,14 @@ export class GiveawaysService {
         description: dto.description ?? null,
         logo_url: dto.logo_url ?? null,
         project_name: dto.project_name ?? null,
+        short_id: generateShortId(),
         winner_count: dto.winner_count,
         selection_mode: dto.selection_mode,
         prize_amount_usd: dto.prize_amount_usd,
         entries_close_at: closeAt.toISOString(),
         eligibility: dto.eligibility ?? {},
         funding_required_usd,
+        platform_fee_usd: platformFeeUsd,
         is_devnet: this.isDevnet,
         mint: this.usdcMint,
         is_official: isOfficial,
@@ -142,6 +167,23 @@ export class GiveawaysService {
     await this.logEvent(giveaway.id, 'submitted', { winner_count: dto.winner_count, task_count: dto.tasks.length });
     if (isOfficial) {
       await this.logEvent(giveaway.id, 'approved', { admin: userId, auto: true, burner_address: officialBurner!.address });
+    } else {
+      // Fire-and-forget — PENDING_APPROVAL otherwise sits invisible until someone happens to open
+      // the admin dashboard. Not sent for official giveaways, which auto-approve above.
+      const alertEmail = this.configService.get<string>('GIVEAWAY_REVIEW_ALERT_EMAIL', GIVEAWAY_REVIEW_ALERT_EMAIL);
+      const adminPath = this.configService.get<string>('ADMIN_SECRET_PATH', '');
+      this.resolveLinkedEmail(userId)
+        .then((creatorEmail) =>
+          this.emailService.sendGiveawaySubmittedAlertEmail({
+            to: alertEmail,
+            title: giveaway.title,
+            creatorEmail,
+            prizeAmountUsd: dto.prize_amount_usd,
+            winnerCount: dto.winner_count,
+            adminUrl: adminPath ? `${this.baseUrl}/app/${adminPath}` : `${this.baseUrl}/app`,
+          }),
+        )
+        .catch((e) => this.logger.warn(`[Giveaway] ${giveaway.id}: failed to send submission alert email (non-fatal): ${e?.message ?? e}`));
     }
     return giveaway as Giveaway;
   }
@@ -162,7 +204,10 @@ export class GiveawaysService {
     if (Number.isNaN(closeAt.getTime()) || closeAt.getTime() <= Date.now()) {
       throw new BadRequestException('entries_close_at must be a valid future date');
     }
-    const funding_required_usd = this.computeFundingRequiredUsd(dto.prize_amount_usd, dto.winner_count);
+    // Preserve the platform fee already snapshotted at creation (never recompute from the live
+    // constant here — that constant could change between creation and this edit) and re-add it on
+    // top of the recomputed prize pool, since prize_amount_usd/winner_count may have just changed.
+    const funding_required_usd = this.computeFundingRequiredUsd(dto.prize_amount_usd, dto.winner_count) + Number(giveaway.platform_fee_usd);
 
     const { data, error } = await this.supabaseService.giveaways
       .update({

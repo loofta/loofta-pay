@@ -95,7 +95,7 @@ function taskTargetHref(target: string, taskType: string): string {
 }
 
 interface PublicGiveaway {
-  id: string; title: string; description: string | null; logo_url: string | null; project_name: string | null;
+  id: string; title: string; description: string | null; logo_url: string | null; project_name: string | null; short_id: string | null;
   winner_count: number; selection_mode: string; prize_amount_usd: string; entries_close_at: string;
   eligibility: { min_followers?: number; min_account_age_days?: number };
   status: string; burner_address: string | null; mint: string | null; is_devnet: boolean;
@@ -164,26 +164,32 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     refetchOnWindowFocus: false,
   });
 
+  // The URL param may be either the real UUID or the short_id — every authenticated call below
+  // needs the real UUID (short_id only means anything to the public find-by-either lookup), so
+  // this resolves to giveaway.id once the public fetch above lands, falling back to the raw param
+  // until then (a no-op fallback when the URL already had the real UUID).
+  const resolvedId = giveaway?.id ?? id;
+
   const { data: myEntry, refetch: refetchEntry } = useQuery({
-    queryKey: ["giveaway-my-entry", id, userId],
+    queryKey: ["giveaway-my-entry", resolvedId, userId],
     queryFn: async (): Promise<MyEntry | null> => {
-      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/my-entry`, { headers: await authHeaders(getAccessToken) });
+      const res = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}/my-entry`, { headers: await authHeaders(getAccessToken) });
       if (!res.ok) return null;
       const data = await res.json();
       return data.entry ?? null;
     },
-    enabled: Boolean(authenticated && userId),
+    enabled: Boolean(authenticated && userId && giveaway),
     staleTime: 10_000,
     refetchOnWindowFocus: false,
   });
 
   const { data: isOwner } = useQuery({
-    queryKey: ["giveaway-is-owner", id, userId],
+    queryKey: ["giveaway-is-owner", resolvedId, userId],
     queryFn: async (): Promise<boolean> => {
-      const res = await fetch(`${BACKEND_URL}/giveaways/${id}`, { headers: await authHeaders(getAccessToken) });
+      const res = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}`, { headers: await authHeaders(getAccessToken) });
       return res.ok;
     },
-    enabled: Boolean(authenticated && userId),
+    enabled: Boolean(authenticated && userId && giveaway),
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
@@ -191,9 +197,9 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   // Live on-chain balance check (re-checks and flips PENDING_FUNDING -> OPEN once fully funded) —
   // only the owner can call this endpoint, and only while funding is actually in progress.
   const { data: funding, refetch: refetchFunding } = useQuery({
-    queryKey: ["giveaway-funding", id],
+    queryKey: ["giveaway-funding", resolvedId],
     queryFn: async () => {
-      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/funding`, { headers: await authHeaders(getAccessToken) });
+      const res = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}/funding`, { headers: await authHeaders(getAccessToken) });
       if (!res.ok) throw new Error("Failed to load funding status");
       return res.json();
     },
@@ -205,7 +211,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     setEntering(true);
     setEnterError(null);
     try {
-      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/entries`, {
+      const res = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}/entries`, {
         method: "POST",
         headers: await authHeaders(getAccessToken),
       });
@@ -220,11 +226,11 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     } finally {
       setEntering(false);
     }
-  }, [id, getAccessToken, toast, refetchEntry]);
+  }, [resolvedId, getAccessToken, toast, refetchEntry]);
 
   const markTaskDone = useCallback(async (taskId: string, submissionText: string) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/tasks/${taskId}/submit`, {
+      const res = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}/tasks/${taskId}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(await authHeaders(getAccessToken)) },
         body: JSON.stringify({ submission_data: submissionText ? { proof: submissionText } : undefined }),
@@ -245,7 +251,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     } catch (err: any) {
       toast({ variant: "destructive", title: "Could not submit task", description: err.message });
     }
-  }, [id, getAccessToken, toast, refetchEntry]);
+  }, [resolvedId, getAccessToken, toast, refetchEntry]);
 
   const handleFund = useCallback(async (remainingUsd: number, burnerAddress: string) => {
     setPaying(true);
@@ -257,7 +263,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
 
         const accessToken = await getAccessToken();
         const cluster = networkMode === "mainnet" ? "mainnet" : "devnet";
-        const txData = await buildGiveawayFundingPrivateTransfer(id, user?.id ?? "", senderAddress, accessToken, cluster, true);
+        const txData = await buildGiveawayFundingPrivateTransfer(resolvedId, user?.id ?? "", senderAddress, accessToken, cluster, true);
 
         const rawTxBytes = Buffer.from(txData.transactionBase64, "base64");
         const chain = getPrivySolanaChainForMode(networkMode);
@@ -302,12 +308,12 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     } finally {
       setPaying(false);
     }
-  }, [id, user?.id, getAccessToken, networkMode, payPrivately, solanaPayment, solanaWallets, signTransaction, toast, refetchFunding, refetch]);
+  }, [resolvedId, user?.id, getAccessToken, networkMode, payPrivately, solanaPayment, solanaWallets, signTransaction, toast, refetchFunding, refetch]);
 
   const deleteGiveaway = useCallback(async () => {
     setDeleting(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/giveaways/${id}`, {
+      const res = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}`, {
         method: "DELETE",
         headers: await authHeaders(getAccessToken),
       });
@@ -324,7 +330,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     } finally {
       setDeleting(false);
     }
-  }, [id, getAccessToken, toast, router, queryClient]);
+  }, [resolvedId, getAccessToken, toast, router, queryClient]);
 
   const downloadShareImage = useCallback(async () => {
     setDownloadingImage(true);
@@ -381,7 +387,10 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   // when running locally, which CSP's connect-src correctly blocked (same convention as the claim
   // page's window.location.origin usage). SSR-safe fallback for the brief pre-hydration render.
   const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://pay.loofta.xyz";
-  const giveawayUrl = `${siteUrl}/rewards/giveaways/${id}`;
+  // Prefer the short_id for anything user-facing/shareable — much shorter than the raw UUID —
+  // falling back to the real id for older rows created before short_id existed.
+  const shareId = giveaway?.short_id ?? giveaway?.id ?? id;
+  const giveawayUrl = `${siteUrl}/rewards/giveaways/${shareId}`;
 
   return (
     <>
@@ -392,7 +401,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             <span>Back to giveaways</span>
           </Link>
           {isOwner && (
-            <Link href={`/rewards/giveaways/${id}/manage`} className="text-base font-medium text-slate-300 hover:text-white transition-colors">
+            <Link href={`/rewards/giveaways/${resolvedId}/manage`} className="text-base font-medium text-slate-300 hover:text-white transition-colors">
               Manage →
             </Link>
           )}
@@ -426,7 +435,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               )}
               {isOwner && giveaway.status === "PENDING_APPROVAL" && (
                 <Link
-                  href={`/rewards/giveaways/${id}/edit`}
+                  href={`/rewards/giveaways/${resolvedId}/edit`}
                   aria-label="Edit giveaway"
                   className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
                 >
@@ -480,7 +489,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 url={giveawayUrl}
                 title={giveaway.title}
                 text={`$${giveaway.prize_amount_usd} × ${giveaway.winner_count} winner${giveaway.winner_count === 1 ? "" : "s"} — enter "${giveaway.title}" on Loofta 🎁`}
-                ogUrl={`${siteUrl}/api/giveaways/${id}/og`}
+                ogUrl={`${siteUrl}/api/giveaways/${shareId}/og`}
                 triggerLabel="Share"
                 triggerClassName="h-11 w-full"
               />

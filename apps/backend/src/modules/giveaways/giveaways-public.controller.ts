@@ -21,7 +21,7 @@ export class GiveawaysPublicController {
   @ApiOperation({ summary: 'Browse open giveaways. No auth required.' })
   async findOpen() {
     const { data, error } = await this.supabaseService.giveawaysSafe
-      .select('id, title, description, logo_url, project_name, winner_count, selection_mode, prize_amount_usd, entries_close_at, status, is_official')
+      .select('id, title, description, logo_url, project_name, short_id, winner_count, selection_mode, prize_amount_usd, entries_close_at, status, is_official')
       // Official Loofta giveaways pin to the top, then soonest-closing first within each group.
       .eq('status', 'OPEN')
       .order('is_official', { ascending: false })
@@ -30,18 +30,31 @@ export class GiveawaysPublicController {
     return { giveaways: data ?? [] };
   }
 
+  /** Accepts either the giveaway's UUID or its 8-char short_id — same dual-lookup convention as
+   *  claims.service.ts's fetchRawRow (tries id first, falls back to short_id; a short_id never
+   *  collides with UUID format so there's no ambiguity). Lets a shared /rewards/giveaways/{short}
+   *  link work exactly like the full-uuid one. */
+  private async fetchGiveawayByIdOrShortId(id: string) {
+    const { data: byId } = await this.supabaseService.giveawaysSafe.select('*').eq('id', id).maybeSingle();
+    if (byId) return byId;
+    const { data: byShortId } = await this.supabaseService.giveawaysSafe.select('*').eq('short_id', id).maybeSingle();
+    return byShortId;
+  }
+
   @Get(':id')
-  @ApiOperation({ summary: 'Public giveaway page data — rules, live funding status, draw proof once available. No auth required.' })
+  @ApiOperation({ summary: 'Public giveaway page data — rules, live funding status, draw proof once available. Accepts the UUID or short_id. No auth required.' })
   async findOne(@Param('id') id: string) {
-    const { data: giveaway, error } = await this.supabaseService.giveawaysSafe.select('*').eq('id', id).maybeSingle();
-    if (error) throw new NotFoundException(error.message);
+    const giveaway = await this.fetchGiveawayByIdOrShortId(id);
     if (!giveaway) throw new NotFoundException('Giveaway not found');
 
-    const tasks = await this.giveawaysService.getTasks(id);
+    // Always the real UUID from here on — `id` (the route param) may have been the short_id, and
+    // giveaway_tasks/giveaway_entries are keyed on the real giveaway id, not the short code.
+    const realId = giveaway.id as string;
+    const tasks = await this.giveawaysService.getTasks(realId);
 
     const { count: entryCount } = await this.supabaseService.giveawayEntries
       .select('id', { count: 'exact', head: true })
-      .eq('giveaway_id', id);
+      .eq('giveaway_id', realId);
 
     return {
       id: giveaway.id,
@@ -49,6 +62,7 @@ export class GiveawaysPublicController {
       description: giveaway.description,
       logo_url: giveaway.logo_url,
       project_name: giveaway.project_name,
+      short_id: giveaway.short_id,
       winner_count: giveaway.winner_count,
       selection_mode: giveaway.selection_mode,
       prize_amount_usd: giveaway.prize_amount_usd,
@@ -61,6 +75,7 @@ export class GiveawaysPublicController {
       is_devnet: giveaway.is_devnet,
       funding_required_usd: giveaway.funding_required_usd,
       funding_confirmed_usd: giveaway.funding_confirmed_usd,
+      platform_fee_usd: giveaway.platform_fee_usd,
       entry_count: entryCount ?? 0,
       // Draw proof — present once the draw has run, null before that.
       entry_snapshot_hash: giveaway.entry_snapshot_hash,

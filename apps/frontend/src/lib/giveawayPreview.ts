@@ -19,11 +19,12 @@ export interface GiveawayPreview {
  */
 export async function getGiveawayPreview(id: string): Promise<GiveawayPreview | null> {
   const supabase = getSupabaseAdmin();
-  const { data } = await supabase
-    .from("giveaways_safe")
-    .select("id, title, prize_amount_usd, winner_count, entries_close_at, status, is_devnet")
-    .eq("id", id)
-    .maybeSingle();
+  const cols = "id, title, prize_amount_usd, winner_count, entries_close_at, status, is_devnet";
+  // Accepts either the UUID or the 8-char short_id — same dual-lookup convention as the backend's
+  // GiveawaysPublicController.fetchGiveawayByIdOrShortId, so a shared short link's OG image/meta
+  // tags resolve exactly like the full-uuid one.
+  const { data: byId } = await supabase.from("giveaways_safe").select(cols).eq("id", id).maybeSingle();
+  const data = byId ?? (await supabase.from("giveaways_safe").select(cols).eq("short_id", id).maybeSingle()).data;
   if (!data) return null;
 
   return {
