@@ -95,7 +95,7 @@ function taskTargetHref(target: string, taskType: string): string {
 }
 
 interface PublicGiveaway {
-  id: string; title: string; description: string | null; logo_url: string | null;
+  id: string; title: string; description: string | null; logo_url: string | null; project_name: string | null;
   winner_count: number; selection_mode: string; prize_amount_usd: string; entries_close_at: string;
   eligibility: { min_followers?: number; min_account_age_days?: number };
   status: string; burner_address: string | null; mint: string | null; is_devnet: boolean;
@@ -458,12 +458,19 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             </AlertDialogContent>
           </AlertDialog>
 
-          {giveaway.is_official && (
+          {giveaway.is_official ? (
             <div className="inline-flex items-center gap-1.5 rounded-full border border-[#FF7A2A]/40 bg-[#FF7A2A]/10 px-2 py-0.5 mb-2">
               <Image src="/loofta_icon_magic.png" alt="" width={14} height={14} className="rounded-full" />
               <span className="text-sm font-medium text-[#FF7A2A]">Loofta</span>
             </div>
-          )}
+          ) : (giveaway.logo_url || giveaway.project_name) ? (
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2 py-0.5 mb-2">
+              {giveaway.logo_url && (
+                <Image src={giveaway.logo_url} alt="" width={14} height={14} className="rounded-full object-cover shrink-0" />
+              )}
+              {giveaway.project_name && <span className="text-sm font-medium text-slate-300">{giveaway.project_name}</span>}
+            </div>
+          ) : null}
           <h1 className="text-2xl font-medium text-white mb-2">{giveaway.title}</h1>
           {giveaway.description && <FormattedText text={giveaway.description} className="text-base text-slate-300 mb-5 leading-relaxed" />}
 

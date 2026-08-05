@@ -92,6 +92,12 @@ export class CreateGiveawayDto {
   @MaxLength(500)
   logo_url?: string;
 
+  @ApiPropertyOptional({ description: 'Project/brand name shown next to the logo on the giveaway page.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  project_name?: string;
+
 
   @ApiProperty({ example: 5 })
   @IsInt()

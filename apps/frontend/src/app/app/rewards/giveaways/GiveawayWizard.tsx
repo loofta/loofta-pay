@@ -344,6 +344,8 @@ interface GiveawayDraft {
   step: number;
   title: string;
   description: string;
+  projectName: string;
+  logoUrl: string;
   totalPool: number;
   winnerCount: number;
   selectionMode: "random" | "first_come" | "manual";
@@ -358,6 +360,8 @@ function defaultDraft(): GiveawayDraft {
     step: 1,
     title: "",
     description: "",
+    projectName: "",
+    logoUrl: "",
     totalPool: 500,
     winnerCount: 10,
     selectionMode: "random",
@@ -372,6 +376,8 @@ interface RemoteGiveaway {
   id: string;
   title: string;
   description: string | null;
+  project_name: string | null;
+  logo_url: string | null;
   winner_count: number;
   selection_mode: "random" | "first_come" | "manual";
   prize_amount_usd: string;
@@ -387,6 +393,8 @@ function draftFromRemote(g: RemoteGiveaway): GiveawayDraft {
     step: 1,
     title: g.title,
     description: g.description ?? "",
+    projectName: g.project_name ?? "",
+    logoUrl: g.logo_url ?? "",
     totalPool: Math.max(MIN_TOTAL_POOL, Math.round(prizeAmount * g.winner_count)),
     winnerCount: g.winner_count,
     selectionMode: g.selection_mode,
@@ -437,6 +445,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
 
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [createAsAdmin, setCreateAsAdmin] = useState(false);
 
   // "Create as Loofta" is admin-only and create-only — the backend re-checks admin status itself
@@ -469,7 +478,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     gcTime: Infinity,
     retry: false,
   });
-  const { step, title, description, totalPool, winnerCount, selectionMode, entriesCloseAt, minFollowers, minAccountAgeDays, tasks } = draft;
+  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, entriesCloseAt, minFollowers, minAccountAgeDays, tasks } = draft;
   const prizeAmount = winnerCount > 0 ? totalPool / winnerCount : 0;
   const validWinnerCounts = useMemo(() => divisorsUpTo(totalPool, MAX_WINNERS), [totalPool]);
 
@@ -503,6 +512,28 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   }, [updateDraft]);
   const setTitle = useCallback((v: string) => updateDraft({ title: v }), [updateDraft]);
   const setDescription = useCallback((v: string) => updateDraft({ description: v }), [updateDraft]);
+  const setProjectName = useCallback((v: string) => updateDraft({ projectName: v }), [updateDraft]);
+
+  const uploadLogo = useCallback(async (file: File) => {
+    setUploadingLogo(true);
+    try {
+      const token = await getAccessToken().catch(() => null);
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/giveaways/upload-logo", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || "Failed to upload logo");
+      updateDraft({ logoUrl: body.logo_url });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Could not upload logo", description: err.message });
+    } finally {
+      setUploadingLogo(false);
+    }
+  }, [getAccessToken, updateDraft, toast]);
   const setSelectionMode = useCallback((v: GiveawayDraft["selectionMode"]) => updateDraft({ selectionMode: v }), [updateDraft]);
   const setEntriesCloseAt = useCallback((v: string) => updateDraft({ entriesCloseAt: v }), [updateDraft]);
   const setMinFollowers = useCallback((v: string) => updateDraft({ minFollowers: v }), [updateDraft]);
@@ -607,6 +638,8 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
         body: JSON.stringify({
           title: title.trim(),
           description: description.trim() || undefined,
+          project_name: projectName.trim() || undefined,
+          logo_url: logoUrl || undefined,
           winner_count: winnerCount,
           selection_mode: selectionMode,
           prize_amount_usd: prizeAmount,
@@ -632,7 +665,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     } finally {
       setSubmitting(false);
     }
-  }, [mode, giveawayId, title, description, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
+  }, [mode, giveawayId, title, description, projectName, logoUrl, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
 
   const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
@@ -748,6 +781,35 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                             <FieldLabel optional>Description</FieldLabel>
                             <RichTextEditor value={description} onChange={setDescription} rows={6}
                               maxLength={2000} placeholder="What is this giveaway for?" />
+                          </div>
+                          <div>
+                            <FieldLabel optional>Project name</FieldLabel>
+                            <Input value={projectName} onChange={(e) => setProjectName(e.target.value)} placeholder="Your project or brand name" className={inputClass} />
+                          </div>
+                          <div>
+                            <FieldLabel optional>Project logo</FieldLabel>
+                            <div className="flex items-center gap-3">
+                              {logoUrl && (
+                                <Image src={logoUrl} alt="" width={44} height={44} className="rounded-full object-cover border border-white/10 shrink-0" />
+                              )}
+                              <label className="cursor-pointer text-base font-medium border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all rounded-lg px-3 py-2">
+                                {uploadingLogo ? "Uploading…" : logoUrl ? "Change logo" : "Upload logo"}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  disabled={uploadingLogo}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) uploadLogo(file);
+                                    e.target.value = "";
+                                  }}
+                                />
+                              </label>
+                            </div>
+                            <p className="text-sm text-slate-500 mt-1">
+                              Shown as a badge next to your project name on the giveaway page, alongside the Loofta badge.
+                            </p>
                           </div>
                         </>
                       )}

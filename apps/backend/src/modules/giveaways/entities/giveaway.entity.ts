@@ -72,6 +72,7 @@ export interface Giveaway {
   title: string;
   description: string | null;
   logo_url: string | null;
+  project_name: string | null;
 
   winner_count: number;
   selection_mode: GiveawaySelectionMode;

@@ -16,6 +16,13 @@ import {
 
 const TWITTER_ACCOUNT_TYPES = ['twitter_oauth', 'twitter_oauth2', 'twitter', 'x'];
 
+// Caps how many times a single entrant can trigger a live X API check for one task — each click
+// costs a real API call (fetch the tweet's retweeter/liker/follower list), so this bounds cost
+// exposure per (entry, task) instead of relying on goodwill. Tracked in the completion row's own
+// verification_detail.attempts (rolling window), no separate table/migration needed.
+const MAX_VERIFY_ATTEMPTS_PER_WINDOW = 2;
+const VERIFY_ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
+
 @Injectable()
 export class GiveawayEntriesService {
   private readonly logger = new Logger(GiveawayEntriesService.name);
@@ -138,10 +145,11 @@ export class GiveawayEntriesService {
    *  so it never runs on a local/staging instance at all). Reuses the exact same
    *  XVerificationService.verifyPendingCompletions the cron calls, just with a single-entry list
    *  instead of every giveaway's pending backlog — one extra X API call per click on click-through
-   *  tasks, which is an acceptable trade for instant feedback at this feature's current scale; the
-   *  batched cron remains the backstop in production for anyone who clicks before actually doing
-   *  the task, or if this inline check fails/errors. For self_report tasks, submission_data is the
-   *  actual proof and nothing here changes — a human still reviews it. */
+   *  tasks, capped at MAX_VERIFY_ATTEMPTS_PER_WINDOW per rolling hour (a "Try again" after a
+   *  rejection is still a real API call). The batched cron remains the backstop in production for
+   *  anyone who clicks before actually doing the task, or if this inline check fails/errors. For
+   *  self_report tasks, submission_data is the actual proof and nothing here changes — a human
+   *  still reviews it, no rate limit needed since there's no API call to bound. */
   async submitTaskCompletion(
     giveawayId: string,
     userId: string,
@@ -163,14 +171,36 @@ export class GiveawayEntriesService {
     const tasks = await this.giveawaysService.getTasks(giveawayId);
     const task = tasks.find((t) => t.id === taskId);
     if (task?.verification_mode === GiveawayTaskVerificationMode.AUTO_API && this.xVerification.isAvailable()) {
+      const existingDetail = (data.verification_detail ?? {}) as { attempts?: string[] };
+      const now = Date.now();
+      const recentAttempts = (existingDetail.attempts ?? []).filter((ts) => now - new Date(ts).getTime() < VERIFY_ATTEMPT_WINDOW_MS);
+      if (recentAttempts.length >= MAX_VERIFY_ATTEMPTS_PER_WINDOW) {
+        const oldestMs = Math.min(...recentAttempts.map((ts) => new Date(ts).getTime()));
+        const minutesLeft = Math.max(1, Math.ceil((oldestMs + VERIFY_ATTEMPT_WINDOW_MS - now) / 60_000));
+        throw new BadRequestException(
+          `You've already tried verifying this task ${MAX_VERIFY_ATTEMPTS_PER_WINDOW} times in the last hour. Try again in ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'}.`,
+        );
+      }
+
       try {
         const giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
         await this.xVerification.verifyPendingCompletions(giveaway, task, [{ completion: data as GiveawayTaskCompletion, entry }]);
-        const { data: refreshed } = await this.supabaseService.giveawayTaskCompletions.select('*').eq('id', completion.id).single();
-        if (refreshed) return refreshed as GiveawayTaskCompletion;
       } catch (e) {
         this.logger.warn(`[GiveawayEntries] inline verify failed for completion ${completion.id} (cron will retry): ${String(e)}`);
       }
+
+      // Record this attempt regardless of outcome — verifyPendingCompletions overwrites
+      // verification_detail wholesale (rejection reason / api_error), so the attempts array is
+      // merged back in AFTER, never before, or it'd just get clobbered.
+      const { data: afterVerify } = await this.supabaseService.giveawayTaskCompletions.select('*').eq('id', completion.id).single();
+      const mergedDetail = { ...((afterVerify?.verification_detail as Record<string, unknown>) ?? {}), attempts: [...recentAttempts, new Date(now).toISOString()] };
+      const { data: withAttempts } = await this.supabaseService.giveawayTaskCompletions
+        .update({ verification_detail: mergedDetail })
+        .eq('id', completion.id)
+        .select()
+        .single();
+      if (withAttempts) return withAttempts as GiveawayTaskCompletion;
+      if (afterVerify) return afterVerify as GiveawayTaskCompletion;
     }
     return data as GiveawayTaskCompletion;
   }

@@ -31,6 +31,9 @@ export function FormattedText({ text, className }: { text: string; className?: s
         rehypePlugins={[rehypeRaw, [rehypeSanitize, SCHEMA]]}
         components={{
           p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+          // Default browser bold reads too heavy at this text size — medium weight keeps the
+          // emphasis without it looking shouted.
+          strong: ({ children }) => <strong className="font-medium">{children}</strong>,
           a: ({ children, href }) => (
             <a href={href} target="_blank" rel="noopener noreferrer" className="underline text-[#FF7A2A] hover:text-[#ffa15c]">
               {children}

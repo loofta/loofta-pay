@@ -17,6 +17,7 @@ interface PublicGiveawayListItem {
   title: string;
   description: string | null;
   logo_url: string | null;
+  project_name: string | null;
   winner_count: number;
   selection_mode: "random" | "first_come" | "manual";
   prize_amount_usd: string;
@@ -104,18 +105,19 @@ export default function GiveawaysListPage() {
                 <Link
                   key={g.id}
                   href={`/rewards/giveaways/${g.id}`}
-                  className={`block rounded-2xl border transition-colors p-4 ${
-                    g.is_official
-                      ? "border-[#FF7A2A]/30 bg-[#FF7A2A]/[0.06] hover:bg-[#FF7A2A]/10"
-                      : "border-white/10 bg-white/5 hover:bg-white/[0.07]"
-                  }`}
+                  className="block rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors p-4"
                 >
-                  {g.is_official && (
-                    <div className="inline-flex items-center gap-1.5 rounded-full border border-[#FF7A2A]/40 bg-[#FF7A2A]/10 px-2 py-0.5 mb-2">
-                      <Image src="/loofta_icon_magic.png" alt="" width={14} height={14} className="rounded-full" />
-                      <span className="text-sm font-medium text-[#FF7A2A]">Loofta</span>
+                  {g.is_official ? (
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Image src="/loofta_icon_magic.png" alt="" width={16} height={16} className="rounded-full" />
+                      <span className="text-sm font-medium text-slate-400">Loofta</span>
                     </div>
-                  )}
+                  ) : (g.logo_url || g.project_name) ? (
+                    <div className="flex items-center gap-1.5 mb-2">
+                      {g.logo_url && <Image src={g.logo_url} alt="" width={16} height={16} className="rounded-full object-cover shrink-0" />}
+                      {g.project_name && <span className="text-sm font-medium text-slate-400">{g.project_name}</span>}
+                    </div>
+                  ) : null}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-lg font-semibold text-white truncate">{g.title}</p>

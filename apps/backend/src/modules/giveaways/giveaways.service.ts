@@ -97,6 +97,7 @@ export class GiveawaysService {
         title: dto.title,
         description: dto.description ?? null,
         logo_url: dto.logo_url ?? null,
+        project_name: dto.project_name ?? null,
         winner_count: dto.winner_count,
         selection_mode: dto.selection_mode,
         prize_amount_usd: dto.prize_amount_usd,
@@ -166,6 +167,8 @@ export class GiveawaysService {
       .update({
         title: dto.title,
         description: dto.description ?? null,
+        logo_url: dto.logo_url ?? null,
+        project_name: dto.project_name ?? null,
         winner_count: dto.winner_count,
         selection_mode: dto.selection_mode,
         prize_amount_usd: dto.prize_amount_usd,
