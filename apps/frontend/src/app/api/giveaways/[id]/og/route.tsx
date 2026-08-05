@@ -292,7 +292,11 @@ export async function GET(
     }
   });
 
+  // Never cache this route URL itself long-term — it's the same URL regardless of the
+  // giveaway's status, and status can change (e.g. PENDING_FUNDING -> OPEN). The actual
+  // long-term cache lives in Supabase Storage, keyed by status via objectPath above; the
+  // redirect above is what should get cached hard, not this first-generation response.
   return new NextResponse(new Uint8Array(buffer), {
-    headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=31536000, immutable" },
+    headers: { "Content-Type": "image/png", "Cache-Control": "no-store" },
   });
 }

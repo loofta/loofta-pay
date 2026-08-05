@@ -126,8 +126,8 @@ function expandTaskRow(row: TaskRow): Array<{ task_type: BackendTaskType; config
   }
   const out: Array<{ task_type: BackendTaskType; config: Record<string, unknown> }> = [];
   const instructions = row.instructions.trim() || undefined;
-  if (row.engage.retweet) out.push({ task_type: "x_retweet", config: { target: row.target.trim() } });
-  if (row.engage.like) out.push({ task_type: "x_like", config: { target: row.target.trim() } });
+  if (row.engage.retweet) out.push({ task_type: "x_retweet", config: { target: row.target.trim(), instructions } });
+  if (row.engage.like) out.push({ task_type: "x_like", config: { target: row.target.trim(), instructions } });
   if (row.engage.comment) out.push({ task_type: "x_comment", config: { target: row.target.trim(), comment_requirement: instructions } });
   if (row.engage.bookmark) {
     out.push({ task_type: "x_bookmark", config: { target: row.target.trim(), comment_requirement: instructions, require_proof: row.requireProof } });
@@ -151,8 +151,14 @@ function collapseTasksToRows(tasks: Array<{ task_type: string; config: Record<st
         engageByTarget.set(target, row);
         rows.push(row);
       }
-      if (t.task_type === "x_retweet") row.engage.retweet = true;
-      if (t.task_type === "x_like") row.engage.like = true;
+      if (t.task_type === "x_retweet") {
+        row.engage.retweet = true;
+        if (t.config?.instructions) row.instructions = t.config.instructions;
+      }
+      if (t.task_type === "x_like") {
+        row.engage.like = true;
+        if (t.config?.instructions) row.instructions = t.config.instructions;
+      }
       if (t.task_type === "x_comment") {
         row.engage.comment = true;
         if (t.config?.comment_requirement) row.instructions = t.config.comment_requirement;

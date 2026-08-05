@@ -65,7 +65,7 @@ export class GiveawaysPublicController {
       entry_snapshot_hash: giveaway.entry_snapshot_hash,
       vrf_randomness: giveaway.vrf_randomness,
       vrf_fulfilled_at: giveaway.vrf_fulfilled_at,
-      tasks: tasks.map((t) => ({ id: t.id, task_type: t.task_type, config: t.config, order_index: t.order_index })),
+      tasks: tasks.map((t) => ({ id: t.id, task_type: t.task_type, config: t.config, order_index: t.order_index, verification_mode: t.verification_mode })),
     };
   }
 }

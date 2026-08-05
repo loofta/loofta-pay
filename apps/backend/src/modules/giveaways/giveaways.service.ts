@@ -380,18 +380,37 @@ export class GiveawaysService {
         ...(dto.min_account_age_days !== undefined ? { min_account_age_days: dto.min_account_age_days } : {}),
       };
     }
-    if (Object.keys(update).length === 0) {
+    if (Object.keys(update).length === 0 && !dto.tasks?.length) {
       throw new BadRequestException('No editable fields provided');
     }
 
-    const { data, error } = await this.supabaseService.giveaways
-      .update(update)
-      .eq('id', id)
-      .select()
-      .single();
-    if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to update giveaway');
-    await this.logEvent(id, 'admin_edited', { admin: adminUserId, fields: Object.keys(update) });
-    return data as Giveaway;
+    let result: Giveaway = giveaway;
+    if (Object.keys(update).length > 0) {
+      const { data, error } = await this.supabaseService.giveaways
+        .update(update)
+        .eq('id', id)
+        .select()
+        .single();
+      if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to update giveaway');
+      result = data as Giveaway;
+    }
+
+    // Task edits update `config` in place on the existing row (matched by id, scoped to this
+    // giveaway) — never delete/reinsert. giveaway_task_completions FK-cascades off
+    // giveaway_tasks.id, and entrants may already have completions recorded against these exact
+    // rows; task_type/verification_mode are fixed and not editable here.
+    if (dto.tasks?.length) {
+      for (const t of dto.tasks) {
+        const { error: taskError } = await this.supabaseService.giveawayTasks
+          .update({ config: t.config })
+          .eq('id', t.id)
+          .eq('giveaway_id', id);
+        if (taskError) throw new BadRequestException(`Failed to update task ${t.id}: ${taskError.message}`);
+      }
+    }
+
+    await this.logEvent(id, 'admin_edited', { admin: adminUserId, fields: Object.keys(update), task_ids: dto.tasks?.map((t) => t.id) ?? [] });
+    return result;
   }
 
   /** Approve -> mints the burner and moves to PENDING_FUNDING; reject -> REJECTED with a reason.

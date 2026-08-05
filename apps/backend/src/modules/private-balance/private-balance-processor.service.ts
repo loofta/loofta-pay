@@ -17,6 +17,7 @@ import { EmailService } from '../email/email.service';
 import type { PrivateTransfer } from './entities/private-transfer.entity';
 
 const BATCH_LIMIT = 25;
+const DEPOSIT_ABANDON_DAYS = 7;
 
 @Injectable()
 export class PrivateBalanceProcessorService {
@@ -57,6 +58,7 @@ export class PrivateBalanceProcessorService {
     }
     this.isProcessing = true;
     try {
+      await this.expireAbandonedDeposits();
       await this.processDeposits();
       await this.processWithdrawals();
       await this.reclaimFinishedBurners();
@@ -110,11 +112,44 @@ export class PrivateBalanceProcessorService {
   // Deposits: burner funded (directly or via Near Intents bridge) -> private transfer -> user
   // ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Direct-deposit burners that were created but never funded (user abandoned the flow client-side)
+   * stay 'awaiting_funds' forever — nothing else ever transitions them out. With no ordering on the
+   * processDeposits() query below, an unbounded backlog of these dead rows permanently starves newer,
+   * genuinely-funded deposits out of the BATCH_LIMIT window (confirmed incident 2026-08-05: 29 rows
+   * matched the filter, only 25 fit in a batch, and the newest 4 — including one already funded
+   * on-chain for 8+ hours — never got picked up). Excludes near_deposit_address rows (cross-chain via
+   * Near Intents) since those are driven by advanceCrossChainDeposit's bridge-status poll instead and
+   * shouldn't be auto-failed on a timer.
+   */
+  private async expireAbandonedDeposits() {
+    const cutoff = new Date(Date.now() - DEPOSIT_ABANDON_DAYS * 24 * 60 * 60_000).toISOString();
+    const { data, error } = await this.supabaseService.privateTransfers
+      .update({
+        status: 'failed',
+        error_message: `Deposit abandoned — no funds received within ${DEPOSIT_ABANDON_DAYS} days`,
+      })
+      .eq('direction', 'deposit')
+      .eq('status', 'awaiting_funds')
+      .is('near_deposit_address', null)
+      .lt('created_at', cutoff)
+      .select('id');
+    if (error) { this.logger.warn(`expireAbandonedDeposits: query failed: ${error.message}`); return; }
+    if (data?.length) {
+      this.logger.log(`[PrivateDeposit] expired ${data.length} abandoned deposit row(s) unfunded for >${DEPOSIT_ABANDON_DAYS}d`);
+    }
+  }
+
   private async processDeposits() {
+    // Newest-first: a growing backlog of dead/abandoned 'awaiting_funds' rows must never be able to
+    // starve a genuinely-funded recent deposit out of the BATCH_LIMIT window. expireAbandonedDeposits()
+    // (run just before this every tick) caps how large that backlog can get, but ordering oldest-last
+    // is defense in depth for the window before a stuck row crosses the expiry cutoff.
     const { data, error } = await this.supabaseService.privateTransfers
       .select('*')
       .eq('direction', 'deposit')
       .in('status', ['awaiting_funds', 'bridging'])
+      .order('created_at', { ascending: false })
       .limit(BATCH_LIMIT);
     if (error) { this.logger.warn(`processDeposits: query failed: ${error.message}`); return; }
     for (const row of (data ?? []) as PrivateTransfer[]) {
@@ -162,7 +197,16 @@ export class PrivateBalanceProcessorService {
     const burnerAta = await getAssociatedTokenAddress(mint, burnerPubkey);
 
     let balance = BigInt(0);
-    try { balance = (await getAccount(conn, burnerAta)).amount; } catch { /* not funded yet */ }
+    try {
+      balance = (await getAccount(conn, burnerAta)).amount;
+    } catch (e: any) {
+      // TokenAccountNotFoundError means genuinely not funded yet — expected, stay quiet.
+      // Anything else (RPC timeout/rate-limit/etc) previously vanished here with zero trace,
+      // making a stuck row indistinguishable from "still waiting" — log so it's diagnosable.
+      if (e?.name !== 'TokenAccountNotFoundError') {
+        this.logger.warn(`[PrivateDeposit] ${row.id}: balance check failed (will retry next tick): ${e?.message ?? e}`);
+      }
+    }
 
     const relayFeeUnits = BigInt(Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000));
     if (balance <= relayFeeUnits) return; // nothing yet, or not even enough to cover the relay fee

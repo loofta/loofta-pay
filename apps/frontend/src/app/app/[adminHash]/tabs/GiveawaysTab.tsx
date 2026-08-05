@@ -13,12 +13,25 @@ import { useToast } from "@/components/ui/use-toast";
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 const TERMINAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "REJECTED", "REFUNDED", "UNDERFUNDED_EXPIRED"]);
 
+interface EditableTask {
+  id: string;
+  task_type: string;
+  target: string;
+  /** Which config key this task's free-text note lives under — comment_requirement for
+   *  comment/bookmark tasks (also text-matched at verify time), instructions for everything else. */
+  noteKey: "comment_requirement" | "instructions";
+  note: string;
+  /** Any other config fields (e.g. require_proof) preserved as-is and merged back in on save. */
+  restConfig: Record<string, unknown>;
+}
+
 interface EditForm {
   title: string;
   description: string;
   entries_close_at: string;
   min_followers: string;
   min_account_age_days: string;
+  tasks: EditableTask[];
 }
 
 interface AdminGiveaway {
@@ -161,12 +174,28 @@ export function GiveawaysTab() {
       const res = await fetch(`${BACKEND_URL}/giveaways/public/${g.id}`);
       if (!res.ok) throw new Error(await res.text());
       const detail: AdminGiveawayDetail = await res.json();
+      const NOTE_KEY_BY_TASK_TYPE: Record<string, "comment_requirement" | "instructions"> = {
+        x_comment: "comment_requirement",
+        x_bookmark: "comment_requirement",
+      };
       setEditForm({
         title: g.title,
         description: detail.description ?? "",
         entries_close_at: detail.entries_close_at ? detail.entries_close_at.slice(0, 16) : "",
         min_followers: detail.eligibility?.min_followers != null ? String(detail.eligibility.min_followers) : "",
         min_account_age_days: detail.eligibility?.min_account_age_days != null ? String(detail.eligibility.min_account_age_days) : "",
+        tasks: (detail.tasks ?? []).map((t) => {
+          const noteKey = NOTE_KEY_BY_TASK_TYPE[t.task_type] ?? "instructions";
+          const { target, instructions, comment_requirement, ...restConfig } = t.config;
+          return {
+            id: t.id,
+            task_type: t.task_type,
+            target: target ?? "",
+            noteKey,
+            note: (noteKey === "comment_requirement" ? comment_requirement : instructions) ?? "",
+            restConfig,
+          };
+        }),
       });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Failed to load giveaway", description: err.message });
@@ -187,6 +216,12 @@ export function GiveawaysTab() {
       if (editForm.entries_close_at) body.entries_close_at = new Date(editForm.entries_close_at).toISOString();
       if (editForm.min_followers !== "") body.min_followers = Number(editForm.min_followers);
       if (editForm.min_account_age_days !== "") body.min_account_age_days = Number(editForm.min_account_age_days);
+      if (editForm.tasks.length) {
+        body.tasks = editForm.tasks.map((t) => ({
+          id: t.id,
+          config: { target: t.target.trim(), ...(t.note.trim() ? { [t.noteKey]: t.note.trim() } : {}), ...t.restConfig },
+        }));
+      }
 
       const res = await fetch(`${BACKEND_URL}/giveaways/admin/${id}/edit`, {
         method: "PUT",
@@ -482,6 +517,38 @@ export function GiveawaysTab() {
                                   />
                                 </div>
                               </div>
+                              {editForm.tasks.length > 0 && (
+                                <div>
+                                  <label className="text-gray-500 text-sm block mb-1">Tasks</label>
+                                  <div className="space-y-2">
+                                    {editForm.tasks.map((t, i) => (
+                                      <div key={t.id} className="rounded-lg border border-gray-800 p-2 space-y-1.5">
+                                        <p className="text-xs text-gray-500 uppercase tracking-wide">{t.task_type.replace(/_/g, " ")}</p>
+                                        <input
+                                          value={t.target}
+                                          placeholder="Target (URL or handle)"
+                                          onChange={(e) => {
+                                            const tasks = [...editForm.tasks];
+                                            tasks[i] = { ...t, target: e.target.value };
+                                            setEditForm({ ...editForm, tasks });
+                                          }}
+                                          className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                        />
+                                        <input
+                                          value={t.note}
+                                          placeholder="Instructions shown to entrants (optional)"
+                                          onChange={(e) => {
+                                            const tasks = [...editForm.tasks];
+                                            tasks[i] = { ...t, note: e.target.value };
+                                            setEditForm({ ...editForm, tasks });
+                                          }}
+                                          className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                        />
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                               <div className="flex gap-2 pt-1">
                                 <button
                                   type="button"

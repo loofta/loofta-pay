@@ -38,7 +38,6 @@ import { buildGiveawayFundingPrivateTransfer } from "@/services/api/claims";
 import { FormattedText } from "@/components/FormattedText";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-const SITE_URL = "https://pay.loofta.xyz";
 // Money-highlight accent (prize amounts), matching the browse-list card and this feature's other
 // interactive accents — never used for buttons/badges, which use this app's established
 // gradient/semantic tokens instead.
@@ -88,6 +87,13 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   custom: "Custom task",
 };
 
+/** Turns a task's raw target (a handle for x_follow, a bare or full URL for everything else) into a real clickable href. */
+function taskTargetHref(target: string, taskType: string): string {
+  const t = target.trim();
+  if (taskType === "x_follow") return `https://x.com/${t.replace(/^@/, "")}`;
+  return /^https?:\/\//i.test(t) ? t : `https://${t}`;
+}
+
 interface PublicGiveaway {
   id: string; title: string; description: string | null; logo_url: string | null;
   winner_count: number; selection_mode: string; prize_amount_usd: string; entries_close_at: string;
@@ -96,7 +102,7 @@ interface PublicGiveaway {
   funding_required_usd: string | null; funding_confirmed_usd: string; entry_count: number;
   entry_snapshot_hash: string | null; vrf_randomness: string | null; vrf_fulfilled_at: string | null;
   is_official: boolean;
-  tasks: Array<{ id: string; task_type: string; config: { target?: string; comment_requirement?: string }; order_index: number }>;
+  tasks: Array<{ id: string; task_type: string; config: { target?: string; comment_requirement?: string; instructions?: string }; order_index: number; verification_mode: string }>;
 }
 
 interface TaskCompletion {
@@ -126,6 +132,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [entering, setEntering] = useState(false);
+  const [enterError, setEnterError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [downloadingImage, setDownloadingImage] = useState(false);
@@ -196,6 +203,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
 
   const enter = useCallback(async () => {
     setEntering(true);
+    setEnterError(null);
     try {
       const res = await fetch(`${BACKEND_URL}/giveaways/${id}/entries`, {
         method: "POST",
@@ -208,7 +216,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
       toast({ title: "You're entered!", description: "Complete the tasks below before entries close." });
       refetchEntry();
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Could not enter", description: err.message });
+      setEnterError(err.message);
     } finally {
       setEntering(false);
     }
@@ -221,8 +229,18 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
         headers: { "Content-Type": "application/json", ...(await authHeaders(getAccessToken)) },
         body: JSON.stringify({ submission_data: submissionText ? { proof: submissionText } : undefined }),
       });
-      if (!res.ok) throw new Error(await res.text());
-      toast({ title: "Task marked done" });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message || "Failed to submit task");
+      // X tasks (retweet/like/follow/comment) verify instantly against the live X API — give
+      // accurate feedback right away instead of a generic "marked done" that implies it's still pending.
+      const status = body?.completion?.verification_status;
+      if (status === "auto_verified") {
+        toast({ title: "Verified! ✅", description: "Confirmed on X." });
+      } else if (status === "rejected") {
+        toast({ variant: "destructive", title: "Not verified", description: "We couldn't confirm this on X yet — make sure you've actually done it, then try again." });
+      } else {
+        toast({ title: "Task marked done" });
+      }
       refetchEntry();
     } catch (err: any) {
       toast({ variant: "destructive", title: "Could not submit task", description: err.message });
@@ -311,7 +329,10 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const downloadShareImage = useCallback(async () => {
     setDownloadingImage(true);
     try {
-      const res = await fetch(`/api/giveaways/${id}/og`);
+      // no-store: a browser that fetched this URL before the Cache-Control fix (previously
+      // immutable, max-age=31536000) would otherwise keep serving that stale cached response
+      // forever, regardless of any server-side fix — this forces a real network hit every time.
+      const res = await fetch(`/api/giveaways/${id}/og`, { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to generate image");
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -355,7 +376,12 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     : 0;
   const canEnter = giveaway.status === "OPEN" && !myEntry;
   const canShare = giveaway.status !== "REJECTED" && giveaway.status !== "CANCELLED";
-  const giveawayUrl = `${SITE_URL}/rewards/giveaways/${id}`;
+  // Matches the current environment (localhost in dev, pay.loofta.xyz in prod) instead of a
+  // hardcoded production URL — a hardcoded one made ShareLinkMenu's OG pre-warm fetch cross-origin
+  // when running locally, which CSP's connect-src correctly blocked (same convention as the claim
+  // page's window.location.origin usage). SSR-safe fallback for the brief pre-hydration render.
+  const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://pay.loofta.xyz";
+  const giveawayUrl = `${siteUrl}/rewards/giveaways/${id}`;
 
   return (
     <>
@@ -447,7 +473,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 url={giveawayUrl}
                 title={giveaway.title}
                 text={`$${giveaway.prize_amount_usd} × ${giveaway.winner_count} winner${giveaway.winner_count === 1 ? "" : "s"} — enter "${giveaway.title}" on Loofta 🎁`}
-                ogUrl={`${SITE_URL}/api/giveaways/${id}/og`}
+                ogUrl={`${siteUrl}/api/giveaways/${id}/og`}
                 triggerLabel="Share"
                 triggerClassName="h-11 w-full"
               />
@@ -575,13 +601,36 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-base font-medium text-white">{TASK_TYPE_LABELS[task.task_type] ?? task.task_type}</p>
-                        {task.config?.target && <p className="text-base text-slate-500 truncate">{task.config.target}</p>}
+                        {task.config?.target && (
+                          <a
+                            href={taskTargetHref(task.config.target, task.task_type)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block text-base text-[#FF7A2A] hover:underline underline-offset-2 truncate"
+                          >
+                            {task.config.target}
+                          </a>
+                        )}
+                        {(task.config?.comment_requirement || task.config?.instructions) && (
+                          <p className="text-base text-slate-500 mt-0.5">
+                            {task.config.comment_requirement || task.config.instructions}
+                          </p>
+                        )}
                       </div>
                       {myEntry && (
                         verified ? (
                           <span className="shrink-0 inline-flex items-center gap-1 text-base font-medium text-emerald-400"><Check className="w-3.5 h-3.5" /> Verified</span>
                         ) : rejected ? (
-                          <span className="shrink-0 text-base font-medium text-red-400">Rejected</span>
+                          <div className="shrink-0 flex flex-col items-end gap-1">
+                            <span className="text-base font-medium text-red-400">Rejected</span>
+                            <button
+                              type="button"
+                              onClick={() => markTaskDone(task.id, "")}
+                              className="text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-2.5 py-1"
+                            >
+                              Try again
+                            </button>
+                          </div>
                         ) : completion?.submission_data ? (
                           <span className="shrink-0 text-base font-medium text-amber-400">Pending review</span>
                         ) : (
@@ -590,7 +639,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                             onClick={() => markTaskDone(task.id, "")}
                             className="shrink-0 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-2.5 py-1"
                           >
-                            Mark done
+                            {task.verification_mode === "auto_api" ? "Verify" : "Mark done"}
                           </button>
                         )
                       )}
@@ -618,9 +667,17 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               Connect X to enter
             </GradientActionButton>
           ) : canEnter ? (
-            <GradientActionButton onClick={enter} disabled={entering} loading={entering} loadingText="Entering…">
-              Enter giveaway
-            </GradientActionButton>
+            <>
+              <GradientActionButton onClick={enter} disabled={entering} loading={entering} loadingText="Entering…">
+                Enter giveaway
+              </GradientActionButton>
+              {enterError && (
+                <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 p-3">
+                  <p className="text-base font-medium text-red-400">Could not enter</p>
+                  <p className="text-base text-slate-400 mt-0.5">{enterError}</p>
+                </div>
+              )}
+            </>
           ) : myEntry?.status === "winner" && myEntry.claim_payment_id ? (
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
               <p className="font-semibold text-lg mb-1 text-emerald-400">You won!</p>

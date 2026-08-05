@@ -11,6 +11,7 @@ import {
   GiveawayTask,
   GiveawayTaskCompletion,
   GiveawayTaskCompletionStatus,
+  GiveawayTaskVerificationMode,
 } from './entities/giveaway.entity';
 
 const TWITTER_ACCOUNT_TYPES = ['twitter_oauth', 'twitter_oauth2', 'twitter', 'x'];
@@ -131,9 +132,16 @@ export class GiveawayEntriesService {
     return { ...(entry as GiveawayEntry), completions: (completions ?? []) as GiveawayTaskCompletion[] };
   }
 
-  /** Participant marking a task done. For auto_api tasks this just flips pending -> pending
-   *  (no-op besides recording intent + optional link) so the batched X-verification cron has
-   *  something to check; for self_report tasks, submission_data is the actual proof. */
+  /** Participant marking a task done. For auto_api tasks (x_follow/x_retweet/x_like/x_comment),
+   *  this also tries to verify right away against the live X API — instant "Verified" instead of
+   *  waiting on GiveawayCronService.verifyXTasks's 2-minute batch pass (which is also prod-gated,
+   *  so it never runs on a local/staging instance at all). Reuses the exact same
+   *  XVerificationService.verifyPendingCompletions the cron calls, just with a single-entry list
+   *  instead of every giveaway's pending backlog — one extra X API call per click on click-through
+   *  tasks, which is an acceptable trade for instant feedback at this feature's current scale; the
+   *  batched cron remains the backstop in production for anyone who clicks before actually doing
+   *  the task, or if this inline check fails/errors. For self_report tasks, submission_data is the
+   *  actual proof and nothing here changes — a human still reviews it. */
   async submitTaskCompletion(
     giveawayId: string,
     userId: string,
@@ -151,6 +159,19 @@ export class GiveawayEntriesService {
       .select()
       .single();
     if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to submit task');
+
+    const tasks = await this.giveawaysService.getTasks(giveawayId);
+    const task = tasks.find((t) => t.id === taskId);
+    if (task?.verification_mode === GiveawayTaskVerificationMode.AUTO_API && this.xVerification.isAvailable()) {
+      try {
+        const giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+        await this.xVerification.verifyPendingCompletions(giveaway, task, [{ completion: data as GiveawayTaskCompletion, entry }]);
+        const { data: refreshed } = await this.supabaseService.giveawayTaskCompletions.select('*').eq('id', completion.id).single();
+        if (refreshed) return refreshed as GiveawayTaskCompletion;
+      } catch (e) {
+        this.logger.warn(`[GiveawayEntries] inline verify failed for completion ${completion.id} (cron will retry): ${String(e)}`);
+      }
+    }
     return data as GiveawayTaskCompletion;
   }
 
