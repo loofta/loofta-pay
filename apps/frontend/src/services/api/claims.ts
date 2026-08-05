@@ -170,6 +170,22 @@ export async function buildClaimPrivateTransfer(
   });
 }
 
+export async function buildGiveawayFundingPrivateTransfer(
+  giveawayId: string,
+  userId: string,
+  senderWallet: string,
+  accessToken?: string | null,
+  cluster?: 'devnet' | 'mainnet',
+  gasless = true,
+): Promise<MagicblockTxResponse> {
+  return fetchApi<MagicblockTxResponse>(`/giveaways/${giveawayId}/funding/private-transfer`, {
+    method: 'POST',
+    body: JSON.stringify({ sender_wallet: senderWallet, cluster, gasless }),
+    userId,
+    accessToken,
+  });
+}
+
 // ===========================================
 // Default export
 // ===========================================

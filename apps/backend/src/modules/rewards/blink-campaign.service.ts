@@ -51,9 +51,14 @@ export class BlinkCampaignService {
     private readonly privy: PrivyVerificationService,
   ) {}
 
-  async getBlinkCampaign(privyUserId: string, solanaAddress?: string): Promise<BlinkCampaignData> {
+  async getBlinkCampaign(privyUserId: string): Promise<BlinkCampaignData> {
+    // Resolve the wallet address server-side from Privy (skipCache: true) rather than trusting a
+    // client-supplied address — the frontend derives it from local wallet-hook state, which can
+    // be stale relative to Privy's records after a wallet rotation/archive, silently undercounting
+    // (or missing entirely) a user's real Blink deposits.
+    const solanaAddress = await this.getPrivySolanaAddress(privyUserId, { skipCache: true });
     const [blinkLookup, privatePaymentsCount] = await Promise.all([
-      this.getBlinkDepositsCount(solanaAddress),
+      this.getBlinkDepositsCount(solanaAddress ?? undefined),
       this.getMainnetPrivatePaymentsCount(privyUserId),
     ]);
     const blinkDeposits = blinkLookup.count;
@@ -208,12 +213,12 @@ export class BlinkCampaignService {
     });
   }
 
-  private async getPrivySolanaAddress(privyUserId: string): Promise<string | null> {
+  private async getPrivySolanaAddress(privyUserId: string, opts?: { skipCache?: boolean }): Promise<string | null> {
     try {
       // Bulk admin sweep hits this for ~1900 users — bound the wait so one slow
       // Privy lookup can't stall its whole concurrency batch.
       const user = await Promise.race([
-        this.privy.getPrivyUser(privyUserId),
+        this.privy.getPrivyUser(privyUserId, opts),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
       ]);
       const accounts: any[] = user?.linked_accounts ?? [];

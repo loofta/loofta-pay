@@ -81,17 +81,22 @@ export class PrivyVerificationService {
   /**
    * Fetch full Privy user object (linked_accounts etc.) with Redis caching.
    * Replaces direct Privy API calls in UsersService.
+   * Pass `skipCache: true` for any lookup that resolves a fund destination
+   * (deposits/top-ups) — a stale cache hit here can hand out an address
+   * Privy has since archived during a wallet rotation.
    */
-  async getPrivyUser(userId: string): Promise<{ linked_accounts: any[] } | null> {
+  async getPrivyUser(userId: string, opts?: { skipCache?: boolean }): Promise<{ linked_accounts: any[] } | null> {
     if (!userId?.includes('did:privy:')) return null;
 
     const cacheKey = `privy:user:data:${userId}`;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) {
-      try {
-        return JSON.parse(cached);
-      } catch {
-        // corrupt cache entry — fall through to API
+    if (!opts?.skipCache) {
+      const cached = await this.redis.get(cacheKey);
+      if (cached) {
+        try {
+          return JSON.parse(cached);
+        } catch {
+          // corrupt cache entry — fall through to API
+        }
       }
     }
 

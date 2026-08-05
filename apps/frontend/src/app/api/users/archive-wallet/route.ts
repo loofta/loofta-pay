@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddress, getAccount } from "@solana/spl-token";
 import { getVerifiedUserId } from "@/lib/serverAuth";
+import { getRpcForMode, getUsdcMintForMode } from "@/lib/solanaRpc";
+
+// Anything above this is a real balance, not float dust — this flow is mainnet-only
+// (part of the mandatory wallet upgrade, MAINNET_WALLET_UPDATE_ID), so mainnet RPC/mint.
+const DUST_LAMPORTS = 5000;
 
 const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID!;
 const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET!;
@@ -50,6 +57,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Wallet not found on this account" },
         { status: 404 }
+      );
+    }
+
+    // Hard invariant: a wallet holding real funds must never be archived — Privy blocks all
+    // signing on an archived wallet, so this is how deposits/payments get permanently stranded
+    // behind a wallet rotation (real incidents: users cmq9rrtii001h0ckzcw9ky9d4, cmq1ja1zf005q0cjucz5eg5d8,
+    // 2026-08-05). Fail closed: if we can't confirm the wallet is empty, don't archive it.
+    try {
+      const conn = new Connection(getRpcForMode("mainnet"), "confirmed");
+      const pubkey = new PublicKey(walletAddress);
+      const [solBalance, usdcBalance] = await Promise.all([
+        conn.getBalance(pubkey),
+        getAssociatedTokenAddress(getUsdcMintForMode("mainnet"), pubkey)
+          .then((ata) => getAccount(conn, ata))
+          .then((acc) => acc.amount)
+          .catch(() => BigInt(0)), // no USDC token account = no USDC balance
+      ]);
+      if (solBalance > DUST_LAMPORTS || usdcBalance > BigInt(0)) {
+        return NextResponse.json(
+          { error: "This wallet still holds funds and cannot be archived. Move funds out first, or contact support." },
+          { status: 409 }
+        );
+      }
+    } catch (e: any) {
+      return NextResponse.json(
+        { error: "Could not verify this wallet is empty before archiving — try again." },
+        { status: 502 }
       );
     }
 

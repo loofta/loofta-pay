@@ -352,11 +352,15 @@ export class UsersService {
   }
 
   /**
-   * Get user's Solana wallet address from Privy (server-side only, Redis-cached 2 min).
+   * Get user's Solana wallet address from Privy (server-side only, Redis-cached 5 min by default).
    * Wallet address is never exposed to the frontend.
+   *
+   * Pass `skipCache: true` whenever the result will be used as a fund destination
+   * (deposits/top-ups/payouts) — a stale cache hit can hand out a wallet Privy has
+   * since archived during a wallet rotation, stranding funds. See PrivyVerificationService.getPrivyUser.
    */
-  async getSolanaWalletAddress(privyUserId: string): Promise<string> {
-    const privyUser = await this.getPrivyUser(privyUserId);
+  async getSolanaWalletAddress(privyUserId: string, opts?: { skipCache?: boolean }): Promise<string> {
+    const privyUser = await this.getPrivyUser(privyUserId, opts);
     if (!privyUser) {
       throw new Error('Failed to fetch wallet from Privy');
     }
@@ -443,11 +447,11 @@ export class UsersService {
    * Fetch full Privy user (linked_accounts etc.) with Redis caching.
    * Delegates to PrivyVerificationService when available; falls back to raw HTTP.
    */
-  async getPrivyUser(privyUserId: string): Promise<{ linked_accounts: any[] } | null> {
+  async getPrivyUser(privyUserId: string, opts?: { skipCache?: boolean }): Promise<{ linked_accounts: any[] } | null> {
     if (this.privyVerification) {
-      return this.privyVerification.getPrivyUser(privyUserId);
+      return this.privyVerification.getPrivyUser(privyUserId, opts);
     }
-    // Fallback for when service is not yet injected (e.g. early boot)
+    // Fallback for when service is not yet injected (e.g. early boot) — always live, no cache involved.
     const privyAppId = this.configService.get<string>('PRIVY_APP_ID');
     const privyAppSecret = this.configService.get<string>('PRIVY_APP_SECRET');
     if (!privyAppId || !privyAppSecret) return null;
