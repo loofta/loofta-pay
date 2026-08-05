@@ -4,6 +4,16 @@ import Link from "next/link";
 import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
+import { useQuery } from "@tanstack/react-query";
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+
+async function fetchOpenGiveawayCount(): Promise<number> {
+  const res = await fetch(`${BACKEND_URL}/giveaways/public`);
+  if (!res.ok) throw new Error("Failed to load giveaways");
+  const data = await res.json();
+  return (data.giveaways ?? []).length;
+}
 
 // Campaign ended July 1 2026 at 18:00 CET (CEST = UTC+2) = 16:00 UTC
 const SPARKS_END_DATE = new Date("2026-07-01T16:00:00.000Z");
@@ -242,6 +252,13 @@ export default function RewardsPage() {
   const [megapotActive, setMegapotActive] = useState(false);
   const [isLocalhost, setIsLocalhost] = useState(false);
 
+  const { data: openGiveawayCount } = useQuery({
+    queryKey: ["giveaways-open-count"],
+    queryFn: fetchOpenGiveawayCount,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
   useEffect(() => {
     const now = new Date();
     setSparksEnded(now >= SPARKS_END_DATE);
@@ -280,26 +297,29 @@ export default function RewardsPage() {
               }}
             >
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/15" />
-              <div className="relative z-10 p-4 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="mb-1">
-                    <span
-                      className="text-sm font-bold px-2 py-0.5 rounded-full border"
-                      style={{ backgroundColor: `${GIVEAWAYS_ACCENT}26`, color: GIVEAWAYS_ACCENT, borderColor: `${GIVEAWAYS_ACCENT}40` }}
-                    >
-                      New
-                    </span>
-                  </div>
-                  <h2 className="text-2xl font-bold text-white truncate">Giveaways</h2>
-                  <p className="text-base text-slate-300 truncate">
-                    Promote your project or earn by entering giveaways
-                  </p>
+              <div className="relative z-10 p-4">
+                <div className="mb-1">
+                  <span
+                    className="text-sm font-bold px-2 py-0.5 rounded-full border"
+                    style={{ backgroundColor: `${GIVEAWAYS_ACCENT}26`, color: GIVEAWAYS_ACCENT, borderColor: `${GIVEAWAYS_ACCENT}40` }}
+                  >
+                    New
+                  </span>
                 </div>
-                <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors shrink-0">
-                  <span>Browse</span>
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
-                    <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
+                <h2 className="text-2xl font-bold text-white truncate">Giveaways</h2>
+                <p className="text-base text-slate-300 truncate mb-2">
+                  Promote your project or earn by entering giveaways
+                </p>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold" style={{ color: GIVEAWAYS_ACCENT }}>
+                    {openGiveawayCount === undefined ? "" : openGiveawayCount === 0 ? "Be the first" : `${openGiveawayCount} open now`}
+                  </span>
+                  <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors shrink-0">
+                    <span>Browse</span>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
+                      <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
                 </div>
               </div>
             </div>
