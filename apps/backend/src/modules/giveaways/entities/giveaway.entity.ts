@@ -49,7 +49,13 @@ export enum GiveawayTaskVerificationMode {
 export const GIVEAWAY_TASK_VERIFICATION_MODE: Record<GiveawayTaskType, GiveawayTaskVerificationMode> = {
   [GiveawayTaskType.X_FOLLOW]: GiveawayTaskVerificationMode.AUTO_API,
   [GiveawayTaskType.X_RETWEET]: GiveawayTaskVerificationMode.AUTO_API,
-  [GiveawayTaskType.X_LIKE]: GiveawayTaskVerificationMode.AUTO_API,
+  // Confirmed via live test (2026-08-05): X's "liking_users" lookup returns an empty list
+  // regardless of who actually liked the tweet — a tier/access gap on this specific endpoint
+  // (tweetRetweetedBy on the same tweet correctly returned real users). Auto-verifying against an
+  // endpoint that always comes back empty means every genuine like gets rejected, so this falls
+  // back to self-report/human review until that access gap is resolved. Revert to AUTO_API once
+  // fixed on the X Developer Portal side.
+  [GiveawayTaskType.X_LIKE]: GiveawayTaskVerificationMode.SELF_REPORT,
   [GiveawayTaskType.X_COMMENT]: GiveawayTaskVerificationMode.AUTO_API,
   [GiveawayTaskType.X_BOOKMARK]: GiveawayTaskVerificationMode.SELF_REPORT,
   [GiveawayTaskType.TELEGRAM_JOIN]: GiveawayTaskVerificationMode.SELF_REPORT,

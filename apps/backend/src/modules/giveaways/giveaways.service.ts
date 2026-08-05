@@ -474,11 +474,16 @@ export class GiveawaysService {
     // GiveawayEntriesService.createTaskCompletionStubs, which only runs at entry time and would
     // otherwise never see a task added after someone already entered.
     if (dto.new_tasks?.length) {
+      // order_index must stay unique per giveaway — the frontend task list keys off it, and a
+      // fixed value here would collide with itself the second time a task was ever added (or with
+      // an existing task at the same index), causing a duplicate React key.
+      const { data: existingTasks } = await this.supabaseService.giveawayTasks.select('order_index').eq('giveaway_id', id);
+      const nextOrderIndex = 1 + Math.max(-1, ...(existingTasks ?? []).map((t) => t.order_index as number));
       const { data: insertedTasks, error: insError } = await this.supabaseService.giveawayTasks
         .insert(
-          dto.new_tasks.map((t) => ({
+          dto.new_tasks.map((t, i) => ({
             giveaway_id: id,
-            order_index: 1000,
+            order_index: nextOrderIndex + i,
             task_type: t.task_type,
             config: t.config ?? {},
             verification_mode: GIVEAWAY_TASK_VERIFICATION_MODE[t.task_type],

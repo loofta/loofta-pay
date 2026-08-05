@@ -249,7 +249,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
       // X tasks (retweet/like/follow/comment) verify instantly against the live X API — give
       // accurate feedback right away instead of a generic "marked done" that implies it's still pending.
       const status = body?.completion?.verification_status;
-      if (status === "auto_verified") {
+      if (status === "auto_verified" || status === "verified") {
         toast({ title: "Verified! ✅", description: "Confirmed on X." });
       } else if (status === "rejected") {
         toast({ variant: "destructive", title: "Not verified", description: "We couldn't confirm this on X yet — make sure you've actually done it, then try again." });

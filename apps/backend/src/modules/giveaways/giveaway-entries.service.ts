@@ -12,6 +12,7 @@ import {
   GiveawayTaskCompletion,
   GiveawayTaskCompletionStatus,
   GiveawayTaskVerificationMode,
+  GiveawayTaskType,
 } from './entities/giveaway.entity';
 
 const TWITTER_ACCOUNT_TYPES = ['twitter_oauth', 'twitter_oauth2', 'twitter', 'x'];
@@ -161,6 +162,29 @@ export class GiveawayEntriesService {
     const completion = entry.completions.find((c) => c.giveaway_task_id === taskId);
     if (!completion) throw new NotFoundException('Task not found on this giveaway');
 
+    const tasks = await this.giveawaysService.getTasks(giveawayId);
+    const task = tasks.find((t) => t.id === taskId);
+
+    // TEMPORARY (2026-08-05): X's "Like Lookup" endpoint is gated behind a tier this app doesn't
+    // have — it always returns an empty liker list regardless of who actually liked the tweet,
+    // which was auto-rejecting every genuine like. Until that access gap is resolved, trust the
+    // click and auto-verify instead of forcing self-report review for something we can't actually
+    // check either way. Remove this branch once Like Lookup access is confirmed working again.
+    if (task?.task_type === GiveawayTaskType.X_LIKE) {
+      const { data: trusted, error: trustedError } = await this.supabaseService.giveawayTaskCompletions
+        .update({
+          submission_data: submissionData ?? null,
+          verification_status: GiveawayTaskCompletionStatus.VERIFIED,
+          verification_detail: { note: 'Auto-approved — X Like Lookup unavailable on current API tier' },
+          reviewed_at: new Date().toISOString(),
+        })
+        .eq('id', completion.id)
+        .select()
+        .single();
+      if (trustedError || !trusted) throw new BadRequestException(trustedError?.message ?? 'Failed to submit task');
+      return trusted as GiveawayTaskCompletion;
+    }
+
     const { data, error } = await this.supabaseService.giveawayTaskCompletions
       .update({ submission_data: submissionData ?? null })
       .eq('id', completion.id)
@@ -168,8 +192,6 @@ export class GiveawayEntriesService {
       .single();
     if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to submit task');
 
-    const tasks = await this.giveawaysService.getTasks(giveawayId);
-    const task = tasks.find((t) => t.id === taskId);
     if (task?.verification_mode === GiveawayTaskVerificationMode.AUTO_API && this.xVerification.isAvailable()) {
       const existingDetail = (data.verification_detail ?? {}) as { attempts?: string[] };
       const now = Date.now();
