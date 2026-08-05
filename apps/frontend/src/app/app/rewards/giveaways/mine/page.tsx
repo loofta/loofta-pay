@@ -26,7 +26,7 @@ const STATUS_LABELS: Record<string, string> = {
   REJECTED: "Rejected",
   PENDING_FUNDING: "Needs funding",
   FUNDED: "Funded",
-  OPEN: "Open",
+  OPEN: "Funded",
   ENTRIES_CLOSED: "Entries closed",
   DRAWING: "Drawing winners",
   WINNERS_SELECTED: "Winners selected",

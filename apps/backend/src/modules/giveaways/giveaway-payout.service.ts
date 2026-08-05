@@ -184,7 +184,7 @@ export class GiveawayPayoutService {
       const conn = this.solanaSponsor.getConnectionForCluster(this.cluster(giveaway));
       const mint = new PublicKey(giveaway.mint);
       const burnerKeypair = this.burnerSweep.decryptBurner(giveaway.burner_address, giveaway.burner_encrypted_secret);
-      const creatorWallet = await this.usersService.getSolanaWalletAddress(giveaway.created_by);
+      const creatorWallet = await this.usersService.getSolanaWalletAddress(giveaway.created_by, { skipCache: true });
       const refund = await this.burnerSweep.refundRemainingToCreator({
         conn,
         burnerKeypair,

@@ -57,7 +57,7 @@ const STATUS_LABELS: Record<string, string> = {
   REJECTED: "Rejected",
   PENDING_FUNDING: "Needs funding",
   FUNDED: "Funded",
-  OPEN: "Open",
+  OPEN: "Funded",
   ENTRIES_CLOSED: "Entries closed",
   DRAWING: "Drawing winners",
   WINNERS_SELECTED: "Winners selected",
@@ -509,6 +509,18 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             const totalDueUsdc = payPrivately ? remainingUsd + privateFeeUsdc : remainingUsd;
 
             const insufficientBalance = !solanaPayment.isBalanceLoading && !solanaPayment.hasEnoughBalance(totalDueUsdc);
+
+            if (remainingUsd <= 0) {
+              return (
+                <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 mb-5 text-center">
+                  <p className="font-semibold text-lg text-emerald-400">Funded! ✅</p>
+                  <p className="text-base text-slate-300 mt-1">
+                    ${confirmedUsd.toFixed(2)} of ${requiredUsd.toFixed(2)} confirmed — this giveaway is about to open for entries.
+                  </p>
+                </div>
+              );
+            }
+
             return (
               <div className="relative mb-5">
                 {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}

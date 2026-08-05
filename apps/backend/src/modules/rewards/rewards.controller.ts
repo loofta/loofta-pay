@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { RewardsService } from './rewards.service';
 import { BlinkCampaignService } from './blink-campaign.service';
@@ -34,14 +34,10 @@ export class RewardsController {
   @UseGuards(PrivyAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get Blink campaign quest status for current user' })
-  async getMyBlinkCampaign(
-    @PrivyUser() user: { id: string },
-    @Query('address') solanaAddress?: string,
-  ) {
-    if (solanaAddress && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(solanaAddress)) {
-      throw new BadRequestException('Invalid Solana address');
-    }
-    return this.blinkCampaign.getBlinkCampaign(user.id, solanaAddress);
+  async getMyBlinkCampaign(@PrivyUser() user: { id: string }) {
+    // Wallet address is resolved server-side from Privy, never trusted from the client —
+    // see BlinkCampaignService.getBlinkCampaign.
+    return this.blinkCampaign.getBlinkCampaign(user.id);
   }
 
   @Get('megapot/me')

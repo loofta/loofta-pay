@@ -1326,7 +1326,7 @@ export class ClaimsService {
     // used as the retry target for the default claim-to-wallet flow. sweepDestination: where
     // funds actually go THIS time — overridden by an explicit destinationAddress (claim to an
     // external wallet) without ever touching the recipient's on-file identity.
-    const wallet = await this.usersService.getSolanaWalletAddress(privyUserId);
+    const wallet = await this.usersService.getSolanaWalletAddress(privyUserId, { skipCache: true });
     if (!wallet?.trim()) {
       throw new BadRequestException('No Solana wallet linked to your account. Please add a wallet in settings.');
     }
@@ -1715,9 +1715,16 @@ export class ClaimsService {
     privyUserId: string,
   ): Promise<{ swept: boolean; sweepTxHash?: string; sweptAmount?: string }> {
     const claim = await this.findOneRaw(claimId);
-    const wallet = await this.usersService.getSolanaWalletAddress(privyUserId);
-    const recipientAddress = (claim.recipient_address || '').trim().toLowerCase();
-    if (!wallet?.trim() || recipientAddress !== wallet.trim().toLowerCase()) {
+    // Identity check via checkIsRecipient (recipient_user_id first, wallet-address only as a
+    // fallback) rather than comparing against the stored recipient_address directly — that
+    // column is a point-in-time snapshot and stays stale after a Privy wallet rotation, which
+    // would otherwise incorrectly block the real recipient from retrying to their current wallet.
+    const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
+    if (!isRecipient) {
+      throw new ForbiddenException('You are not the recipient wallet for this payment.');
+    }
+    const wallet = await this.usersService.getSolanaWalletAddress(privyUserId, { skipCache: true });
+    if (!wallet?.trim()) {
       throw new ForbiddenException('You are not the recipient wallet for this payment.');
     }
     const { sweepTxHash, sweptAmount, deliveredPrivately } = await this.sweepClaimBurnerToWallet(claimId, claim, wallet);
@@ -3297,7 +3304,20 @@ export class ClaimsService {
       // wallet_address) to a plain public sweep to their default wallet. Losing this destination
       // was a real incident (claim 3d05bc19): it swept to the recipient's own wallet instead of
       // their bank account because claim_requested_destination was never stamped for claimToNaira.
-      const destination = rawRow.claim_requested_destination?.trim() || recipientWallet;
+      // For the default "claim to own wallet" case (no explicit destination stamped), re-resolve
+      // the recipient's wallet live via Privy (skipCache) instead of trusting the stored
+      // recipient_address snapshot — that column only gets refreshed on a successful sweep, so a
+      // wallet rotated after the claim was requested but before this cron tick runs would
+      // otherwise strand funds at the recipient's now-archived old wallet.
+      let destination = rawRow.claim_requested_destination?.trim() || recipientWallet;
+      if (!rawRow.claim_requested_destination?.trim() && rawRow.recipient_user_id) {
+        try {
+          const liveWallet = await this.usersService.getSolanaWalletAddress(rawRow.recipient_user_id, { skipCache: true });
+          if (liveWallet?.trim()) destination = liveWallet.trim();
+        } catch (e: any) {
+          this.logger.warn(`[cronSweep] Claim ${claim.id}: live wallet re-resolve failed, falling back to stored recipient_address — ${e?.message ?? e}`);
+        }
+      }
       const claimPrivately = rawRow.claim_requested_privately === true;
       const looftaFeeUsdc = rawRow.claim_requested_naira_fee_usdc ?? undefined;
       try {

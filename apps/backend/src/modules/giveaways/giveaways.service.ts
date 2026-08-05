@@ -77,17 +77,19 @@ export class GiveawaysService {
       throw new BadRequestException('entries_close_at must be a valid future date');
     }
 
-    const funding_required_usd = this.computeFundingRequiredUsd(dto.prize_amount_usd, dto.winner_count);
-
     // "Create as Loofta" — never trust dto.is_official alone; re-check the caller is actually an
     // admin here, server-side, same as every other admin-gated action in this module. An official
     // giveaway auto-approves (mints its burner and skips PENDING_APPROVAL) so the sole admin can
-    // test the full funding -> draw -> claim pipeline without a redundant self-approval click.
+    // test the full funding -> draw -> claim pipeline without a redundant self-approval click, and
+    // funds with no fee buffer (see computeFundingRequiredUsd) since that buffer no longer reflects
+    // a real cost and shouldn't be charged to an admin test run.
     const isOfficial = !!dto.is_official && (await isPrivyUserAdmin(this.supabaseService, this.configService, userId));
     const officialBurner = isOfficial ? this.burnerSweep.createBurner() : null;
     if (isOfficial && !officialBurner) {
       throw new BadRequestException('Giveaway burner minting is not configured (SEND_PAYMENT_ENC_KEY missing). Contact an engineer.');
     }
+
+    const funding_required_usd = this.computeFundingRequiredUsd(dto.prize_amount_usd, dto.winner_count, !isOfficial);
 
     const { data: giveaway, error } = await this.supabaseService.giveaways
       .insert({

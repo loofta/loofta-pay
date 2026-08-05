@@ -698,7 +698,7 @@ export class PackService {
       throw new BadRequestException('This pack opening already has a ticket attached — refunding would double-pay the user');
     }
 
-    const userSolanaAddress = await this.usersService.getSolanaWalletAddress(opening.user_id);
+    const userSolanaAddress = await this.usersService.getSolanaWalletAddress(opening.user_id, { skipCache: true });
     const refundTxHash = await this.lottery.refundToUserWallet(userSolanaAddress, opening.cost_usdc);
 
     await db.from('pack_openings').update({
