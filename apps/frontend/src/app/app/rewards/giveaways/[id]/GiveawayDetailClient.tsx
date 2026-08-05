@@ -623,7 +623,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 const rejected = completion?.verification_status === "rejected";
                 return (
                   <div key={task.order_index} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center justify-between gap-4">
                       <div className="min-w-0">
                         <p className="text-base font-medium text-white">{TASK_TYPE_LABELS[task.task_type] ?? task.task_type}</p>
                         {task.config?.target && (
@@ -631,13 +631,13 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                             href={taskTargetHref(task.config.target, task.task_type)}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="block text-base text-[#FF7A2A] hover:underline underline-offset-2 truncate"
+                            className="block text-base text-sky-400 hover:text-sky-300 underline underline-offset-2 truncate"
                           >
                             {task.config.target}
                           </a>
                         )}
                         {(task.config?.comment_requirement || task.config?.instructions) && (
-                          <p className="text-base text-slate-500 mt-0.5">
+                          <p className="text-base text-slate-300 mt-0.5">
                             {task.config.comment_requirement || task.config.instructions}
                           </p>
                         )}
@@ -684,8 +684,11 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
           )}
 
           {!authenticated ? (
-            <GradientActionButton onClick={() => login({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })}>
-              Sign in to enter
+            // Every giveaway requires a linked X account to enter (see eligibility text above) —
+            // sign in with X directly instead of offering methods that would just dead-end at a
+            // second "Connect X" prompt right after.
+            <GradientActionButton onClick={() => login({ loginMethods: ["twitter"], disableSignup: false })}>
+              Sign in with X to enter
             </GradientActionButton>
           ) : canEnter && !hasXLinked ? (
             <GradientActionButton onClick={() => linkTwitter()}>

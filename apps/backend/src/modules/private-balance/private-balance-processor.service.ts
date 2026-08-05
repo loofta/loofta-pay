@@ -145,10 +145,20 @@ export class PrivateBalanceProcessorService {
     // starve a genuinely-funded recent deposit out of the BATCH_LIMIT window. expireAbandonedDeposits()
     // (run just before this every tick) caps how large that backlog can get, but ordering oldest-last
     // is defense in depth for the window before a stuck row crosses the expiry cutoff.
+    // 'delivering_privately' must stay in this list: tryDeliverBurnerBalance() sets that status
+    // BEFORE building/broadcasting the MagicBlock transfer, so any failure after that point
+    // (RPC hiccup, wallet-resolve error, broadcast failure) would otherwise strand the row
+    // forever — it'd never match this query again and never get retried, even though the burner
+    // still holds the funds untouched (confirmed real incident 2026-08-05, private_transfers
+    // 43138a5e-...: reached 'delivering_privately', no leg2_tx_signature, no error_message,
+    // burner balance unchanged — stuck with no path back into this query). Safe to retry: the
+    // balance re-check at the top of tryDeliverBurnerBalance means a row that already completed
+    // on-chain (but crashed before the DB write) would just see balance <= relayFeeUnits and
+    // no-op rather than double-spend.
     const { data, error } = await this.supabaseService.privateTransfers
       .select('*')
       .eq('direction', 'deposit')
-      .in('status', ['awaiting_funds', 'bridging'])
+      .in('status', ['awaiting_funds', 'bridging', 'delivering_privately'])
       .order('created_at', { ascending: false })
       .limit(BATCH_LIMIT);
     if (error) { this.logger.warn(`processDeposits: query failed: ${error.message}`); return; }
@@ -209,7 +219,16 @@ export class PrivateBalanceProcessorService {
     }
 
     const relayFeeUnits = BigInt(Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000));
-    if (balance <= relayFeeUnits) return; // nothing yet, or not even enough to cover the relay fee
+    if (balance <= relayFeeUnits) {
+      // A row already at 'delivering_privately' with a drained/empty burner most likely already
+      // completed on-chain on a prior tick but crashed before the final DB write (status stuck,
+      // no leg2_tx_signature) — silently no-op-ing here would hide a real delivered payment
+      // behind a row that looks stuck forever. Surface it instead of staying quiet.
+      if (row.status === 'delivering_privately') {
+        this.logger.warn(`[PrivateDeposit] ${row.id}: status is 'delivering_privately' but burner is empty/near-empty — likely already delivered on a prior attempt that crashed before recording leg2_tx_signature. Needs manual on-chain verification.`);
+      }
+      return; // nothing yet, or not even enough to cover the relay fee
+    }
 
     if (opts.requireExpected) {
       // Direct deposits only — don't sweep a still-arriving partial transfer early. Cross-chain
