@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -169,6 +169,15 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   // this resolves to giveaway.id once the public fetch above lands, falling back to the raw param
   // until then (a no-op fallback when the URL already had the real UUID).
   const resolvedId = giveaway?.id ?? id;
+
+  // Landed on the long UUID (an old link, a bookmark, someone pasting the raw id) but a short_id
+  // now exists — clean up the address bar to the canonical short link. replace (not push) so this
+  // doesn't add a back-button entry; harmless no-op once the URL already matches.
+  useEffect(() => {
+    if (giveaway?.short_id && id !== giveaway.short_id) {
+      router.replace(`/rewards/giveaways/${giveaway.short_id}`);
+    }
+  }, [giveaway?.short_id, id, router]);
 
   const { data: myEntry, refetch: refetchEntry } = useQuery({
     queryKey: ["giveaway-my-entry", resolvedId, userId],

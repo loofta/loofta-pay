@@ -11,6 +11,7 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:300
 
 interface MyGiveaway {
   id: string;
+  short_id: string | null;
   title: string;
   status: string;
   winner_count: number;
@@ -112,7 +113,7 @@ export default function MyGiveawaysPage() {
               {data.map((g) => (
                 <div key={g.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
                   <div className="flex items-start justify-between gap-3 mb-2">
-                    <Link href={`/rewards/giveaways/${g.id}`} className="min-w-0 flex-1 hover:underline">
+                    <Link href={`/rewards/giveaways/${g.short_id ?? g.id}`} className="min-w-0 flex-1 hover:underline">
                       <p className="text-lg font-semibold text-white truncate">{g.title}</p>
                     </Link>
                     <span className={`shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${statusColor(g.status)}`}>
@@ -128,17 +129,17 @@ export default function MyGiveawaysPage() {
                   )}
 
                   {g.status === "PENDING_FUNDING" ? (
-                    <Link href={`/rewards/giveaways/${g.id}`}>
+                    <Link href={`/rewards/giveaways/${g.short_id ?? g.id}`}>
                       <GradientActionButton>
                         <span className="text-base">Fund Giveaway</span>
                       </GradientActionButton>
                     </Link>
                   ) : (
                     <Link
-                      href={`/rewards/giveaways/${g.id}/manage`}
+                      href={`/rewards/giveaways/${g.short_id ?? g.id}`}
                       className="text-base font-medium text-slate-300 hover:text-white transition-colors"
                     >
-                      Manage →
+                      View →
                     </Link>
                   )}
                 </div>

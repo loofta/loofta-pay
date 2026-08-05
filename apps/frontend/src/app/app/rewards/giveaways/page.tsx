@@ -14,6 +14,7 @@ const ACCENT = "#FF7A2A";
 
 interface PublicGiveawayListItem {
   id: string;
+  short_id: string | null;
   title: string;
   description: string | null;
   logo_url: string | null;
@@ -104,7 +105,7 @@ export default function GiveawaysListPage() {
               {data.map((g) => (
                 <Link
                   key={g.id}
-                  href={`/rewards/giveaways/${g.id}`}
+                  href={`/rewards/giveaways/${g.short_id ?? g.id}`}
                   className="block rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors p-4"
                 >
                   <div className="flex items-center justify-between gap-2 mb-2">

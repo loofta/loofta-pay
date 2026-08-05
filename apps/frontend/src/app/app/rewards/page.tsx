@@ -4,16 +4,6 @@ import Link from "next/link";
 import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
-import { useQuery } from "@tanstack/react-query";
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-
-async function fetchOpenGiveawayCount(): Promise<number> {
-  const res = await fetch(`${BACKEND_URL}/giveaways/public`);
-  if (!res.ok) throw new Error("Failed to load giveaways");
-  const data = await res.json();
-  return (data.giveaways ?? []).length;
-}
 
 // Campaign ended July 1 2026 at 18:00 CET (CEST = UTC+2) = 16:00 UTC
 const SPARKS_END_DATE = new Date("2026-07-01T16:00:00.000Z");
@@ -252,13 +242,6 @@ export default function RewardsPage() {
   const [megapotActive, setMegapotActive] = useState(false);
   const [isLocalhost, setIsLocalhost] = useState(false);
 
-  const { data: openGiveawayCount } = useQuery({
-    queryKey: ["giveaways-open-count"],
-    queryFn: fetchOpenGiveawayCount,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
-  });
-
   useEffect(() => {
     const now = new Date();
     setSparksEnded(now >= SPARKS_END_DATE);
@@ -306,10 +289,10 @@ export default function RewardsPage() {
                     >
                       New
                     </span>
-                    <h2 className="text-lg font-medium text-white truncate">Giveaways</h2>
+                    <h2 className="text-2xl font-bold text-white truncate">Giveaways</h2>
                   </div>
-                  <p className="text-sm font-semibold truncate" style={{ color: GIVEAWAYS_ACCENT }}>
-                    {openGiveawayCount === undefined ? "Launch or enter one" : openGiveawayCount === 0 ? "Be the first" : `${openGiveawayCount} open now`}
+                  <p className="text-sm text-slate-400 truncate">
+                    Promote your project or earn by entering giveaways
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors shrink-0">
