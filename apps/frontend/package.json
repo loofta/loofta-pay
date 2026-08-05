@@ -65,6 +65,7 @@
     "emoji-picker-react": "^4.17.1",
     "framer-motion": "^11.15.0",
     "fs": "^0.0.1-security",
+    "gray-matter": "4.0.3",
     "hast-util-sanitize": "5.0.2",
     "javascript-time-ago": "^2.5.10",
     "lottie-react": "^2.4.1",
