@@ -115,6 +115,9 @@ export async function signAndBroadcastSponsoredTx(
    *  backend can verify the ATA it's about to sponsor actually matches that claim's recipient
    *  (see project memory: solana sponsor security hardening, Attack 6 / intent-binding fix). */
   claimId?: string,
+  /** Same idea as claimId, for a PAJ Cash offramp order — backend verifies the ATA being
+   *  sponsored matches that order's own deposit address on file. */
+  pajOrderId?: string,
 ): Promise<string> {
   const label = stepLabel ?? "sign-and-broadcast";
   const t0 =
@@ -135,6 +138,7 @@ export async function signAndBroadcastSponsoredTx(
       transaction: uint8ArrayToBase64(signedTransactionBytes),
       ...(network ? { network } : {}),
       ...(claimId ? { claimId } : {}),
+      ...(pajOrderId ? { pajOrderId } : {}),
     }),
   });
   if (!r.ok) {

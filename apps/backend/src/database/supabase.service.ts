@@ -51,6 +51,10 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('payment_intents');
   }
 
+  get pajCashOrders() {
+    return this.client.from('paj_cash_orders');
+  }
+
   get paymentEvents() {
     return this.client.from('payment_events');
   }

@@ -348,6 +348,7 @@ export class SolanaSponsorService {
     label: string,
     userId?: string,
     claimId?: string,
+    pajOrderId?: string,
   ): Promise<void> {
     const details = this.getAtaCreationDetails(serializedBase64);
     if (details.length === 0) return;
@@ -371,16 +372,33 @@ export class SolanaSponsorService {
     }
     if (chargeable.length === 0) return;
 
+    // Structured, greppable log line for every chargeable sponsor call — this is what a future
+    // "was this a drain" investigation should read first, instead of manually decoding raw
+    // transactions off Solscan. `intentSource` says exactly which real backing record (if any)
+    // justified each of these creations; "UNBOUND" means the only protection is the per-user
+    // volume cap below, which is the current known gap for near-intents withdraw and any future
+    // caller that hasn't been migrated to pass an intent id.
+    const intentSource = claimId ? `claim:${claimId}` : pajOrderId ? `pajOrder:${pajOrderId}` : 'UNBOUND';
+    this.logger.log(
+      `SolanaSponsor[${label}] SPONSOR_ATA_CREATE user=${userId ?? 'unknown'} intent=${intentSource} count=${chargeable.length} owners=${chargeable.map((d) => d.owner.slice(0, 8)).join(',')}`,
+    );
+    if (intentSource === 'UNBOUND') {
+      this.logger.warn(
+        `SolanaSponsor[${label}]: UNBOUND sponsor call (no claimId/pajOrderId) — relying solely on the per-user volume cap for user=${userId ?? 'unknown'}, count=${chargeable.length}`,
+      );
+    }
+
     // Intent-binding (2026-08-04 fix for the "sign-and-broadcast volume gap" — see project
     // memory: solana sponsor security hardening, Attack 6). This endpoint used to accept ANY
     // pre-built transaction with zero context on what it's *for*, so every chargeable creation
-    // looked identical to a legitimate first-time payment. When the caller supplies a claimId,
-    // we now require every chargeable ATA's owner to be the EXACT recipient/burner address that
-    // claim already has on file — not just "some new wallet, first time we've seen it". A caller
-    // can no longer sponsor an arbitrary self-generated wallet: there is no real claim row backing
-    // a destination they invented. Falls through to the (weaker) per-user cap below only when no
-    // claimId is supplied — i.e. the other two callers of this endpoint (near-intents withdraw,
-    // PAJ off-ramp) not yet migrated to pass their own intent id.
+    // looked identical to a legitimate first-time payment. When the caller supplies a claimId or
+    // pajOrderId, we now require every chargeable ATA's owner to be the EXACT recipient/deposit
+    // address that real record has on file — not just "some new wallet, first time we've seen
+    // it". A caller can no longer sponsor an arbitrary self-generated wallet: there is no real
+    // row backing a destination they invented. Falls through to the (weaker) per-user cap below
+    // only when neither id is supplied — i.e. near-intents withdraw, which has no backend-tracked
+    // quote row yet to bind to (the quote is fetched client-side straight from NEAR's public API)
+    // and needs new backend infra before it can get this same protection — see project memory.
     if (claimId && chargeable.length > 0) {
       const { data: claimRow, error: claimLookupError } = await this.supabaseService.payments
         .select('id, recipient_address, burner_address')
@@ -403,6 +421,34 @@ export class SolanaSponsorService {
           throw new Error('This transaction does not match the claim it is being paid against.');
         }
       }
+    } else if (pajOrderId && chargeable.length > 0) {
+      const { data: orderRow, error: orderLookupError } = await this.supabaseService.pajCashOrders
+        .select('id, offramp_deposit_address, user_id')
+        .eq('id', pajOrderId)
+        .maybeSingle();
+      if (orderLookupError || !orderRow) {
+        this.logger.warn(`SolanaSponsor[${label}]: pajOrderId=${pajOrderId} not found — refusing to sponsor (${orderLookupError?.message ?? 'no row'})`);
+        throw new Error('Offramp order not found; cannot verify this payment.');
+      }
+      if (userId && orderRow.user_id && orderRow.user_id !== userId) {
+        this.logger.error(
+          `SolanaSponsor[${label}]: BLOCKED — pajOrderId=${pajOrderId} belongs to a different user than the caller (user=${userId})`,
+        );
+        throw new Error('This offramp order does not belong to your account.');
+      }
+      const expectedRecipient = String(orderRow.offramp_deposit_address || '').trim();
+      if (!expectedRecipient) {
+        this.logger.warn(`SolanaSponsor[${label}]: pajOrderId=${pajOrderId} has no resolvable deposit address — refusing to sponsor`);
+        throw new Error('This offramp order has no resolvable destination; cannot verify this payment.');
+      }
+      for (const d of chargeable) {
+        if (d.owner !== expectedRecipient) {
+          this.logger.error(
+            `SolanaSponsor[${label}]: BLOCKED — pajOrderId=${pajOrderId} expects destination ${expectedRecipient.slice(0, 8)}… but tx creates an ATA for ${d.owner.slice(0, 8)}… (user=${userId ?? 'unknown'})`,
+          );
+          throw new Error('This transaction does not match the offramp order it is being paid against.');
+        }
+      }
     }
 
     // NOTE: this function's intended safety net for volume was pricing — recover the rent from
@@ -414,11 +460,12 @@ export class SolanaSponsorService {
     // 2026-08-04: one caller used it to sponsor 25+ distinct new wallets over ~2 hours, deliberately
     // paced to stay under any rate/burst detection, at zero cost recovery. Skipped when userId is
     // absent (cron/backend-only callers have no identity to cap against — unchanged from before),
-    // and skipped when claimId already verified the destination above — that's a strictly stronger
-    // check (tied to a real, pre-existing claim) than "hasn't this caller done this too many times",
-    // and a caller legitimately paying into many different real claims/requests shouldn't be capped
-    // the same way a caller inventing wallets out of thin air should be.
-    if (userId && !claimId) {
+    // and skipped when claimId/pajOrderId already verified the destination above — that's a
+    // strictly stronger check (tied to a real, pre-existing record) than "hasn't this caller done
+    // this too many times", and a caller legitimately paying into many different real
+    // claims/orders shouldn't be capped the same way a caller inventing wallets out of thin air
+    // should be.
+    if (userId && !claimId && !pajOrderId) {
       await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, userId, chargeable.length, `SolanaSponsor:${label}`);
     }
 
@@ -635,6 +682,7 @@ export class SolanaSponsorService {
     network?: string,
     userId?: string,
     claimId?: string,
+    pajOrderId?: string,
   ): Promise<{ signature: string }> {
     if (!this.feePayerKeypair || !this.feePayerAddress) {
       throw new Error('Solana fee sponsorship is not configured');
@@ -656,6 +704,7 @@ export class SolanaSponsorService {
       'sign-and-broadcast',
       userId,
       claimId,
+      pajOrderId,
     );
 
     let legacy: Transaction | null = null;
@@ -872,6 +921,7 @@ export class SolanaSponsorService {
     userSignedTxBase64: string,
     conn?: Connection,
     userId?: string,
+    claimId?: string,
   ): Promise<{ signature: string }> {
     const broadcastConn = conn ?? this.connection;
     const transactionBuffer = Buffer.from(userSignedTxBase64, 'base64');
@@ -904,6 +954,7 @@ export class SolanaSponsorService {
       broadcastConn,
       'sign-and-broadcast-per',
       userId,
+      claimId,
     );
 
     if (!this.feePayerKeypair) {

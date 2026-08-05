@@ -268,6 +268,7 @@ export function PajCashOfframpView({
         accessToken,
         network: mode,
         looftaFeeUsdc: created.loofta_fee_usdc ?? 0,
+        pajOrderId: created.id,
       });
 
       const confirmed = await pajConfirmOfframpSent(created.id, sig, accessToken);
