@@ -1,6 +1,7 @@
 import { IsArray, IsInt, IsISO8601, IsObject, IsOptional, IsString, Min, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { CreateGiveawayTaskDto } from './create-giveaway.dto';
 
 /**
  * Updates one existing task's `config` (target/instructions/comment_requirement) by id — never
@@ -60,4 +61,20 @@ export class AdminEditGiveawayDto {
   @ValidateNested({ each: true })
   @Type(() => AdminEditGiveawayTaskDto)
   tasks?: AdminEditGiveawayTaskDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'Task ids to delete outright. giveaway_task_completions FK-cascades off giveaway_tasks.id, so this also removes any completion (including an already-verified one) any entrant recorded against that task — intentional, since the task itself no longer exists.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  delete_task_ids?: string[];
+
+  @ApiPropertyOptional({ type: [CreateGiveawayTaskDto], description: 'New tasks to add. Every existing entrant gets a fresh pending completion stub for each one.' })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateGiveawayTaskDto)
+  new_tasks?: CreateGiveawayTaskDto[];
 }

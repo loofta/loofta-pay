@@ -15,6 +15,7 @@ import {
   Giveaway,
   GiveawayTask,
   GiveawayStatus,
+  GiveawayTaskCompletionStatus,
   GIVEAWAY_TASK_VERIFICATION_MODE,
 } from './entities/giveaway.entity';
 
@@ -383,7 +384,7 @@ export class GiveawaysService {
         ...(dto.min_account_age_days !== undefined ? { min_account_age_days: dto.min_account_age_days } : {}),
       };
     }
-    if (Object.keys(update).length === 0 && !dto.tasks?.length) {
+    if (Object.keys(update).length === 0 && !dto.tasks?.length && !dto.delete_task_ids?.length && !dto.new_tasks?.length) {
       throw new BadRequestException('No editable fields provided');
     }
 
@@ -412,7 +413,57 @@ export class GiveawaysService {
       }
     }
 
-    await this.logEvent(id, 'admin_edited', { admin: adminUserId, fields: Object.keys(update), task_ids: dto.tasks?.map((t) => t.id) ?? [] });
+    // Deleting a task is a real delete, not a soft-remove — giveaway_task_completions
+    // FK-cascades off giveaway_tasks.id, so any entrant's completion for it (including an
+    // already-verified one) is gone too. That's the intent: the task no longer exists, so neither
+    // does anyone's record of having done it.
+    if (dto.delete_task_ids?.length) {
+      const { error: delError } = await this.supabaseService.giveawayTasks
+        .delete()
+        .in('id', dto.delete_task_ids)
+        .eq('giveaway_id', id);
+      if (delError) throw new BadRequestException(`Failed to delete task(s): ${delError.message}`);
+    }
+
+    // New tasks need a pending completion stub backfilled for every existing entrant — mirrors
+    // GiveawayEntriesService.createTaskCompletionStubs, which only runs at entry time and would
+    // otherwise never see a task added after someone already entered.
+    if (dto.new_tasks?.length) {
+      const { data: insertedTasks, error: insError } = await this.supabaseService.giveawayTasks
+        .insert(
+          dto.new_tasks.map((t) => ({
+            giveaway_id: id,
+            order_index: 1000,
+            task_type: t.task_type,
+            config: t.config ?? {},
+            verification_mode: GIVEAWAY_TASK_VERIFICATION_MODE[t.task_type],
+          })),
+        )
+        .select();
+      if (insError) throw new BadRequestException(`Failed to add task(s): ${insError.message}`);
+
+      const { data: entries, error: entriesError } = await this.supabaseService.giveawayEntries.select('id').eq('giveaway_id', id);
+      if (entriesError) throw new BadRequestException(`Failed to backfill task completions: ${entriesError.message}`);
+      if (entries?.length && insertedTasks?.length) {
+        const stubRows = entries.flatMap((e) =>
+          (insertedTasks as GiveawayTask[]).map((t) => ({
+            giveaway_entry_id: e.id,
+            giveaway_task_id: t.id,
+            verification_status: GiveawayTaskCompletionStatus.PENDING,
+          })),
+        );
+        const { error: stubError } = await this.supabaseService.giveawayTaskCompletions.insert(stubRows);
+        if (stubError) throw new BadRequestException(`Failed to backfill task completions: ${stubError.message}`);
+      }
+    }
+
+    await this.logEvent(id, 'admin_edited', {
+      admin: adminUserId,
+      fields: Object.keys(update),
+      task_ids: dto.tasks?.map((t) => t.id) ?? [],
+      deleted_task_ids: dto.delete_task_ids ?? [],
+      new_task_count: dto.new_tasks?.length ?? 0,
+    });
     return result;
   }
 

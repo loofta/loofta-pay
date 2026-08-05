@@ -402,15 +402,28 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
       <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
         <div className="max-w-lg mx-auto px-4 py-6 pb-24">
           <div className="flex items-center justify-between gap-2 mb-3">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              {giveaway.is_official ? (
+                <>
+                  <Image src="/loofta_icon_magic.png" alt="" width={16} height={16} className="rounded-full shrink-0" />
+                  <span className="text-sm font-medium text-slate-400 truncate">Loofta</span>
+                </>
+              ) : (giveaway.logo_url || giveaway.project_name) ? (
+                <>
+                  {giveaway.logo_url && (
+                    <Image src={giveaway.logo_url} alt="" width={16} height={16} className="rounded-full object-cover shrink-0" />
+                  )}
+                  {giveaway.project_name && <span className="text-sm font-medium text-slate-400 truncate">{giveaway.project_name}</span>}
+                </>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${statusColor(giveaway.status)}`}>
                 {STATUS_LABELS[giveaway.status] ?? giveaway.status.replace(/_/g, " ")}
               </span>
               {giveaway.is_devnet && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">Devnet</span>
               )}
-            </div>
-            <div className="flex items-center gap-1">
               {isOwner && giveaway.status === "PENDING_APPROVAL" && (
                 <Link
                   href={`/rewards/giveaways/${id}/edit`}
@@ -458,19 +471,6 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             </AlertDialogContent>
           </AlertDialog>
 
-          {giveaway.is_official ? (
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-[#FF7A2A]/40 bg-[#FF7A2A]/10 px-2 py-0.5 mb-2">
-              <Image src="/loofta_icon_magic.png" alt="" width={14} height={14} className="rounded-full" />
-              <span className="text-sm font-medium text-[#FF7A2A]">Loofta</span>
-            </div>
-          ) : (giveaway.logo_url || giveaway.project_name) ? (
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.06] px-2 py-0.5 mb-2">
-              {giveaway.logo_url && (
-                <Image src={giveaway.logo_url} alt="" width={14} height={14} className="rounded-full object-cover shrink-0" />
-              )}
-              {giveaway.project_name && <span className="text-sm font-medium text-slate-300">{giveaway.project_name}</span>}
-            </div>
-          ) : null}
           <h1 className="text-2xl font-medium text-white mb-2">{giveaway.title}</h1>
           {giveaway.description && <FormattedText text={giveaway.description} className="text-base text-slate-300 mb-5 leading-relaxed" />}
 

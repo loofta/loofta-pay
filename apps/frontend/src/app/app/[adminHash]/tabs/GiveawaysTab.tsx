@@ -7,7 +7,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { Loader2, Gift, Check, X, AlertTriangle, ChevronDown, ChevronRight, Ban, Search, Pencil } from "lucide-react";
+import { Loader2, Gift, Check, X, AlertTriangle, ChevronDown, ChevronRight, Ban, Search, Pencil, Trash2, Plus } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -25,6 +25,12 @@ interface EditableTask {
   restConfig: Record<string, unknown>;
 }
 
+interface NewTask {
+  task_type: string;
+  target: string;
+  note: string;
+}
+
 interface EditForm {
   title: string;
   description: string;
@@ -32,7 +38,14 @@ interface EditForm {
   min_followers: string;
   min_account_age_days: string;
   tasks: EditableTask[];
+  deletedTaskIds: string[];
+  newTasks: NewTask[];
 }
+
+const TASK_TYPE_OPTIONS = [
+  "x_follow", "x_retweet", "x_like", "x_comment", "x_bookmark",
+  "telegram_join", "discord_join", "visit_link", "custom",
+];
 
 interface AdminGiveaway {
   id: string;
@@ -196,6 +209,8 @@ export function GiveawaysTab() {
             restConfig,
           };
         }),
+        deletedTaskIds: [],
+        newTasks: [],
       });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Failed to load giveaway", description: err.message });
@@ -221,6 +236,22 @@ export function GiveawaysTab() {
           id: t.id,
           config: { target: t.target.trim(), ...(t.note.trim() ? { [t.noteKey]: t.note.trim() } : {}), ...t.restConfig },
         }));
+      }
+      if (editForm.deletedTaskIds.length) body.delete_task_ids = editForm.deletedTaskIds;
+      if (editForm.newTasks.length) {
+        const NOTE_KEY_BY_TASK_TYPE: Record<string, "comment_requirement" | "instructions"> = {
+          x_comment: "comment_requirement",
+          x_bookmark: "comment_requirement",
+        };
+        body.new_tasks = editForm.newTasks
+          .filter((t) => t.target.trim())
+          .map((t) => {
+            const noteKey = NOTE_KEY_BY_TASK_TYPE[t.task_type] ?? "instructions";
+            return {
+              task_type: t.task_type,
+              config: { target: t.target.trim(), ...(t.note.trim() ? { [noteKey]: t.note.trim() } : {}) },
+            };
+          });
       }
 
       const res = await fetch(`${BACKEND_URL}/giveaways/admin/${id}/edit`, {
@@ -517,13 +548,26 @@ export function GiveawaysTab() {
                                   />
                                 </div>
                               </div>
-                              {editForm.tasks.length > 0 && (
+                              {(editForm.tasks.length > 0 || editForm.newTasks.length > 0) && (
                                 <div>
                                   <label className="text-gray-500 text-sm block mb-1">Tasks</label>
                                   <div className="space-y-2">
                                     {editForm.tasks.map((t, i) => (
                                       <div key={t.id} className="rounded-lg border border-gray-800 p-2 space-y-1.5">
-                                        <p className="text-xs text-gray-500 uppercase tracking-wide">{t.task_type.replace(/_/g, " ")}</p>
+                                        <div className="flex items-center justify-between">
+                                          <p className="text-xs text-gray-500 uppercase tracking-wide">{t.task_type.replace(/_/g, " ")}</p>
+                                          <button
+                                            type="button"
+                                            title="Delete task — also removes any entrant's completion (verified or not) for it"
+                                            onClick={() => {
+                                              const tasks = editForm.tasks.filter((_, idx) => idx !== i);
+                                              setEditForm({ ...editForm, tasks, deletedTaskIds: [...editForm.deletedTaskIds, t.id] });
+                                            }}
+                                            className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-900/20"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
                                         <input
                                           value={t.target}
                                           placeholder="Target (URL or handle)"
@@ -546,9 +590,62 @@ export function GiveawaysTab() {
                                         />
                                       </div>
                                     ))}
+                                    {editForm.newTasks.map((nt, i) => (
+                                      <div key={`new-${i}`} className="rounded-lg border border-green-900/40 bg-green-900/5 p-2 space-y-1.5">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <select
+                                            value={nt.task_type}
+                                            onChange={(e) => {
+                                              const newTasks = [...editForm.newTasks];
+                                              newTasks[i] = { ...nt, task_type: e.target.value };
+                                              setEditForm({ ...editForm, newTasks });
+                                            }}
+                                            className="bg-gray-900 border border-gray-800 rounded-lg px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-gray-600"
+                                          >
+                                            {TASK_TYPE_OPTIONS.map((tt) => (
+                                              <option key={tt} value={tt}>{tt.replace(/_/g, " ")}</option>
+                                            ))}
+                                          </select>
+                                          <button
+                                            type="button"
+                                            onClick={() => setEditForm({ ...editForm, newTasks: editForm.newTasks.filter((_, idx) => idx !== i) })}
+                                            className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-900/20"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                        <input
+                                          value={nt.target}
+                                          placeholder="Target (URL or handle)"
+                                          onChange={(e) => {
+                                            const newTasks = [...editForm.newTasks];
+                                            newTasks[i] = { ...nt, target: e.target.value };
+                                            setEditForm({ ...editForm, newTasks });
+                                          }}
+                                          className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                        />
+                                        <input
+                                          value={nt.note}
+                                          placeholder="Instructions shown to entrants (optional)"
+                                          onChange={(e) => {
+                                            const newTasks = [...editForm.newTasks];
+                                            newTasks[i] = { ...nt, note: e.target.value };
+                                            setEditForm({ ...editForm, newTasks });
+                                          }}
+                                          className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                        />
+                                      </div>
+                                    ))}
                                   </div>
                                 </div>
                               )}
+                              <button
+                                type="button"
+                                onClick={() => setEditForm({ ...editForm, newTasks: [...editForm.newTasks, { task_type: "x_retweet", target: "", note: "" }] })}
+                                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-400 hover:text-gray-200 hover:bg-gray-800 w-fit"
+                              >
+                                <Plus className="w-3.5 h-3.5" /> Add task
+                              </button>
                               <div className="flex gap-2 pt-1">
                                 <button
                                   type="button"
