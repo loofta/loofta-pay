@@ -349,6 +349,8 @@ export class SolanaSponsorService {
     userId?: string,
     claimId?: string,
     pajOrderId?: string,
+    nearIntentsOrderId?: string,
+    offrampRequestId?: string,
   ): Promise<void> {
     const details = this.getAtaCreationDetails(serializedBase64);
     if (details.length === 0) return;
@@ -378,7 +380,15 @@ export class SolanaSponsorService {
     // justified each of these creations; "UNBOUND" means the only protection is the per-user
     // volume cap below, which is the current known gap for near-intents withdraw and any future
     // caller that hasn't been migrated to pass an intent id.
-    const intentSource = claimId ? `claim:${claimId}` : pajOrderId ? `pajOrder:${pajOrderId}` : 'UNBOUND';
+    const intentSource = claimId
+      ? `claim:${claimId}`
+      : pajOrderId
+        ? `pajOrder:${pajOrderId}`
+        : nearIntentsOrderId
+          ? `nearIntentsOrder:${nearIntentsOrderId}`
+          : offrampRequestId
+            ? `offrampRequest:${offrampRequestId}`
+            : 'UNBOUND';
     this.logger.log(
       `SolanaSponsor[${label}] SPONSOR_ATA_CREATE user=${userId ?? 'unknown'} intent=${intentSource} count=${chargeable.length} owners=${chargeable.map((d) => d.owner.slice(0, 8)).join(',')}`,
     );
@@ -449,6 +459,62 @@ export class SolanaSponsorService {
           throw new Error('This transaction does not match the offramp order it is being paid against.');
         }
       }
+    } else if (nearIntentsOrderId && chargeable.length > 0) {
+      const { data: orderRow, error: orderLookupError } = await this.supabaseService.nearIntentsWithdrawalOrders
+        .select('id, deposit_address, user_id')
+        .eq('id', nearIntentsOrderId)
+        .maybeSingle();
+      if (orderLookupError || !orderRow) {
+        this.logger.warn(`SolanaSponsor[${label}]: nearIntentsOrderId=${nearIntentsOrderId} not found — refusing to sponsor (${orderLookupError?.message ?? 'no row'})`);
+        throw new Error('Withdrawal order not found; cannot verify this payment.');
+      }
+      if (userId && orderRow.user_id && orderRow.user_id !== userId) {
+        this.logger.error(
+          `SolanaSponsor[${label}]: BLOCKED — nearIntentsOrderId=${nearIntentsOrderId} belongs to a different user than the caller (user=${userId})`,
+        );
+        throw new Error('This withdrawal order does not belong to your account.');
+      }
+      const expectedRecipient = String(orderRow.deposit_address || '').trim();
+      if (!expectedRecipient) {
+        this.logger.warn(`SolanaSponsor[${label}]: nearIntentsOrderId=${nearIntentsOrderId} has no resolvable deposit address — refusing to sponsor`);
+        throw new Error('This withdrawal order has no resolvable destination; cannot verify this payment.');
+      }
+      for (const d of chargeable) {
+        if (d.owner !== expectedRecipient) {
+          this.logger.error(
+            `SolanaSponsor[${label}]: BLOCKED — nearIntentsOrderId=${nearIntentsOrderId} expects deposit address ${expectedRecipient.slice(0, 8)}… but tx creates an ATA for ${d.owner.slice(0, 8)}… (user=${userId ?? 'unknown'})`,
+          );
+          throw new Error('This transaction does not match the withdrawal order it is being paid against.');
+        }
+      }
+    } else if (offrampRequestId && chargeable.length > 0) {
+      const { data: offrampRow, error: offrampLookupError } = await this.supabaseService.offrampRequests
+        .select('id, near_intents_deposit_address, user_id')
+        .eq('id', offrampRequestId)
+        .maybeSingle();
+      if (offrampLookupError || !offrampRow) {
+        this.logger.warn(`SolanaSponsor[${label}]: offrampRequestId=${offrampRequestId} not found — refusing to sponsor (${offrampLookupError?.message ?? 'no row'})`);
+        throw new Error('Offramp request not found; cannot verify this payment.');
+      }
+      if (userId && offrampRow.user_id && offrampRow.user_id !== userId) {
+        this.logger.error(
+          `SolanaSponsor[${label}]: BLOCKED — offrampRequestId=${offrampRequestId} belongs to a different user than the caller (user=${userId})`,
+        );
+        throw new Error('This offramp request does not belong to your account.');
+      }
+      const expectedRecipient = String(offrampRow.near_intents_deposit_address || '').trim();
+      if (!expectedRecipient) {
+        this.logger.warn(`SolanaSponsor[${label}]: offrampRequestId=${offrampRequestId} has no resolvable deposit address — refusing to sponsor`);
+        throw new Error('This offramp request has no resolvable destination; cannot verify this payment.');
+      }
+      for (const d of chargeable) {
+        if (d.owner !== expectedRecipient) {
+          this.logger.error(
+            `SolanaSponsor[${label}]: BLOCKED — offrampRequestId=${offrampRequestId} expects deposit address ${expectedRecipient.slice(0, 8)}… but tx creates an ATA for ${d.owner.slice(0, 8)}… (user=${userId ?? 'unknown'})`,
+          );
+          throw new Error('This transaction does not match the offramp request it is being paid against.');
+        }
+      }
     }
 
     // NOTE: this function's intended safety net for volume was pricing — recover the rent from
@@ -465,7 +531,7 @@ export class SolanaSponsorService {
     // this too many times", and a caller legitimately paying into many different real
     // claims/orders shouldn't be capped the same way a caller inventing wallets out of thin air
     // should be.
-    if (userId && !claimId && !pajOrderId) {
+    if (userId && !claimId && !pajOrderId && !nearIntentsOrderId && !offrampRequestId) {
       await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, userId, chargeable.length, `SolanaSponsor:${label}`);
     }
 
@@ -683,6 +749,8 @@ export class SolanaSponsorService {
     userId?: string,
     claimId?: string,
     pajOrderId?: string,
+    nearIntentsOrderId?: string,
+    offrampRequestId?: string,
   ): Promise<{ signature: string }> {
     if (!this.feePayerKeypair || !this.feePayerAddress) {
       throw new Error('Solana fee sponsorship is not configured');
@@ -705,6 +773,8 @@ export class SolanaSponsorService {
       userId,
       claimId,
       pajOrderId,
+      nearIntentsOrderId,
+      offrampRequestId,
     );
 
     let legacy: Transaction | null = null;

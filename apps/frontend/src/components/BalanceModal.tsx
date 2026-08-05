@@ -54,6 +54,7 @@ async function assertEvmSponsorAllowed(walletAddress: string, userId: string, ac
 }
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
+import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 import {
   addWithdrawal,
@@ -2084,6 +2085,7 @@ export function BalanceModal({
         chain: getPrivySolanaChainForMode(mode),
         accessToken: bridgeAccessToken,
         network: devnetMode ? "devnet" : "mainnet",
+        offrampRequestId: prep.id,
       });
 
       console.log(PEER_LOG, "USDC sent to bridge", { sig });
@@ -2291,23 +2293,32 @@ export function BalanceModal({
     try {
       const mode = devnetMode ? "devnet" : "mainnet";
       const connection = new Connection(getRpcForMode(mode), "confirmed");
+      const accessToken = await getAccessToken();
       let recipientAddress: string;
       let memo: string | null = null;
       let depositAddr: string | undefined;
+      let nearIntentsOrderId: string | undefined;
 
       if (isNearIntentsWithdraw && usdcSolanaToken && effectiveToken) {
-        const depositInfo = await getDepositInfo({
-          fromToken: usdcSolanaToken as NearToken,
-          toToken: effectiveToken as NearToken,
-          amount: amount.toString(),
-          recipient: rawAddress,
-          sender: solanaAddress,
-          refundAddress: solanaAddress,
-          slippageBps: 100,
-        });
-        recipientAddress = depositInfo.depositAddress ?? "";
-        memo = depositInfo.memo ?? null;
+        // Fetch the deposit quote server-side and persist it as a real order BEFORE signing,
+        // instead of trusting a deposit address fetched directly from NEAR's public API — see
+        // project memory: solana sponsor security hardening. The backend verifies the ATA it
+        // sponsors matches this order's own deposit_address.
+        const order = await prepareNearIntentsWithdrawal(
+          {
+            fromToken: usdcSolanaToken as NearToken,
+            toToken: effectiveToken as NearToken,
+            amountUsdc: amount.toString(),
+            destinationAddress: rawAddress,
+            refundAddress: solanaAddress,
+            isDevnet: devnetMode,
+          },
+          accessToken,
+        );
+        recipientAddress = order.depositAddress ?? "";
+        memo = order.memo ?? null;
         depositAddr = recipientAddress;
+        nearIntentsOrderId = order.id;
 
         if (!recipientAddress || !isValidAddressForChain(recipientAddress, "solana")) {
           throw new Error("Invalid deposit address from Near Intents. Please try again.");
@@ -2318,7 +2329,6 @@ export function BalanceModal({
 
       setWithdrawStep("sent");
 
-      const accessToken = await getAccessToken();
       const sig = await sendUsdcWithBackendFeePayer({
         senderAddress: solanaAddress,
         recipientAddress,
@@ -2332,6 +2342,7 @@ export function BalanceModal({
         chain: getPrivySolanaChainForMode(mode),
         accessToken,
         network: devnetMode ? "devnet" : "mainnet",
+        nearIntentsOrderId,
       });
 
       // Save to localStorage and DB

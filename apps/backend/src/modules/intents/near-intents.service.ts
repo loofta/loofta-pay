@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OneClickService, QuoteRequest, OpenAPI } from '@defuse-protocol/one-click-sdk-typescript';
+import { SupabaseService } from '@/database/supabase.service';
 
 export interface NearToken {
   symbol: string;
@@ -59,7 +60,10 @@ export class NearIntentsService implements OnModuleInit {
   private tokensCache: NearToken[] = [];
   private tokensCacheExpiry = 0;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly supabaseService: SupabaseService,
+  ) {
     this.referralCode = this.configService.get<string>('ONECLICK_REFERRAL', 'loofta');
     this.appFeeBps = Number(this.configService.get<string>('APP_FEE_BPS', '0')) || 0;
     this.appFeeRecipient = this.configService.get<string>('APP_FEE_RECIPIENT');
@@ -405,6 +409,69 @@ export class NearIntentsService implements OnModuleInit {
       this.logger.error('Request that failed:', JSON.stringify(req, null, 2));
       throw error;
     }
+  }
+
+  /**
+   * Fetches a real deposit quote server-side AND persists it as a `near_intents_withdrawal_orders`
+   * row BEFORE the user signs anything — so solana-sponsor.service.ts's assertAtaCreationsAllowed
+   * can later verify the ATA it's about to sponsor matches this order's own deposit_address,
+   * instead of trusting whatever destination the client supplies. Mirrors
+   * PajCashOrdersService.createOfframp's pattern. Previously the quote was fetched client-side
+   * directly from NEAR's public API with nothing backend-tracked to bind against — see project
+   * memory: solana sponsor security hardening.
+   */
+  async createWithdrawalOrder(params: {
+    userId: string;
+    fromToken: { tokenId: string; chain: string; symbol: string; decimals: number };
+    toToken: { tokenId: string; chain: string; symbol: string; decimals: number };
+    amountUsdc: string;
+    destinationAddress: string;
+    refundAddress: string;
+    isDevnet?: boolean;
+  }): Promise<{ id: string; depositAddress: string; memo: string | null; deadline?: string; timeEstimate?: number; minAmountInFormatted?: string }> {
+    const { userId, fromToken, toToken, amountUsdc, destinationAddress, refundAddress, isDevnet } = params;
+
+    const quote = await this.getDepositQuote({
+      fromToken,
+      toToken,
+      amountIn: amountUsdc,
+      recipient: destinationAddress,
+      refundAddress,
+    });
+    if (!quote.depositAddress) {
+      throw new Error('Near Intents did not return a deposit address for this quote');
+    }
+
+    const { data, error } = await this.supabaseService.nearIntentsWithdrawalOrders
+      .insert({
+        user_id: userId,
+        from_token_id: fromToken.tokenId,
+        from_chain: fromToken.chain,
+        to_token_id: toToken.tokenId,
+        to_chain: toToken.chain,
+        amount_usdc: amountUsdc,
+        destination_address: destinationAddress,
+        deposit_address: quote.depositAddress,
+        memo: quote.memo ?? null,
+        quote_id: quote.quoteId ?? null,
+        deadline: quote.deadline ?? null,
+        is_devnet: Boolean(isDevnet),
+      })
+      .select('id')
+      .single();
+    if (error || !data) {
+      this.logger.error(`createWithdrawalOrder: failed to persist order: ${error?.message ?? 'no row returned'}`);
+      throw new Error('Failed to create withdrawal order');
+    }
+
+    return {
+      id: data.id as string,
+      depositAddress: quote.depositAddress,
+      memo: quote.memo ?? null,
+      deadline: quote.deadline,
+      timeEstimate: quote.timeEstimate,
+      minAmountInFormatted: quote.minAmountInFormatted,
+    };
   }
 
   /**

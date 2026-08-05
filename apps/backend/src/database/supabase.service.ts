@@ -55,6 +55,14 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('paj_cash_orders');
   }
 
+  get nearIntentsWithdrawalOrders() {
+    return this.client.from('near_intents_withdrawal_orders');
+  }
+
+  get offrampRequests() {
+    return this.client.from('offramp_requests');
+  }
+
   get paymentEvents() {
     return this.client.from('payment_events');
   }
