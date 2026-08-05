@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Check, Loader2, Trash2, Download, Pencil } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -94,6 +95,7 @@ interface PublicGiveaway {
   status: string; burner_address: string | null; mint: string | null; is_devnet: boolean;
   funding_required_usd: string | null; funding_confirmed_usd: string; entry_count: number;
   entry_snapshot_hash: string | null; vrf_randomness: string | null; vrf_fulfilled_at: string | null;
+  is_official: boolean;
   tasks: Array<{ id: string; task_type: string; config: { target?: string; comment_requirement?: string }; order_index: number }>;
 }
 
@@ -430,6 +432,12 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             </AlertDialogContent>
           </AlertDialog>
 
+          {giveaway.is_official && (
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-[#FF7A2A]/40 bg-[#FF7A2A]/10 px-2 py-0.5 mb-2">
+              <Image src="/loofta_icon_magic.png" alt="" width={14} height={14} className="rounded-full" />
+              <span className="text-sm font-medium text-[#FF7A2A]">Loofta</span>
+            </div>
+          )}
           <h1 className="text-2xl font-medium text-white mb-2">{giveaway.title}</h1>
           {giveaway.description && <FormattedText text={giveaway.description} className="text-base text-slate-300 mb-5 leading-relaxed" />}
 

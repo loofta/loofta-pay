@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
+import { isPrivyUserAdmin } from '@/common/admin-check';
 
 @Injectable()
 export class AdminGuard implements CanActivate {
@@ -29,7 +30,7 @@ export class AdminGuard implements CanActivate {
     const userId = await this.privy.verifyAccessToken(token);
     if (!userId) throw new UnauthorizedException('Invalid or expired token');
 
-    const isAdmin = await this.checkAdminStatus(userId);
+    const isAdmin = await isPrivyUserAdmin(this.supabaseService, this.configService, userId);
     if (!isAdmin) {
       this.logger.warn(`Unauthorized admin access attempt by user: ${userId?.slice(0, 30)}...`);
       throw new UnauthorizedException('Admin access required');
@@ -37,29 +38,5 @@ export class AdminGuard implements CanActivate {
 
     request.user = { id: userId, isAdmin: true };
     return true;
-  }
-
-  private async checkAdminStatus(userId: string): Promise<boolean> {
-    try {
-      // First check environment variable (fastest, no DB query)
-      const adminIds = this.configService.get<string>('ADMIN_PRIVY_USER_IDS', '');
-      const adminList = adminIds.split(',').map((id) => id.trim()).filter(Boolean);
-
-      if (adminList.includes(userId)) {
-        return true;
-      }
-
-      // Fallback to database check
-      const { data, error } = await this.supabaseService.users
-        .select('role')
-        .eq('privy_user_id', userId)
-        .eq('role', 'admin')
-        .maybeSingle();
-
-      return !error && !!data;
-    } catch (error) {
-      this.logger.error('Error checking admin status:', error);
-      return false;
-    }
   }
 }

@@ -5,6 +5,7 @@ import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { MAGICBLOCK_VOLUME_FEE_BPS, MAGICBLOCK_GAS_USDC } from '@/common/magicblock-private-transfer';
 import { GiveawayBurnerSweepService } from './giveaway-burner-sweep.service';
+import { isPrivyUserAdmin } from '@/common/admin-check';
 import { GiveawayFundingService } from './giveaway-funding.service';
 import { EmailService } from '../email/email.service';
 import { CreateGiveawayDto } from './dto/create-giveaway.dto';
@@ -43,9 +44,16 @@ export class GiveawaysService {
     this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
   }
 
-  /** Sized so the burner never runs short even if every winner picks private payout — see
-   *  project memory `project_magicblock_fee_structure`: fee = 10bps USDC + 0.002 SOL-equivalent. */
-  private computeFundingRequiredUsd(prizeAmountUsd: number, winnerCount: number): number {
+  /** Historically sized so the burner never ran short on a direct MagicBlock private sweep to the
+   *  winner's wallet (fee = 10bps USDC + 0.002 SOL-equivalent, deducted from the burner's own
+   *  balance). Winner payout no longer works that way — giveaway-payout.service.ts now funds a
+   *  dedicated claim burner via a plain internal SPL transfer (no MagicBlock hop, no fee out of
+   *  this burner at all; any claim-time MagicBlock fee is the recipient's own /c/[id] claim, paid
+   *  from their claim burner, not this one). The buffer is skipped entirely for an official
+   *  ("create as Loofta") giveaway so admin testing isn't charged a fee that no longer applies —
+   *  kept for regular creators only as a safety margin pending a fuller cleanup. */
+  private computeFundingRequiredUsd(prizeAmountUsd: number, winnerCount: number, includeFeeBuffer = true): number {
+    if (!includeFeeBuffer) return prizeAmountUsd * winnerCount;
     const perWinnerFee = (prizeAmountUsd * MAGICBLOCK_VOLUME_FEE_BPS) / 10_000 + MAGICBLOCK_GAS_USDC;
     return prizeAmountUsd * winnerCount + perWinnerFee * winnerCount;
   }
@@ -71,6 +79,16 @@ export class GiveawaysService {
 
     const funding_required_usd = this.computeFundingRequiredUsd(dto.prize_amount_usd, dto.winner_count);
 
+    // "Create as Loofta" — never trust dto.is_official alone; re-check the caller is actually an
+    // admin here, server-side, same as every other admin-gated action in this module. An official
+    // giveaway auto-approves (mints its burner and skips PENDING_APPROVAL) so the sole admin can
+    // test the full funding -> draw -> claim pipeline without a redundant self-approval click.
+    const isOfficial = !!dto.is_official && (await isPrivyUserAdmin(this.supabaseService, this.configService, userId));
+    const officialBurner = isOfficial ? this.burnerSweep.createBurner() : null;
+    if (isOfficial && !officialBurner) {
+      throw new BadRequestException('Giveaway burner minting is not configured (SEND_PAYMENT_ENC_KEY missing). Contact an engineer.');
+    }
+
     const { data: giveaway, error } = await this.supabaseService.giveaways
       .insert({
         created_by: userId,
@@ -85,7 +103,16 @@ export class GiveawaysService {
         funding_required_usd,
         is_devnet: this.isDevnet,
         mint: this.usdcMint,
-        status: GiveawayStatus.PENDING_APPROVAL,
+        is_official: isOfficial,
+        status: isOfficial ? GiveawayStatus.PENDING_FUNDING : GiveawayStatus.PENDING_APPROVAL,
+        ...(isOfficial
+          ? {
+              admin_reviewed_by: userId,
+              admin_reviewed_at: new Date().toISOString(),
+              burner_address: officialBurner!.address,
+              burner_encrypted_secret: officialBurner!.encryptedSecret,
+            }
+          : {}),
       })
       .select()
       .single();
@@ -109,6 +136,9 @@ export class GiveawaysService {
     }
 
     await this.logEvent(giveaway.id, 'submitted', { winner_count: dto.winner_count, task_count: dto.tasks.length });
+    if (isOfficial) {
+      await this.logEvent(giveaway.id, 'approved', { admin: userId, auto: true, burner_address: officialBurner!.address });
+    }
     return giveaway as Giveaway;
   }
 

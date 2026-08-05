@@ -21,8 +21,10 @@ export class GiveawaysPublicController {
   @ApiOperation({ summary: 'Browse open giveaways. No auth required.' })
   async findOpen() {
     const { data, error } = await this.supabaseService.giveawaysSafe
-      .select('id, title, description, logo_url, winner_count, selection_mode, prize_amount_usd, entries_close_at, status')
+      .select('id, title, description, logo_url, winner_count, selection_mode, prize_amount_usd, entries_close_at, status, is_official')
+      // Official Loofta giveaways pin to the top, then soonest-closing first within each group.
       .eq('status', 'OPEN')
+      .order('is_official', { ascending: false })
       .order('entries_close_at', { ascending: true });
     if (error) throw new NotFoundException(error.message);
     return { giveaways: data ?? [] };
@@ -52,6 +54,7 @@ export class GiveawaysPublicController {
       entries_close_at: giveaway.entries_close_at,
       eligibility: giveaway.eligibility,
       status: giveaway.status,
+      is_official: giveaway.is_official,
       burner_address: giveaway.burner_address,
       mint: giveaway.mint,
       is_devnet: giveaway.is_devnet,

@@ -99,6 +99,9 @@ export interface Giveaway {
   rejection_reason: string | null;
   cancel_reason: string | null;
 
+  /** True for an admin-created "Loofta official" giveaway — auto-approved, shown with the Loofta brand, pinned to the top of public listings. */
+  is_official: boolean;
+
   status: GiveawayStatus;
 }
 

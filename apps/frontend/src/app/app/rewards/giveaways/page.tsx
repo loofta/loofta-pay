@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -21,6 +22,7 @@ interface PublicGiveawayListItem {
   prize_amount_usd: string;
   entries_close_at: string;
   status: string;
+  is_official: boolean;
 }
 
 async function fetchOpenGiveaways(): Promise<PublicGiveawayListItem[]> {
@@ -102,8 +104,18 @@ export default function GiveawaysListPage() {
                 <Link
                   key={g.id}
                   href={`/rewards/giveaways/${g.id}`}
-                  className="block rounded-2xl border border-white/10 bg-white/5 hover:bg-white/[0.07] transition-colors p-4"
+                  className={`block rounded-2xl border transition-colors p-4 ${
+                    g.is_official
+                      ? "border-[#FF7A2A]/30 bg-[#FF7A2A]/[0.06] hover:bg-[#FF7A2A]/10"
+                      : "border-white/10 bg-white/5 hover:bg-white/[0.07]"
+                  }`}
                 >
+                  {g.is_official && (
+                    <div className="inline-flex items-center gap-1.5 rounded-full border border-[#FF7A2A]/40 bg-[#FF7A2A]/10 px-2 py-0.5 mb-2">
+                      <Image src="/loofta_icon_magic.png" alt="" width={14} height={14} className="rounded-full" />
+                      <span className="text-sm font-medium text-[#FF7A2A]">Loofta</span>
+                    </div>
+                  )}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-lg font-semibold text-white truncate">{g.title}</p>

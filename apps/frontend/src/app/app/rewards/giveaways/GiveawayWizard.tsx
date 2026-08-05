@@ -26,6 +26,9 @@ const TOTAL_STEPS = 5;
 // display cents. Changing the pool re-snaps the current winner count to the nearest still-valid
 // divisor if it no longer divides evenly.
 const MIN_TOTAL_POOL = 50;
+// Lower floor for an admin testing the full mechanism end to end ("create as Loofta") — real
+// creators still see the normal $50 floor above.
+const ADMIN_MIN_TOTAL_POOL = 10;
 const MAX_TOTAL_POOL = 10_000;
 const MAX_WINNERS = 50;
 
@@ -428,6 +431,23 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
 
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [createAsAdmin, setCreateAsAdmin] = useState(false);
+
+  // "Create as Loofta" is admin-only and create-only — the backend re-checks admin status itself
+  // (never trusts this), this is purely to decide whether to show the toggle at all.
+  const { data: isAdmin } = useQuery({
+    queryKey: ["giveaway-wizard-is-admin"],
+    queryFn: async (): Promise<boolean> => {
+      const token = await getAccessToken().catch(() => null);
+      const res = await fetch("/api/admin/check", { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!res.ok) return false;
+      const data = await res.json();
+      return !!data.isAdmin;
+    },
+    enabled: authenticated && mode === "create",
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
 
   const storageKey = mode === "edit" && giveawayId ? `loofta:giveaway-draft:edit:${giveawayId}` : "loofta:giveaway-draft:v1";
   const queryKey = useMemo(() => ["giveaway-draft", mode, giveawayId ?? "new"] as const, [mode, giveawayId]);
@@ -482,8 +502,9 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   const setMinFollowers = useCallback((v: string) => updateDraft({ minFollowers: v }), [updateDraft]);
   const setMinAccountAgeDays = useCallback((v: string) => updateDraft({ minAccountAgeDays: v }), [updateDraft]);
 
+  const effectiveMinPool = createAsAdmin ? ADMIN_MIN_TOTAL_POOL : MIN_TOTAL_POOL;
   const setTotalPool = useCallback((next: number) => {
-    const clamped = Math.min(MAX_TOTAL_POOL, Math.max(MIN_TOTAL_POOL, Math.round(next) || MIN_TOTAL_POOL));
+    const clamped = Math.min(MAX_TOTAL_POOL, Math.max(effectiveMinPool, Math.round(next) || effectiveMinPool));
     updateDraft((prev) => {
       const valid = divisorsUpTo(clamped, MAX_WINNERS);
       // Keep the current winner count if it still divides the new pool evenly; otherwise snap
@@ -491,7 +512,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
       const winnerCount = valid.includes(prev.winnerCount) ? prev.winnerCount : nearest(valid, prev.winnerCount);
       return { totalPool: clamped, winnerCount };
     });
-  }, [updateDraft]);
+  }, [updateDraft, effectiveMinPool]);
   const setWinnerCount = useCallback((next: number) => {
     updateDraft((prev) => {
       const valid = divisorsUpTo(prev.totalPool, MAX_WINNERS);
@@ -532,7 +553,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   }, [updateDraft]);
 
   const step1Valid = title.trim().length > 0;
-  const step2Valid = prizeAmount > 0 && winnerCount > 0 && totalPool >= MIN_TOTAL_POOL;
+  const step2Valid = prizeAmount > 0 && winnerCount > 0 && totalPool >= effectiveMinPool;
   const step3Valid = tasks.every(rowIsValid);
   const step4Valid = Boolean(entriesCloseAt);
 
@@ -553,7 +574,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
       return;
     }
     if (step === 2 && !step2Valid) {
-      toast({ variant: "destructive", title: `Total prize pool must be at least $${MIN_TOTAL_POOL}` });
+      toast({ variant: "destructive", title: `Total prize pool must be at least $${effectiveMinPool}` });
       return;
     }
     if (step === 3 && !step3Valid) {
@@ -565,7 +586,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
       return;
     }
     setStep((s) => Math.min(TOTAL_STEPS, s + 1));
-  }, [step, step1Valid, step2Valid, step3Valid, step4Valid, toast]);
+  }, [step, step1Valid, step2Valid, step3Valid, step4Valid, effectiveMinPool, toast]);
 
   const goBack = useCallback(() => setStep((s) => Math.max(1, s - 1)), []);
 
@@ -589,6 +610,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
             ...(minAccountAgeDays ? { min_account_age_days: Number(minAccountAgeDays) } : {}),
           },
           tasks: tasks.flatMap(expandTaskRow),
+          ...(mode === "create" ? { is_official: createAsAdmin } : {}),
         }),
       });
       if (!res.ok) {
@@ -604,7 +626,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     } finally {
       setSubmitting(false);
     }
-  }, [mode, giveawayId, title, description, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, tasks, getAccessToken, router, toast, clearDraft]);
+  }, [mode, giveawayId, title, description, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
 
   const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
@@ -688,6 +710,30 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                     >
                       {step === 1 && (
                         <>
+                          {isAdmin && mode === "create" && (
+                            <button
+                              type="button"
+                              onClick={() => setCreateAsAdmin((v) => !v)}
+                              className={`w-full flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
+                                createAsAdmin ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/[0.03]"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2 text-left">
+                                <Image src="/loofta_icon_magic.png" alt="" width={20} height={20} className="rounded-full shrink-0" />
+                                <span className={`text-base font-medium ${createAsAdmin ? "text-white" : "text-slate-300"}`}>
+                                  Create as Loofta (admin)
+                                  <span className="block text-sm font-normal text-slate-500">
+                                    Auto-approved, pinned to the top, prize pool as low as ${ADMIN_MIN_TOTAL_POOL} for testing
+                                  </span>
+                                </span>
+                              </span>
+                              <span className={`shrink-0 w-10 h-6 rounded-full border transition-colors relative ${
+                                createAsAdmin ? "bg-[#FF7A2A] border-[#FF7A2A]" : "bg-white/10 border-white/15"
+                              }`}>
+                                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${createAsAdmin ? "left-[18px]" : "left-0.5"}`} />
+                              </span>
+                            </button>
+                          )}
                           <div>
                             <Label className={labelClass}>Title</Label>
                             <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Launch Week Giveaway" className={inputClass} />
@@ -704,7 +750,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                         <>
                           <div>
                             <Label className={labelClass}>Total prize pool</Label>
-                            <RangeSlider min={MIN_TOTAL_POOL} max={MAX_TOTAL_POOL} step={1} value={totalPool} onChange={setTotalPool} />
+                            <RangeSlider min={effectiveMinPool} max={MAX_TOTAL_POOL} step={1} value={totalPool} onChange={setTotalPool} />
                             <div className="relative mt-2">
                               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">$</span>
                               <Input

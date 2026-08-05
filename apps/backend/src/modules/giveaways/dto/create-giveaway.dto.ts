@@ -124,4 +124,11 @@ export class CreateGiveawayDto {
   @ValidateNested()
   @Type(() => GiveawayEligibilityDto)
   eligibility?: GiveawayEligibilityDto;
+
+  /** "Create as Loofta" — only honored server-side if the caller is actually an admin
+   *  (GiveawaysService.create() re-checks; a non-admin sending this is silently ignored). */
+  @ApiPropertyOptional({ description: 'Admin-only: create as an official Loofta giveaway (auto-approved, shown with the Loofta brand, pinned to the top of listings). Ignored for non-admins.' })
+  @IsOptional()
+  @IsBoolean()
+  is_official?: boolean;
 }
