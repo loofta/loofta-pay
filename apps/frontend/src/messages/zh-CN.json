@@ -58,6 +58,7 @@
     "refresh": "刷新",
     "refreshList": "刷新列表",
     "search": "搜索",
+    "sendAgain": "再次发送",
     "status": {
       "SUCCESS": "已付款",
       "PRIVATE_TRANSFER_PENDING": "未认领",

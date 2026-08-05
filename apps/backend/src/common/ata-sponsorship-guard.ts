@@ -22,6 +22,69 @@ const ALERT_WINDOW_MS = 60 * 60_000; // 1 hour
 let alertWindowStartedAt = 0;
 let alertsSentInWindow = 0;
 
+// --- Fleet-wide burst circuit breaker ---------------------------------------------------------
+// The per-wallet guard above only catches the SAME wallet being sponsored twice — trivially
+// evaded by an attacker who spends a fresh throwaway wallet every time (each one is a legitimate
+// "first sponsorship" as far as that guard is concerned). This tracks the RATE of first-time
+// sponsorships across all wallets/call sites and trips a fleet-wide pause once it spikes,
+// regardless of which wallets are involved.
+//
+// IMPORTANT — this is NOT what would have caught the 2026-08-03 x402 incident: that route drained
+// at roughly 1 sponsorship per 20-30s (per its own disable-comment), which is the same order of
+// magnitude as this app's ordinary legitimate cadence (checked against real fee-payer history —
+// normal traffic runs ~1 per 20-90s per window, with organic bursts). A short window/low threshold
+// can't separate an attacker at human-plausible pace from real users; that incident was actually
+// closed by removing the unauthenticated route, not by rate-limiting it. This breaker exists only
+// to catch a qualitatively different failure: a bot hammering far faster than any human-paced flow,
+// SUSTAINED over several minutes — hence the longer window and higher bar below. Don't tune this
+// down to "catch everything" — that just trades false positives (pausing real users) for a false
+// sense of coverage against slow-drip abuse, which auth/guards at the call site are what actually
+// stop. In-memory/per-process, same trade-off as the alert de-dupe above: resets on deploy/restart,
+// acceptable because this is a defense-in-depth trip wire, not the only control.
+const BURST_WINDOW_MS = Number(process.env.ATA_BURST_WINDOW_MS) || 10 * 60_000; // 10 minutes
+const BURST_THRESHOLD = Number(process.env.ATA_BURST_THRESHOLD) || 40; // >40 sponsorships/10min ≈ sustained 1-per-15s, well above observed organic cadence
+let recentSponsorshipTimestamps: number[] = [];
+let breakerTrippedAt: number | null = null;
+
+/** True while the fleet-wide burst breaker is tripped — every sponsorship attempt is refused
+ *  until clearAtaSponsorshipBreaker() is called (e.g. from an admin endpoint), regardless of
+ *  wallet/mint/context. */
+export function isAtaSponsorshipBreakerTripped(): boolean {
+  return breakerTrippedAt !== null;
+}
+
+export function getAtaSponsorshipBreakerStatus(): { tripped: boolean; trippedAt: string | null; recentCount: number } {
+  const now = Date.now();
+  recentSponsorshipTimestamps = recentSponsorshipTimestamps.filter((t) => now - t <= BURST_WINDOW_MS);
+  return {
+    tripped: breakerTrippedAt !== null,
+    trippedAt: breakerTrippedAt ? new Date(breakerTrippedAt).toISOString() : null,
+    recentCount: recentSponsorshipTimestamps.length,
+  };
+}
+
+/** Manual reset — call only after confirming on-chain that the burst was legitimate traffic, or
+ *  that the actual abuse vector has been fixed/deployed. Does NOT clear the underlying cause. */
+export function clearAtaSponsorshipBreaker(): void {
+  log.warn('Fleet-wide ATA-sponsorship circuit breaker manually cleared — resuming sponsored ATA creation.');
+  breakerTrippedAt = null;
+  recentSponsorshipTimestamps = [];
+}
+
+/** Records a first-time sponsorship and trips the breaker if the rate over the trailing window
+ *  exceeds the threshold. Returns true the instant this call trips it (so the caller can alert
+ *  exactly once, on the transition, not on every subsequent blocked attempt). */
+function recordSponsorshipAndMaybeTrip(): boolean {
+  const now = Date.now();
+  recentSponsorshipTimestamps.push(now);
+  recentSponsorshipTimestamps = recentSponsorshipTimestamps.filter((t) => now - t <= BURST_WINDOW_MS);
+  if (recentSponsorshipTimestamps.length > BURST_THRESHOLD && breakerTrippedAt === null) {
+    breakerTrippedAt = now;
+    return true;
+  }
+  return false;
+}
+
 /**
  * Anti-drain guard for sponsor-paid ATA creation. Whenever our fee payer pays the rent to
  * create a wallet's USDC ATA, that rent is only ours to lose once — the wallet's owner can
@@ -71,6 +134,46 @@ let alertsSentInWindow = 0;
  *  doesn't depend on every call site formatting its label consistently (most don't). */
 const CALLER_MARKER = '|caller:';
 
+/** Rolling window + per-caller ceiling on *new* (rent-costing) ATA creations, shared across every
+ *  call site whose destination is a fresh address every time (bridge deposit addresses, arbitrary
+ *  client-signed destinations, etc.) — guardAtaSponsorship's same-wallet check does nothing there
+ *  since the wallet is never repeated. See incident 2026-08-04 (solana-sponsor.service.ts's
+ *  sign-and-broadcast): one caller sponsored 25+ distinct new wallets over ~2 hours, paced under
+ *  any rate/burst threshold, at zero cost recovery. Call this BEFORE guardAtaSponsorship whenever
+ *  a call site (a) has an authenticated userId available and (b) has no same-transaction cost
+ *  recovery (no compensating burner-close, no upfront pricing) — i.e. exactly the cases flagged
+ *  "GAP" in the 2026-08-04 fee-payer audit. Skip it entirely for call sites that already recover
+ *  cost (claims sweep, lottery/private-balance withdrawals that close their burner, multi-send's
+ *  upfront pricing) — this is a blunt backstop for the unpriced paths, not a universal tax. */
+const ATA_PER_USER_WINDOW_HOURS = Number(process.env.ATA_PER_USER_WINDOW_HOURS) || 24;
+const ATA_PER_USER_CAP = Number(process.env.ATA_PER_USER_CAP) || 10;
+
+export async function assertPerUserAtaCreationCapNotExceeded(
+  supabaseService: SupabaseService,
+  userId: string,
+  newAtaCount: number,
+  label: string,
+): Promise<void> {
+  if (newAtaCount <= 0) return;
+  const windowStart = new Date(Date.now() - ATA_PER_USER_WINDOW_HOURS * 60 * 60_000).toISOString();
+  const { count, error } = await supabaseService.ataSponsorships
+    .select('wallet_address', { count: 'exact', head: true })
+    .ilike('context', `%${CALLER_MARKER}${userId}`)
+    .gte('first_sponsored_at', windowStart);
+  if (error) {
+    log.warn(`[${label}] per-user ATA cap check failed (failing open): ${error.message}`);
+    return;
+  }
+  if ((count ?? 0) + newAtaCount > ATA_PER_USER_CAP) {
+    log.error(
+      `[${label}] BLOCKED user=${userId} — would exceed ${ATA_PER_USER_CAP} sponsored new ATAs per ${ATA_PER_USER_WINDOW_HOURS}h (already at ${count}, this request adds ${newAtaCount})`,
+    );
+    throw new Error(
+      `You've reached the limit of ${ATA_PER_USER_CAP} new-recipient sends per ${ATA_PER_USER_WINDOW_HOURS}h that don't already have a token account. Please try again later or use multi-send for bulk payouts.`,
+    );
+  }
+}
+
 export async function guardAtaSponsorship(
   supabaseService: SupabaseService,
   walletAddress: string,
@@ -79,13 +182,37 @@ export async function guardAtaSponsorship(
   emailService?: EmailService,
   callerUserId?: string,
 ): Promise<boolean> {
+  if (breakerTrippedAt !== null) {
+    log.error(
+      `BLOCKED — fleet-wide circuit breaker tripped at ${new Date(breakerTrippedAt).toISOString()}, refusing ALL sponsored ATA creation (wallet=${walletAddress.slice(0, 8)}…, context=${context}) until manually cleared.`,
+    );
+    return false;
+  }
+
   const storedContext = callerUserId ? `${context}${CALLER_MARKER}${callerUserId}` : context;
   const { error } = await supabaseService.ataSponsorships.insert({
     wallet_address: walletAddress,
     mint,
     context: storedContext,
   });
-  if (!error) return true;
+  if (!error) {
+    if (recordSponsorshipAndMaybeTrip()) {
+      log.error(
+        `CIRCUIT BREAKER TRIPPED: more than ${BURST_THRESHOLD} new sponsored ATAs created within ${BURST_WINDOW_MS / 1000}s (last: wallet=${walletAddress.slice(0, 8)}…, context=${context}) — pausing ALL sponsored ATA creation fleet-wide until manually cleared.`,
+      );
+      if (emailService) {
+        emailService
+          .sendAtaSponsorshipBurstAlertEmail({
+            to: ATA_ABUSE_ALERT_EMAIL,
+            count: recentSponsorshipTimestamps.length,
+            windowSeconds: BURST_WINDOW_MS / 1000,
+            context,
+          })
+          .catch((e) => log.warn(`burst alert email failed (non-fatal): ${(e as Error)?.message}`));
+      }
+    }
+    return true;
+  }
   // Postgres unique-violation — this (wallet, mint) was already sponsored once before.
   if (error.code === '23505') {
     if (callerUserId) {

@@ -111,6 +111,10 @@ export async function signAndBroadcastSponsoredTx(
   stepLabel?: string,
   accessToken?: string | null,
   network?: "mainnet" | "devnet",
+  /** When this transaction is paying into a specific existing claim/request, pass its id so the
+   *  backend can verify the ATA it's about to sponsor actually matches that claim's recipient
+   *  (see project memory: solana sponsor security hardening, Attack 6 / intent-binding fix). */
+  claimId?: string,
 ): Promise<string> {
   const label = stepLabel ?? "sign-and-broadcast";
   const t0 =
@@ -130,6 +134,7 @@ export async function signAndBroadcastSponsoredTx(
     body: JSON.stringify({
       transaction: uint8ArrayToBase64(signedTransactionBytes),
       ...(network ? { network } : {}),
+      ...(claimId ? { claimId } : {}),
     }),
   });
   if (!r.ok) {

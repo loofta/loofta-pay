@@ -10,7 +10,7 @@ import { NearIntentsService } from '../intents/near-intents.service';
 import { StatusService } from '../intents/status.service';
 import { PrivateBalanceService, PRIVATE_BALANCE_PLATFORM_FEE_BPS } from './private-balance.service';
 import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
-import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
+import { guardAtaSponsorship, assertPerUserAtaCreationCapNotExceeded } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { reclaimBurnerFunds } from '@/common/burner-reclaim';
 import { EmailService } from '../email/email.service';
@@ -389,7 +389,21 @@ export class PrivateBalanceProcessorService {
     const bridgeDestAta = await getAssociatedTokenAddress(mint, bridgeDestPubkey);
     const fundTx = new Transaction();
     if (!(await tokenAccountExists(conn, bridgeDestAta))) {
-      const allowed = await guardAtaSponsorship(this.supabaseService, bridgeDestPubkey.toBase58(), mint.toBase58(), `private-withdrawal-bridge:${row.id}`, this.emailService);
+      // Bridge deposit addresses are freshly generated per quote — never repeated — so
+      // guardAtaSponsorship's same-wallet check can't catch a user cycling withdrawals to rack up
+      // free ATA creations (2026-08-04 fee-payer audit: this path had no cost recovery at all,
+      // unlike sweepDirectToDestination just above, which closes its burner in the same tx).
+      try {
+        await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, row.user_id, 1, 'PrivateWithdrawalBridge');
+      } catch (e: unknown) {
+        await this.supabaseService.privateTransfers.update({
+          status: 'failed',
+          error_message: e instanceof Error ? e.message : String(e),
+        }).eq('id', row.id);
+        this.logger.warn(`[PrivateWithdrawal] ${row.id}: blocked by per-user ATA cap`);
+        return;
+      }
+      const allowed = await guardAtaSponsorship(this.supabaseService, bridgeDestPubkey.toBase58(), mint.toBase58(), `private-withdrawal-bridge:${row.id}`, this.emailService, row.user_id);
       if (!allowed) {
         await this.supabaseService.privateTransfers.update({
           status: 'failed',

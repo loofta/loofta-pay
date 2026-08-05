@@ -58,6 +58,7 @@
     "refresh": "새로고침",
     "refreshList": "목록 새로고침",
     "search": "검색",
+    "sendAgain": "다시 보내기",
     "status": {
       "SUCCESS": "결제됨",
       "PRIVATE_TRANSFER_PENDING": "미청구",

@@ -134,16 +134,20 @@ export class MagicblockQuestService {
     // returns early with no row created at all, so there'd be nothing for retryFailedPushes to
     // ever retry (repeated real-world incident, 2026-07-24 — several users bought privately, then
     // connected their wallet after, and their quest silently never got a first attempt).
-    this.backfillQuestsForNewWallet(userId).catch((e) =>
-      this.logger.warn(`backfillQuestsForNewWallet(${userId}) failed: ${(e as Error)?.message ?? e}`),
+    this.backfillQuestsForWallet(userId).catch((e) =>
+      this.logger.warn(`backfillQuestsForWallet(${userId}) failed: ${(e as Error)?.message ?? e}`),
     );
     return { wallet: trimmed };
   }
 
-  /** Fire-and-forget: re-runs the same qualifying push for every pre-existing purchase/payment
-   *  this user made before connecting a MagicBlock wallet. Safe to call repeatedly — pushForAction's
-   *  own (quest_type, source_id) reservation silently no-ops anything already pushed. */
-  private async backfillQuestsForNewWallet(userId: string): Promise<void> {
+  /** Fire-and-forget: re-runs the same qualifying push for every purchase/payment this user has
+   *  ever made that qualifies but has no push row yet — whether that's because they connected
+   *  their wallet after the fact, or because some other bug (fixed or not-yet-found) caused the
+   *  original push attempt to be skipped. Safe to call repeatedly, and safe to call for a wallet
+   *  that's been connected for a while — pushForAction's own (quest_type, source_id) reservation
+   *  silently no-ops anything already pushed. Called both from setWallet (new connection) and from
+   *  MagicblockQuestCronService (periodic reconciliation across every already-connected wallet). */
+  async backfillQuestsForWallet(userId: string): Promise<void> {
     const db = this.supabase.getClient();
 
     const { data: tickets } = await db

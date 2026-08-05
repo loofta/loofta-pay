@@ -58,6 +58,7 @@
     "refresh": "Aktualisieren",
     "refreshList": "Liste aktualisieren",
     "search": "Suchen",
+    "sendAgain": "Erneut senden",
     "status": {
       "SUCCESS": "Bezahlt",
       "PRIVATE_TRANSFER_PENDING": "Nicht beansprucht",

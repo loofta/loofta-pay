@@ -2739,7 +2739,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     !hidePaySectionForPendingClaimant &&
     !isRecipient &&
     !isCheckingRecipient &&
-    !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase());
+    !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase());
   /** Same dark card treatment, mirrored for the recipient's side: viewing a payment that
    *  was genuinely sent privately (claim.is_private), whether still pending claim or already
    *  claimed — the "someone went out of their way to hide this from the public chain" fact is
@@ -3571,6 +3571,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           // existing USDC token account (recipients who already had one skipped that
           // instruction entirely, which is why this stayed hidden).
           usdcMint: getUsdcMintForMode(networkMode === "mainnet" ? "mainnet" : "devnet"),
+          claimId: claim.id,
         });
       }
       setPerTransferPhase(null);
@@ -4776,9 +4777,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   {renderClaimPanel(true)}
                 </div>
               </div>
-            ) : ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+            ) : ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <>
-                {/* Payment Complete — hero + share + summary */}
+                {/* Payment Complete — hero + share + summary. IN_FLIGHT included: the sender's
+                    debit already happened (broadcast tx confirmed or awaiting confirmation) —
+                    "sent" is factually true even before the recipient-side leg settles. Showing
+                    the default Pay Now view instead (pre-fix behavior) let a sender who already
+                    broadcast see "Amount to send" again and risk a genuine double payment. */}
                 {(() => {
                   const recipientLabel =
                     (claim as any)?.recipient_pending_username_value
@@ -5136,7 +5141,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               </>
             )}
 
-            {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) && (!deposit ? (
+            {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase()) && (!deposit ? (
               <>
                 {/* Private indicator — only when payment is private */}
                 {requiresPrivate ? (

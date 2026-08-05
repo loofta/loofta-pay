@@ -55,8 +55,8 @@ describe('SupabaseService', () => {
   it('should provide table accessors', () => {
     service.onModuleInit();
     expect(service.organizations).toBeDefined();
-    expect(service.claims).toBeDefined();
-    expect(service.claimIntents).toBeDefined();
+    expect(service.payments).toBeDefined();
+    expect(service.paymentIntents).toBeDefined();
     expect(service.users).toBeDefined();
   });
 });

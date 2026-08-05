@@ -22,6 +22,7 @@ import {
 import { AdminGuard } from '@/common/guards';
 import { ClaimsService } from './claims.service';
 import { Claim, ClaimIntent, ClaimStatus } from './entities/claim.entity';
+import { getAtaSponsorshipBreakerStatus, clearAtaSponsorshipBreaker } from '@/common/ata-sponsorship-guard';
 
 @ApiTags('admin/claims')
 @Controller('admin/claims')
@@ -128,5 +129,30 @@ export class AdminClaimsController {
   })
   async deleteMany(@Body() body: { ids: string[] }): Promise<{ deleted: number }> {
     return this.claimsService.deleteMany(body.ids);
+  }
+
+  /**
+   * Status of the fleet-wide sponsored-ATA-creation circuit breaker (see
+   * common/ata-sponsorship-guard.ts). Trips automatically when too many sponsored token accounts
+   * are created within a short window, regardless of wallet — pauses all sponsored ATA creation
+   * (claims, send-payment, lottery, private-balance withdrawals) until manually cleared below.
+   */
+  @Get('ata-sponsorship-breaker')
+  @ApiOperation({ summary: 'Get fleet-wide ATA-sponsorship circuit breaker status (admin)' })
+  async getAtaSponsorshipBreaker() {
+    return getAtaSponsorshipBreakerStatus();
+  }
+
+  /**
+   * Manually clears the breaker after confirming (on Solscan/logs) that the burst was either
+   * legitimate traffic or that the actual abuse vector has been fixed and deployed. Does not fix
+   * anything itself — sponsored ATA creation resumes immediately across all money-moving flows.
+   */
+  @Post('ata-sponsorship-breaker/clear')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Manually clear the ATA-sponsorship circuit breaker (admin)' })
+  async clearAtaSponsorshipBreakerEndpoint() {
+    clearAtaSponsorshipBreaker();
+    return { cleared: true };
   }
 }

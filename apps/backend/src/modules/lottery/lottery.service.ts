@@ -50,7 +50,7 @@ const ROUND_UP_GRACE_USDC = 0.1;
 // (USDC) and gas/relay (SOL) and — since purchases no longer collect a Loofta fee — is no longer
 // auto-replenished, so it must be watched. Defaults overridable via env; recipient defaults to the
 // operator's address.
-const FEE_WALLET_MIN_SOL = 0.10;
+const FEE_WALLET_MIN_SOL = 0.03;
 const FEE_WALLET_MIN_USDC = 10;
 const FEE_WALLET_ALERT_DEFAULT_EMAIL = 'lisa.bechina@gmail.com';
 // Re-alert cadence while still low, so one email doesn't get buried and forgotten.
