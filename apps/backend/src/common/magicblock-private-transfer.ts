@@ -124,7 +124,18 @@ export async function fetchSolPriceUsd(): Promise<number | null> {
  */
 export async function resolveMagicblockRelayFeeUsdc(): Promise<number> {
   const solPriceUsd = await fetchSolPriceUsd();
-  return solPriceUsd ? MAGICBLOCK_GAS_SOL * solPriceUsd : MAGICBLOCK_GAS_USDC;
+  const dynamicEstimate = solPriceUsd ? MAGICBLOCK_GAS_SOL * solPriceUsd : MAGICBLOCK_GAS_USDC;
+  // Floor at the flat constant, confirmed against MagicBlock's actual on-chain charge (root-caused
+  // incident 2026-08-05: the `gasless: true` relay fee is a separate plain spl-token transfer of
+  // EXACTLY 200,000 base units / 0.2 USDC every time — full tx logs decoded via getTransaction —
+  // while the SOL-price-dynamic estimate above had drifted to ~147,958 units at the time, silently
+  // undershooting by ~52k units. Every unpadded caller (private-balance-processor's deposit
+  // delivery, which has no gross-up buffer) failed 100% of attempts on-chain with SPL Token
+  // "insufficient funds" (custom error 0x1) until this floor was added — reserving too little here
+  // fails the transfer outright, reserving too much just delivers a few cents less, so always erring
+  // high is the safe direction. +5% on top of the floor itself, since landing exactly on the
+  // observed fee with zero margin is what caused this incident in the first place.
+  return Math.max(dynamicEstimate, MAGICBLOCK_GAS_USDC) * 1.05;
 }
 
 /**
