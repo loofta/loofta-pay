@@ -13,6 +13,7 @@ import { GiveawayFundingService } from './giveaway-funding.service';
 import { XVerificationService } from './x-verification.service';
 import { GiveawayEntriesService } from './giveaway-entries.service';
 import { GiveawayDrawService } from './giveaway-draw.service';
+import { GiveawayVrfService } from './giveaway-vrf.service';
 import { GiveawayPayoutService } from './giveaway-payout.service';
 import { GiveawayGiphyService } from './giveaway-giphy.service';
 import { GiveawayCronService } from './giveaway-cron.service';
@@ -36,6 +37,7 @@ import { GiveawayCronService } from './giveaway-cron.service';
     XVerificationService,
     GiveawayEntriesService,
     GiveawayDrawService,
+    GiveawayVrfService,
     GiveawayPayoutService,
     GiveawayGiphyService,
     GiveawayCronService,
@@ -47,6 +49,7 @@ import { GiveawayCronService } from './giveaway-cron.service';
     XVerificationService,
     GiveawayEntriesService,
     GiveawayDrawService,
+    GiveawayVrfService,
     GiveawayPayoutService,
   ],
 })

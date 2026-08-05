@@ -1,0 +1,227 @@
+{
+  "address": "5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi",
+  "metadata": {
+    "name": "loofta_vrf",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "callback_randomness",
+      "docs": [
+        "Invoked by the MagicBlock VRF oracle once randomness is ready. `#[vrf_callback]` injects",
+        "the scoped identity signer check that proves this call genuinely came from the oracle —",
+        "that check, not the seeds constraint alone, is what makes this callback trustworthy."
+      ],
+      "discriminator": [
+        38,
+        174,
+        207,
+        182,
+        57,
+        53,
+        157,
+        54
+      ],
+      "accounts": [
+        {
+          "name": "vrf_program_identity",
+          "docs": [
+            "Scoped VRF identity PDA, bound to this program. Its presence as a signer proves",
+            "the callback was issued by the VRF program for this program."
+          ],
+          "signer": true
+        },
+        {
+          "name": "draw_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  114,
+                  97,
+                  119
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "giveaway_id_seed"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "randomness",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "_giveaway_id_seed",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "request_randomness",
+      "docs": [
+        "Requests randomness for a giveaway's winner draw from the base-layer MagicBlock VRF",
+        "oracle. `giveaway_id_seed` is sha256(giveaway.id) computed by the backend — the program",
+        "never needs to know about Postgres UUIDs, only stable seed bytes. Re-callable for the",
+        "same giveaway (e.g. after a manual stall-recovery retry) since a fresh, unfulfilled",
+        "request just overwrites the prior one."
+      ],
+      "discriminator": [
+        213,
+        5,
+        173,
+        166,
+        37,
+        236,
+        31,
+        18
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "draw_request",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  114,
+                  97,
+                  119
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "giveaway_id_seed"
+              }
+            ]
+          }
+        },
+        {
+          "name": "oracle_queue",
+          "writable": true
+        },
+        {
+          "name": "program_identity",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  100,
+                  101,
+                  110,
+                  116,
+                  105,
+                  116,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vrf_program",
+          "address": "Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz"
+        },
+        {
+          "name": "slot_hashes",
+          "address": "SysvarS1otHashes111111111111111111111111111"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "giveaway_id_seed",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "client_seed",
+          "type": "u8"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "DrawRequest",
+      "discriminator": [
+        250,
+        26,
+        18,
+        131,
+        85,
+        229,
+        190,
+        63
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "AlreadyFulfilled",
+      "msg": "This draw request has already been fulfilled"
+    }
+  ],
+  "types": [
+    {
+      "name": "DrawRequest",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "randomness",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "fulfilled",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}
