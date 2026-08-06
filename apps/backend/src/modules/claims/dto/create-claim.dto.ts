@@ -17,7 +17,7 @@ export class TokenSelectionDto {
 export class CreateClaimDto {
   @ApiProperty({ description: 'Amount in USD', example: 100 })
   @IsNumber()
-  @Min(0.01)
+  @Min(1)
   amount: number;
 
   @ApiProperty({ description: 'Destination token selection', type: TokenSelectionDto })

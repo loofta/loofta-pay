@@ -108,15 +108,22 @@ function recordSponsorshipAndMaybeTrip(): boolean {
  * sites with no live human caller (lottery rescue/topup, private-balance withdrawal), which keep
  * the original strict one-time-forever behavior since there's no identity to check against.
  * When present, a repeat sponsorship request for a (wallet, mint) already funded by that SAME
- * authenticated user is allowed rather than blocked — incident 2026-07-30: this guard (added in
- * "fix solana drain") started blocking real signed-in users on an ordinary second payment to a
- * destination whose ATA had been closed since (e.g. the destination wallet's own app auto-closes
- * empty accounts). The abuse this guard exists to stop — see July 2026 incident, ~60 sponsored
- * creations of one wallet every ~10s — is anonymous/disposable-identity repeat funding; a
- * signed-in, rate-limited (RateLimitGuard), identifiable account asking again for a destination
- * IT ALREADY paid for is a materially different risk (and if it is abuse, the account is now
- * known and can be banned, unlike a throwaway). A DIFFERENT user requesting the same wallet is
- * still blocked exactly as before — this only relaxes the same-caller case.
+ * authenticated user is allowed, UP TO `MAX_SAME_CALLER_REPEATS` times — incident 2026-07-30:
+ * this guard (added in "fix solana drain") started blocking real signed-in users on an ordinary
+ * second payment to a destination whose ATA had been closed since (e.g. the destination wallet's
+ * own app auto-closes empty accounts). The abuse this guard exists to stop — see July 2026
+ * incident, ~60 sponsored creations of one wallet every ~10s — is anonymous/disposable-identity
+ * repeat funding; a signed-in, rate-limited (RateLimitGuard), identifiable account asking again
+ * for a destination it already paid for is a materially different risk. A DIFFERENT user
+ * requesting the same wallet is still blocked exactly as before — this only relaxes the
+ * same-caller case.
+ *
+ * That relaxation was originally unconditional (re-allow forever) until incident 2026-08-06: the
+ * same authenticated caller used it to run an unbounded create → close (reclaim rent) → repeat
+ * cycle against a small, reused set of destination wallets, spread across days. A handful of
+ * legitimate same-caller repeats is normal; unlimited is the drain. `repeat_count`
+ * (migration `20260806170000`) tracks how many same-caller repeats a (wallet, mint) has already
+ * been granted; past the cap it is blocked exactly like a different-caller repeat.
  *
  * `emailService` is optional — pass it when the caller already has one injected (most do) so a
  * blocked attempt actually gets *seen*, not just logged. A real incident (2026-07-29) had this
@@ -133,6 +140,10 @@ function recordSponsorshipAndMaybeTrip(): boolean {
  *  separate from each call site's free-text context label so parsing it back out on a conflict
  *  doesn't depend on every call site formatting its label consistently (most don't). */
 const CALLER_MARKER = '|caller:';
+
+/** Lifetime cap on same-caller repeat sponsorships for a single (wallet, mint) — see
+ *  guardAtaSponsorship doc comment, incident 2026-08-06. */
+const MAX_SAME_CALLER_REPEATS = 2;
 
 /** Rolling window + per-caller ceiling on *new* (rent-costing) ATA creations, shared across every
  *  call site whose destination is a fresh address every time (bridge deposit addresses, arbitrary
@@ -217,16 +228,26 @@ export async function guardAtaSponsorship(
   if (error.code === '23505') {
     if (callerUserId) {
       const { data: existingRow } = await supabaseService.ataSponsorships
-        .select('context')
+        .select('context, repeat_count')
         .eq('wallet_address', walletAddress)
         .eq('mint', mint)
         .maybeSingle();
       const priorCallerId = (existingRow?.context as string | undefined)?.split(CALLER_MARKER)[1];
+      const repeatCount = (existingRow?.repeat_count as number | undefined) ?? 0;
       if (priorCallerId && priorCallerId === callerUserId) {
-        log.log(
-          `ALLOWED repeat sponsorship for wallet=${walletAddress.slice(0, 8)}… mint=${mint.slice(0, 8)}… — same authenticated caller (${callerUserId}) as the original sponsorship, not an anonymous/fresh-identity repeat.`,
-        );
-        return true;
+        if (repeatCount >= MAX_SAME_CALLER_REPEATS) {
+          // Falls through to the generic BLOCKED log + alert below, with the same-caller context
+          // already established — no separate log line needed here.
+        } else {
+          await supabaseService.ataSponsorships
+            .update({ repeat_count: repeatCount + 1 })
+            .eq('wallet_address', walletAddress)
+            .eq('mint', mint);
+          log.log(
+            `ALLOWED repeat sponsorship for wallet=${walletAddress.slice(0, 8)}… mint=${mint.slice(0, 8)}… — same authenticated caller (${callerUserId}), repeat ${repeatCount + 1}/${MAX_SAME_CALLER_REPEATS}.`,
+          );
+          return true;
+        }
       }
     }
     log.warn(
