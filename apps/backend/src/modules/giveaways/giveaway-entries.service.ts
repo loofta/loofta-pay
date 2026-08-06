@@ -380,4 +380,23 @@ export class GiveawayEntriesService {
       (e) => e.status === GiveawayEntryStatus.ENTERED && allVerifiedByEntry.get(e.id) === true,
     );
   }
+
+  /** Count of completions still awaiting a decision (unresolved X-verification, or an
+   *  un-reviewed self-report submission) among currently-ENTERED entries. Used to block
+   *  finalizing the draw while real work is still outstanding — without this, a self-report task
+   *  the creator just hasn't reviewed yet would silently exclude that entrant from the draw
+   *  instead of the draw waiting for the review queue to clear. Disqualified entries are excluded
+   *  from the count since their pending work (if any) can never become eligible anyway. */
+  async countPendingCompletions(giveawayId: string): Promise<number> {
+    const entries = await this.listEntries(giveawayId);
+    const activeEntryIds = entries.filter((e) => e.status === GiveawayEntryStatus.ENTERED).map((e) => e.id);
+    if (!activeEntryIds.length) return 0;
+
+    const { count, error } = await this.supabaseService.giveawayTaskCompletions
+      .select('id', { count: 'exact', head: true })
+      .in('giveaway_entry_id', activeEntryIds)
+      .eq('verification_status', GiveawayTaskCompletionStatus.PENDING);
+    if (error) throw new BadRequestException(error.message);
+    return count ?? 0;
+  }
 }

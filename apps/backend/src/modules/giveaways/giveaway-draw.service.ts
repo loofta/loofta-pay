@@ -71,7 +71,7 @@ export class GiveawayDrawService {
 
     await this.closeEntries(giveaway);
     giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
-    await this.freezeSnapshotAndStartDrawing(giveaway);
+    await this.freezeSnapshotAndStartDrawing(giveaway, { throwIfPending: true });
     giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
 
     if (giveaway.status === GiveawayStatus.DRAWING && giveaway.selection_mode !== GiveawaySelectionMode.MANUAL) {
@@ -107,10 +107,27 @@ export class GiveawayDrawService {
     return ((data.payload as { entry_ids?: string[] } | null)?.entry_ids ?? []) as string[];
   }
 
-  private async freezeSnapshotAndStartDrawing(giveaway: Giveaway): Promise<void> {
+  private async freezeSnapshotAndStartDrawing(giveaway: Giveaway, opts: { throwIfPending?: boolean } = {}): Promise<void> {
     // One last chance for anyone who did the X task for real but never clicked "Verify" in-app —
     // see runFinalXVerificationSweep's doc comment for why this replaced the old scheduled cron.
     await this.entriesService.runFinalXVerificationSweep(giveaway);
+
+    // Never freeze the pool while real work is still outstanding — a self-report task the
+    // creator hasn't reviewed yet (or an X-verification that's still pending for some other
+    // reason) must not silently exclude that entrant. The cron path just defers and retries next
+    // tick; forceRunDrawNow surfaces this to the creator instead, since it's an explicit action
+    // expecting an immediate result.
+    const pendingCount = await this.entriesService.countPendingCompletions(giveaway.id);
+    if (pendingCount > 0) {
+      if (opts.throwIfPending) {
+        throw new BadRequestException(
+          `${pendingCount} task submission${pendingCount === 1 ? '' : 's'} still need${pendingCount === 1 ? 's' : ''} review before the draw can run — check the review queue.`,
+        );
+      }
+      this.logger.log(`[GiveawayDraw] ${giveaway.id}: ${pendingCount} completion(s) still pending — deferring draw until reviewed`);
+      return;
+    }
+
     const eligible = await this.entriesService.getEligibleVerifiedEntries(giveaway.id);
     const entryIds = eligible.map((e) => e.id);
 

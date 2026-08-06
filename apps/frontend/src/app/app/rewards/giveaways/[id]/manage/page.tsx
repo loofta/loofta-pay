@@ -2,11 +2,13 @@
 
 import { use, useCallback, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, X } from "lucide-react";
+import { ArrowLeft, Check, X, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useToast } from "@/components/ui/use-toast";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,6 +21,8 @@ import {
 } from "@/components/ui/alert-dialog";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const ENTRIES_PER_PAGE = 20;
+const searchInputClass = "pl-9 bg-white/[0.06] border-white/15 text-white placeholder:text-slate-500";
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",
@@ -73,6 +77,9 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   const [selectedWinners, setSelectedWinners] = useState<Set<string>>(new Set());
   const [runningDraw, setRunningDraw] = useState(false);
   const [showRunDrawConfirm, setShowRunDrawConfirm] = useState(false);
+  const [entriesDialogOpen, setEntriesDialogOpen] = useState(false);
+  const [entrySearch, setEntrySearch] = useState("");
+  const [entryPage, setEntryPage] = useState(1);
 
   const { data: giveaway, refetch: refetchGiveaway } = useQuery({
     queryKey: ["giveaway-manage", id],
@@ -171,6 +178,17 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   }
 
   const canPickManually = giveaway.status === "DRAWING" && giveaway.selection_mode === "manual";
+  const pendingReviewCount = reviewQueue?.length ?? 0;
+
+  // Client-side filter/paginate — entry counts can run into the hundreds, and pulling that whole
+  // list into view by default (as this used to) made the manage page unusably long to scroll.
+  const searchQuery = entrySearch.trim().toLowerCase();
+  const filteredEntries = searchQuery
+    ? (entries ?? []).filter((e) => e.x_handle.toLowerCase().includes(searchQuery) || String(e.entry_index) === searchQuery)
+    : (entries ?? []);
+  const totalEntryPages = Math.max(1, Math.ceil(filteredEntries.length / ENTRIES_PER_PAGE));
+  const clampedEntryPage = Math.min(entryPage, totalEntryPages);
+  const pageEntries = filteredEntries.slice((clampedEntryPage - 1) * ENTRIES_PER_PAGE, clampedEntryPage * ENTRIES_PER_PAGE);
 
   return (
     <>
@@ -195,65 +213,144 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                 <button
                   type="button"
                   onClick={() => setShowRunDrawConfirm(true)}
-                  disabled={runningDraw}
-                  className="inline-flex items-center rounded-lg px-3 py-1.5 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-50"
+                  disabled={runningDraw || pendingReviewCount > 0}
+                  className="inline-flex items-center rounded-lg px-3 py-1.5 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {runningDraw ? "Running draw…" : "Run draw now"}
                 </button>
+                {pendingReviewCount > 0 && (
+                  <p className="text-base text-slate-500 mt-1.5">
+                    Review the {pendingReviewCount} pending submission{pendingReviewCount === 1 ? "" : "s"} below first — the draw can&apos;t run until the queue is clear.
+                  </p>
+                )}
               </div>
             )}
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <p className="text-base font-medium text-slate-400 uppercase tracking-widest mb-2">
-              Entries {entries ? `(${entries.length})` : ""}
-            </p>
-            <div className="space-y-2">
-              {(entries ?? []).map((entry) => (
-                <div key={entry.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-base font-medium text-white truncate">@{entry.x_handle}</p>
-                    <p className="text-base text-slate-500">
-                      #{entry.entry_index} · {entry.status}
-                      {entry.payout_status && entry.status === "winner" ? ` · payout ${entry.payout_status}` : ""}
-                    </p>
-                    {entry.status === "winner" && entry.claim_payment_id && (
-                      <Link
-                        href={`/c/${entry.claim_payment_id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-base text-[#FF7A2A] hover:underline underline-offset-2"
-                      >
-                        View claim link
-                      </Link>
-                    )}
-                  </div>
-                  {canPickManually && (
-                    <button
-                      type="button"
-                      onClick={() => toggleWinner(entry.id)}
-                      className={`shrink-0 rounded-lg px-2.5 py-1 text-base font-medium border transition-colors ${
-                        selectedWinners.has(entry.id) ? "border-[#FF7A2A] text-white bg-[#FF7A2A]/10" : "border-white/10 text-slate-300 hover:bg-white/[0.06]"
-                      }`}
-                    >
-                      {selectedWinners.has(entry.id) ? "Selected" : "Pick as winner"}
-                    </button>
-                  )}
-                </div>
-              ))}
-              {entries && entries.length === 0 && <p className="text-base text-slate-500">No entries yet</p>}
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-base font-medium text-slate-400 uppercase tracking-widest">
+                Entries {entries ? `(${entries.length})` : ""}
+              </p>
+              <button
+                type="button"
+                onClick={() => setEntriesDialogOpen(true)}
+                disabled={!entries || entries.length === 0}
+                className="shrink-0 text-base font-medium border border-white/15 text-slate-300 hover:bg-white/[0.06] transition-all rounded-lg px-3 py-1.5 disabled:opacity-40 disabled:pointer-events-none"
+              >
+                View entries
+              </button>
             </div>
             {canPickManually && (
-              <div className="mt-3">
-                <GradientActionButton
-                  onClick={submitManualWinners}
-                  disabled={selectedWinners.size === 0 || selectedWinners.size > giveaway.winner_count}
-                >
-                  Confirm {selectedWinners.size} / {giveaway.winner_count} winner{giveaway.winner_count === 1 ? "" : "s"}
-                </GradientActionButton>
-              </div>
+              <p className="text-base text-slate-400 mt-2">
+                {selectedWinners.size} / {giveaway.winner_count} winner{giveaway.winner_count === 1 ? "" : "s"} selected — open the list to pick.
+              </p>
             )}
           </div>
+
+          <Dialog open={entriesDialogOpen} onOpenChange={setEntriesDialogOpen}>
+            <DialogContent className="max-w-md max-h-[85vh] flex flex-col overflow-hidden bg-[#0f0f12] border-white/10">
+              <DialogHeader>
+                <DialogTitle className="text-white">Entries ({entries?.length ?? 0})</DialogTitle>
+              </DialogHeader>
+
+              <div className="relative shrink-0">
+                <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Input
+                  value={entrySearch}
+                  onChange={(e) => {
+                    setEntrySearch(e.target.value);
+                    setEntryPage(1);
+                  }}
+                  placeholder="Search by @handle or entry #"
+                  className={searchInputClass}
+                />
+              </div>
+
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-2">
+                {pageEntries.map((entry) => (
+                  <div key={entry.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-base font-medium text-white truncate">@{entry.x_handle}</p>
+                      <p className="text-base text-slate-500">
+                        #{entry.entry_index} · {entry.status}
+                        {entry.payout_status && entry.status === "winner" ? ` · payout ${entry.payout_status}` : ""}
+                      </p>
+                      {entry.status === "winner" && entry.claim_payment_id && (
+                        <Link
+                          href={`/c/${entry.claim_payment_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-base text-[#FF7A2A] hover:underline underline-offset-2"
+                        >
+                          View claim link
+                        </Link>
+                      )}
+                    </div>
+                    {canPickManually && (
+                      <button
+                        type="button"
+                        onClick={() => toggleWinner(entry.id)}
+                        className={`shrink-0 rounded-lg px-2.5 py-1 text-base font-medium border transition-colors ${
+                          selectedWinners.has(entry.id) ? "border-[#FF7A2A] text-white bg-[#FF7A2A]/10" : "border-white/10 text-slate-300 hover:bg-white/[0.06]"
+                        }`}
+                      >
+                        {selectedWinners.has(entry.id) ? "Selected" : "Pick as winner"}
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {pageEntries.length === 0 && (
+                  <p className="text-base text-slate-500 text-center py-6">
+                    {searchQuery ? "No matching entries" : "No entries yet"}
+                  </p>
+                )}
+              </div>
+
+              {totalEntryPages > 1 && (
+                <div className="shrink-0 flex items-center justify-between pt-2 border-t border-white/10">
+                  <button
+                    type="button"
+                    disabled={clampedEntryPage <= 1}
+                    onClick={() => setEntryPage((p) => Math.max(1, p - 1))}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span className="text-base text-slate-400">Page {clampedEntryPage} of {totalEntryPages}</span>
+                  <button
+                    type="button"
+                    disabled={clampedEntryPage >= totalEntryPages}
+                    onClick={() => setEntryPage((p) => Math.min(totalEntryPages, p + 1))}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                    aria-label="Next page"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {canPickManually && (
+                <div className="shrink-0">
+                  <GradientActionButton
+                    onClick={submitManualWinners}
+                    disabled={selectedWinners.size === 0 || selectedWinners.size > giveaway.winner_count}
+                  >
+                    Confirm {selectedWinners.size} / {giveaway.winner_count} winner{giveaway.winner_count === 1 ? "" : "s"}
+                  </GradientActionButton>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setEntriesDialogOpen(false)}
+                className="shrink-0 w-full text-base font-medium border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all rounded-lg px-3 py-2.5"
+              >
+                Close
+              </button>
+            </DialogContent>
+          </Dialog>
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <p className="text-base font-medium text-slate-400 uppercase tracking-widest mb-2">

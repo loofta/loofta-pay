@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, Loader2, Trash2, Download, Pencil } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Trash2, Download, Pencil, ShieldCheck, ExternalLink } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePrivy, useLinkAccount } from "@privy-io/react-auth";
 import { useWallets, useSignTransaction } from "@privy-io/react-auth/solana";
@@ -24,6 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
@@ -180,6 +181,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [downloadingImage, setDownloadingImage] = useState(false);
+  const [showProofModal, setShowProofModal] = useState(false);
 
   // Funding — "Pay now" mirrors the app's existing send-payment/multi-send pattern instead of
   // asking the creator to copy a raw address into another wallet. Lives here (not on /manage) so
@@ -575,6 +577,42 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             </AlertDialogContent>
           </AlertDialog>
 
+          <Dialog open={showProofModal} onOpenChange={setShowProofModal}>
+            <DialogContent className="border-white/10 bg-[#0f0f12] text-white sm:max-w-md max-h-[85vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-[#FF7A2A]" />
+                  Provably fair draw
+                </DialogTitle>
+                <DialogDescription className="text-slate-400">
+                  The winner was chosen using real on-chain randomness — Loofta never saw or picked the outcome in advance. Here&apos;s how to check it yourself.
+                  {giveaway.is_devnet && " This particular giveaway ran on Solana devnet (a test network), so its proof lives there too — not a real-money draw."}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 mt-2">
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <p className="text-base font-medium text-white mb-1">Randomness</p>
+                  <p className="text-base text-slate-400 mb-2">
+                    An independent oracle (MagicBlock), not Loofta, generated this value on-chain after entries closed.
+                  </p>
+                  {giveaway.draw_request_pda ? (
+                    <a
+                      href={`https://explorer.solana.com/address/${giveaway.draw_request_pda}${giveaway.is_devnet ? "?cluster=devnet" : ""}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-base text-[#FF7A2A] hover:underline underline-offset-2"
+                    >
+                      View the on-chain account <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  ) : (
+                    <span className="text-base text-slate-500">Not available for this draw</span>
+                  )}
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
           <h1 className="text-2xl font-medium text-white mb-2">{giveaway.title}</h1>
           {giveaway.description && <FormattedText text={giveaway.description} className="text-base text-slate-300 mb-5 leading-relaxed" />}
 
@@ -625,30 +663,14 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               </div>
             )}
             {giveaway.vrf_fulfilled_at && giveaway.vrf_randomness && (
-              <p className="text-base text-slate-500 mt-3 break-all">
-                Draw proof: randomness{" "}
-                {giveaway.draw_request_pda ? (
-                  <a
-                    href={`https://explorer.solana.com/address/${giveaway.draw_request_pda}${giveaway.is_devnet ? "?cluster=devnet" : ""}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-mono text-slate-400 hover:text-white hover:underline underline-offset-2 transition-colors"
-                  >
-                    {giveaway.vrf_randomness.slice(0, 16)}…
-                  </a>
-                ) : (
-                  <span className="font-mono">{giveaway.vrf_randomness.slice(0, 16)}…</span>
-                )}
-                , snapshot{" "}
-                <a
-                  href={`${BACKEND_URL}/giveaways/public/${giveaway.id}/entries`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-mono text-slate-400 hover:text-white hover:underline underline-offset-2 transition-colors"
-                >
-                  {giveaway.entry_snapshot_hash?.slice(0, 16)}…
-                </a>
-              </p>
+              <button
+                type="button"
+                onClick={() => setShowProofModal(true)}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                View on-chain proof
+              </button>
             )}
             {winnerHandles.length > 0 && (
               <div className="mt-3">
