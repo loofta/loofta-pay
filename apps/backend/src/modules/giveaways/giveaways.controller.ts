@@ -160,4 +160,11 @@ export class GiveawaysController {
     await this.drawService.selectWinnersManually(id, req.user!.id, dto.entry_ids);
     return { ok: true };
   }
+
+  @Put(':id/force-run-draw')
+  @ApiOperation({ summary: 'Creator-only: force-close entries and run the draw immediately instead of waiting for entries_close_at' })
+  async forceRunDraw(@Req() req: { user?: { id: string } }, @Param('id') id: string): Promise<{ giveaway: Giveaway }> {
+    const giveaway = await this.drawService.forceRunDrawNow(id, req.user!.id);
+    return { giveaway };
+  }
 }

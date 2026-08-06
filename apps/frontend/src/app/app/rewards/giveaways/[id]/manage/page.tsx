@@ -7,6 +7,16 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useToast } from "@/components/ui/use-toast";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
@@ -61,6 +71,8 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   const { getAccessToken } = usePrivy();
   const { toast } = useToast();
   const [selectedWinners, setSelectedWinners] = useState<Set<string>>(new Set());
+  const [runningDraw, setRunningDraw] = useState(false);
+  const [showRunDrawConfirm, setShowRunDrawConfirm] = useState(false);
 
   const { data: giveaway, refetch: refetchGiveaway } = useQuery({
     queryKey: ["giveaway-manage", id],
@@ -129,6 +141,25 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
     }
   }, [id, selectedWinners, getAccessToken, toast, refetchEntries, refetchGiveaway]);
 
+  const runDrawNow = useCallback(async () => {
+    setShowRunDrawConfirm(false);
+    setRunningDraw(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/force-run-draw`, {
+        method: "PUT",
+        headers: await authHeaders(getAccessToken),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      toast({ title: "Draw complete" });
+      refetchGiveaway();
+      refetchEntries();
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Failed to run draw", description: err.message });
+    } finally {
+      setRunningDraw(false);
+    }
+  }, [id, getAccessToken, toast, refetchGiveaway, refetchEntries]);
+
   if (!giveaway) {
     return (
       <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
@@ -159,6 +190,18 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${statusColor(giveaway.status)}`}>
               {STATUS_LABELS[giveaway.status] ?? giveaway.status.replace(/_/g, " ")}
             </span>
+            {giveaway.status === "OPEN" && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowRunDrawConfirm(true)}
+                  disabled={runningDraw}
+                  className="inline-flex items-center rounded-lg px-3 py-1.5 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-50"
+                >
+                  {runningDraw ? "Running draw…" : "Run draw now"}
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -242,6 +285,21 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
           </div>
         </div>
       </div>
+
+      <AlertDialog open={showRunDrawConfirm} onOpenChange={setShowRunDrawConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Run the draw now?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This closes entries immediately, even if the scheduled close time hasn&apos;t passed yet, and runs the draw right away. This can&apos;t be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={runDrawNow}>Run draw now</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

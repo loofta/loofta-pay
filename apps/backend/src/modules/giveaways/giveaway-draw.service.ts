@@ -55,6 +55,36 @@ export class GiveawayDrawService {
     }
   }
 
+  /** Creator-triggered early close: force entries shut and run the draw immediately instead of
+   *  waiting for entries_close_at + the cron. Unlike advance() (one step per call, meant for a
+   *  cron tick), this drives every step synchronously within the request — including polling the
+   *  VRF oracle to fulfillment (bounded to ~15s; observed real fulfillment latency is ~2-4s) — so
+   *  a creator clicking "Run draw now" sees the real final state, not an intermediate one, whether
+   *  or not any cron is running against this instance. Manual-selection giveaways stop at DRAWING
+   *  same as always; the creator still picks winners separately via select-winners. */
+  async forceRunDrawNow(giveawayId: string, creatorId: string): Promise<Giveaway> {
+    let giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+    if (giveaway.created_by !== creatorId) throw new ForbiddenException('Not your giveaway');
+    if (giveaway.status !== GiveawayStatus.OPEN) {
+      throw new BadRequestException(`Giveaway is ${giveaway.status}, can only force-run the draw from OPEN`);
+    }
+
+    await this.closeEntries(giveaway);
+    giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+    await this.freezeSnapshotAndStartDrawing(giveaway);
+    giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+
+    if (giveaway.status === GiveawayStatus.DRAWING && giveaway.selection_mode !== GiveawaySelectionMode.MANUAL) {
+      for (let i = 0; i < 15; i++) {
+        await this.runAutoDraw(giveaway);
+        giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+        if (giveaway.status !== GiveawayStatus.DRAWING) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+    return giveaway;
+  }
+
   private async closeEntries(giveaway: Giveaway): Promise<void> {
     const { error } = await this.supabaseService.giveaways.update({ status: GiveawayStatus.ENTRIES_CLOSED }).eq('id', giveaway.id);
     if (error) {

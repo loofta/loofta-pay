@@ -46,6 +46,12 @@ export class GiveawayTaskConfigDto {
   @IsOptional()
   @IsBoolean()
   require_proof?: boolean;
+
+  @ApiPropertyOptional({ description: 'custom tasks only — short title shown to the entrant, e.g. "Join the stream". `target` (optional) is the accompanying link.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  title?: string;
 }
 
 export class CreateGiveawayTaskDto {

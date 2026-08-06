@@ -165,17 +165,28 @@ export class GiveawayEntriesService {
     const tasks = await this.giveawaysService.getTasks(giveawayId);
     const task = tasks.find((t) => t.id === taskId);
 
-    // TEMPORARY (2026-08-05): X's "Like Lookup" endpoint is gated behind a tier this app doesn't
-    // have — it always returns an empty liker list regardless of who actually liked the tweet,
-    // which was auto-rejecting every genuine like. Until that access gap is resolved, trust the
-    // click and auto-verify instead of forcing self-report review for something we can't actually
-    // check either way. Remove this branch once Like Lookup access is confirmed working again.
-    if (task?.task_type === GiveawayTaskType.X_LIKE) {
+    // Trust-on-click for the two X actions we can never verify against a real API result:
+    // - X_LIKE: TEMPORARY (2026-08-05) — X's "Like Lookup" endpoint is gated behind a tier this
+    //   app doesn't have, so it always returns an empty liker list regardless of who actually
+    //   liked the tweet, which was auto-rejecting every genuine like. Remove this half once Like
+    //   Lookup access is confirmed working again.
+    // - X_BOOKMARK: PERMANENT — confirmed 2026-08-06 there is no X API endpoint that exposes who
+    //   bookmarked a tweet (bookmarks are private per-user data; the bookmarks endpoint only
+    //   returns the calling user's own bookmarks). There is no future "fix" to revert this to —
+    //   trusting the click is the only option this task type will ever have.
+    // Both trust the click instead of parking it in the self-report review queue: leaving it
+    // there previously meant an entrant's eligibility silently blocked on a creator manually
+    // reviewing something no one can actually confirm one way or the other.
+    if (task?.task_type === GiveawayTaskType.X_LIKE || task?.task_type === GiveawayTaskType.X_BOOKMARK) {
+      const note =
+        task.task_type === GiveawayTaskType.X_LIKE
+          ? 'Auto-approved — X Like Lookup unavailable on current API tier'
+          : 'Auto-approved — X has no public API for who bookmarked a post, so this is trusted on click';
       const { data: trusted, error: trustedError } = await this.supabaseService.giveawayTaskCompletions
         .update({
           submission_data: submissionData ?? null,
           verification_status: GiveawayTaskCompletionStatus.VERIFIED,
-          verification_detail: { note: 'Auto-approved — X Like Lookup unavailable on current API tier' },
+          verification_detail: { note },
           reviewed_at: new Date().toISOString(),
         })
         .eq('id', completion.id)
