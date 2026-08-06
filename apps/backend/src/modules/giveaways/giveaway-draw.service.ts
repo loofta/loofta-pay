@@ -67,6 +67,9 @@ export class GiveawayDrawService {
   }
 
   private async freezeSnapshotAndStartDrawing(giveaway: Giveaway): Promise<void> {
+    // One last chance for anyone who did the X task for real but never clicked "Verify" in-app —
+    // see runFinalXVerificationSweep's doc comment for why this replaced the old scheduled cron.
+    await this.entriesService.runFinalXVerificationSweep(giveaway);
     const eligible = await this.entriesService.getEligibleVerifiedEntries(giveaway.id);
     const entryIds = eligible.map((e) => e.id);
 

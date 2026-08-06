@@ -319,6 +319,32 @@ export class GiveawayEntriesService {
     return byTask;
   }
 
+  /** Final catch-all X-verification pass, run exactly once per giveaway at its actual end date —
+   *  called from GiveawayDrawService right as entries close, before the eligibility snapshot
+   *  freezes. Replaces the old fixed-schedule cron (removed 2026-08-06, Lisa: "we don't have
+   *  budget to automatically do it, they need to click verify"): during the giveaway, verification
+   *  is click-only via submitTaskCompletion's inline path above. This sweep exists so an entrant
+   *  who genuinely did the X task but never clicked "Verify" in-app isn't unfairly excluded from
+   *  the draw — same cache-shared fetch as every other verification call (XVerificationService's
+   *  FETCH_CACHE_TTL_MS), so it costs at most one real X call per still-pending task, not per
+   *  entrant. */
+  async runFinalXVerificationSweep(giveaway: Giveaway): Promise<void> {
+    if (!this.xVerification.isAvailable()) return;
+    try {
+      const pendingByTask = await this.listPendingByTask(giveaway.id);
+      if (!pendingByTask.size) return;
+      const tasks = await this.giveawaysService.getTasks(giveaway.id);
+      const tasksById = new Map(tasks.map((t) => [t.id, t]));
+      for (const [taskId, pending] of pendingByTask) {
+        const task = tasksById.get(taskId);
+        if (!task) continue;
+        await this.xVerification.verifyPendingCompletions(giveaway, task, pending);
+      }
+    } catch (e: any) {
+      this.logger.error(`[GiveawayEntries] runFinalXVerificationSweep ${giveaway.id}: ${e?.message ?? e}`);
+    }
+  }
+
   /** Entries where every task completion is verified/auto_verified — the pool the draw selects
    *  winners from. Disqualified/incomplete entries are simply excluded, not error cases. */
   async getEligibleVerifiedEntries(giveawayId: string): Promise<GiveawayEntry[]> {
