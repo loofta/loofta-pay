@@ -51,6 +51,7 @@ export function Footer() {
             <ul className="space-y-2">
               <li><a href="/guides/send-crypto-privately" className="text-slate-400 hover:text-white transition-colors">Send crypto privately</a></li>
               <li><a href="/vs/paypal" className="text-slate-400 hover:text-white transition-colors">Loofta vs PayPal</a></li>
+              <li><a href="/blog" className="text-slate-400 hover:text-white transition-colors">Blog</a></li>
             </ul>
           </div>
 

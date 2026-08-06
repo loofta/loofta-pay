@@ -23,6 +23,14 @@ export interface XProfile {
  *  when hit, since a truncated list means some real completions could be missed. */
 const MAX_PAGINATED_USERS = 5_000;
 
+/** X API calls are metered/expensive, and verifyPendingCompletions is invoked from two independent
+ *  paths — the 2-minute cron batch AND every entrant's inline "Verify"/"Try again" click. Without
+ *  sharing results, a burst of near-simultaneous submissions on the same tweet each pays for its
+ *  own full retweeter/quote/liker fetch. Cache the id-set per (task, target) for a short window so
+ *  bursts collapse into one real fetch; TTL is short enough that a genuine retry a minute later
+ *  still sees fresh data. */
+const FETCH_CACHE_TTL_MS = 60 * 1000;
+
 /**
  * Real X API v2 verification for X-based giveaway tasks, reusing the same OAuth1 user-context
  * credentials apps/twitter-bot already runs on (TWITTER_API_KEY/SECRET/ACCESS_TOKEN/ACCESS_SECRET)
@@ -37,6 +45,16 @@ const MAX_PAGINATED_USERS = 5_000;
 export class XVerificationService {
   private readonly logger = new Logger(XVerificationService.name);
   private client: TwitterApi | null = null;
+  private readonly fetchCache = new Map<string, { ids: Set<string>; expiresAt: number }>();
+
+  /** Shared cache wrapper for every fetch*Ids helper below — see FETCH_CACHE_TTL_MS. */
+  private async getCachedIds(key: string, fetch: () => Promise<Set<string>>): Promise<Set<string>> {
+    const cached = this.fetchCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.ids;
+    const ids = await fetch();
+    this.fetchCache.set(key, { ids, expiresAt: Date.now() + FETCH_CACHE_TTL_MS });
+    return ids;
+  }
 
   constructor(private readonly configService: ConfigService, private readonly supabaseService: SupabaseService) {
     const apiKey = this.configService.get<string>('TWITTER_API_KEY');
@@ -106,19 +124,21 @@ export class XVerificationService {
    *  and was still rejected, since only plain retweets were being checked. Union both. */
   private async fetchRetweeterIds(tweetId: string): Promise<Set<string>> {
     if (!this.client) return new Set();
-    const [retweeterIds, quoteAuthorIds] = await Promise.all([
-      (async () => {
-        const paginator = await this.client!.v2.tweetRetweetedBy(tweetId, { asPaginator: true, max_results: 100 });
-        return this.collectUserIds(paginator, `retweetedBy(${tweetId})`);
-      })(),
-      this.fetchQuoteTweetAuthorIds(tweetId),
-    ]);
-    return new Set([...retweeterIds, ...quoteAuthorIds]);
+    return this.getCachedIds(`retweet:${tweetId}`, async () => {
+      const [retweeterIds, quoteAuthorIds] = await Promise.all([
+        (async () => {
+          const paginator = await this.client!.v2.tweetRetweetedBy(tweetId, { asPaginator: true, max_results: 100 });
+          return this.collectUserIds(paginator, `retweetedBy(${tweetId})`);
+        })(),
+        this.fetchQuoteTweetAuthorIds(tweetId),
+      ]);
+      return new Set([...retweeterIds, ...quoteAuthorIds]);
+    });
   }
 
   private async fetchQuoteTweetAuthorIds(tweetId: string): Promise<Set<string>> {
     if (!this.client) return new Set();
-    const paginator = await this.client.v2.quotes(tweetId, { max_results: 100 });
+    const paginator = await this.client.v2.quotes(tweetId, { max_results: 100, 'tweet.fields': ['author_id'] });
     const ids = new Set<string>();
     for await (const tweet of paginator) {
       if (tweet.author_id) ids.add(tweet.author_id);
@@ -132,16 +152,20 @@ export class XVerificationService {
 
   private async fetchLikerIds(tweetId: string): Promise<Set<string>> {
     if (!this.client) return new Set();
-    const paginator = await this.client.v2.tweetLikedBy(tweetId, { asPaginator: true, max_results: 100 });
-    return this.collectUserIds(paginator, `likedBy(${tweetId})`);
+    return this.getCachedIds(`like:${tweetId}`, async () => {
+      const paginator = await this.client!.v2.tweetLikedBy(tweetId, { asPaginator: true, max_results: 100 });
+      return this.collectUserIds(paginator, `likedBy(${tweetId})`);
+    });
   }
 
   private async fetchFollowerIds(targetHandle: string): Promise<Set<string>> {
     if (!this.client) return new Set();
-    const target = await this.client.v2.userByUsername(targetHandle);
-    if (!target.data) return new Set();
-    const paginator = await this.client.v2.followers(target.data.id, { asPaginator: true, max_results: 1000 });
-    return this.collectUserIds(paginator, `followers(${targetHandle})`);
+    return this.getCachedIds(`follow:${targetHandle.toLowerCase()}`, async () => {
+      const target = await this.client!.v2.userByUsername(targetHandle);
+      if (!target.data) return new Set();
+      const paginator = await this.client!.v2.followers(target.data.id, { asPaginator: true, max_results: 1000 });
+      return this.collectUserIds(paginator, `followers(${targetHandle})`);
+    });
   }
 
   /** Replies (conversation_id search) whose author is in `entrantIds` — used for x_comment. Text
@@ -150,17 +174,19 @@ export class XVerificationService {
    *  queue on `rejected`, not a silent security hole. */
   private async fetchReplyAuthors(tweetId: string, commentRequirement?: string): Promise<Set<string>> {
     if (!this.client) return new Set();
-    const paginator = await this.client.v2.search(`conversation_id:${tweetId} is:reply`, {
-      max_results: 100,
-      'tweet.fields': ['author_id', 'text'],
+    return this.getCachedIds(`comment:${tweetId}:${commentRequirement ?? ''}`, async () => {
+      const paginator = await this.client!.v2.search(`conversation_id:${tweetId} is:reply`, {
+        max_results: 100,
+        'tweet.fields': ['author_id', 'text'],
+      });
+      const authorIds = new Set<string>();
+      for await (const tweet of paginator) {
+        if (commentRequirement && !tweet.text?.toLowerCase().includes(commentRequirement.toLowerCase())) continue;
+        if (tweet.author_id) authorIds.add(tweet.author_id);
+        if (authorIds.size >= MAX_PAGINATED_USERS) break;
+      }
+      return authorIds;
     });
-    const authorIds = new Set<string>();
-    for await (const tweet of paginator) {
-      if (commentRequirement && !tweet.text?.toLowerCase().includes(commentRequirement.toLowerCase())) continue;
-      if (tweet.author_id) authorIds.add(tweet.author_id);
-      if (authorIds.size >= MAX_PAGINATED_USERS) break;
-    }
-    return authorIds;
   }
 
   /**

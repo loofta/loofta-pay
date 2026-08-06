@@ -735,6 +735,13 @@ function RewardsSection() {
               <span className="font-display text-lg font-medium text-[#EAB308] sm:text-[26px]">+1 ticket</span>
               per 20 USDC sent, no cost, no catch
             </div>
+
+            <a
+              href="/blog/what-is-megapot-usdc-lottery-explained"
+              className="mt-6 inline-block font-grotesk text-sm font-medium text-white/60 underline decoration-white/30 underline-offset-4 transition-colors hover:text-white"
+            >
+              Learn how the daily draw works
+            </a>
           </div>
         </motion.div>
       </div>
