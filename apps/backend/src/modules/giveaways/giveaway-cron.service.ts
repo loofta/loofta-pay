@@ -3,12 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { GiveawaysService } from './giveaways.service';
 import { GiveawayFundingService } from './giveaway-funding.service';
-import { GiveawayEntriesService } from './giveaway-entries.service';
-import { XVerificationService } from './x-verification.service';
 import { GiveawayDrawService } from './giveaway-draw.service';
 import { GiveawayPayoutService } from './giveaway-payout.service';
 import { GiveawayBurnerSweepService } from './giveaway-burner-sweep.service';
-import { GiveawayStatus } from './entities/giveaway.entity';
 import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 
 /**
@@ -24,8 +21,6 @@ export class GiveawayCronService {
   constructor(
     private readonly giveaways: GiveawaysService,
     private readonly funding: GiveawayFundingService,
-    private readonly entries: GiveawayEntriesService,
-    private readonly xVerification: XVerificationService,
     private readonly draw: GiveawayDrawService,
     private readonly payout: GiveawayPayoutService,
     private readonly burnerSweep: GiveawayBurnerSweepService,
@@ -54,34 +49,6 @@ export class GiveawayCronService {
       }
     } catch (e: any) {
       this.logger.error(`pollFunding: ${e?.message ?? e}`);
-    }
-  }
-
-  /** Every 2 minutes: batch X-API verification, one fetch per task (not per entrant) for every
-   *  giveaway still accepting or having just closed entries. */
-  @Cron('0 */2 * * * *')
-  async verifyXTasks(): Promise<void> {
-    if (!this.isProd || !this.xVerification.isAvailable()) return;
-    try {
-      const active = await this.giveaways.findAdvanceable();
-      for (const giveaway of active) {
-        if (giveaway.status !== GiveawayStatus.OPEN && giveaway.status !== GiveawayStatus.ENTRIES_CLOSED) continue;
-        try {
-          const pendingByTask = await this.entries.listPendingByTask(giveaway.id);
-          if (!pendingByTask.size) continue;
-          const tasks = await this.giveaways.getTasks(giveaway.id);
-          const tasksById = new Map(tasks.map((t) => [t.id, t]));
-          for (const [taskId, pending] of pendingByTask) {
-            const task = tasksById.get(taskId);
-            if (!task) continue;
-            await this.xVerification.verifyPendingCompletions(giveaway, task, pending);
-          }
-        } catch (e: any) {
-          this.logger.error(`verifyXTasks ${giveaway.id}: ${e?.message ?? e}`);
-        }
-      }
-    } catch (e: any) {
-      this.logger.error(`verifyXTasks: ${e?.message ?? e}`);
     }
   }
 

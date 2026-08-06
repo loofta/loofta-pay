@@ -59,10 +59,14 @@ export function proxy(request: NextRequest) {
     "/partners",
     "/guides/send-crypto-privately",
     "/vs/paypal",
+    "/blog",
   ]);
+  // /blog/[slug] is dynamic, so the exact-match Set above can't cover it — treat any /blog/*
+  // path as marketing too, same as the literal paths in marketingPaths.
+  const isMarketingPath = (p: string) => marketingPaths.has(p) || p.startsWith("/blog/");
   const isLocalAppPath =
     isLocalhost &&
-    !marketingPaths.has(pathname) &&
+    !isMarketingPath(pathname) &&
     !pathname.startsWith("/app");
 
   // App-only kill switch: set MAINTENANCE_MODE=true on Railway/Vercel to rewrite the
@@ -72,7 +76,7 @@ export function proxy(request: NextRequest) {
   if (
     isMaintenanceModeOn &&
     (isAppDomain || isLocalAppPath) &&
-    !marketingPaths.has(pathname) &&
+    !isMarketingPath(pathname) &&
     pathname !== "/maintenance"
   ) {
     return NextResponse.rewrite(new URL("/maintenance", request.url));
@@ -86,7 +90,7 @@ export function proxy(request: NextRequest) {
 
   // Marketing pages (e.g. /partners) linked from within the app must still
   // resolve on pay.loofta.xyz instead of being rewritten to a nonexistent /app/* route.
-  if (isAppDomain && marketingPaths.has(pathname)) {
+  if (isAppDomain && isMarketingPath(pathname)) {
     return NextResponse.next();
   }
 

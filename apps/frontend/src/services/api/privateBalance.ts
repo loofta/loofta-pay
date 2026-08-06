@@ -43,7 +43,7 @@ export async function startPrivateDeposit(
   userId: string,
   accessToken?: string | null,
   cluster?: 'devnet' | 'mainnet',
-): Promise<{ id: string; depositAddress: string; memo?: string | null }> {
+): Promise<{ id: string; depositAddress: string; memo?: string | null; amountToSendUsdc?: number; feeEstimateUsdc?: number }> {
   return fetchApi(`/private-balance/deposit/start`, {
     method: 'POST',
     body: JSON.stringify({ amount_usdc: amountUsdc, cluster }),
@@ -63,6 +63,22 @@ export async function startPrivateDepositCrossChain(
   return fetchApi(`/private-balance/deposit/start`, {
     method: 'POST',
     body: JSON.stringify({ source_token: sourceToken, source_amount: sourceAmount, cluster }),
+    userId,
+    accessToken,
+  });
+}
+
+/** Direct private deposit: a connected external wallet -> the caller's own wallet, no burner. */
+export async function buildDirectPrivateDeposit(
+  amountUsdc: number,
+  sourceWalletAddress: string,
+  userId: string,
+  accessToken?: string | null,
+  cluster?: 'devnet' | 'mainnet',
+): Promise<MagicblockTxResponse> {
+  return fetchApi(`/private-balance/deposit/build-direct`, {
+    method: 'POST',
+    body: JSON.stringify({ amount_usdc: amountUsdc, source_wallet_address: sourceWalletAddress, cluster }),
     userId,
     accessToken,
   });

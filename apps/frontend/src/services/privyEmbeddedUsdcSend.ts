@@ -82,8 +82,17 @@ export async function sendUsdcWithBackendFeePayer(params: {
    *  about to sponsor matches that claim's own recipient on file, instead of trusting any
    *  destination the client supplies (see project memory: solana sponsor security hardening,
    *  Attack 6 / intent-binding fix). Omit for flows with no such backend-tracked intent yet
-   *  (near-intents withdraw, PAJ off-ramp) — falls back to the per-user volume cap. */
+   *  (near-intents withdraw) — falls back to the per-user volume cap. */
   claimId?: string;
+  /** Same idea as claimId, for a PAJ Cash offramp order (created server-side before this send —
+   *  see PajCashOfframpView.tsx). */
+  pajOrderId?: string;
+  /** Same idea, for a Near Intents withdrawal order (created server-side before this send — see
+   *  BalanceModal.tsx's handleWithdraw / prepareNearIntentsWithdrawal). */
+  nearIntentsOrderId?: string;
+  /** Same idea, for a "peer offramp" (ZKP2P/Base bridging) request — see BalanceModal.tsx's
+   *  handlePeerSubmit, which already creates a real offramp_requests row via POST /api/offramp. */
+  offrampRequestId?: string;
 }): Promise<string> {
   const {
     senderAddress,
@@ -99,6 +108,9 @@ export async function sendUsdcWithBackendFeePayer(params: {
     network,
     looftaFeeUsdc,
     claimId,
+    pajOrderId,
+    nearIntentsOrderId,
+    offrampRequestId,
   } = params;
   const chain = params.chain ?? getPrivySolanaChain();
 
@@ -134,5 +146,8 @@ export async function sendUsdcWithBackendFeePayer(params: {
     accessToken,
     network,
     claimId,
+    pajOrderId,
+    nearIntentsOrderId,
+    offrampRequestId,
   );
 }
