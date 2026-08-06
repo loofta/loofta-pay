@@ -522,16 +522,18 @@ export class SolanaSponsorService {
     // creations would be fine because none of them is free to the requester. That pricing was
     // built for multi-send only and was never wired up here, so until it is, a per-user volume
     // cap (shared with every other unpriced sponsor-paid ATA path — see
-    // assertPerUserAtaCreationCapNotExceeded) is the real control for THIS endpoint — see incident
-    // 2026-08-04: one caller used it to sponsor 25+ distinct new wallets over ~2 hours, deliberately
-    // paced to stay under any rate/burst detection, at zero cost recovery. Skipped when userId is
-    // absent (cron/backend-only callers have no identity to cap against — unchanged from before),
-    // and skipped when claimId/pajOrderId already verified the destination above — that's a
-    // strictly stronger check (tied to a real, pre-existing record) than "hasn't this caller done
-    // this too many times", and a caller legitimately paying into many different real
-    // claims/orders shouldn't be capped the same way a caller inventing wallets out of thin air
-    // should be.
-    if (userId && !claimId && !pajOrderId && !nearIntentsOrderId && !offrampRequestId) {
+    // assertPerUserAtaCreationCapNotExceeded) is the real control for THIS endpoint.
+    //
+    // Applied UNCONDITIONALLY whenever userId is present — previously skipped when
+    // claimId/pajOrderId/etc. already verified the destination, on the theory that a real backing
+    // record is a strictly stronger check than a volume cap. That reasoning broke in the
+    // 2026-08-06 recurrence: claims can be self-created by anyone via POST /claims/create, so an
+    // attacker can pay into a claim they authored themselves, targeting a destination they own —
+    // intent-binding "passes" every time because the record is real, it's just real AND
+    // attacker-controlled. The cap is the only thing that actually bounds this, so it must apply
+    // regardless of which intent id (if any) was supplied. Skipped only when userId is absent
+    // (cron/backend-only callers have no identity to cap against).
+    if (userId) {
       await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, userId, chargeable.length, `SolanaSponsor:${label}`);
     }
 
