@@ -20,7 +20,7 @@ Across platforms in this space, a few factors usually apply:
 
 ## What to actually check
 
-Before playing any crypto lottery, including Megapot:
+Before playing any crypto lottery, including Loofta's:
 
 1. Confirm your country and, if relevant, your state or province doesn't restrict online lotteries or gambling-adjacent products.
 2. Check the platform's own terms of service for age and geographic eligibility requirements.

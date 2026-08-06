@@ -82,7 +82,6 @@ export function Footer() {
             <h4 className="text-white font-semibold mb-4">Ecosystem</h4>
             <ul className="space-y-2">
               <li><a href="https://magicblock.xyz" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">MagicBlock</a></li>
-              <li><a href="https://megapot.io" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Megapot</a></li>
               <li><a href="https://blink.cash" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Blink.cash</a></li>
             </ul>
           </div>

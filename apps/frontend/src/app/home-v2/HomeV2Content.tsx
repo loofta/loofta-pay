@@ -737,7 +737,7 @@ function RewardsSection() {
             </div>
 
             <a
-              href="/blog/what-is-megapot-usdc-lottery-explained"
+              href="/blog/how-loofta-daily-lottery-works"
               className="mt-6 block font-grotesk text-sm font-medium text-white/60 underline decoration-white/30 underline-offset-4 transition-colors hover:text-white"
             >
               Learn how the daily draw works

@@ -16,7 +16,7 @@ import { SolflareWalletAdapter } from "@solana/wallet-adapter-solflare";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
 export { useWallet } from "@solana/wallet-adapter-react";
-export { useWalletModal } from "@solana/wallet-adapter-react-ui";
+export { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 
 export function SolanaWalletConnectProvider({ rpcUrl, children }: { rpcUrl: string; children: ReactNode }) {
   // Phantom + Solflare are listed explicitly so they always show in the picker (with an "install"

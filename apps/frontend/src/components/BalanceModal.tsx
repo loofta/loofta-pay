@@ -70,7 +70,7 @@ import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@
 import { QRCodeSVG } from "qrcode.react";
 import { usePerPrivateSelfTransfer } from "@/hooks/usePerPrivateSelfTransfer";
 import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
-import { SolanaWalletConnectProvider, useWallet as useSolanaWalletAdapter, useWalletModal } from "@/components/SolanaWalletConnect";
+import { SolanaWalletConnectProvider, useWallet as useSolanaWalletAdapter, WalletMultiButton } from "@/components/SolanaWalletConnect";
 import { startPrivateDeposit, getPrivateTransferStatus, type PrivateTransferStatus } from "@/services/api/privateBalance";
 import { PRIVATE_PAYMENT_MAX_WAIT_MINUTES } from "@/lib/privatePaymentCopy";
 import { PajCashOnrampView } from "@/components/paj-cash/PajCashOnrampView";
@@ -295,9 +295,14 @@ function IconBubble({ active, dark, children }: { active: boolean; dark: boolean
 }
 
 /**
- * Private Deposit "Pay now" widget. Connect/pay/disconnect all rendered with our own Button (no
- * @solana/wallet-adapter-react-ui components) so it matches the rest of this modal instead of the
- * library's default look. Only the connect wallet-picker dialog it opens is library-styled.
+ * Private Deposit "Pay now" widget. Connecting goes through the library's own WalletMultiButton
+ * (its internal click handling is what actually works reliably; an earlier attempt to reimplement
+ * that click with our own Button + useWalletModal() broke connecting entirely, for reasons that
+ * weren't worth chasing further given a working alternative existed). Styled via CSS overrides
+ * only, no behavior changes, to keep that working path intact. Once connected, WalletMultiButton
+ * is swapped out for a plain address chip + our own Disconnect link (disconnect() is a simple
+ * state call, not a modal-opening one, so reimplementing it doesn't carry the same risk). This
+ * also avoids the connected state looking like a big gradient CTA when it's really just a status.
  * Must render inside SolanaWalletConnectProvider. Module-level (not nested in BalanceModal) so
  * it isn't redefined every render.
  */
@@ -315,28 +320,25 @@ function PrivateDepositPayNowWidget({
   onViewAddressInstead: () => void;
 }) {
   const { publicKey, signTransaction, connected, disconnect } = useSolanaWalletAdapter();
-  const { setVisible: setWalletModalVisible } = useWalletModal();
   const canPay = connected && !!publicKey && !!signTransaction && status === "idle";
   const short = publicKey ? `${publicKey.toBase58().slice(0, 4)}..${publicKey.toBase58().slice(-4)}` : "";
 
   return (
     <div className="space-y-2">
       {connected && publicKey ? (
-        <div className="flex items-center justify-center gap-2">
-          <span className={`text-sm font-mono ${dark ? "text-slate-400" : "text-gray-500"}`}>{short}</span>
+        <div className={`flex items-center justify-center gap-2 rounded-md py-2 ${dark ? "bg-white/5" : "bg-gray-50"}`}>
+          <span className={`text-sm font-mono ${dark ? "text-slate-300" : "text-gray-700"}`}>{short}</span>
           <button type="button" onClick={() => void disconnect()}
             className={`text-sm underline underline-offset-2 ${dark ? "text-slate-500 hover:text-white" : "text-gray-400 hover:text-gray-700"}`}>
             Disconnect
           </button>
         </div>
       ) : (
-        <Button
-          type="button"
-          onClick={() => setWalletModalVisible(true)}
-          className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white"
-        >
-          Connect wallet
-        </Button>
+        <div className="[&_.wallet-adapter-dropdown]:block [&_.wallet-adapter-dropdown]:w-full [&_.wallet-adapter-button]:w-full [&_.wallet-adapter-button]:justify-center [&_.wallet-adapter-button]:h-10 [&_.wallet-adapter-button]:rounded-md [&_.wallet-adapter-button]:text-sm [&_.wallet-adapter-button]:font-medium [&_.wallet-adapter-button]:font-sans">
+          <WalletMultiButton
+            style={{ background: "linear-gradient(to right, #f97316, #ef4444)" }}
+          />
+        </div>
       )}
       {connected && publicKey && signTransaction && (
         <Button
