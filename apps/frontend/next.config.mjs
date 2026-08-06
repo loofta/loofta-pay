@@ -40,6 +40,14 @@ const nextConfig = {
       '@radix-ui/react-tooltip',
     ],
   },
+  // Vercel's serverless function bundler traces the module graph statically and can miss files
+  // that are only ever touched via a runtime fs.readdirSync/readFileSync (src/lib/blog.ts reads
+  // src/content/blog/*.md this way) — force-include the whole content dir so blog posts aren't
+  // silently absent from the deployed bundle even though they build and run fine locally.
+  outputFileTracingIncludes: {
+    '/blog': ['./src/content/blog/**/*'],
+    '/blog/[slug]': ['./src/content/blog/**/*'],
+  },
   turbopack: {
     resolveAlias: {
       fs: { browser: './empty-module.js' },

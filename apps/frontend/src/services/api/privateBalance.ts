@@ -43,7 +43,7 @@ export async function startPrivateDeposit(
   userId: string,
   accessToken?: string | null,
   cluster?: 'devnet' | 'mainnet',
-): Promise<{ id: string; depositAddress: string; memo?: string | null }> {
+): Promise<{ id: string; depositAddress: string; memo?: string | null; amountToSendUsdc?: number; feeEstimateUsdc?: number }> {
   return fetchApi(`/private-balance/deposit/start`, {
     method: 'POST',
     body: JSON.stringify({ amount_usdc: amountUsdc, cluster }),

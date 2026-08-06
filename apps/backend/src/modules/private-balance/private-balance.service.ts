@@ -11,6 +11,7 @@ import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/
 import { isValidSolanaAddress } from '@/common/solana-address';
 import {
   MAGICBLOCK_GAS_SOL,
+  MAGICBLOCK_VOLUME_FEE_BPS,
   estimateMagicblockGrossUp,
   requestMagicblockPrivateTransfer,
   decodeActualSenderDebit,
@@ -100,7 +101,10 @@ export class PrivateBalanceService {
   // Private Deposit: external/other funds -> burner -> user's Loofta wallet
   // ─────────────────────────────────────────────────────────────────
 
-  async startDeposit(userId: string, dto: StartPrivateDepositDto): Promise<{ id: string; depositAddress: string; memo?: string | null }> {
+  async startDeposit(
+    userId: string,
+    dto: StartPrivateDepositDto,
+  ): Promise<{ id: string; depositAddress: string; memo?: string | null; amountToSendUsdc?: number; feeEstimateUsdc?: number }> {
     // Cross-chain sources are built (see below + PrivateBalanceProcessorService) but disabled
     // until failed/refunded bridges have an automated recovery path — a failed cross-chain
     // deposit today refunds into the burner in the ORIGINAL source token, which nothing
@@ -131,8 +135,37 @@ export class PrivateBalanceService {
         throw new BadRequestException('Could not start private deposit. Please try again.');
       }
 
-      this.logger.log(`[PrivateDeposit] ${data.id}: started (direct), burner=${burner.address.slice(0, 8)}… amount=${dto.amount_usdc} cluster=${cluster}`);
-      return { id: data.id as string, depositAddress: burner.address };
+      // `dto.amount_usdc` is the NET amount the user will receive. The burner-to-wallet delivery
+      // leg (tryDeliverBurnerBalance in private-balance-processor.service.ts) subtracts the relay
+      // fee first, then takes MagicBlock's + Loofta's bps cut out of the remainder. Gross this up
+      // the same way in reverse so the UI can tell the user how much to send to net their
+      // requested amount, instead of them sending the requested amount and receiving less.
+      //
+      // This is an ESTIMATE, not a guarantee: (1) estimateMagicblockGrossUp's own doc comment
+      // says it's an approximation of MagicBlock's internal fee math, not a confirmed-exact figure,
+      // and it was only verified against decoded on-chain transactions for the exactOut path.
+      // The delivery leg here uses exactOut:false, so we're assuming the same bps math applies in
+      // reverse. (2) The relay-fee-in-USDC component is priced off SOL/USD *now*, but
+      // tryDeliverBurnerBalance re-fetches its own fresh price whenever the burner actually gets
+      // swept, which can be much later than this quote (manual/QR funding has no time limit).
+      // If SOL/USD rises in between, the real relay fee at delivery time is higher than quoted
+      // here and the user would net less than promised. The bps cut itself is price-independent
+      // (no drift risk), so only pad the relay-fee component, same "always err high" approach
+      // resolveMagicblockRelayFeeUsdc() already takes for the on-chain call itself.
+      const netBaseUnits = Math.round(dto.amount_usdc * 1_000_000);
+      const relayFeeUnits = Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000);
+      const RELAY_FEE_QUOTE_BUFFER_BPS = 2500; // +25% cushion against SOL/USD drift before delivery
+      const relayFeeUnitsBuffered = relayFeeUnits + Math.ceil((relayFeeUnits * RELAY_FEE_QUOTE_BUFFER_BPS) / 10_000);
+      const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + PRIVATE_BALANCE_PLATFORM_FEE_BPS;
+      const amountToSendUnits = estimateMagicblockGrossUp(netBaseUnits, totalBps) + relayFeeUnitsBuffered;
+
+      this.logger.log(`[PrivateDeposit] ${data.id}: started (direct), burner=${burner.address.slice(0, 8)}… netAmount=${dto.amount_usdc} sendAmount=${amountToSendUnits / 1_000_000} cluster=${cluster}`);
+      return {
+        id: data.id as string,
+        depositAddress: burner.address,
+        amountToSendUsdc: amountToSendUnits / 1_000_000,
+        feeEstimateUsdc: (amountToSendUnits - netBaseUnits) / 1_000_000,
+      };
     }
 
     // Guaranteed unreachable — the guard at the top of this method already rejected any request

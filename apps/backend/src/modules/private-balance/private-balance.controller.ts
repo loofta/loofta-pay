@@ -16,7 +16,7 @@ export class PrivateBalanceController {
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Start a private deposit — returns a one-time burner address to send USDC to' })
-  @ApiResponse({ status: 200, description: '{ id, depositAddress }' })
+  @ApiResponse({ status: 200, description: '{ id, depositAddress, amountToSendUsdc?, feeEstimateUsdc? }' })
   async startDeposit(@PrivyUser() user: { id: string }, @Body() dto: StartPrivateDepositDto) {
     return this.privateBalanceService.startDeposit(user.id, dto);
   }
