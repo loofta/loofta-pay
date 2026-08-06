@@ -28,7 +28,6 @@ import { usePrivy, useWallets as useEvmWallets, useCreateWallet, useSendTransact
 import { useWallets, useSignTransaction, useFundWallet } from "@privy-io/react-auth/solana";
 import { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
-import { buildUSDCTransferTransaction, sendSignedUSDCTransfer } from "@/services/solanaTransfer";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 
 /** Gate check before any EVM gas-sponsored transaction. Throws if rate-limited. */
@@ -71,7 +70,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { usePerPrivateSelfTransfer } from "@/hooks/usePerPrivateSelfTransfer";
 import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
 import { SolanaWalletConnectProvider, useWallet as useSolanaWalletAdapter, WalletMultiButton } from "@/components/SolanaWalletConnect";
-import { startPrivateDeposit, getPrivateTransferStatus, type PrivateTransferStatus } from "@/services/api/privateBalance";
+import { startPrivateDeposit, buildDirectPrivateDeposit, getPrivateTransferStatus, type PrivateTransferStatus } from "@/services/api/privateBalance";
 import { PRIVATE_PAYMENT_MAX_WAIT_MINUTES } from "@/lib/privatePaymentCopy";
 import { PajCashOnrampView } from "@/components/paj-cash/PajCashOnrampView";
 import { PajCashOfframpView } from "@/components/paj-cash/PajCashOfframpView";
@@ -492,6 +491,10 @@ export function BalanceModal({
   // Private Deposit (MagicBlock burner-relay) — USDC on Solana only for now (cross-chain sources
   // are built server-side but gated off until failed-bridge refund recovery is automated)
   const [privateDepositAmount, setPrivateDepositAmount] = useState("");
+  // True once the amount screen's "Deposit" button is clicked. Moves past the amount form without
+  // itself creating a burner. Pay now (direct, no burner) is the default next screen; the burner
+  // only gets created if/when the user explicitly asks for a deposit address instead.
+  const [privateDepositStarted, setPrivateDepositStarted] = useState(false);
   const [privateDepositSubmitting, setPrivateDepositSubmitting] = useState(false);
   const [privateDepositId, setPrivateDepositId] = useState<string | null>(null);
   const [privateDepositAddress, setPrivateDepositAddress] = useState<string | null>(null);
@@ -501,15 +504,10 @@ export function BalanceModal({
   // is what the user will receive, not what they send. See private-balance.service.ts startDeposit.
   const [privateDepositSendAmount, setPrivateDepositSendAmount] = useState<number | null>(null);
   const [privateDepositFeeEstimate, setPrivateDepositFeeEstimate] = useState<number | null>(null);
-  // Which CTA the user picked on the amount screen: controls whether the address/QR view or the
-  // wallet-pay view is shown once the burner exists. Either can switch to the other afterward.
+  // Which CTA the user picked once past the amount screen: "qr" shows the burner address/QR view;
+  // null shows the direct Pay now (no burner) view, the default. Either can switch to the other.
   const [privateDepositEntryMode, setPrivateDepositEntryMode] = useState<"qr" | null>(null);
   const privateDepositPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Mirror privateDepositAddress/privateDepositSendAmount in refs so the "Pay now" flow (which can
-  // be triggered in the same call as burner creation, before a re-render lands) always reads the
-  // just-created burner instead of a stale pre-creation state closure.
-  const privateDepositAddressRef = useRef<string | null>(null);
-  const privateDepositSendAmountRef = useRef<number | null>(null);
 
   // Private Deposit "Pay now": @solana/wallet-adapter-react connect/disconnect state
   // (SolanaWalletConnectProvider, see components/SolanaWalletConnect.tsx) for an installed
@@ -846,8 +844,6 @@ export function BalanceModal({
       const accessToken = await getAccessToken();
       const result = await startPrivateDeposit(privateDepositAmountNum, user.id, accessToken, devnetMode ? "devnet" : "mainnet");
       const sendAmount = result.amountToSendUsdc ?? privateDepositAmountNum;
-      privateDepositAddressRef.current = result.depositAddress;
-      privateDepositSendAmountRef.current = sendAmount;
       setPrivateDepositId(result.id);
       setPrivateDepositAddress(result.depositAddress);
       setPrivateDepositStatus("awaiting_funds");
@@ -863,6 +859,7 @@ export function BalanceModal({
   };
 
   const resetPrivateDeposit = useCallback(() => {
+    setPrivateDepositStarted(false);
     setPrivateDepositId(null);
     setPrivateDepositAddress(null);
     setPrivateDepositStatus(null);
@@ -871,48 +868,48 @@ export function BalanceModal({
     setPrivateDepositSendAmount(null);
     setPrivateDepositFeeEstimate(null);
     setPrivateDepositEntryMode(null);
-    privateDepositAddressRef.current = null;
-    privateDepositSendAmountRef.current = null;
     setPayNowStatus("idle");
     setPayNowError(null);
     localStorage.removeItem(PRIVATE_DEPOSIT_SESSION_KEY);
   }, []);
 
-  // Private Deposit "Pay now": build the funding transfer and sign it with whatever wallet
-  // SolanaWalletConnectProvider/useWallet() has connected. The existing status-poll effect below
-  // picks up the burner-funded -> delivering -> complete transitions automatically once this lands
-  // on-chain, exactly as it does for a manually-sent deposit. No extra plumbing needed here.
+  // Private Deposit "Pay now": a single direct private transfer from the connected wallet straight
+  // to this account's own embedded wallet, no burner, gasless (MagicBlock's relay is the fee
+  // payer, reimbursed in-token, never Loofta's sponsor), exactOut (delivers exactly the typed
+  // amount). No private_transfers row and nothing to poll afterward: once the signature confirms
+  // there's no further backend-tracked state, same as how private claim payments already work.
   const payPrivateDepositFromWallet = useCallback(async (
     senderAddress: string,
     signTx: <T extends Transaction | VersionedTransaction>(tx: T) => Promise<T>,
   ) => {
-    // Read from refs, not state: this can run right after burner creation in the same click
-    // (before a re-render lands), so the state variables may still be stale.
-    const depositAddress = privateDepositAddressRef.current;
-    const sendAmount = privateDepositSendAmountRef.current;
-    if (!depositAddress || !sendAmount) return;
+    if (!user?.id || !privateDepositAmountNum) return;
     setPayNowError(null);
     try {
       const mode = devnetMode ? "devnet" : "mainnet";
       const connection = new Connection(getRpcForMode(mode), "confirmed");
+      const accessToken = await getAccessToken();
 
       setPayNowStatus("building");
-      const unsignedTx = await buildUSDCTransferTransaction({
-        senderAddress,
-        recipientAddress: depositAddress,
-        amountUSDC: sendAmount,
-        connection,
-        usdcMint: getUsdcMintForMode(mode),
-      });
+      const txData = await buildDirectPrivateDeposit(privateDepositAmountNum, senderAddress, user.id, accessToken, mode);
+
+      const rawTxBytes = Buffer.from(txData.transactionBase64, "base64");
+      let tx: Transaction | VersionedTransaction;
+      try {
+        tx = Transaction.from(rawTxBytes);
+      } catch {
+        tx = VersionedTransaction.deserialize(rawTxBytes);
+      }
 
       setPayNowStatus("awaiting_signature");
-      const signedTx = await signTx(unsignedTx);
+      const signedTx = await signTx(tx);
 
       setPayNowStatus("broadcasting");
-      const signature = await sendSignedUSDCTransfer(signedTx, connection);
-      await waitForSignatureConfirmation(connection, signature, 120_000, 1500, "privateDepositPayNow");
+      const serialized = signedTx instanceof Transaction ? signedTx.serialize() : (signedTx as VersionedTransaction).serialize();
+      const signature = await connection.sendRawTransaction(serialized, { skipPreflight: false, preflightCommitment: "confirmed" });
+      await waitForSignatureConfirmation(connection, signature, 120_000, 1500, "privateDepositDirect");
 
       setPayNowStatus("sent");
+      onRefresh();
       toast({ title: "Sent!", description: "Routing privately to your balance…" });
     } catch (err: unknown) {
       setPayNowStatus("idle");
@@ -920,7 +917,7 @@ export function BalanceModal({
       setPayNowError(msg);
       toast({ variant: "destructive", title: "Payment failed", description: msg });
     }
-  }, [devnetMode, toast]);
+  }, [devnetMode, toast, user?.id, privateDepositAmountNum, getAccessToken, onRefresh]);
 
   // Private Withdrawal: sign leg 1 (own wallet -> burner); backend cron handles leg 2 (burner -> destination).
   // USDC on Solana only for now — reuses withdrawAmount/withdrawAddress, same state usdc-sol uses.
@@ -1550,11 +1547,17 @@ export function BalanceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depositPollAddr]);
 
-  // Private Deposit: restore an in-progress session on reopen (completion is backend-driven, can outlive a single session)
+  // Private Deposit: restore an in-progress burner session on reopen (completion is backend-driven,
+  // can outlive a single session). Only the burner/QR path has anything to restore. The direct
+  // Pay now path has no backend row, nothing persists past a page reload for it.
   useEffect(() => {
     if (!open || privateDepositId) return;
     const saved = localStorage.getItem(PRIVATE_DEPOSIT_SESSION_KEY);
-    if (saved) setPrivateDepositId(saved);
+    if (saved) {
+      setPrivateDepositId(saved);
+      setPrivateDepositStarted(true);
+      setPrivateDepositEntryMode("qr");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -2875,8 +2878,35 @@ export function BalanceModal({
                 <ChevronLeft className="h-4 w-4" />Back
               </button>
 
-              {privateDepositAddress ? (
-                /* ── Deposit address view ── */
+              {!privateDepositStarted ? (
+                /* ── Amount form ── */
+                <div className="space-y-4">
+                  <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    Connect a wallet and send privately, or send USDC from any wallet (e.g. an
+                    exchange) to a one-time address. Either way, the sending wallet is never linked
+                    to your Loofta wallet on-chain.
+                  </p>
+                  <div>
+                    <Label htmlFor="private-deposit-amount" className={dark ? "text-slate-300" : undefined}>Amount you&apos;ll receive (USDC)</Label>
+                    <AmountInput
+                      id="private-deposit-amount"
+                      dark={dark}
+                      value={privateDepositAmount}
+                      onChange={setPrivateDepositAmount}
+                      suffix="USDC"
+                      className="mt-1"
+                    />
+                  </div>
+                  <Button
+                    onClick={() => setPrivateDepositStarted(true)}
+                    disabled={!privateDepositAmountNum}
+                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
+                  >
+                    Deposit
+                  </Button>
+                </div>
+              ) : privateDepositAddress && privateDepositEntryMode === "qr" ? (
+                /* ── Deposit address view (burner path, exchanges/any wallet) ── */
                 <div className="space-y-3">
 
                   {/* Status */}
@@ -2913,7 +2943,7 @@ export function BalanceModal({
                     </p>
                   )}
 
-                  {privateDepositStatus !== "complete" && privateDepositEntryMode === "qr" && (
+                  {privateDepositStatus !== "complete" && (
                     <div className={`rounded-2xl border overflow-hidden ${dark ? "border-white/10" : "border-gray-100"}`}>
                       <div className={`px-4 py-3 border-b ${dark ? "border-white/[0.06] bg-white/5" : "border-gray-100 bg-gray-50/60"}`}>
                         <p className={`text-base font-medium ${dark ? "text-slate-400" : "text-gray-500"}`}>
@@ -2947,18 +2977,6 @@ export function BalanceModal({
                     </div>
                   )}
 
-                  {privateDepositStatus === "awaiting_funds" && privateDepositEntryMode !== "qr" && (
-                    <SolanaWalletConnectProvider rpcUrl={getRpcForMode(devnetMode ? "devnet" : "mainnet")}>
-                      <PrivateDepositPayNowWidget
-                        dark={dark}
-                        status={payNowStatus}
-                        error={payNowError}
-                        onPay={(senderAddress, signTx) => void payPrivateDepositFromWallet(senderAddress, signTx)}
-                        onViewAddressInstead={() => setPrivateDepositEntryMode("qr")}
-                      />
-                    </SolanaWalletConnectProvider>
-                  )}
-
                   {(privateDepositStatus === "complete" || privateDepositStatus === "failed") && (
                     <Button onClick={() => { setTopUpView(null); resetPrivateDeposit(); }}
                       className={cn("w-full", privateDepositStatus === "complete" ? "bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white" : "bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white")}>
@@ -2967,31 +2985,53 @@ export function BalanceModal({
                   )}
                 </div>
               ) : (
-                /* ── Amount form ── */
+                /* ── Pay now (direct private transfer, no burner), default once "Deposit" is clicked ── */
                 <div className="space-y-4">
-                  <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    Send USDC from any wallet to a one-time address. It's privately routed to your balance. The sending wallet is never linked to your Loofta wallet on-chain.
-                  </p>
-                  <div>
-                    <Label htmlFor="private-deposit-amount" className={dark ? "text-slate-300" : undefined}>Amount you&apos;ll receive (USDC)</Label>
-                    <AmountInput
-                      id="private-deposit-amount"
-                      dark={dark}
-                      value={privateDepositAmount}
-                      onChange={setPrivateDepositAmount}
-                      suffix="USDC"
-                      className="mt-1"
-                    />
-                  </div>
-                  <Button
-                    onClick={handleStartPrivateDeposit}
-                    disabled={privateDepositSubmitting || !privateDepositAmountNum}
-                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
-                  >
-                    {privateDepositSubmitting ? (
-                      <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Getting deposit ready…</span>
-                    ) : "Deposit"}
-                  </Button>
+                  {payNowStatus === "sent" ? (
+                    <div className={`flex items-center gap-3 rounded-2xl px-4 py-3.5 ${dark ? "bg-white/5 border border-white/10" : "bg-gradient-to-r from-orange-50/70 to-amber-50/30 border border-orange-100"}`}>
+                      <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+                      <div>
+                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Sent!</p>
+                        <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                          Routing to your balance privately, can take up to {PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      Connect a Solana wallet and we&apos;ll deliver exactly {privateDepositAmountNum.toFixed(2)} USDC
+                      to your balance privately, no gas from your wallet.
+                    </p>
+                  )}
+
+                  {payNowStatus !== "sent" && (
+                    privateDepositEntryMode === "qr" && privateDepositSubmitting ? (
+                      <div className="flex items-center justify-center gap-2 py-3">
+                        <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+                        <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>Getting deposit address…</span>
+                      </div>
+                    ) : (
+                      <SolanaWalletConnectProvider rpcUrl={getRpcForMode(devnetMode ? "devnet" : "mainnet")}>
+                        <PrivateDepositPayNowWidget
+                          dark={dark}
+                          status={payNowStatus}
+                          error={payNowError}
+                          onPay={(senderAddress, signTx) => void payPrivateDepositFromWallet(senderAddress, signTx)}
+                          onViewAddressInstead={() => {
+                            setPrivateDepositEntryMode("qr");
+                            if (!privateDepositAddress) void handleStartPrivateDeposit();
+                          }}
+                        />
+                      </SolanaWalletConnectProvider>
+                    )
+                  )}
+
+                  {payNowStatus === "sent" && (
+                    <Button onClick={() => { setTopUpView(null); resetPrivateDeposit(); }}
+                      className="w-full bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white">
+                      Done
+                    </Button>
+                  )}
                 </div>
               )}
             </div>

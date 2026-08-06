@@ -9,7 +9,7 @@ import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { StatusService } from '../intents/status.service';
 import { PrivateBalanceService, PRIVATE_BALANCE_PLATFORM_FEE_BPS } from './private-balance.service';
-import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc, MAGICBLOCK_VOLUME_FEE_BPS, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc, estimateMagicblockGrossUp, MAGICBLOCK_VOLUME_FEE_BPS, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { guardAtaSponsorship, assertPerUserAtaCreationCapNotExceeded } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { reclaimBurnerFunds } from '@/common/burner-reclaim';
@@ -260,7 +260,26 @@ export class PrivateBalanceProcessorService {
     this.logger.log(`[PrivateDeposit] ${row.id}: burner funded (${balance} units) — delivering privately`);
     await this.supabaseService.privateTransfers.update({ status: 'delivering_privately' }).eq('id', row.id);
 
-    const transferUnits = balance - relayFeeUnits;
+    // Deliver the user's EXACT requested net amount whenever the burner holds enough padding to
+    // support it — MagicBlock's exactOut:true grosses up the debit internally and guarantees the
+    // destination nets exactly `amount` (confirmed semantics, see this file's top comment). Any
+    // leftover stays in the burner and is swept to the fee payer by reclaimBurnerLater() below —
+    // "burner delivers the exact amount, we get the rest," same as claim/send-payment burners.
+    // Only fall back to the old best-effort (deliver whatever's left, amount may run slightly over
+    // or under) when the burner doesn't provably hold enough: exactOut:true debiting more than the
+    // burner has would fail on-chain outright, so this must stay conservative. A manually-funded
+    // (QR/address) deposit that only just cleared the requireExpected gate above, with no padding
+    // beyond the bare net target, is the common case that still needs the fallback.
+    const netTargetUnits = BigInt(Math.round(Number(row.amount_requested_usdc) * 1_000_000));
+    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + PRIVATE_BALANCE_PLATFORM_FEE_BPS;
+    const estimatedGrossForExactOut = BigInt(estimateMagicblockGrossUp(Number(netTargetUnits), totalBps));
+    // +2% on top of the estimate: estimateMagicblockGrossUp is an approximation of MagicBlock's
+    // internal math (see its own doc comment), not a confirmed-exact figure — this is a smaller,
+    // separate margin from the one applied when quoting the send amount in private-balance.service.ts.
+    const requiredForExactOut = estimatedGrossForExactOut + (estimatedGrossForExactOut * BigInt(200)) / BigInt(10_000) + relayFeeUnits;
+    const useExactOut = balance >= requiredForExactOut;
+    const transferUnits = useExactOut ? netTargetUnits : (balance - relayFeeUnits);
+
     const destination = await this.usersService.getSolanaWalletAddress(row.user_id, { skipCache: true });
     const destinationPubkey = new PublicKey(destination);
     // Snapshot BEFORE broadcasting hop1 — this is the baseline verifyQueuedDelivery() compares
@@ -274,13 +293,15 @@ export class PrivateBalanceProcessorService {
       ? (await getAssociatedTokenAddress(mint, new PublicKey(feePayerAddress))).toBase58()
       : null;
 
+    this.logger.log(`[PrivateDeposit] ${row.id}: burner balance=${balance} exactOut=${useExactOut} (needs>=${requiredForExactOut}) amount=${transferUnits}`);
+
     const txResponse = await requestMagicblockPrivateTransfer({
       from: row.burner_address,
       to: destination,
       mint: mint.toBase58(),
       amount: Number(transferUnits),
       cluster: row.cluster,
-      exactOut: false,
+      exactOut: useExactOut,
       gasless: true,
       ...(platformFeeAccount ? { platformFeeBps: PRIVATE_BALANCE_PLATFORM_FEE_BPS, platformFeeAccount } : {}),
     });
@@ -290,7 +311,8 @@ export class PrivateBalanceProcessorService {
 
     // hop1 (burner -> MagicBlock's queue) confirmed — NOT the same as delivered. Record what to
     // expect and wait for verifyQueuedDelivery() to observe it actually landing before completing.
-    const expectedUnits = await this.parseExpectedDeliveryUnits(conn, sig, transferUnits);
+    // exactOut:true already guarantees the exact figure, no need to parse it back out of the logs.
+    const expectedUnits = useExactOut ? netTargetUnits : await this.parseExpectedDeliveryUnits(conn, sig, transferUnits);
     await this.supabaseService.privateTransfers.update({
       leg2_tx_signature: sig,
       delivery_hop1_confirmed_at: new Date().toISOString(),

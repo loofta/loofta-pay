@@ -68,6 +68,22 @@ export async function startPrivateDepositCrossChain(
   });
 }
 
+/** Direct private deposit: a connected external wallet -> the caller's own wallet, no burner. */
+export async function buildDirectPrivateDeposit(
+  amountUsdc: number,
+  sourceWalletAddress: string,
+  userId: string,
+  accessToken?: string | null,
+  cluster?: 'devnet' | 'mainnet',
+): Promise<MagicblockTxResponse> {
+  return fetchApi(`/private-balance/deposit/build-direct`, {
+    method: 'POST',
+    body: JSON.stringify({ amount_usdc: amountUsdc, source_wallet_address: sourceWalletAddress, cluster }),
+    userId,
+    accessToken,
+  });
+}
+
 export async function buildPrivateWithdrawal(
   amountUsdc: number,
   destinationAddress: string,

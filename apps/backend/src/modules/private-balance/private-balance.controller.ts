@@ -4,7 +4,7 @@ import { AuthGuard, RateLimitGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { PrivateBalanceService } from './private-balance.service';
-import { StartPrivateDepositDto, BuildPrivateWithdrawalDto, RecordWithdrawalSignatureDto } from './dto';
+import { StartPrivateDepositDto, BuildDirectDepositDto, BuildPrivateWithdrawalDto, RecordWithdrawalSignatureDto } from './dto';
 
 @Controller('private-balance')
 export class PrivateBalanceController {
@@ -19,6 +19,17 @@ export class PrivateBalanceController {
   @ApiResponse({ status: 200, description: '{ id, depositAddress, amountToSendUsdc?, feeEstimateUsdc? }' })
   async startDeposit(@PrivyUser() user: { id: string }, @Body() dto: StartPrivateDepositDto) {
     return this.privateBalanceService.startDeposit(user.id, dto);
+  }
+
+  @Post('deposit/build-direct')
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'privatebal:build')
+  @HttpCode(HttpStatus.OK)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Build a direct private transfer from a connected external wallet straight to the caller\'s own wallet, no burner' })
+  @ApiResponse({ status: 200, description: '{ transactionBase64, version, sendTo, feeAmountUsdc, feeBreakdown }' })
+  async buildDirectDeposit(@PrivyUser() user: { id: string }, @Body() dto: BuildDirectDepositDto) {
+    return this.privateBalanceService.buildDirectDeposit(user.id, dto);
   }
 
   @Post('withdrawal/build')
