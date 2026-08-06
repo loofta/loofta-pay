@@ -57,9 +57,15 @@ export class GiveawayCronService {
     }
   }
 
-  /** Every 2 minutes: batch X-API verification, one fetch per task (not per entrant) for every
-   *  giveaway still accepting or having just closed entries. */
-  @Cron('0 */2 * * * *')
+  /** Once a day (was every 2 minutes until 2026-08-06 — Lisa: "we don't have budget to
+   *  automatically do it, they need to click verify"): batch X-API verification, one fetch per
+   *  task (not per entrant), as a backstop for entrants who completed the task on X directly and
+   *  never clicked "Verify" in-app. Day-to-day verification is now click-only via
+   *  GiveawayEntriesService.submitTaskCompletion's inline path (cache-shared, see
+   *  XVerificationService.FETCH_CACHE_TTL_MS) — this is just the daily sweep so nobody who did the
+   *  task but skipped the button stays `pending` forever. Bump the schedule back up (or restore
+   *  '0 */2 * * * *') once there's budget for tighter background verification again. */
+  @Cron('0 0 4 * * *')
   async verifyXTasks(): Promise<void> {
     if (!this.isProd || !this.xVerification.isAvailable()) return;
     try {

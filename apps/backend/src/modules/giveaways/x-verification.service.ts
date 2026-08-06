@@ -23,13 +23,16 @@ export interface XProfile {
  *  when hit, since a truncated list means some real completions could be missed. */
 const MAX_PAGINATED_USERS = 5_000;
 
-/** X API calls are metered/expensive, and verifyPendingCompletions is invoked from two independent
- *  paths — the 2-minute cron batch AND every entrant's inline "Verify"/"Try again" click. Without
- *  sharing results, a burst of near-simultaneous submissions on the same tweet each pays for its
- *  own full retweeter/quote/liker fetch. Cache the id-set per (task, target) for a short window so
- *  bursts collapse into one real fetch; TTL is short enough that a genuine retry a minute later
- *  still sees fresh data. */
-const FETCH_CACHE_TTL_MS = 60 * 1000;
+/** X API calls are metered/expensive (confirmed real cost, ~$3/67 entries on 2026-08-06), and
+ *  verifyPendingCompletions is invoked from two independent paths — the 2-minute cron batch AND
+ *  every entrant's inline "Verify"/"Try again" click. The cron (`giveaway-cron.service.ts`'s
+ *  `verifyXTasks`, every 2 min) re-fetches the FULL retweeter/quote/liker list from scratch every
+ *  single tick as long as anything is pending, with no awareness of whether the underlying data
+ *  could plausibly have changed — this dominates cost, not the inline clicks. TTL is set just
+ *  above the cron interval so most ticks reuse the same cached fetch instead of re-hitting X; the
+ *  design was already "batched, not real-time" (see class doc below), so a few extra minutes of
+ *  staleness costs nothing functionally. */
+const FETCH_CACHE_TTL_MS = 3 * 60 * 1000;
 
 /**
  * Real X API v2 verification for X-based giveaway tasks, reusing the same OAuth1 user-context
