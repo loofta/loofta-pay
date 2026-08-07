@@ -101,6 +101,9 @@ const BRIDGE_FEE_PCT = 0.6; // Near Intents ~0.1% + 50 BPS Loofta referral fee (
 // Withdraw-flow lottery ticket add-on. Mirrors megapot/page.tsx's handlePublicBuy/randomTicket
 // (numbers only matter for display — the backend accepts a quick-pick pick same as a manual one).
 const LOTTERY_TICKET_PRICE_USDC = 1;
+// Below this, adding a ticket would eat the whole withdrawal (or more) — hide the upsell rather
+// than tempt someone into a $0 withdrawal.
+const LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC = LOTTERY_TICKET_PRICE_USDC * 2;
 const LOTTERY_MAIN_MAX = 30;
 const LOTTERY_MAIN_COUNT = 5;
 const LOTTERY_BONUS_MAX = 10;
@@ -4107,7 +4110,7 @@ export function BalanceModal({
                   Toggling on never blocks on balance: it reduces the withdraw amount by the ticket
                   price instead, so there's always room. Flowing glow border matches the one used
                   around the ticket-purchase confirm button on the lottery page (SlideToPay.tsx). */}
-              {isUSDCOnSolana && spendableBalance >= LOTTERY_TICKET_PRICE_USDC && withdrawAmountNum > 0 && (
+              {isUSDCOnSolana && spendableBalance >= LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC && withdrawAmountNum > 0 && (
                 <div className="relative rounded-2xl">
                   <style>{`
                     @keyframes looftaGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
