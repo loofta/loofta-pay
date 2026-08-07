@@ -129,7 +129,7 @@ export class GiveawaysController {
   @ApiOperation({ summary: 'List entries for a giveaway you created' })
   async listEntries(@Req() req: { user?: { id: string } }, @Param('id') id: string) {
     await this.giveawaysService.findOneForCreator(id, req.user!.id);
-    const entries = await this.entriesService.listEntries(id);
+    const entries = await this.entriesService.listEntriesWithClaimStatus(id);
     return { entries };
   }
 

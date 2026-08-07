@@ -256,6 +256,31 @@ export class GiveawayEntriesService {
     return (data ?? []) as GiveawayEntry[];
   }
 
+  /** payout_status: 'succeeded' only means a claim link was created — it says nothing about
+   *  whether the winner actually claimed it. Joins in the real payments.status/paid_at so a
+   *  creator can tell "sent, waiting on winner" apart from "winner actually claimed it." Only the
+   *  creator-facing manage page needs this join, so it's kept separate from listEntries (used by
+   *  the draw/eligibility internals on every cron tick, where the extra payments query would be
+   *  pure overhead). */
+  async listEntriesWithClaimStatus(giveawayId: string): Promise<Array<GiveawayEntry & { payment_status: string | null; payment_paid_at: string | null }>> {
+    const entries = await this.listEntries(giveawayId);
+
+    const paymentIds = entries.map((e) => e.claim_payment_id).filter((id): id is string => Boolean(id));
+    let paymentsById = new Map<string, { status: string; paid_at: string | null }>();
+    if (paymentIds.length) {
+      const { data: payments, error: paymentsError } = await this.supabaseService.payments
+        .select('id, status, paid_at')
+        .in('id', paymentIds);
+      if (paymentsError) throw new BadRequestException(paymentsError.message);
+      paymentsById = new Map((payments ?? []).map((p) => [p.id as string, { status: p.status as string, paid_at: p.paid_at as string | null }]));
+    }
+
+    return entries.map((e) => {
+      const payment = e.claim_payment_id ? paymentsById.get(e.claim_payment_id) : undefined;
+      return { ...e, payment_status: payment?.status ?? null, payment_paid_at: payment?.paid_at ?? null };
+    });
+  }
+
   /** Completions awaiting a human decision — self-report submissions plus anything the X-API
    *  checker couldn't resolve. Permanent fallback per plan §Task verification. */
   async listReviewQueue(giveawayId: string): Promise<Array<GiveawayTaskCompletion & { entry: GiveawayEntry; task: GiveawayTask }>> {

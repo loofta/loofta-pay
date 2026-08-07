@@ -2,7 +2,7 @@
 
 import { use, useCallback, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, X, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, Check, X, Search, ChevronLeft, ChevronRight, Copy, Download } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useToast } from "@/components/ui/use-toast";
@@ -57,7 +57,17 @@ interface GiveawayDetail {
 
 interface Entry {
   id: string; user_id: string; entry_index: number; x_handle: string; status: string;
-  payout_status: string | null; claim_payment_id: string | null;
+  payout_status: string | null; claim_payment_id: string | null; payment_status: string | null;
+}
+
+// payout_status "succeeded" only means a claim link was created — payment_status (the underlying
+// payments row's real status) is what tells us whether the winner actually claimed it.
+function claimStatus(entry: Entry): { label: string; className: string } {
+  if (entry.payout_status === "failed") return { label: "Payout failed", className: "text-red-400" };
+  if (entry.payout_status === "in_progress") return { label: "Sending", className: "text-amber-400" };
+  if (entry.payout_status !== "succeeded") return { label: "Pending", className: "text-slate-500" };
+  if (entry.payment_status === "SUCCESS") return { label: "Claimed", className: "text-emerald-400" };
+  return { label: "Sent, awaiting claim", className: "text-amber-400" };
 }
 
 interface ReviewItem {
@@ -180,6 +190,32 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   const canPickManually = giveaway.status === "DRAWING" && giveaway.selection_mode === "manual";
   const pendingReviewCount = reviewQueue?.length ?? 0;
   const winners = (entries ?? []).filter((e) => e.status === "winner");
+  const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://pay.loofta.xyz";
+
+  const winnersAsRows = winners.map((w) => ({
+    handle: w.x_handle,
+    status: claimStatus(w).label,
+    claim_link: w.claim_payment_id ? `${siteUrl}/c/${w.claim_payment_id}` : "",
+  }));
+
+  const copyWinners = () => {
+    const text = winnersAsRows.map((w) => `@${w.handle}\t${w.status}\t${w.claim_link}`).join("\n");
+    navigator.clipboard.writeText(text);
+    toast({ title: "Winners copied to clipboard" });
+  };
+
+  const exportWinnersCsv = () => {
+    const header = "handle,status,claim_link";
+    const rows = winnersAsRows.map((w) => `"${w.handle}","${w.status}","${w.claim_link}"`);
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${giveaway.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-winners.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // Client-side filter/paginate — entry counts can run into the hundreds, and pulling that whole
   // list into view by default (as this used to) made the manage page unusably long to scroll.
@@ -230,16 +266,36 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
 
           {winners.length > 0 && (
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-base font-medium text-slate-400 uppercase tracking-widest mb-2">
-                Winners ({winners.length})
-              </p>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-base font-medium text-slate-400 uppercase tracking-widest">
+                  Winners ({winners.length})
+                </p>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={copyWinners}
+                    title="Copy winners to clipboard"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportWinnersCsv}
+                    title="Export winners as CSV"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
               <div className="space-y-2">
                 {winners.map((entry) => (
                   <div key={entry.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-base font-medium text-white truncate">@{entry.x_handle}</p>
-                      <p className="text-base text-slate-500">
-                        payout {entry.payout_status ?? "pending"}
+                      <p className={`text-base ${claimStatus(entry).className}`}>
+                        {claimStatus(entry).label}
                       </p>
                     </div>
                     {entry.claim_payment_id && (
@@ -305,7 +361,7 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                       <p className="text-base font-medium text-white truncate">@{entry.x_handle}</p>
                       <p className="text-base text-slate-500">
                         #{entry.entry_index} · {entry.status}
-                        {entry.payout_status && entry.status === "winner" ? ` · payout ${entry.payout_status}` : ""}
+                        {entry.status === "winner" ? ` · ${claimStatus(entry).label}` : ""}
                       </p>
                       {entry.status === "winner" && entry.claim_payment_id && (
                         <Link
