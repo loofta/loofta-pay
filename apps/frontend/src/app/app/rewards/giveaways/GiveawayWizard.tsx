@@ -71,7 +71,7 @@ const CATEGORY_TARGET_LABELS: Record<TaskCategory, string> = {
   telegram_join: "Telegram channel/group link",
   discord_join: "Discord invite link",
   visit_link: "Link URL",
-  custom: "Describe the task",
+  custom: "Link (optional) — e.g. https://twitch.tv/yourstream",
 };
 
 /** Categories nothing can auto-verify — completion is always self-reported and reviewed by the
@@ -94,6 +94,8 @@ interface TaskRow {
   id: string;
   category: TaskCategory;
   target: string;
+  /** custom tasks only — the short title shown to the entrant (e.g. "Join the stream"); `target` is the accompanying link, optional. */
+  title: string;
   instructions: string;
   requireProof: boolean;
   engage: { retweet: boolean; like: boolean; comment: boolean; bookmark: boolean };
@@ -104,6 +106,7 @@ function newRow(): TaskRow {
     id: crypto.randomUUID(),
     category: "engage",
     target: "",
+    title: "",
     instructions: "",
     requireProof: false,
     engage: { retweet: true, like: false, comment: false, bookmark: false },
@@ -111,6 +114,7 @@ function newRow(): TaskRow {
 }
 
 function rowIsValid(row: TaskRow): boolean {
+  if (row.category === "custom") return row.title.trim().length > 0;
   if (!row.target.trim()) return false;
   if (row.category === "engage") return row.engage.retweet || row.engage.like || row.engage.comment || row.engage.bookmark;
   return true;
@@ -119,6 +123,12 @@ function rowIsValid(row: TaskRow): boolean {
 /** One TaskRow -> one or more backend {task_type, config} objects — an "engage" row with 3
  *  actions checked becomes 3 separate task rows server-side, each independently verifiable. */
 function expandTaskRow(row: TaskRow): Array<{ task_type: BackendTaskType; config: Record<string, unknown> }> {
+  if (row.category === "custom") {
+    const config: Record<string, unknown> = { title: row.title.trim() };
+    if (row.target.trim()) config.target = row.target.trim();
+    config.require_proof = row.requireProof;
+    return [{ task_type: "custom", config }];
+  }
   if (row.category !== "engage") {
     const config: Record<string, unknown> = { target: row.target.trim() };
     if (row.category === "visit_link" && row.instructions.trim()) config.instructions = row.instructions.trim();
@@ -148,7 +158,7 @@ function collapseTasksToRows(tasks: Array<{ task_type: string; config: Record<st
     if (ENGAGE_TYPES.has(t.task_type)) {
       let row = engageByTarget.get(target);
       if (!row) {
-        row = { id: crypto.randomUUID(), category: "engage", target, instructions: "", requireProof: false, engage: { retweet: false, like: false, comment: false, bookmark: false } };
+        row = { id: crypto.randomUUID(), category: "engage", target, title: "", instructions: "", requireProof: false, engage: { retweet: false, like: false, comment: false, bookmark: false } };
         engageByTarget.set(target, row);
         rows.push(row);
       }
@@ -169,11 +179,25 @@ function collapseTasksToRows(tasks: Array<{ task_type: string; config: Record<st
         if (t.config?.comment_requirement) row.instructions = t.config.comment_requirement;
         if (t.config?.require_proof) row.requireProof = true;
       }
+    } else if (t.task_type === "custom") {
+      // Rows created before config.title existed only have the old free-text `target` as a
+      // description — surface it as the title on edit rather than silently dropping it.
+      const hasTitle = typeof t.config?.title === "string" && t.config.title.trim().length > 0;
+      rows.push({
+        id: crypto.randomUUID(),
+        category: "custom",
+        target: hasTitle ? target : "",
+        title: hasTitle ? t.config.title : target,
+        instructions: t.config?.instructions ?? "",
+        requireProof: !!t.config?.require_proof,
+        engage: { retweet: false, like: false, comment: false, bookmark: false },
+      });
     } else {
       rows.push({
         id: crypto.randomUUID(),
         category: t.task_type as TaskCategory,
         target,
+        title: "",
         instructions: t.config?.instructions ?? "",
         requireProof: !!t.config?.require_proof,
         engage: { retweet: false, like: false, comment: false, bookmark: false },
@@ -578,6 +602,9 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   const setTaskTarget = useCallback((id: string, target: string) => {
     updateDraft((prev) => ({ tasks: prev.tasks.map((r) => (r.id === id ? { ...r, target } : r)) }));
   }, [updateDraft]);
+  const setTaskTitle = useCallback((id: string, title: string) => {
+    updateDraft((prev) => ({ tasks: prev.tasks.map((r) => (r.id === id ? { ...r, title } : r)) }));
+  }, [updateDraft]);
   const setTaskInstructions = useCallback((id: string, instructions: string) => {
     updateDraft((prev) => ({ tasks: prev.tasks.map((r) => (r.id === id ? { ...r, instructions } : r)) }));
   }, [updateDraft]);
@@ -924,12 +951,29 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                                   ))}
                                 </div>
 
-                                <Input
-                                  value={task.target}
-                                  onChange={(e) => setTaskTarget(task.id, e.target.value)}
-                                  placeholder={CATEGORY_TARGET_LABELS[task.category]}
-                                  className={inputClass}
-                                />
+                                {task.category === "custom" ? (
+                                  <>
+                                    <Input
+                                      value={task.title}
+                                      onChange={(e) => setTaskTitle(task.id, e.target.value)}
+                                      placeholder="Task title — e.g. Join the stream"
+                                      className={inputClass}
+                                    />
+                                    <Input
+                                      value={task.target}
+                                      onChange={(e) => setTaskTarget(task.id, e.target.value)}
+                                      placeholder={CATEGORY_TARGET_LABELS.custom}
+                                      className={inputClass}
+                                    />
+                                  </>
+                                ) : (
+                                  <Input
+                                    value={task.target}
+                                    onChange={(e) => setTaskTarget(task.id, e.target.value)}
+                                    placeholder={CATEGORY_TARGET_LABELS[task.category]}
+                                    className={inputClass}
+                                  />
+                                )}
 
                                 {task.category === "visit_link" && (
                                   <Input

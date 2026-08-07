@@ -34,8 +34,9 @@ export enum GiveawayTaskType {
   // Covers "join a waitlist", "create an account", or any other single-URL action — the
   // free-text `instructions` in config says what to actually do there.
   VISIT_LINK = 'visit_link',
-  // Free-form task with no fixed target/verification shape at all — creator writes the whole
-  // thing in config.instructions, entrant self-reports, always reviewed manually.
+  // Free-form task — creator gives it a config.title (e.g. "Join the stream") and an optional
+  // config.target link, entrant self-reports, always reviewed manually. Legacy rows created
+  // before `title` existed only have config.target as a free-text description.
   CUSTOM = 'custom',
 }
 

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, Loader2, Trash2, Download, Pencil } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Trash2, Download, Pencil, ShieldCheck, ExternalLink } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePrivy, useLinkAccount } from "@privy-io/react-auth";
 import { useWallets, useSignTransaction } from "@privy-io/react-auth/solana";
@@ -24,6 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
@@ -39,6 +40,9 @@ import { FormattedText } from "@/components/FormattedText";
 import posthog from "posthog-js";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+// Mirrors giveaways-public.controller.ts's ENTRIES_VISIBLE_STATUSES — the entry list (and
+// therefore the winners list) only exists server-side once entries have closed.
+const ENTRIES_VISIBLE_STATUSES = ["ENTRIES_CLOSED", "DRAWING", "WINNERS_SELECTED", "PAYOUT_IN_PROGRESS", "COMPLETED"];
 // Money-highlight accent (prize amounts), matching the browse-list card and this feature's other
 // interactive accents — never used for buttons/badges, which use this app's established
 // gradient/semantic tokens instead.
@@ -88,11 +92,52 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   custom: "Custom task",
 };
 
+/** x_retweet/x_like/x_comment/x_bookmark on the same tweet render as one grouped card instead of
+ *  four separate ones — matches how a creator set it up in the wizard ("engage with a post" with
+ *  a few actions checked) and lets one click verify everything at once. Retweet already covers
+ *  quote-tweets server-side (x-verification.service.ts unions retweeters + quote authors). */
+const ENGAGE_TASK_TYPES = new Set(["x_retweet", "x_like", "x_comment", "x_bookmark"]);
+const ENGAGE_ACTION_LABELS: Record<string, string> = {
+  x_retweet: "Retweet / Quote",
+  x_like: "Like",
+  x_comment: "Comment",
+  x_bookmark: "Bookmark",
+};
+
 /** Turns a task's raw target (a handle for x_follow, a bare or full URL for everything else) into a real clickable href. */
 function taskTargetHref(target: string, taskType: string): string {
   const t = target.trim();
   if (taskType === "x_follow") return `https://x.com/${t.replace(/^@/, "")}`;
   return /^https?:\/\//i.test(t) ? t : `https://${t}`;
+}
+
+/** On its own line (not squeezed inline with the action list above) so it doesn't blend into
+ *  body text, colored with the app's accent instead of a bordered pill. */
+const taskLinkClass = "block text-base font-normal mt-2 truncate hover:underline underline-offset-2 transition-opacity hover:opacity-80";
+
+type PublicTask = { id: string; task_type: string; config: { target?: string; comment_requirement?: string; instructions?: string; title?: string }; order_index: number; verification_mode: string };
+type TaskDisplayGroup = { kind: "engage"; target: string; tasks: PublicTask[] } | { kind: "single"; task: PublicTask };
+
+/** Groups engage-type tasks that share the same tweet URL into one display card; everything else
+ *  (follow, telegram, discord, visit link, custom) stays one card per task, unchanged. */
+function groupTasksForDisplay(tasks: PublicTask[]): TaskDisplayGroup[] {
+  const groups: TaskDisplayGroup[] = [];
+  const engageByTarget = new Map<string, TaskDisplayGroup & { kind: "engage" }>();
+  for (const task of tasks) {
+    if (ENGAGE_TASK_TYPES.has(task.task_type)) {
+      const target = task.config?.target ?? "";
+      let group = engageByTarget.get(target);
+      if (!group) {
+        group = { kind: "engage", target, tasks: [] };
+        engageByTarget.set(target, group);
+        groups.push(group);
+      }
+      group.tasks.push(task);
+    } else {
+      groups.push({ kind: "single", task });
+    }
+  }
+  return groups;
 }
 
 interface PublicGiveaway {
@@ -101,9 +146,9 @@ interface PublicGiveaway {
   eligibility: { min_followers?: number; min_account_age_days?: number };
   status: string; burner_address: string | null; mint: string | null; is_devnet: boolean;
   funding_required_usd: string | null; funding_confirmed_usd: string; entry_count: number;
-  entry_snapshot_hash: string | null; vrf_randomness: string | null; vrf_fulfilled_at: string | null;
+  entry_snapshot_hash: string | null; vrf_randomness: string | null; vrf_fulfilled_at: string | null; vrf_request_slot: number | null; draw_request_pda: string | null;
   is_official: boolean;
-  tasks: Array<{ id: string; task_type: string; config: { target?: string; comment_requirement?: string; instructions?: string }; order_index: number; verification_mode: string }>;
+  tasks: PublicTask[];
 }
 
 interface TaskCompletion {
@@ -137,6 +182,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [downloadingImage, setDownloadingImage] = useState(false);
+  const [showProofModal, setShowProofModal] = useState(false);
 
   // Funding — "Pay now" mirrors the app's existing send-payment/multi-send pattern instead of
   // asking the creator to copy a raw address into another wallet. Lives here (not on /manage) so
@@ -217,6 +263,22 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     refetchInterval: 15_000,
   });
 
+  // Public entry list (X handle + status) — becomes available once entries close (backend gates
+  // this the same way, `visible: false` before that). Doubles as the "provably fair" recompute
+  // data (id + status for every entrant) and the source for the winners list below.
+  const { data: publicEntries } = useQuery({
+    queryKey: ["giveaway-public-entries", resolvedId],
+    queryFn: async (): Promise<{ visible: boolean; entries: Array<{ id: string; x_handle: string; status: string }> }> => {
+      const res = await fetch(`${BACKEND_URL}/giveaways/public/${resolvedId}/entries`);
+      if (!res.ok) return { visible: false, entries: [] };
+      return res.json();
+    },
+    enabled: Boolean(giveaway && ENTRIES_VISIBLE_STATUSES.includes(giveaway.status)),
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+  });
+  const winnerHandles = (publicEntries?.entries ?? []).filter((e) => e.status === "winner").map((e) => e.x_handle);
+
   const enter = useCallback(async () => {
     setEntering(true);
     setEnterError(null);
@@ -244,18 +306,22 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     }
   }, [resolvedId, getAccessToken, toast, refetchEntry, giveaway]);
 
+  const submitTask = useCallback(async (taskId: string, submissionText: string): Promise<string | undefined> => {
+    const res = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}/tasks/${taskId}/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders(getAccessToken)) },
+      body: JSON.stringify({ submission_data: submissionText ? { proof: submissionText } : undefined }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.message || "Failed to submit task");
+    return body?.completion?.verification_status;
+  }, [resolvedId, getAccessToken]);
+
   const markTaskDone = useCallback(async (taskId: string, submissionText: string) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}/tasks/${taskId}/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(await authHeaders(getAccessToken)) },
-        body: JSON.stringify({ submission_data: submissionText ? { proof: submissionText } : undefined }),
-      });
-      const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.message || "Failed to submit task");
+      const status = await submitTask(taskId, submissionText);
       // X tasks (retweet/like/follow/comment) verify instantly against the live X API — give
       // accurate feedback right away instead of a generic "marked done" that implies it's still pending.
-      const status = body?.completion?.verification_status;
       if (status === "auto_verified" || status === "verified") {
         toast({ title: "Verified! ✅", description: "Confirmed on X." });
       } else if (status === "rejected") {
@@ -267,7 +333,29 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     } catch (err: any) {
       toast({ variant: "destructive", title: "Could not submit task", description: err.message });
     }
-  }, [resolvedId, getAccessToken, toast, refetchEntry]);
+  }, [submitTask, toast, refetchEntry]);
+
+  // One click verifies every action in an "engage with a post" group at once (retweet/quote,
+  // comment, like, bookmark) instead of requiring a separate click per action — like and bookmark
+  // are trusted on click server-side (X has no API to check either), retweet/comment are checked
+  // for real against the live X API.
+  const verifyEngageGroup = useCallback(async (taskIds: string[]) => {
+    try {
+      const results = await Promise.all(taskIds.map((taskId) => submitTask(taskId, "")));
+      const allVerified = results.every((s) => s === "auto_verified" || s === "verified");
+      const anyRejected = results.some((s) => s === "rejected");
+      if (allVerified) {
+        toast({ title: "Verified! ✅", description: "Confirmed on X." });
+      } else if (anyRejected) {
+        toast({ variant: "destructive", title: "Not fully verified", description: "We couldn't confirm everything on X yet — make sure you've actually done it, then try again." });
+      } else {
+        toast({ title: "Marked done" });
+      }
+      refetchEntry();
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Could not submit task", description: err.message });
+    }
+  }, [submitTask, toast, refetchEntry]);
 
   const handleFund = useCallback(async (remainingUsd: number, burnerAddress: string) => {
     setPaying(true);
@@ -496,6 +584,54 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             </AlertDialogContent>
           </AlertDialog>
 
+          <Dialog open={showProofModal} onOpenChange={setShowProofModal}>
+            <DialogContent className="border-white/10 bg-[#0f0f12] text-white sm:max-w-md max-h-[85vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-[#FF7A2A]" />
+                  Provably fair draw
+                </DialogTitle>
+                <DialogDescription className="text-slate-400">
+                  Loofta never saw or picked the outcome in advance — the winner was decided by a random number generated on Solana. Here&apos;s the proof.
+                  {giveaway.is_devnet && " This particular giveaway ran on Solana devnet (a test network), so its proof lives there too — not a real-money draw."}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 mt-2">
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                  <p className="text-base font-medium text-white mb-1">Randomness</p>
+                  <p className="text-base text-slate-400 mb-2">
+                    MagicBlock VRF generated this number on Solana after entries closed. Every entry gets ranked by this number, and whoever ranks first wins.
+                  </p>
+                  <p className="text-base font-mono text-slate-300 break-all bg-black/30 rounded-lg px-2.5 py-2 mb-2">
+                    {giveaway.vrf_randomness}
+                  </p>
+                  <p className="text-base text-slate-500">
+                    {giveaway.vrf_request_slot != null && <>Requested at slot {giveaway.vrf_request_slot.toLocaleString()} · </>}
+                    Fulfilled {giveaway.vrf_fulfilled_at && new Date(giveaway.vrf_fulfilled_at).toLocaleString()}
+                  </p>
+                </div>
+
+                {giveaway.draw_request_pda && (
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <p className="text-base font-medium text-white mb-1">Verify it yourself</p>
+                    <p className="text-base text-slate-400 mb-2">
+                      Loofta doesn&apos;t control this page — it&apos;s Solana&apos;s own public record. Once it loads, look for a <span className="font-mono">randomness</span> value matching the one above and <span className="font-mono">fulfilled: true</span>.
+                    </p>
+                    <a
+                      href={`https://explorer.solana.com/address/${giveaway.draw_request_pda}${giveaway.is_devnet ? "?cluster=devnet" : ""}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-base text-[#FF7A2A] hover:underline underline-offset-2"
+                    >
+                      Verify independently on Solana Explorer <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+
           <h1 className="text-2xl font-medium text-white mb-2">{giveaway.title}</h1>
           {giveaway.description && <FormattedText text={giveaway.description} className="text-base text-slate-300 mb-5 leading-relaxed" />}
 
@@ -545,10 +681,37 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 </div>
               </div>
             )}
-            {giveaway.vrf_fulfilled_at && giveaway.vrf_randomness && (
-              <p className="text-base text-slate-500 mt-3 break-all">
-                Draw proof: randomness <span className="font-mono">{giveaway.vrf_randomness.slice(0, 16)}…</span>, snapshot <span className="font-mono">{giveaway.entry_snapshot_hash?.slice(0, 16)}…</span>
-              </p>
+            {/* draw_request_pda is only ever set by the backend once it has independently
+                confirmed the on-chain account exists AND matches the stored randomness — never
+                gate this on vrf_fulfilled_at/vrf_randomness alone, since those columns can be
+                populated by the legacy non-VRF fallback path too (see 2026-08-06 incident). */}
+            {giveaway.draw_request_pda && (
+              <button
+                type="button"
+                onClick={() => setShowProofModal(true)}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                View on-chain proof
+              </button>
+            )}
+            {winnerHandles.length > 0 && (
+              <div className="mt-3">
+                <p className="text-base text-slate-400 mb-2">Winners</p>
+                <div className="flex flex-wrap gap-2">
+                  {winnerHandles.map((handle) => (
+                    <a
+                      key={handle}
+                      href={`https://x.com/${handle}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+                    >
+                      @{handle}
+                    </a>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
 
@@ -624,58 +787,132 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-5">
             <p className="text-base font-medium text-slate-400 uppercase tracking-widest mb-2">Tasks</p>
             <div className="space-y-2">
-              {giveaway.tasks.map((task) => {
+              {groupTasksForDisplay(giveaway.tasks).map((group) => {
+                if (group.kind === "engage") {
+                  const subStatuses = group.tasks.map(
+                    (t) => myEntry?.completions.find((c) => c.giveaway_task_id === t.id)?.verification_status ?? "pending",
+                  );
+                  const allVerified = subStatuses.every((s) => s === "verified" || s === "auto_verified");
+                  const anyRejected = subStatuses.some((s) => s === "rejected");
+                  const instructions = group.tasks.find((t) => t.config?.comment_requirement || t.config?.instructions);
+                  const groupTaskIds = group.tasks.map((t) => t.id);
+                  return (
+                    <div key={`engage-${group.target}`} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                      <p className="text-base font-medium text-white">Engage with the post</p>
+                      <p className="text-base mt-1.5">
+                        {group.tasks.map((t, i) => {
+                          const status = myEntry?.completions.find((c) => c.giveaway_task_id === t.id)?.verification_status;
+                          const ok = status === "verified" || status === "auto_verified";
+                          return (
+                            <span key={t.id} className="inline-flex items-center">
+                              {i > 0 && <span className="text-slate-500 font-semibold mx-1">+</span>}
+                              <span className={`inline-flex items-center gap-1 ${ok ? "text-emerald-400" : "text-slate-400"}`}>
+                                {ok && <Check className="w-3.5 h-3.5" />}
+                                {ENGAGE_ACTION_LABELS[t.task_type] ?? t.task_type}
+                              </span>
+                            </span>
+                          );
+                        })}
+                      </p>
+                      {group.target && (
+                        <a href={taskTargetHref(group.target, "x_retweet")} target="_blank" rel="noopener noreferrer" className={taskLinkClass} style={{ color: ACCENT }}>
+                          {group.target}
+                        </a>
+                      )}
+                      {instructions && (
+                        <p className="text-base text-slate-300 mt-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                          <span className="font-medium text-white">Instructions: </span>
+                          {instructions.config.comment_requirement || instructions.config.instructions}
+                        </p>
+                      )}
+                      {myEntry && (
+                        <div className="mt-3">
+                          {allVerified ? (
+                            <span className="inline-flex items-center gap-1 text-base font-medium text-emerald-400"><Check className="w-3.5 h-3.5" /> Verified</span>
+                          ) : anyRejected ? (
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-base font-medium text-red-400">Not fully verified</span>
+                              <button
+                                type="button"
+                                onClick={() => verifyEngageGroup(groupTaskIds)}
+                                className="shrink-0 text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
+                              >
+                                Try again
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => verifyEngageGroup(groupTaskIds)}
+                              className="w-full text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
+                            >
+                              Verify
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                const task = group.task;
                 const completion = myEntry?.completions.find((c) => c.giveaway_task_id === task.id);
                 const verified = completion?.verification_status === "verified" || completion?.verification_status === "auto_verified";
                 const rejected = completion?.verification_status === "rejected";
+                const isCustom = task.task_type === "custom";
+                const hasStructuredTitle = isCustom && typeof task.config?.title === "string" && task.config.title.trim().length > 0;
+                const title = hasStructuredTitle ? (task.config.title as string) : (TASK_TYPE_LABELS[task.task_type] ?? task.task_type);
+                // Legacy custom tasks (created before config.title existed) stored a free-text
+                // description in `target` — that's not a real URL, so render it as plain text
+                // instead of a broken link. New-format custom tasks (with a title) use `target`
+                // as the actual accompanying link.
+                const showTargetAsLink = task.config?.target && (!isCustom || hasStructuredTitle);
+                const showTargetAsText = isCustom && !hasStructuredTitle && task.config?.target;
                 return (
                   <div key={task.order_index} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="min-w-0">
-                        <p className="text-base font-medium text-white">{TASK_TYPE_LABELS[task.task_type] ?? task.task_type}</p>
-                        {task.config?.target && (
-                          <a
-                            href={taskTargetHref(task.config.target, task.task_type)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block text-base text-sky-400 hover:text-sky-300 underline underline-offset-2 truncate"
-                          >
-                            {task.config.target}
-                          </a>
-                        )}
-                        {(task.config?.comment_requirement || task.config?.instructions) && (
-                          <p className="text-base text-slate-300 mt-0.5">
-                            {task.config.comment_requirement || task.config.instructions}
-                          </p>
-                        )}
-                      </div>
-                      {myEntry && (
-                        verified ? (
-                          <span className="shrink-0 inline-flex items-center gap-1 text-base font-medium text-emerald-400"><Check className="w-3.5 h-3.5" /> Verified</span>
+                    <p className="text-base font-medium text-white">{title}</p>
+                    {showTargetAsLink && (
+                      <a href={taskTargetHref(task.config.target as string, task.task_type)} target="_blank" rel="noopener noreferrer" className={taskLinkClass} style={{ color: ACCENT }}>
+                        {task.config.target}
+                      </a>
+                    )}
+                    {showTargetAsText && (
+                      <p className="text-base text-slate-300 mt-1.5">{task.config.target}</p>
+                    )}
+                    {(task.config?.comment_requirement || task.config?.instructions) && (
+                      <p className="text-base text-slate-300 mt-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                        <span className="font-medium text-white">Instructions: </span>
+                        {task.config.comment_requirement || task.config.instructions}
+                      </p>
+                    )}
+                    {myEntry && (
+                      <div className="mt-3">
+                        {verified ? (
+                          <span className="inline-flex items-center gap-1 text-base font-medium text-emerald-400"><Check className="w-3.5 h-3.5" /> Verified</span>
                         ) : rejected ? (
-                          <div className="shrink-0 flex flex-col items-end gap-1">
+                          <div className="flex items-center justify-between gap-3">
                             <span className="text-base font-medium text-red-400">Rejected</span>
                             <button
                               type="button"
                               onClick={() => markTaskDone(task.id, "")}
-                              className="text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-2.5 py-1"
+                              className="shrink-0 text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
                             >
                               Try again
                             </button>
                           </div>
                         ) : completion?.submission_data ? (
-                          <span className="shrink-0 text-base font-medium text-amber-400">Pending review</span>
+                          <span className="text-base font-medium text-amber-400">Pending review</span>
                         ) : (
                           <button
                             type="button"
                             onClick={() => markTaskDone(task.id, "")}
-                            className="shrink-0 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-2.5 py-1"
+                            className="w-full text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
                           >
                             {task.verification_mode === "auto_api" ? "Verify" : "Mark done"}
                           </button>
-                        )
-                      )}
-                    </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

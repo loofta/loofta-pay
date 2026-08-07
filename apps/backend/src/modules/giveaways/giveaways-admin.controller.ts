@@ -3,9 +3,11 @@ import { ApiTags, ApiOperation, ApiSecurity } from '@nestjs/swagger';
 import { AdminGuard } from '@/common/guards';
 import { GiveawaysService } from './giveaways.service';
 import { GiveawayEntriesService } from './giveaway-entries.service';
+import { GiveawayDrawService } from './giveaway-draw.service';
 import { AdminReviewGiveawayDto } from './dto/admin-review-giveaway.dto';
 import { AdminEditGiveawayDto } from './dto/admin-edit-giveaway.dto';
 import { ReviewTaskCompletionDto } from './dto/review-task-completion.dto';
+import { VrfManualFallbackDto } from './dto/vrf-manual-fallback.dto';
 import { Giveaway } from './entities/giveaway.entity';
 
 @ApiTags('giveaways-admin')
@@ -16,6 +18,7 @@ export class GiveawaysAdminController {
   constructor(
     private readonly giveawaysService: GiveawaysService,
     private readonly entriesService: GiveawayEntriesService,
+    private readonly drawService: GiveawayDrawService,
   ) {}
 
   @Get('pending')
@@ -66,6 +69,20 @@ export class GiveawaysAdminController {
   async reviewQueue() {
     const items = await this.entriesService.listApiErrorEscalations();
     return { items };
+  }
+
+  @Put(':id/vrf-manual-fallback')
+  @ApiOperation({
+    summary:
+      'Audited last resort when an on-chain VRF request has genuinely stalled — bypasses it with server-generated randomness, explicitly tagged as non-VRF in giveaway_events. Prefer clearing vrf_requested_at (a plain retry) unless the oracle is confirmed down.',
+  })
+  async vrfManualFallback(
+    @Req() req: { user?: { id: string } },
+    @Param('id') id: string,
+    @Body() dto: VrfManualFallbackDto,
+  ): Promise<{ ok: true }> {
+    await this.drawService.manualVrfFallback(id, req.user!.id, dto.reason);
+    return { ok: true };
   }
 
   @Put('completions/:completionId/review')

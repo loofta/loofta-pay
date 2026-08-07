@@ -1,10 +1,14 @@
 import { randomBytes } from 'crypto';
 import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { GiveawaysService } from './giveaways.service';
 import { GiveawayEntriesService } from './giveaway-entries.service';
+import { GiveawayVrfService } from './giveaway-vrf.service';
 import { Giveaway, GiveawayStatus, GiveawaySelectionMode, GiveawayEntryStatus } from './entities/giveaway.entity';
 import { hashEntrySnapshot, selectRandomWinners, selectFirstComeWinners } from './giveaway-draw-selection';
+
+const DEFAULT_VRF_STALL_MINUTES = 15;
 
 @Injectable()
 export class GiveawayDrawService {
@@ -14,7 +18,14 @@ export class GiveawayDrawService {
     private readonly supabaseService: SupabaseService,
     private readonly giveawaysService: GiveawaysService,
     private readonly entriesService: GiveawayEntriesService,
+    private readonly vrf: GiveawayVrfService,
+    private readonly config: ConfigService,
   ) {}
+
+  private get vrfStallMs(): number {
+    const minutes = Number(this.config.get<string>('GIVEAWAY_VRF_STALL_MINUTES')) || DEFAULT_VRF_STALL_MINUTES;
+    return minutes * 60_000;
+  }
 
   private async logEvent(giveawayId: string, type: string, payload?: Record<string, unknown>): Promise<void> {
     const { error } = await this.supabaseService.giveawayEvents.insert({ giveaway_id: giveawayId, type, payload: payload ?? null });
@@ -44,6 +55,36 @@ export class GiveawayDrawService {
     }
   }
 
+  /** Creator-triggered early close: force entries shut and run the draw immediately instead of
+   *  waiting for entries_close_at + the cron. Unlike advance() (one step per call, meant for a
+   *  cron tick), this drives every step synchronously within the request — including polling the
+   *  VRF oracle to fulfillment (bounded to ~15s; observed real fulfillment latency is ~2-4s) — so
+   *  a creator clicking "Run draw now" sees the real final state, not an intermediate one, whether
+   *  or not any cron is running against this instance. Manual-selection giveaways stop at DRAWING
+   *  same as always; the creator still picks winners separately via select-winners. */
+  async forceRunDrawNow(giveawayId: string, creatorId: string): Promise<Giveaway> {
+    let giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+    if (giveaway.created_by !== creatorId) throw new ForbiddenException('Not your giveaway');
+    if (giveaway.status !== GiveawayStatus.OPEN) {
+      throw new BadRequestException(`Giveaway is ${giveaway.status}, can only force-run the draw from OPEN`);
+    }
+
+    await this.closeEntries(giveaway);
+    giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+    await this.freezeSnapshotAndStartDrawing(giveaway, { throwIfPending: true });
+    giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+
+    if (giveaway.status === GiveawayStatus.DRAWING && giveaway.selection_mode !== GiveawaySelectionMode.MANUAL) {
+      for (let i = 0; i < 15; i++) {
+        await this.runAutoDraw(giveaway);
+        giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+        if (giveaway.status !== GiveawayStatus.DRAWING) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+    return giveaway;
+  }
+
   private async closeEntries(giveaway: Giveaway): Promise<void> {
     const { error } = await this.supabaseService.giveaways.update({ status: GiveawayStatus.ENTRIES_CLOSED }).eq('id', giveaway.id);
     if (error) {
@@ -66,10 +107,27 @@ export class GiveawayDrawService {
     return ((data.payload as { entry_ids?: string[] } | null)?.entry_ids ?? []) as string[];
   }
 
-  private async freezeSnapshotAndStartDrawing(giveaway: Giveaway): Promise<void> {
+  private async freezeSnapshotAndStartDrawing(giveaway: Giveaway, opts: { throwIfPending?: boolean } = {}): Promise<void> {
     // One last chance for anyone who did the X task for real but never clicked "Verify" in-app —
     // see runFinalXVerificationSweep's doc comment for why this replaced the old scheduled cron.
     await this.entriesService.runFinalXVerificationSweep(giveaway);
+
+    // Never freeze the pool while real work is still outstanding — a self-report task the
+    // creator hasn't reviewed yet (or an X-verification that's still pending for some other
+    // reason) must not silently exclude that entrant. The cron path just defers and retries next
+    // tick; forceRunDrawNow surfaces this to the creator instead, since it's an explicit action
+    // expecting an immediate result.
+    const pendingCount = await this.entriesService.countPendingCompletions(giveaway.id);
+    if (pendingCount > 0) {
+      if (opts.throwIfPending) {
+        throw new BadRequestException(
+          `${pendingCount} task submission${pendingCount === 1 ? '' : 's'} still need${pendingCount === 1 ? 's' : ''} review before the draw can run — check the review queue.`,
+        );
+      }
+      this.logger.log(`[GiveawayDraw] ${giveaway.id}: ${pendingCount} completion(s) still pending — deferring draw until reviewed`);
+      return;
+    }
+
     const eligible = await this.entriesService.getEligibleVerifiedEntries(giveaway.id);
     const entryIds = eligible.map((e) => e.id);
 
@@ -108,20 +166,101 @@ export class GiveawayDrawService {
       return;
     }
 
-    let winnerIds: string[];
-    let randomnessHex: string | undefined;
     if (giveaway.selection_mode === GiveawaySelectionMode.RANDOM) {
-      // TODO(vrf): replace with a MagicBlock VRF callback output — see giveaway-draw-selection.ts.
-      randomnessHex = randomBytes(32).toString('hex');
-      winnerIds = selectRandomWinners(entryIds, randomnessHex, giveaway.winner_count);
-    } else {
-      const entries = await this.entriesService.listEntries(giveaway.id);
-      const byId = new Map(entries.map((e) => [e.id, e]));
-      const frozenEntries = entryIds.map((id) => byId.get(id)).filter((e): e is NonNullable<typeof e> => !!e);
-      winnerIds = selectFirstComeWinners(frozenEntries, giveaway.winner_count);
+      const randomnessHex = await this.advanceVrf(giveaway);
+      if (!randomnessHex) return; // still waiting on-chain — next cron tick continues it
+      const winnerIds = selectRandomWinners(entryIds, randomnessHex, giveaway.winner_count);
+      await this.finalizeWinners(giveaway, entryIds, winnerIds, randomnessHex);
+      return;
     }
 
-    await this.finalizeWinners(giveaway, entryIds, winnerIds, randomnessHex);
+    const entries = await this.entriesService.listEntries(giveaway.id);
+    const byId = new Map(entries.map((e) => [e.id, e]));
+    const frozenEntries = entryIds.map((id) => byId.get(id)).filter((e): e is NonNullable<typeof e> => !!e);
+    const winnerIds = selectFirstComeWinners(frozenEntries, giveaway.winner_count);
+    await this.finalizeWinners(giveaway, entryIds, winnerIds);
+  }
+
+  /** Ticks the on-chain VRF request forward exactly one step, using `vrf_requested_at`/
+   *  `vrf_randomness` nullability as an implicit sub-state within DRAWING — no new
+   *  GiveawayStatus value needed. Returns the real randomness hex once fulfilled, or null while
+   *  still in flight (the next cron tick will pick up where this one left off). Never falls back
+   *  to non-VRF randomness silently — a stalled request is logged and left for manual recovery,
+   *  since the public "Draw proof" panel can't otherwise distinguish real VRF from a fallback. */
+  private async advanceVrf(giveaway: Giveaway): Promise<string | null> {
+    if (giveaway.vrf_randomness) return giveaway.vrf_randomness;
+
+    if (!giveaway.vrf_requested_at) {
+      try {
+        const { slot } = await this.vrf.requestRandomness(giveaway);
+        const { error } = await this.supabaseService.giveaways
+          .update({ vrf_requested_at: new Date().toISOString(), vrf_request_slot: slot })
+          .eq('id', giveaway.id);
+        if (error) this.logger.warn(`[GiveawayDraw] ${giveaway.id}: failed to persist vrf_requested_at: ${error.message}`);
+        await this.logEvent(giveaway.id, 'vrf_requested', { slot });
+        this.logger.log(`[GiveawayDraw] ${giveaway.id}: VRF randomness requested (slot=${slot})`);
+      } catch (e: any) {
+        this.logger.error(`[GiveawayDraw] ${giveaway.id}: VRF request failed: ${e?.message ?? e} (will retry next tick)`);
+      }
+      return null;
+    }
+
+    const randomnessHex = await this.vrf.pollFulfillment(giveaway);
+    if (!randomnessHex) {
+      const requestedAgeMs = Date.now() - new Date(giveaway.vrf_requested_at).getTime();
+      if (requestedAgeMs >= this.vrfStallMs) {
+        await this.flagVrfStallOnce(giveaway.id);
+      }
+      return null;
+    }
+
+    const { error } = await this.supabaseService.giveaways
+      .update({ vrf_randomness: randomnessHex, vrf_fulfilled_at: new Date().toISOString() })
+      .eq('id', giveaway.id);
+    if (error) this.logger.warn(`[GiveawayDraw] ${giveaway.id}: failed to persist vrf_randomness: ${error.message}`);
+    await this.logEvent(giveaway.id, 'vrf_fulfilled', {});
+    this.logger.log(`[GiveawayDraw] ${giveaway.id}: VRF randomness fulfilled`);
+    return randomnessHex;
+  }
+
+  /** Alert-only — never auto-falls-back to non-VRF randomness. Logged once per giveaway (checked
+   *  via giveaway_events) so a slow oracle doesn't spam logs every cron tick. Manual recovery: an
+   *  operator clears vrf_requested_at (safe retry) or, only as an audited last resort, uses a
+   *  separate manual-override path that explicitly tags the randomness as non-VRF. */
+  private async flagVrfStallOnce(giveawayId: string): Promise<void> {
+    const { data: existing } = await this.supabaseService.giveawayEvents
+      .select('id')
+      .eq('giveaway_id', giveawayId)
+      .eq('type', 'vrf_stalled')
+      .limit(1)
+      .maybeSingle();
+    if (existing) return;
+    this.logger.error(`[GiveawayDraw] ${giveawayId}: VRF request has been pending longer than the stall threshold — needs manual attention`);
+    await this.logEvent(giveawayId, 'vrf_stalled', {});
+  }
+
+  /** Audited last-resort escape hatch when a VRF request has genuinely stalled (oracle down,
+   *  program bug) and a giveaway can't be left hanging forever. Deliberately NOT the same code
+   *  path as a real VRF fulfillment — the `vrf_manual_fallback` event with `reason`/`admin_id`
+   *  is the only place this is distinguished from a genuine oracle callback, since the public
+   *  "Draw proof" panel renders `vrf_randomness` the same way either way. Prefer clearing
+   *  `vrf_requested_at` (a plain retry) over this whenever the oracle might still come through. */
+  async manualVrfFallback(giveawayId: string, adminId: string, reason: string): Promise<void> {
+    const giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+    if (giveaway.status !== GiveawayStatus.DRAWING || giveaway.selection_mode !== GiveawaySelectionMode.RANDOM) {
+      throw new BadRequestException('Only applicable to a random-selection giveaway currently DRAWING');
+    }
+    if (giveaway.vrf_randomness) {
+      throw new BadRequestException('This giveaway already has randomness — nothing to fall back on');
+    }
+
+    const randomnessHex = randomBytes(32).toString('hex');
+    const { error } = await this.supabaseService.giveaways
+      .update({ vrf_randomness: randomnessHex, vrf_fulfilled_at: new Date().toISOString() })
+      .eq('id', giveaway.id);
+    if (error) this.logger.warn(`[GiveawayDraw] ${giveaway.id}: failed to persist manual fallback randomness: ${error.message}`);
+    await this.logEvent(giveaway.id, 'vrf_manual_fallback', { source: 'manual_fallback_non_vrf', admin_id: adminId, reason });
+    this.logger.warn(`[GiveawayDraw] ${giveaway.id}: VRF manually bypassed by admin ${adminId} — reason: ${reason}`);
   }
 
   /** Creator's manual pick — only valid while DRAWING and selection_mode = manual. `entryIds`
@@ -170,13 +309,11 @@ export class GiveawayDrawService {
       if (error) this.logger.warn(`[GiveawayDraw] ${giveaway.id}: failed to mark non-winners: ${error.message}`);
     }
 
-    const updatePayload: Record<string, unknown> = { status: GiveawayStatus.WINNERS_SELECTED };
-    if (randomnessHex) {
-      updatePayload.vrf_randomness = randomnessHex;
-      updatePayload.vrf_requested_at = new Date().toISOString();
-      updatePayload.vrf_fulfilled_at = new Date().toISOString();
-    }
-    const { error } = await this.supabaseService.giveaways.update(updatePayload).eq('id', giveaway.id);
+    // vrf_randomness/vrf_requested_at/vrf_fulfilled_at are already persisted by advanceVrf() at
+    // the real moments they happened — this only flips the status, never re-stamps those fields.
+    const { error } = await this.supabaseService.giveaways
+      .update({ status: GiveawayStatus.WINNERS_SELECTED })
+      .eq('id', giveaway.id);
     if (error) this.logger.warn(`[GiveawayDraw] ${giveaway.id}: failed to update status to WINNERS_SELECTED: ${error.message}`);
 
     await this.logEvent(giveaway.id, 'winners_selected', {

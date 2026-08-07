@@ -6,6 +6,9 @@
     "deleteOutDir": true,
     "builder": "swc",
     "typeCheck": false,
+    "assets": [
+      { "include": "modules/giveaways/idl/**/*.json", "outDir": "dist", "watchAssets": true }
+    ],
     "plugins": [
       {
         "name": "@nestjs/swagger",
