@@ -3,7 +3,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { SupabaseService } from '@/database/supabase.service';
 import { GiveawaysService } from './giveaways.service';
 import { GiveawayVrfService } from './giveaway-vrf.service';
-import { GiveawayStatus } from './entities/giveaway.entity';
+import { Giveaway, GiveawayStatus } from './entities/giveaway.entity';
 
 // Entries (and who won) go public once the pool is frozen — before that, revealing who's in the
 // running would leak the live entrant list while people can still act on it. This is also
@@ -71,6 +71,19 @@ export class GiveawaysPublicController {
       .select('id', { count: 'exact', head: true })
       .eq('giveaway_id', realId);
 
+    // Never claim on-chain proof without actually confirming it on-chain — the stored
+    // vrf_fulfilled_at/vrf_randomness alone don't prove a real oracle request ever happened
+    // (e.g. a giveaway that got raced and finished by legacy non-VRF code would still have these
+    // columns populated). Fetch the real DrawRequest account and require its randomness to match
+    // what's stored before exposing an Explorer link a visitor could click and find nothing at.
+    let drawRequestPda: string | null = null;
+    if (giveaway.vrf_fulfilled_at && giveaway.vrf_randomness) {
+      const onChainRandomness = await this.vrf.pollFulfillment({ id: realId, is_devnet: giveaway.is_devnet } as Giveaway);
+      if (onChainRandomness && onChainRandomness === giveaway.vrf_randomness) {
+        drawRequestPda = this.vrf.derivePda(realId)[0].toBase58();
+      }
+    }
+
     return {
       id: giveaway.id,
       title: giveaway.title,
@@ -92,13 +105,14 @@ export class GiveawaysPublicController {
       funding_confirmed_usd: giveaway.funding_confirmed_usd,
       platform_fee_usd: giveaway.platform_fee_usd,
       entry_count: entryCount ?? 0,
-      // Draw proof — present once the draw has run, null before that. draw_request_pda lets the
-      // frontend link the randomness straight to the actual on-chain account holding it, instead
-      // of just displaying an unverifiable hex string.
+      // Draw proof — present once the draw has run, null before that. draw_request_pda is only
+      // set once independently confirmed on-chain (see above) — the frontend treats its absence
+      // as "can't verify this draw," not just "link unavailable."
       entry_snapshot_hash: giveaway.entry_snapshot_hash,
       vrf_randomness: giveaway.vrf_randomness,
       vrf_fulfilled_at: giveaway.vrf_fulfilled_at,
-      draw_request_pda: giveaway.vrf_fulfilled_at ? this.vrf.derivePda(realId)[0].toBase58() : null,
+      vrf_request_slot: drawRequestPda ? giveaway.vrf_request_slot : null,
+      draw_request_pda: drawRequestPda,
       tasks: tasks.map((t) => ({ id: t.id, task_type: t.task_type, config: t.config, order_index: t.order_index, verification_mode: t.verification_mode })),
     };
   }

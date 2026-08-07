@@ -9,10 +9,21 @@ declare_id!("5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi");
 
 pub const DRAW_PDA_SEED: &[u8] = b"draw";
 
+// The only account allowed to request (or reset-and-re-request) randomness — without this,
+// `giveaway_id_seed` being a public, deterministic sha256(giveaway.id) meant anyone could compute
+// the right seed and call request_randomness for our exact PDA, and since that instruction
+// unconditionally resets `fulfilled`/`randomness`, an outsider could grief or reset an
+// already-fulfilled draw for a few cents. This can never let anyone bias WHO wins (VRF security
+// holds regardless of who requests it), but it's a real griefing/audit-trail risk that has no
+// reason to exist — only our own backend's fee payer ever legitimately calls this.
+pub const AUTHORIZED_REQUESTER: Pubkey = pubkey!("5dCTWJj277c41ex92RFxSRUa8ckU4EAurWftDRASBKuq");
+
 #[error_code]
 pub enum ErrorCode {
     #[msg("This draw request has already been fulfilled")]
     AlreadyFulfilled,
+    #[msg("Only Loofta's backend can request randomness for a draw")]
+    UnauthorizedRequester,
 }
 
 #[program]
@@ -74,7 +85,10 @@ pub mod loofta_vrf {
 #[derive(Accounts)]
 #[instruction(giveaway_id_seed: [u8; 32])]
 pub struct RequestRandomnessCtx<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = payer.key() == AUTHORIZED_REQUESTER @ ErrorCode::UnauthorizedRequester
+    )]
     pub payer: Signer<'info>,
     #[account(
         init_if_needed,

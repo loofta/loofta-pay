@@ -145,7 +145,7 @@ interface PublicGiveaway {
   eligibility: { min_followers?: number; min_account_age_days?: number };
   status: string; burner_address: string | null; mint: string | null; is_devnet: boolean;
   funding_required_usd: string | null; funding_confirmed_usd: string; entry_count: number;
-  entry_snapshot_hash: string | null; vrf_randomness: string | null; vrf_fulfilled_at: string | null; draw_request_pda: string | null;
+  entry_snapshot_hash: string | null; vrf_randomness: string | null; vrf_fulfilled_at: string | null; vrf_request_slot: number | null; draw_request_pda: string | null;
   is_official: boolean;
   tasks: PublicTask[];
 }
@@ -585,7 +585,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                   Provably fair draw
                 </DialogTitle>
                 <DialogDescription className="text-slate-400">
-                  The winner was chosen using real on-chain randomness — Loofta never saw or picked the outcome in advance. Here&apos;s how to check it yourself.
+                  Loofta never saw or picked the outcome in advance — the winner was decided by a random number generated on Solana. Here&apos;s the proof.
                   {giveaway.is_devnet && " This particular giveaway ran on Solana devnet (a test network), so its proof lives there too — not a real-money draw."}
                 </DialogDescription>
               </DialogHeader>
@@ -594,21 +594,33 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                   <p className="text-base font-medium text-white mb-1">Randomness</p>
                   <p className="text-base text-slate-400 mb-2">
-                    An independent oracle (MagicBlock), not Loofta, generated this value on-chain after entries closed.
+                    MagicBlock VRF generated this number on Solana after entries closed. Every entry gets ranked by this number, and whoever ranks first wins.
                   </p>
-                  {giveaway.draw_request_pda ? (
+                  <p className="text-base font-mono text-slate-300 break-all bg-black/30 rounded-lg px-2.5 py-2 mb-2">
+                    {giveaway.vrf_randomness}
+                  </p>
+                  <p className="text-base text-slate-500">
+                    {giveaway.vrf_request_slot != null && <>Requested at slot {giveaway.vrf_request_slot.toLocaleString()} · </>}
+                    Fulfilled {giveaway.vrf_fulfilled_at && new Date(giveaway.vrf_fulfilled_at).toLocaleString()}
+                  </p>
+                </div>
+
+                {giveaway.draw_request_pda && (
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <p className="text-base font-medium text-white mb-1">Verify it yourself</p>
+                    <p className="text-base text-slate-400 mb-2">
+                      Loofta doesn&apos;t control this page — it&apos;s Solana&apos;s own public record. Once it loads, look for a <span className="font-mono">randomness</span> value matching the one above and <span className="font-mono">fulfilled: true</span>.
+                    </p>
                     <a
                       href={`https://explorer.solana.com/address/${giveaway.draw_request_pda}${giveaway.is_devnet ? "?cluster=devnet" : ""}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 text-base text-[#FF7A2A] hover:underline underline-offset-2"
                     >
-                      View the on-chain account <ExternalLink className="w-3.5 h-3.5" />
+                      Verify independently on Solana Explorer <ExternalLink className="w-3.5 h-3.5" />
                     </a>
-                  ) : (
-                    <span className="text-base text-slate-500">Not available for this draw</span>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </DialogContent>
           </Dialog>
@@ -662,7 +674,11 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 </div>
               </div>
             )}
-            {giveaway.vrf_fulfilled_at && giveaway.vrf_randomness && (
+            {/* draw_request_pda is only ever set by the backend once it has independently
+                confirmed the on-chain account exists AND matches the stored randomness — never
+                gate this on vrf_fulfilled_at/vrf_randomness alone, since those columns can be
+                populated by the legacy non-VRF fallback path too (see 2026-08-06 incident). */}
+            {giveaway.draw_request_pda && (
               <button
                 type="button"
                 onClick={() => setShowProofModal(true)}
