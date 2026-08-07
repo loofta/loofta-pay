@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import Link from "next/link";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { embeddedSolanaUsdcBalanceQueryKey } from "@/services/solanaBalance";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
@@ -2549,7 +2551,25 @@ export function BalanceModal({
       if (addLotteryTicket) {
         const ticketAdded = await buyQuickLotteryTicket();
         if (ticketAdded) {
-          toast({ title: "Ticket added! 🎟️", description: "Good luck — you're in for the next draw." });
+          toast({
+            duration: Infinity,
+            title: "Ticket added! 🎟️",
+            description: (
+              <span className="text-base">
+                Good luck — you're in for today&apos;s draw, a shot at {lotteryPrizePoolDisplay}.
+              </span>
+            ),
+            action: (
+              <ToastAction altText="View your lottery tickets" asChild>
+                <Link
+                  href="/app/megapot?tab=history"
+                  className="!bg-gradient-to-r !from-[#FF1301] !to-[#EAB308] !text-white !border-0 !font-semibold hover:!opacity-90"
+                >
+                  View tickets
+                </Link>
+              </ToastAction>
+            ),
+          });
         } else {
           toast({ variant: "destructive", title: "Couldn't add your ticket", description: "Continuing with your withdrawal." });
         }
