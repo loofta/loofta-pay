@@ -29,6 +29,7 @@ import { usePrivy, useWallets as useEvmWallets, useCreateWallet, useSendTransact
 import { useWallets, useSignTransaction, useSignAndSendTransaction, useFundWallet } from "@privy-io/react-auth/solana";
 import { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
+import { useReducedMotion } from "framer-motion";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 
@@ -418,6 +419,7 @@ export function BalanceModal({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: tokens = [] } = useTokensQuery();
+  const reduceMotion = useReducedMotion();
 
   // Optimistically subtract the withdrawn amount so the UI updates instantly.
   // The normal 5 s polling cycle will sync the real on-chain value once the TX is indexed.
@@ -4015,7 +4017,10 @@ export function BalanceModal({
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setWithdrawAmount(spendableBalance.toFixed(6).replace(/\.?0+$/, ""))}
+                    onClick={() => {
+                      const max = Math.max(0, spendableBalance - (addLotteryTicket ? LOTTERY_TICKET_PRICE_USDC : 0));
+                      setWithdrawAmount(max.toFixed(6).replace(/\.?0+$/, ""));
+                    }}
                     className={`shrink-0 px-3 text-base ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}
                   >
                     Max
@@ -4078,16 +4083,30 @@ export function BalanceModal({
                 )}
               </div>
 
-              {/* Lottery ticket upsell — high-conversion "add to basket" toggle before withdrawing */}
-              {isUSDCOnSolana && withdrawAmountNum > 0 && (() => {
-                const ticketAffordable = withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC <= spendableBalance;
-                return (
+              {/* Lottery ticket upsell — high-conversion "add to basket" toggle before withdrawing.
+                  Toggling on never blocks on balance: it reduces the withdraw amount by the ticket
+                  price instead, so there's always room. Flowing glow border matches the one used
+                  around the ticket-purchase confirm button on the lottery page (SlideToPay.tsx). */}
+              {isUSDCOnSolana && spendableBalance >= LOTTERY_TICKET_PRICE_USDC && withdrawAmountNum > 0 && (
+                <div className="relative rounded-2xl">
+                  <style>{`
+                    @keyframes looftaGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+                    @keyframes looftaGlowPulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+                  `}</style>
+                  <div
+                    aria-hidden
+                    className="absolute -inset-[2.5px] rounded-2xl blur-[7px]"
+                    style={{
+                      background: "linear-gradient(110deg,#FF1301,#FF6A00,#EAB308,#FF4A26,#FF1301)",
+                      backgroundSize: "220% 100%",
+                      animation: reduceMotion ? undefined : "looftaGlowShift 2.4s linear infinite, looftaGlowPulse 2.4s ease-in-out infinite",
+                      opacity: reduceMotion ? 0.7 : undefined,
+                    }}
+                  />
                   <div
                     className={cn(
-                      "rounded-2xl border p-4 transition-colors",
-                      dark
-                        ? "bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/10 border-orange-500/20"
-                        : "bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 border-orange-200"
+                      "relative rounded-2xl border p-4",
+                      dark ? "bg-[#15110d] border-white/10" : "bg-white border-orange-100"
                     )}
                   >
                     <div className="flex items-start gap-3">
@@ -4096,33 +4115,36 @@ export function BalanceModal({
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
-                          Multiply your win — add a ticket
+                          Multiply your win — add a lottery ticket
                         </p>
                         <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                          For $1, get a shot at {lotteryPrizePoolDisplay} in the next draw.
+                          The Loofta lottery draws every day. $1 = 1 ticket, a shot at {lotteryPrizePoolDisplay} prize pool.
                         </p>
                       </div>
                       <Switch
                         checked={addLotteryTicket}
-                        onCheckedChange={(checked) => setAddLotteryTicket(checked && ticketAffordable)}
-                        disabled={!ticketAffordable}
+                        onCheckedChange={(checked) => {
+                          setAddLotteryTicket(checked);
+                          if (checked && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
+                            const adjusted = Math.max(0, spendableBalance - LOTTERY_TICKET_PRICE_USDC);
+                            setWithdrawAmount(adjusted.toFixed(6).replace(/\.?0+$/, ""));
+                          }
+                        }}
                         className="shrink-0 mt-1 data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-[#FF4A26] data-[state=checked]:to-[#E1A041]"
                       />
                     </div>
-                    {addLotteryTicket ? (
+                    {addLotteryTicket && (
                       <div className={cn(
                         "mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-base font-semibold",
-                        dark ? "bg-white/10 text-white" : "bg-white text-gray-900"
+                        dark ? "bg-white/10 text-white" : "bg-orange-50 text-gray-900"
                       )}>
-                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 lottery ticket added</span>
+                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 lottery ticket added to your withdrawal</span>
                         <span>+${LOTTERY_TICKET_PRICE_USDC.toFixed(2)}</span>
                       </div>
-                    ) : !ticketAffordable ? (
-                      <p className="text-base text-amber-500 mt-2">Not enough balance left to add a ticket too.</p>
-                    ) : null}
+                    )}
                   </div>
-                );
-              })()}
+                </div>
+              )}
 
               <div className="flex gap-2 pt-2">
                 <Button variant="outline" onClick={() => setWithdrawMethod(null)} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
