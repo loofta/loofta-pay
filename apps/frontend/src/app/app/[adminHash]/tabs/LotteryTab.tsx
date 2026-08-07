@@ -168,6 +168,7 @@ export function LotteryTab({
                 <th className="text-right px-4 py-2.5">Tickets</th>
                 <th className="text-left px-4 py-2.5">Status</th>
                 <th className="text-left px-4 py-2.5">Ticket</th>
+                <th className="text-left px-4 py-2.5">Claim link</th>
               </tr>
             </thead>
             <tbody>
@@ -192,6 +193,21 @@ export function LotteryTab({
                     </td>
                     <td className="px-4 py-2.5 font-mono text-sm text-gray-500">
                       {row.resulting_ticket_id ?? <span className="text-gray-700">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {row.claimUrl ? (
+                        <div className="flex items-center gap-2 text-sm text-gray-400">
+                          <span className="truncate max-w-[220px]">{row.claimUrl}</span>
+                          <button type="button" onClick={() => copyText(row.claimUrl)} title="Copy" className="shrink-0">
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                          <a href={row.claimUrl} target="_blank" rel="noopener noreferrer" title="Open" className="shrink-0">
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      ) : (
+                        <span className="text-gray-700">—</span>
+                      )}
                     </td>
                   </tr>
                 );
