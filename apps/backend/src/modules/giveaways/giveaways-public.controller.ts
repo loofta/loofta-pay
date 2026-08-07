@@ -62,11 +62,16 @@ export class GiveawaysPublicController {
   }
 
   @Get('ended')
-  @ApiOperation({ summary: 'Browse past (no longer open) giveaways — most recently closed first. No auth required.' })
+  @ApiOperation({ summary: 'Browse past (no longer open) giveaways that actually received funding — most recently closed first. No auth required.' })
   async findEnded() {
     const { data, error } = await this.supabaseService.giveawaysSafe
       .select('id, title, description, logo_url, project_name, short_id, winner_count, selection_mode, prize_amount_usd, entries_close_at, status, is_official')
       .in('status', ENDED_STATUSES as string[])
+      // UNDERFUNDED_EXPIRED always has zero confirmed funding by definition, and CANCELLED can
+      // mean either "creator cancelled before ever funding it" or "funded, closed, but nobody
+      // qualified" — this single check separates real giveaways from ones that never actually ran,
+      // regardless of which status they landed in.
+      .gt('funding_confirmed_usd', 0)
       .order('entries_close_at', { ascending: false });
     if (error) throw new NotFoundException(error.message);
     return { giveaways: data ?? [] };
