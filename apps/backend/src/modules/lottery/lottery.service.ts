@@ -653,10 +653,13 @@ export class LotteryService {
   }
 
   /**
-   * Admin action: creates a lightweight, unfunded gift record. No wallets are generated and no
-   * money moves here — that's deliberate, see claimGift below. Mirrors the recipient-targeting
-   * UX of a regular Loofta payment (email or X handle) without touching the payments/claims
-   * tables at all.
+   * Admin action: creates a gift record. When the recipient identifier already resolves to a
+   * registered Loofta account (see resolveGiftRecipient), the ticket is bought immediately —
+   * admin gifts are meant to land instantly, not sit behind a claim step the recipient has to
+   * find and click. When it doesn't resolve (no account yet), falls back to the original
+   * lightweight unfunded record + claim link — see claimGift below — since there's no wallet to
+   * buy into yet. Mirrors the recipient-targeting UX of a regular Loofta payment (email or X
+   * handle) without touching the payments/claims tables at all.
    */
   async createGift(opts: {
     adminUserId: string;
@@ -675,6 +678,8 @@ export class LotteryService {
     const recipientIdentifier = this.normalizeGiftIdentifier(recipientType, opts.recipientIdentifier);
     if (!recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
 
+    const resolved = await this.usersService.resolveGiftRecipient(recipientType, recipientIdentifier);
+
     const claimToken = randomUUID();
     const shortId = generateShortId();
     const db = this.supabase.getClient();
@@ -689,7 +694,13 @@ export class LotteryService {
         recipient_identifier: recipientIdentifier,
         claim_token: claimToken,
         short_id: shortId,
-        status: 'unclaimed',
+        // Pre-mark as claimed by the resolved account so this behaves exactly like a normal
+        // claim already happened — same state claimGift's own atomic update would produce,
+        // which is what makes the idempotent-retry branch below (and in claimGift itself) work
+        // for free if the purchase fails partway through.
+        status: resolved ? 'claimed' : 'unclaimed',
+        claimed_at: resolved ? new Date().toISOString() : null,
+        claimed_by_user_id: resolved?.privyUserId ?? null,
         funded_privately: false, // no sender payment at all — funded from Loofta's own treasury
       })
       .select('id')
@@ -697,7 +708,24 @@ export class LotteryService {
     if (error || !gift) throw new Error(`Failed to create lottery gift: ${error?.message}`);
 
     const claimUrl = `https://pay.loofta.xyz/gift/${shortId}`;
-    if (recipientType === 'email') {
+
+    if (resolved) {
+      // Throws (and leaves the row retryable) on failure — same contract purchaseGiftTickets
+      // already has for claimGift, so an admin who sees this error can just re-trigger the gift
+      // and it picks up where it left off instead of double-buying.
+      await this.purchaseGiftTickets(
+        { id: gift.id, num_tickets: numTickets, funding_mode: 'admin_treasury', funded_privately: false },
+        resolved.privyUserId,
+      );
+      const recipientEmail = resolved.email ?? (recipientType === 'email' ? recipientIdentifier : null);
+      if (recipientEmail) {
+        await this.emailService.sendGiftTicketReceivedEmail({
+          recipientEmail,
+          numTickets,
+          note: note ?? null,
+        }).catch(e => this.logger.warn(`createGift ${gift.id}: sendGiftTicketReceivedEmail failed: ${e.message}`));
+      }
+    } else if (recipientType === 'email') {
       await this.emailService.sendGiftTicketEmail({
         recipientEmail: recipientIdentifier,
         numTickets,
@@ -707,7 +735,7 @@ export class LotteryService {
     }
     this.prewarmGiftOg(claimUrl);
 
-    this.logger.log(`Gift ${gift.id}: created ${numTickets} ticket(s) for ${recipientType}:${recipientIdentifier.slice(0, 3)}*** by admin ${adminUserId}`);
+    this.logger.log(`Gift ${gift.id}: created ${numTickets} ticket(s) for ${recipientType}:${recipientIdentifier.slice(0, 3)}*** by admin ${adminUserId}${resolved ? ' (auto-purchased, no claim needed)' : ''}`);
     return { giftId: gift.id, claimToken, claimUrl };
   }
 

@@ -277,6 +277,43 @@ export class UsersService {
   }
 
   /**
+   * Best-effort resolve an existing app_users row for an admin lottery gift's recipient — never
+   * throws, returns null when nothing matches. Lets createGift auto-fund gifts to already-
+   * registered accounts (no claim step needed) while falling back to the claim-link flow for
+   * everyone else. 'handle' tries both a Loofta username and a linked Twitter handle in one
+   * query, mirroring isGiftRecipient's claim-time check — the admin form doesn't ask which one it
+   * is either.
+   */
+  async resolveGiftRecipient(
+    recipientType: 'email' | 'handle',
+    identifier: string,
+  ): Promise<{ privyUserId: string; email: string | null } | null> {
+    try {
+      if (recipientType === 'email') {
+        const clean = identifier.trim().toLowerCase();
+        if (!clean) return null;
+        const { data: user } = await this.supabaseService.appUsers
+          .select('privy_user_id, email')
+          .eq('email', clean)
+          .maybeSingle();
+        if (!user?.privy_user_id) return null;
+        return { privyUserId: user.privy_user_id, email: user.email ?? null };
+      }
+      const clean = identifier.replace(/^@/, '').trim().toLowerCase();
+      if (!clean) return null;
+      const { data: user } = await this.supabaseService.appUsers
+        .select('privy_user_id, email')
+        .or(`username.ilike.${clean},twitter_username.ilike.${clean}`)
+        .maybeSingle();
+      if (!user?.privy_user_id) return null;
+      return { privyUserId: user.privy_user_id, email: user.email ?? null };
+    } catch (e: any) {
+      this.logger.warn(`resolveGiftRecipient(${recipientType}) failed: ${e?.message ?? e}`);
+      return null;
+    }
+  }
+
+  /**
    * Search usernames by prefix (for autocomplete). Cached 1 min; only selects username.
    */
   async searchUsernames(query: string, limit = 10): Promise<{ usernames: string[] }> {

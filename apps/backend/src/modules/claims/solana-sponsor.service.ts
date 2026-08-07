@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { isSolanaDevnetFromConfig, getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { SupabaseService } from '@/database/supabase.service';
 import { EmailService } from '@/modules/email/email.service';
-import { guardAtaSponsorship, assertPerUserAtaCreationCapNotExceeded } from '@/common/ata-sponsorship-guard';
+import { guardAtaSponsorship, assertPerUserAtaCreationCapNotExceeded, assertPerWalletAtaCreationCapNotExceeded } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
@@ -17,6 +17,7 @@ import {
   SystemProgram,
   PublicKey,
 } from '@solana/web3.js';
+import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 // bs58 may export default depending on bundler/runtime
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const bs58Module = require('bs58');
@@ -318,6 +319,57 @@ export class SolanaSponsorService {
   }
 
   /**
+   * Sum of SPL Token Transfer/TransferChecked instruction amounts whose destination account is
+   * `destinationAtaBase58`. Used to verify a claim payment actually transfers what the claim
+   * asks for — a client builds this transaction itself, so nothing stops it from putting in any
+   * amount it likes unless something on our side independently re-derives what really moves
+   * on-chain instead of trusting the claim id alone to mean "this is legitimate."
+   */
+  private sumTokenTransfersToDestination(serializedBase64: string, destinationAtaBase58: string): bigint {
+    const readAmount = (data: Buffer, discriminator: number): bigint | null => {
+      if (data.length < 9 || data[0] !== discriminator) return null;
+      return data.readBigUInt64LE(1);
+    };
+    const txBuffer = Buffer.from(serializedBase64, 'base64');
+    try {
+      const tx = Transaction.from(txBuffer);
+      let total = 0n;
+      for (const ix of tx.instructions) {
+        if (ix.programId.toBase58() !== TOKEN_PROGRAM_ID_STR) continue;
+        if (ix.data[0] === 3) {
+          const amount = readAmount(ix.data, 3);
+          if (amount !== null && ix.keys[1]?.pubkey?.toBase58() === destinationAtaBase58) total += amount;
+        } else if (ix.data[0] === 12) {
+          const amount = readAmount(ix.data, 12);
+          if (amount !== null && ix.keys[2]?.pubkey?.toBase58() === destinationAtaBase58) total += amount;
+        }
+      }
+      return total;
+    } catch {
+      // not a legacy tx — try versioned
+    }
+    try {
+      const vtx = VersionedTransaction.deserialize(txBuffer);
+      const accountKeys = vtx.message.getAccountKeys().staticAccountKeys;
+      let total = 0n;
+      for (const ix of vtx.message.compiledInstructions) {
+        if (accountKeys[ix.programIdIndex]?.toBase58() !== TOKEN_PROGRAM_ID_STR) continue;
+        const data = Buffer.from(ix.data);
+        if (data[0] === 3) {
+          const amount = readAmount(data, 3);
+          if (amount !== null && accountKeys[ix.accountKeyIndexes[1]]?.toBase58() === destinationAtaBase58) total += amount;
+        } else if (data[0] === 12) {
+          const amount = readAmount(data, 12);
+          if (amount !== null && accountKeys[ix.accountKeyIndexes[2]]?.toBase58() === destinationAtaBase58) total += amount;
+        }
+      }
+      return total;
+    } catch {
+      return 0n;
+    }
+  }
+
+  /**
    * Refuse to pay ATA rent twice for the same (wallet, mint).
    *
    * The program/mint whitelist below only checks instruction *shape* — right program, right mint.
@@ -351,8 +403,51 @@ export class SolanaSponsorService {
     pajOrderId?: string,
     nearIntentsOrderId?: string,
     offrampRequestId?: string,
+    giveawayId?: string,
   ): Promise<void> {
     const details = this.getAtaCreationDetails(serializedBase64);
+
+    // Claim-amount enforcement — deliberately OUTSIDE the `details.length === 0` early-return
+    // below. Everything else in this function only ever runs when the transaction creates a
+    // brand-new ATA; a claim paid into a recipient who already has a USDC account skips ALL of
+    // it, including the owner-match check further down. That meant a claim's `amount` column was
+    // purely decorative for the actual broadcast: nothing compared what a self-built transaction
+    // really transfers on-chain against what the claim says it's worth (2026-08-07 finding — see
+    // project memory, solana sponsor security hardening). Fetched once here and reused by the
+    // owner-match branch below instead of querying `payments` twice.
+    let claimRow: { id: string; recipient_address: string | null; burner_address: string | null; amount: number | string | null; created_by: string | null } | null = null;
+    if (claimId) {
+      const { data, error } = await this.supabaseService.payments
+        .select('id, recipient_address, burner_address, amount, created_by')
+        .eq('id', claimId)
+        .maybeSingle();
+      if (error || !data) {
+        this.logger.warn(`SolanaSponsor[${label}]: claimId=${claimId} not found — refusing to sponsor (${error?.message ?? 'no row'})`);
+        throw new Error('Claim not found; cannot verify this payment.');
+      }
+      claimRow = data;
+      const expectedRecipient = String(claimRow.burner_address || claimRow.recipient_address || '').trim();
+      if (!expectedRecipient) {
+        this.logger.warn(`SolanaSponsor[${label}]: claimId=${claimId} has no resolvable recipient/burner address — refusing to sponsor`);
+        throw new Error('This claim has no resolvable recipient; cannot verify this payment.');
+      }
+      const claimAmountUsd = parseFloat(String(claimRow.amount ?? '0'));
+      if (Number.isFinite(claimAmountUsd) && claimAmountUsd > 0) {
+        const requiredUnits = BigInt(Math.round(claimAmountUsd * 1_000_000));
+        let paidUnits = 0n;
+        for (const mint of USDC_MINT_SET) {
+          const destAta = getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(expectedRecipient));
+          paidUnits += this.sumTokenTransfersToDestination(serializedBase64, destAta.toBase58());
+        }
+        if (paidUnits < requiredUnits) {
+          this.logger.error(
+            `SolanaSponsor[${label}]: BLOCKED — claimId=${claimId} expects ${requiredUnits} USDC base units but tx only transfers ${paidUnits} to ${expectedRecipient.slice(0, 8)}… (user=${userId ?? 'unknown'})`,
+          );
+          throw new Error('This payment does not cover the amount owed on this claim.');
+        }
+      }
+    }
+
     if (details.length === 0) return;
 
     // Which creations we would actually be paying rent for right now.
@@ -376,10 +471,10 @@ export class SolanaSponsorService {
 
     // Structured, greppable log line for every chargeable sponsor call — this is what a future
     // "was this a drain" investigation should read first, instead of manually decoding raw
-    // transactions off Solscan. `intentSource` says exactly which real backing record (if any)
-    // justified each of these creations; "UNBOUND" means the only protection is the per-user
-    // volume cap below, which is the current known gap for near-intents withdraw and any future
-    // caller that hasn't been migrated to pass an intent id.
+    // transactions off Solscan. `intentSource` says exactly which real backing record justified
+    // each of these creations. "UNBOUND" can still appear in this log line (it's computed before
+    // the enforcement branches below run), but as of 2026-08-07 it never survives this function —
+    // the final `else if (chargeable.length > 0)` branch below refuses any call with no id.
     const intentSource = claimId
       ? `claim:${claimId}`
       : pajOrderId
@@ -388,41 +483,26 @@ export class SolanaSponsorService {
           ? `nearIntentsOrder:${nearIntentsOrderId}`
           : offrampRequestId
             ? `offrampRequest:${offrampRequestId}`
-            : 'UNBOUND';
+            : giveawayId
+              ? `giveaway:${giveawayId}`
+              : 'UNBOUND';
     this.logger.log(
       `SolanaSponsor[${label}] SPONSOR_ATA_CREATE user=${userId ?? 'unknown'} intent=${intentSource} count=${chargeable.length} owners=${chargeable.map((d) => d.owner.slice(0, 8)).join(',')}`,
     );
-    if (intentSource === 'UNBOUND') {
-      this.logger.warn(
-        `SolanaSponsor[${label}]: UNBOUND sponsor call (no claimId/pajOrderId) — relying solely on the per-user volume cap for user=${userId ?? 'unknown'}, count=${chargeable.length}`,
-      );
-    }
 
-    // Intent-binding (2026-08-04 fix for the "sign-and-broadcast volume gap" — see project
-    // memory: solana sponsor security hardening, Attack 6). This endpoint used to accept ANY
-    // pre-built transaction with zero context on what it's *for*, so every chargeable creation
-    // looked identical to a legitimate first-time payment. When the caller supplies a claimId or
-    // pajOrderId, we now require every chargeable ATA's owner to be the EXACT recipient/deposit
-    // address that real record has on file — not just "some new wallet, first time we've seen
-    // it". A caller can no longer sponsor an arbitrary self-generated wallet: there is no real
-    // row backing a destination they invented. Falls through to the (weaker) per-user cap below
-    // only when neither id is supplied — i.e. near-intents withdraw, which has no backend-tracked
-    // quote row yet to bind to (the quote is fetched client-side straight from NEAR's public API)
-    // and needs new backend infra before it can get this same protection — see project memory.
+    // Intent-binding (2026-08-04 fix for the "sign-and-broadcast volume gap", hardened
+    // 2026-08-07 — see project memory: solana sponsor security hardening, Attack 6 and the
+    // 2026-08-07 recurrence). This endpoint used to accept ANY pre-built transaction with zero
+    // context on what it's *for*, so every chargeable creation looked identical to a legitimate
+    // first-time payment. The caller must now supply one of claimId/pajOrderId/nearIntentsOrderId
+    // /offrampRequestId/giveawayId, and every chargeable ATA's owner must be the EXACT recipient/
+    // deposit/burner address that real record has on file — not just "some new wallet, first time
+    // we've seen it". A caller can no longer sponsor an arbitrary self-generated wallet: there is
+    // no real row backing a destination they invented, and (as of 2026-08-07) no id at all is no
+    // longer accepted either — see the final `else if (chargeable.length > 0)` branch below.
     if (claimId && chargeable.length > 0) {
-      const { data: claimRow, error: claimLookupError } = await this.supabaseService.payments
-        .select('id, recipient_address, burner_address')
-        .eq('id', claimId)
-        .maybeSingle();
-      if (claimLookupError || !claimRow) {
-        this.logger.warn(`SolanaSponsor[${label}]: claimId=${claimId} not found — refusing to sponsor (${claimLookupError?.message ?? 'no row'})`);
-        throw new Error('Claim not found; cannot verify this payment.');
-      }
-      const expectedRecipient = String(claimRow.burner_address || claimRow.recipient_address || '').trim();
-      if (!expectedRecipient) {
-        this.logger.warn(`SolanaSponsor[${label}]: claimId=${claimId} has no resolvable recipient/burner address — refusing to sponsor`);
-        throw new Error('This claim has no resolvable recipient; cannot verify this payment.');
-      }
+      // claimRow was already fetched (and its amount enforced) above, before the early return.
+      const expectedRecipient = String(claimRow!.burner_address || claimRow!.recipient_address || '').trim();
       for (const d of chargeable) {
         if (d.owner !== expectedRecipient) {
           this.logger.error(
@@ -430,6 +510,24 @@ export class SolanaSponsorService {
           );
           throw new Error('This transaction does not match the claim it is being paid against.');
         }
+      }
+      // Self-issued-and-self-paid check (2026-08-07). Intent-binding above only proves the
+      // claim record is real and the destination matches it — it can't tell a genuine "pay
+      // someone else's claim" from an attacker who created the claim themselves and is now
+      // paying into it, since both look identical: a real row, a matching destination. Unlike
+      // pajOrder/nearIntentsOrder/offrampRequest — where the creator paying their OWN order is
+      // the entire point of those flows — a claim exists to be paid by someone OTHER than its
+      // creator; self-payment has no legitimate use here and is exactly the "self-created claim,
+      // self-controlled destination" pattern called out in the 2026-08-06 incident. Refusing a
+      // NEW ATA in this case costs nothing to real users (paying your own claim was never a
+      // supported flow) while removing the one identity-verification-proof path still open to a
+      // rent-farming attacker; they're left with the (already-capped) alternative of a claim
+      // whose destination already has a funded token account, which is free.
+      if (userId && claimRow!.created_by && claimRow!.created_by === userId) {
+        this.logger.error(
+          `SolanaSponsor[${label}]: BLOCKED — claimId=${claimId} was created and is being paid by the same user=${userId} — refusing to sponsor a new token account for a self-issued claim`,
+        );
+        throw new Error('You cannot sponsor a new token account for a claim you created yourself.');
       }
     } else if (pajOrderId && chargeable.length > 0) {
       const { data: orderRow, error: orderLookupError } = await this.supabaseService.pajCashOrders
@@ -515,6 +613,39 @@ export class SolanaSponsorService {
           throw new Error('This transaction does not match the offramp request it is being paid against.');
         }
       }
+    } else if (giveawayId && chargeable.length > 0) {
+      const { data: giveawayRow, error: giveawayLookupError } = await this.supabaseService.giveaways
+        .select('id, burner_address')
+        .eq('id', giveawayId)
+        .maybeSingle();
+      if (giveawayLookupError || !giveawayRow) {
+        this.logger.warn(`SolanaSponsor[${label}]: giveawayId=${giveawayId} not found — refusing to sponsor (${giveawayLookupError?.message ?? 'no row'})`);
+        throw new Error('Giveaway not found; cannot verify this payment.');
+      }
+      const expectedRecipient = String(giveawayRow.burner_address || '').trim();
+      if (!expectedRecipient) {
+        this.logger.warn(`SolanaSponsor[${label}]: giveawayId=${giveawayId} has no resolvable burner address — refusing to sponsor`);
+        throw new Error('This giveaway has no resolvable funding destination; cannot verify this payment.');
+      }
+      for (const d of chargeable) {
+        if (d.owner !== expectedRecipient) {
+          this.logger.error(
+            `SolanaSponsor[${label}]: BLOCKED — giveawayId=${giveawayId} expects burner ${expectedRecipient.slice(0, 8)}… but tx creates an ATA for ${d.owner.slice(0, 8)}… (user=${userId ?? 'unknown'})`,
+          );
+          throw new Error('This transaction does not match the giveaway it is funding.');
+        }
+      }
+    } else if (chargeable.length > 0) {
+      // No backing intent id at all. This used to be accepted as "UNBOUND" and rely solely on
+      // the per-user/per-wallet volume caps below — that's exactly the gap the 2026-08-07
+      // recurrence exploited (a raw client-built transaction with no claimId/pajOrderId/
+      // nearIntentsOrderId/offrampRequestId/giveawayId, so intent-binding never even ran). Every
+      // known legitimate caller of this endpoint now passes one of those five ids, so a new
+      // sponsor-paid ATA creation with none of them is refused outright rather than merely capped.
+      this.logger.error(
+        `SolanaSponsor[${label}]: BLOCKED — sponsor-paid ATA creation with no claimId/pajOrderId/nearIntentsOrderId/offrampRequestId/giveawayId (user=${userId ?? 'unknown'}, count=${chargeable.length})`,
+      );
+      throw new Error('This payment cannot be verified against a known claim, order, or giveaway.');
     }
 
     // NOTE: this function's intended safety net for volume was pricing — recover the rent from
@@ -537,6 +668,15 @@ export class SolanaSponsorService {
       await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, userId, chargeable.length, `SolanaSponsor:${label}`);
     }
 
+    // Second, independent axis on the same cap — see assertPerWalletAtaCreationCapNotExceeded.
+    // Derived straight from the transaction, so it applies even when userId didn't resolve, and
+    // it's what actually caught the 2026-08-07 recurrence: same signer wallet reused across ~30
+    // sponsorships while (apparently) rotating Privy accounts to dodge the check above.
+    const primarySigner = this.getRequiredUserSigners(serializedBase64)[0];
+    if (primarySigner) {
+      await assertPerWalletAtaCreationCapNotExceeded(this.supabaseService, primarySigner, chargeable.length, `SolanaSponsor:${label}`);
+    }
+
     for (const d of chargeable) {
       const allowed = await guardAtaSponsorship(
         this.supabaseService,
@@ -545,6 +685,7 @@ export class SolanaSponsorService {
         `sponsor-broadcast:${label}:user:${userId ?? 'unknown'}`,
         this.emailService,
         userId,
+        primarySigner,
       );
       if (!allowed) {
         this.logger.warn(
@@ -753,6 +894,7 @@ export class SolanaSponsorService {
     pajOrderId?: string,
     nearIntentsOrderId?: string,
     offrampRequestId?: string,
+    giveawayId?: string,
   ): Promise<{ signature: string }> {
     if (!this.feePayerKeypair || !this.feePayerAddress) {
       throw new Error('Solana fee sponsorship is not configured');
@@ -777,6 +919,7 @@ export class SolanaSponsorService {
       pajOrderId,
       nearIntentsOrderId,
       offrampRequestId,
+      giveawayId,
     );
 
     let legacy: Transaction | null = null;

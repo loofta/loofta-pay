@@ -47,6 +47,11 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
   chain?: PrivySolanaChain;
   accessToken?: string | null;
   network?: "mainnet" | "devnet";
+  claimId?: string;
+  pajOrderId?: string;
+  nearIntentsOrderId?: string;
+  offrampRequestId?: string;
+  giveawayId?: string;
   /** Legacy params — unused, kept for call-site compatibility */
   signAndSendTransaction?: unknown;
   skipLooftaFeePayer?: boolean;
@@ -93,6 +98,9 @@ export async function sendUsdcWithBackendFeePayer(params: {
   /** Same idea, for a "peer offramp" (ZKP2P/Base bridging) request — see BalanceModal.tsx's
    *  handlePeerSubmit, which already creates a real offramp_requests row via POST /api/offramp. */
   offrampRequestId?: string;
+  /** Same idea, for a giveaway funding payment — see GiveawayDetailClient.tsx's handleFund,
+   *  which already has the giveaway's own id in scope. */
+  giveawayId?: string;
 }): Promise<string> {
   const {
     senderAddress,
@@ -111,6 +119,7 @@ export async function sendUsdcWithBackendFeePayer(params: {
     pajOrderId,
     nearIntentsOrderId,
     offrampRequestId,
+    giveawayId,
   } = params;
   const chain = params.chain ?? getPrivySolanaChain();
 
@@ -149,5 +158,6 @@ export async function sendUsdcWithBackendFeePayer(params: {
     pajOrderId,
     nearIntentsOrderId,
     offrampRequestId,
+    giveawayId,
   );
 }

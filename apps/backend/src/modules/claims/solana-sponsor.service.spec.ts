@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Keypair, PublicKey, Transaction } from '@solana/web3.js';
 import {
   createAssociatedTokenAccountInstruction,
+  createTransferInstruction,
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -21,6 +22,7 @@ jest.mock('@/common/token-account-exists', () => ({
 jest.mock('@/common/ata-sponsorship-guard', () => ({
   guardAtaSponsorship: jest.fn().mockResolvedValue(true),
   assertPerUserAtaCreationCapNotExceeded: jest.fn().mockResolvedValue(undefined),
+  assertPerWalletAtaCreationCapNotExceeded: jest.fn().mockResolvedValue(undefined),
 }));
 
 const USDC_DEVNET_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
@@ -36,14 +38,21 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
   let service: SolanaSponsorService;
   let feePayer: Keypair;
   let mockPayments: ReturnType<typeof makeChainMock>;
+  let mockGiveaways: ReturnType<typeof makeChainMock>;
 
-  /** Builds a real, correctly-serialized legacy tx creating one ATA for `owner`, paid by our fee payer. */
-  function buildAtaCreationTxBase64(owner: PublicKey): string {
+  /** Builds a real, correctly-serialized legacy tx creating one ATA for `owner`, paid by our fee
+   *  payer. `transferAmountUnits`, if given, appends a real Transfer instruction moving that many
+   *  USDC base units into the new ATA — needed to exercise the claim-amount enforcement added
+   *  2026-08-07, which runs independently of the ATA-creation check. */
+  function buildAtaCreationTxBase64(owner: PublicKey, transferAmountUnits?: number): string {
     const mint = new PublicKey(USDC_DEVNET_MINT);
     const ata = getAssociatedTokenAddressSync(mint, owner);
-    const ix = createAssociatedTokenAccountInstruction(feePayer.publicKey, ata, owner, mint);
     const tx = new Transaction();
-    tx.add(ix);
+    tx.add(createAssociatedTokenAccountInstruction(feePayer.publicKey, ata, owner, mint));
+    if (transferAmountUnits !== undefined) {
+      const sourceAta = getAssociatedTokenAddressSync(mint, Keypair.generate().publicKey);
+      tx.add(createTransferInstruction(sourceAta, ata, Keypair.generate().publicKey, transferAmountUnits));
+    }
     tx.feePayer = feePayer.publicKey;
     tx.recentBlockhash = Keypair.generate().publicKey.toBase58(); // any valid base58 32-byte value
     return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
@@ -53,6 +62,7 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
     jest.clearAllMocks();
     feePayer = Keypair.generate();
     mockPayments = makeChainMock();
+    mockGiveaways = makeChainMock();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -68,7 +78,7 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
         },
         {
           provide: SupabaseService,
-          useValue: { payments: mockPayments },
+          useValue: { payments: mockPayments, giveaways: mockGiveaways },
         },
         { provide: EmailService, useValue: {} },
       ],
@@ -85,6 +95,34 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
       error: null,
     });
     const txBase64 = buildAtaCreationTxBase64(recipient);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'user-1', 'pay-1'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('blocks sponsorship when the transferred amount is below what the claim asks for', async () => {
+    const recipient = Keypair.generate().publicKey;
+    mockPayments.maybeSingle.mockResolvedValueOnce({
+      data: { id: 'pay-1', recipient_address: null, burner_address: recipient.toBase58(), amount: 50 },
+      error: null,
+    });
+    // Claim asks for $50 (50_000_000 base units) but the tx only transfers $10 — a client builds
+    // this transaction itself, so nothing but this check stops it from lying about the amount.
+    const txBase64 = buildAtaCreationTxBase64(recipient, 10_000_000);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'attacker', 'pay-1'),
+    ).rejects.toThrow('does not cover the amount owed');
+  });
+
+  it('allows sponsorship when the transferred amount meets what the claim asks for', async () => {
+    const recipient = Keypair.generate().publicKey;
+    mockPayments.maybeSingle.mockResolvedValueOnce({
+      data: { id: 'pay-1', recipient_address: null, burner_address: recipient.toBase58(), amount: 50 },
+      error: null,
+    });
+    const txBase64 = buildAtaCreationTxBase64(recipient, 50_000_000);
 
     await expect(
       (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'user-1', 'pay-1'),
@@ -113,5 +151,70 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
     await expect(
       (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'attacker', 'made-up-id'),
     ).rejects.toThrow('Claim not found');
+  });
+
+  // 2026-08-07 recurrence: a raw client-built transaction with NO claimId/pajOrderId/
+  // nearIntentsOrderId/offrampRequestId/giveawayId used to fall through to "UNBOUND" and rely
+  // solely on the (rotatable) per-user volume cap. Every real caller now passes one of the five
+  // ids, so this must be refused outright, not merely capped.
+  it('rejects a sponsor call with no backing intent id at all, even under the volume cap', async () => {
+    const txBase64 = buildAtaCreationTxBase64(Keypair.generate().publicKey);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'attacker'),
+    ).rejects.toThrow('cannot be verified against a known claim, order, or giveaway');
+  });
+
+  it('allows sponsorship when the ATA owner matches the giveaway burner_address on file', async () => {
+    const burner = Keypair.generate().publicKey;
+    mockGiveaways.maybeSingle.mockResolvedValueOnce({
+      data: { id: 'gw-1', burner_address: burner.toBase58() },
+      error: null,
+    });
+    const txBase64 = buildAtaCreationTxBase64(burner);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'user-1', undefined, undefined, undefined, undefined, 'gw-1'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('blocks sponsorship when the claim was created and is being paid by the same user (self-issued)', async () => {
+    const recipient = Keypair.generate().publicKey;
+    mockPayments.maybeSingle.mockResolvedValueOnce({
+      data: { id: 'pay-1', recipient_address: null, burner_address: recipient.toBase58(), created_by: 'attacker' },
+      error: null,
+    });
+    const txBase64 = buildAtaCreationTxBase64(recipient);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'attacker', 'pay-1'),
+    ).rejects.toThrow('a claim you created yourself');
+  });
+
+  it('allows sponsorship when the claim was created by someone else, even if the payer is authenticated', async () => {
+    const recipient = Keypair.generate().publicKey;
+    mockPayments.maybeSingle.mockResolvedValueOnce({
+      data: { id: 'pay-1', recipient_address: null, burner_address: recipient.toBase58(), created_by: 'the-recipient' },
+      error: null,
+    });
+    const txBase64 = buildAtaCreationTxBase64(recipient);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'a-different-sender', 'pay-1'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('blocks sponsorship when the ATA owner does NOT match the giveaway burner_address on file', async () => {
+    const realBurner = Keypair.generate().publicKey;
+    const attackerWallet = Keypair.generate().publicKey;
+    mockGiveaways.maybeSingle.mockResolvedValueOnce({
+      data: { id: 'gw-1', burner_address: realBurner.toBase58() },
+      error: null,
+    });
+    const txBase64 = buildAtaCreationTxBase64(attackerWallet);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'attacker', undefined, undefined, undefined, undefined, 'gw-1'),
+    ).rejects.toThrow('does not match the giveaway');
   });
 });

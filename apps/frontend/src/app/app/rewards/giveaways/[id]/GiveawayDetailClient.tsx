@@ -37,6 +37,7 @@ import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
 import { buildGiveawayFundingPrivateTransfer } from "@/services/api/claims";
 import { FormattedText } from "@/components/FormattedText";
+import posthog from "posthog-js";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 // Mirrors giveaways-public.controller.ts's ENTRIES_VISIBLE_STATUSES — the entry list (and
@@ -291,13 +292,19 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
         throw new Error(body?.message || "Failed to enter giveaway");
       }
       toast({ title: "You're entered!", description: "Complete the tasks below before entries close." });
+      if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+        posthog.capture("giveaway_entered", {
+          selection_mode: giveaway?.selection_mode,
+          task_count: giveaway?.tasks.length,
+        });
+      }
       refetchEntry();
     } catch (err: any) {
       setEnterError(err.message);
     } finally {
       setEntering(false);
     }
-  }, [resolvedId, getAccessToken, toast, refetchEntry]);
+  }, [resolvedId, getAccessToken, toast, refetchEntry, giveaway]);
 
   const submitTask = useCallback(async (taskId: string, submissionText: string): Promise<string | undefined> => {
     const res = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}/tasks/${taskId}/submit`, {
@@ -396,7 +403,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
           if (!(msg.includes("InstructionError") && msg.includes('"Custom":'))) throw e;
         }
       } else {
-        await solanaPayment.makePayment({ amount: remainingUsd, recipientAddress: burnerAddress });
+        await solanaPayment.makePayment({ amount: remainingUsd, recipientAddress: burnerAddress, giveawayId: resolvedId });
       }
       toast({ title: "Payment sent", description: "Confirming on-chain — this can take a few seconds." });
       await Promise.all([refetchFunding(), refetch()]);

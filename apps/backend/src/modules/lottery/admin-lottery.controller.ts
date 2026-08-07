@@ -95,11 +95,15 @@ export class AdminLotteryController {
     const db = this.supabase.getClient();
     const { data, count, error } = await db
       .from('lottery_gifts')
-      .select('id, created_at, created_by_user_id, funding_mode, num_tickets, note, recipient_type, recipient_identifier, status, claimed_at, claimed_by_user_id, resulting_ticket_id, failure_reason', { count: 'exact' })
+      .select('id, created_at, created_by_user_id, funding_mode, num_tickets, note, recipient_type, recipient_identifier, status, claimed_at, claimed_by_user_id, resulting_ticket_id, failure_reason, short_id, claim_token', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range((page - 1) * pageSize, page * pageSize - 1);
     if (error) throw new BadRequestException(error.message);
-    return { data: data ?? [], total: count ?? 0, page, limit: pageSize };
+    const data2 = (data ?? []).map((g: any) => ({
+      ...g,
+      claimUrl: `https://pay.loofta.xyz/gift/${g.short_id || g.claim_token}`,
+    }));
+    return { data: data2, total: count ?? 0, page, limit: pageSize };
   }
 
   @Get('packs/tiers')
