@@ -7,6 +7,16 @@ use ephemeral_rollups_sdk::vrf::{
 
 declare_id!("5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi");
 
+#[cfg(not(feature = "no-entrypoint"))]
+solana_security_txt::security_txt! {
+    name: "loofta-vrf",
+    project_url: "https://loofta.xyz",
+    contacts: "email:hello@loofta.xyz",
+    policy: "Please report vulnerabilities responsibly by emailing hello@loofta.xyz before any public disclosure.",
+    preferred_languages: "en",
+    source_code: "https://github.com/loofta/loofta-vrf"
+}
+
 pub const DRAW_PDA_SEED: &[u8] = b"draw";
 
 // The only account allowed to request (or reset-and-re-request) randomness — without this,
