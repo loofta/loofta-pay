@@ -308,7 +308,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
           if (!(msg.includes("InstructionError") && msg.includes('"Custom":'))) throw e;
         }
       } else {
-        await solanaPayment.makePayment({ amount: remainingUsd, recipientAddress: burnerAddress });
+        await solanaPayment.makePayment({ amount: remainingUsd, recipientAddress: burnerAddress, giveawayId: resolvedId });
       }
       toast({ title: "Payment sent", description: "Confirming on-chain — this can take a few seconds." });
       await Promise.all([refetchFunding(), refetch()]);

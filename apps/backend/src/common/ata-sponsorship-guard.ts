@@ -141,6 +141,16 @@ function recordSponsorshipAndMaybeTrip(): boolean {
  *  doesn't depend on every call site formatting its label consistently (most don't). */
 const CALLER_MARKER = '|caller:';
 
+/** Marker for the Solana wallet that signed the sponsored transaction — tracked separately from
+ *  callerUserId because a Privy account costs nothing to recreate, but the 2026-08-07 recurrence
+ *  showed the same signing wallet reused across ~30 sponsorships while (evidently) rotating
+ *  accounts to dodge the per-user cap below. Reusing a wallet costs an attacker nothing either,
+ *  but it's the one identity that stayed constant, so capping on it closes that specific
+ *  evasion. Kept BEFORE the caller marker in stored context so the existing
+ *  `%${CALLER_MARKER}${userId}` suffix match and the priorCallerId parsing (split on
+ *  CALLER_MARKER, take everything after) both keep working unmodified. */
+const SIGNER_MARKER = '|signer:';
+
 /** Lifetime cap on same-caller repeat sponsorships for a single (wallet, mint) — see
  *  guardAtaSponsorship doc comment, incident 2026-08-06. */
 const MAX_SAME_CALLER_REPEATS = 2;
@@ -185,6 +195,42 @@ export async function assertPerUserAtaCreationCapNotExceeded(
   }
 }
 
+/**
+ * Same volume cap as assertPerUserAtaCreationCapNotExceeded, keyed on the Solana wallet that
+ * signed the transaction instead of the authenticated userId. Added 2026-08-07: a live drain
+ * reused one signer wallet across ~30 UNBOUND (no claimId) sponsorships while apparently rotating
+ * Privy accounts to stay under the per-user cap each time — free to do since creating a new Privy
+ * account costs nothing. The signer wallet is derived straight from the transaction itself
+ * (SolanaSponsorService.getRequiredUserSigners), so call this unconditionally whenever a non-fee-
+ * payer signer is present, independent of whether userId resolved — it's a second, independent
+ * axis on the same underlying abuse, not a replacement for the per-user check.
+ */
+export async function assertPerWalletAtaCreationCapNotExceeded(
+  supabaseService: SupabaseService,
+  walletAddress: string,
+  newAtaCount: number,
+  label: string,
+): Promise<void> {
+  if (newAtaCount <= 0) return;
+  const windowStart = new Date(Date.now() - ATA_PER_USER_WINDOW_HOURS * 60 * 60_000).toISOString();
+  const { count, error } = await supabaseService.ataSponsorships
+    .select('wallet_address', { count: 'exact', head: true })
+    .ilike('context', `%${SIGNER_MARKER}${walletAddress}%`)
+    .gte('first_sponsored_at', windowStart);
+  if (error) {
+    log.warn(`[${label}] per-wallet ATA cap check failed (failing open): ${error.message}`);
+    return;
+  }
+  if ((count ?? 0) + newAtaCount > ATA_PER_USER_CAP) {
+    log.error(
+      `[${label}] BLOCKED signerWallet=${walletAddress.slice(0, 8)}… — would exceed ${ATA_PER_USER_CAP} sponsored new ATAs per ${ATA_PER_USER_WINDOW_HOURS}h for this signing wallet (already at ${count}, this request adds ${newAtaCount})`,
+    );
+    throw new Error(
+      `This wallet has reached the limit of ${ATA_PER_USER_CAP} new-recipient sends per ${ATA_PER_USER_WINDOW_HOURS}h that don't already have a token account. Please try again later.`,
+    );
+  }
+}
+
 export async function guardAtaSponsorship(
   supabaseService: SupabaseService,
   walletAddress: string,
@@ -192,6 +238,7 @@ export async function guardAtaSponsorship(
   context: string,
   emailService?: EmailService,
   callerUserId?: string,
+  signerWalletAddress?: string,
 ): Promise<boolean> {
   if (breakerTrippedAt !== null) {
     log.error(
@@ -200,7 +247,7 @@ export async function guardAtaSponsorship(
     return false;
   }
 
-  const storedContext = callerUserId ? `${context}${CALLER_MARKER}${callerUserId}` : context;
+  const storedContext = `${context}${signerWalletAddress ? `${SIGNER_MARKER}${signerWalletAddress}` : ''}${callerUserId ? `${CALLER_MARKER}${callerUserId}` : ''}`;
   const { error } = await supabaseService.ataSponsorships.insert({
     wallet_address: walletAddress,
     mint,

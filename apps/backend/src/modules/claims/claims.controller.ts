@@ -620,7 +620,7 @@ export class ClaimsController {
   @ApiResponse({ status: 400, description: 'Invalid transaction' })
   @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
   async signAndBroadcastSponsored(
-    @Body() body: { transaction: string; network?: string; claimId?: string; pajOrderId?: string; nearIntentsOrderId?: string; offrampRequestId?: string },
+    @Body() body: { transaction: string; network?: string; claimId?: string; pajOrderId?: string; nearIntentsOrderId?: string; offrampRequestId?: string; giveawayId?: string },
     @Headers('x-loofta-internal') internalKey: string | undefined,
     @Req() req: { user?: { id: string } },
   ): Promise<{ signature: string }> {
@@ -669,7 +669,7 @@ export class ClaimsController {
     }
 
     try {
-      return await this.solanaSponsor.signAndBroadcast(body.transaction, body.network, userId, body.claimId, body.pajOrderId, body.nearIntentsOrderId, body.offrampRequestId);
+      return await this.solanaSponsor.signAndBroadcast(body.transaction, body.network, userId, body.claimId, body.pajOrderId, body.nearIntentsOrderId, body.offrampRequestId, body.giveawayId);
     } catch (e: any) {
       if (e?.message?.includes('not configured')) {
         throw new ServiceUnavailableException('Solana sponsorship is not configured');

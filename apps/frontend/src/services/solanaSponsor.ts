@@ -177,6 +177,9 @@ export async function signAndBroadcastSponsoredTx(
   /** Same idea, for a "peer offramp" (ZKP2P/Base bridging) request — backend verifies the ATA
    *  being sponsored matches that offramp_requests row's own near_intents_deposit_address. */
   offrampRequestId?: string,
+  /** Same idea, for a giveaway funding payment — backend verifies the ATA being sponsored
+   *  matches that giveaway's own burner_address on file. */
+  giveawayId?: string,
 ): Promise<string> {
   const label = stepLabel ?? "sign-and-broadcast";
   const t0 =
@@ -200,6 +203,7 @@ export async function signAndBroadcastSponsoredTx(
       ...(pajOrderId ? { pajOrderId } : {}),
       ...(nearIntentsOrderId ? { nearIntentsOrderId } : {}),
       ...(offrampRequestId ? { offrampRequestId } : {}),
+      ...(giveawayId ? { giveawayId } : {}),
     }),
   });
   if (!r.ok) {
