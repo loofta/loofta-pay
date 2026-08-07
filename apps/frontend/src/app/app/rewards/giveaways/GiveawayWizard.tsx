@@ -16,6 +16,7 @@ import { RichTextEditor } from "@/components/RichTextEditor";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import posthog from "posthog-js";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 const GRADIENT = "linear-gradient(to right, #EAB308, #FF0F00)";
@@ -657,6 +658,15 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
         throw new Error(body?.message || (mode === "edit" ? "Failed to save changes" : "Failed to submit giveaway"));
       }
       setSubmitted(true);
+      if (mode === "create" && process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+        posthog.capture("giveaway_created", {
+          prize_pool_usd: totalPool,
+          winner_count: winnerCount,
+          selection_mode: selectionMode,
+          task_count: tasks.length,
+          is_official: createAsAdmin,
+        });
+      }
       clearDraft();
       const redirectTo = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways/mine";
       setTimeout(() => router.push(redirectTo), 1800);
@@ -665,7 +675,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     } finally {
       setSubmitting(false);
     }
-  }, [mode, giveawayId, title, description, projectName, logoUrl, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
+  }, [mode, giveawayId, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
 
   const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";

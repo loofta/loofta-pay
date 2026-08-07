@@ -36,6 +36,7 @@ import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
 import { buildGiveawayFundingPrivateTransfer } from "@/services/api/claims";
 import { FormattedText } from "@/components/FormattedText";
+import posthog from "posthog-js";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 // Money-highlight accent (prize amounts), matching the browse-list card and this feature's other
@@ -229,13 +230,19 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
         throw new Error(body?.message || "Failed to enter giveaway");
       }
       toast({ title: "You're entered!", description: "Complete the tasks below before entries close." });
+      if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+        posthog.capture("giveaway_entered", {
+          selection_mode: giveaway?.selection_mode,
+          task_count: giveaway?.tasks.length,
+        });
+      }
       refetchEntry();
     } catch (err: any) {
       setEnterError(err.message);
     } finally {
       setEntering(false);
     }
-  }, [resolvedId, getAccessToken, toast, refetchEntry]);
+  }, [resolvedId, getAccessToken, toast, refetchEntry, giveaway]);
 
   const markTaskDone = useCallback(async (taskId: string, submissionText: string) => {
     try {

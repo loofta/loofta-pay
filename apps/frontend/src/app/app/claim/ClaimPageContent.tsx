@@ -23,6 +23,7 @@ import { PRIVATE_PAYMENT_ENABLED } from "@/services/privatePayment";
 import { useAuthStore } from "@/store/auth";
 import { CROSS_CHAIN_ENABLED } from "@/lib/features";
 import { MessageInput } from "@/components/MessageInput";
+import posthog from "posthog-js";
 
 /** Inline Loofta logo SVG (matches pay modal). */
 function LooftaIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
@@ -321,6 +322,15 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
         feeOnSender,
       }, accessToken);
       setCreatedLink(res.link);
+      if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+        posthog.capture("payment_link_created", {
+          amount_usd: Number(amountUsdStr),
+          destination_chain: finalToSel.chain,
+          destination_token: finalToSel.symbol,
+          is_private: effectivePrivate,
+          recipient_type: receiveDestination,
+        });
+      }
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 2500);
       toast({ title: "Payment link created", description: "Share the link with your recipient." });
