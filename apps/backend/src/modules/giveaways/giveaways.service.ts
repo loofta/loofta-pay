@@ -115,6 +115,15 @@ export class GiveawaysService {
     const platformFeeUsd = isOfficial ? 0 : GIVEAWAY_PLATFORM_FEE_USD;
     const funding_required_usd = this.computeFundingRequiredUsd(dto.prize_amount_usd, dto.winner_count) + platformFeeUsd;
 
+    // A creator with no email linked to their Privy account is otherwise invisible once
+    // submitted — no way to notify them of approval/rejection/expiry, and no way for admin to
+    // reach them beyond their raw Privy id. Not enforced for an official ("create as Loofta")
+    // giveaway, created by the admin themselves for internal testing.
+    const creatorEmail = isOfficial ? null : await this.resolveLinkedEmail(userId);
+    if (!isOfficial && !creatorEmail) {
+      throw new BadRequestException('Add an email to your account before creating a giveaway — we use it to notify you about approval, funding, and payouts.');
+    }
+
     const { data: giveaway, error } = await this.supabaseService.giveaways
       .insert({
         created_by: userId,
@@ -172,17 +181,15 @@ export class GiveawaysService {
       // the admin dashboard. Not sent for official giveaways, which auto-approve above.
       const alertEmail = this.configService.get<string>('GIVEAWAY_REVIEW_ALERT_EMAIL', GIVEAWAY_REVIEW_ALERT_EMAIL);
       const adminPath = this.configService.get<string>('ADMIN_SECRET_PATH', '');
-      this.resolveLinkedEmail(userId)
-        .then((creatorEmail) =>
-          this.emailService.sendGiveawaySubmittedAlertEmail({
-            to: alertEmail,
-            title: giveaway.title,
-            creatorEmail,
-            prizeAmountUsd: dto.prize_amount_usd,
-            winnerCount: dto.winner_count,
-            adminUrl: adminPath ? `${this.baseUrl}/app/${adminPath}` : `${this.baseUrl}/app`,
-          }),
-        )
+      this.emailService
+        .sendGiveawaySubmittedAlertEmail({
+          to: alertEmail,
+          title: giveaway.title,
+          creatorEmail,
+          prizeAmountUsd: dto.prize_amount_usd,
+          winnerCount: dto.winner_count,
+          adminUrl: adminPath ? `${this.baseUrl}/app/${adminPath}` : `${this.baseUrl}/app`,
+        })
         .catch((e) => this.logger.warn(`[Giveaway] ${giveaway.id}: failed to send submission alert email (non-fatal): ${e?.message ?? e}`));
     }
     return giveaway as Giveaway;
@@ -540,6 +547,14 @@ export class GiveawaysService {
         .single();
       if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to reject giveaway');
       await this.logEvent(id, 'rejected', { reason: dto.rejection_reason, admin: adminUserId });
+
+      this.resolveLinkedEmail(data.created_by).then((recipientEmail) => {
+        if (!recipientEmail) return;
+        this.emailService
+          .sendGiveawayRejectedEmail({ recipientEmail, title: data.title, reason: dto.rejection_reason! })
+          .catch((e) => this.logger.warn(`[Giveaway] ${id}: failed to send rejection email (non-fatal): ${e?.message ?? e}`));
+      });
+
       return data as Giveaway;
     }
 
@@ -571,6 +586,40 @@ export class GiveawaysService {
           giveawayUrl: `${this.baseUrl}/rewards/giveaways/${id}/manage`,
         })
         .catch((e) => this.logger.warn(`[Giveaway] ${id}: failed to send approval email (non-fatal): ${e?.message ?? e}`));
+    });
+
+    return data as Giveaway;
+  }
+
+  /** Admin manual expiry — for a giveaway that was approved (PENDING_FUNDING) but the creator
+   *  never funded it. Re-checks the burner's on-chain balance first (same guard as
+   *  cancelOrDelete's PENDING_FUNDING branch) so an admin can't accidentally expire one that
+   *  actually just got funded and is about to flip to OPEN via the funding cron. */
+  async adminExpireUnfunded(id: string, adminUserId: string, reason?: string): Promise<Giveaway> {
+    const giveaway = await this.findOneOrThrow(id);
+    if (giveaway.status !== GiveawayStatus.PENDING_FUNDING) {
+      throw new BadRequestException(`Giveaway is ${giveaway.status}, not PENDING_FUNDING — nothing to expire`);
+    }
+
+    const { fundingConfirmedUsd } = await this.fundingService.checkAndUpdateFundingStatus(giveaway);
+    if (fundingConfirmedUsd > 0) {
+      throw new BadRequestException('This giveaway already has funds in its burner — refresh and check its funding status instead of expiring it.');
+    }
+
+    const expireReason = reason?.trim() || 'Approved but never funded';
+    const { data, error } = await this.supabaseService.giveaways
+      .update({ status: GiveawayStatus.UNDERFUNDED_EXPIRED, cancel_reason: expireReason })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to expire giveaway');
+    await this.logEvent(id, 'expired', { admin: adminUserId, reason: expireReason });
+
+    this.resolveLinkedEmail(data.created_by).then((recipientEmail) => {
+      if (!recipientEmail) return;
+      this.emailService
+        .sendGiveawayExpiredEmail({ recipientEmail, title: data.title, reason: expireReason })
+        .catch((e) => this.logger.warn(`[Giveaway] ${id}: failed to send expiry email (non-fatal): ${e?.message ?? e}`));
     });
 
     return data as Giveaway;

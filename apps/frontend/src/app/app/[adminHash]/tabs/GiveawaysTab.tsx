@@ -9,6 +9,8 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { Loader2, Gift, Check, X, AlertTriangle, ChevronDown, ChevronRight, Ban, Search, Pencil, Trash2, Plus } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 const TERMINAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "REJECTED", "REFUNDED", "UNDERFUNDED_EXPIRED"]);
@@ -274,19 +276,16 @@ export function GiveawaysTab() {
     }
   }, [editForm, authHeaders, toast, searchAll, searchInput]);
 
-  const review = useCallback(async (id: string, decision: "approve" | "reject") => {
-    if (decision === "reject" && !window.confirm("Reject this giveaway?")) return;
+  const review = useCallback(async (id: string, decision: "approve" | "reject", rejectionReason?: string) => {
     setBusyId(id);
     try {
-      const rejection_reason = decision === "reject" ? window.prompt("Rejection reason:") ?? "" : undefined;
-      if (decision === "reject" && !rejection_reason) { setBusyId(null); return; }
       const res = await fetch(`${BACKEND_URL}/giveaways/admin/${id}/review`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-        body: JSON.stringify({ decision, rejection_reason }),
+        body: JSON.stringify({ decision, rejection_reason: rejectionReason }),
       });
       if (!res.ok) throw new Error(await res.text());
-      toast({ title: decision === "approve" ? "Giveaway approved — burner minted" : "Giveaway rejected" });
+      toast({ title: decision === "approve" ? "Giveaway approved — burner minted" : "Giveaway rejected — creator notified" });
       fetchAll();
     } catch (err: any) {
       toast({ variant: "destructive", title: "Failed to review giveaway", description: err.message });
@@ -294,6 +293,51 @@ export function GiveawaysTab() {
       setBusyId(null);
     }
   }, [authHeaders, toast, fetchAll]);
+
+  // Admin manual expiry for a giveaway approved (PENDING_FUNDING) but never funded by the creator —
+  // backend re-checks the burner's on-chain balance and refuses if funds actually did land, so this
+  // can't accidentally kill one that's about to flip to OPEN via the funding cron.
+  const expireGiveaway = useCallback(async (id: string, reason: string) => {
+    setBusyId(id);
+    try {
+      const res = await fetch(`${BACKEND_URL}/giveaways/admin/${id}/expire`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({ reason: reason.trim() || undefined }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null);
+        throw new Error(errBody?.message || "Failed to expire giveaway");
+      }
+      toast({ title: "Giveaway expired — creator notified" });
+      searchAll(searchInput);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Failed to expire giveaway", description: err.message });
+    } finally {
+      setBusyId(null);
+    }
+  }, [authHeaders, toast, searchAll, searchInput]);
+
+  // Shared reason-entry dialog for both reject (rejection_reason required) and expire (reason
+  // optional, defaults server-side) — replaces window.prompt/window.confirm with an in-app modal.
+  const [reasonDialog, setReasonDialog] = useState<{ type: "reject" | "expire"; id: string; title: string } | null>(null);
+  const [reasonInput, setReasonInput] = useState("");
+
+  const openReject = useCallback((g: AdminGiveaway) => {
+    setReasonDialog({ type: "reject", id: g.id, title: g.title });
+    setReasonInput("");
+  }, []);
+  const openExpire = useCallback((g: AdminGiveaway) => {
+    setReasonDialog({ type: "expire", id: g.id, title: g.title });
+    setReasonInput("Approved but never funded");
+  }, []);
+  const confirmReasonDialog = useCallback(() => {
+    if (!reasonDialog) return;
+    const { type, id } = reasonDialog;
+    setReasonDialog(null);
+    if (type === "reject") review(id, "reject", reasonInput.trim());
+    else expireGiveaway(id, reasonInput);
+  }, [reasonDialog, reasonInput, review, expireGiveaway]);
 
   const reviewCompletion = useCallback(async (completionId: string, decision: "verified" | "rejected") => {
     setBusyId(completionId);
@@ -370,7 +414,7 @@ export function GiveawaysTab() {
                       <button
                         type="button"
                         disabled={busyId === g.id}
-                        onClick={() => review(g.id, "reject")}
+                        onClick={() => openReject(g)}
                         className="p-1.5 rounded bg-red-900/40 text-red-400 hover:bg-red-900/70 disabled:opacity-50"
                         aria-label="Reject"
                       >
@@ -479,18 +523,31 @@ export function GiveawaysTab() {
                       <td className="px-3 py-2">${g.prize_amount_usd} × {g.winner_count}</td>
                       <td className="px-3 py-2 text-gray-500">{new Date(g.entries_close_at).toLocaleString()}</td>
                       <td className="px-3 py-2">
-                        {editable ? (
-                          <button
-                            type="button"
-                            onClick={() => startEdit(g)}
-                            className="p-1.5 rounded bg-gray-800 text-gray-300 hover:bg-gray-700"
-                            aria-label="Edit"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                        ) : (
-                          <span className="text-gray-700">—</span>
-                        )}
+                        <div className="flex gap-1.5">
+                          {editable && (
+                            <button
+                              type="button"
+                              onClick={() => startEdit(g)}
+                              className="p-1.5 rounded bg-gray-800 text-gray-300 hover:bg-gray-700"
+                              aria-label="Edit"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {g.status === "PENDING_FUNDING" && (
+                            <button
+                              type="button"
+                              disabled={busyId === g.id}
+                              onClick={() => openExpire(g)}
+                              className="p-1.5 rounded bg-orange-900/40 text-orange-400 hover:bg-orange-900/70 disabled:opacity-50"
+                              aria-label="Expire"
+                              title="Expire — approved but never funded"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {!editable && g.status !== "PENDING_FUNDING" && <span className="text-gray-700">—</span>}
+                        </div>
                       </td>
                     </tr>
                     {editingId === g.id && (
@@ -766,6 +823,49 @@ export function GiveawaysTab() {
           </table>
         </div>
       </div>
+
+      <Dialog open={!!reasonDialog} onOpenChange={(open) => { if (!open) setReasonDialog(null); }}>
+        <DialogContent className="bg-gray-900 border-gray-700 text-gray-100 max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {reasonDialog?.type === "reject" ? `Reject "${reasonDialog.title}"?` : `Expire "${reasonDialog?.title}"?`}
+            </DialogTitle>
+            <DialogDescription className="text-gray-400">
+              {reasonDialog?.type === "reject"
+                ? "The creator will be emailed this reason, with a note to contact support if they think this is a mistake."
+                : "Approved but never funded — the creator will be emailed this reason. Refused if the burner already has funds."}
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={reasonInput}
+            onChange={(e) => setReasonInput(e.target.value)}
+            placeholder={reasonDialog?.type === "reject" ? "Reason for rejection (required)…" : "Reason (optional)…"}
+            rows={3}
+            className="bg-gray-950 border-gray-700 text-gray-100 placeholder:text-gray-600"
+          />
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setReasonDialog(null)}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-700 text-gray-300 hover:bg-gray-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmReasonDialog}
+              disabled={reasonDialog?.type === "reject" && !reasonInput.trim()}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50 ${
+                reasonDialog?.type === "reject"
+                  ? "bg-red-900/40 text-red-400 hover:bg-red-900/70"
+                  : "bg-orange-900/40 text-orange-400 hover:bg-orange-900/70"
+              }`}
+            >
+              {reasonDialog?.type === "reject" ? "Reject giveaway" : "Expire giveaway"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

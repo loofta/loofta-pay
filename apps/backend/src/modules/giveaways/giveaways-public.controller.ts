@@ -17,6 +17,22 @@ const ENTRIES_VISIBLE_STATUSES: readonly string[] = [
   GiveawayStatus.COMPLETED,
 ];
 
+// Giveaways that have gone past OPEN but never made it public in the first place
+// (DRAFT/PENDING_APPROVAL/PENDING_FUNDING/REJECTED) are excluded — there was never anything for a
+// visitor to have seen or entered, so there's nothing to show as "ended." Everything else that was
+// once live gets listed, even CANCELLED/REFUNDED/UNDERFUNDED_EXPIRED — someone who saw it open
+// should still be able to find out what happened to it.
+const ENDED_STATUSES: readonly string[] = [
+  GiveawayStatus.ENTRIES_CLOSED,
+  GiveawayStatus.DRAWING,
+  GiveawayStatus.WINNERS_SELECTED,
+  GiveawayStatus.PAYOUT_IN_PROGRESS,
+  GiveawayStatus.COMPLETED,
+  GiveawayStatus.CANCELLED,
+  GiveawayStatus.UNDERFUNDED_EXPIRED,
+  GiveawayStatus.REFUNDED,
+];
+
 /**
  * No-auth verifiability surface — mirrors twitter-payments.controller.ts's narrow public
  * pattern. Deliberately reads from `giveaways_safe` (never `giveaways` directly), which already
@@ -41,6 +57,17 @@ export class GiveawaysPublicController {
       .eq('status', 'OPEN')
       .order('is_official', { ascending: false })
       .order('entries_close_at', { ascending: true });
+    if (error) throw new NotFoundException(error.message);
+    return { giveaways: data ?? [] };
+  }
+
+  @Get('ended')
+  @ApiOperation({ summary: 'Browse past (no longer open) giveaways — most recently closed first. No auth required.' })
+  async findEnded() {
+    const { data, error } = await this.supabaseService.giveawaysSafe
+      .select('id, title, description, logo_url, project_name, short_id, winner_count, selection_mode, prize_amount_usd, entries_close_at, status, is_official')
+      .in('status', ENDED_STATUSES as string[])
+      .order('entries_close_at', { ascending: false });
     if (error) throw new NotFoundException(error.message);
     return { giveaways: data ?? [] };
   }

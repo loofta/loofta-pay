@@ -656,6 +656,10 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   const goBack = useCallback(() => setStep((s) => Math.max(1, s - 1)), []);
 
   const handleSubmit = useCallback(async () => {
+    if (mode === "create" && !notifyEmail) {
+      toast({ variant: "destructive", title: "Add your email first", description: "We need an email on file to notify you about approval, funding, and payouts." });
+      return;
+    }
     setSubmitting(true);
     try {
       const token = await getAccessToken().catch(() => null);
@@ -702,7 +706,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     } finally {
       setSubmitting(false);
     }
-  }, [mode, giveawayId, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
+  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
 
   const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
@@ -1084,11 +1088,11 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                           </div>
 
                           <div>
-                            <Label className={labelClass}>Notify me when approved</Label>
+                            <Label className={labelClass}>Email{mode === "create" ? " (required)" : ""}</Label>
                             {notifyEmail ? (
                               <div className="flex items-center gap-2 rounded-xl bg-white/[0.04] border border-white/10 px-3 py-2.5">
                                 <Mail className="w-4 h-4 text-slate-500 shrink-0" />
-                                <p className="text-base text-slate-400">We&apos;ll email {notifyEmail} once this is approved.</p>
+                                <p className="text-base text-slate-400">We&apos;ll email {notifyEmail} about approval, funding, and payouts.</p>
                               </div>
                             ) : (
                               <button
@@ -1097,7 +1101,9 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                                 className="w-full flex items-center gap-2 rounded-xl bg-white/[0.04] border border-white/10 px-3 py-2.5 hover:bg-white/[0.07] transition-colors text-left"
                               >
                                 <Mail className="w-4 h-4 text-slate-400 shrink-0" />
-                                <p className="text-base text-slate-400">Add your email to be notified when it&apos;s approved</p>
+                                <p className="text-base text-slate-400">
+                                  {mode === "create" ? "Add your email to submit — we need it to notify you" : "Add your email to be notified about updates"}
+                                </p>
                               </button>
                             )}
                           </div>

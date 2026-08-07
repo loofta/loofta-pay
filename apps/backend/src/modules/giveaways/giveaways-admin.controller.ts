@@ -6,6 +6,7 @@ import { GiveawayEntriesService } from './giveaway-entries.service';
 import { GiveawayDrawService } from './giveaway-draw.service';
 import { AdminReviewGiveawayDto } from './dto/admin-review-giveaway.dto';
 import { AdminEditGiveawayDto } from './dto/admin-edit-giveaway.dto';
+import { ExpireGiveawayDto } from './dto/expire-giveaway.dto';
 import { ReviewTaskCompletionDto } from './dto/review-task-completion.dto';
 import { VrfManualFallbackDto } from './dto/vrf-manual-fallback.dto';
 import { Giveaway } from './entities/giveaway.entity';
@@ -61,6 +62,17 @@ export class GiveawaysAdminController {
     @Body() dto: AdminReviewGiveawayDto,
   ): Promise<{ giveaway: Giveaway }> {
     const giveaway = await this.giveawaysService.adminReview(id, req.user!.id, dto);
+    return { giveaway };
+  }
+
+  @Put(':id/expire')
+  @ApiOperation({ summary: 'Admin manual expiry for a giveaway that was approved (PENDING_FUNDING) but the creator never funded — moves it to UNDERFUNDED_EXPIRED and emails the creator. Refused if the burner already has funds.' })
+  async expire(
+    @Req() req: { user?: { id: string } },
+    @Param('id') id: string,
+    @Body() dto: ExpireGiveawayDto,
+  ): Promise<{ giveaway: Giveaway }> {
+    const giveaway = await this.giveawaysService.adminExpireUnfunded(id, req.user!.id, dto.reason);
     return { giveaway };
   }
 

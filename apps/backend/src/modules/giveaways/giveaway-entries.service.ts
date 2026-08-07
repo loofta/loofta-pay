@@ -162,6 +162,11 @@ export class GiveawayEntriesService {
     const completion = entry.completions.find((c) => c.giveaway_task_id === taskId);
     if (!completion) throw new NotFoundException('Task not found on this giveaway');
 
+    const giveawayForStatus = await this.giveawaysService.findOneOrThrow(giveawayId);
+    if (giveawayForStatus.status !== GiveawayStatus.OPEN) {
+      throw new BadRequestException('This giveaway has ended — tasks can no longer be verified.');
+    }
+
     const tasks = await this.giveawaysService.getTasks(giveawayId);
     const task = tasks.find((t) => t.id === taskId);
 

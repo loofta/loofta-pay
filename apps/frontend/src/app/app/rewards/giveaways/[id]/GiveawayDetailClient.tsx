@@ -485,6 +485,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     ? Math.min(100, Math.round((Number(giveaway.funding_confirmed_usd) / Number(giveaway.funding_required_usd)) * 100))
     : 0;
   const canEnter = giveaway.status === "OPEN" && !myEntry;
+  const giveawayEnded = giveaway.status !== "OPEN";
   const canShare = giveaway.status !== "REJECTED" && giveaway.status !== "CANCELLED";
   // Matches the current environment (localhost in dev, pay.loofta.xyz in prod) instead of a
   // hardcoded production URL — a hardcoded one made ShareLinkMenu's OG pre-warm fetch cross-origin
@@ -619,7 +620,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                       Loofta doesn&apos;t control this page — it&apos;s Solana&apos;s own public record. Once it loads, look for a <span className="font-mono">randomness</span> value matching the one above and <span className="font-mono">fulfilled: true</span>.
                     </p>
                     <a
-                      href={`https://explorer.solana.com/address/${giveaway.draw_request_pda}${giveaway.is_devnet ? "?cluster=devnet" : ""}`}
+                      href={`https://explorer.solana.com/address/${giveaway.draw_request_pda}/anchor-account${giveaway.is_devnet ? "?cluster=devnet" : ""}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 text-base text-[#FF7A2A] hover:underline underline-offset-2"
@@ -832,14 +833,18 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                           ) : anyRejected ? (
                             <div className="flex items-center justify-between gap-3">
                               <span className="text-base font-medium text-red-400">Not fully verified</span>
-                              <button
-                                type="button"
-                                onClick={() => verifyEngageGroup(groupTaskIds)}
-                                className="shrink-0 text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
-                              >
-                                Try again
-                              </button>
+                              {!giveawayEnded && (
+                                <button
+                                  type="button"
+                                  onClick={() => verifyEngageGroup(groupTaskIds)}
+                                  className="shrink-0 text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
+                                >
+                                  Try again
+                                </button>
+                              )}
                             </div>
+                          ) : giveawayEnded ? (
+                            <span className="text-base font-medium text-slate-500">Giveaway ended — can no longer be verified</span>
                           ) : (
                             <button
                               type="button"
@@ -892,16 +897,20 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                         ) : rejected ? (
                           <div className="flex items-center justify-between gap-3">
                             <span className="text-base font-medium text-red-400">Rejected</span>
-                            <button
-                              type="button"
-                              onClick={() => markTaskDone(task.id, "")}
-                              className="shrink-0 text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
-                            >
-                              Try again
-                            </button>
+                            {!giveawayEnded && (
+                              <button
+                                type="button"
+                                onClick={() => markTaskDone(task.id, "")}
+                                className="shrink-0 text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
+                              >
+                                Try again
+                              </button>
+                            )}
                           </div>
                         ) : completion?.submission_data ? (
                           <span className="text-base font-medium text-amber-400">Pending review</span>
+                        ) : giveawayEnded ? (
+                          <span className="text-base font-medium text-slate-500">Giveaway ended — can no longer be verified</span>
                         ) : (
                           <button
                             type="button"

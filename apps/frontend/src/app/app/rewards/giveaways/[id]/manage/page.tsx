@@ -179,6 +179,7 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
 
   const canPickManually = giveaway.status === "DRAWING" && giveaway.selection_mode === "manual";
   const pendingReviewCount = reviewQueue?.length ?? 0;
+  const winners = (entries ?? []).filter((e) => e.status === "winner");
 
   // Client-side filter/paginate — entry counts can run into the hundreds, and pulling that whole
   // list into view by default (as this used to) made the manage page unusably long to scroll.
@@ -226,6 +227,36 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
               </div>
             )}
           </div>
+
+          {winners.length > 0 && (
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <p className="text-base font-medium text-slate-400 uppercase tracking-widest mb-2">
+                Winners ({winners.length})
+              </p>
+              <div className="space-y-2">
+                {winners.map((entry) => (
+                  <div key={entry.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-base font-medium text-white truncate">@{entry.x_handle}</p>
+                      <p className="text-base text-slate-500">
+                        payout {entry.payout_status ?? "pending"}
+                      </p>
+                    </div>
+                    {entry.claim_payment_id && (
+                      <Link
+                        href={`/c/${entry.claim_payment_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="shrink-0 text-base text-[#FF7A2A] hover:underline underline-offset-2"
+                      >
+                        View claim link
+                      </Link>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="flex items-center justify-between gap-3">

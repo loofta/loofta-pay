@@ -34,6 +34,24 @@ async function fetchOpenGiveaways(): Promise<PublicGiveawayListItem[]> {
   return data.giveaways ?? [];
 }
 
+async function fetchEndedGiveaways(): Promise<PublicGiveawayListItem[]> {
+  const res = await fetch(`${BACKEND_URL}/giveaways/public/ended`);
+  if (!res.ok) throw new Error("Failed to load past giveaways");
+  const data = await res.json();
+  return data.giveaways ?? [];
+}
+
+const ENDED_STATUS_LABELS: Record<string, string> = {
+  ENTRIES_CLOSED: "Closing",
+  DRAWING: "Drawing winners",
+  WINNERS_SELECTED: "Winners selected",
+  PAYOUT_IN_PROGRESS: "Paying out",
+  COMPLETED: "Completed",
+  CANCELLED: "Cancelled",
+  UNDERFUNDED_EXPIRED: "Underfunded",
+  REFUNDED: "Refunded",
+};
+
 function Skeleton() {
   return (
     <div className="animate-pulse space-y-3 mt-6">
@@ -50,6 +68,13 @@ export default function GiveawaysListPage() {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["giveaways-open"],
     queryFn: fetchOpenGiveaways,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const { data: endedData } = useQuery({
+    queryKey: ["giveaways-ended"],
+    queryFn: fetchEndedGiveaways,
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });
@@ -142,6 +167,51 @@ export default function GiveawaysListPage() {
                   </div>
                 </Link>
               ))}
+            </div>
+          )}
+
+          {endedData && endedData.length > 0 && (
+            <div className="mt-8">
+              <p className="text-base font-medium text-slate-400 uppercase tracking-widest mb-3">Ended</p>
+              <div className="space-y-3">
+                {endedData.map((g) => (
+                  <Link
+                    key={g.id}
+                    href={`/rewards/giveaways/${g.short_id ?? g.id}`}
+                    className="block rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors p-4"
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      {g.is_official ? (
+                        <div className="flex items-center gap-1.5">
+                          <Image src="/loofta_icon_magic.png" alt="" width={16} height={16} className="rounded-full" />
+                          <span className="text-sm font-medium text-slate-400">Loofta</span>
+                        </div>
+                      ) : (g.logo_url || g.project_name) ? (
+                        <div className="flex items-center gap-1.5">
+                          {g.logo_url && <Image src={g.logo_url} alt="" width={16} height={16} className="rounded-full object-cover shrink-0" />}
+                          {g.project_name && <span className="text-sm font-medium text-slate-400">{g.project_name}</span>}
+                        </div>
+                      ) : <span />}
+                      <span className="text-sm font-medium text-slate-500">{ENDED_STATUS_LABELS[g.status] ?? g.status}</span>
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-lg font-semibold text-slate-300 truncate">{g.title}</p>
+                        {g.description && <FormattedText text={g.description} className="text-base text-slate-500 mt-0.5 line-clamp-2" />}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-2xl font-medium text-slate-400">${g.prize_amount_usd}</p>
+                        <p className="text-base text-slate-500">× {g.winner_count} winner{g.winner_count === 1 ? "" : "s"}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 mt-3">
+                      <span className="text-base text-slate-500">
+                        Ended {new Date(g.entries_close_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
             </div>
           )}
         </div>
