@@ -41,6 +41,7 @@ import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 import { useSolPrice } from "@/hooks/useSolPrice";
 import type { MultiSendRecipientType } from "@/store/multiSend";
+import posthog from "posthog-js";
 
 // MagicBlock's flat relay fee, in SOL — same figure as backend MAGICBLOCK_GAS_SOL
 // (apps/backend/src/common/magicblock-private-transfer.ts). Duplicated rather than shared
@@ -466,6 +467,13 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       setCompletedLinks(result.links as MultiSendLink[]);
       setReviewPending(false);
       setRows(defaultRows());
+      if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+        posthog.capture("multi_send_completed", {
+          recipient_count: result.recipientCount,
+          total_usdc: result.totalAmountUsdc,
+          is_private: false,
+        });
+      }
       setPhase({
         kind: "done",
         recipientCount: result.recipientCount,
@@ -564,6 +572,13 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       setCompletedLinks(links as MultiSendLink[]);
       setReviewPending(false);
       setRows(defaultRows());
+      if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+        posthog.capture("multi_send_completed", {
+          recipient_count: confirmState.paymentIds.length,
+          total_usdc: confirmState.totalAmountUsdc,
+          is_private: true,
+        });
+      }
       setPhase({
         kind: "done",
         recipientCount: confirmState.paymentIds.length,
