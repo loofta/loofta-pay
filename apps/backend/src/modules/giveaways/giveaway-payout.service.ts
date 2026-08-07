@@ -4,6 +4,7 @@ import { SupabaseService } from '@/database/supabase.service';
 import { ConfigService } from '@nestjs/config';
 import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 import { UsersService } from '../users/users.service';
+import { EmailService } from '../email/email.service';
 import { GiveawayBurnerSweepService } from './giveaway-burner-sweep.service';
 import { GiveawayGiphyService } from './giveaway-giphy.service';
 import { GiveawaysService } from './giveaways.service';
@@ -40,6 +41,7 @@ export class GiveawayPayoutService {
     private readonly giveawaysService: GiveawaysService,
     private readonly burnerSweep: GiveawayBurnerSweepService,
     private readonly giphy: GiveawayGiphyService,
+    private readonly emailService: EmailService,
   ) {
     this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
   }
@@ -151,12 +153,22 @@ export class GiveawayPayoutService {
             claim_payment_id: payment.id as string,
           })
           .eq('id', entry.id);
+        const claimUrl = `${this.baseUrl}/c/${payment.id}`;
         await this.logEvent(giveaway.id, 'payout_succeeded', {
           entry_id: entry.id,
           tx_hash: txHash,
           claim_payment_id: payment.id,
-          claim_url: `${this.baseUrl}/c/${payment.id}`,
+          claim_url: claimUrl,
         });
+
+        // Fire-and-forget, only if they've actually linked an email — never blocks/fails the
+        // payout itself (matches send-payment.service.ts's multi-send email convention).
+        const winnerEmail = await this.usersService.getEmailByPrivyId(entry.user_id).catch(() => null);
+        if (winnerEmail) {
+          this.emailService
+            .sendGiveawayWonEmail({ recipientEmail: winnerEmail, title: giveaway.title, amountUsd: giveaway.prize_amount_usd, claimUrl })
+            .catch((e: unknown) => this.logger.warn(`[GiveawayPayout] sendGiveawayWonEmail failed for ${winnerEmail}: ${String(e)}`));
+        }
       } catch (e) {
         this.logger.warn(`[GiveawayPayout] ${giveaway.id} entry ${entry.id}: payout failed (will retry next cron): ${String(e)}`);
         await this.supabaseService.giveawayEntries.update({ payout_status: 'failed' }).eq('id', entry.id);
