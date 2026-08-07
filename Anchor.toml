@@ -11,6 +11,9 @@ loofta_vrf = "5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi"
 [programs.devnet]
 loofta_vrf = "5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi"
 
+[programs.mainnet]
+loofta_vrf = "5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi"
+
 [registry]
 url = "https://api.apr.dev"
 
