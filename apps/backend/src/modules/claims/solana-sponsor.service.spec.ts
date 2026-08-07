@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Keypair, PublicKey, Transaction } from '@solana/web3.js';
 import {
   createAssociatedTokenAccountInstruction,
+  createTransferInstruction,
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -37,13 +38,19 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
   let feePayer: Keypair;
   let mockPayments: ReturnType<typeof makeChainMock>;
 
-  /** Builds a real, correctly-serialized legacy tx creating one ATA for `owner`, paid by our fee payer. */
-  function buildAtaCreationTxBase64(owner: PublicKey): string {
+  /** Builds a real, correctly-serialized legacy tx creating one ATA for `owner`, paid by our fee
+   *  payer. `transferAmountUnits`, if given, appends a real Transfer instruction moving that many
+   *  USDC base units into the new ATA — needed to exercise the claim-amount enforcement added
+   *  2026-08-07, which runs independently of the ATA-creation check. */
+  function buildAtaCreationTxBase64(owner: PublicKey, transferAmountUnits?: number): string {
     const mint = new PublicKey(USDC_DEVNET_MINT);
     const ata = getAssociatedTokenAddressSync(mint, owner);
-    const ix = createAssociatedTokenAccountInstruction(feePayer.publicKey, ata, owner, mint);
     const tx = new Transaction();
-    tx.add(ix);
+    tx.add(createAssociatedTokenAccountInstruction(feePayer.publicKey, ata, owner, mint));
+    if (transferAmountUnits !== undefined) {
+      const sourceAta = getAssociatedTokenAddressSync(mint, Keypair.generate().publicKey);
+      tx.add(createTransferInstruction(sourceAta, ata, Keypair.generate().publicKey, transferAmountUnits));
+    }
     tx.feePayer = feePayer.publicKey;
     tx.recentBlockhash = Keypair.generate().publicKey.toBase58(); // any valid base58 32-byte value
     return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
@@ -85,6 +92,34 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
       error: null,
     });
     const txBase64 = buildAtaCreationTxBase64(recipient);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'user-1', 'pay-1'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('blocks sponsorship when the transferred amount is below what the claim asks for', async () => {
+    const recipient = Keypair.generate().publicKey;
+    mockPayments.maybeSingle.mockResolvedValueOnce({
+      data: { id: 'pay-1', recipient_address: null, burner_address: recipient.toBase58(), amount: 50 },
+      error: null,
+    });
+    // Claim asks for $50 (50_000_000 base units) but the tx only transfers $10 — a client builds
+    // this transaction itself, so nothing but this check stops it from lying about the amount.
+    const txBase64 = buildAtaCreationTxBase64(recipient, 10_000_000);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'attacker', 'pay-1'),
+    ).rejects.toThrow('does not cover the amount owed');
+  });
+
+  it('allows sponsorship when the transferred amount meets what the claim asks for', async () => {
+    const recipient = Keypair.generate().publicKey;
+    mockPayments.maybeSingle.mockResolvedValueOnce({
+      data: { id: 'pay-1', recipient_address: null, burner_address: recipient.toBase58(), amount: 50 },
+      error: null,
+    });
+    const txBase64 = buildAtaCreationTxBase64(recipient, 50_000_000);
 
     await expect(
       (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'user-1', 'pay-1'),

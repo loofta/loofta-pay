@@ -17,6 +17,7 @@ import {
   SystemProgram,
   PublicKey,
 } from '@solana/web3.js';
+import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 // bs58 may export default depending on bundler/runtime
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const bs58Module = require('bs58');
@@ -318,6 +319,57 @@ export class SolanaSponsorService {
   }
 
   /**
+   * Sum of SPL Token Transfer/TransferChecked instruction amounts whose destination account is
+   * `destinationAtaBase58`. Used to verify a claim payment actually transfers what the claim
+   * asks for — a client builds this transaction itself, so nothing stops it from putting in any
+   * amount it likes unless something on our side independently re-derives what really moves
+   * on-chain instead of trusting the claim id alone to mean "this is legitimate."
+   */
+  private sumTokenTransfersToDestination(serializedBase64: string, destinationAtaBase58: string): bigint {
+    const readAmount = (data: Buffer, discriminator: number): bigint | null => {
+      if (data.length < 9 || data[0] !== discriminator) return null;
+      return data.readBigUInt64LE(1);
+    };
+    const txBuffer = Buffer.from(serializedBase64, 'base64');
+    try {
+      const tx = Transaction.from(txBuffer);
+      let total = 0n;
+      for (const ix of tx.instructions) {
+        if (ix.programId.toBase58() !== TOKEN_PROGRAM_ID_STR) continue;
+        if (ix.data[0] === 3) {
+          const amount = readAmount(ix.data, 3);
+          if (amount !== null && ix.keys[1]?.pubkey?.toBase58() === destinationAtaBase58) total += amount;
+        } else if (ix.data[0] === 12) {
+          const amount = readAmount(ix.data, 12);
+          if (amount !== null && ix.keys[2]?.pubkey?.toBase58() === destinationAtaBase58) total += amount;
+        }
+      }
+      return total;
+    } catch {
+      // not a legacy tx — try versioned
+    }
+    try {
+      const vtx = VersionedTransaction.deserialize(txBuffer);
+      const accountKeys = vtx.message.getAccountKeys().staticAccountKeys;
+      let total = 0n;
+      for (const ix of vtx.message.compiledInstructions) {
+        if (accountKeys[ix.programIdIndex]?.toBase58() !== TOKEN_PROGRAM_ID_STR) continue;
+        const data = Buffer.from(ix.data);
+        if (data[0] === 3) {
+          const amount = readAmount(data, 3);
+          if (amount !== null && accountKeys[ix.accountKeyIndexes[1]]?.toBase58() === destinationAtaBase58) total += amount;
+        } else if (data[0] === 12) {
+          const amount = readAmount(data, 12);
+          if (amount !== null && accountKeys[ix.accountKeyIndexes[2]]?.toBase58() === destinationAtaBase58) total += amount;
+        }
+      }
+      return total;
+    } catch {
+      return 0n;
+    }
+  }
+
+  /**
    * Refuse to pay ATA rent twice for the same (wallet, mint).
    *
    * The program/mint whitelist below only checks instruction *shape* — right program, right mint.
@@ -353,6 +405,48 @@ export class SolanaSponsorService {
     offrampRequestId?: string,
   ): Promise<void> {
     const details = this.getAtaCreationDetails(serializedBase64);
+
+    // Claim-amount enforcement — deliberately OUTSIDE the `details.length === 0` early-return
+    // below. Everything else in this function only ever runs when the transaction creates a
+    // brand-new ATA; a claim paid into a recipient who already has a USDC account skips ALL of
+    // it, including the owner-match check further down. That meant a claim's `amount` column was
+    // purely decorative for the actual broadcast: nothing compared what a self-built transaction
+    // really transfers on-chain against what the claim says it's worth (2026-08-07 finding — see
+    // project memory, solana sponsor security hardening). Fetched once here and reused by the
+    // owner-match branch below instead of querying `payments` twice.
+    let claimRow: { id: string; recipient_address: string | null; burner_address: string | null; amount: number | string | null } | null = null;
+    if (claimId) {
+      const { data, error } = await this.supabaseService.payments
+        .select('id, recipient_address, burner_address, amount')
+        .eq('id', claimId)
+        .maybeSingle();
+      if (error || !data) {
+        this.logger.warn(`SolanaSponsor[${label}]: claimId=${claimId} not found — refusing to sponsor (${error?.message ?? 'no row'})`);
+        throw new Error('Claim not found; cannot verify this payment.');
+      }
+      claimRow = data;
+      const expectedRecipient = String(claimRow.burner_address || claimRow.recipient_address || '').trim();
+      if (!expectedRecipient) {
+        this.logger.warn(`SolanaSponsor[${label}]: claimId=${claimId} has no resolvable recipient/burner address — refusing to sponsor`);
+        throw new Error('This claim has no resolvable recipient; cannot verify this payment.');
+      }
+      const claimAmountUsd = parseFloat(String(claimRow.amount ?? '0'));
+      if (Number.isFinite(claimAmountUsd) && claimAmountUsd > 0) {
+        const requiredUnits = BigInt(Math.round(claimAmountUsd * 1_000_000));
+        let paidUnits = 0n;
+        for (const mint of USDC_MINT_SET) {
+          const destAta = getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(expectedRecipient));
+          paidUnits += this.sumTokenTransfersToDestination(serializedBase64, destAta.toBase58());
+        }
+        if (paidUnits < requiredUnits) {
+          this.logger.error(
+            `SolanaSponsor[${label}]: BLOCKED — claimId=${claimId} expects ${requiredUnits} USDC base units but tx only transfers ${paidUnits} to ${expectedRecipient.slice(0, 8)}… (user=${userId ?? 'unknown'})`,
+          );
+          throw new Error('This payment does not cover the amount owed on this claim.');
+        }
+      }
+    }
+
     if (details.length === 0) return;
 
     // Which creations we would actually be paying rent for right now.
@@ -410,19 +504,8 @@ export class SolanaSponsorService {
     // quote row yet to bind to (the quote is fetched client-side straight from NEAR's public API)
     // and needs new backend infra before it can get this same protection — see project memory.
     if (claimId && chargeable.length > 0) {
-      const { data: claimRow, error: claimLookupError } = await this.supabaseService.payments
-        .select('id, recipient_address, burner_address')
-        .eq('id', claimId)
-        .maybeSingle();
-      if (claimLookupError || !claimRow) {
-        this.logger.warn(`SolanaSponsor[${label}]: claimId=${claimId} not found — refusing to sponsor (${claimLookupError?.message ?? 'no row'})`);
-        throw new Error('Claim not found; cannot verify this payment.');
-      }
-      const expectedRecipient = String(claimRow.burner_address || claimRow.recipient_address || '').trim();
-      if (!expectedRecipient) {
-        this.logger.warn(`SolanaSponsor[${label}]: claimId=${claimId} has no resolvable recipient/burner address — refusing to sponsor`);
-        throw new Error('This claim has no resolvable recipient; cannot verify this payment.');
-      }
+      // claimRow was already fetched (and its amount enforced) above, before the early return.
+      const expectedRecipient = String(claimRow!.burner_address || claimRow!.recipient_address || '').trim();
       for (const d of chargeable) {
         if (d.owner !== expectedRecipient) {
           this.logger.error(
