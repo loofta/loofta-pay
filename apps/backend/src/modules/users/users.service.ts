@@ -277,6 +277,43 @@ export class UsersService {
   }
 
   /**
+   * Best-effort resolve an existing app_users row for an admin lottery gift's recipient — never
+   * throws, returns null when nothing matches. Lets createGift auto-fund gifts to already-
+   * registered accounts (no claim step needed) while falling back to the claim-link flow for
+   * everyone else. 'handle' tries both a Loofta username and a linked Twitter handle in one
+   * query, mirroring isGiftRecipient's claim-time check — the admin form doesn't ask which one it
+   * is either.
+   */
+  async resolveGiftRecipient(
+    recipientType: 'email' | 'handle',
+    identifier: string,
+  ): Promise<{ privyUserId: string; email: string | null } | null> {
+    try {
+      if (recipientType === 'email') {
+        const clean = identifier.trim().toLowerCase();
+        if (!clean) return null;
+        const { data: user } = await this.supabaseService.appUsers
+          .select('privy_user_id, email')
+          .eq('email', clean)
+          .maybeSingle();
+        if (!user?.privy_user_id) return null;
+        return { privyUserId: user.privy_user_id, email: user.email ?? null };
+      }
+      const clean = identifier.replace(/^@/, '').trim().toLowerCase();
+      if (!clean) return null;
+      const { data: user } = await this.supabaseService.appUsers
+        .select('privy_user_id, email')
+        .or(`username.ilike.${clean},twitter_username.ilike.${clean}`)
+        .maybeSingle();
+      if (!user?.privy_user_id) return null;
+      return { privyUserId: user.privy_user_id, email: user.email ?? null };
+    } catch (e: any) {
+      this.logger.warn(`resolveGiftRecipient(${recipientType}) failed: ${e?.message ?? e}`);
+      return null;
+    }
+  }
+
+  /**
    * Search usernames by prefix (for autocomplete). Cached 1 min; only selects username.
    */
   async searchUsernames(query: string, limit = 10): Promise<{ usernames: string[] }> {
@@ -352,11 +389,15 @@ export class UsersService {
   }
 
   /**
-   * Get user's Solana wallet address from Privy (server-side only, Redis-cached 2 min).
+   * Get user's Solana wallet address from Privy (server-side only, Redis-cached 5 min by default).
    * Wallet address is never exposed to the frontend.
+   *
+   * Pass `skipCache: true` whenever the result will be used as a fund destination
+   * (deposits/top-ups/payouts) — a stale cache hit can hand out a wallet Privy has
+   * since archived during a wallet rotation, stranding funds. See PrivyVerificationService.getPrivyUser.
    */
-  async getSolanaWalletAddress(privyUserId: string): Promise<string> {
-    const privyUser = await this.getPrivyUser(privyUserId);
+  async getSolanaWalletAddress(privyUserId: string, opts?: { skipCache?: boolean }): Promise<string> {
+    const privyUser = await this.getPrivyUser(privyUserId, opts);
     if (!privyUser) {
       throw new Error('Failed to fetch wallet from Privy');
     }
@@ -443,11 +484,11 @@ export class UsersService {
    * Fetch full Privy user (linked_accounts etc.) with Redis caching.
    * Delegates to PrivyVerificationService when available; falls back to raw HTTP.
    */
-  async getPrivyUser(privyUserId: string): Promise<{ linked_accounts: any[] } | null> {
+  async getPrivyUser(privyUserId: string, opts?: { skipCache?: boolean }): Promise<{ linked_accounts: any[] } | null> {
     if (this.privyVerification) {
-      return this.privyVerification.getPrivyUser(privyUserId);
+      return this.privyVerification.getPrivyUser(privyUserId, opts);
     }
-    // Fallback for when service is not yet injected (e.g. early boot)
+    // Fallback for when service is not yet injected (e.g. early boot) — always live, no cache involved.
     const privyAppId = this.configService.get<string>('PRIVY_APP_ID');
     const privyAppSecret = this.configService.get<string>('PRIVY_APP_SECRET');
     if (!privyAppId || !privyAppSecret) return null;

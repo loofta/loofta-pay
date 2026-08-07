@@ -108,7 +108,7 @@ export class PajCashOrdersService {
     const currency = params.currency ?? 'NGN';
 
     const token = await this.session.getValidSessionToken(userId);
-    const recipient = await this.usersService.getSolanaWalletAddress(userId);
+    const recipient = await this.usersService.getSolanaWalletAddress(userId, { skipCache: true });
 
     let order;
     try {

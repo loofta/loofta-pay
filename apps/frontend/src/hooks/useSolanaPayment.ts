@@ -21,6 +21,10 @@ export interface SolanaPaymentConfig {
   amount: number;
   recipientAddress: string;
   claimId?: string;
+  pajOrderId?: string;
+  nearIntentsOrderId?: string;
+  offrampRequestId?: string;
+  giveawayId?: string;
 }
 
 export interface UseSolanaPaymentOptions {
@@ -110,6 +114,11 @@ export function useSolanaPayment(options: UseSolanaPaymentOptions = {}) {
         chain: getPrivySolanaChainForMode(networkMode),
         network: networkMode,
         accessToken,
+        claimId: config.claimId,
+        pajOrderId: config.pajOrderId,
+        nearIntentsOrderId: config.nearIntentsOrderId,
+        offrampRequestId: config.offrampRequestId,
+        giveawayId: config.giveawayId,
       });
     } catch (error: any) {
       if (

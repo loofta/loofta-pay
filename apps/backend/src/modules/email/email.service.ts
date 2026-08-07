@@ -194,6 +194,79 @@ export class EmailService {
     }
   }
 
+  async sendGiveawayApprovedEmail(data: { recipientEmail: string; title: string; giveawayUrl: string }): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `Your giveaway "${data.title}" was approved — fund it to go live`,
+        html: this.buildGiveawayApprovedHtml(data),
+      });
+      this.logger.log(`Giveaway approved email sent to ${data.recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send giveaway approved email to ${data.recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
+  /** Sent when an admin rejects a submitted giveaway — includes the rejection reason and a
+   *  support contact in case the creator thinks it was rejected in error. */
+  async sendGiveawayRejectedEmail(data: { recipientEmail: string; title: string; reason: string }): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `Your giveaway "${data.title}" wasn't approved`,
+        html: this.buildGiveawayRejectedHtml(data),
+      });
+      this.logger.log(`Giveaway rejected email sent to ${data.recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send giveaway rejected email to ${data.recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
+  /** Sent when an admin manually expires an approved-but-never-funded giveaway
+   *  (GiveawaysService.adminExpireUnfunded) — includes the reason and a support contact in case
+   *  the creator thinks this was a mistake (e.g. they believe they already funded it). */
+  async sendGiveawayExpiredEmail(data: { recipientEmail: string; title: string; reason: string }): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `Your giveaway "${data.title}" expired — never funded`,
+        html: this.buildGiveawayExpiredHtml(data),
+      });
+      this.logger.log(`Giveaway expired email sent to ${data.recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send giveaway expired email to ${data.recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
+  /** Sent to a giveaway winner once their claim link is actually ready (payout succeeded, not
+   *  just "selected") — never throws, matching sendPaymentReceivedEmail/sendClaimReadyEmail's
+   *  fire-and-forget convention, since a failed notification email shouldn't fail the payout
+   *  itself. Only ever called for entrants with an email on file (see getEmailByPrivyId). */
+  async sendGiveawayWonEmail(data: { recipientEmail: string; title: string; amountUsd: string | number; claimUrl: string }): Promise<void> {
+    if (!this.resend) return;
+    const amountStr = `$${parseFloat(String(data.amountUsd)).toFixed(2)}`;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `You won "${data.title}" — ${amountStr} is ready to claim 🎉`,
+        html: this.buildGiveawayWonHtml({ ...data, amountStr }),
+      });
+      this.logger.log(`Giveaway won email sent to ${data.recipientEmail} (${amountStr})`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send giveaway won email to ${data.recipientEmail}: ${err?.message ?? err}`);
+    }
+  }
+
   async sendGiftTicketEmail(data: { recipientEmail: string; numTickets: number; claimUrl: string; note?: string | null }): Promise<void> {
     if (!this.resend) return;
     const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
@@ -207,6 +280,28 @@ export class EmailService {
       this.logger.log(`Gift ticket email sent to ${data.recipientEmail} (${data.numTickets} tickets)`);
     } catch (err: any) {
       this.logger.error(`Failed to send gift ticket email to ${data.recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
+  /**
+   * Sent for an admin gift that auto-purchased into an already-registered account (see
+   * LotteryService.createGift) — the ticket already exists in the recipient's dashboard, so
+   * unlike sendGiftTicketEmail there's nothing to claim; the CTA points at the dashboard itself.
+   */
+  async sendGiftTicketReceivedEmail(data: { recipientEmail: string; numTickets: number; note?: string | null }): Promise<void> {
+    if (!this.resend) return;
+    const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `You've been gifted ${data.numTickets} Megapot ${ticketWord} 🎁`,
+        html: this.buildGiftTicketReceivedHtml(data),
+      });
+      this.logger.log(`Gift ticket received email sent to ${data.recipientEmail} (${data.numTickets} tickets)`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send gift ticket received email to ${data.recipientEmail}: ${err?.message ?? err}`);
       throw err;
     }
   }
@@ -554,6 +649,99 @@ export class EmailService {
     }
   }
 
+  /** Fired when a creator submits a new giveaway for review — PENDING_APPROVAL sits invisible
+   *  until someone checks the admin dashboard, so this makes a submission show up immediately
+   *  instead of relying on remembering to look. Not sent for an official ("create as Loofta")
+   *  giveaway, since those auto-approve and skip PENDING_APPROVAL entirely. */
+  async sendGiveawaySubmittedAlertEmail(data: {
+    to: string;
+    title: string;
+    creatorEmail: string | null;
+    prizeAmountUsd: number;
+    winnerCount: number;
+    adminUrl: string;
+  }): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`Giveaway-submitted alert NOT sent (RESEND_API_KEY unset): title=${data.title}`);
+      return;
+    }
+    const subject = `🎁 New giveaway to review — "${data.title}"`;
+    const html = `
+      <div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+        <h2 style="color:#0f172a;margin:0 0 4px;">New giveaway submitted for approval</h2>
+        <p style="color:#64748b;margin:0 0 16px;font-size:14px;">
+          A creator just submitted a giveaway — it stays invisible to entrants until you approve it in the admin dashboard.
+        </p>
+        <table style="border-collapse:collapse;width:100%;background:#f8fafc;border-radius:8px;font-size:14px;">
+          <tr><td style="padding:6px 12px;color:#475569;">Title</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.title}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Creator</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.creatorEmail ?? "no email linked"}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Prize</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">$${data.prizeAmountUsd} × ${data.winnerCount} winner${data.winnerCount === 1 ? "" : "s"}</td></tr>
+        </table>
+        <p style="color:#94a3b8;margin:16px 0 0;font-size:12px;">
+          Open the admin dashboard's Giveaways tab to approve or reject · <a href="${data.adminUrl}" style="color:#6366f1;">${data.adminUrl}</a>
+        </p>
+      </div>`;
+    try {
+      await this.resend.emails.send({
+        from: `Loofta Ops <${this.fromEmail}>`,
+        to: data.to,
+        subject,
+        html,
+      });
+      this.logger.log(`Giveaway-submitted alert sent to ${data.to} (title=${data.title})`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send giveaway-submitted alert to ${data.to}: ${err?.message ?? err}`);
+    }
+  }
+
+  /** Distinct from sendAtaSponsorshipAbuseAlertEmail: that one fires on a *repeat* sponsorship of
+   *  the SAME wallet, which a Sybil attacker trivially evades by using a fresh throwaway wallet
+   *  every time. This one fires when the sponsored-ATA-creation *rate* itself spikes regardless of
+   *  which wallets are involved — the signal that actually catches that evasion — and reports that
+   *  sponsorship is now paused fleet-wide until manually cleared. */
+  async sendAtaSponsorshipBurstAlertEmail(data: {
+    to: string;
+    count: number;
+    windowSeconds: number;
+    context: string;
+  }): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`ATA-sponsorship BURST alert NOT sent (RESEND_API_KEY unset): ${data.count} in ${data.windowSeconds}s, last context=${data.context}`);
+      return;
+    }
+    const subject = `🚨 Sponsored ATA burst detected — creation paused fleet-wide`;
+    const html = `
+      <div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+        <h2 style="color:#0f172a;margin:0 0 4px;">Sponsored account-creation burst — auto-paused</h2>
+        <p style="color:#64748b;margin:0 0 16px;font-size:14px;">
+          ${data.count} sponsored USDC token accounts were created in the last ${data.windowSeconds} seconds —
+          across possibly many different wallets, so the per-wallet repeat guard alone did not catch it.
+          <strong>All sponsored ATA creation is now paused</strong> fleet-wide until this is manually
+          cleared, so no further SOL can drain through this path in the meantime.
+        </p>
+        <table style="border-collapse:collapse;width:100%;background:#f8fafc;border-radius:8px;font-size:14px;">
+          <tr><td style="padding:6px 12px;color:#475569;">Count</td><td style="padding:6px 12px;font-weight:600;color:#dc2626;">${data.count}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Window</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.windowSeconds}s</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Last context</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.context}</td></tr>
+        </table>
+        <p style="color:#94a3b8;margin:16px 0 0;font-size:12px;">
+          Check the fee payer's recent transactions on Solscan, confirm this is real abuse (not a legitimate
+          traffic spike), then clear the pause via the admin endpoint once safe.
+        </p>
+      </div>`;
+    try {
+      await this.resend.emails.send({
+        from: `Loofta Ops <${this.fromEmail}>`,
+        to: data.to,
+        subject,
+        html,
+      });
+      this.logger.log(`ATA-sponsorship BURST alert sent to ${data.to} (count=${data.count}, window=${data.windowSeconds}s)`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send ATA-sponsorship BURST alert to ${data.to}: ${err?.message ?? err}`);
+    }
+  }
+
   private buildGiftTicketHtml(data: { numTickets: number; claimUrl: string; note?: string | null }): string {
     const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
     const { text: noteText, gifUrl } = data.note ? this.extractGifUrl(data.note) : { text: '', gifUrl: null };
@@ -598,6 +786,69 @@ export class EmailService {
               <div style="text-align:center;margin-bottom:8px;">
                 <a href="${data.claimUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   Claim your ${ticketWord}
+                </a>
+              </div>
+              <p style="margin:20px 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildGiftTicketReceivedHtml(data: { numTickets: number; note?: string | null }): string {
+    const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
+    const { text: noteText, gifUrl } = data.note ? this.extractGifUrl(data.note) : { text: '', gifUrl: null };
+    const noteTextBlock = noteText
+      ? `<p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#9ca3af;">Message</p>
+         <p style="margin:0;font-size:14px;line-height:1.5;color:#d1d5db;">${noteText}</p>`
+      : '';
+    const gifBlock = gifUrl
+      ? `<div style="${noteText ? 'margin-top:12px;' : ''}text-align:center;"><img src="${gifUrl}" alt="GIF" style="max-width:100%;border-radius:8px;display:block;margin:0 auto;" /></div>`
+      : '';
+    const noteBlock = (noteText || gifBlock)
+      ? `<div style="background:#1e1e23;border-radius:12px;padding:16px 18px;margin:0 0 28px;">
+           ${noteTextBlock}
+           ${gifBlock}
+         </div>`
+      : '';
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>You've been gifted a Megapot ticket</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Gift</span>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px 8px;">
+              <p style="margin:0 0 12px;font-size:28px;line-height:1.15;color:#ffffff;font-weight:700;text-align:center;">You've been gifted<br/>${data.numTickets} Megapot ${ticketWord}</p>
+              <p style="margin:0 0 28px;font-size:14px;color:#9ca3af;text-align:center;">Already in your account — entered into the next draw. Nothing to claim.</p>
+              ${noteBlock}
+              <div style="text-align:center;margin-bottom:8px;">
+                <a href="https://pay.loofta.xyz/app/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  View your ${ticketWord}
                 </a>
               </div>
               <p style="margin:20px 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
@@ -769,6 +1020,193 @@ export class EmailService {
               </div>
               <p style="margin:0;">Thanks for bearing with us, and reply here if you run into anything else.</p>
               <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildGiveawayApprovedHtml(data: { title: string; giveawayUrl: string }): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Giveaway approved</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">🎉 Your giveaway was approved</p>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:28px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 16px;">hey, this is Lisa from Loofta.</p>
+              <p style="margin:0 0 16px;">"${data.title}" just got approved — the last step is funding the burner wallet so it can open for entries.</p>
+              <p style="margin:0 0 28px;">Once it's funded, it goes live automatically and shows up for entrants to join.</p>
+              <div style="text-align:center;margin-bottom:24px;">
+                <a href="${data.giveawayUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Fund giveaway
+                </a>
+              </div>
+              <p style="margin:0;">Reply here if you run into anything.</p>
+              <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildGiveawayRejectedHtml(data: { title: string; reason: string }): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Giveaway not approved</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">Your giveaway wasn&apos;t approved</p>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:28px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 16px;">hey, this is Lisa from Loofta.</p>
+              <p style="margin:0 0 16px;">"${data.title}" didn&apos;t get approved this time. Here&apos;s the reason:</p>
+              <div style="background:#1e1e23;border-radius:12px;padding:16px 18px;margin:0 0 24px;">
+                <p style="margin:0;font-size:14px;line-height:1.6;color:#d1d5db;">${data.reason}</p>
+              </div>
+              <p style="margin:0;">If you think this shouldn&apos;t have been rejected, contact support: <a href="mailto:hello@loofta.xyz" style="color:#FF8C00;text-decoration:none;">hello@loofta.xyz</a> or <a href="https://t.me/looftapay" style="color:#FF8C00;text-decoration:none;">t.me/looftapay</a>.</p>
+              <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildGiveawayExpiredHtml(data: { title: string; reason: string }): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Giveaway expired</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">Your giveaway expired</p>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:28px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 16px;">hey, this is Lisa from Loofta.</p>
+              <p style="margin:0 0 16px;">"${data.title}" was approved but never got funded, so we&apos;ve expired it. Reason:</p>
+              <div style="background:#1e1e23;border-radius:12px;padding:16px 18px;margin:0 0 24px;">
+                <p style="margin:0;font-size:14px;line-height:1.6;color:#d1d5db;">${data.reason}</p>
+              </div>
+              <p style="margin:0;">If you think this shouldn&apos;t have expired (e.g. you already funded it), contact support: <a href="mailto:hello@loofta.xyz" style="color:#FF8C00;text-decoration:none;">hello@loofta.xyz</a> or <a href="https://t.me/looftapay" style="color:#FF8C00;text-decoration:none;">t.me/looftapay</a>.</p>
+              <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildGiveawayWonHtml(data: { title: string; amountStr: string; claimUrl: string }): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>You won a giveaway</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">🎉 You won!</p>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:28px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 16px;">Congrats — you won "${data.title}" on Loofta.</p>
+              <p style="margin:0 0 28px;">${data.amountStr} is ready to claim, verified and funded before the draw ever ran.</p>
+              <div style="text-align:center;margin-bottom:24px;">
+                <a href="${data.claimUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Claim ${data.amountStr}
+                </a>
+              </div>
             </td>
           </tr>
           <!-- Footer -->

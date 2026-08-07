@@ -43,20 +43,24 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('organizations');
   }
 
-  get claims() {
-    return this.client.from('claims');
-  }
-
-  get claimIntents() {
-    return this.client.from('claim_intents');
-  }
-
   get payments() {
     return this.client.from('payments');
   }
 
   get paymentIntents() {
     return this.client.from('payment_intents');
+  }
+
+  get pajCashOrders() {
+    return this.client.from('paj_cash_orders');
+  }
+
+  get nearIntentsWithdrawalOrders() {
+    return this.client.from('near_intents_withdrawal_orders');
+  }
+
+  get offrampRequests() {
+    return this.client.from('offramp_requests');
   }
 
   get paymentEvents() {
@@ -111,10 +115,6 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('mainnet_waitlist');
   }
 
-  get claimEvents() {
-    return this.client.from('claim_events');
-  }
-
   get forceUpdate() {
     return this.client.from('force_update');
   }
@@ -137,5 +137,29 @@ export class SupabaseService implements OnModuleInit {
 
   get integratorApiKeys() {
     return this.client.from('integrator_api_keys');
+  }
+
+  get giveaways() {
+    return this.client.from('giveaways');
+  }
+
+  get giveawaysSafe() {
+    return this.client.from('giveaways_safe');
+  }
+
+  get giveawayTasks() {
+    return this.client.from('giveaway_tasks');
+  }
+
+  get giveawayEntries() {
+    return this.client.from('giveaway_entries');
+  }
+
+  get giveawayTaskCompletions() {
+    return this.client.from('giveaway_task_completions');
+  }
+
+  get giveawayEvents() {
+    return this.client.from('giveaway_events');
   }
 }

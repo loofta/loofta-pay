@@ -724,17 +724,24 @@ function RewardsSection() {
             </div>
 
             <p className="mx-auto mt-10 max-w-[760px] font-grotesk text-[clamp(22px,2.6vw,32px)] font-medium leading-[1.4] text-white">
-              Every payment over 20 USDC earns you a free lottery ticket. Pay your friends,
-              get paid, and stack entries into the weekly jackpot, automatically.
+              Sending payments earns you lottery tickets. Pay your friends,
+              get paid, and stack entries into the jackpot, automatically.
             </p>
 
-            <div className="mt-8 inline-flex flex-wrap items-center justify-center gap-2 rounded-2xl border border-[rgba(255,255,255,0.16)] bg-white/[0.08] px-4 py-3 font-grotesk text-sm font-medium text-white sm:flex-nowrap sm:gap-3.5 sm:rounded-full sm:px-[26px] sm:py-3.5 sm:text-lg">
-              <span className="h-[18px] w-[18px] shrink-0 sm:h-[26px] sm:w-[26px] [&>svg]:h-full [&>svg]:w-full">
-                <Icon3DStar size={26} />
+            <div className="mx-auto mt-8 inline-flex flex-col items-center gap-2 rounded-2xl border border-[rgba(255,255,255,0.12)] bg-white/[0.06] px-8 py-6 font-grotesk text-white sm:px-12 sm:py-8">
+              <span className="h-[26px] w-[26px] sm:h-[34px] sm:w-[34px] [&>svg]:h-full [&>svg]:w-full">
+                <Icon3DStar size={34} />
               </span>
-              <span className="font-display text-lg font-medium text-[#EAB308] sm:text-[26px]">+1 ticket</span>
-              per 20 USDC sent, no cost, no catch
+              <span className="font-display text-2xl font-medium text-[#EAB308] sm:text-[32px]">Win tickets</span>
+              <span className="text-base text-white/60 sm:text-lg">just by sending payments, no cost, no catch</span>
             </div>
+
+            <a
+              href="/blog/how-loofta-daily-lottery-works"
+              className="mt-6 block font-grotesk text-sm font-medium text-white/60 underline decoration-white/30 underline-offset-4 transition-colors hover:text-white"
+            >
+              Learn how the daily draw works
+            </a>
           </div>
         </motion.div>
       </div>

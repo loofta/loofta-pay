@@ -47,6 +47,11 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
   chain?: PrivySolanaChain;
   accessToken?: string | null;
   network?: "mainnet" | "devnet";
+  claimId?: string;
+  pajOrderId?: string;
+  nearIntentsOrderId?: string;
+  offrampRequestId?: string;
+  giveawayId?: string;
   /** Legacy params — unused, kept for call-site compatibility */
   signAndSendTransaction?: unknown;
   skipLooftaFeePayer?: boolean;
@@ -77,6 +82,25 @@ export async function sendUsdcWithBackendFeePayer(params: {
   /** Loofta's cut on this send (e.g. PAJ Cash Naira withdraw fee) — sent to the same backend
    * fee-payer wallet as a second transfer leg in the same transaction/signature. */
   looftaFeeUsdc?: number;
+  /** When this send is paying into a specific existing claim/request (e.g. the claim page's
+   *  "Pay with Loofta" button), pass its id so the backend can verify the recipient ATA it's
+   *  about to sponsor matches that claim's own recipient on file, instead of trusting any
+   *  destination the client supplies (see project memory: solana sponsor security hardening,
+   *  Attack 6 / intent-binding fix). Omit for flows with no such backend-tracked intent yet
+   *  (near-intents withdraw) — falls back to the per-user volume cap. */
+  claimId?: string;
+  /** Same idea as claimId, for a PAJ Cash offramp order (created server-side before this send —
+   *  see PajCashOfframpView.tsx). */
+  pajOrderId?: string;
+  /** Same idea, for a Near Intents withdrawal order (created server-side before this send — see
+   *  BalanceModal.tsx's handleWithdraw / prepareNearIntentsWithdrawal). */
+  nearIntentsOrderId?: string;
+  /** Same idea, for a "peer offramp" (ZKP2P/Base bridging) request — see BalanceModal.tsx's
+   *  handlePeerSubmit, which already creates a real offramp_requests row via POST /api/offramp. */
+  offrampRequestId?: string;
+  /** Same idea, for a giveaway funding payment — see GiveawayDetailClient.tsx's handleFund,
+   *  which already has the giveaway's own id in scope. */
+  giveawayId?: string;
 }): Promise<string> {
   const {
     senderAddress,
@@ -91,6 +115,11 @@ export async function sendUsdcWithBackendFeePayer(params: {
     accessToken,
     network,
     looftaFeeUsdc,
+    claimId,
+    pajOrderId,
+    nearIntentsOrderId,
+    offrampRequestId,
+    giveawayId,
   } = params;
   const chain = params.chain ?? getPrivySolanaChain();
 
@@ -125,5 +154,10 @@ export async function sendUsdcWithBackendFeePayer(params: {
     "withdrawal",
     accessToken,
     network,
+    claimId,
+    pajOrderId,
+    nearIntentsOrderId,
+    offrampRequestId,
+    giveawayId,
   );
 }

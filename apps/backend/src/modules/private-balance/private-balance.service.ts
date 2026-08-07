@@ -11,6 +11,7 @@ import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/
 import { isValidSolanaAddress } from '@/common/solana-address';
 import {
   MAGICBLOCK_GAS_SOL,
+  MAGICBLOCK_VOLUME_FEE_BPS,
   estimateMagicblockGrossUp,
   requestMagicblockPrivateTransfer,
   decodeActualSenderDebit,
@@ -19,7 +20,7 @@ import {
   fetchSolPriceUsd,
   type MagicblockPrivateTransferClientResponse,
 } from '@/common/magicblock-private-transfer';
-import { StartPrivateDepositDto, BuildPrivateWithdrawalDto } from './dto';
+import { StartPrivateDepositDto, BuildDirectDepositDto, BuildPrivateWithdrawalDto } from './dto';
 import type { PrivateTransfer, PrivateTransferStatusResponse } from './entities/private-transfer.entity';
 
 /** Loofta's own cut of every private deposit/withdrawal, taken by MagicBlock as part of the same transfer. */
@@ -100,7 +101,10 @@ export class PrivateBalanceService {
   // Private Deposit: external/other funds -> burner -> user's Loofta wallet
   // ─────────────────────────────────────────────────────────────────
 
-  async startDeposit(userId: string, dto: StartPrivateDepositDto): Promise<{ id: string; depositAddress: string; memo?: string | null }> {
+  async startDeposit(
+    userId: string,
+    dto: StartPrivateDepositDto,
+  ): Promise<{ id: string; depositAddress: string; memo?: string | null; amountToSendUsdc?: number; feeEstimateUsdc?: number }> {
     // Cross-chain sources are built (see below + PrivateBalanceProcessorService) but disabled
     // until failed/refunded bridges have an automated recovery path — a failed cross-chain
     // deposit today refunds into the burner in the ORIGINAL source token, which nothing
@@ -131,8 +135,37 @@ export class PrivateBalanceService {
         throw new BadRequestException('Could not start private deposit. Please try again.');
       }
 
-      this.logger.log(`[PrivateDeposit] ${data.id}: started (direct), burner=${burner.address.slice(0, 8)}… amount=${dto.amount_usdc} cluster=${cluster}`);
-      return { id: data.id as string, depositAddress: burner.address };
+      // `dto.amount_usdc` is the NET amount the user will receive. The burner-to-wallet delivery
+      // leg (tryDeliverBurnerBalance in private-balance-processor.service.ts) subtracts the relay
+      // fee first, then takes MagicBlock's + Loofta's bps cut out of the remainder. Gross this up
+      // the same way in reverse so the UI can tell the user how much to send to net their
+      // requested amount, instead of them sending the requested amount and receiving less.
+      //
+      // This is an ESTIMATE, not a guarantee: (1) estimateMagicblockGrossUp's own doc comment
+      // says it's an approximation of MagicBlock's internal fee math, not a confirmed-exact figure,
+      // and it was only verified against decoded on-chain transactions for the exactOut path.
+      // The delivery leg here uses exactOut:false, so we're assuming the same bps math applies in
+      // reverse. (2) The relay-fee-in-USDC component is priced off SOL/USD *now*, but
+      // tryDeliverBurnerBalance re-fetches its own fresh price whenever the burner actually gets
+      // swept, which can be much later than this quote (manual/QR funding has no time limit).
+      // If SOL/USD rises in between, the real relay fee at delivery time is higher than quoted
+      // here and the user would net less than promised. The bps cut itself is price-independent
+      // (no drift risk), so only pad the relay-fee component, same "always err high" approach
+      // resolveMagicblockRelayFeeUsdc() already takes for the on-chain call itself.
+      const netBaseUnits = Math.round(dto.amount_usdc * 1_000_000);
+      const relayFeeUnits = Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000);
+      const RELAY_FEE_QUOTE_BUFFER_BPS = 2500; // +25% cushion against SOL/USD drift before delivery
+      const relayFeeUnitsBuffered = relayFeeUnits + Math.ceil((relayFeeUnits * RELAY_FEE_QUOTE_BUFFER_BPS) / 10_000);
+      const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + PRIVATE_BALANCE_PLATFORM_FEE_BPS;
+      const amountToSendUnits = estimateMagicblockGrossUp(netBaseUnits, totalBps) + relayFeeUnitsBuffered;
+
+      this.logger.log(`[PrivateDeposit] ${data.id}: started (direct), burner=${burner.address.slice(0, 8)}… netAmount=${dto.amount_usdc} sendAmount=${amountToSendUnits / 1_000_000} cluster=${cluster}`);
+      return {
+        id: data.id as string,
+        depositAddress: burner.address,
+        amountToSendUsdc: amountToSendUnits / 1_000_000,
+        feeEstimateUsdc: (amountToSendUnits - netBaseUnits) / 1_000_000,
+      };
     }
 
     // Guaranteed unreachable — the guard at the top of this method already rejected any request
@@ -202,6 +235,82 @@ export class PrivateBalanceService {
 
     this.logger.log(`[PrivateDeposit] ${data.id}: started (cross-chain ${dto.source_token.symbol}/${dto.source_token.chain}), burner=${burner.address.slice(0, 8)}… nearDeposit=${quote.depositAddress.slice(0, 8)}… estUsdc=${estimatedUsdc} cluster=${cluster}`);
     return { id: data.id as string, depositAddress: quote.depositAddress, memo: quote.memo ?? null };
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // Private Deposit (direct): a connected external wallet -> user's Loofta wallet, no burner.
+  // Same shape as claims.service.ts's buildPrivateTransferForPayer (sender -> recipient directly),
+  // just pointed at the caller's own wallet. No DB row: nothing to track between build and
+  // broadcast beyond "did the signature confirm". Unlike the burner path, there's no intermediate
+  // hop whose delivery needs separate verification.
+  // ─────────────────────────────────────────────────────────────────
+
+  async buildDirectDeposit(userId: string, dto: BuildDirectDepositDto): Promise<MagicblockPrivateTransferClientResponse> {
+    const sourceWallet = dto.source_wallet_address.trim();
+    if (!isValidSolanaAddress(sourceWallet)) {
+      throw new BadRequestException('Invalid source wallet address');
+    }
+
+    const cluster = this.resolveCluster(dto.cluster);
+    const apiCluster = this.resolveApiCluster(cluster);
+    const mint = this.getUsdcMint(cluster);
+    const baseUnits = Math.round(dto.amount_usdc * 1_000_000);
+
+    // Server-resolved, never trust a client-supplied destination for the user's own balance.
+    const destination = await this.usersService.getSolanaWalletAddress(userId);
+    // Same documented MagicBlock gotcha as buildWithdrawal: platformFeeAccount must be the fee
+    // collector's initialized USDC ATA, not its wallet address.
+    const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
+    const platformFeeAccount = feePayerAddress
+      ? (await getAssociatedTokenAddress(mint, new PublicKey(feePayerAddress))).toBase58()
+      : null;
+
+    let txResponse;
+    try {
+      txResponse = await requestMagicblockPrivateTransfer({
+        from: sourceWallet,
+        to: destination,
+        mint: mint.toBase58(),
+        amount: baseUnits,
+        cluster: apiCluster,
+        // exactOut:true is safe here (unlike the burner delivery leg): the sender is the connected
+        // wallet itself, not a pre-funded intermediate. MagicBlock's own balance check at
+        // signing/broadcast time is the natural "not enough funds" guard, no separate padding logic needed.
+        exactOut: true,
+        gasless: true,
+        ...(platformFeeAccount ? { platformFeeBps: PRIVATE_BALANCE_PLATFORM_FEE_BPS, platformFeeAccount } : {}),
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`[PrivateDeposit] direct build failed for user ${userId}: ${msg}`);
+      throw new BadRequestException(`Could not build private deposit: ${msg}`);
+    }
+
+    // Same fee-reconciliation shape as buildPrivateTransferForPayer (claims.service.ts): estimate
+    // MagicBlock's own bps cut via the exactOut gross-up formula, add the live-priced relay fee,
+    // then prefer the actually-decoded sender debit over the estimate when available.
+    const relayFeeUnits = Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000);
+    const relaySolPriceUsd = await fetchSolPriceUsd();
+    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + PRIVATE_BALANCE_PLATFORM_FEE_BPS;
+    const mbVolumeFeeUnits = estimateMagicblockGrossUp(baseUnits, totalBps) - baseUnits;
+    const conn = this.solanaSponsor.getConnectionForCluster(cluster);
+    const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, sourceWallet, mint, conn);
+    const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;
+    const feeUnits = (actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits)
+      ? mbVolumeFeeUnits + actualDebitUnits
+      : estimatedFeeUnits;
+
+    this.logger.log(`[PrivateDeposit] direct: user=${userId} source=${sourceWallet.slice(0, 8)}… amount=${dto.amount_usdc} feeUnits=${feeUnits} cluster=${cluster}`);
+
+    return toClientResponse(txResponse, {
+      feeAmountUsdc: feeUnits / 1_000_000,
+      feeBreakdown: {
+        looftaBpsUsdc: mbVolumeFeeUnits / 1_000_000,
+        solRecoveryUsdc: relayFeeUnits / 1_000_000,
+        solLamports: Math.round(MAGICBLOCK_GAS_SOL * 1e9),
+        solPriceUsd: relaySolPriceUsd ?? 0,
+      },
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────

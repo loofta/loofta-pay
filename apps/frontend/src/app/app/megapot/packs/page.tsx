@@ -24,6 +24,7 @@ import { warmUpAudio } from "@/lib/packSoundEffects";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { useAuthStore } from "@/store/auth";
 import type { PackOpenResult, PackRarity } from "@/components/megapot/MegapotPack";
+import posthog from "posthog-js";
 
 const MegapotPack = dynamic(() => import("@/components/megapot/MegapotPack"), { ssr: false });
 const BalanceModal = dynamic(() => import("@/components/BalanceModal").then(m => ({ default: m.BalanceModal })), { ssr: false });
@@ -284,6 +285,9 @@ export default function MegapotPacksPage() {
         // (see PackService.openPackDemo, which resolveOpen already calls in demo mode instead of
         // verifying a real tx hash). Tiny artificial delay so "Confirming…" doesn't just flash.
         await new Promise(r => setTimeout(r, 350));
+        if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+          posthog.capture("mystery_pack_payment_completed", { is_demo: true });
+        }
         setPaid(true);
         return;
       }
@@ -326,6 +330,9 @@ export default function MegapotPacksPage() {
       const signature = bs58.encode(sigBytes as Uint8Array);
 
       setPaymentTxHash(signature);
+      if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+        posthog.capture("mystery_pack_payment_completed", { is_demo: false });
+      }
       setPaid(true);
       try {
         localStorage.setItem(PACK_PAYMENT_STORAGE_KEY, JSON.stringify({ paymentTxHash: signature, paidAt: Date.now() }));
@@ -341,6 +348,13 @@ export default function MegapotPacksPage() {
   // an /open error must NOT clear paid/paymentTxHash, so the user can just tap the pack again
   // and retry with the same already-verified payment instead of being asked to pay twice.
   const handleOpened = useCallback((r: PackOpenResult) => {
+    if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+      posthog.capture("mystery_pack_opened", {
+        is_demo: demoMode,
+        rarity: r.rarity,
+        tickets_awarded: r.ticketsAwarded,
+      });
+    }
     try { localStorage.removeItem(PACK_PAYMENT_STORAGE_KEY); } catch { /* ignore */ }
     // Re-check now — this open may have been the last one allowed today, so "Open another"
     // should correctly show the limit message instead of offering a payment gate doomed to fail.
@@ -349,7 +363,7 @@ export default function MegapotPacksPage() {
     // the bottom of it (see RESULT_SHEET_DELAY_MS).
     if (resultDelayTimeoutRef.current) clearTimeout(resultDelayTimeoutRef.current);
     resultDelayTimeoutRef.current = setTimeout(() => setResult(r), RESULT_SHEET_DELAY_MS);
-  }, [checkDailyLimit]);
+  }, [checkDailyLimit, demoMode]);
 
   const handleOpenAnother = useCallback(() => {
     try { localStorage.removeItem(PACK_PAYMENT_STORAGE_KEY); } catch { /* ignore */ }

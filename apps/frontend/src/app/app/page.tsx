@@ -102,6 +102,16 @@ export default function Home() {
     setRecipient(clean.replace(/^@+/, ""));
     const amt = searchParams.get("amount");
     if (amt != null && amt !== "" && !isNaN(Number(amt)) && Number(amt) >= 0) setAmount(amt);
+    // Set by history's "send again" link so a repeat send lands on the same method/platform
+    // tab the original payment used, instead of always defaulting to email.
+    const method = searchParams.get("method");
+    if (method === "email" || method === "username" || method === "social") setSendMethod(method);
+    if (method === "social") {
+      const platform = searchParams.get("platform");
+      if (platform === "twitter" || platform === "discord" || platform === "github" || platform === "telegram") {
+        setSocialPlatform(platform);
+      }
+    }
   }, [toParam, searchParams]);
 
   useEffect(() => {

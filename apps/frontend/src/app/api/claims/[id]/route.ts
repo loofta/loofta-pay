@@ -99,35 +99,16 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   const params = await props.params;
   const supabase = getSupabaseAdmin();
 
-  // Try payments table first; fall back to legacy claims
-  let rawPayment: Record<string, unknown> | null = null;
-  let isLegacy = false;
-
   const { data: paymentRow } = await supabase
     .from("payments")
     .select("id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, claimed_privately")
     .eq("id", params.id)
     .maybeSingle();
 
-  if (paymentRow) {
-    rawPayment = normalisePayment(paymentRow as Record<string, unknown>);
-  } else {
-    // Fall back to legacy claims table
-    const { data: claimRow, error: claimError } = await supabase
-      .from("claims")
-      .select("id, amount, to_symbol, to_chain, status, created_at, updated_at, paid_at, recipient_address, recipient_username, claim_burner_address, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description, is_devnet, sender_tx_hash")
-      .eq("id", params.id)
-      .maybeSingle();
-
-    if (claimError || !claimRow) {
-      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
-    }
-    rawPayment = {
-      ...claimRow as Record<string, unknown>,
-      direction: "from_sender",
-    };
-    isLegacy = true;
+  if (!paymentRow) {
+    return NextResponse.json({ error: "Payment not found" }, { status: 404 });
   }
+  const rawPayment: Record<string, unknown> = normalisePayment(paymentRow as Record<string, unknown>);
 
   const status = String((rawPayment?.status as string) || "").toUpperCase();
   if (status === "DELETED") {
@@ -214,9 +195,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     ? supabase.from("app_users").select("username").eq("privy_user_id", recipientUserId).maybeSingle()
     : Promise.resolve({ data: null });
 
-  const intentPromise = isLegacy
-    ? supabase.from("claim_intents").select("deposit_address, memo, deadline, time_estimate, quote_id, status, deposit_received_at").eq("claim_id", params.id).order("created_at", { ascending: false }).limit(1).maybeSingle()
-    : supabase.from("payment_intents").select("deposit_address, memo, deadline, time_estimate, quote_id, status").eq("payment_id", params.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const intentPromise = supabase.from("payment_intents").select("deposit_address, memo, deadline, time_estimate, quote_id, status").eq("payment_id", params.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
 
   const [{ data: appUser }, { data: recipientAppUser }, { data: intentData }] = await Promise.all([
     creatorUsernamePromise,
@@ -235,11 +214,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
   // Mask recipient wallet — never expose the real address to the public
   const ra = String(rawPayment?.recipient_address ?? "").trim();
-  const burner = String(
-    isLegacy
-      ? (rawPayment as Record<string, unknown>)?.claim_burner_address ?? ""
-      : (rawPayment as Record<string, unknown>)?.burner_address ?? ""
-  ).trim();
+  const burner = String((rawPayment as Record<string, unknown>)?.burner_address ?? "").trim();
 
   if (ra.startsWith(PENDING_EMAIL_PREFIX)) {
     claim.recipient_address = undefined;
@@ -283,7 +258,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   // recipient_claim_lock_at column may not exist yet in every environment (migration
   // 20260713000000_payments_recipient_claim_lock.sql), and this flag is a nice-to-have, not
   // something the main payment lookup should ever fail over.
-  const isCreatorForResponse = !isLegacy && !!createdBy && createdBy === requestingUserId;
+  const isCreatorForResponse = !!createdBy && createdBy === requestingUserId;
   if (isCreatorForResponse) {
     try {
       const { data: lockRow } = await supabase
@@ -384,16 +359,17 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       updateData.from_token = String(paidWithToken).toUpperCase();
     }
 
-    // Try payments table first
     const { data: existingPayment } = await supabase
       .from("payments")
       .select("id, status, created_by, direction, sender_user_id, recipient_user_id, amount, burner_address, is_devnet")
       .eq("id", paymentId)
       .maybeSingle();
 
-    let useLegacy = !existingPayment;
+    if (!existingPayment) {
+      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+    }
 
-    if (!useLegacy) {
+    {
       const ep = existingPayment as {
         created_by?: string | null; direction?: string; sender_user_id?: string | null; recipient_user_id?: string | null;
         amount?: number | string | null; burner_address?: string | null; is_devnet?: boolean | null;
@@ -511,80 +487,6 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
 
       return NextResponse.json({ ok: true, claim: data }, { status: 200 });
     }
-
-    // Legacy: fall back to claims table
-    const { data: existingClaim, error: checkError } = await supabase
-      .from("claims")
-      .select("id, status, created_by")
-      .eq("id", paymentId)
-      .maybeSingle();
-
-    if (checkError || !existingClaim) {
-      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
-    }
-
-    const legacyCreator = (existingClaim as { created_by?: string | null })?.created_by;
-    if (legacyCreator && legacyCreator !== userId) {
-      return NextResponse.json({ error: "Not authorized to update this payment" }, { status: 403 });
-    }
-
-    if (status === "SUCCESS" && userId && !(existingClaim as { created_by?: string | null }).created_by) {
-      updateData.created_by = userId;
-    }
-
-    const legacyUpdate: Record<string, unknown> = { status };
-    if (updateData.paid_at) legacyUpdate.paid_at = updateData.paid_at;
-    if (updateData.sender_tx_hash) legacyUpdate.sender_tx_hash = updateData.sender_tx_hash;
-    // Legacy claims table uses paid_with_chain/paid_with_token instead of from_chain/from_token
-    if (updateData.from_chain) legacyUpdate.paid_with_chain = updateData.from_chain;
-    if (updateData.created_by) legacyUpdate.created_by = updateData.created_by;
-
-    const { data, error } = await supabase
-      .from("claims")
-      .update(legacyUpdate)
-      .eq("id", paymentId)
-      .select("id, status, created_at, paid_at")
-      .single();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    if (status === "IN_FLIGHT" || status === "SUCCESS" || status === "REFUNDED") {
-      try {
-        const intentUpdate: Record<string, unknown> = {
-          status,
-          updated_at: new Date().toISOString(),
-        };
-
-        if (status === "IN_FLIGHT") {
-          const { data: existingIntent } = await supabase
-            .from("claim_intents")
-            .select("deposit_received_at, from_chain, to_chain")
-            .eq("claim_id", paymentId)
-            .maybeSingle();
-
-          if (existingIntent && !existingIntent.deposit_received_at) {
-            intentUpdate.deposit_received_at = depositReceivedAt || new Date().toISOString();
-          }
-
-          if (originAsset || destinationAsset) {
-            const { fromChain, toChain } = extractChainsFromAssets(originAsset, destinationAsset);
-            if (fromChain && !existingIntent?.from_chain) intentUpdate.from_chain = fromChain;
-            if (toChain && !existingIntent?.to_chain) intentUpdate.to_chain = toChain;
-          }
-        }
-
-        await supabase
-          .from("claim_intents")
-          .update(intentUpdate)
-          .eq("claim_id", paymentId);
-      } catch (e) {
-        console.error("[payments/PATCH] Error updating claim_intent:", e);
-      }
-    }
-
-    return NextResponse.json({ ok: true, claim: data }, { status: 200 });
   } catch (e: any) {
     console.error("[payments/PATCH] Error:", e);
     return NextResponse.json({ error: e?.message || "Failed to update payment" }, { status: 500 });
@@ -603,53 +505,28 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
   try {
     const supabase = getSupabaseAdmin();
 
-    // Try payments first
     const { data: payment } = await supabase
       .from("payments")
       .select("id, status, created_by")
       .eq("id", paymentId)
       .maybeSingle();
 
-    if (payment) {
-      const status = String((payment as { status?: string }).status || "").toUpperCase();
-      const createdBy = (payment as { created_by?: string | null }).created_by;
-      if (createdBy !== userId) {
-        return NextResponse.json({ error: "Only the creator can delete this payment" }, { status: 403 });
-      }
-      if (!DELETABLE_STATUSES.includes(status)) {
-        return NextResponse.json({ error: "Only open or pending payments can be deleted" }, { status: 400 });
-      }
-      const { error } = await supabase
-        .from("payments")
-        .update({ status: "DELETED" })
-        .eq("id", paymentId);
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-      return NextResponse.json({ ok: true }, { status: 200 });
-    }
-
-    // Fall back to legacy claims
-    const { data: claim, error: fetchError } = await supabase
-      .from("claims")
-      .select("id, status, created_by")
-      .eq("id", paymentId)
-      .maybeSingle();
-
-    if (fetchError || !claim) {
+    if (!payment) {
       return NextResponse.json({ error: "Payment not found" }, { status: 404 });
     }
-    const status = String((claim as { status?: string }).status || "").toUpperCase();
-    const createdBy = (claim as { created_by?: string | null }).created_by;
+    const status = String((payment as { status?: string }).status || "").toUpperCase();
+    const createdBy = (payment as { created_by?: string | null }).created_by;
     if (createdBy !== userId) {
       return NextResponse.json({ error: "Only the creator can delete this payment" }, { status: 403 });
     }
     if (!DELETABLE_STATUSES.includes(status)) {
       return NextResponse.json({ error: "Only open or pending payments can be deleted" }, { status: 400 });
     }
-    const { error: updateError } = await supabase
-      .from("claims")
+    const { error } = await supabase
+      .from("payments")
       .update({ status: "DELETED" })
       .eq("id", paymentId);
-    if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Failed to delete payment";

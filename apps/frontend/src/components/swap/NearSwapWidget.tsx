@@ -25,6 +25,7 @@ import { upsertLocal } from "@/lib/history";
 import { getClientGeo } from "@/lib/geo";
 import { Switch } from "@/components/ui/switch";
 import { isValidZcashShielded } from "@/lib/zcash";
+import posthog from "posthog-js";
 
 export function NearSwapWidget({
 	tokens,
@@ -314,6 +315,15 @@ export function NearSwapWidget({
 					quoteId: info.quoteId,
 					minDepositFormatted: info.minDepositFormatted,
 				});
+				if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+					posthog.capture("cross_chain_transfer_started", {
+						from_chain: selectedFrom.chain,
+						from_token: selectedFrom.symbol,
+						to_chain: selectedTo.chain,
+						to_token: selectedTo.symbol,
+						is_shielded: useShielded,
+					});
+				}
 				// Save history (local + remote if logged in)
 				try {
 					const geo = await getClientGeo();

@@ -276,43 +276,6 @@ export async function GET(request: Request) {
       }
     }
 
-    // Ids already in payments (to skip duplicates from legacy claims query)
-    const paymentIds = new Set([
-      ...(sentPaymentRows || []).map((r) => (r as Record<string, unknown>).id as string),
-      ...(legacySentRows || []).map((r) => (r as Record<string, unknown>).id as string),
-      ...(pendingRequestRows || []).map((r) => (r as Record<string, unknown>).id as string),
-      ...receivedPaymentRows.map((r) => r.id as string),
-    ]);
-
-    // ── legacy claims table (backward compat) ─────────────────────────────
-    const LEGACY_CLAIM_SELECT =
-      "id, amount, to_symbol, to_chain, status, created_at, paid_at, recipient_username, creator_email, created_by, paid_with_token, paid_with_chain, is_private, description, is_devnet";
-
-    let sentClaimsQuery = supabase
-      .from("claims")
-      .select(LEGACY_CLAIM_SELECT)
-      .eq("created_by", userId)
-      .eq("is_devnet", devnetOnly)
-      .order("created_at", { ascending: false })
-      .range(offset, offset + limit - 1);
-    if (dateFilter) sentClaimsQuery = sentClaimsQuery.gte("created_at", dateFilter);
-    const { data: sentClaimRows } = await sentClaimsQuery;
-
-    let receivedClaimRows: Record<string, unknown>[] = [];
-    if (walletAddresses.length > 0) {
-      let recQuery = supabase
-        .from("claims")
-        .select(LEGACY_CLAIM_SELECT)
-        .in("recipient_address", walletAddresses)
-        .in("status", RECEIVED_VISIBLE_STATUSES)
-        .eq("is_devnet", devnetOnly)
-        .order("created_at", { ascending: false })
-        .range(offset, offset + limit - 1);
-      if (dateFilter) recQuery = recQuery.gte("created_at", dateFilter);
-      const { data: received } = await recQuery;
-      receivedClaimRows = (received || []) as Record<string, unknown>[];
-    }
-
     // Normalise and merge; deduplicate by ID (payments table takes precedence)
     const normPaymentReceived = receivedPaymentRows.map((r) => normalisePayment(r));
     const sentIds = new Set((sentPaymentRows || []).map((r) => (r as Record<string, unknown>).id as string));
@@ -328,28 +291,7 @@ export async function GET(request: Request) {
         .map((r) => normalisePayment(r as Record<string, unknown>)),
     ];
 
-    const normClaimSent = (sentClaimRows || [])
-      .filter((r) => !paymentIds.has((r as Record<string, unknown>).id as string))
-      .map((r) => ({
-        ...(r as Record<string, unknown>),
-        direction: "from_sender" as const,
-        recipient_email: (r as Record<string, unknown>).creator_email ?? null,
-        paid_with_token: (r as Record<string, unknown>).paid_with_token ?? null,
-      }) as unknown as PaymentHistoryClaim);
-
-    const normClaimReceived = receivedClaimRows
-      .filter((r) => !paymentIds.has(r.id as string))
-      .map((r) => ({
-        ...r,
-        direction: "from_sender" as const,
-        recipient_email: r.creator_email ?? null,
-        paid_with_token: r.paid_with_token ?? null,
-      }) as unknown as PaymentHistoryClaim);
-
-    const allItems = [
-      ...normPaymentSent, ...normClaimSent,
-      ...normPaymentReceived, ...normClaimReceived,
-    ];
+    const allItems = [...normPaymentSent, ...normPaymentReceived];
 
     // Enrich with usernames — collect created_by, sender_user_id, and recipient_user_id in one batch
     type EnrichedClaim = PaymentHistoryClaim & { sender_user_id?: string | null; _recipient_user_id?: string | null };
@@ -378,8 +320,14 @@ export async function GET(request: Request) {
       // Only backfill from recipient_user_id for from_sender payments.
       // from_recipient (payment request links) store the creator's own ID in recipient_user_id,
       // so backfilling there would show the creator's own username as the payee.
-      const recipientUsername = c.recipient_username ||
-        (c.direction === "from_sender" && ec._recipient_user_id && usernameMap[ec._recipient_user_id]) || null;
+      // Live lookup wins over the column stored at send time — a recipient addressed directly by
+      // username (claims.service.ts createFromUsername) gets that value frozen on the row, so
+      // without this a later username switch (switch-username route) would leave "Send again"
+      // targeting a stale handle that no longer resolves to anyone, instead of their current one.
+      const recipientUsername =
+        (c.direction === "from_sender" && ec._recipient_user_id && usernameMap[ec._recipient_user_id]) ||
+        c.recipient_username ||
+        null;
       const creatorUsername = (c.created_by && usernameMap[c.created_by]) || null;
       const senderUsername = (ec.sender_user_id && usernameMap[ec.sender_user_id]) || null;
       // created_by/sender_user_id/_recipient_user_id are raw Privy user IDs used only to look up
@@ -394,11 +342,11 @@ export async function GET(request: Request) {
       };
     };
 
-    const sent = [...normPaymentSent, ...normClaimSent]
+    const sent = normPaymentSent
       .map(enrich)
       .filter((c) => !isExpiredOpenPayment(c) && String(c.status || "").toUpperCase() !== "DELETED");
 
-    const received = [...normPaymentReceived, ...normClaimReceived]
+    const received = normPaymentReceived
       .map(enrich)
       .filter((c) => RECEIVED_VISIBLE_STATUSES.includes(String(c.status || "").toUpperCase()));
 

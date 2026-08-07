@@ -27,6 +27,16 @@ export interface PrivateTransfer {
   leg2_tx_signature: string | null;
   destination_address: string | null;
   error_message: string | null;
+  /** Deposit only: when the burner -> MagicBlock hop1 transaction confirmed on-chain. Used to
+   *  time out the delivery-verification wait (see tryDeliverBurnerBalance/verifyQueuedDelivery). */
+  delivery_hop1_confirmed_at: string | null;
+  /** Deposit only: USDC MagicBlock's own program logs say it will deliver to the destination
+   *  (parsed from the hop1 transaction's logs — the source of truth, not our own fee estimate). */
+  delivery_expected_usdc: string | number | null;
+  /** Deposit only: destination wallet's USDC balance immediately before hop1 broadcast. The row
+   *  is only marked 'complete' once the destination's balance has risen by delivery_expected_usdc
+   *  above this baseline. */
+  delivery_baseline_usdc: string | number | null;
 }
 
 /** Fields safe to return to the client — never the encrypted burner secret. */

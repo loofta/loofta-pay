@@ -9,14 +9,15 @@ import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { StatusService } from '../intents/status.service';
 import { PrivateBalanceService, PRIVATE_BALANCE_PLATFORM_FEE_BPS } from './private-balance.service';
-import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
-import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
+import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc, estimateMagicblockGrossUp, MAGICBLOCK_VOLUME_FEE_BPS, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
+import { guardAtaSponsorship, assertPerUserAtaCreationCapNotExceeded } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { reclaimBurnerFunds } from '@/common/burner-reclaim';
 import { EmailService } from '../email/email.service';
 import type { PrivateTransfer } from './entities/private-transfer.entity';
 
 const BATCH_LIMIT = 25;
+const DEPOSIT_ABANDON_DAYS = 7;
 
 @Injectable()
 export class PrivateBalanceProcessorService {
@@ -57,6 +58,7 @@ export class PrivateBalanceProcessorService {
     }
     this.isProcessing = true;
     try {
+      await this.expireAbandonedDeposits();
       await this.processDeposits();
       await this.processWithdrawals();
       await this.reclaimFinishedBurners();
@@ -110,11 +112,54 @@ export class PrivateBalanceProcessorService {
   // Deposits: burner funded (directly or via Near Intents bridge) -> private transfer -> user
   // ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Direct-deposit burners that were created but never funded (user abandoned the flow client-side)
+   * stay 'awaiting_funds' forever — nothing else ever transitions them out. With no ordering on the
+   * processDeposits() query below, an unbounded backlog of these dead rows permanently starves newer,
+   * genuinely-funded deposits out of the BATCH_LIMIT window (confirmed incident 2026-08-05: 29 rows
+   * matched the filter, only 25 fit in a batch, and the newest 4 — including one already funded
+   * on-chain for 8+ hours — never got picked up). Excludes near_deposit_address rows (cross-chain via
+   * Near Intents) since those are driven by advanceCrossChainDeposit's bridge-status poll instead and
+   * shouldn't be auto-failed on a timer.
+   */
+  private async expireAbandonedDeposits() {
+    const cutoff = new Date(Date.now() - DEPOSIT_ABANDON_DAYS * 24 * 60 * 60_000).toISOString();
+    const { data, error } = await this.supabaseService.privateTransfers
+      .update({
+        status: 'failed',
+        error_message: `Deposit abandoned — no funds received within ${DEPOSIT_ABANDON_DAYS} days`,
+      })
+      .eq('direction', 'deposit')
+      .eq('status', 'awaiting_funds')
+      .is('near_deposit_address', null)
+      .lt('created_at', cutoff)
+      .select('id');
+    if (error) { this.logger.warn(`expireAbandonedDeposits: query failed: ${error.message}`); return; }
+    if (data?.length) {
+      this.logger.log(`[PrivateDeposit] expired ${data.length} abandoned deposit row(s) unfunded for >${DEPOSIT_ABANDON_DAYS}d`);
+    }
+  }
+
   private async processDeposits() {
+    // Newest-first: a growing backlog of dead/abandoned 'awaiting_funds' rows must never be able to
+    // starve a genuinely-funded recent deposit out of the BATCH_LIMIT window. expireAbandonedDeposits()
+    // (run just before this every tick) caps how large that backlog can get, but ordering oldest-last
+    // is defense in depth for the window before a stuck row crosses the expiry cutoff.
+    // 'delivering_privately' must stay in this list: tryDeliverBurnerBalance() sets that status
+    // BEFORE building/broadcasting the MagicBlock transfer, so any failure after that point
+    // (RPC hiccup, wallet-resolve error, broadcast failure) would otherwise strand the row
+    // forever — it'd never match this query again and never get retried, even though the burner
+    // still holds the funds untouched (confirmed real incident 2026-08-05, private_transfers
+    // 43138a5e-...: reached 'delivering_privately', no leg2_tx_signature, no error_message,
+    // burner balance unchanged — stuck with no path back into this query). Safe to retry: the
+    // balance re-check at the top of tryDeliverBurnerBalance means a row that already completed
+    // on-chain (but crashed before the DB write) would just see balance <= relayFeeUnits and
+    // no-op rather than double-spend.
     const { data, error } = await this.supabaseService.privateTransfers
       .select('*')
       .eq('direction', 'deposit')
-      .in('status', ['awaiting_funds', 'bridging'])
+      .in('status', ['awaiting_funds', 'bridging', 'delivering_privately'])
+      .order('created_at', { ascending: false })
       .limit(BATCH_LIMIT);
     if (error) { this.logger.warn(`processDeposits: query failed: ${error.message}`); return; }
     for (const row of (data ?? []) as PrivateTransfer[]) {
@@ -154,18 +199,55 @@ export class PrivateBalanceProcessorService {
    * amount — the burner has no gross-up padding (unlike claim burners, which are pre-funded
    * with extra to cover MagicBlock's fee), so exactOut must be false here: exactOut:true would
    * ask MagicBlock to debit MORE than the burner holds, which would just fail on-chain.
+   *
+   * IMPORTANT (confirmed via on-chain inspection, 2026-08-06 incident): the transaction this
+   * builds and confirms below does NOT deliver funds to the user directly. Its own program logs
+   * show "Instruction: DepositAndDelegateShuttleEphemeralAtaWithMergeAndPrivateTransfer" and a
+   * "queue=..." address — it deposits into MagicBlock's own queued-delivery system. The actual
+   * delivery to the user's wallet happens 1-10 minutes later via one or more separate
+   * "ExecuteReadyQueuedTransfer" instructions MagicBlock's own relay submits, which we neither
+   * control nor get notified of. So this method only gets the row to "hop1 confirmed" — it does
+   * NOT mark 'complete' itself. That's verifyQueuedDelivery()'s job, called on later ticks once
+   * leg2_tx_signature is set, which watches the destination's actual balance instead of trusting
+   * the first on-chain hop (mirrors the same pattern deliverToBurnerThenRoute already uses for
+   * withdrawals' leg1 — checking the burner's real balance, not just the signature status).
    */
   private async tryDeliverBurnerBalance(row: PrivateTransfer, opts: { requireExpected: boolean }) {
+    // Hop1 already confirmed on a prior tick — just checking whether MagicBlock's queue has
+    // actually released the funds yet, not rebuilding/rebroadcasting anything.
+    if (row.status === 'delivering_privately' && row.leg2_tx_signature) {
+      await this.verifyQueuedDelivery(row);
+      return;
+    }
+
     const mint = this.privateBalanceService.getUsdcMint(row.cluster);
     const conn = this.solanaSponsor.getConnectionForCluster(row.cluster);
     const burnerPubkey = new PublicKey(row.burner_address);
     const burnerAta = await getAssociatedTokenAddress(mint, burnerPubkey);
 
     let balance = BigInt(0);
-    try { balance = (await getAccount(conn, burnerAta)).amount; } catch { /* not funded yet */ }
+    try {
+      balance = (await getAccount(conn, burnerAta)).amount;
+    } catch (e: any) {
+      // TokenAccountNotFoundError means genuinely not funded yet — expected, stay quiet.
+      // Anything else (RPC timeout/rate-limit/etc) previously vanished here with zero trace,
+      // making a stuck row indistinguishable from "still waiting" — log so it's diagnosable.
+      if (e?.name !== 'TokenAccountNotFoundError') {
+        this.logger.warn(`[PrivateDeposit] ${row.id}: balance check failed (will retry next tick): ${e?.message ?? e}`);
+      }
+    }
 
     const relayFeeUnits = BigInt(Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000));
-    if (balance <= relayFeeUnits) return; // nothing yet, or not even enough to cover the relay fee
+    if (balance <= relayFeeUnits) {
+      // A row already at 'delivering_privately' with a drained/empty burner most likely already
+      // completed on-chain on a prior tick but crashed before the final DB write (status stuck,
+      // no leg2_tx_signature) — silently no-op-ing here would hide a real delivered payment
+      // behind a row that looks stuck forever. Surface it instead of staying quiet.
+      if (row.status === 'delivering_privately') {
+        this.logger.warn(`[PrivateDeposit] ${row.id}: status is 'delivering_privately' but burner is empty/near-empty — likely already delivered on a prior attempt that crashed before recording leg2_tx_signature. Needs manual on-chain verification.`);
+      }
+      return; // nothing yet, or not even enough to cover the relay fee
+    }
 
     if (opts.requireExpected) {
       // Direct deposits only — don't sweep a still-arriving partial transfer early. Cross-chain
@@ -178,8 +260,31 @@ export class PrivateBalanceProcessorService {
     this.logger.log(`[PrivateDeposit] ${row.id}: burner funded (${balance} units) — delivering privately`);
     await this.supabaseService.privateTransfers.update({ status: 'delivering_privately' }).eq('id', row.id);
 
-    const transferUnits = balance - relayFeeUnits;
-    const destination = await this.usersService.getSolanaWalletAddress(row.user_id);
+    // Deliver the user's EXACT requested net amount whenever the burner holds enough padding to
+    // support it — MagicBlock's exactOut:true grosses up the debit internally and guarantees the
+    // destination nets exactly `amount` (confirmed semantics, see this file's top comment). Any
+    // leftover stays in the burner and is swept to the fee payer by reclaimBurnerLater() below —
+    // "burner delivers the exact amount, we get the rest," same as claim/send-payment burners.
+    // Only fall back to the old best-effort (deliver whatever's left, amount may run slightly over
+    // or under) when the burner doesn't provably hold enough: exactOut:true debiting more than the
+    // burner has would fail on-chain outright, so this must stay conservative. A manually-funded
+    // (QR/address) deposit that only just cleared the requireExpected gate above, with no padding
+    // beyond the bare net target, is the common case that still needs the fallback.
+    const netTargetUnits = BigInt(Math.round(Number(row.amount_requested_usdc) * 1_000_000));
+    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + PRIVATE_BALANCE_PLATFORM_FEE_BPS;
+    const estimatedGrossForExactOut = BigInt(estimateMagicblockGrossUp(Number(netTargetUnits), totalBps));
+    // +2% on top of the estimate: estimateMagicblockGrossUp is an approximation of MagicBlock's
+    // internal math (see its own doc comment), not a confirmed-exact figure — this is a smaller,
+    // separate margin from the one applied when quoting the send amount in private-balance.service.ts.
+    const requiredForExactOut = estimatedGrossForExactOut + (estimatedGrossForExactOut * BigInt(200)) / BigInt(10_000) + relayFeeUnits;
+    const useExactOut = balance >= requiredForExactOut;
+    const transferUnits = useExactOut ? netTargetUnits : (balance - relayFeeUnits);
+
+    const destination = await this.usersService.getSolanaWalletAddress(row.user_id, { skipCache: true });
+    const destinationPubkey = new PublicKey(destination);
+    // Snapshot BEFORE broadcasting hop1 — this is the baseline verifyQueuedDelivery() compares
+    // against later to detect the actual (delayed) arrival.
+    const destinationBalanceBefore = await this.getUsdcBalance(conn, mint, destinationPubkey);
     const burnerKeypair = this.privateBalanceService.decryptBurnerSecret(row.burner_encrypted_secret, row.burner_address);
     // MagicBlock confirmed platformFeeAccount must be the fee collector's initialized USDC ATA,
     // not its wallet address — same bug as private-balance.service.ts's build leg.
@@ -188,13 +293,15 @@ export class PrivateBalanceProcessorService {
       ? (await getAssociatedTokenAddress(mint, new PublicKey(feePayerAddress))).toBase58()
       : null;
 
+    this.logger.log(`[PrivateDeposit] ${row.id}: burner balance=${balance} exactOut=${useExactOut} (needs>=${requiredForExactOut}) amount=${transferUnits}`);
+
     const txResponse = await requestMagicblockPrivateTransfer({
       from: row.burner_address,
       to: destination,
       mint: mint.toBase58(),
       amount: Number(transferUnits),
       cluster: row.cluster,
-      exactOut: false,
+      exactOut: useExactOut,
       gasless: true,
       ...(platformFeeAccount ? { platformFeeBps: PRIVATE_BALANCE_PLATFORM_FEE_BPS, platformFeeAccount } : {}),
     });
@@ -202,14 +309,96 @@ export class PrivateBalanceProcessorService {
     const sig = await this.signAndBroadcastFromBurner(txResponse, burnerKeypair, conn);
     await this.pollConfirm(conn, sig);
 
-    await this.supabaseService.privateTransfers.update({ status: 'complete', leg2_tx_signature: sig }).eq('id', row.id);
-    this.logger.log(`[PrivateDeposit] ${row.id}: complete, tx=${sig}`);
+    // hop1 (burner -> MagicBlock's queue) confirmed — NOT the same as delivered. Record what to
+    // expect and wait for verifyQueuedDelivery() to observe it actually landing before completing.
+    // exactOut:true already guarantees the exact figure, no need to parse it back out of the logs.
+    const expectedUnits = useExactOut ? netTargetUnits : await this.parseExpectedDeliveryUnits(conn, sig, transferUnits);
+    await this.supabaseService.privateTransfers.update({
+      leg2_tx_signature: sig,
+      delivery_hop1_confirmed_at: new Date().toISOString(),
+      delivery_expected_usdc: (Number(expectedUnits) / 1_000_000).toString(),
+      delivery_baseline_usdc: (Number(destinationBalanceBefore) / 1_000_000).toString(),
+    }).eq('id', row.id);
+    this.logger.log(`[PrivateDeposit] ${row.id}: hop1 confirmed tx=${sig}, waiting for MagicBlock's queued release of ~$${(Number(expectedUnits) / 1_000_000).toFixed(6)} (checked again next tick)`);
 
     // The delivery tx above is built by MagicBlock's relay, so we can't append a closeAccount to
     // it — reclaim the burner's ATA rent (+ any dust MagicBlock's fee accounting left behind) in
-    // a follow-up tx instead, after a short settle delay. Best-effort: the deposit itself is
-    // already complete; a failed reclaim only postpones rent recovery, never the user's money.
+    // a follow-up tx instead, after a short settle delay. Safe to do now regardless of the queued
+    // release's outcome: the burner itself is already fully drained by hop1 either way.
     this.reclaimBurnerLater(row.id, burnerKeypair, conn);
+  }
+
+  /** Current USDC balance for an arbitrary owner, or 0 if the ATA doesn't exist yet. */
+  private async getUsdcBalance(conn: Connection, mint: PublicKey, owner: PublicKey): Promise<bigint> {
+    try {
+      const ata = await getAssociatedTokenAddress(mint, owner);
+      return (await getAccount(conn, ata)).amount;
+    } catch {
+      return BigInt(0);
+    }
+  }
+
+  /**
+   * The confirmed hop1 transaction's own program logs report exactly what MagicBlock's queue will
+   * release (observed in production: "private_transfer_amount: 5052403") — more reliable than
+   * re-deriving it ourselves, since this build uses exactOut:false and MagicBlock's bps math on a
+   * non-exactOut transfer was never independently confirmed the way the exactOut path was (see
+   * magicblock-private-transfer.ts's top comment). Falls back to an approximation only if the log
+   * line isn't found, which isn't expected in normal operation.
+   */
+  private async parseExpectedDeliveryUnits(conn: Connection, signature: string, transferUnits: bigint): Promise<bigint> {
+    try {
+      const tx = await conn.getTransaction(signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
+      for (const line of tx?.meta?.logMessages ?? []) {
+        const match = line.match(/private_transfer_amount:\s*(\d+)/);
+        if (match) return BigInt(match[1]);
+      }
+      this.logger.warn(`[PrivateDeposit] no private_transfer_amount found in hop1 logs for ${signature} — falling back to bps estimate`);
+    } catch (e) {
+      this.logger.warn(`[PrivateDeposit] failed to fetch hop1 logs for ${signature}: ${String(e)} — falling back to bps estimate`);
+    }
+    const totalBps = BigInt(MAGICBLOCK_VOLUME_FEE_BPS + PRIVATE_BALANCE_PLATFORM_FEE_BPS);
+    return (transferUnits * (BigInt(10_000) - totalBps)) / BigInt(10_000);
+  }
+
+  /**
+   * Watches for MagicBlock's delayed queued release (see tryDeliverBurnerBalance's doc comment)
+   * actually landing in the destination wallet, instead of trusting hop1's on-chain confirmation
+   * alone. Called every tick while status is 'delivering_privately' with leg2_tx_signature set.
+   */
+  private async verifyQueuedDelivery(row: PrivateTransfer) {
+    if (row.delivery_expected_usdc == null || row.delivery_baseline_usdc == null || !row.delivery_hop1_confirmed_at) {
+      // Row from before this verification step shipped (or the migration adding these columns
+      // hasn't landed on this environment yet) — nothing to compare against. Mark complete rather
+      // than getting permanently stuck; only affects rows created before this fix went live.
+      await this.supabaseService.privateTransfers.update({ status: 'complete' }).eq('id', row.id);
+      this.logger.warn(`[PrivateDeposit] ${row.id}: no delivery-verification baseline recorded (pre-fix row) — marking complete without verifying actual arrival, tx=${row.leg2_tx_signature}`);
+      return;
+    }
+
+    const mint = this.privateBalanceService.getUsdcMint(row.cluster);
+    const conn = this.solanaSponsor.getConnectionForCluster(row.cluster);
+    const destination = await this.usersService.getSolanaWalletAddress(row.user_id, { skipCache: true });
+    const currentUnits = await this.getUsdcBalance(conn, mint, new PublicKey(destination));
+    const baselineUnits = BigInt(Math.round(Number(row.delivery_baseline_usdc) * 1_000_000));
+    const expectedUnits = BigInt(Math.round(Number(row.delivery_expected_usdc) * 1_000_000));
+    const delta = currentUnits - baselineUnits;
+
+    if (delta >= expectedUnits) {
+      await this.supabaseService.privateTransfers.update({ status: 'complete' }).eq('id', row.id);
+      this.logger.log(`[PrivateDeposit] ${row.id}: MagicBlock queued release confirmed (destination +${delta} units, expected >=${expectedUnits}) — complete`);
+      return;
+    }
+
+    const elapsedMs = Date.now() - new Date(row.delivery_hop1_confirmed_at).getTime();
+    const VERIFY_TIMEOUT_MS = 30 * 60_000; // generous vs MagicBlock's own documented 10min max delay
+    if (elapsedMs > VERIFY_TIMEOUT_MS) {
+      // Deliberately NOT marking 'complete' (the money may genuinely not have arrived) or 'failed'
+      // (it may still be sitting in MagicBlock's queue, not lost) — surface loudly instead so this
+      // gets a human looking at the actual on-chain state rather than either lying about it.
+      this.logger.error(`[PrivateDeposit] ${row.id}: queued delivery NOT observed ${Math.round(elapsedMs / 60_000)}min after hop1 confirmed (tx=${row.leg2_tx_signature}, destination=${destination}, expected +${expectedUnits} units, only +${delta} seen) — needs manual on-chain investigation`);
+    }
+    // else: still within the normal delay window — checked again next tick
   }
 
   /** Fire-and-forget rent reclaim for a finished burner (see @/common/burner-reclaim). */
@@ -389,7 +578,21 @@ export class PrivateBalanceProcessorService {
     const bridgeDestAta = await getAssociatedTokenAddress(mint, bridgeDestPubkey);
     const fundTx = new Transaction();
     if (!(await tokenAccountExists(conn, bridgeDestAta))) {
-      const allowed = await guardAtaSponsorship(this.supabaseService, bridgeDestPubkey.toBase58(), mint.toBase58(), `private-withdrawal-bridge:${row.id}`, this.emailService);
+      // Bridge deposit addresses are freshly generated per quote — never repeated — so
+      // guardAtaSponsorship's same-wallet check can't catch a user cycling withdrawals to rack up
+      // free ATA creations (2026-08-04 fee-payer audit: this path had no cost recovery at all,
+      // unlike sweepDirectToDestination just above, which closes its burner in the same tx).
+      try {
+        await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, row.user_id, 1, 'PrivateWithdrawalBridge');
+      } catch (e: unknown) {
+        await this.supabaseService.privateTransfers.update({
+          status: 'failed',
+          error_message: e instanceof Error ? e.message : String(e),
+        }).eq('id', row.id);
+        this.logger.warn(`[PrivateWithdrawal] ${row.id}: blocked by per-user ATA cap`);
+        return;
+      }
+      const allowed = await guardAtaSponsorship(this.supabaseService, bridgeDestPubkey.toBase58(), mint.toBase58(), `private-withdrawal-bridge:${row.id}`, this.emailService, row.user_id);
       if (!allowed) {
         await this.supabaseService.privateTransfers.update({
           status: 'failed',

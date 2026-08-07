@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,18 @@ const CashoutTab = dynamic(() => import("./tabs/CashoutTab").then((m) => m.Casho
 const LotteryTab = dynamic(() => import("./tabs/LotteryTab").then((m) => m.LotteryTab), { loading: tabLoading, ssr: false });
 const PacksTab = dynamic(() => import("./tabs/PacksTab").then((m) => m.PacksTab), { loading: tabLoading, ssr: false });
 const AnalyticsTab = dynamic(() => import("./tabs/AnalyticsTab").then((m) => m.AnalyticsTab), { loading: tabLoading, ssr: false });
+const GiveawaysTab = dynamic(() => import("./tabs/GiveawaysTab").then((m) => m.GiveawaysTab), { loading: tabLoading, ssr: false });
+
+type AdminTab = "payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout" | "lottery" | "packs" | "giveaways";
+const ADMIN_TAB_STORAGE_KEY = "loofta-admin-active-tab";
+const ADMIN_TAB_QUERY_KEY = ["admin-active-tab"];
+const VALID_ADMIN_TABS: AdminTab[] = ["payments", "sparks", "waitlist", "analytics", "blink", "cashout", "lottery", "packs", "giveaways"];
+
+function loadStoredAdminTab(): AdminTab {
+  if (typeof window === "undefined") return "payments";
+  const stored = window.localStorage.getItem(ADMIN_TAB_STORAGE_KEY);
+  return (VALID_ADMIN_TABS as string[]).includes(stored ?? "") ? (stored as AdminTab) : "payments";
+}
 
 export default function AdminDashboard() {
   const { authenticated, userId, login, ready } = useAuth();
@@ -72,8 +85,18 @@ export default function AdminDashboard() {
   });
   const [saving, setSaving] = useState(false);
 
-  // Tabs
-  const [activeTab, setActiveTab] = useState<"payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout" | "lottery" | "packs">("payments");
+  // Tabs — persisted via TanStack Query (localStorage-backed) so a reload keeps whatever tab
+  // the admin was on, instead of always bouncing back to "payments".
+  const queryClient = useQueryClient();
+  const { data: activeTab = "payments" } = useQuery({
+    queryKey: ADMIN_TAB_QUERY_KEY,
+    queryFn: () => loadStoredAdminTab(),
+    staleTime: Infinity,
+  });
+  const setActiveTab = useCallback((tab: AdminTab) => {
+    queryClient.setQueryData(ADMIN_TAB_QUERY_KEY, tab);
+    if (typeof window !== "undefined") window.localStorage.setItem(ADMIN_TAB_STORAGE_KEY, tab);
+  }, [queryClient]);
 
   // Sparks leaderboard
   const [sparksData, setSparksData] = useState<any[]>([]);
@@ -756,6 +779,7 @@ export default function AdminDashboard() {
               () => fetchPajCash(pajCashPage, pajCashStatusFilter, pajCashDirectionFilter)
             ) :
             activeTab === "lottery" ? () => { reconcileAndFetchLottery(lotteryPage, lotteryStatusFilter); fetchGifts(giftsPage); fetchReferralFees(); } :
+            activeTab === "giveaways" || activeTab === "packs" ? () => {} : // self-contained tabs refresh themselves
             () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })
           }
           disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading || cashoutLoading || withdrawalsLoading || pajCashLoading || lotteryLoading}
@@ -834,6 +858,13 @@ export default function AdminDashboard() {
         >
           Mystery Packs
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("giveaways")}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "giveaways" ? "border-pink-500 text-pink-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          Giveaways
+        </button>
         <Link
           href={outreachUrl}
           className="px-4 py-2 text-base md:text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-orange-400 hover:border-orange-500/50 transition-colors flex items-center gap-1.5 ml-auto"
@@ -889,6 +920,8 @@ export default function AdminDashboard() {
       )}
 
       {activeTab === "packs" && <PacksTab />}
+
+      {activeTab === "giveaways" && <GiveawaysTab />}
 
       {activeTab === "analytics" && (
         <AnalyticsTab

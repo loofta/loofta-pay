@@ -39,28 +39,18 @@ export async function POST(request: Request) {
       .eq("id", claimId)
       .maybeSingle();
 
-    let claim: Record<string, unknown>;
-    if (paymentRow) {
-      claim = {
-        id: paymentRow.id,
-        amount: paymentRow.amount,
-        to_symbol: paymentRow.to_token,
-        to_chain: paymentRow.to_chain,
-        recipient_address: paymentRow.recipient_address,
-        claim_burner_address: paymentRow.burner_address,
-        is_private: paymentRow.is_private,
-      };
-    } else {
-      const { data: claimRow } = await supabaseForClaim
-        .from("claims")
-        .select("id, amount, to_symbol, to_chain, recipient_address, claim_burner_address, is_private")
-        .eq("id", claimId)
-        .maybeSingle();
-      if (!claimRow) {
-        return NextResponse.json({ error: "Payment not found" }, { status: 404 });
-      }
-      claim = claimRow as Record<string, unknown>;
+    if (!paymentRow) {
+      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
     }
+    const claim: Record<string, unknown> = {
+      id: paymentRow.id,
+      amount: paymentRow.amount,
+      to_symbol: paymentRow.to_token,
+      to_chain: paymentRow.to_chain,
+      recipient_address: paymentRow.recipient_address,
+      claim_burner_address: paymentRow.burner_address,
+      is_private: paymentRow.is_private,
+    };
     console.log('[claims/deposit] Loaded claim from DB:', claim.id);
 
     // For private cross-chain payments, forward to backend to create Privy wallet
@@ -180,22 +170,12 @@ export async function POST(request: Request) {
         console.log("[claims/deposit] Same chain + same token → Direct transfer to recipient");
 
         // Privacy: fetch burner address from DB — never return the real recipient wallet to the sender
-        let directRecipient: string | null = null;
-        const { data: paymentRow } = await supabase
+        const { data: directPaymentRow } = await supabase
           .from("payments")
           .select("burner_address")
           .eq("id", claimId)
           .maybeSingle();
-        if (paymentRow) {
-          directRecipient = (paymentRow as any).burner_address || null;
-        } else {
-          const { data: claimRow } = await supabase
-            .from("claims")
-            .select("claim_burner_address")
-            .eq("id", claimId)
-            .maybeSingle();
-          directRecipient = (claimRow as any)?.claim_burner_address || null;
-        }
+        const directRecipient: string | null = (directPaymentRow as any)?.burner_address || null;
 
         if (!directRecipient) {
           console.error("[claims/deposit] No burner address for direct transfer — rejecting to protect recipient privacy");
@@ -450,49 +430,22 @@ export async function POST(request: Request) {
     }
     const q = (raw as any)?.quote || raw || {};
 
-    // Insert into payment_intents; fall back to claim_intents for legacy records
     try {
-      // Try payments table first
-      const { data: existingPayment } = await supabase
-        .from("payments")
-        .select("id")
-        .eq("id", claimId)
-        .maybeSingle();
-
-      if (existingPayment) {
-        await supabase
-          .from("payment_intents")
-          .insert({
-            payment_id: claimId,
-            quote_id: q?.id || q?.quoteId || null,
-            deposit_address: q?.depositAddress || q?.address || null,
-            memo: q?.memo ?? null,
-            deadline: q?.deadline ? new Date(q.deadline).toISOString() : null,
-            time_estimate: typeof q?.timeEstimate === "number" ? q.timeEstimate : null,
-            status: "PENDING_DEPOSIT",
-            last_status_payload: null,
-            from_chain: String(fromToken?.chain || "").toLowerCase() || null,
-            to_chain: "solana",
-          });
-        await supabase.from("payments").update({ status: "PENDING_DEPOSIT" }).eq("id", claimId);
-      } else {
-        // Legacy: write to claim_intents / claims
-        await supabase
-          .from("claim_intents")
-          .insert({
-            claim_id: claimId,
-            quote_id: q?.id || q?.quoteId || null,
-            deposit_address: q?.depositAddress || q?.address || null,
-            memo: q?.memo ?? null,
-            deadline: q?.deadline ? new Date(q.deadline).toISOString() : null,
-            time_estimate: typeof q?.timeEstimate === "number" ? q.timeEstimate : null,
-            status: "PENDING_DEPOSIT",
-            last_status_payload: null,
-            from_chain: String(fromToken?.chain || "").toLowerCase() || null,
-            to_chain: String(claim.to_chain || "solana").toLowerCase() || null,
-          });
-        await supabase.from("claims").update({ status: "PENDING_DEPOSIT" }).eq("id", claimId);
-      }
+      await supabase
+        .from("payment_intents")
+        .insert({
+          payment_id: claimId,
+          quote_id: q?.id || q?.quoteId || null,
+          deposit_address: q?.depositAddress || q?.address || null,
+          memo: q?.memo ?? null,
+          deadline: q?.deadline ? new Date(q.deadline).toISOString() : null,
+          time_estimate: typeof q?.timeEstimate === "number" ? q.timeEstimate : null,
+          status: "PENDING_DEPOSIT",
+          last_status_payload: null,
+          from_chain: String(fromToken?.chain || "").toLowerCase() || null,
+          to_chain: "solana",
+        });
+      await supabase.from("payments").update({ status: "PENDING_DEPOSIT" }).eq("id", claimId);
     } catch {}
     
     // Round UP the minAmountIn to avoid INCOMPLETE_DEPOSIT issues

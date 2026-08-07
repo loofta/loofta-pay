@@ -620,7 +620,7 @@ export class ClaimsController {
   @ApiResponse({ status: 400, description: 'Invalid transaction' })
   @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
   async signAndBroadcastSponsored(
-    @Body() body: { transaction: string; network?: string },
+    @Body() body: { transaction: string; network?: string; claimId?: string; pajOrderId?: string; nearIntentsOrderId?: string; offrampRequestId?: string; giveawayId?: string },
     @Headers('x-loofta-internal') internalKey: string | undefined,
     @Req() req: { user?: { id: string } },
   ): Promise<{ signature: string }> {
@@ -634,8 +634,13 @@ export class ClaimsController {
       throw new ServiceUnavailableException('Solana fee sponsorship is not configured');
     }
 
-    // Verify every non-fee-payer signer in the transaction belongs to the authenticated user.
-    // Prevents an authenticated user from submitting a transaction signed by someone else's wallet.
+    // Verify EVERY non-fee-payer signer in the transaction belongs to the authenticated user —
+    // not just one of them. A burner can never legitimately appear as a required signer here:
+    // the client doesn't hold our burner keys, so it could never produce a valid signature for
+    // one (burner-signed transactions are always built and signed server-side elsewhere, never
+    // submitted through this client-facing endpoint). So every required signer besides the fee
+    // payer must be one of the caller's own linked wallets, with no exceptions — a transaction
+    // with a mix of "one signer matches, one doesn't" is not a case that should ever pass.
     const userId = req.user?.id;
     if (userId) {
       const userSigners = this.solanaSponsor.getRequiredUserSigners(body.transaction);
@@ -643,9 +648,10 @@ export class ClaimsController {
         const checks = await Promise.all(
           userSigners.map((addr) => this.usersService.isSolanaAddressInLinkedAccounts(userId, addr)),
         );
-        if (!checks.some(Boolean)) {
+        if (!checks.every(Boolean)) {
+          const unlinked = userSigners.filter((_, i) => !checks[i]);
           this.logger.warn(
-            `ClaimsController[sign-and-broadcast]: userId=${userId} submitted tx with unlinked signer(s): ${userSigners.map((a) => a.slice(0, 8)).join(', ')}…`,
+            `ClaimsController[sign-and-broadcast]: userId=${userId} submitted tx with unlinked signer(s): ${unlinked.map((a) => a.slice(0, 8)).join(', ')}…`,
           );
           throw new ForbiddenException('Transaction signer does not match your account');
         }
@@ -663,7 +669,7 @@ export class ClaimsController {
     }
 
     try {
-      return await this.solanaSponsor.signAndBroadcast(body.transaction, body.network, userId);
+      return await this.solanaSponsor.signAndBroadcast(body.transaction, body.network, userId, body.claimId, body.pajOrderId, body.nearIntentsOrderId, body.offrampRequestId, body.giveawayId);
     } catch (e: any) {
       if (e?.message?.includes('not configured')) {
         throw new ServiceUnavailableException('Solana sponsorship is not configured');
@@ -687,7 +693,7 @@ export class ClaimsController {
   @ApiResponse({ status: 400, description: 'Invalid transaction' })
   @ApiResponse({ status: 503, description: 'Sponsorship not configured' })
   async signAndBroadcastPER(
-    @Body() body: { transaction: string },
+    @Body() body: { transaction: string; claimId?: string },
     @Headers('x-loofta-internal') internalKey: string | undefined,
     @Req() req: { user?: { id: string } },
   ): Promise<{ signature: string }> {
@@ -710,21 +716,24 @@ export class ClaimsController {
         const checks = await Promise.all(
           userSigners.map((addr) => this.usersService.isSolanaAddressInLinkedAccounts(userId, addr)),
         );
-        if (!checks.some(Boolean)) {
+        if (!checks.every(Boolean)) {
+          const unlinked = userSigners.filter((_, i) => !checks[i]);
           this.logger.warn(
-            `ClaimsController[sign-and-broadcast-per]: userId=${userId} submitted tx with unlinked signer(s): ${userSigners.map((a) => a.slice(0, 8)).join(', ')}…`,
+            `ClaimsController[sign-and-broadcast-per]: userId=${userId} submitted tx with unlinked signer(s): ${unlinked.map((a) => a.slice(0, 8)).join(', ')}…`,
           );
           throw new ForbiddenException('Transaction signer does not match your account');
         }
       }
 
-      // See the matching note in signAndBroadcastSponsored above — ATA-creation destination is
+      // See the matching note in signAndBroadcastSponsored above — every required signer must be
+      // the caller's own linked wallet, no exceptions (a burner could never validly appear here
+      // anyway — the client can't sign for a key it doesn't hold). ATA-creation destination is
       // deliberately not restricted to the caller's own linked wallets (breaks withdraw-to-external-
       // wallet); assertAtaCreationsAllowed inside signAndBroadcastPER is the real drain guard.
     }
 
     try {
-      return await this.solanaSponsor.signAndBroadcastPER(body.transaction, undefined, userId);
+      return await this.solanaSponsor.signAndBroadcastPER(body.transaction, undefined, userId, body.claimId);
     } catch (e: any) {
       if (e?.message?.includes('not configured')) {
         throw new ServiceUnavailableException('Solana sponsorship is not configured');

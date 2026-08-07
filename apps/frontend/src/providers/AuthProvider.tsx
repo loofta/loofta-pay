@@ -1,16 +1,46 @@
 "use client";
 
-import { PrivyProvider } from "@privy-io/react-auth";
+import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 import { toSolanaWalletConnectors, useSolanaFundingPlugin } from "@privy-io/react-auth/solana";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
-import React from "react";
+import { getSolanaCluster, getSolanaHttpRpc, getSolanaWsRpc } from "@/lib/solanaCluster";
+import posthog from "posthog-js";
+import React, { useEffect, useRef } from "react";
 
 function SolanaPlugins() {
   useSolanaFundingPlugin();
   return null;
 }
 
-import { getSolanaCluster, getSolanaHttpRpc, getSolanaWsRpc } from "@/lib/solanaCluster";
+function PostHogIdentity() {
+  const { ready, authenticated, user } = usePrivy();
+  const identifiedUserId = useRef<string | null>(null);
+  const userId = user?.id;
+  const email = user?.email?.address;
+  const posthogConfigured = Boolean(
+    process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST,
+  );
+
+  useEffect(() => {
+    if (!ready) return;
+
+    if (authenticated && userId) {
+      if (identifiedUserId.current && identifiedUserId.current !== userId && posthogConfigured) {
+        posthog.reset();
+      }
+      if (identifiedUserId.current !== userId && posthogConfigured) {
+        posthog.identify(userId, { ...(email ? { email } : {}) });
+        identifiedUserId.current = userId;
+      }
+      return;
+    }
+
+    if (identifiedUserId.current && posthogConfigured) posthog.reset();
+    identifiedUserId.current = null;
+  }, [ready, authenticated, userId, email, posthogConfigured]);
+
+  return null;
+}
 
 const cluster = getSolanaCluster();
 
@@ -92,6 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 				},
 			}}
 		>
+			<PostHogIdentity />
 			<SolanaPlugins />
 			{children}
 		</PrivyProvider>

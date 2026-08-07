@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import Link from "next/link";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { embeddedSolanaUsdcBalanceQueryKey } from "@/services/solanaBalance";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
@@ -20,14 +22,18 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X, VenetianMask } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X, VenetianMask, Ticket } from "lucide-react";
 import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, clearPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 import { usePrivy, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction } from "@privy-io/react-auth";
-import { useWallets, useSignTransaction, useFundWallet } from "@privy-io/react-auth/solana";
-import { Connection } from "@solana/web3.js";
+import { useWallets, useSignTransaction, useSignAndSendTransaction, useFundWallet } from "@privy-io/react-auth/solana";
+import { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
+import bs58 from "bs58";
+import { useReducedMotion } from "framer-motion";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
+import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 
 /** Gate check before any EVM gas-sponsored transaction. Throws if rate-limited. */
 async function assertEvmSponsorAllowed(walletAddress: string, userId: string, accessToken: string | null) {
@@ -54,6 +60,7 @@ async function assertEvmSponsorAllowed(walletAddress: string, userId: string, ac
 }
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
+import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 import {
   addWithdrawal,
@@ -67,7 +74,8 @@ import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@
 import { QRCodeSVG } from "qrcode.react";
 import { usePerPrivateSelfTransfer } from "@/hooks/usePerPrivateSelfTransfer";
 import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
-import { startPrivateDeposit, getPrivateTransferStatus, type PrivateTransferStatus } from "@/services/api/privateBalance";
+import { SolanaWalletConnectProvider, useWallet as useSolanaWalletAdapter, WalletMultiButton } from "@/components/SolanaWalletConnect";
+import { startPrivateDeposit, buildDirectPrivateDeposit, getPrivateTransferStatus, type PrivateTransferStatus } from "@/services/api/privateBalance";
 import { PRIVATE_PAYMENT_MAX_WAIT_MINUTES } from "@/lib/privatePaymentCopy";
 import { PajCashOnrampView } from "@/components/paj-cash/PajCashOnrampView";
 import { PajCashOfframpView } from "@/components/paj-cash/PajCashOfframpView";
@@ -89,6 +97,21 @@ function zkp2pRate(spreadPercent: number): string {
   return ((ZKP2P_RATE_UNIT * BigInt(Math.round((1 - spreadPercent / 100) * 10_000))) / 10_000n).toString();
 }
 const BRIDGE_FEE_PCT = 0.6; // Near Intents ~0.1% + 50 BPS Loofta referral fee (Solana → Base)
+
+// Withdraw-flow lottery ticket add-on. Mirrors megapot/page.tsx's handlePublicBuy/randomTicket
+// (numbers only matter for display — the backend accepts a quick-pick pick same as a manual one).
+const LOTTERY_TICKET_PRICE_USDC = 1;
+// Below this, adding a ticket would eat the whole withdrawal (or more) — hide the upsell rather
+// than tempt someone into a $0 withdrawal.
+const LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC = LOTTERY_TICKET_PRICE_USDC * 2;
+const LOTTERY_MAIN_MAX = 30;
+const LOTTERY_MAIN_COUNT = 5;
+const LOTTERY_BONUS_MAX = 10;
+function randomLotteryQuickPick(): { main: number[]; bonus: number } {
+  const s = new Set<number>();
+  while (s.size < LOTTERY_MAIN_COUNT) s.add(Math.ceil(Math.random() * LOTTERY_MAIN_MAX));
+  return { main: [...s].sort((a, b) => a - b), bonus: Math.ceil(Math.random() * LOTTERY_BONUS_MAX) };
+}
 
 type WithdrawalStep = "idle" | "submitting" | "sent" | "bridging" | "complete" | "failed" | "settling";
 type PeerStep = "platform" | "form" | "bridging" | "creating-deposit" | "deposit-error" | "deposited" | "complete" | "cancelling" | "cancelled" | "failed";
@@ -290,6 +313,83 @@ function IconBubble({ active, dark, children }: { active: boolean; dark: boolean
   );
 }
 
+/**
+ * Private Deposit "Pay now" widget. Connecting goes through the library's own WalletMultiButton
+ * (its internal click handling is what actually works reliably; an earlier attempt to reimplement
+ * that click with our own Button + useWalletModal() broke connecting entirely, for reasons that
+ * weren't worth chasing further given a working alternative existed). Styled via CSS overrides
+ * only, no behavior changes, to keep that working path intact. Once connected, WalletMultiButton
+ * is swapped out for a plain address chip + our own Disconnect link (disconnect() is a simple
+ * state call, not a modal-opening one, so reimplementing it doesn't carry the same risk). This
+ * also avoids the connected state looking like a big gradient CTA when it's really just a status.
+ * Must render inside SolanaWalletConnectProvider. Module-level (not nested in BalanceModal) so
+ * it isn't redefined every render.
+ */
+function PrivateDepositPayNowWidget({
+  dark,
+  status,
+  error,
+  onPay,
+  onViewAddressInstead,
+}: {
+  dark?: boolean;
+  status: "idle" | "building" | "awaiting_signature" | "broadcasting" | "sent";
+  error: string | null;
+  onPay: (senderAddress: string, signTransaction: <T extends Transaction | VersionedTransaction>(tx: T) => Promise<T>) => void;
+  onViewAddressInstead: () => void;
+}) {
+  const { publicKey, signTransaction, connected, disconnect } = useSolanaWalletAdapter();
+  const canPay = connected && !!publicKey && !!signTransaction && status === "idle";
+  const short = publicKey ? `${publicKey.toBase58().slice(0, 4)}..${publicKey.toBase58().slice(-4)}` : "";
+
+  return (
+    <div className="space-y-2">
+      {connected && publicKey ? (
+        <div className={`flex items-center justify-center gap-2 rounded-md py-2 ${dark ? "bg-white/5" : "bg-gray-50"}`}>
+          <span className={`text-sm font-mono ${dark ? "text-slate-300" : "text-gray-700"}`}>{short}</span>
+          <button type="button" onClick={() => void disconnect()}
+            className={`text-sm underline underline-offset-2 ${dark ? "text-slate-500 hover:text-white" : "text-gray-400 hover:text-gray-700"}`}>
+            Disconnect
+          </button>
+        </div>
+      ) : (
+        <div className="[&_.wallet-adapter-dropdown]:block [&_.wallet-adapter-dropdown]:w-full [&_.wallet-adapter-button]:w-full [&_.wallet-adapter-button]:justify-center [&_.wallet-adapter-button]:h-10 [&_.wallet-adapter-button]:rounded-md [&_.wallet-adapter-button]:text-sm [&_.wallet-adapter-button]:font-medium [&_.wallet-adapter-button]:font-sans">
+          <WalletMultiButton
+            style={{ background: "linear-gradient(to right, #f97316, #ef4444)" }}
+          />
+        </div>
+      )}
+      {connected && publicKey && signTransaction && (
+        <Button
+          type="button"
+          onClick={() => onPay(publicKey.toBase58(), signTransaction)}
+          disabled={!canPay}
+          className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
+        >
+          {status === "building" ? (
+            <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Preparing…</span>
+          ) : status === "awaiting_signature" ? (
+            <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Confirm in your wallet…</span>
+          ) : status === "broadcasting" ? (
+            <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Sending…</span>
+          ) : status === "sent" ? (
+            "Sent!"
+          ) : (
+            "Pay now"
+          )}
+        </Button>
+      )}
+      {error && <p className="text-sm text-center text-red-400">{error}</p>}
+      {status === "idle" && (
+        <button type="button" onClick={onViewAddressInstead}
+          className={`w-full text-center text-base underline underline-offset-2 ${dark ? "text-slate-500 hover:text-white" : "text-gray-400 hover:text-gray-700"}`}>
+          Or view the deposit address instead
+        </button>
+      )}
+    </div>
+  );
+}
+
 export interface BalanceModalProps {
   open: boolean;
   onClose: () => void;
@@ -324,6 +424,7 @@ export function BalanceModal({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: tokens = [] } = useTokensQuery();
+  const reduceMotion = useReducedMotion();
 
   // Optimistically subtract the withdrawn amount so the UI updates instantly.
   // The normal 5 s polling cycle will sync the real on-chain value once the TX is indexed.
@@ -341,6 +442,9 @@ export function BalanceModal({
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
+  // Withdraw-flow lottery ticket upsell ("add 1 ticket to basket before withdraw")
+  const [addLotteryTicket, setAddLotteryTicket] = useState(false);
+  const [lotteryPrizePool, setLotteryPrizePool] = useState<string | null>(null);
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
   const [addressRiskStatus, setAddressRiskStatus] = useState<"idle" | "checking" | "safe" | "unsafe">("idle");
   const [recentWithdrawals, setRecentWithdrawals] = useState<WithdrawalHistoryItem[]>([]);
@@ -411,12 +515,31 @@ export function BalanceModal({
   // Private Deposit (MagicBlock burner-relay) — USDC on Solana only for now (cross-chain sources
   // are built server-side but gated off until failed-bridge refund recovery is automated)
   const [privateDepositAmount, setPrivateDepositAmount] = useState("");
+  // True once the amount screen's "Deposit" button is clicked. Moves past the amount form without
+  // itself creating a burner. Pay now (direct, no burner) is the default next screen; the burner
+  // only gets created if/when the user explicitly asks for a deposit address instead.
+  const [privateDepositStarted, setPrivateDepositStarted] = useState(false);
   const [privateDepositSubmitting, setPrivateDepositSubmitting] = useState(false);
   const [privateDepositId, setPrivateDepositId] = useState<string | null>(null);
   const [privateDepositAddress, setPrivateDepositAddress] = useState<string | null>(null);
   const [privateDepositStatus, setPrivateDepositStatus] = useState<PrivateTransferStatus | null>(null);
   const [privateDepositError, setPrivateDepositError] = useState<string | null>(null);
+  // Gross amount to actually send to the burner (net amount + estimated fees). The amount input
+  // is what the user will receive, not what they send. See private-balance.service.ts startDeposit.
+  const [privateDepositSendAmount, setPrivateDepositSendAmount] = useState<number | null>(null);
+  const [privateDepositFeeEstimate, setPrivateDepositFeeEstimate] = useState<number | null>(null);
+  // Which CTA the user picked once past the amount screen: "qr" shows the burner address/QR view;
+  // null shows the direct Pay now (no burner) view, the default. Either can switch to the other.
+  const [privateDepositEntryMode, setPrivateDepositEntryMode] = useState<"qr" | null>(null);
   const privateDepositPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Private Deposit "Pay now": @solana/wallet-adapter-react connect/disconnect state
+  // (SolanaWalletConnectProvider, see components/SolanaWalletConnect.tsx) for an installed
+  // Phantom/Solflare/etc., used to sign a plain USDC transfer to the burner in-app,
+  // paying its own gas. No Loofta sponsor involved; the burner still performs the actual private
+  // relay to the embedded wallet, unchanged.
+  const [payNowStatus, setPayNowStatus] = useState<"idle" | "building" | "awaiting_signature" | "broadcasting" | "sent">("idle");
+  const [payNowError, setPayNowError] = useState<string | null>(null);
 
   // Private Withdrawal (MagicBlock burner-relay) — to USDC on Solana direct, or any Near Intents token
   // cross-chain. Reuses the same withdrawAmount/withdrawAddress/fromSel state as usdc-sol/near-intents
@@ -447,6 +570,7 @@ export function BalanceModal({
   const { user, getAccessToken } = usePrivy();
   const { wallets: solanaWallets } = useWallets();
   const { signTransaction } = useSignTransaction();
+  const { signAndSendTransaction: signAndSendLotteryTx } = useSignAndSendTransaction();
   const { fundWallet: privyFundWallet } = useFundWallet();
   const { wallets: evmWallets } = useEvmWallets();
   const { createWallet: createEvmWallet } = useCreateWallet();
@@ -733,7 +857,9 @@ export function BalanceModal({
     }
   };
 
-  // Private Deposit: create a one-time burner address to send USDC to (USDC on Solana only for now)
+  // Private Deposit: create a one-time burner address to send USDC to (USDC on Solana only for now).
+  // Single CTA on the amount screen. The next screen is where the user picks Pay now vs. Get
+  // deposit address (privateDepositEntryMode), no QR shown until they explicitly ask for it.
   const privateDepositAmountNum = parseFloat(privateDepositAmount) || 0;
   const handleStartPrivateDeposit = async () => {
     if (!user?.id || !privateDepositAmountNum) return;
@@ -742,9 +868,12 @@ export function BalanceModal({
     try {
       const accessToken = await getAccessToken();
       const result = await startPrivateDeposit(privateDepositAmountNum, user.id, accessToken, devnetMode ? "devnet" : "mainnet");
+      const sendAmount = result.amountToSendUsdc ?? privateDepositAmountNum;
       setPrivateDepositId(result.id);
       setPrivateDepositAddress(result.depositAddress);
       setPrivateDepositStatus("awaiting_funds");
+      setPrivateDepositSendAmount(sendAmount);
+      setPrivateDepositFeeEstimate(result.feeEstimateUsdc ?? null);
       localStorage.setItem(PRIVATE_DEPOSIT_SESSION_KEY, result.id);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Could not start private deposit";
@@ -755,13 +884,65 @@ export function BalanceModal({
   };
 
   const resetPrivateDeposit = useCallback(() => {
+    setPrivateDepositStarted(false);
     setPrivateDepositId(null);
     setPrivateDepositAddress(null);
     setPrivateDepositStatus(null);
     setPrivateDepositError(null);
     setPrivateDepositAmount("");
+    setPrivateDepositSendAmount(null);
+    setPrivateDepositFeeEstimate(null);
+    setPrivateDepositEntryMode(null);
+    setPayNowStatus("idle");
+    setPayNowError(null);
     localStorage.removeItem(PRIVATE_DEPOSIT_SESSION_KEY);
   }, []);
+
+  // Private Deposit "Pay now": a single direct private transfer from the connected wallet straight
+  // to this account's own embedded wallet, no burner, gasless (MagicBlock's relay is the fee
+  // payer, reimbursed in-token, never Loofta's sponsor), exactOut (delivers exactly the typed
+  // amount). No private_transfers row and nothing to poll afterward: once the signature confirms
+  // there's no further backend-tracked state, same as how private claim payments already work.
+  const payPrivateDepositFromWallet = useCallback(async (
+    senderAddress: string,
+    signTx: <T extends Transaction | VersionedTransaction>(tx: T) => Promise<T>,
+  ) => {
+    if (!user?.id || !privateDepositAmountNum) return;
+    setPayNowError(null);
+    try {
+      const mode = devnetMode ? "devnet" : "mainnet";
+      const connection = new Connection(getRpcForMode(mode), "confirmed");
+      const accessToken = await getAccessToken();
+
+      setPayNowStatus("building");
+      const txData = await buildDirectPrivateDeposit(privateDepositAmountNum, senderAddress, user.id, accessToken, mode);
+
+      const rawTxBytes = Buffer.from(txData.transactionBase64, "base64");
+      let tx: Transaction | VersionedTransaction;
+      try {
+        tx = Transaction.from(rawTxBytes);
+      } catch {
+        tx = VersionedTransaction.deserialize(rawTxBytes);
+      }
+
+      setPayNowStatus("awaiting_signature");
+      const signedTx = await signTx(tx);
+
+      setPayNowStatus("broadcasting");
+      const serialized = signedTx instanceof Transaction ? signedTx.serialize() : (signedTx as VersionedTransaction).serialize();
+      const signature = await connection.sendRawTransaction(serialized, { skipPreflight: false, preflightCommitment: "confirmed" });
+      await waitForSignatureConfirmation(connection, signature, 120_000, 1500, "privateDepositDirect");
+
+      setPayNowStatus("sent");
+      onRefresh();
+      toast({ title: "Sent!", description: "Routing privately to your balance…" });
+    } catch (err: unknown) {
+      setPayNowStatus("idle");
+      const msg = err instanceof Error ? err.message : "Payment failed. Please try again.";
+      setPayNowError(msg);
+      toast({ variant: "destructive", title: "Payment failed", description: msg });
+    }
+  }, [devnetMode, toast, user?.id, privateDepositAmountNum, getAccessToken, onRefresh]);
 
   // Private Withdrawal: sign leg 1 (own wallet -> burner); backend cron handles leg 2 (burner -> destination).
   // USDC on Solana only for now — reuses withdrawAmount/withdrawAddress, same state usdc-sol uses.
@@ -817,6 +998,74 @@ export function BalanceModal({
     () => (solanaAddress ? solanaWallets?.find((w) => w.address === solanaAddress) : undefined),
     [solanaAddress, solanaWallets]
   );
+
+  // Withdraw-flow lottery ticket add-on: same /api/lottery/buy + buy-confirm public-route quick-pick
+  // purchase as megapot/page.tsx's handlePublicBuy, using the embedded Solana wallet already in scope
+  // here. Kept intentionally soft-fail — a failed add-on never blocks the underlying withdrawal.
+  const buyQuickLotteryTicket = useCallback(async (): Promise<boolean> => {
+    if (!wallet?.address) return false;
+    try {
+      const token = await getAccessToken();
+      const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const pick = randomLotteryQuickPick();
+      const initRes = await fetch("/api/lottery/buy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({
+          numTickets: 1,
+          userSolanaAddress: wallet.address,
+          tickets: [{ main: pick.main, bonus: pick.bonus }],
+          route: "solana_public",
+        }),
+      });
+      if (!initRes.ok) {
+        const err = await initRes.json().catch(() => ({} as { message?: string }));
+        throw new Error(err.message ?? "Failed to buy ticket");
+      }
+      const { ticketId, txBase64 } = await initRes.json();
+      const txBytes = Buffer.from(txBase64, "base64");
+      const { signature: sigBytes } = await signAndSendLotteryTx({
+        transaction: txBytes as unknown as Uint8Array,
+        wallet: wallet as any,
+      });
+      const signature = bs58.encode(sigBytes as Uint8Array);
+      await fetch("/api/lottery/buy-confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ ticketId, senderTxHash: signature }),
+      });
+      return true;
+    } catch (err: unknown) {
+      console.warn(`${LOG_PREFIX} lottery ticket add-on failed:`, err);
+      return false;
+    }
+  }, [wallet, getAccessToken, signAndSendLotteryTx]);
+
+  // Live prize pool for the upsell copy — fetched once when the primary withdraw form is reached;
+  // falls back to the same "$1,100,000+" marketing snapshot used elsewhere in the app.
+  useEffect(() => {
+    if (tab !== "withdraw" || withdrawMethod !== "usdc-sol" || lotteryPrizePool) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch("/api/lottery/dashboard", { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (!res.ok) return;
+        const data = await res.json();
+        const pool = data?.nextDraw?.prizePool;
+        if (!cancelled && pool) setLotteryPrizePool(pool);
+      } catch { /* non-fatal — fallback copy used */ }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, withdrawMethod, lotteryPrizePool, getAccessToken]);
+
+  const lotteryPrizePoolDisplay = useMemo(() => {
+    if (lotteryPrizePool) {
+      const amount = Math.round(parseFloat(lotteryPrizePool) / 100_000) * 100_000;
+      if (amount > 0) return `$${amount.toLocaleString()}+`;
+    }
+    return "$1,100,000+";
+  }, [lotteryPrizePool]);
 
   const pajPrefillEmail = user?.email?.address || undefined;
 
@@ -1391,11 +1640,17 @@ export function BalanceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depositPollAddr]);
 
-  // Private Deposit: restore an in-progress session on reopen (completion is backend-driven, can outlive a single session)
+  // Private Deposit: restore an in-progress burner session on reopen (completion is backend-driven,
+  // can outlive a single session). Only the burner/QR path has anything to restore. The direct
+  // Pay now path has no backend row, nothing persists past a page reload for it.
   useEffect(() => {
     if (!open || privateDepositId) return;
     const saved = localStorage.getItem(PRIVATE_DEPOSIT_SESSION_KEY);
-    if (saved) setPrivateDepositId(saved);
+    if (saved) {
+      setPrivateDepositId(saved);
+      setPrivateDepositStarted(true);
+      setPrivateDepositEntryMode("qr");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -2084,6 +2339,7 @@ export function BalanceModal({
         chain: getPrivySolanaChainForMode(mode),
         accessToken: bridgeAccessToken,
         network: devnetMode ? "devnet" : "mainnet",
+        offrampRequestId: prep.id,
       });
 
       console.log(PEER_LOG, "USDC sent to bridge", { sig });
@@ -2260,6 +2516,10 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "Insufficient balance", description: `You have ${spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC available.` });
       return;
     }
+    if (addLotteryTicket && amount + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
+      toast({ variant: "destructive", title: "Insufficient balance", description: `Adding a $${LOTTERY_TICKET_PRICE_USDC.toFixed(2)} ticket needs a bit more USDC than you have available.` });
+      return;
+    }
     if (!solanaAddress || !wallet) {
       toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta wallet is not available. Try refreshing or logging out and back in." });
       return;
@@ -2289,25 +2549,63 @@ export function BalanceModal({
     setWithdrawStep("submitting");
 
     try {
+      // Ticket add-on goes first and never blocks the withdrawal itself — a failed purchase just
+      // means no ticket, the user's actual withdrawal still proceeds for the full requested amount.
+      if (addLotteryTicket) {
+        const ticketAdded = await buyQuickLotteryTicket();
+        if (ticketAdded) {
+          toast({
+            duration: Infinity,
+            title: "Ticket added! 🎟️",
+            description: (
+              <span className="text-base">
+                Good luck — you're in for today&apos;s draw, a shot at {lotteryPrizePoolDisplay}.
+              </span>
+            ),
+            action: (
+              <ToastAction altText="View your lottery tickets" asChild>
+                <Link
+                  href="/app/megapot?tab=history"
+                  className="!bg-gradient-to-r !from-[#FF1301] !to-[#EAB308] !text-white !border-0 !font-semibold hover:!opacity-90"
+                >
+                  View tickets
+                </Link>
+              </ToastAction>
+            ),
+          });
+        } else {
+          toast({ variant: "destructive", title: "Couldn't add your ticket", description: "Continuing with your withdrawal." });
+        }
+      }
+
       const mode = devnetMode ? "devnet" : "mainnet";
       const connection = new Connection(getRpcForMode(mode), "confirmed");
+      const accessToken = await getAccessToken();
       let recipientAddress: string;
       let memo: string | null = null;
       let depositAddr: string | undefined;
+      let nearIntentsOrderId: string | undefined;
 
       if (isNearIntentsWithdraw && usdcSolanaToken && effectiveToken) {
-        const depositInfo = await getDepositInfo({
-          fromToken: usdcSolanaToken as NearToken,
-          toToken: effectiveToken as NearToken,
-          amount: amount.toString(),
-          recipient: rawAddress,
-          sender: solanaAddress,
-          refundAddress: solanaAddress,
-          slippageBps: 100,
-        });
-        recipientAddress = depositInfo.depositAddress ?? "";
-        memo = depositInfo.memo ?? null;
+        // Fetch the deposit quote server-side and persist it as a real order BEFORE signing,
+        // instead of trusting a deposit address fetched directly from NEAR's public API — see
+        // project memory: solana sponsor security hardening. The backend verifies the ATA it
+        // sponsors matches this order's own deposit_address.
+        const order = await prepareNearIntentsWithdrawal(
+          {
+            fromToken: usdcSolanaToken as NearToken,
+            toToken: effectiveToken as NearToken,
+            amountUsdc: amount.toString(),
+            destinationAddress: rawAddress,
+            refundAddress: solanaAddress,
+            isDevnet: devnetMode,
+          },
+          accessToken,
+        );
+        recipientAddress = order.depositAddress ?? "";
+        memo = order.memo ?? null;
         depositAddr = recipientAddress;
+        nearIntentsOrderId = order.id;
 
         if (!recipientAddress || !isValidAddressForChain(recipientAddress, "solana")) {
           throw new Error("Invalid deposit address from Near Intents. Please try again.");
@@ -2318,7 +2616,6 @@ export function BalanceModal({
 
       setWithdrawStep("sent");
 
-      const accessToken = await getAccessToken();
       const sig = await sendUsdcWithBackendFeePayer({
         senderAddress: solanaAddress,
         recipientAddress,
@@ -2332,6 +2629,7 @@ export function BalanceModal({
         chain: getPrivySolanaChainForMode(mode),
         accessToken,
         network: devnetMode ? "devnet" : "mainnet",
+        nearIntentsOrderId,
       });
 
       // Save to localStorage and DB
@@ -2354,6 +2652,7 @@ export function BalanceModal({
 
       setWithdrawAddress("");
       setAddressRiskStatus("idle");
+      setAddLotteryTicket(false);
 
       if (isNearIntentsWithdraw && depositAddr) {
         setWithdrawStep("bridging");
@@ -2706,8 +3005,35 @@ export function BalanceModal({
                 <ChevronLeft className="h-4 w-4" />Back
               </button>
 
-              {privateDepositAddress ? (
-                /* ── Deposit address view ── */
+              {!privateDepositStarted ? (
+                /* ── Amount form ── */
+                <div className="space-y-4">
+                  <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    Connect a wallet and send privately, or send USDC from any wallet (e.g. an
+                    exchange) to a one-time address. Either way, the sending wallet is never linked
+                    to your Loofta wallet on-chain.
+                  </p>
+                  <div>
+                    <Label htmlFor="private-deposit-amount" className={dark ? "text-slate-300" : undefined}>Amount you&apos;ll receive (USDC)</Label>
+                    <AmountInput
+                      id="private-deposit-amount"
+                      dark={dark}
+                      value={privateDepositAmount}
+                      onChange={setPrivateDepositAmount}
+                      suffix="USDC"
+                      className="mt-1"
+                    />
+                  </div>
+                  <Button
+                    onClick={() => setPrivateDepositStarted(true)}
+                    disabled={!privateDepositAmountNum}
+                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
+                  >
+                    Deposit
+                  </Button>
+                </div>
+              ) : privateDepositAddress && privateDepositEntryMode === "qr" ? (
+                /* ── Deposit address view (burner path, exchanges/any wallet) ── */
                 <div className="space-y-3">
 
                   {/* Status */}
@@ -2732,17 +3058,23 @@ export function BalanceModal({
                           : privateDepositStatus === "failed"
                             ? (privateDepositError || "Please contact support.")
                             : privateDepositStatus === "delivering_privately"
-                              ? `Routing to your balance privately — can take up to ${PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes.`
-                              : "Once received, it's automatically routed to your balance privately — no need to keep this open."}
+                              ? `Routing to your balance privately, can take up to ${PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes.`
+                              : `Once received, it's automatically routed to your balance privately, usually within up to ${PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes. No need to keep this open.`}
                       </p>
                     </div>
                   </div>
+
+                  {privateDepositFeeEstimate != null && privateDepositStatus !== "complete" && (
+                    <p className={`text-sm text-center ${dark ? "text-slate-500" : "text-gray-400"}`}>
+                      You&apos;ll receive approximately {privateDepositAmountNum.toFixed(2)} USDC after ${privateDepositFeeEstimate.toFixed(2)} in fees
+                    </p>
+                  )}
 
                   {privateDepositStatus !== "complete" && (
                     <div className={`rounded-2xl border overflow-hidden ${dark ? "border-white/10" : "border-gray-100"}`}>
                       <div className={`px-4 py-3 border-b ${dark ? "border-white/[0.06] bg-white/5" : "border-gray-100 bg-gray-50/60"}`}>
                         <p className={`text-base font-medium ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                          Send exactly <span className={`font-bold ${dark ? "text-white" : "text-gray-900"}`}>{privateDepositAmountNum} USDC</span> (Solana) to this address
+                          Send <span className={`font-bold ${dark ? "text-white" : "text-gray-900"}`}>{(privateDepositSendAmount ?? privateDepositAmountNum).toFixed(2)} USDC</span> (Solana) to this address
                         </p>
                       </div>
 
@@ -2762,6 +3094,13 @@ export function BalanceModal({
                           <QRCodeSVG value={privateDepositAddress} size={140} />
                         </div>
                       </div>
+
+                      <div className="px-4 py-3 border-t border-inherit">
+                        <button type="button" onClick={() => setPrivateDepositEntryMode(null)}
+                          className={`w-full text-center text-base underline underline-offset-2 ${dark ? "text-slate-500 hover:text-white" : "text-gray-400 hover:text-gray-700"}`}>
+                          Or pay with a connected wallet instead
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -2773,31 +3112,53 @@ export function BalanceModal({
                   )}
                 </div>
               ) : (
-                /* ── Amount form ── */
+                /* ── Pay now (direct private transfer, no burner), default once "Deposit" is clicked ── */
                 <div className="space-y-4">
-                  <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    Send USDC from any wallet to a one-time address. It's privately routed to your balance — the sending wallet is never linked to your Loofta wallet on-chain.
-                  </p>
-                  <div>
-                    <Label htmlFor="private-deposit-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
-                    <AmountInput
-                      id="private-deposit-amount"
-                      dark={dark}
-                      value={privateDepositAmount}
-                      onChange={setPrivateDepositAmount}
-                      suffix="USDC"
-                      className="mt-1"
-                    />
-                  </div>
-                  <Button
-                    onClick={handleStartPrivateDeposit}
-                    disabled={privateDepositSubmitting || !privateDepositAmountNum}
-                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
-                  >
-                    {privateDepositSubmitting ? (
-                      <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Getting deposit address…</span>
-                    ) : "Get deposit address"}
-                  </Button>
+                  {payNowStatus === "sent" ? (
+                    <div className={`flex items-center gap-3 rounded-2xl px-4 py-3.5 ${dark ? "bg-white/5 border border-white/10" : "bg-gradient-to-r from-orange-50/70 to-amber-50/30 border border-orange-100"}`}>
+                      <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+                      <div>
+                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Sent!</p>
+                        <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                          Routing to your balance privately, can take up to {PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      Connect a Solana wallet and we&apos;ll deliver exactly {privateDepositAmountNum.toFixed(2)} USDC
+                      to your balance privately, no gas from your wallet.
+                    </p>
+                  )}
+
+                  {payNowStatus !== "sent" && (
+                    privateDepositEntryMode === "qr" && privateDepositSubmitting ? (
+                      <div className="flex items-center justify-center gap-2 py-3">
+                        <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+                        <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>Getting deposit address…</span>
+                      </div>
+                    ) : (
+                      <SolanaWalletConnectProvider rpcUrl={getRpcForMode(devnetMode ? "devnet" : "mainnet")}>
+                        <PrivateDepositPayNowWidget
+                          dark={dark}
+                          status={payNowStatus}
+                          error={payNowError}
+                          onPay={(senderAddress, signTx) => void payPrivateDepositFromWallet(senderAddress, signTx)}
+                          onViewAddressInstead={() => {
+                            setPrivateDepositEntryMode("qr");
+                            if (!privateDepositAddress) void handleStartPrivateDeposit();
+                          }}
+                        />
+                      </SolanaWalletConnectProvider>
+                    )
+                  )}
+
+                  {payNowStatus === "sent" && (
+                    <Button onClick={() => { setTopUpView(null); resetPrivateDeposit(); }}
+                      className="w-full bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white">
+                      Done
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
@@ -3679,7 +4040,10 @@ export function BalanceModal({
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setWithdrawAmount(spendableBalance.toFixed(6).replace(/\.?0+$/, ""))}
+                    onClick={() => {
+                      const max = Math.max(0, spendableBalance - (addLotteryTicket ? LOTTERY_TICKET_PRICE_USDC : 0));
+                      setWithdrawAmount(max.toFixed(6).replace(/\.?0+$/, ""));
+                    }}
                     className={`shrink-0 px-3 text-base ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}
                   >
                     Max
@@ -3742,6 +4106,69 @@ export function BalanceModal({
                 )}
               </div>
 
+              {/* Lottery ticket upsell — high-conversion "add to basket" toggle before withdrawing.
+                  Toggling on never blocks on balance: it reduces the withdraw amount by the ticket
+                  price instead, so there's always room. Flowing glow border matches the one used
+                  around the ticket-purchase confirm button on the lottery page (SlideToPay.tsx). */}
+              {isUSDCOnSolana && spendableBalance >= LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC && withdrawAmountNum > 0 && (
+                <div className="relative rounded-2xl">
+                  <style>{`
+                    @keyframes looftaGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+                    @keyframes looftaGlowPulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+                  `}</style>
+                  <div
+                    aria-hidden
+                    className="absolute -inset-[2.5px] rounded-2xl blur-[7px]"
+                    style={{
+                      background: "linear-gradient(110deg,#FF1301,#FF6A00,#EAB308,#FF4A26,#FF1301)",
+                      backgroundSize: "220% 100%",
+                      animation: reduceMotion ? undefined : "looftaGlowShift 2.4s linear infinite, looftaGlowPulse 2.4s ease-in-out infinite",
+                      opacity: reduceMotion ? 0.7 : undefined,
+                    }}
+                  />
+                  <div
+                    className={cn(
+                      "relative rounded-2xl border p-4",
+                      dark ? "bg-[#15110d] border-white/10" : "bg-white border-orange-100"
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_8px_20px_rgba(255,122,42,0.35)]">
+                        <Ticket className="h-5 w-5 text-white" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
+                          Multiply your win — add a lottery ticket
+                        </p>
+                        <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
+                          The Loofta lottery draws every day. $1 = 1 ticket, a shot at {lotteryPrizePoolDisplay} prize pool.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={addLotteryTicket}
+                        onCheckedChange={(checked) => {
+                          setAddLotteryTicket(checked);
+                          if (checked && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
+                            const adjusted = Math.max(0, spendableBalance - LOTTERY_TICKET_PRICE_USDC);
+                            setWithdrawAmount(adjusted.toFixed(6).replace(/\.?0+$/, ""));
+                          }
+                        }}
+                        className="shrink-0 mt-1 data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-[#FF4A26] data-[state=checked]:to-[#E1A041]"
+                      />
+                    </div>
+                    {addLotteryTicket && (
+                      <div className={cn(
+                        "mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-base font-semibold",
+                        dark ? "bg-white/10 text-white" : "bg-orange-50 text-gray-900"
+                      )}>
+                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 lottery ticket added to your withdrawal</span>
+                        <span>+${LOTTERY_TICKET_PRICE_USDC.toFixed(2)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-2 pt-2">
                 <Button variant="outline" onClick={() => setWithdrawMethod(null)} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
                   Back
@@ -3752,6 +4179,7 @@ export function BalanceModal({
                     withdrawing ||
                     withdrawAmountNum <= 0 ||
                     withdrawAmountNum > spendableBalance ||
+                    (addLotteryTicket && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) ||
                     !withdrawAddress.trim() ||
                     !wallet ||
                     (withdrawMethod === "near-intents" && !selectedFrom) ||
@@ -3764,8 +4192,12 @@ export function BalanceModal({
                       <Loader2 className="h-4 w-4 animate-spin" />
                       {stepLabel(withdrawStep, Boolean(isNearIntentsWithdraw))}
                     </span>
+                  ) : isNearIntentsWithdraw ? (
+                    `Bridge to ${effectiveToken?.symbol || "token"}`
+                  ) : addLotteryTicket ? (
+                    "Withdraw + Add Ticket"
                   ) : (
-                    isNearIntentsWithdraw ? `Bridge to ${effectiveToken?.symbol || "token"}` : "Withdraw USDC"
+                    "Withdraw USDC"
                   )}
                 </Button>
               </div>

@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createSign } from 'node:crypto';
 import { SupabaseService } from '@/database/supabase.service';
-import { PrivyVerificationService } from '@/auth/privy-verification.service';
+import { UsersService } from '@/modules/users/users.service';
 
 export type BlinkTaskKey = 'setup_passkeys' | 'two_deposits' | 'two_private_payments';
 
@@ -48,12 +48,17 @@ export class BlinkCampaignService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly config: ConfigService,
-    private readonly privy: PrivyVerificationService,
+    private readonly users: UsersService,
   ) {}
 
-  async getBlinkCampaign(privyUserId: string, solanaAddress?: string): Promise<BlinkCampaignData> {
+  async getBlinkCampaign(privyUserId: string): Promise<BlinkCampaignData> {
+    // Resolve the wallet address server-side (same cached lookup UsersService uses everywhere
+    // else in the app) rather than trusting a client-supplied address. This intentionally allows
+    // the 5-min Redis cache: a transient Privy hiccup should fall back to the last-known address
+    // instead of zeroing out a user's deposit count for that request.
+    const solanaAddress = await this.getPrivySolanaAddress(privyUserId);
     const [blinkLookup, privatePaymentsCount] = await Promise.all([
-      this.getBlinkDepositsCount(solanaAddress),
+      this.getBlinkDepositsCount(solanaAddress ?? undefined),
       this.getMainnetPrivatePaymentsCount(privyUserId),
     ]);
     const blinkDeposits = blinkLookup.count;
@@ -208,23 +213,19 @@ export class BlinkCampaignService {
     });
   }
 
+  /**
+   * Same wallet-resolution UsersService uses everywhere else in the app (Header balance,
+   * offramp, etc) — cached via PrivyVerificationService's 5-min Redis TTL, so a transient
+   * Privy error falls back to the last-known address instead of resolving to "no wallet".
+   */
   private async getPrivySolanaAddress(privyUserId: string): Promise<string | null> {
     try {
       // Bulk admin sweep hits this for ~1900 users — bound the wait so one slow
       // Privy lookup can't stall its whole concurrency batch.
-      const user = await Promise.race([
-        this.privy.getPrivyUser(privyUserId),
+      return await Promise.race([
+        this.users.getSolanaWalletAddress(privyUserId),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
       ]);
-      const accounts: any[] = user?.linked_accounts ?? [];
-      const solana = accounts.find(
-        (a) =>
-          (a.type === 'wallet' || a.type === 'solana_embedded_wallet') &&
-          (a.wallet_client_type === 'privy' || a.type === 'solana_embedded_wallet') &&
-          (a.chain_type === 'solana' || a.chain === 'solana') &&
-          a.address,
-      );
-      return solana?.address ?? null;
     } catch {
       return null;
     }

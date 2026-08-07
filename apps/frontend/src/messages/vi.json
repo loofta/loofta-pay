@@ -58,6 +58,7 @@
     "refresh": "Làm mới",
     "refreshList": "Làm mới danh sách",
     "search": "Tìm kiếm",
+    "sendAgain": "Gửi lại",
     "status": {
       "SUCCESS": "Đã thanh toán",
       "PRIVATE_TRANSFER_PENDING": "Chưa nhận",

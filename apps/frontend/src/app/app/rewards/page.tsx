@@ -4,6 +4,16 @@ import Link from "next/link";
 import Image from "next/image";
 import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
+import { useQuery } from "@tanstack/react-query";
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+
+async function fetchOpenGiveawayCount(): Promise<number> {
+  const res = await fetch(`${BACKEND_URL}/giveaways/public`);
+  if (!res.ok) throw new Error("Failed to load giveaways");
+  const data = await res.json();
+  return (data.giveaways ?? []).length;
+}
 
 // Campaign ended July 1 2026 at 18:00 CET (CEST = UTC+2) = 16:00 UTC
 const SPARKS_END_DATE = new Date("2026-07-01T16:00:00.000Z");
@@ -207,6 +217,30 @@ const MAGICBLOCK_BG_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 
 
 const MAGICBLOCK_BG = `data:image/svg+xml,${encodeURIComponent(MAGICBLOCK_BG_SVG)}`;
 
+// Giveaways — rose accent, distinct from every other campaign card's color
+const GIVEAWAYS_ACCENT = "#FB7185";
+const GIVEAWAYS_BG_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 180" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="giveaways-glow" cx="70%" cy="40%" r="50%">
+      <stop offset="0%" stop-color="${GIVEAWAYS_ACCENT}" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="giveaways-edge" cx="50%" cy="50%" r="75%">
+      <stop offset="35%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.65"/>
+    </radialGradient>
+  </defs>
+  <rect width="480" height="180" fill="#0a0808"/>
+  <line x1="0" y1="60" x2="480" y2="60" stroke="${GIVEAWAYS_ACCENT}" stroke-width="0.3" opacity="0.05"/>
+  <line x1="0" y1="120" x2="480" y2="120" stroke="${GIVEAWAYS_ACCENT}" stroke-width="0.3" opacity="0.05"/>
+  <ellipse cx="340" cy="80" rx="180" ry="120" fill="url(#giveaways-glow)"/>
+  <circle cx="320" cy="38" r="2" fill="${GIVEAWAYS_ACCENT}" opacity="0.4"/>
+  <circle cx="400" cy="70" r="1.5" fill="${GIVEAWAYS_ACCENT}" opacity="0.3"/>
+  <circle cx="440" cy="120" r="2.5" fill="${GIVEAWAYS_ACCENT}" opacity="0.25"/>
+  <rect width="480" height="180" fill="url(#giveaways-edge)"/>
+</svg>`;
+const GIVEAWAYS_BG = `data:image/svg+xml,${encodeURIComponent(GIVEAWAYS_BG_SVG)}`;
+
 
 export default function RewardsPage() {
   const t = useTranslations("RewardsPage");
@@ -217,6 +251,13 @@ export default function RewardsPage() {
   const [megapotDaysLeft, setMegapotDaysLeft] = useState<number | null>(null);
   const [megapotActive, setMegapotActive] = useState(false);
   const [isLocalhost, setIsLocalhost] = useState(false);
+
+  const { data: openGiveawayCount } = useQuery({
+    queryKey: ["giveaways-open-count"],
+    queryFn: fetchOpenGiveawayCount,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
 
   useEffect(() => {
     const now = new Date();
@@ -242,6 +283,48 @@ export default function RewardsPage() {
         <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">
           {t("activeCampaigns")}
         </p>
+
+        {/* Giveaways — projects fund a prize pool, participants complete tasks, winners get paid out */}
+        <div>
+          <Link href="/rewards/giveaways" className="block group">
+            <div
+              className="relative rounded-2xl overflow-hidden border transition-all duration-200"
+              style={{
+                backgroundImage: `url("${GIVEAWAYS_BG}")`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                borderColor: `${GIVEAWAYS_ACCENT}33`,
+              }}
+            >
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/15" />
+              <div className="relative z-10 p-4">
+                <div className="mb-1">
+                  <span
+                    className="text-sm font-bold px-2 py-0.5 rounded-full border"
+                    style={{ backgroundColor: `${GIVEAWAYS_ACCENT}26`, color: GIVEAWAYS_ACCENT, borderColor: `${GIVEAWAYS_ACCENT}40` }}
+                  >
+                    New
+                  </span>
+                </div>
+                <h2 className="text-2xl font-bold text-white truncate">Giveaways</h2>
+                <p className="text-base text-slate-300 truncate mb-2">
+                  Promote your project or earn by entering giveaways
+                </p>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold" style={{ color: GIVEAWAYS_ACCENT }}>
+                    {openGiveawayCount === undefined ? "" : openGiveawayCount === 0 ? "Be the first" : `${openGiveawayCount} open now`}
+                  </span>
+                  <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors shrink-0">
+                    <span>Browse</span>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
+                      <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Link>
+        </div>
 
         {/* MagicBlock Quests — ongoing, no end date */}
         <div className="mt-4">

@@ -1753,7 +1753,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   // PAJ Cash calls for every claim-page visit (including the sender's own share view).
   const [pajDefaultBankAccount, setPajDefaultBankAccount] = useState<PajSavedBankAccount | null>(null);
   const [pajLinked, setPajLinked] = useState(false);
-  const [pajNigeria, setPajNigeria] = useState(false);
+  // Optimistic default: assume Nigeria until getClientGeo() (cached after the first call, see
+  // lib/geo.ts) proves otherwise, so the "set up a bank account" discovery link below doesn't
+  // wait on a network round trip to appear for the Nigerian majority of its audience.
+  const [pajNigeria, setPajNigeria] = useState(true);
   const [nairaQuote, setNairaQuote] = useState<number | null>(null);
   useEffect(() => {
     if (!PAJ_CASH_ENABLED || !isRecipient || !user?.id) return;
@@ -1797,11 +1800,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     return () => { cancelled = true; };
   }, [pajDefaultBankAccount, claim?.amount, getAccessToken]);
 
-  // Two-way "claim to wallet / claim to bank" layout — only for recipients in Nigeria (by IP) or
-  // who already have a default Naira payout account set up (i.e. have done this before). Being
-  // merely PAJ-linked with no bank account saved yet does NOT count — everyone else keeps the
-  // plain single "Claim publicly" button, unchanged.
-  const showBankClaimOption = PAJ_CASH_ENABLED && isRecipient && (pajNigeria || !!pajDefaultBankAccount);
+  // Two-way "claim to wallet / claim to bank" layout — only once the recipient already has a
+  // default Naira payout account set up (i.e. has done this before). Being in Nigeria by IP or
+  // merely PAJ-linked with no bank account saved yet does NOT count on its own — those recipients
+  // get the small discovery link below instead, since "Claim to bank" here would otherwise imply
+  // they already have Naira payouts configured when they don't.
+  const showBankClaimOption = PAJ_CASH_ENABLED && isRecipient && !!pajDefaultBankAccount;
   // Once the recipient picks "Claim to wallet", drop into the original public/private choice —
   // "Claim to bank" no longer shows alongside it, matching the pre-bank-option flow exactly.
   const [walletClaimChosen, setWalletClaimChosen] = useState(false);
@@ -2187,29 +2191,29 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         </>
       ) : (
         <>
-        <button
-          type="button"
-          onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate({}); }}
-          disabled={claimActionDisabled}
-          className={cn(
-            "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
-            mobile ? "py-4 text-base" : "py-3",
-            "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-            claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
-          )}
-        >
-          {claimAsRecipientMutation.isPending ? (
-            <><Loader2 className={mobile ? "h-5 w-5 animate-spin" : "h-4 w-4 animate-spin"} /><span>Claiming…</span></>
-          ) : (
-            <>
-              <CheckCircle2 className={mobile ? "h-5 w-5" : "h-4 w-4"} />
-              {/* "Claim now" when the payment already arrived privately — "publicly" would be
+          <button
+            type="button"
+            onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate({}); }}
+            disabled={claimActionDisabled}
+            className={cn(
+              "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
+              mobile ? "py-4 text-base" : "py-3",
+              "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+              claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
+            )}
+          >
+            {claimAsRecipientMutation.isPending ? (
+              <><Loader2 className={mobile ? "h-5 w-5 animate-spin" : "h-4 w-4 animate-spin"} /><span>Claiming…</span></>
+            ) : (
+              <>
+                <CheckCircle2 className={mobile ? "h-5 w-5" : "h-4 w-4"} />
+                {/* "Claim now" when the payment already arrived privately — "publicly" would be
                   misleading there. "Claim publicly" only makes sense as a contrast to the
                   "Claim privately" option, which only appears for a publicly-sent payment anyway. */}
-              <span>{canClaimPrivately ? "Claim publicly" : "Claim now"}{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
-            </>
-          )}
-        </button>
+                <span>{canClaimPrivately ? "Claim publicly" : "Claim now"}{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
+              </>
+            )}
+          </button>
 
           {/* Dark secondary button — this card is a dark surface (bg-white/5, forced-white text via
               ClaimPayLayout's overrides). A confetti burst on click (same PrivacyConfettiBurst used
@@ -2246,11 +2250,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         </>
       )}
 
-      {/* Small, unobtrusive discovery link for anyone who's started linking PAJ Cash but hasn't
-          saved a bank account yet — the prominent two-button "Claim to wallet / Claim to bank"
-          layout only shows for Nigeria-by-IP or an already-saved default account (see
-          showBankClaimOption above), so this is how everyone else still finds their way in. */}
-      {PAJ_CASH_ENABLED && isRecipient && !showBankClaimOption && pajLinked && (
+      {/* Small, unobtrusive discovery link for recipients without a saved default bank account
+          yet — either because they're in Nigeria by IP (pajNigeria) or because they've started
+          linking PAJ Cash but never finished (pajLinked). The prominent two-button "Claim to
+          wallet / Claim to bank" layout only shows once a default account already exists (see
+          showBankClaimOption above), so this is how everyone else finds their way in. */}
+      {PAJ_CASH_ENABLED && isRecipient && !showBankClaimOption && (pajLinked || pajNigeria) && (
         <button
           type="button"
           onClick={openNairaSetup}
@@ -2739,7 +2744,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     !hidePaySectionForPendingClaimant &&
     !isRecipient &&
     !isCheckingRecipient &&
-    !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase());
+    !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase());
   /** Same dark card treatment, mirrored for the recipient's side: viewing a payment that
    *  was genuinely sent privately (claim.is_private), whether still pending claim or already
    *  claimed — the "someone went out of their way to hide this from the public chain" fact is
@@ -3571,6 +3576,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           // existing USDC token account (recipients who already had one skipped that
           // instruction entirely, which is why this stayed hidden).
           usdcMint: getUsdcMintForMode(networkMode === "mainnet" ? "mainnet" : "devnet"),
+          claimId: claim.id,
         });
       }
       setPerTransferPhase(null);
@@ -4776,9 +4782,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   {renderClaimPanel(true)}
                 </div>
               </div>
-            ) : ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+            ) : ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <>
-                {/* Payment Complete — hero + share + summary */}
+                {/* Payment Complete — hero + share + summary. IN_FLIGHT included: the sender's
+                    debit already happened (broadcast tx confirmed or awaiting confirmation) —
+                    "sent" is factually true even before the recipient-side leg settles. Showing
+                    the default Pay Now view instead (pre-fix behavior) let a sender who already
+                    broadcast see "Amount to send" again and risk a genuine double payment. */}
                 {(() => {
                   const recipientLabel =
                     (claim as any)?.recipient_pending_username_value
@@ -5136,7 +5146,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               </>
             )}
 
-            {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED"].includes(String(status || claim?.status || "").toUpperCase()) && (!deposit ? (
+            {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase()) && (!deposit ? (
               <>
                 {/* Private indicator — only when payment is private */}
                 {requiresPrivate ? (
