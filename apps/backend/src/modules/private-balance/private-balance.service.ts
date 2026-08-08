@@ -9,6 +9,8 @@ import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import { isValidSolanaAddress } from '@/common/solana-address';
+import { tokenAccountExists } from '@/common/token-account-exists';
+import { quoteAtaRentRecoveryUsdc } from '@/common/ata-rent-recovery';
 import {
   MAGICBLOCK_GAS_SOL,
   MAGICBLOCK_VOLUME_FEE_BPS,
@@ -364,6 +366,18 @@ export class PrivateBalanceService {
       throw new BadRequestException(`Could not build private withdrawal: ${msg}`);
     }
 
+    // Destination token-account setup fee. Leg 2 has to create this account when the destination
+    // has never held USDC, and that rent leaves the fee payer for good — the account belongs to
+    // the recipient. Quote it here so it can be shown before signing, and persist it so the sweep
+    // charges exactly what was quoted rather than re-pricing minutes later at a different SOL
+    // price. Mirrors what the regular withdrawal path already charges.
+    const destAta = await getAssociatedTokenAddress(mint, new PublicKey(destinationAddress));
+    const destAtaExists = await tokenAccountExists(
+      this.solanaSponsor.getConnectionForCluster(cluster),
+      destAta,
+    ).catch(() => true); // unsure -> assume it exists, i.e. don't charge a fee we can't justify
+    const ataSetupFeeUnits = destAtaExists ? 0 : (await quoteAtaRentRecoveryUsdc(1)).totalUsdcUnits;
+
     const { data, error } = await this.supabaseService.privateTransfers.insert({
       user_id: userId,
       direction: 'withdrawal',
@@ -374,6 +388,7 @@ export class PrivateBalanceService {
       cluster,
       destination_address: destinationAddress,
       source_or_dest_token: dto.destination_token ?? null,
+      ata_setup_fee_usdc: ataSetupFeeUnits / 1_000_000,
     }).select('id').single();
 
     if (error || !data) {
@@ -394,9 +409,11 @@ export class PrivateBalanceService {
     const conn = this.solanaSponsor.getConnectionForCluster(cluster);
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, userWallet, mint, conn);
     const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;
-    const feeUnits = (actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits)
+    // ataSetupFeeUnits is charged on leg 2, not leg 1, so it is not part of the decoded leg-1
+    // debit — add it to both branches so the quoted total is what actually leaves the user.
+    const feeUnits = ataSetupFeeUnits + ((actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits)
       ? mbVolumeFeeUnits + actualDebitUnits
-      : estimatedFeeUnits;
+      : estimatedFeeUnits);
 
     this.logger.log(`[PrivateWithdrawal] ${data.id}: built, burner=${burner.address.slice(0, 8)}… amount=${dto.amount_usdc} dest=${destinationAddress.slice(0, 8)}… cluster=${cluster}`);
 

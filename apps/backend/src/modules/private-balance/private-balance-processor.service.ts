@@ -499,6 +499,8 @@ export class PrivateBalanceProcessorService {
     const destinationPubkey = new PublicKey(row.destination_address!);
     const destinationAta = await getAssociatedTokenAddress(mint, destinationPubkey);
     const sweepTx = new Transaction();
+    /** Set only when this sweep creates the destination account and recovers its rent. */
+    let ataFeeUnits = 0n;
     if (!(await tokenAccountExists(conn, destinationAta))) {
       // Anti-drain guard: the destination is a raw client-supplied address with no ownership
       // check (that's the point — private withdrawal can go anywhere). Without this, a wallet
@@ -513,8 +515,22 @@ export class PrivateBalanceProcessorService {
         return;
       }
       sweepTx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, destinationAta, destinationPubkey, mint));
+      // Recover that account's rent from the withdrawal rather than absorbing it. The amount was
+      // quoted and shown to the user at build time and stored on the row, so this charges exactly
+      // what they agreed to even though SOL may have moved since. Without this the fee payer paid
+      // ~$0.15 per private withdrawal to a first-time USDC recipient and recovered ~$0.001.
+      const quotedFeeUnits = BigInt(Math.round(Number(row.ata_setup_fee_usdc ?? 0) * 1_000_000));
+      // Never let the fee swallow the whole transfer — if the balance somehow can't cover it,
+      // deliver what's there and absorb the rent, rather than sending the recipient nothing.
+      ataFeeUnits = quotedFeeUnits > 0n && quotedFeeUnits < balance ? quotedFeeUnits : 0n;
+      if (ataFeeUnits > 0n) {
+        const feePayerAta = await getAssociatedTokenAddress(mint, feePayerKp.publicKey);
+        sweepTx.add(createTransferInstruction(burnerAta, feePayerAta, burnerKeypair.publicKey, ataFeeUnits));
+      } else if (quotedFeeUnits > 0n) {
+        this.logger.warn(`[PrivateWithdrawal] ${row.id}: quoted ATA setup fee ${quotedFeeUnits} >= balance ${balance} — delivering in full and absorbing the rent`);
+      }
     }
-    sweepTx.add(createTransferInstruction(burnerAta, destinationAta, burnerKeypair.publicKey, balance));
+    sweepTx.add(createTransferInstruction(burnerAta, destinationAta, burnerKeypair.publicKey, balance - ataFeeUnits));
     // The transfer above drains the burner ATA to exactly zero and the burner is single-use —
     // close it in the same tx so its ~0.002 SOL rent returns to the fee payer instead of being
     // stranded (rent audit 2026-07-29: 39% of terminal private-balance burners still held rent).

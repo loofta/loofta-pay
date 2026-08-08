@@ -37,6 +37,11 @@ export interface PrivateTransfer {
    *  is only marked 'complete' once the destination's balance has risen by delivery_expected_usdc
    *  above this baseline. */
   delivery_baseline_usdc: string | number | null;
+  /** Withdrawal only: USDC quoted at build time to cover the destination token account's rent on
+   *  leg 2, deducted from the delivered amount. NULL/0 when the destination already had a USDC
+   *  account (the common case). Stored rather than re-quoted so the sweep charges exactly what
+   *  the user was shown before signing. */
+  ata_setup_fee_usdc: string | number | null;
 }
 
 /** Fields safe to return to the client — never the encrypted burner secret. */
