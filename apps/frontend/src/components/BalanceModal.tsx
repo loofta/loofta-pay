@@ -2793,17 +2793,26 @@ export function BalanceModal({
       // path — a destination that already has a USDC account creates nothing and pays nothing.
       // Re-checked against the chain here (not just the form's debounced check) so the charge is
       // always based on the account's real state at send time.
+      //
+      // Direct-Solana withdrawals only: a Near Intents `recipientAddress` is a fresh, single-use
+      // deposit address minted per order, which never has a pre-existing ATA, so this would fire
+      // on every cross-chain withdrawal — charging an undisclosed fee and sending less than the
+      // amount Near already quoted, which is enough on its own to make Near see the deposit as
+      // short and refund/fail the order.
       const mint = getUsdcMintForMode(mode);
-      const recipientAta = getAssociatedTokenAddressSync(mint, new PublicKey(recipientAddress));
-      const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
-      const ataRentUsdc = recipientAtaInfo ? 0 : ataSetupFeeUsdc;
-      if (ataRentUsdc > 0) {
-        if (ataRentUsdc >= amount) {
-          throw new Error(
-            `This wallet has never held USDC, so it needs a one-time $${ataRentUsdc.toFixed(2)} account setup — more than you're withdrawing. Withdraw a larger amount, or use a wallet that already holds USDC.`,
-          );
+      let ataRentUsdc = 0;
+      if (!isNearIntentsWithdraw) {
+        const recipientAta = getAssociatedTokenAddressSync(mint, new PublicKey(recipientAddress));
+        const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
+        ataRentUsdc = recipientAtaInfo ? 0 : ataSetupFeeUsdc;
+        if (ataRentUsdc > 0) {
+          if (ataRentUsdc >= amount) {
+            throw new Error(
+              `This wallet has never held USDC, so it needs a one-time $${ataRentUsdc.toFixed(2)} account setup — more than you're withdrawing. Withdraw a larger amount, or use a wallet that already holds USDC.`,
+            );
+          }
+          console.log(`${LOG_PREFIX} recipient has no USDC account — charging $${ataRentUsdc.toFixed(2)} setup fee from the withdrawal`);
         }
-        console.log(`${LOG_PREFIX} recipient has no USDC account — charging $${ataRentUsdc.toFixed(2)} setup fee from the withdrawal`);
       }
 
       const sig = await sendUsdcWithBackendFeePayer({
