@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
+    "@bonfida/spl-name-service": "4.0.1",
     "@coral-xyz/anchor": "^0.32.1",
     "@defuse-protocol/one-click-sdk-typescript": "0.1.1",
     "@duneanalytics/client-sdk": "^0.2.5",

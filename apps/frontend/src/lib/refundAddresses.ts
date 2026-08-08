@@ -15,6 +15,15 @@ export function isValidSolanaAddress(address: string): boolean {
 }
 
 /**
+ * Shape check for a Solana Name Service domain (`vitalik.sol`). Only says it LOOKS like a domain —
+ * whether it's registered, and what it points at, needs an on-chain lookup (see useSolDomain).
+ * Deliberately rejects sub-domains (`a.b.sol`) since resolution of those isn't wired up.
+ */
+export function isSolDomain(value: string): boolean {
+  return /^[a-z0-9_-]+\.sol$/i.test((value || "").trim());
+}
+
+/**
  * Validate that an address matches the expected format for the given chain/network.
  * Use for destination addresses and refund addresses across the app.
  */

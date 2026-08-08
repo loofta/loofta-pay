@@ -61,7 +61,8 @@ async function assertEvmSponsorAllowed(walletAddress: string, userId: string, ac
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
 import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
-import { isValidAddressForChain } from "@/lib/refundAddresses";
+import { isValidAddressForChain, isSolDomain } from "@/lib/refundAddresses";
+import { useSolDomain, type SolDomainState } from "@/hooks/useSolDomain";
 import {
   addWithdrawal,
   getWithdrawalHistory,
@@ -88,6 +89,47 @@ import { AmountInput } from "@/components/AmountInput";
 const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
 
 const LOG_PREFIX = "[BalanceModal]";
+
+/**
+ * Resolution status for a typed .sol domain. Always shows the wallet a domain resolved to — the
+ * user is about to send real money to it, and the domain alone doesn't tell them where it lands.
+ */
+function SolDomainHint({ domain, input, dark }: { domain: SolDomainState; input: string; dark: boolean }) {
+  if (!isSolDomain(input)) return null;
+  if (domain.status === "resolving") {
+    return (
+      <p className={`text-base mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
+        <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+        Looking up {input.trim().toLowerCase()}…
+      </p>
+    );
+  }
+  if (domain.status === "resolved") {
+    return (
+      <p className="text-base text-emerald-400 mt-1.5 flex items-start gap-1.5 font-medium">
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-1" />
+        <span className="font-mono break-all">{domain.address}</span>
+      </p>
+    );
+  }
+  if (domain.status === "not-found") {
+    return (
+      <p className="text-base text-red-400 mt-1.5 flex items-center gap-1.5">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        No wallet registered for this domain
+      </p>
+    );
+  }
+  if (domain.status === "error") {
+    return (
+      <p className="text-base text-amber-400 mt-1.5 flex items-center gap-1.5">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        Couldn&apos;t look up that domain — try again, or paste the address
+      </p>
+    );
+  }
+  return null;
+}
 
 /**
  * Rent-exempt deposit for an SPL token account, in SOL. Fixed by Solana and effectively never
@@ -983,7 +1025,7 @@ export function BalanceModal({
   const handlePrivateWithdraw = async () => {
     if (!user?.id || !wallet || !solanaAddress) return;
     const amount = parseFloat(withdrawAmount) || 0;
-    const destination = withdrawAddress.trim();
+    const destination = effectiveWithdrawAddress.trim();
     if (!amount || !destination) return;
     setPrivateWithdrawSubmitting(true);
     setPrivateWithdrawError(null);
@@ -1181,7 +1223,13 @@ export function BalanceModal({
     () => (solPriceUsd ? Math.ceil(ATA_RENT_SOL * ATA_FEE_BUFFER * solPriceUsd * 100) / 100 : ATA_SETUP_FEE_FALLBACK_USDC),
     [solPriceUsd],
   );
-  const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
+  // .sol domain support. The user may type either a raw address or a domain; everything
+  // downstream (validation, risk check, ATA lookup, the transfer itself) works off
+  // `effectiveWithdrawAddress`, which is the resolved wallet whenever a domain resolved and the
+  // raw input otherwise. Solana destinations only — a domain means nothing on another chain.
+  const solDomain = useSolDomain(isUSDCOnSolana ? withdrawAddress : "", devnetMode ? "devnet" : "mainnet");
+  const effectiveWithdrawAddress = solDomain.address ?? withdrawAddress;
+  const destinationAddressValid = isValidAddressForChain(effectiveWithdrawAddress, isUSDCOnSolana ? "solana" : destChain);
 
   // Persist active peer session to localStorage so page refresh restores state
   useEffect(() => {
@@ -2097,7 +2145,7 @@ export function BalanceModal({
 
   useEffect(() => {
     if (!isUSDCOnSolana) { setAddressRiskStatus("idle"); return; }
-    const raw = withdrawAddress.trim();
+    const raw = effectiveWithdrawAddress.trim();
     if (!raw || !isValidAddressForChain(raw, "solana")) { setAddressRiskStatus("idle"); return; }
     setAddressRiskStatus("checking");
     const t = setTimeout(async () => {
@@ -2105,14 +2153,14 @@ export function BalanceModal({
       setAddressRiskStatus(safe ? "safe" : "unsafe");
     }, 500);
     return () => clearTimeout(t);
-  }, [withdrawAddress, checkAddressRisk, isUSDCOnSolana]);
+  }, [effectiveWithdrawAddress, checkAddressRisk, isUSDCOnSolana]);
 
   // Does the destination already have a USDC account? If not, Solana requires one to be created
   // and we charge the setup fee (see ataSetupFeeUsdc) — surfaced in the form BEFORE the
   // user commits, so the smaller-than-expected amount landing is never a surprise.
   useEffect(() => {
     if (!isUSDCOnSolana) { setRecipientNeedsUsdcAccount(false); return; }
-    const raw = withdrawAddress.trim();
+    const raw = effectiveWithdrawAddress.trim();
     if (!raw || !isValidAddressForChain(raw, "solana")) { setRecipientNeedsUsdcAccount(false); return; }
     let cancelled = false;
     const t = setTimeout(async () => {
@@ -2128,7 +2176,7 @@ export function BalanceModal({
       }
     }, 500);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [withdrawAddress, isUSDCOnSolana, devnetMode]);
+  }, [effectiveWithdrawAddress, isUSDCOnSolana, devnetMode]);
 
   const saveWithdrawalToDB = useCallback(async (item: WithdrawalHistoryItem) => {
     try {
@@ -2598,7 +2646,7 @@ export function BalanceModal({
   };
 
   const handleWithdraw = async (ataFeeAcknowledged = false) => {
-    const rawAddress = withdrawAddress.trim();
+    const rawAddress = effectiveWithdrawAddress.trim();
     const amount = withdrawAmountNum;
 
     if (amount <= 0) {
@@ -4019,12 +4067,13 @@ export function BalanceModal({
                     <Label htmlFor="private-withdraw-address" className={dark ? "text-slate-300" : undefined}>Destination Solana address</Label>
                     <Input
                       id="private-withdraw-address"
-                      placeholder="Enter a Solana address"
+                      placeholder="Enter a Solana address or .sol domain"
                       value={withdrawAddress}
                       onChange={(e) => setWithdrawAddress(e.target.value)}
                       className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
                     />
-                    {withdrawAddress && !isValidAddressForChain(withdrawAddress, "solana") && (
+                    <SolDomainHint domain={solDomain} input={withdrawAddress} dark={dark} />
+                    {withdrawAddress && !isSolDomain(withdrawAddress) && !isValidAddressForChain(withdrawAddress, "solana") && (
                       <p className="text-base text-red-400 mt-1 flex items-center gap-1.5">
                         <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                         Invalid Solana address
@@ -4048,8 +4097,8 @@ export function BalanceModal({
                       !parseFloat(withdrawAmount) ||
                       parseFloat(withdrawAmount) < PRIVATE_WITHDRAW_MIN_USDC ||
                       parseFloat(withdrawAmount) > spendableBalance ||
-                      !withdrawAddress.trim() ||
-                      !isValidAddressForChain(withdrawAddress, "solana")
+                      !effectiveWithdrawAddress.trim() ||
+                      !isValidAddressForChain(effectiveWithdrawAddress, "solana")
                     }
                     className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
                   >
@@ -4297,11 +4346,12 @@ export function BalanceModal({
                 </Label>
                 <Input
                   id="withdraw-address"
-                  placeholder={isUSDCOnSolana ? "Enter Solana address" : `Enter ${effectiveToken?.chain || "destination"} address`}
+                  placeholder={isUSDCOnSolana ? "Enter Solana address or .sol domain" : `Enter ${effectiveToken?.chain || "destination"} address`}
                   value={withdrawAddress}
                   onChange={(e) => { setWithdrawAddress(e.target.value); setAtaFeeConfirmPending(false); }}
                   className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
                 />
+                <SolDomainHint domain={solDomain} input={withdrawAddress} dark={dark} />
                 {isUSDCOnSolana && addressRiskStatus === "checking" && (
                   <p className={`text-base mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
                     <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
@@ -4458,7 +4508,7 @@ export function BalanceModal({
                     withdrawAmountNum <= 0 ||
                     withdrawAmountNum > spendableBalance ||
                     (addLotteryTicket && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) ||
-                    !withdrawAddress.trim() ||
+                    !effectiveWithdrawAddress.trim() ||
                     !wallet ||
                     (withdrawMethod === "near-intents" && !selectedFrom) ||
                     (isUSDCOnSolana ? addressRiskStatus !== "safe" : !destinationAddressValid)
