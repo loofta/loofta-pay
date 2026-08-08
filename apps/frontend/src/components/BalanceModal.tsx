@@ -71,7 +71,6 @@ import {
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { cn } from "@/lib/utils";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
-import { useSolPrice } from "@/hooks/useSolPrice";
 import { PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { QRCodeSVG } from "qrcode.react";
@@ -88,6 +87,17 @@ import { AmountInput } from "@/components/AmountInput";
 const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
 
 const LOG_PREFIX = "[BalanceModal]";
+
+/**
+ * Flat one-time charge, in USDC, when a withdrawal destination has never held USDC and Solana
+ * therefore needs a token account created for it. The real cost is the account's rent-exempt
+ * deposit (~0.00204 SOL, ~$0.15 at SOL ≈ $75) which leaves our fee payer permanently — the
+ * account belongs to the recipient, so only they can ever close it and reclaim that SOL.
+ * Deliberately flat rather than quoted off the live SOL price: it's a number we can state plainly
+ * up front, and the margin over cost absorbs SOL price swings without re-quoting. Charged to the
+ * withdrawal itself so Loofta doesn't absorb it — see handleWithdraw.
+ */
+const ATA_SETUP_FEE_USDC = 0.2;
 const PEER_LOG = "[Peer Offramp]";
 const PEER_SESSION_KEY = "loofta_peer_session";
 const PRIVATE_DEPOSIT_SESSION_KEY = "loofta_private_deposit_id";
@@ -450,6 +460,7 @@ export function BalanceModal({
   const [lotteryPrizePool, setLotteryPrizePool] = useState<string | null>(null);
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
   const [addressRiskStatus, setAddressRiskStatus] = useState<"idle" | "checking" | "safe" | "unsafe">("idle");
+  const [recipientNeedsUsdcAccount, setRecipientNeedsUsdcAccount] = useState(false);
   const [recentWithdrawals, setRecentWithdrawals] = useState<WithdrawalHistoryItem[]>([]);
   const [dbDeposits, setDbDeposits] = useState<{ id: string; type: string; status: string; amount_usdc: number | null; deposit_address: string | null; bridge_status: string | null; created_at: string }[]>([]);
   const [dbDepositsLoading, setDbDepositsLoading] = useState(false);
@@ -1119,7 +1130,6 @@ export function BalanceModal({
   const spendableBalance = Math.floor((balanceExact ?? payFromBalanceNum) * 1_000_000) / 1_000_000;
   const destChain = effectiveToken?.chain || "";
   const isNearIntentsWithdraw = withdrawMethod === "near-intents" && !!selectedFrom && !!usdcSolanaToken;
-  const solPriceUsd = useSolPrice();
   const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
 
   // Persist active peer session to localStorage so page refresh restores state
@@ -2041,6 +2051,29 @@ export function BalanceModal({
     return () => clearTimeout(t);
   }, [withdrawAddress, checkAddressRisk, isUSDCOnSolana]);
 
+  // Does the destination already have a USDC account? If not, Solana requires one to be created
+  // and we charge the flat setup fee (see ATA_SETUP_FEE_USDC) — surfaced in the form BEFORE the
+  // user commits, so the smaller-than-expected amount landing is never a surprise.
+  useEffect(() => {
+    if (!isUSDCOnSolana) { setRecipientNeedsUsdcAccount(false); return; }
+    const raw = withdrawAddress.trim();
+    if (!raw || !isValidAddressForChain(raw, "solana")) { setRecipientNeedsUsdcAccount(false); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const conn = new Connection(getRpcForMode(devnetMode ? "devnet" : "mainnet"), "confirmed");
+        const ata = getAssociatedTokenAddressSync(getUsdcMintForMode(devnetMode ? "devnet" : "mainnet"), new PublicKey(raw));
+        const info = await conn.getAccountInfo(ata);
+        if (!cancelled) setRecipientNeedsUsdcAccount(!info);
+      } catch {
+        // Can't tell (RPC hiccup) — don't warn about a fee we're not sure applies. handleWithdraw
+        // re-checks against the chain right before sending, so the charge itself stays correct.
+        if (!cancelled) setRecipientNeedsUsdcAccount(false);
+      }
+    }, 500);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [withdrawAddress, isUSDCOnSolana, devnetMode]);
+
   const saveWithdrawalToDB = useCallback(async (item: WithdrawalHistoryItem) => {
     try {
       const token = await getAccessToken();
@@ -2628,19 +2661,19 @@ export function BalanceModal({
       // of the withdrawal itself instead: the recipient nets amount - rent, and the rent lands in
       // our fee payer's USDC account, leaving Loofta exactly even. Costs nothing on the common
       // path — a destination that already has a USDC account creates nothing and pays nothing.
+      // Re-checked against the chain here (not just the form's debounced check) so the charge is
+      // always based on the account's real state at send time.
       const mint = getUsdcMintForMode(mode);
       const recipientAta = getAssociatedTokenAddressSync(mint, new PublicKey(recipientAddress));
       const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
-      // 1.25x buffer absorbs SOL price drift between this quote and settlement; mirrors the
-      // backend's own quoteAtaRentRecoveryUsdc (apps/backend/src/common/ata-rent-recovery.ts).
-      const ataRentUsdc = recipientAtaInfo ? 0 : Math.ceil(0.00203928 * 1.25 * solPriceUsd * 1e6) / 1e6;
+      const ataRentUsdc = recipientAtaInfo ? 0 : ATA_SETUP_FEE_USDC;
       if (ataRentUsdc > 0) {
         if (ataRentUsdc >= amount) {
           throw new Error(
             `This wallet has never held USDC, so it needs a one-time $${ataRentUsdc.toFixed(2)} account setup — more than you're withdrawing. Withdraw a larger amount, or use a wallet that already holds USDC.`,
           );
         }
-        console.log(`${LOG_PREFIX} recipient has no USDC account — recovering $${ataRentUsdc.toFixed(4)} rent from the withdrawal`);
+        console.log(`${LOG_PREFIX} recipient has no USDC account — charging $${ataRentUsdc.toFixed(2)} setup fee from the withdrawal`);
       }
 
       const sig = await sendUsdcWithBackendFeePayer({
@@ -4132,6 +4165,23 @@ export function BalanceModal({
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                     Address flagged — withdrawal blocked
                   </p>
+                )}
+                {isUSDCOnSolana && recipientNeedsUsdcAccount && addressRiskStatus !== "unsafe" && (
+                  <div className={`mt-2 rounded-xl border p-3 ${dark ? "border-amber-400/30 bg-amber-400/10" : "border-amber-300 bg-amber-50"}`}>
+                    <p className={`text-base flex items-start gap-2 ${dark ? "text-amber-200" : "text-amber-900"}`}>
+                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <span>
+                        This wallet has never received USDC. Solana needs a USDC account created for
+                        it first, so a one-time{" "}
+                        <span className="font-semibold">${ATA_SETUP_FEE_USDC.toFixed(2)} setup fee</span>{" "}
+                        is deducted from this withdrawal
+                        {withdrawAmountNum > ATA_SETUP_FEE_USDC && (
+                          <> — they&apos;ll receive ${(withdrawAmountNum - ATA_SETUP_FEE_USDC).toFixed(2)}</>
+                        )}
+                        .
+                      </span>
+                    </p>
+                  </div>
                 )}
               </div>
 
