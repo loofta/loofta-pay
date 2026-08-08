@@ -4,6 +4,8 @@ import { isSolanaDevnetFromConfig, getMainnetSolanaRpcUrl } from '@/common/solan
 import { SupabaseService } from '@/database/supabase.service';
 import { EmailService } from '@/modules/email/email.service';
 import { guardAtaSponsorship, assertPerUserAtaCreationCapNotExceeded, assertPerWalletAtaCreationCapNotExceeded } from '@/common/ata-sponsorship-guard';
+import { ATA_RENT_LAMPORTS } from '@/common/ata-rent-recovery';
+import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
@@ -370,6 +372,50 @@ export class SolanaSponsorService {
   }
 
   /**
+   * Total USDC (base units) this transaction pays into our own fee payer's USDC account, across
+   * both the mainnet and devnet mints. This is how a client covers costs we'd otherwise absorb —
+   * currently the recipient-token-account rent on a plain withdrawal.
+   */
+  private sumUsdcTransfersToFeePayer(serializedBase64: string): bigint {
+    if (!this.feePayerAddress) return 0n;
+    let total = 0n;
+    for (const mint of USDC_MINT_SET) {
+      const feePayerAta = getAssociatedTokenAddressSync(
+        new PublicKey(mint),
+        new PublicKey(this.feePayerAddress),
+      );
+      total += this.sumTokenTransfersToDestination(serializedBase64, feePayerAta.toBase58());
+    }
+    return total;
+  }
+
+  /**
+   * What `count` new token accounts actually cost us, in USDC base units — the raw rent-exempt
+   * deposit at the current SOL price, with no safety margin on top (see the call site: the client
+   * quotes with a margin, so demanding it again here would reject legitimate transactions on
+   * ordinary price skew between the two feeds).
+   *
+   * If the price feed is down, falls back to a deliberately LOW flat floor rather than a high one:
+   * a too-high requirement rejects real withdrawals, while a too-low one merely lets an attacker
+   * underpay slightly on a creation they're still funding — and the volume caps bound that anyway.
+   * Being wrong in the lenient direction costs cents; being wrong in the strict direction breaks
+   * withdrawals for everyone, which is exactly what happened on 2026-08-07.
+   */
+  private async ataRentCostUsdcUnits(count: number): Promise<bigint> {
+    if (count <= 0) return 0n;
+    const FALLBACK_UNITS_PER_ATA = 100_000n; // $0.10 — under the real cost at any plausible SOL price
+    const solPriceUsd = await fetchSolPriceUsd().catch(() => null);
+    if (!solPriceUsd || solPriceUsd <= 0) {
+      this.logger.warn(
+        `SolanaSponsor: SOL price unavailable for ATA cost check — falling back to $${Number(FALLBACK_UNITS_PER_ATA) / 1e6}/account so withdrawals keep working`,
+      );
+      return FALLBACK_UNITS_PER_ATA * BigInt(count);
+    }
+    const perAtaUsd = (ATA_RENT_LAMPORTS / 1e9) * solPriceUsd;
+    return BigInt(Math.floor(perAtaUsd * 1e6)) * BigInt(count);
+  }
+
+  /**
    * Refuse to pay ATA rent twice for the same (wallet, mint).
    *
    * The program/mint whitelist below only checks instruction *shape* — right program, right mint.
@@ -647,12 +693,27 @@ export class SolanaSponsorService {
       // account. Do not reintroduce that: the 2026-08-07 drain was never "we pay rent at all",
       // it was ONE actor farming that rent in a loop against wallets they controlled.
       //
-      // What actually bounds the abuse is the volume caps immediately below — in particular the
-      // per-SIGNER-WALLET cap, which closes the disposable-Privy-account rotation the attacker
-      // used to sail past the per-user cap. Logged at warn so this path stays greppable in a
-      // future investigation.
-      this.logger.warn(
-        `SolanaSponsor[${label}]: UNBOUND sponsor-paid ATA creation (no intent id — expected for plain withdrawals) — bounded only by the per-user/per-wallet volume caps (user=${userId ?? 'unknown'}, count=${chargeable.length}, owners=${chargeable.map((d) => d.owner.slice(0, 8)).join(',')})`,
+      // What it must NOT be, though, is free. The transaction has to pay that rent back to us in
+      // USDC — which is exactly what the withdrawal UI now does (BalanceModal charges the setup
+      // fee as a second transfer leg in the same signature). That turns the 2026-08-07 attack
+      // into a no-op: an attacker farming rent now funds every account they open, so there is
+      // nothing left to farm, no matter how many identities they rotate through.
+      //
+      // The threshold is the RAW rent — deliberately NOT the 1.25x-buffered figure the client
+      // quotes from. Client and server price SOL from different feeds at different moments, so
+      // requiring the buffered amount here would reject a legitimate withdrawal any time the
+      // server's price ticked above the client's. Charging 1.25x and demanding 1.0x leaves ~25%
+      // headroom for that skew, which is the whole reason real withdrawals keep working.
+      const paidUnits = this.sumUsdcTransfersToFeePayer(serializedBase64);
+      const requiredUnits = await this.ataRentCostUsdcUnits(chargeable.length);
+      if (paidUnits < requiredUnits) {
+        this.logger.error(
+          `SolanaSponsor[${label}]: BLOCKED — unbound ATA creation is not self-funded: ${chargeable.length} account(s) cost us ${requiredUnits} USDC base units, tx pays back only ${paidUnits} (user=${userId ?? 'unknown'}, owners=${chargeable.map((d) => d.owner.slice(0, 8)).join(',')})`,
+        );
+        throw new Error('This transaction does not cover the cost of creating the recipient token account.');
+      }
+      this.logger.log(
+        `SolanaSponsor[${label}]: unbound ATA creation self-funded — ${chargeable.length} account(s), cost ${requiredUnits} USDC base units, tx pays back ${paidUnits} (user=${userId ?? 'unknown'})`,
       );
     }
 

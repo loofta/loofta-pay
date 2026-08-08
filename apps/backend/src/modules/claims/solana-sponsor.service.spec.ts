@@ -24,6 +24,11 @@ jest.mock('@/common/ata-sponsorship-guard', () => ({
   assertPerUserAtaCreationCapNotExceeded: jest.fn().mockResolvedValue(undefined),
   assertPerWalletAtaCreationCapNotExceeded: jest.fn().mockResolvedValue(undefined),
 }));
+// SOL at $74.79 — the real price when the withdrawal flow was verified on mainnet (5jg7E7yG),
+// so the numbers in these tests are the ones production actually saw.
+jest.mock('@/common/magicblock-private-transfer', () => ({
+  fetchSolPriceUsd: jest.fn().mockResolvedValue(74.79),
+}));
 
 const USDC_DEVNET_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
 
@@ -55,6 +60,34 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
     }
     tx.feePayer = feePayer.publicKey;
     tx.recentBlockhash = Keypair.generate().publicKey.toBase58(); // any valid base58 32-byte value
+    return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
+  }
+
+  /**
+   * A transaction shaped like the one BalanceModal builds for a real withdrawal to a wallet that
+   * has never held USDC: create the recipient's ATA (rent on our fee payer), transfer the net
+   * amount to them, and transfer the setup fee to our fee payer's own USDC account — all in one
+   * signature. `sender` is a throwaway stand-in for the user's embedded wallet.
+   */
+  function buildWithdrawalTxBase64(
+    recipient: PublicKey,
+    amountToRecipientUnits: number,
+    feeToFeePayerUnits: number,
+  ): string {
+    const mint = new PublicKey(USDC_DEVNET_MINT);
+    const sender = Keypair.generate().publicKey;
+    const senderAta = getAssociatedTokenAddressSync(mint, sender);
+    const recipientAta = getAssociatedTokenAddressSync(mint, recipient);
+    const feePayerAta = getAssociatedTokenAddressSync(mint, feePayer.publicKey);
+
+    const tx = new Transaction();
+    tx.add(createAssociatedTokenAccountInstruction(feePayer.publicKey, recipientAta, recipient, mint));
+    tx.add(createTransferInstruction(senderAta, recipientAta, sender, amountToRecipientUnits));
+    if (feeToFeePayerUnits > 0) {
+      tx.add(createTransferInstruction(senderAta, feePayerAta, sender, feeToFeePayerUnits));
+    }
+    tx.feePayer = feePayer.publicKey;
+    tx.recentBlockhash = Keypair.generate().publicKey.toBase58();
     return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
   }
 
@@ -153,16 +186,62 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
     ).rejects.toThrow('Claim not found');
   });
 
-  // Plain Solana withdrawals have no backend-tracked record to bind against and never will —
-  // paying the recipient's ATA rent there is normal product cost, not abuse. This briefly threw
-  // (2026-08-07) and broke every real withdrawal to a wallet that had never held USDC; the volume
-  // caps (esp. the per-signer-wallet one) are what bound the farming case instead.
-  it('allows a sponsor call with no backing intent id — bounded by the volume caps, not refused', async () => {
-    const txBase64 = buildAtaCreationTxBase64(Keypair.generate().publicKey);
+  // ── Unbound (no intent id) creations: plain Solana withdrawals ──────────────────────────────
+  // These have no backend-tracked record to bind against and never will. Refusing them outright
+  // (2026-08-07) broke every real withdrawal to a wallet that had never held USDC. Requiring them
+  // to be self-funded instead keeps withdrawals working while making rent-farming pointless.
+  //
+  // THE IMPORTANT ONE: a transaction shaped exactly like what BalanceModal builds for a real
+  // withdrawal — create the recipient's ATA, pay them, and pay our fee payer the setup fee in the
+  // same signature — must pass. If this ever fails, withdrawals are broken in production.
+  it('allows a real withdrawal: creates the recipient ATA and pays the setup fee to our fee payer', async () => {
+    const recipient = Keypair.generate().publicKey;
+    // $0.20 is what the client charges at SOL $74.79 (0.00203928 x 1.25 x 74.79 = $0.1906, rounded
+    // up to the cent). Our raw cost is $0.1525, so this clears it with the intended headroom.
+    const txBase64 = buildWithdrawalTxBase64(recipient, 800_000, 200_000);
 
     await expect(
       (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'user-1'),
     ).resolves.toBeUndefined();
+  });
+
+  it('still allows the withdrawal when SOL has risen enough to eat most of the client-side margin', async () => {
+    const { fetchSolPriceUsd } = jest.requireMock('@/common/magicblock-private-transfer');
+    // Client quoted $0.20 at $74.79; server now sees $95. Raw cost $0.1937 — still under $0.20, so
+    // ordinary price drift between the two feeds must not reject a legitimate withdrawal.
+    fetchSolPriceUsd.mockResolvedValueOnce(95);
+    const txBase64 = buildWithdrawalTxBase64(Keypair.generate().publicKey, 800_000, 200_000);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'user-1'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('allows the withdrawal when the SOL price feed is down (lenient fallback, never blocks users)', async () => {
+    const { fetchSolPriceUsd } = jest.requireMock('@/common/magicblock-private-transfer');
+    fetchSolPriceUsd.mockRejectedValueOnce(new Error('price feed down'));
+    const txBase64 = buildWithdrawalTxBase64(Keypair.generate().publicKey, 800_000, 200_000);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'user-1'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('blocks an unbound creation that pays us nothing — the 2026-08-07 rent-farming shape', async () => {
+    const txBase64 = buildAtaCreationTxBase64(Keypair.generate().publicKey);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'attacker'),
+    ).rejects.toThrow('does not cover the cost of creating the recipient token account');
+  });
+
+  it('blocks an unbound creation that underpays the real rent cost', async () => {
+    // $0.01 against a $0.1525 cost — an attacker attaching a token transfer just to look funded.
+    const txBase64 = buildWithdrawalTxBase64(Keypair.generate().publicKey, 800_000, 10_000);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'attacker'),
+    ).rejects.toThrow('does not cover the cost of creating the recipient token account');
   });
 
   it('allows sponsorship when the ATA owner matches the giveaway burner_address on file', async () => {
