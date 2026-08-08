@@ -69,15 +69,6 @@ export async function buildUSDCTransferTransaction(params: {
   /** Optional second transfer leg in the same transaction/signature — used for the Loofta fee
    * cut on PAJ Cash Naira withdrawals (fee wallet + net amount to PAJ, one user signature). */
   extraTransfer?: { recipientAddress: string; amountUSDC: number };
-  /** When false, never let feePayer create a new recipient ATA — throws a clear error up front
-   *  instead. Used for withdrawals to an arbitrary user-supplied address, which (unlike claim
-   *  payments, giveaway funding, etc.) has no backend-tracked record to bind an ATA-creation-rent
-   *  sponsorship against, so the backend refuses to sponsor it anyway (see project memory: solana
-   *  sponsor security hardening). Sponsoring the transaction's network fee is unaffected — this
-   *  only gates the ATA *rent* the fee payer would otherwise pay for a brand-new recipient.
-   *  Defaults to true so claim payments etc. (which DO have a real record to bind to) are
-   *  unaffected. */
-  sponsorNewRecipientAccounts?: boolean;
 }): Promise<VersionedTransaction> {
   const connection =
     params.connection || new Connection(getSolanaHttpRpc(), "confirmed");
@@ -140,11 +131,6 @@ export async function buildUSDCTransferTransaction(params: {
     "getAccountInfo(recipientAta)"
   );
   if (!recipientAccountInfo) {
-    if (feePayer && params.sponsorNewRecipientAccounts === false) {
-      throw new Error(
-        "This wallet doesn't have a USDC account yet — it needs to receive USDC at least once before you can send to it this way."
-      );
-    }
     instructions.push(
       createAssociatedTokenAccountInstruction(
         ataPayer,
