@@ -500,6 +500,22 @@ export class PrivateBalanceProcessorService {
    * isn't mistaken for a completed delivery.
    */
   private async confirmDirectPrivateDelivery(row: PrivateTransfer, mint: PublicKey, conn: Connection) {
+    // Transition guard: a row built by the OLD two-leg code sent the user's funds to a burner that
+    // this method no longer sweeps. There were no such rows in flight when the one-leg change
+    // shipped, but a signature landing in the deploy window could still produce one — and silently
+    // "confirming" it would strand real money. Detect the burner holding a balance, leave the row
+    // in place, and shout, so it can be swept by hand rather than lost.
+    try {
+      const legacyBurnerAta = await getAssociatedTokenAddress(mint, new PublicKey(row.burner_address));
+      const legacyBalance = (await getAccount(conn, legacyBurnerAta)).amount;
+      if (legacyBalance > BigInt(0)) {
+        this.logger.error(
+          `[PrivateWithdrawal] ${row.id}: NEEDS MANUAL SWEEP — legacy two-leg row, burner ${row.burner_address.slice(0, 8)}… holds ${legacyBalance} base units destined for ${row.destination_address!.slice(0, 8)}…`,
+        );
+        return;
+      }
+    } catch { /* no burner ATA — the expected case for a one-leg withdrawal */ }
+
     const destinationAta = await getAssociatedTokenAddress(mint, new PublicKey(row.destination_address!));
     let current = BigInt(0);
     try { current = (await getAccount(conn, destinationAta)).amount; } catch { /* not created yet */ }
