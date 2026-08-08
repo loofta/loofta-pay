@@ -4163,7 +4163,11 @@ export function BalanceModal({
           )}
 
           {/* Withdraw tab — form (method selected, not peer-offramp or paj-cash which have their own sections) */}
-          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "peer-offramp" && withdrawMethod !== "paj-cash" && (
+          {/* Generic withdraw form (usdc-sol / near-intents). Every method that brings its own
+              form must be excluded here, or both render stacked — private-relay was missing, and
+              only stayed hidden by accident whenever a previous run had left withdrawStep on a
+              terminal value. */}
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "peer-offramp" && withdrawMethod !== "paj-cash" && withdrawMethod !== "private-relay" && (
             <div className="space-y-4 py-2">
 
               {/* Back button — hidden on devnet (only one method available, nothing to go back to) */}
