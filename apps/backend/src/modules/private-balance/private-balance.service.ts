@@ -9,8 +9,6 @@ import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
 import { isValidSolanaAddress } from '@/common/solana-address';
-import { tokenAccountExists } from '@/common/token-account-exists';
-import { quoteAtaRentRecoveryUsdc } from '@/common/ata-rent-recovery';
 import {
   MAGICBLOCK_GAS_SOL,
   MAGICBLOCK_VOLUME_FEE_BPS,
@@ -350,9 +348,22 @@ export class PrivateBalanceService {
 
     let txResponse;
     try {
+      // Straight to the user's destination — ONE MagicBlock private transfer, no burner hop.
+      //
+      // The burner used to sit in the middle (leg 1 user -> burner, leg 2 burner -> destination,
+      // swept by cron) but it was never what made this private: MagicBlock's own queue does the
+      // mixing, delaying delivery 1-10 min and splitting it across several transfers. Delivering
+      // from that queue is in fact better privacy than delivering from a burner whose funding
+      // transaction is timing-correlated with leg 1. `to` is just a parameter and needs no
+      // ownership over the recipient — the lottery module has been sending private transfers to
+      // arbitrary user-supplied destinations this way in production (lottery.service.ts).
+      //
+      // Dropping the hop also removes the destination-token-account rent Loofta was absorbing on
+      // leg 2, the leg-2 sponsored transaction fee, and the burner rent churn. `initAtasIfMissing`
+      // (set in requestMagicblockPrivateTransfer) leaves the recipient account to MagicBlock.
       txResponse = await requestMagicblockPrivateTransfer({
         from: userWallet,
-        to: burner.address,
+        to: destinationAddress,
         mint: mint.toBase58(),
         amount: baseUnits,
         cluster: apiCluster,
@@ -366,18 +377,11 @@ export class PrivateBalanceService {
       throw new BadRequestException(`Could not build private withdrawal: ${msg}`);
     }
 
-    // Destination token-account setup fee. Leg 2 has to create this account when the destination
-    // has never held USDC, and that rent leaves the fee payer for good — the account belongs to
-    // the recipient. Quote it here so it can be shown before signing, and persist it so the sweep
-    // charges exactly what was quoted rather than re-pricing minutes later at a different SOL
-    // price. Mirrors what the regular withdrawal path already charges.
-    const destAta = await getAssociatedTokenAddress(mint, new PublicKey(destinationAddress));
-    const destAtaExists = await tokenAccountExists(
-      this.solanaSponsor.getConnectionForCluster(cluster),
-      destAta,
-    ).catch(() => true); // unsure -> assume it exists, i.e. don't charge a fee we can't justify
-    const ataSetupFeeUnits = destAtaExists ? 0 : (await quoteAtaRentRecoveryUsdc(1)).totalUsdcUnits;
-
+    // No destination-token-account fee on this path any more: with the burner hop gone there is
+    // no leg of our own that creates the recipient's account, so there is no rent for Loofta to
+    // absorb or recover. MagicBlock delivers (initAtasIfMissing is set) and the fee payer is not
+    // involved. The regular, non-private withdrawal still charges its own setup fee — that path
+    // does create the account itself.
     const { data, error } = await this.supabaseService.privateTransfers.insert({
       user_id: userId,
       direction: 'withdrawal',
@@ -388,7 +392,6 @@ export class PrivateBalanceService {
       cluster,
       destination_address: destinationAddress,
       source_or_dest_token: dto.destination_token ?? null,
-      ata_setup_fee_usdc: ataSetupFeeUnits / 1_000_000,
     }).select('id').single();
 
     if (error || !data) {
@@ -409,11 +412,9 @@ export class PrivateBalanceService {
     const conn = this.solanaSponsor.getConnectionForCluster(cluster);
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, userWallet, mint, conn);
     const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;
-    // ataSetupFeeUnits is charged on leg 2, not leg 1, so it is not part of the decoded leg-1
-    // debit — add it to both branches so the quoted total is what actually leaves the user.
-    const feeUnits = ataSetupFeeUnits + ((actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits)
+    const feeUnits = (actualDebitUnits != null && actualDebitUnits > 0 && actualDebitUnits < baseUnits)
       ? mbVolumeFeeUnits + actualDebitUnits
-      : estimatedFeeUnits);
+      : estimatedFeeUnits;
 
     this.logger.log(`[PrivateWithdrawal] ${data.id}: built, burner=${burner.address.slice(0, 8)}… amount=${dto.amount_usdc} dest=${destinationAddress.slice(0, 8)}… cluster=${cluster}`);
 

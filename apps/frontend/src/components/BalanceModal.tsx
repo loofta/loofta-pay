@@ -3963,8 +3963,8 @@ export function BalanceModal({
                         Confirm private withdrawal
                       </p>
                       <p className={`text-base mt-0.5 ${dark ? "text-slate-400" : "text-gray-600"}`}>
-                        Sending privately routes through a one-time burner wallet, which carries a
-                        network and relay cost.
+                        Delivery is delayed and split by the private-transfer relay, which charges a
+                        flat fee regardless of amount.
                       </p>
                     </div>
                   </div>
