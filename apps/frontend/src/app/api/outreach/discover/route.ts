@@ -57,9 +57,9 @@ const QUERIES: Array<{ q: string; hint: ProspectType }> = [
   { hint: "freelancer", q: '"received" USDC bounty -is:retweet lang:en' },
 
   // ── GIVEAWAY PROJECTS: currently running a giveaway / reward campaign ─────
-  // BD strategy: co-market their giveaway + offer Loofta Pay as the winner payout
-  // rail. Smaller/mid projects are the real fit here, not major CEXs who already
-  // have their own payout infra.
+  // BD strategy: pitch verifiable-random draws + no-wallet-needed claiming as the
+  // winner payout rail. Smaller/mid projects are the real fit here, not major CEXs
+  // who already have their own payout infra.
   { hint: "giveaway_project", q: '"giveaway" "prize pool" crypto -is:retweet lang:en' },
   { hint: "giveaway_project", q: '"giveaway" winner solana -is:retweet lang:en' },
   { hint: "giveaway_project", q: '"reward campaign" crypto -is:retweet lang:en' },

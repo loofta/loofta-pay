@@ -23,7 +23,7 @@ const TYPE_CONTEXT: Record<ProspectType, string> = {
   web3_project:
     "Web3 protocol or project that pays contributors, grantees, bounty hunters, or a distributed team. Real pain: when they pay contributors from their treasury, every recipient can see the full payment list - who got what, how much the treasury has, who the other contributors are. Loofta decouples payments from treasury visibility. They can pay in any token they hold; contributors receive privately. DEFAULT TO QUALIFYING unless purely a trading bot, scam, or completely dormant.",
   giveaway_project:
-    "A crypto project, community, or account currently running (or about to run) a giveaway, reward campaign, or contest with a prize pool. This is NOT the treasury-privacy pitch - it's a partnership pitch. Real pain: paying out winners is a logistics headache (collecting wallet addresses, converting currencies, winners who don't hold crypto), and they want more eyes on the campaign. Loofta's angle: co-market the giveaway to Loofta's audience, and let Loofta Pay handle winner payouts so winners can claim straight to their bank app or wallet, no crypto knowledge required. DEFAULT TO QUALIFYING if there's a live or recent giveaway/reward campaign signal.",
+    "A crypto project, community, or account currently running (or about to run) a giveaway, reward campaign, or contest with a prize pool. This is NOT the treasury-privacy pitch - it's a partnership pitch. Real pain: winners are usually picked manually and asked to drop a wallet address in replies or DMs - slow, and easy to accuse of being rigged. Loofta's angle: draw winners with verifiable onchain randomness (VRF, anyone can check it wasn't rigged), and winners claim with just their email or X handle, no crypto wallet required. DEFAULT TO QUALIFYING if there's a live or recent giveaway/reward campaign signal.",
 };
 
 function buildPrompt(
@@ -86,8 +86,8 @@ TASK:
    - Keep it simple and conversational - do not try to reference their specific bio or seem over-researched
    - Ask a qualifying question first ("is that your case?" style) before pitching
    - For creator/freelancer/web3_project: focus on the simple value prop: pay teammates privately, just using their email, they claim however they want. Do NOT lead with the pain angle or treasury exposure - keep it friendly and low-pressure.
-   - For giveaway_project: this is a partnership pitch, not a payments-privacy pitch. Ask if their giveaway/campaign is still live, then offer to co-market it and handle winner payouts through Loofta Pay so winners can claim without needing a crypto wallet.
-   - Do NOT say: "first protocol", "revolutionize", "seamless", "ecosystem", "leverage", "excited to", "love what you're doing", "want to try it"
+   - For giveaway_project: ask if their giveaway/campaign is still live, then pitch the VRF-verifiable draw and no-wallet-needed claim (email or X handle). If the SPECIFIC ANGLE TO USE contains a URL, invite them to try it (soft, not an instruction - "if you want to try it out, you can create one here: [URL]") and let them know once they do, you'll waive the fee.
+   - Do NOT say: "first protocol", "revolutionize", "seamless", "ecosystem", "leverage", "excited to", "love what you're doing", "want to try it", "co-market", "co-marketing", "promote it to our audience", "more eyes on the campaign"
    - Do NOT use em dashes or en dashes - use a comma or period instead. This is critical.
    - No hashtags, no emojis
    - End with a warm, open invite: "would love to have you in" or "worth a chat?"
