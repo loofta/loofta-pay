@@ -4297,7 +4297,8 @@ export function BalanceModal({
                         First time sending USDC here
                       </p>
                       <p className={`text-base mt-0.5 ${dark ? "text-slate-400" : "text-gray-600"}`}>
-                        Solana charges a one-time fee to open a USDC account for this wallet.
+                        Solana charges a one-time fee to open a USDC account for this wallet
+                        {solPriceUsd ? ` (${ATA_RENT_SOL} SOL at $${solPriceUsd.toFixed(2)})` : ""}.
                       </p>
                     </div>
                   </div>
