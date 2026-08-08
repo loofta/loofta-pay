@@ -16,33 +16,94 @@ import {
   ApiQuery,
   ApiSecurity,
 } from '@nestjs/swagger';
+import {
+  IsString,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsBoolean,
+} from 'class-validator';
 import { AuthGuard } from '@/common/guards';
 import { NearIntentsService, NearToken, QuoteResult } from './near-intents.service';
 import { StatusService, UnifiedStatus } from './status.service';
 
-class GetQuoteDto {
+export class GetQuoteDto {
+  @IsString()
+  @IsNotEmpty()
   fromTokenId: string;
+
+  @IsString()
+  @IsNotEmpty()
   fromChain: string;
+
+  @IsNumber()
   fromDecimals: number;
+
+  @IsString()
+  @IsNotEmpty()
   toTokenId: string;
+
+  @IsString()
+  @IsNotEmpty()
   toChain: string;
+
+  @IsNumber()
   toDecimals: number;
+
+  @IsString()
+  @IsNotEmpty()
   amount: string;
+
+  @IsOptional()
+  @IsNumber()
   slippageBps?: number;
 }
 
-class CreateWithdrawalOrderDto {
+export class CreateWithdrawalOrderDto {
+  @IsString()
+  @IsNotEmpty()
   fromTokenId: string;
+
+  @IsString()
+  @IsNotEmpty()
   fromChain: string;
+
+  @IsString()
+  @IsNotEmpty()
   fromSymbol: string;
+
+  @IsNumber()
   fromDecimals: number;
+
+  @IsString()
+  @IsNotEmpty()
   toTokenId: string;
+
+  @IsString()
+  @IsNotEmpty()
   toChain: string;
+
+  @IsString()
+  @IsNotEmpty()
   toSymbol: string;
+
+  @IsNumber()
   toDecimals: number;
+
+  @IsString()
+  @IsNotEmpty()
   amountUsdc: string;
+
+  @IsString()
+  @IsNotEmpty()
   destinationAddress: string;
+
+  @IsString()
+  @IsNotEmpty()
   refundAddress: string;
+
+  @IsOptional()
+  @IsBoolean()
   isDevnet?: boolean;
 }
 
