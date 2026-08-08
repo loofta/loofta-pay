@@ -107,6 +107,10 @@ const ATA_FEE_BUFFER = 1.25;
  * real cost at typical SOL prices rather than risk quoting under it.
  */
 const ATA_SETUP_FEE_FALLBACK_USDC = 0.2;
+
+/** Server-enforced floor for a private withdrawal (BuildPrivateWithdrawalDto @Min(1)). Mirrored
+ *  client-side so a sub-minimum amount is caught in the form rather than by the API. */
+const PRIVATE_WITHDRAW_MIN_USDC = 1;
 const PEER_LOG = "[Peer Offramp]";
 const PEER_SESSION_KEY = "loofta_peer_session";
 const PRIVATE_DEPOSIT_SESSION_KEY = "loofta_private_deposit_id";
@@ -1779,6 +1783,10 @@ export function BalanceModal({
 
   // Reset token selection and address when withdraw method changes
   useEffect(() => {
+    // Also clear any finished public-withdrawal step — otherwise picking a different withdraw
+    // method still carries the previous run's terminal state, which surfaces as a stale success
+    // panel next to the new flow.
+    setWithdrawStep((s) => (s === "complete" || s === "failed" ? "idle" : s));
     setFromSel(undefined);
     setWithdrawAddress("");
     setAddressRiskStatus("idle");
@@ -3651,7 +3659,11 @@ export function BalanceModal({
           })()}
 
           {/* Withdraw tab — progress panel (not shown during peer offramp or settling state) */}
-          {tab === "withdraw" && withdrawStep !== "idle" && withdrawStep !== "settling" && withdrawMethod !== "peer-offramp" && (
+          {/* Public-withdrawal progress/result panel. Excludes the flows that render their own
+              status UI (peer-offramp, private-relay) — otherwise a finished withdrawal's success
+              panel stays on screen underneath them, which read as "it worked" while the flow you
+              were actually looking at had failed. */}
+          {tab === "withdraw" && withdrawStep !== "idle" && withdrawStep !== "settling" && withdrawMethod !== "peer-offramp" && withdrawMethod !== "private-relay" && (
             <ProgressSteps
               step={withdrawStep}
               isNearIntents={Boolean(isNearIntentsWithdraw || activeWithdrawal?.isNearIntents)}
@@ -3940,11 +3952,22 @@ export function BalanceModal({
                       </p>
                     )}
                   </div>
+                  {/* Surface the server's own minimum (BuildPrivateWithdrawalDto @Min(1)) here —
+                      otherwise a sub-$1 amount only fails after the request, and the raw
+                      validator text ("amount_usdc must not be less than 1") is what the user
+                      ends up reading. */}
+                  {parseFloat(withdrawAmount) > 0 && parseFloat(withdrawAmount) < PRIVATE_WITHDRAW_MIN_USDC && (
+                    <p className="text-base text-amber-400 flex items-center gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                      Private withdrawals start at ${PRIVATE_WITHDRAW_MIN_USDC.toFixed(2)}
+                    </p>
+                  )}
                   <Button
                     onClick={handlePrivateWithdraw}
                     disabled={
                       privateWithdrawSubmitting ||
                       !parseFloat(withdrawAmount) ||
+                      parseFloat(withdrawAmount) < PRIVATE_WITHDRAW_MIN_USDC ||
                       parseFloat(withdrawAmount) > spendableBalance ||
                       !withdrawAddress.trim() ||
                       !isValidAddressForChain(withdrawAddress, "solana")
