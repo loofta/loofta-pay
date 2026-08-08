@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -841,8 +841,12 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
           break;
         }
 
-        const delay = Math.floor(Math.random() * (60_000 - 15_000 + 1)) + 15_000;
-        await new Promise((r) => setTimeout(r, delay));
+        // Only real sends need the randomized human-pacing delay - a skip never touched
+        // the DM endpoint, so there's no rate limit or spam-pattern reason to wait here.
+        if (!body.skipped) {
+          const delay = Math.floor(Math.random() * (60_000 - 15_000 + 1)) + 15_000;
+          await new Promise((r) => setTimeout(r, delay));
+        }
       }
     })();
 
