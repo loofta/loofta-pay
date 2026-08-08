@@ -71,6 +71,9 @@ import {
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { cn } from "@/lib/utils";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
+import { useSolPrice } from "@/hooks/useSolPrice";
+import { PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { QRCodeSVG } from "qrcode.react";
 import { usePerPrivateSelfTransfer } from "@/hooks/usePerPrivateSelfTransfer";
 import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
@@ -1116,6 +1119,7 @@ export function BalanceModal({
   const spendableBalance = Math.floor((balanceExact ?? payFromBalanceNum) * 1_000_000) / 1_000_000;
   const destChain = effectiveToken?.chain || "";
   const isNearIntentsWithdraw = withdrawMethod === "near-intents" && !!selectedFrom && !!usdcSolanaToken;
+  const solPriceUsd = useSolPrice();
   const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
 
   // Persist active peer session to localStorage so page refresh restores state
@@ -2616,20 +2620,45 @@ export function BalanceModal({
 
       setWithdrawStep("sent");
 
+      // Account-rent recovery. If the destination has never held USDC, Solana requires a token
+      // account to be created for it, and its ~0.00204 SOL rent-exempt deposit comes out of our
+      // fee payer — that SOL is gone for good, since the account belongs to the recipient and
+      // only they can ever close it and reclaim it. Absorbing that was fine when it was rare, but
+      // it's ~$0.15 a pop regardless of withdrawal size (15% of a $1 withdrawal), so it comes out
+      // of the withdrawal itself instead: the recipient nets amount - rent, and the rent lands in
+      // our fee payer's USDC account, leaving Loofta exactly even. Costs nothing on the common
+      // path — a destination that already has a USDC account creates nothing and pays nothing.
+      const mint = getUsdcMintForMode(mode);
+      const recipientAta = getAssociatedTokenAddressSync(mint, new PublicKey(recipientAddress));
+      const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
+      // 1.25x buffer absorbs SOL price drift between this quote and settlement; mirrors the
+      // backend's own quoteAtaRentRecoveryUsdc (apps/backend/src/common/ata-rent-recovery.ts).
+      const ataRentUsdc = recipientAtaInfo ? 0 : Math.ceil(0.00203928 * 1.25 * solPriceUsd * 1e6) / 1e6;
+      if (ataRentUsdc > 0) {
+        if (ataRentUsdc >= amount) {
+          throw new Error(
+            `This wallet has never held USDC, so it needs a one-time $${ataRentUsdc.toFixed(2)} account setup — more than you're withdrawing. Withdraw a larger amount, or use a wallet that already holds USDC.`,
+          );
+        }
+        console.log(`${LOG_PREFIX} recipient has no USDC account — recovering $${ataRentUsdc.toFixed(4)} rent from the withdrawal`);
+      }
+
       const sig = await sendUsdcWithBackendFeePayer({
         senderAddress: solanaAddress,
         recipientAddress,
-        amountUSDC: amount,
+        amountUSDC: amount - ataRentUsdc,
         connection,
         wallet,
         privyUserId: user!.id,
         signTransaction,
         memo: memo ?? undefined,
-        usdcMint: getUsdcMintForMode(mode),
+        usdcMint: mint,
         chain: getPrivySolanaChainForMode(mode),
         accessToken,
         network: devnetMode ? "devnet" : "mainnet",
         nearIntentsOrderId,
+        // Routes ataRentUsdc to the fee payer's own USDC account in the same signature.
+        looftaFeeUsdc: ataRentUsdc > 0 ? ataRentUsdc : undefined,
       });
 
       // Save to localStorage and DB
