@@ -1,9 +1,13 @@
 'use client';
 // GachaPack3D.tsx — the 3D "rip" spectacle for Gacha Pooled Packs: idle float, shake, then the
-// pack bursts open with a confetti/gold particle burst. No click, no in-3D card reveal — see the
-// header comment further down for why both were removed. The actual revealed card is shown by
-// the separate, DOM-based <GachaCard> component once this fires onOpened; this component's job
-// ends at "the pack is now open."
+// pack bursts open with a confetti/gold particle burst and the REAL revealed card (a textured
+// plane, loaded from the actual nftMetadata.image the moment the result is known — see
+// startOpen()'s TextureLoader call and the 'burst' phase of tick()) rises up out of the halves.
+// No click — see the header comment further down. That card plane is deliberately just a flat
+// textured rectangle, not a readable/flippable/framed trading card: duplicating GachaCard's real
+// work (readable text, drag-to-flip, framing) inside WebGL isn't worth it for a ~1.5s flourish —
+// the separate, DOM-based <GachaCard> component takes over for the actual interactive reveal
+// right after this fires onOpened; this component's job ends at "the pack is now open."
 //
 // Ported from the design handoff at `/gacha/Gacha Pack 3D (standalone).html` (a plain-Three.js
 // prototype reusing Mystery Pack's own pouch/foil pack rig, reskinned with the Gacha pack art —
@@ -18,11 +22,9 @@
 //     is no single "the person who taps this pack" the way Mystery Pack's own real-money click
 //     works. This component is driven entirely by the `autoOpen` prop instead: it flips true and
 //     the shake/burst sequence starts on its own, in sync for everyone watching.
-//  2. No in-3D card mesh/texture. Rendering a nicely swipeable, readable trading card inside a
-//     WebGL scene (readable text, real cover-cropped artwork, drag-to-flip) duplicates real work
-//     the DOM-based GachaCard component already does well with actual CSS 3D transforms — so the
-//     3D scene's job stops at "the pack burst open," and the parent page swaps in <GachaCard> for
-//     the actual reveal display right after onOpened fires.
+//  2. A real (but intentionally simple) in-3D card. Just a plain textured plane using the actual
+//     revealed image — no framing, no flip, no readable stat text. That richer, interactive
+//     version is what the parent page swaps in via <GachaCard> right after onOpened fires.
 //
 // Trimmed relative to MegapotPack on purpose, to land this as a working first pass:
 //  - No adaptive frame-time quality monitor (always renders at full quality/clearcoat).
@@ -37,7 +39,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { drawGachaPack, loadSvg, AW, AH } from './gachaArt';
+import { drawGachaPack, loadSvg, AW, AH, CW, CH } from './gachaArt';
 
 const GOLD_L = '#FFE9A8', GOLD_M = '#E8B23A';
 
@@ -244,6 +246,25 @@ export default function GachaPack3D({
     const topHalf = makeHalf('top'), botHalf = makeHalf('bot');
     packGroup.add(topHalf, botHalf);
 
+    /* the real revealed card, physically emerging from the burst — see startOpen()'s texture
+       load (kicked off as soon as the result is known, during 'shake', so it's usually already
+       loaded by the time 'burst' needs it) and the 'burst'/'reveal' phases of tick() below for
+       the fly-out + flip. Two back-to-back single-sided planes (not one double-sided plane with
+       two textures — WebGL materials only take one map each) so a 180° group rotation shows the
+       front, then genuinely the back, like a real card — not a mirrored front. Sized smaller than
+       the pack itself so it visibly slides out from within it. */
+    const CARD_W = PW * 0.74, CARD_H = CARD_W * (CH / CW);
+    const cardFrontMat = new THREE.MeshStandardMaterial({ map: null, transparent: true, opacity: 0, roughness: 0.35, metalness: 0.05, side: THREE.FrontSide });
+    const cardBackMat = new THREE.MeshStandardMaterial({ map: null, transparent: true, opacity: 0, roughness: 0.35, metalness: 0.05, side: THREE.FrontSide });
+    const cardFront = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W, CARD_H), cardFrontMat);
+    const cardBack = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W, CARD_H), cardBackMat);
+    cardBack.rotation.y = Math.PI;
+    const cardGroup = new THREE.Group();
+    cardGroup.add(cardFront, cardBack);
+    cardGroup.visible = false;
+    packRig.add(cardGroup);
+    let cardTextureReady = false;
+
     /* confetti */
     const P = 150, pGeo = new THREE.BufferGeometry();
     const pPos = new Float32Array(P * 3), pCol = new Float32Array(P * 3);
@@ -260,7 +281,7 @@ export default function GachaPack3D({
     parts.visible = false; parts.position.y = 0.5; scene.add(parts);
 
     /* ---------- state ---------- */
-    let phase: 'idle' | 'shake' | 'burst' | 'done' = 'idle';
+    let phase: 'idle' | 'shake' | 'burst' | 'reveal' | 'done' = 'idle';
     let t0 = 0, raf = 0;
     const clock = new THREE.Clock();
     // Same "keep shaking until it lands" pattern as MegapotPack — except here resolveOpen isn't
@@ -277,7 +298,34 @@ export default function GachaPack3D({
       if (ui.lbl) ui.lbl.textContent = openingLabel;
       if (ui.sub) ui.sub.textContent = '';
       resolveOpenRef.current()
-        .then((result) => { pendingResult = result; })
+        .then((result) => {
+          pendingResult = result;
+          // Kick the real texture load off now, during 'shake' — 'burst' starts ~1.2s later, so
+          // this is usually already resolved by the time the card needs to actually be visible.
+          // Routed through our own /api/gacha/image-proxy (see that route's comment): Collector
+          // Crypt's scans don't send CORS headers, and WebGL's texImage2D flatly refuses to
+          // upload a cross-origin image that wasn't CORS-validated — loading the raw remote URL
+          // here made the card plane silently stay invisible forever, no error, nothing.
+          const frontUrl = result.nftMetadata?.image;
+          // Same "no back scan -> reuse the front image" fallback as GachaCard's 2D reveal (see
+          // that component's file header) — the flip should always land on something real.
+          const backUrl = result.nftMetadata?.backImage ?? frontUrl;
+          if (frontUrl) {
+            new THREE.TextureLoader().load(`/api/gacha/image-proxy?url=${encodeURIComponent(frontUrl)}`, (t) => {
+              t.colorSpace = THREE.SRGBColorSpace;
+              cardFrontMat.map = t;
+              cardFrontMat.needsUpdate = true;
+              cardTextureReady = true;
+            }, undefined, () => { /* no real scan — card plane just stays hidden, no fallback texture */ });
+          }
+          if (backUrl) {
+            new THREE.TextureLoader().load(`/api/gacha/image-proxy?url=${encodeURIComponent(backUrl)}`, (t) => {
+              t.colorSpace = THREE.SRGBColorSpace;
+              cardBackMat.map = t;
+              cardBackMat.needsUpdate = true;
+            }, undefined, () => { /* back stays untextured — front-only is still shown correctly */ });
+          }
+        })
         .catch((err) => { pendingError = err ?? new Error('Failed to open pack'); });
     }
 
@@ -314,6 +362,17 @@ export default function GachaPack3D({
         (topHalf.material as THREE.Material[]).forEach((mt) => { mt.transparent = true; mt.opacity = 1 - q; });
         (botHalf.material as THREE.Material[]).forEach((mt) => { mt.transparent = true; mt.opacity = 1 - q; });
         packGroup.position.set(0, 0, 0); packGroup.rotation.set(0, 0, 0);
+        // The real card, rising up and toward camera out of the halves as they fall away — if the
+        // texture hasn't finished loading yet (slow network), it just stays hidden until it has,
+        // rather than popping in from a wrong mid-animation position.
+        if (cardTextureReady) {
+          cardGroup.visible = true;
+          cardGroup.position.y = q * 1.4;
+          cardGroup.position.z = q * 0.9;
+          cardGroup.scale.setScalar(0.5 + q * 0.5);
+          cardGroup.rotation.y = (1 - q) * 0.6;
+          cardFrontMat.opacity = q; cardBackMat.opacity = q;
+        }
         const p = parts.geometry.attributes.position as THREE.BufferAttribute;
         for (let i = 0; i < P; i++) {
           p.array[i * 3] += pVel[i].x * 0.55;
@@ -324,9 +383,26 @@ export default function GachaPack3D({
         (parts.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - e / 1.5);
         glowLight.intensity = 70 * (1 - k * 0.55);
         if (e > 1.5 && pendingResult) {
+          if (cardTextureReady) {
+            phase = 'reveal'; t0 = t;
+          } else {
+            // No real scan loaded — nothing to flip, so skip straight to done same as before.
+            phase = 'done';
+            packRig.visible = false; parts.visible = false;
+            onOpenedRef.current?.(pendingResult);
+          }
+        }
+      } else if (phase === 'reveal') {
+        // The card holds fully emerged (see 'burst' above, which already left it at scale 1,
+        // opacity 1, z 0.9) and does one full front -> back -> front flip in place before handing
+        // off — a real look at both sides, not just the front, before <GachaCard> takes over.
+        const dur = 2.0, k = Math.min(e / dur, 1);
+        cardGroup.rotation.y = ease(k) * Math.PI * 2;
+        parts.visible = false;
+        if (e > dur) {
           phase = 'done';
-          packRig.visible = false; parts.visible = false;
-          onOpenedRef.current?.(pendingResult);
+          packRig.visible = false;
+          onOpenedRef.current?.(pendingResult!);
         }
       }
       controls.update();

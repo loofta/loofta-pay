@@ -53,22 +53,31 @@ export function loadSvg(url: string): Promise<HTMLImageElement | null> {
 /** Load any raster/vector image URL (for real card art). Tries CORS-anonymous first (needed so
  *  the canvas stays "clean" for renderGachaPackPNG's toDataURL export), but real Collector Crypt
  *  card scans (nft-dev.collectorcrypt.com, redirecting through CloudFront) send no
- *  Access-Control-Allow-Origin header at all — confirmed live — so `crossOrigin: 'anonymous'`
- *  makes the browser refuse the load outright and the card renders with nothing in it. Falls back
- *  to a plain (non-CORS) load on failure: drawImage() onto a canvas works fine with a tainted
- *  source, it only blocks LATER pixel readback (toDataURL/getImageData) on that canvas — which
- *  only the share-image export needs, not simply displaying the card. */
+ *  Access-Control-Allow-Origin header at all on ANY hop — confirmed via curl against the live
+ *  redirect chain — so `crossOrigin: 'anonymous'` is guaranteed to fail for these specifically,
+ *  every time. Skip straight to a plain load for them: these scans commonly run 1-4MB+
+ *  (full-resolution PSA vault photos), so the guaranteed-doomed CORS attempt was silently
+ *  doubling load time for every card. Falls back to a plain (non-CORS) load on failure regardless
+ *  of host: drawImage() onto a canvas works fine with a tainted source, it only blocks LATER pixel
+ *  readback (toDataURL/getImageData) on that canvas — which only the share-image export needs,
+ *  not simply displaying the card. Logs if even the plain load fails, so a genuinely dead/expired
+ *  URL shows up in the console instead of silently rendering the blank "ARTWORK" placeholder. */
 export function loadImage(url?: string | null): Promise<HTMLImageElement | null> {
   return new Promise((res) => {
     if (!url) { res(null); return; }
+    const knownNoCors = /collectorcrypt\.com/.test(url);
     const tryLoad = (withCors: boolean) => {
       const i = new Image();
       if (withCors) i.crossOrigin = 'anonymous';
       i.onload = () => res(i);
-      i.onerror = () => (withCors ? tryLoad(false) : res(null));
+      i.onerror = () => {
+        if (withCors) { tryLoad(false); return; }
+        console.error(`[gachaArt] loadImage failed (network error or dead URL, CORS already ruled out): ${url}`);
+        res(null);
+      };
       i.src = url;
     };
-    tryLoad(true);
+    tryLoad(!knownNoCors);
   });
 }
 
@@ -337,7 +346,7 @@ function roundPath(x: CanvasRenderingContext2D, rx: number, ry: number, w: numbe
   x.closePath();
 }
 
-/** Draw an image cover-cropped into a rect (never squashed). */
+/** Draw an image cover-cropped into a rect (never squashed, but crops whatever overflows). */
 function drawCover(x: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, rx: number, ry: number, w: number, h: number) {
   const s = Math.max(w / img.width, h / img.height);
   const dw = img.width * s;
@@ -345,20 +354,30 @@ function drawCover(x: CanvasRenderingContext2D, img: CanvasImageSource & { width
   x.drawImage(img, rx + (w - dw) / 2, ry + (h - dh) / 2, dw, dh);
 }
 
-/** Paint an image as the ENTIRE card face (for real card scans), with a metallic rim. */
-function drawFullFace(x: CanvasRenderingContext2D, img: HTMLImageElement, rimA: string, rimB: string) {
-  const ob = x.createLinearGradient(0, 0, CW, CH);
-  ob.addColorStop(0, rimA);
-  ob.addColorStop(0.45, rimB);
-  ob.addColorStop(1, rimA);
+/** Draw an image contain-fit into a rect (the WHOLE image always visible, never cropped) —
+ *  letterboxed with `bg` on whichever axis doesn't match the frame's aspect ratio. PSA slab
+ *  photos run a noticeably different ratio than the 2.5:3.5 trading-card frame, so cover-cropping
+ *  them (drawCover) was cutting off real parts of the actual scan — the whole point of a real
+ *  card reveal is showing the real thing, not a uniformly-shaped crop of it. */
+function drawContain(x: CanvasRenderingContext2D, img: CanvasImageSource & { width: number; height: number }, rx: number, ry: number, w: number, h: number, bg: string) {
+  x.fillStyle = bg;
+  x.fillRect(rx, ry, w, h);
+  const s = Math.min(w / img.width, h / img.height);
+  const dw = img.width * s;
+  const dh = img.height * s;
+  x.drawImage(img, rx + (w - dw) / 2, ry + (h - dh) / 2, dw, dh);
+}
+
+/** Paint an image as the ENTIRE card face (for real card scans) — genuinely edge-to-edge, no
+ *  colored rim showing (a real scan doesn't need Loofta's brand frame around it), and the full
+ *  photo always visible rather than cropped to the trading-card aspect ratio. `matColor` (a light
+ *  rarity/brand tint) fills whichever letterbox margin the photo's own aspect ratio leaves, so it
+ *  reads as an intentional mat rather than a cropped-off gap. */
+function drawFullFace(x: CanvasRenderingContext2D, img: HTMLImageElement, matColor: string) {
   roundPath(x, 0, 0, CW, CH, 44);
-  x.fillStyle = ob;
-  x.fill();
-  const m = 14;
   x.save();
-  roundPath(x, m, m, CW - m * 2, CH - m * 2, 34);
   x.clip();
-  drawCover(x, img, m, m, CW - m * 2, CH - m * 2);
+  drawContain(x, img, 0, 0, CW, CH, matColor);
   x.restore();
 }
 
@@ -379,7 +398,7 @@ export function drawCardFront(x: CanvasRenderingContext2D, opts: CardFrontOption
   if (faceImage) {
     const Rf = RARITIES[rarity] || RARITIES.common;
     x.clearRect(0, 0, CW, CH);
-    drawFullFace(x, faceImage, Rf.a, Rf.b);
+    drawFullFace(x, faceImage, Rf.b);
     return;
   }
   const R = RARITIES[rarity] || RARITIES.common;
@@ -503,7 +522,7 @@ export function drawCardBack(x: CanvasRenderingContext2D, opts: CardBackOptions 
   const { logoWhite = null, backImage = null } = opts;
   x.clearRect(0, 0, CW, CH);
   if (backImage) {
-    drawFullFace(x, backImage, GOLD_D, GOLD_L);
+    drawFullFace(x, backImage, GOLD_L);
     return;
   }
 

@@ -15,6 +15,9 @@ class JoinTxDto {
 class ConfirmJoinDto {
   @IsString()
   paymentTxHash: string;
+
+  @IsString()
+  mascotKey: string;
 }
 
 class PlaceBidDto {
@@ -83,6 +86,12 @@ export class GachaController {
     return this.gacha.devForceAdvanceExcluding(id);
   }
 
+  @Post('rooms/:id/force-vote')
+  @ApiOperation({ summary: 'Devnet testing only — forces the current vote round closed (skipping the 30s timeout) and any resulting cut draw to completion. Blocked in production.' })
+  async forceVote(@Param('id') id: string) {
+    return this.gacha.devForceAdvanceVoting(id);
+  }
+
   @Post('rooms/join-tx')
   @ApiOperation({ summary: 'Find-or-create a waiting room for this config and build the entry payment tx to sign' })
   async joinTx(@Body() dto: JoinTxDto, @Request() req: any) {
@@ -92,7 +101,7 @@ export class GachaController {
   @Post('rooms/:id/join')
   @ApiOperation({ summary: 'Confirm entry payment and take a seat — requires a confirmed on-chain payment tx hash' })
   async join(@Param('id') id: string, @Body() dto: ConfirmJoinDto, @Request() req: any) {
-    return this.gacha.confirmJoin(id, req.user.id, dto.paymentTxHash);
+    return this.gacha.confirmJoin(id, req.user.id, dto.paymentTxHash, dto.mascotKey);
   }
 
   @Post('rooms/:id/bid')

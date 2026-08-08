@@ -21,7 +21,8 @@
 // blank.
 
 import { useEffect, useRef, useState } from 'react';
-import { getMascot, mascotImageSrc } from '@/lib/mascots';
+import { getMascot } from '@/lib/mascots';
+import Mascot, { type MascotMood } from '@/components/Mascot';
 
 export interface TableSeat {
   seatNumber: number;
@@ -46,7 +47,7 @@ const BG_COLORS = ['#F59E0B', '#10B981', '#8B5CF6', '#EC4899', '#3B82F6', '#EF44
 // used everywhere else so it doesn't crowd out the pack itself.
 const SIZE_PRESETS = {
   compact: { container: 'h-24 sm:h-28', back: { size: 24, fontSize: 12 }, front: { size: 32, fontSize: 16 } },
-  hero: { container: 'h-40 sm:h-52', back: { size: 36, fontSize: 18 }, front: { size: 52, fontSize: 26 } },
+  hero: { container: 'h-52 sm:h-72', back: { size: 52, fontSize: 22 }, front: { size: 76, fontSize: 32 } },
 } as const;
 
 function hashSeed(seed: string): number {
@@ -84,7 +85,8 @@ export default function PokerTable({
   readySeats,
   size = 'compact',
   excludedSeats,
-  spinning,
+  moodOverride,
+  spotlightSeat,
 }: {
   /** Room capacity — 5 or 10 today. Drives the FIXED grid shape; never how many have joined. */
   seats: number;
@@ -98,11 +100,19 @@ export default function PokerTable({
    *  for; 'compact' (default, original sizing) everywhere else. */
   size?: 'compact' | 'hero';
   /** Seat numbers the exclusion draw has knocked out — rendered dim/greyscale with an "OUT" badge
-   *  instead of the ready checkmark, regardless of that seat's ready state. */
+   *  instead of the ready checkmark, regardless of that seat's ready state, and locked to the
+   *  'sad' mood regardless of moodOverride. */
   excludedSeats?: number[];
-  /** True while the exclusion draw's VRF result is pending — every seat's avatar spins in place,
-   *  slot-machine style, for suspense. Ignored on seats already in excludedSeats. */
-  spinning?: boolean;
+  /** Mood applied to every non-excluded seat's mascot — 'happy' for the pre-exclusion-draw
+   *  anticipation beat, 'winning' once survivors have settled, omitted (idle) otherwise. Excluded
+   *  seats always render 'sad' regardless of this. */
+  moodOverride?: MascotMood;
+  /** Seat number to draw a pulsing gold "roulette" ring around — the exclusion draw's real VRF
+   *  result isn't known until it resolves server-side, so this is purely a suspense animation
+   *  the caller cycles through candidate seats on a timer while waiting (see the room page's
+   *  'excluding' status) — it has no bearing on the actual outcome, which arrives separately via
+   *  ExclusionReveal once the draw resolves. */
+  spotlightSeat?: number | null;
 }) {
   const me = participants.find((p) => p.isMe) ?? null;
   const others = participants.filter((p) => !p.isMe).sort((a, b) => a.seatNumber - b.seatNumber);
@@ -170,7 +180,8 @@ export default function PokerTable({
       const bg = mascot ? 'rgba(255,255,255,0.08)' : bgForSeat(seat.seatNumber);
       const isReady = readySet.has(seat.seatNumber);
       const isExcluded = excludedSet.has(seat.seatNumber);
-      const isSpinning = !!spinning && !isExcluded;
+      const isSpotlit = !isExcluded && spotlightSeat === seat.seatNumber;
+      const mood: MascotMood = isExcluded ? 'sad' : isSpotlit ? 'happy' : moodOverride ?? 'idle';
       const size = seat.isMe ? Math.round(opts.size * 1.22) : opts.size;
       const fontSize = seat.isMe ? Math.round(opts.fontSize * 1.15) : opts.fontSize;
       return (
@@ -200,20 +211,11 @@ export default function PokerTable({
             onMouseEnter={() => !seat.isMe && reveal(seat.seatNumber)}
             onMouseLeave={() => !seat.isMe && setRevealedSeat((cur) => (cur === seat.seatNumber ? null : cur))}
             aria-label={seat.isMe ? 'Pick your emoji' : seat.username ?? `Seat ${seat.seatNumber}`}
-            className={`relative rounded-full flex items-center justify-center ring-2 shadow-md cursor-pointer transition-all ${isExcluded ? 'ring-white/10 grayscale' : isReady ? 'ring-emerald-400' : seat.isMe ? 'ring-amber-400' : 'ring-white/20'}`}
-            style={{ width: size, height: size, background: bg, fontSize, opacity: isExcluded ? 0.35 : opts.zBase === 10 ? 0.85 : 1 }}
+            className={`relative rounded-full flex items-center justify-center ring-2 shadow-md cursor-pointer transition-all duration-100 ${isExcluded ? 'ring-white/10 grayscale' : isSpotlit ? 'ring-[3px] ring-[#EAB308] scale-110 shadow-[0_0_18px_4px_rgba(234,179,8,0.5)]' : isReady ? 'ring-emerald-400' : seat.isMe ? 'ring-amber-400' : 'ring-white/20'}`}
+            style={{ width: size, height: size, background: isSpotlit ? 'rgba(234,179,8,0.18)' : bg, fontSize, opacity: isExcluded ? 0.35 : opts.zBase === 10 ? 0.85 : 1 }}
           >
             {mascot ? (
-              // eslint-disable-next-line @next/next/no-img-element -- small local SVG sticker, not a next/image candidate
-              <img
-                src={mascotImageSrc(mascot.key)}
-                alt={mascot.name}
-                width={size}
-                height={size}
-                className={`rounded-full ${isSpinning ? 'animate-spin' : ''}`}
-                style={isSpinning ? { animationDuration: '0.6s' } : undefined}
-                draggable={false}
-              />
+              <Mascot name={mascot.key} mood={mood} size={size} title={mascot.name} />
             ) : (
               emoji
             )}

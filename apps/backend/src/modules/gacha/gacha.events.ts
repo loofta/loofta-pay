@@ -10,6 +10,9 @@ export const GACHA_EVENTS = {
   BID_PLACED: 'gacha.bid.placed',
   ROOM_SETTLED: 'gacha.room.settled',
   ROOM_EXCLUDED: 'gacha.room.excluded',
+  ROOM_VOTE_ROUND_STARTED: 'gacha.room.vote_round_started',
+  ROOM_VOTE_RESULT: 'gacha.room.vote_result',
+  ROOM_VOTE_CUT: 'gacha.room.vote_cut',
 } as const;
 
 export interface GachaRoomUpdatePayload {
@@ -42,4 +45,24 @@ export interface GachaRoomSettledPayload {
 export interface GachaRoomExcludedPayload {
   roomId: string;
   excludedSeatNumbers: number[];
+}
+
+export interface GachaVoteRoundStartedPayload {
+  roomId: string;
+  round: number;
+  survivorSeatNumbers: number[];
+}
+
+export interface GachaVoteResultPayload {
+  roomId: string;
+  round: number;
+  yesCount: number;
+  totalCount: number;
+  passed: boolean;
+}
+
+export interface GachaVoteCutPayload {
+  roomId: string;
+  round: number;
+  seatNumber: number;
 }

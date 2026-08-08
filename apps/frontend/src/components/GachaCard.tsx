@@ -1,9 +1,11 @@
 'use client';
 // GachaCard.tsx — the collectible card that comes out of a Gacha Pack.
-// Real artwork on the front, and if a real back scan is ALSO available, you can SWIPE (drag /
-// trackpad / arrow keys) to flip between the two faces in 3D. If there's no real back scan, the
-// card is static, front-only — it deliberately never falls back to a generic Loofta-branded back
-// face; a made-up brand pattern standing in for a real collectible's actual back reads as fake.
+// Real artwork on the front, and you can always SWIPE (drag / trackpad / arrow keys) to flip —
+// when Collector Crypt doesn't have a real back scan for this card, the back face just reuses the
+// same front image (gold-tinted mat instead of the rarity-tinted front one, via drawCardBack's
+// own styling), rather than a generic Loofta-branded back or no flip at all: the card physically
+// coming out of the pack should always feel flippable, and a plain re-showing of the one real
+// image you have reads better than either a fake back or a dead, static card.
 //
 //   <GachaCard width={320} card={{ name: 'Charizard', rarity: 'rare', faceImage: nft.image, backImage: nft.backImage }} />
 //
@@ -12,6 +14,8 @@
 // scale (see gachaArt.ts's RARITIES) rather than the handoff's generic common/rare/legendary.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Maximize2, RotateCw, X } from 'lucide-react';
 import { drawCardFront, drawCardBack, loadSvg, loadImage, CW, CH, type Rarity } from './gachaArt';
 
 export type { Rarity };
@@ -64,14 +68,22 @@ export function preloadCards(cards: CardData[]) {
 /* ---- one painted face ---- */
 function Face({ width, card, side, assets }: { width: number; card: CardData; side: 'front' | 'back'; assets: CardAssets }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  // No real back scan -> the back face reuses the front image instead (see the file header).
+  const backSrc = card.backImage ?? card.faceImage ?? card.image;
+  // Real Collector Crypt scans commonly run 1-4MB+ (full-resolution PSA vault photos) — without
+  // this, a slow fetch and "no artwork available" looked identical (blank canvas, then the same
+  // framed placeholder either way), which read as broken rather than just loading.
+  const hasRealArt = side === 'front' ? !!(card.faceImage || card.image) : !!backSrc;
+  const [loading, setLoading] = useState(hasRealArt);
   useEffect(() => {
     let live = true;
+    setLoading(hasRealArt);
     (async () => {
       const [brand, art, faceImage, backImage] = await Promise.all([
         getBrand(assets),
         side === 'front' ? getArt(card.image) : Promise.resolve(null),
         side === 'front' ? getArt(card.faceImage) : Promise.resolve(null),
-        side === 'back' ? getArt(card.backImage) : Promise.resolve(null),
+        side === 'back' ? getArt(backSrc) : Promise.resolve(null),
       ]);
       if (!live || !ref.current) return;
       const c = ref.current;
@@ -84,10 +96,30 @@ function Face({ width, card, side, assets }: { width: number; card: CardData; si
       } else {
         drawCardBack(x, { logoWhite: brand.logoWhite, backImage });
       }
+      setLoading(false);
     })();
     return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- hasRealArt is derived from card.*, already covered below
   }, [card.name, card.rarity, card.image, card.faceImage, card.backImage, side, assets]);
-  return <canvas ref={ref} style={{ display: 'block', width, height: (width * CH) / CW, borderRadius: width * 0.055 }} />;
+  const height = (width * CH) / CW;
+  return (
+    <div style={{ position: 'relative', width, height }}>
+      <canvas ref={ref} style={{ display: 'block', width, height, borderRadius: width * 0.055 }} />
+      {loading && (
+        <div
+          style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            borderRadius: width * 0.055, background: 'rgba(11,11,15,0.4)',
+          }}
+        >
+          <div
+            className="animate-spin"
+            style={{ width: 28, height: 28, borderRadius: '50%', border: '3px solid rgba(255,255,255,0.25)', borderTopColor: '#fff' }}
+          />
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ---- swipeable single card ---- */
@@ -110,10 +142,9 @@ export default function GachaCard({
   );
   const height = (width * CH) / CW;
 
-  // No real back scan -> no flip at all, ever. Drawing the back face with a Loofta brand pattern
-  // as a stand-in for a real collectible's actual back is exactly what this card shouldn't do —
-  // better to just show the one real face you have.
-  const canFlip = !!card.backImage;
+  // Flippable whenever there's any real art at all — see the file header for why a missing back
+  // scan reuses the front image instead of disabling the flip.
+  const canFlip = !!(card.faceImage || card.image || card.backImage);
 
   // turns, in half-rotations: even = front, odd = back
   const [turn, setTurn] = useState(0);
@@ -144,45 +175,106 @@ export default function GachaCard({
 
   const turns = turn + drag;
   const deg = turns * 180;
+  const currentIsFront = Math.abs(Math.round(turns) % 2) === 0;
+  // Only for a REAL scan (never the generic branded pack art) — the whole point of zooming is
+  // seeing the actual card detail up close, which a raw <img> at native resolution gives for
+  // free (the canvas render above is capped to CW×CH, a real scan can be several times larger —
+  // see gachaArt.ts's loadImage comment on real Collector Crypt scan sizes).
+  const zoomUrl = currentIsFront ? card.faceImage : (card.backImage ?? card.faceImage ?? card.image);
+  const [zoomOpen, setZoomOpen] = useState(false);
+  useEffect(() => {
+    if (!zoomOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setZoomOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [zoomOpen]);
 
   return (
-    <div
-      role={canFlip ? 'button' : 'img'}
-      tabIndex={canFlip ? 0 : undefined}
-      aria-label={canFlip
-        ? `${card.name} card, ${Math.abs(Math.round(turns) % 2) === 0 ? 'front' : 'back'}. Swipe or press arrow keys to flip.`
-        : `${card.name} card`}
-      onPointerDown={onDown}
-      onPointerMove={onMove}
-      onPointerUp={onUp}
-      onPointerCancel={onUp}
-      onClick={() => { if (canFlip && !drag) commit(turn + 1); }}
-      onKeyDown={(e) => {
-        if (!canFlip) return;
-        if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Enter') { e.preventDefault(); commit(turn + 1); }
-        if (e.key === 'ArrowLeft') { e.preventDefault(); commit(turn - 1); }
-      }}
-      style={{ width, height, perspective: 1800, cursor: canFlip ? 'grab' : 'default', touchAction: 'pan-y', outline: 'none', ...style }}
-    >
-      {canFlip ? (
-        <div
-          style={{
-            position: 'relative', width: '100%', height: '100%', transformStyle: 'preserve-3d',
-            transform: `rotateY(${deg}deg)`,
-            transition: dragging.current ? 'none' : 'transform .75s cubic-bezier(.2,.8,.2,1)',
-          }}
-        >
-          <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', filter: 'drop-shadow(0 24px 46px rgba(0,0,0,.42))' }}>
+    <div style={{ position: 'relative', width, height }}>
+      <div
+        role={canFlip ? 'button' : 'img'}
+        tabIndex={canFlip ? 0 : undefined}
+        aria-label={canFlip
+          ? `${card.name} card, ${currentIsFront ? 'front' : 'back'}. Swipe or press arrow keys to flip.`
+          : `${card.name} card`}
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerCancel={onUp}
+        onClick={() => { if (canFlip && !drag) commit(turn + 1); }}
+        onKeyDown={(e) => {
+          if (!canFlip) return;
+          if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Enter') { e.preventDefault(); commit(turn + 1); }
+          if (e.key === 'ArrowLeft') { e.preventDefault(); commit(turn - 1); }
+        }}
+        style={{ width, height, perspective: 1800, cursor: canFlip ? 'grab' : 'default', touchAction: 'pan-y', outline: 'none', ...style }}
+      >
+        {canFlip ? (
+          <div
+            style={{
+              position: 'relative', width: '100%', height: '100%', transformStyle: 'preserve-3d',
+              transform: `rotateY(${deg}deg)`,
+              transition: dragging.current ? 'none' : 'transform .75s cubic-bezier(.2,.8,.2,1)',
+            }}
+          >
+            <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', filter: 'drop-shadow(0 24px 46px rgba(0,0,0,.42))' }}>
+              <Face width={width} card={card} side="front" assets={assets} />
+            </div>
+            <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', filter: 'drop-shadow(0 24px 46px rgba(0,0,0,.42))' }}>
+              <Face width={width} card={card} side="back" assets={assets} />
+            </div>
+          </div>
+        ) : (
+          <div style={{ filter: 'drop-shadow(0 24px 46px rgba(0,0,0,.42))' }}>
             <Face width={width} card={card} side="front" assets={assets} />
           </div>
-          <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', filter: 'drop-shadow(0 24px 46px rgba(0,0,0,.42))' }}>
-            <Face width={width} card={card} side="back" assets={assets} />
-          </div>
-        </div>
-      ) : (
-        <div style={{ filter: 'drop-shadow(0 24px 46px rgba(0,0,0,.42))' }}>
-          <Face width={width} card={card} side="front" assets={assets} />
-        </div>
+        )}
+      </div>
+
+      {zoomUrl && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setZoomOpen(true); }}
+          aria-label="Zoom in on this card"
+          className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-black/60 border border-white/20 text-white flex items-center justify-center hover:bg-black/80 transition-colors"
+        >
+          <Maximize2 className="w-4 h-4" />
+        </button>
+      )}
+
+      {zoomOpen && zoomUrl && typeof window !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] bg-black/90 flex items-center justify-center p-6"
+          onClick={() => setZoomOpen(false)}
+        >
+          <button
+            type="button"
+            onClick={() => setZoomOpen(false)}
+            aria-label="Close"
+            className="absolute top-5 right-5 w-10 h-10 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center hover:bg-white/20 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element -- full-res zoom needs the raw source, not a canvas render */}
+          <img
+            src={zoomUrl}
+            alt={`${card.name} card, ${currentIsFront ? 'front' : 'back'}`}
+            className="max-w-[92vw] max-h-[92vh] object-contain rounded-xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          {canFlip && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); commit(turn + 1); }}
+              aria-label={`Flip to ${currentIsFront ? 'back' : 'front'}`}
+              className="absolute bottom-6 left-1/2 -translate-x-1/2 h-11 px-5 rounded-full bg-white/10 border border-white/20 text-white flex items-center gap-2 hover:bg-white/20 transition-colors"
+            >
+              <RotateCw className="w-4 h-4" />
+              Flip to {currentIsFront ? 'back' : 'front'}
+            </button>
+          )}
+        </div>,
+        document.body,
       )}
     </div>
   );

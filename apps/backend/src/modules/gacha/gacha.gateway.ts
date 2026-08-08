@@ -12,7 +12,17 @@ import {
 import type { Server, Socket } from 'socket.io';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { GachaService } from './gacha.service';
-import { GACHA_EVENTS, GachaRoomUpdatePayload, GachaRoomOpenedPayload, GachaBidPlacedPayload, GachaRoomSettledPayload, GachaRoomExcludedPayload } from './gacha.events';
+import {
+  GACHA_EVENTS,
+  GachaRoomUpdatePayload,
+  GachaRoomOpenedPayload,
+  GachaBidPlacedPayload,
+  GachaRoomSettledPayload,
+  GachaRoomExcludedPayload,
+  GachaVoteRoundStartedPayload,
+  GachaVoteResultPayload,
+  GachaVoteCutPayload,
+} from './gacha.events';
 
 // Mirrors main.ts's own CORS logic (see bootstrap()) — read directly from process.env since
 // @WebSocketGateway's cors option is evaluated at class-decoration time, before Nest's DI
@@ -250,6 +260,31 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
     }
   }
 
+  /**
+   * "CUT ONE MORE?" — a survivor's vote for the current round. Ack-based like lock_mascot (a real
+   * one-shot action, not fire-and-forget presence like pick_emoji/mark_ready). Vote tallying and
+   * the majority-with-ties-as-YES rule both live in GachaService.castVote/checkVoteRoundComplete
+   * (not this gateway) — voting needs to be checked from the cron sweep too (round timeouts, a
+   * fully-bot-filled room with no human to click), not just from a live socket event, so unlike
+   * readyByRoom/emojiByRoom the tally itself is service-owned, not gateway-owned.
+   */
+  @SubscribeMessage('cast_vote')
+  async onCastVote(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { roomId: string; vote: boolean },
+  ): Promise<{ ok: boolean; error?: string }> {
+    const roomId = body?.roomId;
+    const userId = client.data?.userId;
+    if (!roomId || !userId || typeof body?.vote !== 'boolean') return { ok: false, error: 'Invalid request' };
+
+    try {
+      await this.gacha.castVote(roomId, userId, body.vote);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? 'Failed to cast your vote' };
+    }
+  }
+
   @OnEvent(GACHA_EVENTS.ROOM_UPDATE)
   async onRoomUpdate(payload: GachaRoomUpdatePayload): Promise<void> {
     const { roomId, ...rest } = payload;
@@ -281,11 +316,30 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
     this.server?.to(roomId).emit('room:settled', rest);
   }
 
-  /** Fired once GachaService.advanceExclusionDraw resolves the VRF draw — the frontend's cue to
-   *  play the kick-reveal animation before the room moves on to the pack purchase/open. */
+  /** Fired once GachaService.advanceExclusionDraw resolves the VRF draw (which now runs AFTER the
+   *  pack rips, not before — see gacha.service.ts) — the frontend's cue to play the kick-reveal
+   *  animation before the room moves on to voting. */
   @OnEvent(GACHA_EVENTS.ROOM_EXCLUDED)
   onRoomExcluded(payload: GachaRoomExcludedPayload): void {
     const { roomId, ...rest } = payload;
     this.server?.to(roomId).emit('room:excluded', rest);
+  }
+
+  @OnEvent(GACHA_EVENTS.ROOM_VOTE_ROUND_STARTED)
+  onVoteRoundStarted(payload: GachaVoteRoundStartedPayload): void {
+    const { roomId, ...rest } = payload;
+    this.server?.to(roomId).emit('room:vote_round_started', rest);
+  }
+
+  @OnEvent(GACHA_EVENTS.ROOM_VOTE_RESULT)
+  onVoteResult(payload: GachaVoteResultPayload): void {
+    const { roomId, ...rest } = payload;
+    this.server?.to(roomId).emit('room:vote_result', rest);
+  }
+
+  @OnEvent(GACHA_EVENTS.ROOM_VOTE_CUT)
+  onVoteCut(payload: GachaVoteCutPayload): void {
+    const { roomId, ...rest } = payload;
+    this.server?.to(roomId).emit('room:vote_cut', rest);
   }
 }

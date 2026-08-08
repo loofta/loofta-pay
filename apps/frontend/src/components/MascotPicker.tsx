@@ -1,13 +1,15 @@
 "use client";
 
-// Mascot lock-in — pick one of the 20 branded mascots, preview it locally, then explicitly commit
-// with "Lock In". Deliberately a separate two-step (pick -> confirm) flow rather than reusing
-// PokerTable's own-seat emoji popover (which commits on first click): once locked, the choice is
-// permanent for the room (see gacha.service.ts lockMascot), so a stray tap shouldn't be able to
-// lock the wrong one in.
+// Mascot lock-in — ported 1:1 from pack-party/preview/pack-party-screens.jsx's ScreenPick
+// ("PICK YOUR FIGHTER"): pick from the grid, see your pick big (in its "happy" mood) in the
+// sticky preview panel, then explicitly commit with "Lock In". Deliberately a separate two-step
+// (pick -> confirm) flow: once locked, the choice is permanent for the room (see
+// gacha.service.ts lockMascot), so a stray tap shouldn't be able to lock the wrong one in.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MASCOTS, mascotImageSrc } from "@/lib/mascots";
+import { MASCOTS } from "@/lib/mascots";
+import Mascot from "@/components/Mascot";
+import { Shell } from "@/components/PackParty";
 
 const PICK_SECONDS = 30;
 
@@ -57,54 +59,69 @@ export default function MascotPicker({
   if (lockedMascotKey) {
     const mascot = MASCOTS.find((m) => m.key === lockedMascotKey);
     return (
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-5 flex items-center gap-4">
-        {mascot && (
-          // eslint-disable-next-line @next/next/no-img-element -- small local SVG sticker
-          <img src={mascotImageSrc(mascot.key)} alt={mascot.name} width={56} height={56} className="rounded-full bg-white/10 shrink-0" />
-        )}
-        <div>
-          <p className="font-display text-xl font-medium tracking-[-0.02em] text-white">Locked in: {mascot?.name ?? lockedMascotKey}</p>
-          <p className="text-slate-400 text-base">Waiting on everyone else to lock in too…</p>
-        </div>
-      </div>
+      <Shell kicker="1 / 7 · PICK" title="LOCKED" titleGrad="IN" sub="waiting on everyone else to lock in too…">
+        <aside className="pp-preview" style={{ position: "static" }}>
+          {mascot && <Mascot key={mascot.key} name={mascot.key} mood="happy" size={230} />}
+          <div className="pp-preview-name">{mascot?.name ?? lockedMascotKey}</div>
+          <div className="pp-preview-sub">ready to feast</div>
+        </aside>
+      </Shell>
     );
   }
 
+  const previewMascot = MASCOTS.find((m) => m.key === selected);
+
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
-      <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#FF1301] via-[#FF6A00] to-[#EAB308]" />
-      <div className="flex items-center justify-between gap-3 pt-1">
-        <p className="font-display text-3xl font-medium tracking-[-0.02em] text-white">Pick your mascot</p>
-        <span className={`font-display text-2xl tabular-nums ${secondsLeft <= 10 ? "text-red-300" : "text-slate-400"}`}>0:{secondsLeft.toString().padStart(2, "0")}</span>
-      </div>
-      <p className="text-slate-400 text-base -mt-2">Lock it in for the whole game — no pick by the timer and you get a random one.</p>
-
-      {error && <p className="text-red-300 text-base">{error}</p>}
-
-      <div className="grid grid-cols-4 sm:grid-cols-5 gap-3">
-        {MASCOTS.map((m) => (
-          <button
-            key={m.key}
-            type="button"
-            onClick={() => setSelected(m.key)}
-            aria-label={m.name}
-            className={`flex flex-col items-center gap-1 rounded-xl p-2 transition-all ${selected === m.key ? "bg-gradient-to-br from-[#FF1301]/20 via-[#FF6A00]/20 to-[#EAB308]/20 ring-2 ring-[#FF6A00] scale-105" : "bg-white/5 hover:bg-white/10 active:bg-white/15 ring-1 ring-white/10"}`}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element -- small local SVG sticker */}
-            <img src={mascotImageSrc(m.key)} alt={m.name} width={48} height={48} className="rounded-full bg-white/10" draggable={false} />
-            <span className="text-xs font-semibold text-slate-300 truncate w-full text-center">{m.name}</span>
+    <Shell
+      kicker={<span className={secondsLeft <= 10 ? "text-red-300" : undefined}>1 / 7 · PICK · 0:{secondsLeft.toString().padStart(2, "0")}</span>}
+      title="PICK YOUR"
+      titleGrad="FIGHTER"
+      sub="this dork represents you in the room"
+    >
+      {error && <p className="text-red-300 text-base mb-4">{error}</p>}
+      <div className="pp-picklayout">
+        <div className="pp-pickgrid">
+          {MASCOTS.map((m) => {
+            const isSel = selected === m.key;
+            return (
+              <button
+                key={m.key}
+                type="button"
+                className={"pp-pick" + (isSel ? " sel" : "")}
+                // Inline style on top of the .sel class — belt and suspenders. If the .sel rule
+                // ever loses a specificity/load-order fight against some other stylesheet, an
+                // inline style still wins, so "I clicked one and nothing visibly changed" can
+                // never happen purely from a CSS cascade issue.
+                style={isSel ? { position: "relative", background: "rgba(234,179,8,0.22)", borderColor: "#EAB308", boxShadow: "0 0 0 2px #EAB308, 0 0 18px rgba(234,179,8,0.45)" } : { position: "relative" }}
+                onClick={() => setSelected(m.key)}
+              >
+                {isSel && (
+                  <span
+                    aria-hidden
+                    style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: 999, background: "#EAB308", color: "#0B0B0F", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    ✓
+                  </span>
+                )}
+                <Mascot name={m.key} mood="idle" size={80} />
+                <span>{m.name}</span>
+              </button>
+            );
+          })}
+        </div>
+        <aside className="pp-preview">
+          {previewMascot ? (
+            <Mascot key={previewMascot.key} name={previewMascot.key} mood="happy" size={230} />
+          ) : (
+            <div style={{ width: 230, height: 230 }} />
+          )}
+          <div className="pp-preview-name">{previewMascot?.name ?? "choose one"}</div>
+          <div className="pp-preview-sub">ready to feast</div>
+          <button type="button" className="pp-btn gold" disabled={!selected || locking} onClick={() => selected && lockKey(selected)}>
+            {locking ? "LOCKING IN…" : "LOCK IN →"}
           </button>
-        ))}
+        </aside>
       </div>
-
-      <button
-        type="button"
-        onClick={() => selected && lockKey(selected)}
-        disabled={!selected || locking}
-        className="w-full h-12 rounded-full bg-gradient-to-r from-[#FF1301] via-[#FF6A00] to-[#EAB308] text-white font-display font-semibold text-lg hover:opacity-90 transition-opacity disabled:opacity-40"
-      >
-        {locking ? "Locking in…" : selected ? `Lock in ${MASCOTS.find((m) => m.key === selected)?.name}` : "Pick a mascot"}
-      </button>
-    </div>
+    </Shell>
   );
 }

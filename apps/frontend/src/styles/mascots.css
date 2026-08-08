@@ -1,0 +1,30 @@
+/* oofta mascot moods */
+.om-mascot{position:relative;display:inline-block;line-height:0}
+.om-mascot-art svg{width:100%;height:100%;display:block}
+.om-mascot-art{display:block;width:100%;height:100%;transform-origin:50% 88%}
+.om-idle .om-mascot-art{animation:om-idle 3.2s ease-in-out infinite}
+.om-happy .om-mascot-art{animation:om-happy 0.85s cubic-bezier(0.36,0.07,0.19,0.97) infinite}
+.om-sad .om-mascot-art{animation:om-sad 3s ease-in-out infinite;filter:saturate(0.55) brightness(0.96)}
+@keyframes om-idle{0%,100%{transform:translateY(0)}50%{transform:translateY(-3.5%)}}
+@keyframes om-happy{0%,100%{transform:translateY(0) scale(1,1) rotate(0deg)}25%{transform:translateY(-12%) scale(0.97,1.05) rotate(-4deg)}50%{transform:translateY(0) scale(1.06,0.92) rotate(0deg)}75%{transform:translateY(-9%) scale(0.98,1.04) rotate(4deg)}}
+@keyframes om-sad{0%,100%{transform:translateY(5%) rotate(-2.5deg) scale(1,0.97)}50%{transform:translateY(6.5%) rotate(2.5deg) scale(1,0.965)}}
+.om-spark{position:absolute;font-size:0;pointer-events:none}
+.om-spark svg{width:100%;height:100%}
+.om-spark-a{width:18%;height:18%;top:-4%;right:2%;animation:om-spark 0.85s ease-in-out infinite}
+.om-spark-b{width:12%;height:12%;top:14%;left:-2%;animation:om-spark 0.85s 0.28s ease-in-out infinite}
+@keyframes om-spark{0%,100%{opacity:0;transform:scale(0.4) rotate(0deg)}50%{opacity:1;transform:scale(1) rotate(18deg)}}
+.om-tear{position:absolute;width:11%;height:16%;left:22%;top:44%;animation:om-tear 1.6s ease-in infinite;pointer-events:none}
+@keyframes om-tear{0%{opacity:0;transform:translateY(0) scale(0.6)}18%{opacity:1;transform:translateY(6%) scale(1)}80%{opacity:1;transform:translateY(120%) scale(1)}100%{opacity:0;transform:translateY(150%) scale(0.8)}}
+.om-cloud{position:absolute;width:34%;height:18%;left:-8%;top:-6%;animation:om-cloud 3s ease-in-out infinite;pointer-events:none}
+@keyframes om-cloud{0%,100%{opacity:0.5;transform:translateY(0)}50%{opacity:0.85;transform:translateY(-8%)}}
+
+/* sad face swap — SVGs carry both faces; .om-sad reveals the sad one */
+.om-sad .om-face-base{display:none}
+.om-sad .om-face-sad{display:inline}
+
+/* winning — star eyes + victory bounce */
+.om-winning .om-face-base{display:none}
+.om-winning .om-face-win{display:inline}
+.om-winning .om-mascot-art{animation:om-win 0.7s cubic-bezier(0.36,0.07,0.19,0.97) infinite}
+@keyframes om-win{0%,100%{transform:translateY(0) scale(1) rotate(0deg)}30%{transform:translateY(-18%) scale(0.95,1.08) rotate(-6deg)}55%{transform:translateY(0) scale(1.1,0.88) rotate(0deg)}80%{transform:translateY(-13%) scale(0.97,1.05) rotate(6deg)}}
+.om-spark-c{width:15%;height:15%;bottom:6%;right:-4%;top:auto;animation:om-spark 0.7s 0.15s ease-in-out infinite}

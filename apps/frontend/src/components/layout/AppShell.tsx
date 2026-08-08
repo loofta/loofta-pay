@@ -37,7 +37,9 @@ function ShellContent({ children }: { children: ReactNode }) {
   // not just the promo banner — so the mascot lock-in / exclusion-draw / pack-opening sequence
   // reads as one continuous cinematic moment instead of a page embedded in the normal app shell.
   // The room page's own "< Rooms" link is the only way back out. Matches /app/gacha/:id and
-  // /app/gacha/demo, but not the /app/gacha list page itself (no trailing segment).
+  // /app/gacha/demo and /app/gacha/play (pick mascot -> pick room size), but not the /app/gacha
+  // explainer/Start page itself — that one still needs the normal header so it doesn't feel like
+  // you've already left the app the moment you land here.
   const isGachaRoomPage = /^\/(app\/)?gacha\/[^/]+\/?$/.test(pathname ?? '');
   const showBottomNav = !isCheckoutPage && !isGachaRoomPage && (
     pathname === '/' || pathname === '/app' ||

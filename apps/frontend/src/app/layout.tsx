@@ -3,6 +3,8 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import "@/styles/mascots.css";
+import "@/styles/pack-party.css";
 import { Toaster } from "@/components/ui/toaster";
 import { QueryProvider } from "@/providers/QueryProvider";
 import { AuthProvider } from "@/providers/AuthProvider";

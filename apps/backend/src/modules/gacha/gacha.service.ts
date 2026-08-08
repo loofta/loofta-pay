@@ -5,6 +5,7 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  SendTransactionError,
   Transaction,
   TransactionInstruction,
   TransactionMessage,
@@ -85,6 +86,7 @@ export interface RoomSummary {
   seats: number;
   entryUsdc: number;
   exclusionCount: number;
+  voteRound: number | null;
   status: string;
   seatsFilled: number;
   nftMetadata: NftMetadata | null;
@@ -180,7 +182,7 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data: rooms, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
       .in('status', ['waiting', 'excluding', 'purchasing', 'opening', 'bidding', 'settling'])
       .order('created_at', { ascending: true });
     if (error) throw new Error(`Failed to list gacha rooms: ${error.message}`);
@@ -195,6 +197,7 @@ export class GachaService {
       seats: r.seats,
       entryUsdc: Number(r.entry_usdc),
       exclusionCount: r.exclusion_count,
+      voteRound: r.vote_round,
       status: r.status,
       seatsFilled: countByRoom[r.id] ?? 0,
       nftMetadata: r.nft_metadata,
@@ -219,7 +222,7 @@ export class GachaService {
 
     const { data: rooms, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
       .in('id', roomIds)
       .order('created_at', { ascending: false });
     if (error) throw new Error(`Failed to load your gacha rooms: ${error.message}`);
@@ -232,6 +235,7 @@ export class GachaService {
       seats: r.seats,
       entryUsdc: Number(r.entry_usdc),
       exclusionCount: r.exclusion_count,
+      voteRound: r.vote_round,
       status: r.status,
       seatsFilled: countByRoom[r.id] ?? 0,
       nftMetadata: r.nft_metadata,
@@ -328,7 +332,7 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data: room, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, pending_bid_id, created_at')
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, pending_bid_id, created_at')
       .eq('id', roomId)
       .maybeSingle();
     if (error || !room) throw new NotFoundException('Room not found');
@@ -365,7 +369,7 @@ export class GachaService {
     return {
       room: {
         id: room.id, configKey: room.config_key, packType: room.pack_type, seats: room.seats, entryUsdc: Number(room.entry_usdc),
-        exclusionCount: room.exclusion_count,
+        exclusionCount: room.exclusion_count, voteRound: room.vote_round,
         status: room.status, seatsFilled: counts[roomId] ?? 0, nftMetadata: room.nft_metadata, rarity: room.rarity,
         buybackAmountUsdc: room.buyback_amount_usdc !== null ? Number(room.buyback_amount_usdc) : null,
         bidWindowEndsAt: room.bid_window_ends_at, createdAt: room.created_at,
@@ -547,6 +551,22 @@ export class GachaService {
     return { queued: openSeats };
   }
 
+  /** sendRawTransaction wrapped so a devnet SendTransactionError logs its full on-chain
+   *  simulation logs immediately — the bare error.message is just "Catch the SendTransactionError
+   *  and call getLogs() on it for full details", not the details themselves. getLogs() needs an
+   *  explicit connection to refetch the logs when they weren't embedded in the RPC error already. */
+  private async sendAndLog(conn: Connection, tx: Transaction, context: string): Promise<string> {
+    try {
+      return await conn.sendRawTransaction(tx.serialize());
+    } catch (e) {
+      if (e instanceof SendTransactionError) {
+        const logs = await e.getLogs(conn).catch(() => e.logs ?? null);
+        this.logger.error(`${context}: SendTransactionError — ${e.message}\nLogs: ${JSON.stringify(logs, null, 2)}`);
+      }
+      throw e;
+    }
+  }
+
   private async addBotParticipant(roomId: string, entryUsdc: number): Promise<void> {
     const db = this.supabase.getClient();
     // Re-check on every bot in case the room filled via a REAL join (or another bot) while this
@@ -574,7 +594,7 @@ export class GachaService {
     fundTx.feePayer = treasuryKeypair.publicKey;
     fundTx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
     fundTx.sign(treasuryKeypair);
-    const fundSig = await conn.sendRawTransaction(fundTx.serialize());
+    const fundSig = await this.sendAndLog(conn, fundTx, `Room ${roomId}: bot ${botUserId} fund tx`);
     await conn.confirmTransaction(fundSig, 'confirmed');
 
     const treasuryToAta = await getAssociatedTokenAddress(this.usdcMint, treasuryKeypair.publicKey);
@@ -585,7 +605,7 @@ export class GachaService {
     joinTx.feePayer = treasuryKeypair.publicKey;
     joinTx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
     joinTx.sign(treasuryKeypair, bot);
-    const joinSig = await conn.sendRawTransaction(joinTx.serialize());
+    const joinSig = await this.sendAndLog(conn, joinTx, `Room ${roomId}: bot ${botUserId} join tx`);
     await conn.confirmTransaction(joinSig, 'confirmed');
 
     // seat_number is NOT set here — the enforce_gacha_room_seat_cap trigger assigns it
@@ -618,7 +638,7 @@ export class GachaService {
     this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: seatNumber, seats: room.seats, status: 'waiting' });
     // Same threshold check a real participant's lock_mascot triggers — a bot filling/locking the
     // last seat must be able to start the exclusion draw too, since it has no socket to do it via.
-    await this.maybeAdvanceToExcluding(roomId);
+    await this.maybeAdvanceToRipping(roomId);
   }
 
   /** Debits the account that lost the most USDC in `tx` and returns its owner — same technique
@@ -691,7 +711,11 @@ export class GachaService {
    * gacha_room_participants (see migration) is the real race guard — this can be called
    * concurrently by every joiner without risk of overselling a room's seats.
    */
-  async confirmJoin(roomId: string, userId: string, paymentTxHash: string): Promise<{ seatNumber: number; roomFilled: boolean }> {
+  /** Mascot is now chosen BEFORE joining (see the frontend entry flow: pick mascot -> pick room
+   *  size -> join), so `mascotKey` rides along with the join call and gets locked in immediately
+   *  once the seat is confirmed — no separate in-room "pick" step for a real join anymore. */
+  async confirmJoin(roomId: string, userId: string, paymentTxHash: string, mascotKey: string): Promise<{ seatNumber: number; roomFilled: boolean }> {
+    if (!(MASCOT_KEYS as readonly string[]).includes(mascotKey)) throw new BadRequestException('Unknown mascot');
     const db = this.supabase.getClient();
     const { data: room, error: roomError } = await db.from('gacha_rooms').select('id, status, entry_usdc, seats').eq('id', roomId).maybeSingle();
     if (roomError || !room) throw new NotFoundException('Room not found');
@@ -710,6 +734,8 @@ export class GachaService {
       room_id: roomId,
       user_id: userId,
       payment_tx_hash: paymentTxHash,
+      mascot_key: mascotKey,
+      mascot_locked_at: new Date().toISOString(),
     }).select('seat_number').single();
     if (insertError || !inserted) {
       // Two different unique constraints can both raise 23505 here, and they mean different
@@ -724,28 +750,37 @@ export class GachaService {
     }
     const seatNumber = inserted.seat_number;
 
-    // Filling the last seat no longer starts the pack purchase directly — the room stays
-    // 'waiting' until every seated participant has also locked in a mascot (see lockMascot /
-    // maybeAdvanceToExcluding below), which is what actually kicks off the exclusion draw and,
-    // once that resolves, the pack purchase.
     const roomFilled = seatNumber === room.seats;
     this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: seatNumber, seats: room.seats, status: 'waiting' });
+    // In case this join was ALSO the last mascot lock needed (always true now, since mascots are
+    // pre-chosen) — mirrors the same check bot joins already trigger.
+    await this.maybeAdvanceToRipping(roomId);
 
     return { seatNumber, roomFilled };
   }
 
-  // ── Mascot lock-in + VRF exclusion draw (replaces the old bid auction) ────────────────
-  // New room lifecycle: waiting -> excluding -> purchasing -> opening -> settled. A room stays
-  // 'waiting' once every seat is filled until every seated participant has ALSO locked in a
-  // mascot (see maybeAdvanceToExcluding) — only then does the exclusion draw start, and only once
-  // that resolves does the pack purchase begin (see advanceExclusionDraw).
+  // ── Mascot lock-in, VRF exclusion draw, and vote-to-cut-more (Pack Party flow) ─────────
+  // Room lifecycle: waiting -> purchasing -> opening (RIP) -> excluding (EAT) ->
+  // voting (0+ rounds, CUT ONE MORE?) -> settled (WINNERS). A room stays 'waiting' once every
+  // seat is filled until every seated participant has ALSO locked in a mascot (see
+  // maybeAdvanceToRipping) — only then does the pack purchase begin. The exclusion draw runs
+  // once the pack is OPEN (see purchaseAndOpenRoom), not before — the rip is the moment, and the
+  // roulette follows it. After the initial exclusion, survivors vote each round on cutting one
+  // more (see startVoteRound/castVote/checkVoteRoundComplete) until a round doesn't pass or only
+  // one survivor remains, at which point finalizeBuybackSettlement runs exactly as before.
 
-  /** Called from the gateway's lock_mascot handler. Rejects re-locking (once set, immutable) —
-   *  the mascot whitelist itself is only enforced here (MASCOT_KEYS), not duplicated in the
-   *  gateway, since this is the one place mascot state actually lives (persisted, not in-memory
-   *  like the emoji picker — see migration 20260808120000 for why). */
-  async lockMascot(roomId: string, userId: string, mascotKey: string): Promise<{ seatNumber: number }> {
+  /** Called from confirmJoin/addBotParticipant right after a seat is confirmed — mascots are
+   *  picked BEFORE joining now (see the frontend entry flow), so there's no separate in-room
+   *  "pick" step for a real join to race; this just persists the pre-chosen key. Still used by
+   *  the dormant lock_mascot socket path too, for anything that predates the pre-choice flow. */
+  private async lockMascotForParticipant(roomId: string, participantId: string, mascotKey: string): Promise<void> {
     if (!(MASCOT_KEYS as readonly string[]).includes(mascotKey)) throw new BadRequestException('Unknown mascot');
+    await this.supabase.getClient().from('gacha_room_participants').update({ mascot_key: mascotKey, mascot_locked_at: new Date().toISOString() }).eq('id', participantId);
+  }
+
+  /** Dormant since mascots are now chosen before joining (see lockMascotForParticipant) — kept
+   *  for the lock_mascot socket event in case anything still needs a post-join pick path. */
+  async lockMascot(roomId: string, userId: string, mascotKey: string): Promise<{ seatNumber: number }> {
     const db = this.supabase.getClient();
     const { data: room } = await db.from('gacha_rooms').select('id, status').eq('id', roomId).maybeSingle();
     if (!room) throw new NotFoundException('Room not found');
@@ -755,17 +790,16 @@ export class GachaService {
     if (!participant) throw new BadRequestException('You are not a participant in this room');
     if (participant.mascot_locked_at) throw new BadRequestException('Your mascot is already locked in');
 
-    await db.from('gacha_room_participants').update({ mascot_key: mascotKey, mascot_locked_at: new Date().toISOString() }).eq('id', participant.id);
-    await this.maybeAdvanceToExcluding(roomId);
+    await this.lockMascotForParticipant(roomId, participant.id, mascotKey);
+    await this.maybeAdvanceToRipping(roomId);
     return { seatNumber: participant.seat_number };
   }
 
-  /** Re-checked after every mascot lock (real, via lockMascot) and every bot join (which
-   *  auto-locks immediately, having no socket to call lockMascot with) — mirrors the "recheck the
-   *  threshold on every relevant event" posture GachaGateway.maybeFireAllReady already uses for
-   *  the ready-check. Flips the room to 'excluding' and kicks the VRF request the instant the
-   *  LAST lock lands, whichever of the two paths that lock came through. */
-  private async maybeAdvanceToExcluding(roomId: string): Promise<void> {
+  /** Re-checked after every mascot lock (now normally via confirmJoin/addBotParticipant, since
+   *  the mascot is chosen before joining) — mirrors the "recheck the threshold on every relevant
+   *  event" posture GachaGateway.maybeFireAllReady already uses for the ready-check. Flips the
+   *  room to 'purchasing' and kicks off the real pack purchase the instant the LAST lock lands. */
+  private async maybeAdvanceToRipping(roomId: string): Promise<void> {
     const db = this.supabase.getClient();
     const { data: room } = await db.from('gacha_rooms').select('id, seats, status').eq('id', roomId).maybeSingle();
     if (!room || room.status !== 'waiting') return;
@@ -775,17 +809,52 @@ export class GachaService {
     if (rows.length < room.seats) return;
     if (rows.some((p: any) => !p.mascot_locked_at)) return;
 
-    await db.from('gacha_rooms').update({ status: 'excluding', updated_at: new Date().toISOString() }).eq('id', roomId);
-    this.logger.log(`Room ${roomId}: all ${room.seats} seats filled and locked in — exclusion draw starting`);
-    this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: rows.length, seats: room.seats, status: 'excluding' });
+    await db.from('gacha_rooms').update({ status: 'purchasing', updated_at: new Date().toISOString() }).eq('id', roomId);
+    this.logger.log(`Room ${roomId}: all ${room.seats} seats filled and locked in — buying the pack`);
+    this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: rows.length, seats: room.seats, status: 'purchasing' });
 
     // Fire-and-forget — the room-filling moment should feel instant rather than waiting for the
-    // next cron tick. advanceExcludingRooms's sweep then carries the poll-to-fulfillment step
-    // forward exactly as it would for a request it hadn't originated itself.
-    this.vrf
-      .requestRandomness(roomId)
-      .then(({ slot }) => db.from('gacha_rooms').update({ vrf_requested_at: new Date().toISOString(), vrf_request_slot: slot }).eq('id', roomId))
-      .catch((e: any) => this.logger.error(`Room ${roomId}: VRF request failed (will retry via cron): ${e.message}`));
+    // next cron tick.
+    this.purchaseAndOpenRoom(roomId).catch((e) => this.logger.error(`Room ${roomId}: purchase/open failed: ${e.message}`));
+  }
+
+  /** Ticks a VRF draw forward exactly one step for the given (roomId, seed) pair, using
+   *  vrf_requested_at/vrf_randomness nullability on gacha_rooms as the implicit sub-state — same
+   *  pattern giveaway-draw.service.ts's advanceVrf uses. Shared by the initial exclusion draw and
+   *  every vote-cut round's draw: each round reuses the SAME columns, reset to null before a new
+   *  one starts (only one draw is ever in flight for a room at a time), with `seed` giving each
+   *  round its own on-chain PDA (bare roomId for the initial draw, `${roomId}:vote:${round}` for
+   *  vote-cut draws — gacha-vrf.service.ts just hashes whatever string it's given). Returns the
+   *  resolved hex once fulfilled, or null while still in flight. Never falls back to non-VRF
+   *  randomness silently — a stalled request is only logged, same posture as giveaways. */
+  private async pollOrRequestVrf(roomId: string, seed: string): Promise<string | null> {
+    const db = this.supabase.getClient();
+    const { data: room } = await db.from('gacha_rooms').select('vrf_requested_at, vrf_randomness').eq('id', roomId).single();
+    if (!room) return null;
+    if (room.vrf_randomness) return room.vrf_randomness;
+
+    if (!room.vrf_requested_at) {
+      try {
+        const { slot } = await this.vrf.requestRandomness(seed);
+        await db.from('gacha_rooms').update({ vrf_requested_at: new Date().toISOString(), vrf_request_slot: slot }).eq('id', roomId);
+        this.logger.log(`Room ${roomId}: VRF randomness requested for "${seed}" (slot=${slot})`);
+      } catch (e: any) {
+        this.logger.error(`Room ${roomId}: VRF request failed for "${seed}": ${e.message} (will retry next tick)`);
+      }
+      return null;
+    }
+
+    const randomnessHex = await this.vrf.pollFulfillment(seed);
+    if (!randomnessHex) {
+      const requestedAgeMs = Date.now() - new Date(room.vrf_requested_at).getTime();
+      if (requestedAgeMs >= EXCLUSION_VRF_STALL_MS) {
+        this.logger.error(`Room ${roomId}: VRF request for "${seed}" has been pending longer than the stall threshold — needs manual attention`);
+      }
+      return null;
+    }
+    await db.from('gacha_rooms').update({ vrf_randomness: randomnessHex, vrf_fulfilled_at: new Date().toISOString() }).eq('id', roomId);
+    this.logger.log(`Room ${roomId}: VRF randomness fulfilled for "${seed}"`);
+    return randomnessHex;
   }
 
   /** Cron entrypoint — advances every room currently mid-exclusion-draw one step (mirrors
@@ -799,42 +868,17 @@ export class GachaService {
     }
   }
 
-  /** Ticks the on-chain VRF request forward exactly one step, using vrf_requested_at/
-   *  vrf_randomness nullability as an implicit sub-state within 'excluding' — same pattern
-   *  giveaway-draw.service.ts's advanceVrf uses. Once fulfilled: computes the exclusion set via
-   *  the same selectRandomWinners the giveaways draw uses (called with exclusionCount and treated
-   *  as EXCLUDED, not winners), persists it, and moves the room on to purchasing/opening exactly
-   *  as the old "room just filled" path used to. Never falls back to non-VRF randomness silently —
-   *  a stalled request is only logged, same posture as giveaways. */
+  /** Once fulfilled: computes the exclusion set via the same selectRandomWinners the giveaways
+   *  draw uses (called with exclusion_count and treated as EXCLUDED, not winners), persists it,
+   *  and moves the room on to voting (CUT ONE MORE?) — the pack purchase already happened before
+   *  this draw even started (see purchaseAndOpenRoom). */
   private async advanceExclusionDraw(roomId: string): Promise<void> {
     const db = this.supabase.getClient();
-    const { data: room } = await db.from('gacha_rooms').select('id, status, exclusion_count, vrf_requested_at, vrf_randomness').eq('id', roomId).single();
+    const { data: room } = await db.from('gacha_rooms').select('id, status, exclusion_count').eq('id', roomId).single();
     if (!room || room.status !== 'excluding') return;
 
-    let randomnessHex: string | null = room.vrf_randomness;
-    if (!randomnessHex) {
-      if (!room.vrf_requested_at) {
-        try {
-          const { slot } = await this.vrf.requestRandomness(roomId);
-          await db.from('gacha_rooms').update({ vrf_requested_at: new Date().toISOString(), vrf_request_slot: slot }).eq('id', roomId);
-          this.logger.log(`Room ${roomId}: VRF randomness requested (slot=${slot})`);
-        } catch (e: any) {
-          this.logger.error(`Room ${roomId}: VRF request failed: ${e.message} (will retry next tick)`);
-        }
-        return;
-      }
-
-      randomnessHex = await this.vrf.pollFulfillment(roomId);
-      if (!randomnessHex) {
-        const requestedAgeMs = Date.now() - new Date(room.vrf_requested_at).getTime();
-        if (requestedAgeMs >= EXCLUSION_VRF_STALL_MS) {
-          this.logger.error(`Room ${roomId}: VRF request has been pending longer than the stall threshold — needs manual attention`);
-        }
-        return;
-      }
-      await db.from('gacha_rooms').update({ vrf_randomness: randomnessHex, vrf_fulfilled_at: new Date().toISOString() }).eq('id', roomId);
-      this.logger.log(`Room ${roomId}: VRF randomness fulfilled`);
-    }
+    const randomnessHex = await this.pollOrRequestVrf(roomId, roomId);
+    if (!randomnessHex) return;
 
     const { data: participants } = await db.from('gacha_room_participants').select('id, user_id, seat_number').eq('room_id', roomId).order('seat_number', { ascending: true });
     const rows = participants ?? [];
@@ -848,13 +892,183 @@ export class GachaService {
       }
     }
 
-    await db.from('gacha_rooms').update({ status: 'purchasing', updated_at: new Date().toISOString() }).eq('id', roomId);
+    await db.from('gacha_rooms').update({ status: 'voting', vote_round: 1, updated_at: new Date().toISOString() }).eq('id', roomId);
     this.logger.log(`Room ${roomId}: exclusion draw resolved — ${excludedSeatNumbers.length}/${rows.length} excluded (seats ${excludedSeatNumbers.join(', ')})`);
     this.events.emit(GACHA_EVENTS.ROOM_EXCLUDED, { roomId, excludedSeatNumbers });
 
-    // Same fire-and-forget posture confirmJoin used to use — whoever/whatever triggered this tick
-    // shouldn't be blocked on the full purchase+open round trip (up to ~1 minute).
-    this.purchaseAndOpenRoom(roomId).catch((e) => this.logger.error(`Room ${roomId}: purchase/open failed: ${e.message}`));
+    await this.startVoteRound(roomId, 1);
+  }
+
+  // ── Voting: "CUT ONE MORE?" (survivors vote after the initial exclusion) ──────────────
+  // Vote tallies are in-memory only (same "live consensus, not a durable fact" posture as
+  // GachaGateway's readyByRoom/emojiByRoom) — the only thing that needs to be durable is a vote
+  // round's OUTCOME (another participant flipped to excluded = true), which lands in Postgres
+  // exactly the same way the initial exclusion draw's outcome does. A backend restart mid-round
+  // only costs that round's in-flight tally, never loses or double-applies a committed exclusion.
+  private readonly voteByRoom = new Map<string, Map<string, boolean>>();
+  private readonly voteRoundStartedAt = new Map<string, number>();
+  private readonly VOTE_ROUND_MS = 30_000;
+
+  // castVote and maybeTimeoutVoteRound both read the room/survivors via awaited Supabase calls
+  // BEFORE touching voteByRoom — without serializing them per room, the 15s cron sweep's timeout
+  // check could interleave inside that gap: it sees the real player's vote as "still missing",
+  // auto-votes NO for them, and finalizes the round (flipping gacha_rooms.status away from
+  // 'voting') before the real vote's write ever lands — the player's actual click then gets
+  // written into an orphaned tally nothing reads again, silently discarded. This queue makes the
+  // two entry points run strictly one-at-a-time per room so that gap can never be raced.
+  private readonly voteLocks = new Map<string, Promise<unknown>>();
+  private async withVoteLock<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
+    const prior = this.voteLocks.get(roomId) ?? Promise.resolve();
+    const run = prior.then(fn, fn);
+    this.voteLocks.set(roomId, run.catch(() => undefined));
+    return run;
+  }
+
+  private async getSurvivors(roomId: string): Promise<Array<{ id: string; user_id: string; seat_number: number }>> {
+    const db = this.supabase.getClient();
+    const { data } = await db.from('gacha_room_participants').select('id, user_id, seat_number').eq('room_id', roomId).eq('excluded', false).order('seat_number', { ascending: true });
+    return data ?? [];
+  }
+
+  /** Starts a fresh voting round: computes bot votes once up front (bots have no socket to vote
+   *  over — same reasoning as bots auto-locking mascots/always-ready), at a YES probability that
+   *  decreases each round (0.72 round 1, floor 0.08) so later rounds feel more like a real
+   *  survivors'-dilemma than an easy rubber stamp. Then checks completion immediately, in case
+   *  every survivor left is a bot (a fully-demo-mode room shouldn't need a human to ever click). */
+  private async startVoteRound(roomId: string, round: number): Promise<void> {
+    const survivors = await this.getSurvivors(roomId);
+    const tally = new Map<string, boolean>();
+    const yesP = Math.max(0.72 - (round - 1) * 0.28, 0.08);
+    for (const p of survivors) {
+      if (p.user_id.startsWith('bot-')) tally.set(p.user_id, Math.random() < yesP);
+    }
+    this.voteByRoom.set(roomId, tally);
+    this.voteRoundStartedAt.set(roomId, Date.now());
+    this.logger.log(`Room ${roomId}: vote round ${round} started (${survivors.length} survivors)`);
+    this.events.emit(GACHA_EVENTS.ROOM_VOTE_ROUND_STARTED, { roomId, round, survivorSeatNumbers: survivors.map((p) => p.seat_number) });
+    await this.checkVoteRoundComplete(roomId, round);
+  }
+
+  /** Called from the gateway's cast_vote handler. Only a CURRENT survivor can vote, and only
+   *  while this round is still collecting votes (not already locked in and mid-VRF-draw). */
+  async castVote(roomId: string, userId: string, vote: boolean): Promise<{ round: number }> {
+    return this.withVoteLock(roomId, async () => {
+      const db = this.supabase.getClient();
+      const { data: room } = await db.from('gacha_rooms').select('id, status, vote_round, vrf_requested_at').eq('id', roomId).maybeSingle();
+      if (!room) throw new NotFoundException('Room not found');
+      if (room.status !== 'voting') throw new BadRequestException('This room is not currently voting');
+      if (room.vrf_requested_at) throw new BadRequestException('This round has already locked in — wait for the next one');
+
+      const survivors = await this.getSurvivors(roomId);
+      if (!survivors.some((p) => p.user_id === userId)) throw new BadRequestException('You are not eligible to vote in this room');
+
+      let tally = this.voteByRoom.get(roomId);
+      if (!tally) { tally = new Map(); this.voteByRoom.set(roomId, tally); }
+      tally.set(userId, vote);
+
+      await this.checkVoteRoundComplete(roomId, room.vote_round);
+      return { round: room.vote_round };
+    });
+  }
+
+  /** Tallies once every current survivor has a vote recorded (bot + real). Ties count as YES —
+   *  `yesCount * 2 >= totalCount` — a deliberate choice distinct from a strict majority, made
+   *  explicitly for this feature (see PLAN doc). NO, or only 1 survivor, ends voting and settles;
+   *  YES fires a fresh VRF request for this round's cut (fire-and-forget, same posture as every
+   *  other VRF kick in this file — advanceVotingRooms' cron sweep carries it to resolution). */
+  private async checkVoteRoundComplete(roomId: string, round: number): Promise<void> {
+    const survivors = await this.getSurvivors(roomId);
+    const tally = this.voteByRoom.get(roomId) ?? new Map<string, boolean>();
+    if (survivors.some((p) => !tally.has(p.user_id))) return; // still waiting on someone
+
+    const yesCount = survivors.filter((p) => tally.get(p.user_id) === true).length;
+    const totalCount = survivors.length;
+    const passed = totalCount > 1 && yesCount * 2 >= totalCount;
+    this.logger.log(`Room ${roomId}: vote round ${round} complete — ${yesCount}/${totalCount} YES (${passed ? 'cutting one more' : 'locked in'})`);
+    this.events.emit(GACHA_EVENTS.ROOM_VOTE_RESULT, { roomId, round, yesCount, totalCount, passed });
+
+    if (!passed) {
+      this.voteByRoom.delete(roomId);
+      this.voteRoundStartedAt.delete(roomId);
+      await this.finalizeBuybackSettlement(roomId);
+      return;
+    }
+
+    const db = this.supabase.getClient();
+    this.vrf
+      .requestRandomness(`${roomId}:vote:${round}`)
+      .then(({ slot }) => db.from('gacha_rooms').update({ vrf_requested_at: new Date().toISOString(), vrf_request_slot: slot }).eq('id', roomId))
+      .catch((e: any) => this.logger.error(`Room ${roomId}: vote-cut VRF request failed (will retry via cron): ${e.message}`));
+  }
+
+  /** Cron entrypoint — for every room in 'voting': if a cut draw is in flight (vrf_requested_at
+   *  set), advance it; otherwise we're still collecting votes, so just check the 30s timeout. */
+  async advanceVotingRooms(): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: rooms } = await db.from('gacha_rooms').select('id, vote_round, vrf_requested_at').eq('status', 'voting');
+    for (const room of rooms ?? []) {
+      if (room.vrf_requested_at) {
+        await this.resolveVoteCutDraw(room.id, room.vote_round).catch((e) => this.logger.error(`Room ${room.id}: vote-cut draw advance failed: ${e.message}`));
+      } else {
+        await this.maybeTimeoutVoteRound(room.id, room.vote_round).catch((e) => this.logger.error(`Room ${room.id}: vote timeout check failed: ${e.message}`));
+      }
+    }
+  }
+
+  /** A human who never votes can't hang the room forever — 30s after a round starts, anyone still
+   *  missing a vote is counted as NO (the safer default: it never risks money on an unclicked
+   *  action) and the round re-checks completion immediately. */
+  private async maybeTimeoutVoteRound(roomId: string, round: number): Promise<void> {
+    const startedAt = this.voteRoundStartedAt.get(roomId);
+    if (!startedAt || Date.now() - startedAt < this.VOTE_ROUND_MS) return;
+
+    return this.withVoteLock(roomId, async () => {
+      const survivors = await this.getSurvivors(roomId);
+      let tally = this.voteByRoom.get(roomId);
+      if (!tally) { tally = new Map(); this.voteByRoom.set(roomId, tally); }
+      let changed = false;
+      for (const p of survivors) {
+        if (!tally.has(p.user_id)) { tally.set(p.user_id, false); changed = true; }
+      }
+      if (changed) this.logger.log(`Room ${roomId}: vote round ${round} timed out — auto-voting NO for stragglers`);
+      await this.checkVoteRoundComplete(roomId, round);
+    });
+  }
+
+  /** Once this round's VRF draw resolves: picks exactly one random survivor via the same
+   *  selectRandomWinners helper (count=1), marks them excluded, resets the VRF columns for the
+   *  next round (or leaves them clear if settling), and either starts the next round or — once
+   *  only 1 survivor remains — settles, matching the "voting can go all the way to a lone
+   *  winner" rule (see PLAN doc). */
+  private async resolveVoteCutDraw(roomId: string, round: number): Promise<void> {
+    const randomnessHex = await this.pollOrRequestVrf(roomId, `${roomId}:vote:${round}`);
+    if (!randomnessHex) return;
+
+    const db = this.supabase.getClient();
+    const survivors = await this.getSurvivors(roomId);
+    if (survivors.length <= 1) { await this.finalizeBuybackSettlement(roomId); return; } // guard only — shouldn't happen
+
+    const [victimUserId] = selectRandomWinners(survivors.map((p) => p.user_id), randomnessHex, 1);
+    const victim = survivors.find((p) => p.user_id === victimUserId)!;
+    await db.from('gacha_room_participants').update({ excluded: true }).eq('id', victim.id);
+    this.logger.log(`Room ${roomId}: vote round ${round} cut seat ${victim.seat_number}`);
+    this.events.emit(GACHA_EVENTS.ROOM_VOTE_CUT, { roomId, round, seatNumber: victim.seat_number });
+
+    this.voteByRoom.delete(roomId);
+    this.voteRoundStartedAt.delete(roomId);
+    await db.from('gacha_rooms').update({
+      vrf_requested_at: null, vrf_randomness: null, vrf_request_slot: null, vrf_fulfilled_at: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', roomId);
+
+    const remaining = survivors.length - 1;
+    if (remaining <= 1) {
+      await this.finalizeBuybackSettlement(roomId);
+    } else {
+      const nextRound = round + 1;
+      await db.from('gacha_rooms').update({ vote_round: nextRound, updated_at: new Date().toISOString() }).eq('id', roomId);
+      await this.startVoteRound(roomId, nextRound);
+    }
   }
 
   // ── Pack purchase + open (treasury is the sole Collectorcrypt "player" — see plan doc) ──
@@ -919,26 +1133,29 @@ export class GachaService {
       }
     }
 
-    // No more bid auction — the room goes straight to settlement once opened (see
-    // finalizeBuybackSettlement, now scoped to survivors only). 'settling' here is just a brief
-    // holding status while that buyback tx confirms, same caption/UI-null status the old
-    // bid-payment-grace path used, reused rather than adding a new status value.
+    // Pack Party flow: the rip happens BEFORE exclusion now (not after, like the previous
+    // session's version) — the room goes straight into the exclusion draw once opened, running
+    // concurrently with whatever ready-gate/reveal-animation time clients spend watching the rip
+    // client-side, so the draw is usually already resolved by the time players click through.
     await db.from('gacha_rooms').update({
       nft_metadata: nftMetadata,
       rarity,
       open_tx_sig: opened.transactionSignature ?? null,
       buyback_amount_usdc: buybackAmountUsdc,
-      status: 'settling',
+      status: 'excluding',
       opened_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('id', roomId);
 
-    this.logger.log(`Room ${roomId}: opened rarity=${rarity} buyback=$${buybackAmountUsdc} — settling`);
+    this.logger.log(`Room ${roomId}: opened rarity=${rarity} buyback=$${buybackAmountUsdc} — exclusion draw starting`);
     this.events.emit(GACHA_EVENTS.ROOM_OPENED, { roomId, nftMetadata, rarity, buybackAmountUsdc, bidWindowEndsAt: null });
 
-    // Fire-and-forget, same posture as every other multi-second money-moving step in this flow —
-    // whoever/whatever triggered purchaseAndOpenRoom shouldn't block on the buyback tx too.
-    this.finalizeBuybackSettlement(roomId).catch((e) => this.logger.error(`Room ${roomId}: settlement failed: ${e.message}`));
+    // Fire-and-forget — same posture as every other multi-second on-chain step in this flow.
+    // advanceExcludingRooms's cron sweep carries the poll-to-fulfillment step forward regardless.
+    this.vrf
+      .requestRandomness(roomId)
+      .then(({ slot }) => db.from('gacha_rooms').update({ vrf_requested_at: new Date().toISOString(), vrf_request_slot: slot }).eq('id', roomId))
+      .catch((e: any) => this.logger.error(`Room ${roomId}: VRF request failed (will retry via cron): ${e.message}`));
   }
 
   private async signAndSubmit(unsignedTxBase64: string, signer: Keypair, conn: Connection): Promise<string> {
@@ -1029,6 +1246,35 @@ export class GachaService {
       const { data: after } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
       status = after?.status ?? status;
       if (status === 'excluding') await new Promise((r) => setTimeout(r, 1000));
+    }
+    return { status };
+  }
+
+  /** Dev-only escape hatch for voting rounds, same reasoning as devForceAdvanceExcluding. If the
+   *  room is still collecting votes, forces the 30s timeout to fire immediately (auto-NO for
+   *  anyone missing) instead of waiting it out; if a cut draw is already in flight, loops it to
+   *  resolution the same way. Call it repeatedly to force through several rounds in a row. */
+  async devForceAdvanceVoting(roomId: string): Promise<{ status: string }> {
+    if (this.config.get<string>('NODE_ENV') === 'production') {
+      throw new BadRequestException('Force-advance is not available in production');
+    }
+    const db = this.supabase.getClient();
+    const { data: room } = await db.from('gacha_rooms').select('id, status, vote_round, vrf_requested_at').eq('id', roomId).maybeSingle();
+    if (!room) throw new NotFoundException('Room not found');
+    if (room.status !== 'voting') throw new BadRequestException(`Room isn't mid-voting (status: ${room.status})`);
+
+    if (!room.vrf_requested_at) {
+      this.voteRoundStartedAt.set(roomId, 0); // force the 30s window to already be elapsed
+      await this.maybeTimeoutVoteRound(roomId, room.vote_round);
+    }
+
+    let status = room.status;
+    for (let i = 0; i < 15 && status === 'voting'; i++) {
+      const { data: current } = await db.from('gacha_rooms').select('status, vote_round, vrf_requested_at').eq('id', roomId).single();
+      if (current?.vrf_requested_at) await this.resolveVoteCutDraw(roomId, current.vote_round);
+      const { data: after } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
+      status = after?.status ?? status;
+      if (status === 'voting') await new Promise((r) => setTimeout(r, 1000));
     }
     return { status };
   }
@@ -1141,6 +1387,15 @@ export class GachaService {
    *  trust the API's say-so, verify on-chain" posture as verifyOnChainPayment/PackService. */
   private async finalizeBuybackSettlement(roomId: string): Promise<void> {
     const db = this.supabase.getClient();
+    // Atomic claim — settlement can now be reached from two independent paths (a vote round not
+    // passing, or voting cutting all the way down to 1 survivor), which can race a cron tick
+    // against a real-time vote. This WHERE-gated update ensures only the first caller actually
+    // proceeds with the real buyback tx — same "claim before doing the expensive work" posture
+    // the seat-cap trigger uses at join time. Reuses 'settling' for its original meaning too (a
+    // brief holding status while the buyback tx confirms).
+    const { data: claimed } = await db.from('gacha_rooms').update({ status: 'settling', updated_at: new Date().toISOString() }).eq('id', roomId).in('status', ['excluding', 'voting']).select('id');
+    if (!claimed?.length) return;
+
     const { data: room } = await db.from('gacha_rooms').select('id, seats, nft_metadata').eq('id', roomId).single();
     if (!room?.nft_metadata?.mint) throw new Error(`Room ${roomId}: cannot buyback — no NFT mint recorded`);
 
@@ -1373,7 +1628,7 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data, count, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at', { count: 'exact' })
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range((page - 1) * pageSize, page * pageSize - 1);
     if (error) throw new Error(`Failed to load gacha rooms: ${error.message}`);
@@ -1382,7 +1637,7 @@ export class GachaService {
     return {
       data: (data ?? []).map((r: any) => ({
         id: r.id, configKey: r.config_key, packType: r.pack_type, seats: r.seats, entryUsdc: Number(r.entry_usdc),
-        exclusionCount: r.exclusion_count,
+        exclusionCount: r.exclusion_count, voteRound: r.vote_round,
         status: r.status, seatsFilled: counts[r.id] ?? 0, nftMetadata: r.nft_metadata, rarity: r.rarity,
         buybackAmountUsdc: r.buyback_amount_usdc !== null ? Number(r.buyback_amount_usdc) : null,
         bidWindowEndsAt: r.bid_window_ends_at, createdAt: r.created_at,

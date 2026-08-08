@@ -1,32 +1,36 @@
 "use client";
 
-// Gacha demo — pure UI walkthrough, zero backend calls. Simulates the whole lobby -> open ->
-// ready check -> 3D rip -> bid -> settle -> claim lifecycle entirely in local state with timers,
-// using the exact same components as the real /app/gacha/[roomId] page (GachaPack3D, GachaCard),
-// so this is genuinely useful for reviewing the UI/UX without a Collectorcrypt key, a database,
-// or any real money moving. Nothing here ever touches /api/gacha/* — see the real room page for
-// the version wired to the backend.
-//
-// The lobby fills slowly and randomly (1.5-4s per seat) rather than instantly, so the "waiting
-// for players" moment actually reads as other people trickling in rather than a flash-cut. The
-// ready check simulates the other seats (bots) marking themselves ready on their own staggered
-// timers, same as the real room's participants would — only the real seat (you) requires an
-// actual click, matching the real page's "no click to open, only to mark ready" flow.
+// Gacha demo — pure UI walkthrough, zero backend calls. Simulates the real flow entirely in
+// local state with timers, reusing the exact same screens as the real /app/gacha/play +
+// /app/gacha/[roomId] pages (MascotPicker, Shell/Chip, GachaPack3D, GachaRoulette, VoteRound —
+// all ported 1:1 from pack-party/preview/pack-party-screens.jsx), so this stays a genuinely
+// accurate preview of the product without a wallet, a database, or any real money moving.
+// Nothing here ever touches /api/gacha/* — see those two real pages for the versions wired to
+// the backend.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
-import GachaPack from "@/components/GachaPack";
-import GachaCard from "@/components/GachaCard";
-import PokerTable from "@/components/PokerTable";
+import MascotPicker from "@/components/MascotPicker";
+import GachaRoulette from "@/components/GachaRoulette";
+import VoteRound, { type VoteParticipant } from "@/components/VoteRound";
+import Mascot from "@/components/Mascot";
+import { Shell, Chip, money, type ChipPlayer } from "@/components/PackParty";
+import { MASCOTS, getMascot } from "@/lib/mascots";
 import type { GachaOpenResult, GachaRarity } from "@/components/GachaPack3D";
 
 const GachaPack3D = dynamic(() => import("@/components/GachaPack3D"), { ssr: false });
 
-type DemoStatus = "waiting" | "purchasing" | "opening" | "readying" | "bidding" | "settling" | "settled";
+type DemoStage = "pick" | "lobby" | "rip" | "excluding" | "voting" | "settled";
 
-const SEATS = 5;
+interface DemoPlayer {
+  seatNumber: number;
+  mascotKey: string;
+  isMe: boolean;
+  excluded: boolean;
+}
+
 const ENTRY_USDC = 10;
 const RARITIES: Array<{ rarity: GachaRarity; buybackUsdc: number; name: string }> = [
   { rarity: "common", buybackUsdc: 8, name: "Common Card" },
@@ -34,43 +38,47 @@ const RARITIES: Array<{ rarity: GachaRarity; buybackUsdc: number; name: string }
   { rarity: "rare", buybackUsdc: 60, name: "Rare Card" },
   { rarity: "epic", buybackUsdc: 150, name: "Epic Card" },
 ];
-const BID_WINDOW_S = 60;
-const PAY_WINDOW_S = 20;
-const MIN_SEAT_DELAY_MS = 1500;
-const MAX_SEAT_DELAY_MS = 4000;
-const BOT_NAMES = ["Nova", "Ziggy", "Marlowe", "Kip", "Sable", "Orion", "Finch", "Remy"];
 
-const RARITY_STYLE: Record<string, string> = {
-  common: "border-slate-500/30 bg-slate-500/10 text-slate-300",
-  uncommon: "border-emerald-400/30 bg-emerald-400/10 text-emerald-300",
-  rare: "border-purple-400/30 bg-purple-400/10 text-purple-300",
-  epic: "border-amber-400/40 bg-amber-400/10 text-amber-300",
-};
+const exclusionCountFor = (seats: number) => (seats === 5 ? 1 : 2);
 
-function formatCountdown(s: number): string {
-  const clamped = Math.max(0, s);
-  const m = Math.floor(clamped / 60);
-  const sec = clamped % 60;
-  return `${m}:${sec.toString().padStart(2, "0")}`;
+function shuffledMascotKeys(exclude: string): string[] {
+  const pool = MASCOTS.map((m) => m.key).filter((k) => k !== exclude);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool;
+}
+
+function buildRoster(myMascotKey: string, seats: number): DemoPlayer[] {
+  const bots = shuffledMascotKeys(myMascotKey);
+  return Array.from({ length: seats }, (_, i) => ({
+    seatNumber: i + 1,
+    mascotKey: i === 0 ? myMascotKey : bots[(i - 1) % bots.length],
+    isMe: i === 0,
+    excluded: false,
+  }));
 }
 
 export default function GachaDemoPage() {
-  const [status, setStatus] = useState<DemoStatus>("waiting");
-  const [seatsFilled, setSeatsFilled] = useState(1);
-  const [rarity, setRarity] = useState<(typeof RARITIES)[number] | null>(null);
-  const [bestBid, setBestBid] = useState<number | null>(null);
-  const [iWon, setIWon] = useState(false);
-  const [bidInput, setBidInput] = useState("");
-  const [bidWindowLeft, setBidWindowLeft] = useState(BID_WINDOW_S);
-  const [payWindowLeft, setPayWindowLeft] = useState(PAY_WINDOW_S);
-  const [claimed, setClaimed] = useState(false);
-  const [isPrivate, setIsPrivate] = useState(true);
+  const [stage, setStage] = useState<DemoStage>("pick");
+  const [seats, setSeats] = useState(5);
+  const [mascotKey, setMascotKey] = useState<string | null>(null);
+  const [players, setPlayers] = useState<DemoPlayer[]>([]);
+  const [joinedCount, setJoinedCount] = useState(1);
 
-  // Ready check — real seat needs a real click; bot seats ready up on their own staggered timers.
-  const [iAmReady, setIAmReady] = useState(false);
-  const [botsReady, setBotsReady] = useState(0);
+  const [readySeatNumbers, setReadySeatNumbers] = useState<number[]>([]);
   const [autoOpen, setAutoOpen] = useState(false);
+  const [rarity, setRarity] = useState<(typeof RARITIES)[number] | null>(null);
   const [revealedCard, setRevealedCard] = useState<GachaOpenResult | null>(null);
+
+  const [finalVictims, setFinalVictims] = useState<number[] | null>(null);
+
+  const [round, setRound] = useState(1);
+  const [tally, setTally] = useState<Record<number, boolean>>({});
+  const [myVote, setMyVote] = useState<boolean | undefined>(undefined);
+  const [voting, setVoting] = useState(true);
+  const [voteDrawInProgress, setVoteDrawInProgress] = useState(false);
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
@@ -79,270 +87,274 @@ export default function GachaDemoPage() {
 
   const reset = () => {
     clearTimers();
-    setStatus("waiting");
-    setSeatsFilled(1);
-    setRarity(null);
-    setBestBid(null);
-    setIWon(false);
-    setBidInput("");
-    setBidWindowLeft(BID_WINDOW_S);
-    setPayWindowLeft(PAY_WINDOW_S);
-    setClaimed(false);
-    setIAmReady(false);
-    setBotsReady(0);
+    setStage("pick");
+    setSeats(5);
+    setMascotKey(null);
+    setPlayers([]);
+    setJoinedCount(1);
+    setReadySeatNumbers([]);
     setAutoOpen(false);
+    setRarity(null);
     setRevealedCard(null);
+    setFinalVictims(null);
+    setRound(1);
+    setTally({});
+    setMyVote(undefined);
+    setVoting(true);
+    setVoteDrawInProgress(false);
   };
 
-  // Lobby: other demo players trickle in slowly, at random intervals — not instantly.
+  const handleLocalMascotPick = async (key: string) => {
+    setMascotKey(key);
+    setPlayers(buildRoster(key, seats));
+    setJoinedCount(1);
+    setStage("lobby");
+    return { ok: true };
+  };
+
+  const changeSize = (s: number) => {
+    if (!mascotKey) return;
+    setSeats(s);
+    setPlayers(buildRoster(mascotKey, s));
+    setJoinedCount(1);
+  };
+
+  // Lobby: bots trickle in slowly, at random intervals — not instantly.
   useEffect(() => {
-    if (status !== "waiting") return;
-    if (seatsFilled >= SEATS) {
-      setStatus("purchasing");
-      after(1200, () => setStatus("opening"));
-      after(2600, () => {
-        const picked = RARITIES[Math.floor(Math.random() * RARITIES.length)];
-        setRarity(picked);
-        setBestBid(picked.buybackUsdc);
-        setStatus("readying");
-      });
+    if (stage !== "lobby") return;
+    if (joinedCount >= seats) {
+      after(900, () => setStage("rip"));
       return;
     }
-    after(MIN_SEAT_DELAY_MS + Math.random() * (MAX_SEAT_DELAY_MS - MIN_SEAT_DELAY_MS), () => setSeatsFilled((n) => Math.min(SEATS, n + 1)));
+    after(350 + Math.random() * 550, () => setJoinedCount((n) => Math.min(seats, n + 1)));
     return clearTimers;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, seatsFilled]);
+  }, [stage, joinedCount, seats]);
 
-  // Ready check: the other (SEATS - 1) bot seats ready up on their own staggered timers.
+  // Rip: pick the rarity the instant the ready-gate opens, bots ready up on their own staggered
+  // timers, then GachaPack3D auto-opens once everyone (incl. you) is ready.
   useEffect(() => {
-    if (status !== "readying") return;
-    const otherSeats = SEATS - 1;
-    const botTimers = Array.from({ length: otherSeats }, (_, i) =>
-      setTimeout(() => setBotsReady((n) => n + 1), 800 + i * (600 + Math.random() * 900)),
+    if (stage !== "rip") return;
+    setRarity(RARITIES[Math.floor(Math.random() * RARITIES.length)]);
+    const botSeats = players.filter((p) => !p.isMe).map((p) => p.seatNumber);
+    botSeats.forEach((seatNumber, i) =>
+      after(800 + i * (600 + Math.random() * 900), () => setReadySeatNumbers((r) => (r.includes(seatNumber) ? r : [...r, seatNumber]))),
     );
-    return () => botTimers.forEach(clearTimeout);
-  }, [status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage]);
 
+  const iAmReady = readySeatNumbers.includes(1);
   useEffect(() => {
-    if (status === "readying" && iAmReady && botsReady >= SEATS - 1) setAutoOpen(true);
-  }, [status, iAmReady, botsReady]);
+    if (stage === "rip" && iAmReady && readySeatNumbers.length >= seats) setAutoOpen(true);
+  }, [stage, iAmReady, readySeatNumbers, seats]);
 
-  // Bidding countdown.
+  // Roulette resolution — same fixed local timer GachaRoulette's own spin then locks onto once
+  // finalVictims stops being null (see GachaRoulette.tsx for the shared reveal choreography).
   useEffect(() => {
-    if (status !== "bidding") return;
-    if (bidWindowLeft <= 0) {
-      if (iWon) {
-        setStatus("settling");
-        setPayWindowLeft(PAY_WINDOW_S);
-      } else {
-        setStatus("settled");
-      }
-      return;
-    }
-    const t = setTimeout(() => setBidWindowLeft((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [status, bidWindowLeft, iWon]);
+    if (stage !== "excluding" || finalVictims) return;
+    const survivorSeats = players.filter((p) => !p.excluded).map((p) => p.seatNumber);
+    if (!survivorSeats.length) return;
+    after(2200, () => {
+      const pickCount = Math.min(exclusionCountFor(seats), survivorSeats.length);
+      const shuffled = [...survivorSeats].sort(() => Math.random() - 0.5);
+      const victims = shuffled.slice(0, pickCount);
+      setFinalVictims(victims);
+      setPlayers((ps) => ps.map((p) => (victims.includes(p.seatNumber) ? { ...p, excluded: true } : p)));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, finalVictims]);
 
-  // Pay-for-the-win countdown (only reached if the demo user placed the winning bid).
-  useEffect(() => {
-    if (status !== "settling") return;
-    if (payWindowLeft <= 0) { setStatus("settled"); return; }
-    const t = setTimeout(() => setPayWindowLeft((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [status, payWindowLeft]);
+  const survivors = players.filter((p) => !p.excluded);
 
-  const handleBid = () => {
-    const amount = parseFloat(bidInput);
-    const floor = bestBid ?? rarity?.buybackUsdc ?? 0;
-    if (!Number.isFinite(amount) || amount <= floor) return;
-    setBestBid(amount);
-    setIWon(true);
-    setBidInput("");
+  const launchVoteRound = (r: number) => {
+    setRound(r);
+    setTally({});
+    setMyVote(undefined);
+    setVoting(true);
+    const alive = players.filter((p) => !p.excluded);
+    const bots = alive.filter((p) => !p.isMe);
+    const yesProbability = Math.max(0.72 - (r - 1) * 0.28, 0.08);
+    bots.forEach((b, i) =>
+      after(900 + i * 650 + Math.random() * 400, () => setTally((t) => ({ ...t, [b.seatNumber]: Math.random() < yesProbability }))),
+    );
   };
 
-  const handlePay = () => setStatus("settled");
-  const handleClaim = () => after(500, () => setClaimed(true));
+  useEffect(() => {
+    if (stage !== "voting" || !voting) return;
+    const alive = players.filter((p) => !p.excluded);
+    const votes = alive.map((p) => (p.seatNumber === 1 ? myVote : tally[p.seatNumber])).filter((v) => v !== undefined);
+    const iAmPending = alive.some((p) => p.isMe) && myVote === undefined;
+    if (iAmPending || votes.length < alive.length) return;
+    setVoting(false);
+    const yesCount = votes.filter(Boolean).length;
+    const passed = yesCount * 2 >= votes.length; // ties count as YES
+    after(1100, () => {
+      if (passed && alive.length > 1) {
+        setVoteDrawInProgress(true);
+        after(1500, () => {
+          const victim = alive[Math.floor(Math.random() * alive.length)];
+          setPlayers((ps) => ps.map((p) => (p.seatNumber === victim.seatNumber ? { ...p, excluded: true } : p)));
+          setVoteDrawInProgress(false);
+          const stillIn = players.filter((p) => !p.excluded && p.seatNumber !== victim.seatNumber);
+          if (stillIn.length > 1) launchVoteRound(round + 1);
+          else setStage("settled");
+        });
+      } else {
+        setStage("settled");
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, voting, tally, myVote]);
 
-  const payoutUsdc = useMemo(() => (bestBid ? bestBid / SEATS : 0), [bestBid]);
+  const castVote = (vote: boolean) => setMyVote(vote);
 
-  const [myEmoji, setMyEmoji] = useState<string | null>(null);
-  const participants = useMemo(
-    () => Array.from({ length: seatsFilled }, (_, i) => ({
-      seatNumber: i + 1,
-      username: i === 0 ? "You" : BOT_NAMES[(i - 1) % BOT_NAMES.length],
-      isMe: i === 0,
-      emoji: i === 0 ? myEmoji ?? undefined : undefined,
-    })),
-    [seatsFilled, myEmoji],
-  );
+  const potUsdc = rarity?.buybackUsdc ?? 0;
+  const me = players.find((p) => p.isMe) ?? null;
+  const myMascot = getMascot(me?.mascotKey);
+  const iWon = !!me && !me.excluded;
+  const payoutUsdc = survivors.length ? potUsdc / survivors.length : 0;
 
-  const statusCaption = useMemo(() => {
-    switch (status) {
-      case "waiting": return `Waiting for ${SEATS - seatsFilled} more player${SEATS - seatsFilled === 1 ? "" : "s"}…`;
-      case "purchasing": return "Buying the pack…";
-      case "opening": return "Opening the pack…";
-      case "readying": return autoOpen ? "Everyone's ready…" : "Waiting for everyone to be ready…";
-      case "bidding": return "Bidding is open";
-      case "settling": return "Settling…";
-      case "settled": return "Settled";
-      default: return status;
-    }
-  }, [status, seatsFilled, autoOpen]);
+  const toChipPlayer = (p: DemoPlayer): ChipPlayer => ({
+    seatNumber: p.seatNumber,
+    mascotKey: p.mascotKey,
+    name: getMascot(p.mascotKey)?.name ?? `Seat ${p.seatNumber}`,
+    isMe: p.isMe,
+    excluded: p.excluded,
+  });
 
-  const show3D = status === "opening" || status === "readying";
+  const voteSurvivors: VoteParticipant[] = survivors.map((p) => ({
+    seatNumber: p.seatNumber,
+    username: getMascot(p.mascotKey)?.name ?? null,
+    isMe: p.isMe,
+    mascotKey: p.mascotKey,
+  }));
+
+  let screen: React.ReactNode;
+
+  if (stage === "pick") {
+    screen = <MascotPicker lockedMascotKey={null} onLock={handleLocalMascotPick} />;
+  } else if (stage === "lobby") {
+    const full = joinedCount >= seats;
+    screen = (
+      <Shell
+        kicker="2 / 7 · LOBBY"
+        title="THE"
+        titleGrad="ROOM"
+        sub={full ? "room is full. no backing out now." : "degens joining…"}
+        footer={
+          <button type="button" className={"pp-btn gold" + (full ? " waitpulse" : "")} disabled>
+            {full ? "RIP THE PACK →" : `waiting ${joinedCount}/${seats}`}
+          </button>
+        }
+      >
+        <div className="pp-sizetoggle">
+          {[5, 10].map((s) => (
+            <button key={s} type="button" className={"pp-seg" + (seats === s ? " on" : "")} onClick={() => changeSize(s)}>
+              {s} players
+            </button>
+          ))}
+        </div>
+        <div className="pp-lobbygrid">
+          {players.slice(0, seats).map((p, i) =>
+            i < joinedCount ? <Chip key={p.seatNumber} p={toChipPlayer(p)} mood={p.isMe ? "happy" : "idle"} /> : <div key={`slot${i}`} className="pp-slot">?</div>,
+          )}
+        </div>
+      </Shell>
+    );
+  } else if (stage === "rip") {
+    screen = (
+      <div className="pp-shell pp-rip">
+        <div className="pp-glow" />
+        <div className="pp-ripbar">
+          <span aria-hidden style={{ width: 1 }} />
+          <div className="pp-ripchips">
+            {players.map((p) => {
+              const m = getMascot(p.mascotKey);
+              const isReady = readySeatNumbers.includes(p.seatNumber);
+              return (
+                <div key={p.seatNumber} className={"pp-minichip" + (isReady ? " rdy" : "")}>
+                  {m && <Mascot name={m.key} mood={isReady ? "happy" : "idle"} size={40} title={m.name} />}
+                </div>
+              );
+            })}
+          </div>
+          <span className="pp-kicker">3 / 7 · {autoOpen ? "ripping…" : `ready ${readySeatNumbers.length}/${seats}`}</span>
+        </div>
+        <div className="absolute inset-0">
+          <GachaPack3D
+            autoOpen={autoOpen}
+            resolveOpen={() => new Promise<GachaOpenResult>((resolve) => {
+              const check = () => (rarity ? resolve({ nftMetadata: { name: rarity.name }, rarity: rarity.rarity }) : setTimeout(check, 200));
+              check();
+            })}
+            onOpened={(result) => { setRevealedCard(result); after(1600, () => setStage("excluding")); }}
+            idleSubtitle={autoOpen ? "ripping the pack…" : "waiting for everyone to be ready…"}
+            openingLabel="opening the pack…"
+            hintTop={84}
+          />
+        </div>
+        <div className="pp-ripfoot">
+          {!iAmReady && <button type="button" className="pp-btn gold" onClick={() => setReadySeatNumbers((r) => [...r, 1])}>I&apos;M READY 🔥</button>}
+          {iAmReady && !autoOpen && <span className="pp-small waitpulse">waiting on the room…</span>}
+          {autoOpen && <span className="pp-small waitpulse">pack is ripping itself…</span>}
+        </div>
+      </div>
+    );
+  } else if (stage === "excluding") {
+    screen = (
+      <GachaRoulette
+        players={players.map(toChipPlayer)}
+        cardName={revealedCard?.nftMetadata?.name ?? rarity?.name}
+        rarity={rarity?.rarity}
+        potUsdc={potUsdc}
+        exclusionCount={exclusionCountFor(seats)}
+        finalVictims={finalVictims}
+        onContinue={() => {
+          const stillIn = players.filter((p) => !p.excluded);
+          if (stillIn.length > 1) { setStage("voting"); launchVoteRound(1); } else setStage("settled");
+        }}
+      />
+    );
+  } else if (stage === "voting") {
+    screen = <VoteRound round={round} survivors={voteSurvivors} potUsdc={potUsdc} myVote={myVote} onVote={castVote} drawInProgress={voteDrawInProgress} />;
+  } else {
+    screen = (
+      <Shell
+        kicker="7 / 7 · PAYOUT"
+        title="WINNERS"
+        titleGrad="EAT"
+        sub="buyback settled. instantly. obviously."
+        footer={
+          <div className="pp-votebtns">
+            <button type="button" className="pp-btn gold" onClick={reset}>RUN IT BACK →</button>
+          </div>
+        }
+      >
+        {!iWon && myMascot && (
+          <div className="flex flex-col items-center gap-2 mb-6">
+            <Mascot name={myMascot.key} mood="sad" size={100} />
+            <p className="pp-small" style={{ marginTop: 0 }}>you were excluded this round — no payout</p>
+          </div>
+        )}
+        <div className="pp-winrow">
+          {survivors.map((p) => (
+            <div key={p.seatNumber} className="pp-winner">
+              <Chip p={toChipPlayer(p)} mood={p.isMe ? "winning" : "idle"} size={96} />
+              <div className="pp-payout">+{money(payoutUsdc)}</div>
+            </div>
+          ))}
+        </div>
+        <div className="pp-pot">POT {money(potUsdc)} · SPLIT {survivors.length} WAYS</div>
+      </Shell>
+    );
+  }
 
   return (
-    <div className="relative w-full min-h-[calc(100vh-var(--header-h,0px))] bg-[#111114] text-slate-100">
-      <div className="max-w-2xl mx-auto px-5 pt-6 pb-16">
-        <div className="flex items-center justify-between mb-6">
-          <Link href="/app/gacha" className="flex items-center gap-1 text-slate-400 hover:text-white transition-colors text-base">
-            <ChevronLeft className="w-4 h-4" /> Rooms
-          </Link>
-          <span className="text-slate-400 text-base">{seatsFilled}/{SEATS} players · ${ENTRY_USDC.toFixed(2)} each</span>
-        </div>
-
-        <div className="flex flex-col items-center gap-4 mb-8">
-          <div className="w-full -mb-4 relative z-10">
-            <PokerTable seats={SEATS} participants={participants} onPickEmoji={setMyEmoji} />
-          </div>
-
-          {status === "waiting" ? (
-            <GachaPack width={180} />
-          ) : show3D ? (
-            <div className="w-full h-[380px] rounded-2xl overflow-hidden border border-white/10">
-              <GachaPack3D
-                autoOpen={autoOpen}
-                resolveOpen={() => new Promise<GachaOpenResult>((resolve) => {
-                  // Demo has no server round trip — the rarity is already known locally the
-                  // instant the pack "opens," same shape as the real page's waitForReveal.
-                  const check = () => (rarity ? resolve({ nftMetadata: { name: rarity.name }, rarity: rarity.rarity }) : setTimeout(check, 200));
-                  check();
-                })}
-                onOpened={(result) => { setRevealedCard(result); setStatus("bidding"); }}
-                idleSubtitle={autoOpen ? statusCaption : "Waiting for everyone to be ready…"}
-                openingLabel={statusCaption}
-              />
-            </div>
-          ) : revealedCard ? (
-            <GachaCard width={220} card={{ name: revealedCard.nftMetadata?.name ?? "Mystery Card", rarity: revealedCard.rarity }} />
-          ) : (
-            <GachaPack width={180} face="back" />
-          )}
-          {rarity && !show3D && (
-            <span className={`text-sm font-semibold uppercase tracking-wide px-3 py-1 rounded-full border ${RARITY_STYLE[rarity.rarity]}`}>
-              {rarity.rarity}
-            </span>
-          )}
-          {!show3D && <p className="text-slate-300 text-base font-medium">{statusCaption}</p>}
-        </div>
-
-        {status === "readying" && !autoOpen && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 text-center space-y-3">
-            {iAmReady ? (
-              <p className="text-slate-300 text-base">Waiting for everyone to be ready — {1 + botsReady}/{SEATS} ready.</p>
-            ) : (
-              <>
-                <p className="text-slate-300 text-base">Everyone marks ready, then the pack opens for the whole room at once.</p>
-                <button
-                  type="button"
-                  onClick={() => setIAmReady(true)}
-                  className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors"
-                >
-                  I&apos;m ready
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {status === "bidding" && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-slate-400 text-base">Current best</p>
-                <p className="text-2xl font-bold text-slate-100">${(bestBid ?? 0).toFixed(2)}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-slate-400 text-base">Time left</p>
-                <p className="text-2xl font-bold text-slate-100 tabular-nums">{formatCountdown(bidWindowLeft)}</p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                inputMode="decimal"
-                value={bidInput}
-                onChange={(e) => setBidInput(e.target.value)}
-                placeholder={`> $${(bestBid ?? 0).toFixed(2)}`}
-                className="flex-1 h-11 rounded-full bg-white/10 border border-white/10 px-4 text-base text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-amber-400/50"
-              />
-              <button
-                type="button"
-                onClick={handleBid}
-                className="h-11 px-6 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors"
-              >
-                Bid
-              </button>
-            </div>
-            <p className="text-slate-500 text-base">No bid? The card auto-sells back and everyone splits the buyback evenly.</p>
-          </div>
-        )}
-
-        {status === "settling" && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-3 text-center">
-            <p className="text-slate-100 text-lg font-bold">You won the bid — ${(bestBid ?? 0).toFixed(2)}</p>
-            <p className="text-slate-400 text-base">Pay within {formatCountdown(payWindowLeft)} to claim the card.</p>
-            <button
-              type="button"
-              onClick={handlePay}
-              className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors"
-            >
-              Pay ${(bestBid ?? 0).toFixed(2)}
-            </button>
-          </div>
-        )}
-
-        {status === "settled" && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
-            {claimed ? (
-              <p className="text-center text-slate-100 text-lg font-bold">Claimed{isPrivate ? " privately" : ""} — ${payoutUsdc.toFixed(2)}</p>
-            ) : (
-              <>
-                <p className="text-center text-slate-100 text-lg font-bold">Your payout: ${payoutUsdc.toFixed(2)}</p>
-                <div>
-                  <p className="text-slate-400 text-base mb-2">Claim</p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setIsPrivate(true)}
-                      className={`flex-1 h-10 rounded-xl border text-base font-medium transition-colors ${isPrivate ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}
-                    >
-                      Private
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsPrivate(false)}
-                      className={`flex-1 h-10 rounded-xl border text-base font-medium transition-colors ${!isPrivate ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}
-                    >
-                      Not private
-                    </button>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleClaim}
-                  className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors"
-                >
-                  Claim ${payoutUsdc.toFixed(2)}
-                </button>
-              </>
-            )}
-            <button type="button" onClick={reset} className="w-full h-10 rounded-full border border-white/10 text-slate-300 hover:text-white hover:bg-white/5 transition-colors text-base">
-              Restart demo
-            </button>
-          </div>
-        )}
-      </div>
+    <div className="relative min-h-screen">
+      <Link href="/app/gacha" className="absolute left-4 top-4 z-20 flex items-center gap-1 text-slate-400 hover:text-white transition-colors text-sm">
+        <ChevronLeft className="w-4 h-4" /> Rooms
+      </Link>
+      {screen}
     </div>
   );
 }

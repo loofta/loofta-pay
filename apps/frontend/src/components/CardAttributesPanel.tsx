@@ -88,14 +88,14 @@ export default function CardAttributesPanel({
       )}
 
       {expanded && (
-        <div className="font-mono text-sm">
+        // 2 columns, not a single stacked list — this panel sits next to (or under) a fixed-width
+        // card on mobile, and a graded Collector Crypt scan can carry a dozen+ attributes; one
+        // column of full-width rows ran taller than the viewport, two halves that height.
+        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-sm">
           {moreLines.slice(0, shown).map((l, i) => (
-            <div
-              key={l.label + i}
-              className="flex items-baseline justify-between gap-3 border-b border-white/5 py-1.5 animate-stat-line-in"
-            >
-              <span className="text-slate-500 uppercase tracking-wide text-xs shrink-0">{l.label}</span>
-              <span className="text-slate-100 text-right truncate">{l.value}</span>
+            <div key={l.label + i} className="min-w-0 border-b border-white/5 py-1.5 animate-stat-line-in">
+              <div className="text-slate-500 uppercase tracking-wide text-xs truncate">{l.label}</div>
+              <div className="text-slate-100 truncate">{l.value}</div>
             </div>
           ))}
         </div>

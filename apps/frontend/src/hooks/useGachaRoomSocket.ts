@@ -42,6 +42,20 @@ export interface GachaMascotLockedEvent {
 export interface GachaRoomExcludedEvent {
   excludedSeatNumbers: number[];
 }
+export interface GachaVoteRoundStartedEvent {
+  round: number;
+  survivorSeatNumbers: number[];
+}
+export interface GachaVoteResultEvent {
+  round: number;
+  yesCount: number;
+  totalCount: number;
+  passed: boolean;
+}
+export interface GachaVoteCutEvent {
+  round: number;
+  seatNumber: number;
+}
 
 /**
  * Joins `roomId`'s Socket.IO room and surfaces the latest event of each type — the caller is
@@ -67,6 +81,9 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
   const [readySeats, setReadySeats] = useState<number[]>([]);
   const [lastMascotLocked, setLastMascotLocked] = useState<GachaMascotLockedEvent | null>(null);
   const [lastExcluded, setLastExcluded] = useState<GachaRoomExcludedEvent | null>(null);
+  const [lastVoteRoundStarted, setLastVoteRoundStarted] = useState<GachaVoteRoundStartedEvent | null>(null);
+  const [lastVoteResult, setLastVoteResult] = useState<GachaVoteResultEvent | null>(null);
+  const [lastVoteCut, setLastVoteCut] = useState<GachaVoteCutEvent | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const roomIdRef = useRef(roomId);
   useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
@@ -99,6 +116,9 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
     socket.on("room:emoji_update", (data: GachaEmojiUpdateEvent) => setEmojiBySeat((prev) => ({ ...prev, [data.seatNumber]: data.emoji })));
     socket.on("room:mascot_locked", (data: GachaMascotLockedEvent) => setLastMascotLocked(data));
     socket.on("room:excluded", (data: GachaRoomExcludedEvent) => setLastExcluded(data));
+    socket.on("room:vote_round_started", (data: GachaVoteRoundStartedEvent) => { setLastVoteRoundStarted(data); setLastVoteResult(null); });
+    socket.on("room:vote_result", (data: GachaVoteResultEvent) => setLastVoteResult(data));
+    socket.on("room:vote_cut", (data: GachaVoteCutEvent) => setLastVoteCut(data));
 
     return () => {
       socket.emit("leave_room", { roomId });
@@ -131,8 +151,22 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
     });
   }, []);
 
+  // Same one-shot/ack-based reasoning as lockMascot — a vote is a real, meaningful action, not
+  // fire-and-forget presence.
+  const castVote = useCallback((vote: boolean): Promise<{ ok: boolean; error?: string }> => {
+    return new Promise((resolve) => {
+      if (!roomIdRef.current || !socketRef.current) { resolve({ ok: false, error: "Not connected" }); return; }
+      const timeout = setTimeout(() => resolve({ ok: false, error: "Timed out — please try again" }), 8000);
+      socketRef.current.emit("cast_vote", { roomId: roomIdRef.current, vote }, (ack: { ok: boolean; error?: string }) => {
+        clearTimeout(timeout);
+        resolve(ack ?? { ok: false, error: "No response from server" });
+      });
+    });
+  }, []);
+
   return {
     connected, snapshot, lastUpdate, lastOpened, lastBid, lastSettled, lastReadyUpdate, allReadyTick,
     emojiBySeat, readySeats, markReady, pickEmoji, lastMascotLocked, lastExcluded, lockMascot,
+    lastVoteRoundStarted, lastVoteResult, lastVoteCut, castVote,
   };
 }
