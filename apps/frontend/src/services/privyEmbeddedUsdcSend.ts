@@ -52,6 +52,7 @@ export async function sendUsdcWithPrivyEmbeddedWallet(params: {
   nearIntentsOrderId?: string;
   offrampRequestId?: string;
   giveawayId?: string;
+  sponsorNewRecipientAccounts?: boolean;
   /** Legacy params — unused, kept for call-site compatibility */
   signAndSendTransaction?: unknown;
   skipLooftaFeePayer?: boolean;
@@ -101,6 +102,9 @@ export async function sendUsdcWithBackendFeePayer(params: {
   /** Same idea, for a giveaway funding payment — see GiveawayDetailClient.tsx's handleFund,
    *  which already has the giveaway's own id in scope. */
   giveawayId?: string;
+  /** See buildUSDCTransferTransaction — pass false for withdrawals to an arbitrary address with
+   *  no backend-tracked record to bind ATA-creation-rent sponsorship against. */
+  sponsorNewRecipientAccounts?: boolean;
 }): Promise<string> {
   const {
     senderAddress,
@@ -120,6 +124,7 @@ export async function sendUsdcWithBackendFeePayer(params: {
     nearIntentsOrderId,
     offrampRequestId,
     giveawayId,
+    sponsorNewRecipientAccounts,
   } = params;
   const chain = params.chain ?? getPrivySolanaChain();
 
@@ -133,6 +138,7 @@ export async function sendUsdcWithBackendFeePayer(params: {
     connection,
     memo: memo ?? undefined,
     usdcMint,
+    sponsorNewRecipientAccounts,
     feePayerAddress,
     extraTransfer: looftaFeeUsdc && looftaFeeUsdc > 0
       ? { recipientAddress: feePayerAddress, amountUSDC: looftaFeeUsdc }

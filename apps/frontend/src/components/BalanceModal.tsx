@@ -2630,6 +2630,13 @@ export function BalanceModal({
         accessToken,
         network: devnetMode ? "devnet" : "mainnet",
         nearIntentsOrderId,
+        // Direct Solana withdrawals go to an arbitrary user-supplied address with no
+        // backend-tracked record to bind ATA-creation-rent sponsorship against — the backend
+        // refuses to sponsor a new account there anyway (see project memory: solana sponsor
+        // security hardening), so don't even try; sponsor the transaction fee only. Near-intents
+        // withdrawals ARE backed by a real order (nearIntentsOrderId, verified server-side), so
+        // they keep the default (fee payer may fund a brand-new deposit-address ATA).
+        sponsorNewRecipientAccounts: isNearIntentsWithdraw,
       });
 
       // Save to localStorage and DB
