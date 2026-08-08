@@ -70,6 +70,7 @@ import {
   type WithdrawalHistoryItem,
 } from "@/lib/withdrawalHistory";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
+import { formatTokenAmount } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 import { useSolPriceOrNull } from "@/hooks/useSolPrice";
@@ -307,7 +308,7 @@ function ProgressSteps({
           <div>
             <p className={`text-base ${textSub}`}>You receive (estimated)</p>
             <p className={`text-base font-semibold ${textBase}`}>
-              ~{Number(estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 2 })} {destinationToken}
+              ~{formatTokenAmount(estimatedOut)} {destinationToken}
               <span className={`font-normal ml-1 ${textSub}`}>on {destinationChain}</span>
             </p>
           </div>
@@ -3392,7 +3393,7 @@ export function BalanceModal({
                     <div>
                       <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>{bridgeStatusLabel(depositBridgeStatus)}</p>
                       {depositQuoteOut && (
-                        <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>~{Number(depositQuoteOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} USDC expected</p>
+                        <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>~{formatTokenAmount(depositQuoteOut)} USDC expected</p>
                       )}
                     </div>
                   </div>
@@ -3483,7 +3484,7 @@ export function BalanceModal({
                               <span className="flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Fetching quote…</span>
                             ) : depositQuoteOut ? (
                               <>
-                                ~{Number(depositQuoteOut).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
+                                ~{formatTokenAmount(depositQuoteOut)} USDC
                                 <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>on {usdcSolanaToken?.chain || "solana"}</span>
                               </>
                             ) : (
@@ -3676,7 +3677,7 @@ export function BalanceModal({
                                     ${item.amountUSDC.toFixed(2)} → {item.destinationToken}
                                     {item.estimatedOut && (
                                       <span className={`font-normal text-base ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                                        (~{Number(item.estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} received)
+                                        (~{formatTokenAmount(item.estimatedOut)} received)
                                       </span>
                                     )}
                                   </p>
@@ -4336,7 +4337,7 @@ export function BalanceModal({
                           <span className="flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Fetching quote…</span>
                         ) : quoteAmount ? (
                           <>
-                            ~{Number(quoteAmount).toLocaleString(undefined, { maximumFractionDigits: 2 })} {effectiveToken?.symbol || "token"}
+                            ~{formatTokenAmount(quoteAmount)} {effectiveToken?.symbol || "token"}
                             <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>on {effectiveToken?.chain}</span>
                           </>
                         ) : (

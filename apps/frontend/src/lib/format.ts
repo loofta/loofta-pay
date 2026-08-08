@@ -7,6 +7,21 @@ export function trimDecimals(value: string | number, maxDecimals: number = 5): s
 	return trimmed ? `${intPart}.${trimmed}` : intPart;
 }
 
+/**
+ * Value-aware token amount display. A flat maximumFractionDigits rounds small
+ * but real amounts (e.g. 0.0014 ETH) down to a misleading "0" — this scales
+ * precision to the magnitude so a nonzero amount never displays as zero.
+ */
+export function formatTokenAmount(value: string | number | null | undefined): string {
+	const n = typeof value === "string" ? Number(value) : value;
+	if (n === null || n === undefined || !Number.isFinite(n)) return "--";
+	if (n === 0) return "0";
+	const abs = Math.abs(n);
+	const decimals = abs >= 1 ? 4 : Math.min(10, Math.max(4, -Math.floor(Math.log10(abs)) + 2));
+	const formatted = n.toLocaleString(undefined, { maximumFractionDigits: decimals });
+	return formatted === "0" || formatted === "-0" ? n.toFixed(decimals) : formatted;
+}
+
 export function maskLink(link: string): string {
 	try {
 		const url = new URL(link);
