@@ -77,6 +77,12 @@ export class GachaController {
     return this.gacha.devForceSettleRoom(id);
   }
 
+  @Post('rooms/:id/force-exclude')
+  @ApiOperation({ summary: 'Devnet testing only — runs a room stuck mid-exclusion-draw to completion immediately instead of waiting for the (production-only) cron sweep. Blocked in production.' })
+  async forceExclude(@Param('id') id: string) {
+    return this.gacha.devForceAdvanceExcluding(id);
+  }
+
   @Post('rooms/join-tx')
   @ApiOperation({ summary: 'Find-or-create a waiting room for this config and build the entry payment tx to sign' })
   async joinTx(@Body() dto: JoinTxDto, @Request() req: any) {

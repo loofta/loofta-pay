@@ -19,7 +19,7 @@ export interface GachaRoomOpenedEvent {
   nftMetadata: Record<string, unknown> | null;
   rarity: string | null;
   buybackAmountUsdc: number | null;
-  bidWindowEndsAt: string;
+  bidWindowEndsAt: string | null;
 }
 export interface GachaBidPlacedEvent {
   amountUsdc: number;
@@ -34,6 +34,13 @@ export interface GachaReadyUpdateEvent {
 export interface GachaEmojiUpdateEvent {
   seatNumber: number;
   emoji: string;
+}
+export interface GachaMascotLockedEvent {
+  seatNumber: number;
+  mascotKey: string;
+}
+export interface GachaRoomExcludedEvent {
+  excludedSeatNumbers: number[];
 }
 
 /**
@@ -58,6 +65,8 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
   const [allReadyTick, setAllReadyTick] = useState(0);
   const [emojiBySeat, setEmojiBySeat] = useState<Record<number, string>>({});
   const [readySeats, setReadySeats] = useState<number[]>([]);
+  const [lastMascotLocked, setLastMascotLocked] = useState<GachaMascotLockedEvent | null>(null);
+  const [lastExcluded, setLastExcluded] = useState<GachaRoomExcludedEvent | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const roomIdRef = useRef(roomId);
   useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
@@ -88,6 +97,8 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
     socket.on("room:all_ready", () => setAllReadyTick((n) => n + 1));
     socket.on("room:emoji_snapshot", (data: Record<number, string>) => setEmojiBySeat((prev) => ({ ...prev, ...data })));
     socket.on("room:emoji_update", (data: GachaEmojiUpdateEvent) => setEmojiBySeat((prev) => ({ ...prev, [data.seatNumber]: data.emoji })));
+    socket.on("room:mascot_locked", (data: GachaMascotLockedEvent) => setLastMascotLocked(data));
+    socket.on("room:excluded", (data: GachaRoomExcludedEvent) => setLastExcluded(data));
 
     return () => {
       socket.emit("leave_room", { roomId });
@@ -106,5 +117,22 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
     socketRef.current?.emit("pick_emoji", { roomId: roomIdRef.current, emoji });
   }, []);
 
-  return { connected, snapshot, lastUpdate, lastOpened, lastBid, lastSettled, lastReadyUpdate, allReadyTick, emojiBySeat, readySeats, markReady, pickEmoji };
+  // Locking in a mascot is irreversible, so unlike pickEmoji/markReady (fire-and-forget) this
+  // waits on the gateway's ack (see GachaGateway.onLockMascot) so the caller can show a real error
+  // ("already locked in", room no longer waiting) instead of assuming success.
+  const lockMascot = useCallback((mascotKey: string): Promise<{ ok: boolean; error?: string }> => {
+    return new Promise((resolve) => {
+      if (!roomIdRef.current || !socketRef.current) { resolve({ ok: false, error: "Not connected" }); return; }
+      const timeout = setTimeout(() => resolve({ ok: false, error: "Timed out — please try again" }), 8000);
+      socketRef.current.emit("lock_mascot", { roomId: roomIdRef.current, mascotKey }, (ack: { ok: boolean; error?: string }) => {
+        clearTimeout(timeout);
+        resolve(ack ?? { ok: false, error: "No response from server" });
+      });
+    });
+  }, []);
+
+  return {
+    connected, snapshot, lastUpdate, lastOpened, lastBid, lastSettled, lastReadyUpdate, allReadyTick,
+    emojiBySeat, readySeats, markReady, pickEmoji, lastMascotLocked, lastExcluded, lockMascot,
+  };
 }

@@ -27,10 +27,14 @@ export class GachaCronService {
     return this.config.get<string>('NODE_ENV') === 'production';
   }
 
-  /** Every 15s: advance any room whose bidding window or bid-payment grace window has closed. */
+  /** Every 15s: advance any room mid-exclusion-draw (VRF request/poll), plus any room whose
+   *  bidding window or bid-payment grace window has closed (dead in the current flow — no room
+   *  ever reaches 'bidding' anymore — but left running rather than removed, same as the bid code
+   *  itself). */
   @Cron('*/15 * * * * *')
   async sweep(): Promise<void> {
     if (!this.isProd) return;
+    await this.gacha.advanceExcludingRooms().catch((e) => this.logger.error(`advanceExcludingRooms: ${e.message}`));
     await this.gacha.settleDueRooms().catch((e) => this.logger.error(`settleDueRooms: ${e.message}`));
   }
 }

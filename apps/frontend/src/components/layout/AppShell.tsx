@@ -33,7 +33,13 @@ function ShellContent({ children }: { children: ReactNode }) {
   // push the pack canvas down by an unaccounted amount (the same overlap bug the header itself
   // used to have, one layer up).
   const isImmersivePage = pathname?.startsWith('/megapot/packs') || pathname?.startsWith('/app/megapot/packs');
-  const showBottomNav = !isCheckoutPage && (
+  // A gacha room (not the room-list lobby) goes fully chromeless — header/footer/nav all hidden,
+  // not just the promo banner — so the mascot lock-in / exclusion-draw / pack-opening sequence
+  // reads as one continuous cinematic moment instead of a page embedded in the normal app shell.
+  // The room page's own "< Rooms" link is the only way back out. Matches /app/gacha/:id and
+  // /app/gacha/demo, but not the /app/gacha list page itself (no trailing segment).
+  const isGachaRoomPage = /^\/(app\/)?gacha\/[^/]+\/?$/.test(pathname ?? '');
+  const showBottomNav = !isCheckoutPage && !isGachaRoomPage && (
     pathname === '/' || pathname === '/app' ||
     pathname === '/history' || pathname === '/app/history' ||
     pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' || pathname === '/profile' ||
@@ -41,9 +47,9 @@ function ShellContent({ children }: { children: ReactNode }) {
     pathname === '/sparks' || pathname === '/app/sparks' ||
     pathname === '/megapot' || pathname === '/app/megapot'
   );
-  const showMinimalHeader = !isCheckoutPage;
+  const showMinimalHeader = !isCheckoutPage && !isGachaRoomPage;
   const showBanner = showMinimalHeader && !bannerDismissed && !isImmersivePage;
-  const showFooter = !isCheckoutPage;
+  const showFooter = !isCheckoutPage && !isGachaRoomPage;
 
   const bannerText = networkMode === "mainnet" ? t('bannerMainnet') : t('bannerDevnet');
   const bannerLink = (

@@ -9,6 +9,7 @@ export const GACHA_EVENTS = {
   ROOM_OPENED: 'gacha.room.opened',
   BID_PLACED: 'gacha.bid.placed',
   ROOM_SETTLED: 'gacha.room.settled',
+  ROOM_EXCLUDED: 'gacha.room.excluded',
 } as const;
 
 export interface GachaRoomUpdatePayload {
@@ -23,7 +24,9 @@ export interface GachaRoomOpenedPayload {
   nftMetadata: unknown;
   rarity: string | null;
   buybackAmountUsdc: number | null;
-  bidWindowEndsAt: string;
+  /** No more bid auction — always null now, kept on the payload only because the frontend socket
+   *  event type still declares it (dormant field, harmless to leave). */
+  bidWindowEndsAt: string | null;
 }
 
 export interface GachaBidPlacedPayload {
@@ -34,4 +37,9 @@ export interface GachaBidPlacedPayload {
 export interface GachaRoomSettledPayload {
   roomId: string;
   won: boolean;
+}
+
+export interface GachaRoomExcludedPayload {
+  roomId: string;
+  excludedSeatNumbers: number[];
 }

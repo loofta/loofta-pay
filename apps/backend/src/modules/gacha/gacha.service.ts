@@ -23,6 +23,11 @@ import { tokenAccountExists } from '@/common/token-account-exists';
 import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc } from '@/common/magicblock-private-transfer';
 import { CollectorCryptClient, CollectorCryptPackType, NftMetadata, OpenPackResponse, PackRarityTier } from './collectorcrypt.client';
 import { GACHA_EVENTS } from './gacha.events';
+import { GachaVrfService } from './gacha-vrf.service';
+// Pure/dependency-free — same selection math the giveaways VRF draw uses (sha256(randomness+':'+id),
+// sort, take first N). For the exclusion game we call it with exclusionCount and treat the
+// returned ids as EXCLUDED rather than as winners; the function's contract doesn't change.
+import { selectRandomWinners } from '../giveaways/giveaway-draw-selection';
 
 // Gacha Pooled Packs is devnet-only for now (Collector Crypt pack source, treasury payments, and
 // MagicBlock private payouts all target devnet) — regardless of the app-wide SOLANA_CLUSTER/
@@ -44,11 +49,21 @@ const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfc
 const ROOM_MEMO_PREFIX = 'gacha-room:';
 const BID_MEMO_PREFIX = 'gacha-bid:';
 
-const BID_WINDOW_MS = 4 * 60_000;
 const BID_PAYMENT_GRACE_MS = 5 * 60_000;
 
 const OPEN_POLL_INTERVAL_MS = 3_000;
 const OPEN_POLL_MAX_ATTEMPTS = 20; // ~1 minute total — openPack's "waiting_for_webhook" state
+
+// Same 20 keys as apps/frontend/public/images/mascots/ and the gacha_room_participants
+// mascot_key CHECK constraint (migration 20260808120000) — the one place this list is validated
+// against on the backend; the gateway's lock_mascot handler just forwards to lockMascot below
+// and relays whatever error it throws, rather than duplicating this whitelist itself.
+const MASCOT_KEYS = [
+  'axolotl', 'bear', 'bunny', 'cat', 'chick', 'crab', 'dog', 'duck', 'fox', 'goat',
+  'hamster', 'octopus', 'owl', 'penguin', 'pig', 'raccoon', 'shark', 'sloth', 'snail', 'turtle',
+] as const;
+
+const EXCLUSION_VRF_STALL_MS = 15 * 60_000; // same threshold as GIVEAWAY_VRF_STALL_MINUTES default
 
 // See ensureDevnetTestFunds — devnet-only test-wallet funding, covers several room joins/bids.
 const DEVNET_TEST_TOPUP_USDC = 100;
@@ -58,6 +73,7 @@ export interface RoomConfigPublic {
   packType: CollectorCryptPackType;
   seats: number;
   entryUsdc: number;
+  exclusionCount: number;
   enabled: boolean;
   displayOrder: number;
 }
@@ -68,6 +84,7 @@ export interface RoomSummary {
   packType: string;
   seats: number;
   entryUsdc: number;
+  exclusionCount: number;
   status: string;
   seatsFilled: number;
   nftMetadata: NftMetadata | null;
@@ -91,6 +108,7 @@ export class GachaService {
     private readonly usersService: UsersService,
     private readonly collectorCrypt: CollectorCryptClient,
     private readonly events: EventEmitter2,
+    private readonly vrf: GachaVrfService,
   ) {
     this.usdcMint = new PublicKey(this.config.get<string>('SOLANA_USDC_MINT_DEVNET') || DEFAULT_DEVNET_USDC_MINT);
   }
@@ -127,7 +145,7 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data, error } = await db
       .from('gacha_room_configs')
-      .select('config_key, pack_type, seats, entry_usdc, enabled, display_order')
+      .select('config_key, pack_type, seats, entry_usdc, exclusion_count, enabled, display_order')
       .order('display_order', { ascending: true });
     if (error) throw new Error(`Failed to load gacha room configs: ${error.message}`);
 
@@ -136,6 +154,7 @@ export class GachaService {
       packType: r.pack_type,
       seats: r.seats,
       entryUsdc: Number(r.entry_usdc),
+      exclusionCount: r.exclusion_count,
       enabled: r.enabled,
       displayOrder: r.display_order,
     }));
@@ -161,8 +180,8 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data: rooms, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
-      .in('status', ['waiting', 'purchasing', 'opening', 'bidding', 'settling'])
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
+      .in('status', ['waiting', 'excluding', 'purchasing', 'opening', 'bidding', 'settling'])
       .order('created_at', { ascending: true });
     if (error) throw new Error(`Failed to list gacha rooms: ${error.message}`);
 
@@ -175,6 +194,7 @@ export class GachaService {
       packType: r.pack_type,
       seats: r.seats,
       entryUsdc: Number(r.entry_usdc),
+      exclusionCount: r.exclusion_count,
       status: r.status,
       seatsFilled: countByRoom[r.id] ?? 0,
       nftMetadata: r.nft_metadata,
@@ -199,7 +219,7 @@ export class GachaService {
 
     const { data: rooms, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
       .in('id', roomIds)
       .order('created_at', { ascending: false });
     if (error) throw new Error(`Failed to load your gacha rooms: ${error.message}`);
@@ -211,6 +231,7 @@ export class GachaService {
       packType: r.pack_type,
       seats: r.seats,
       entryUsdc: Number(r.entry_usdc),
+      exclusionCount: r.exclusion_count,
       status: r.status,
       seatsFilled: countByRoom[r.id] ?? 0,
       nftMetadata: r.nft_metadata,
@@ -299,26 +320,26 @@ export class GachaService {
    *  room screen can poll one endpoint through the whole lobby -> bidding -> settled flow. */
   async getRoomDetail(roomId: string, userId: string): Promise<{
     room: RoomSummary;
-    myParticipant: { seatNumber: number; payoutUsdc: number | null; payoutIsPrivate: boolean | null; claimed: boolean } | null;
+    myParticipant: { seatNumber: number; payoutUsdc: number | null; payoutIsPrivate: boolean | null; claimed: boolean; mascotKey: string | null; mascotLocked: boolean; excluded: boolean } | null;
     bestBid: { amountUsdc: number } | null;
     pendingBid: { bidId: string; userId: string; amountUsdc: number; deadline: string } | null;
-    participants: Array<{ seatNumber: number; username: string | null; isMe: boolean }>;
+    participants: Array<{ seatNumber: number; username: string | null; isMe: boolean; mascotKey: string | null; mascotLocked: boolean; excluded: boolean }>;
   }> {
     const db = this.supabase.getClient();
     const { data: room, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, pending_bid_id, created_at')
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, pending_bid_id, created_at')
       .eq('id', roomId)
       .maybeSingle();
     if (error || !room) throw new NotFoundException('Room not found');
 
     const counts = await this.countParticipantsByRoom([roomId]);
-    const { data: mine } = await db.from('gacha_room_participants').select('seat_number, payout_usdc, payout_is_private, payout_tx_sig').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
+    const { data: mine } = await db.from('gacha_room_participants').select('seat_number, payout_usdc, payout_is_private, payout_tx_sig, mascot_key, mascot_locked_at, excluded').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
     const { data: bestBid } = await db.from('gacha_bids').select('amount_usdc').eq('room_id', roomId).order('amount_usdc', { ascending: false }).limit(1).maybeSingle();
 
     // Seat + username only, for the round-table UI — never the wallet or full user id, same
     // "don't leak more than the UI needs" posture as bid amounts already being anonymous.
-    const { data: seatRows } = await db.from('gacha_room_participants').select('seat_number, user_id').eq('room_id', roomId).order('seat_number', { ascending: true });
+    const { data: seatRows } = await db.from('gacha_room_participants').select('seat_number, user_id, mascot_key, mascot_locked_at, excluded').eq('room_id', roomId).order('seat_number', { ascending: true });
     const uniqueUserIds = Array.from(new Set((seatRows ?? []).map((r: any) => r.user_id)));
     let usernameByUserId: Record<string, string | null> = {};
     if (uniqueUserIds.length) {
@@ -329,6 +350,9 @@ export class GachaService {
       seatNumber: r.seat_number,
       username: usernameByUserId[r.user_id] ?? null,
       isMe: r.user_id === userId,
+      mascotKey: r.mascot_key ?? null,
+      mascotLocked: !!r.mascot_locked_at,
+      excluded: !!r.excluded,
     }));
 
     let pendingBid: { bidId: string; userId: string; amountUsdc: number; deadline: string } | null = null;
@@ -341,11 +365,22 @@ export class GachaService {
     return {
       room: {
         id: room.id, configKey: room.config_key, packType: room.pack_type, seats: room.seats, entryUsdc: Number(room.entry_usdc),
+        exclusionCount: room.exclusion_count,
         status: room.status, seatsFilled: counts[roomId] ?? 0, nftMetadata: room.nft_metadata, rarity: room.rarity,
         buybackAmountUsdc: room.buyback_amount_usdc !== null ? Number(room.buyback_amount_usdc) : null,
         bidWindowEndsAt: room.bid_window_ends_at, createdAt: room.created_at,
       },
-      myParticipant: mine ? { seatNumber: mine.seat_number, payoutUsdc: mine.payout_usdc !== null ? Number(mine.payout_usdc) : null, payoutIsPrivate: mine.payout_is_private, claimed: !!mine.payout_tx_sig } : null,
+      myParticipant: mine
+        ? {
+            seatNumber: mine.seat_number,
+            payoutUsdc: mine.payout_usdc !== null ? Number(mine.payout_usdc) : null,
+            payoutIsPrivate: mine.payout_is_private,
+            claimed: !!mine.payout_tx_sig,
+            mascotKey: mine.mascot_key ?? null,
+            mascotLocked: !!mine.mascot_locked_at,
+            excluded: !!mine.excluded,
+          }
+        : null,
       bestBid: bestBid ? { amountUsdc: Number(bestBid.amount_usdc) } : null,
       pendingBid,
       participants,
@@ -426,7 +461,7 @@ export class GachaService {
 
     const { data: created, error: insertError } = await db
       .from('gacha_rooms')
-      .insert({ config_key: cfg.configKey, pack_type: cfg.packType, seats: cfg.seats, entry_usdc: cfg.entryUsdc, status: 'waiting' })
+      .insert({ config_key: cfg.configKey, pack_type: cfg.packType, seats: cfg.seats, entry_usdc: cfg.entryUsdc, exclusion_count: cfg.exclusionCount, status: 'waiting' })
       .select('id')
       .single();
     if (insertError || !created) throw new Error(`Failed to create gacha room: ${insertError?.message}`);
@@ -561,24 +596,29 @@ export class GachaService {
       room_id: roomId,
       user_id: botUserId,
       payment_tx_hash: joinSig,
-    }).select('seat_number').single();
+    }).select('id, seat_number').single();
     if (insertError || !inserted) {
       this.logger.error(`Room ${roomId}: failed to record bot participant after a real on-chain join (sig=${joinSig}): ${insertError?.message}`);
       return;
     }
     const seatNumber = inserted.seat_number;
 
-    this.logger.log(`Room ${roomId}: bot ${botUserId} joined seat ${seatNumber} (sig=${joinSig})`);
+    // Bots never connect a websocket, so they can never call lock_mascot themselves — auto-lock
+    // one deterministically by seat number right away (seat numbers are 1-10, well within the
+    // 20-mascot set, so this alone can never collide within one room) so a bot never leaves the
+    // room stuck waiting on a mascot lock the way it would on a mark_ready click.
+    const mascotKey = MASCOT_KEYS[(seatNumber - 1) % MASCOT_KEYS.length];
+    await db.from('gacha_room_participants').update({ mascot_key: mascotKey, mascot_locked_at: new Date().toISOString() }).eq('id', inserted.id);
+
+    this.logger.log(`Room ${roomId}: bot ${botUserId} joined seat ${seatNumber} as ${mascotKey} (sig=${joinSig})`);
     // Bots never connect a websocket, so they can never call mark_ready themselves — GachaGateway
     // treats every bot seat as always-ready by computing it from getBotSeatNumbers (the `bot-`
     // user id prefix) rather than from an event fired here, so there's nothing to emit at join
     // time anymore — see getBotSeatNumbers' comment for why the event-based version was fragile.
-    const roomFilled = seatNumber === room.seats;
-    if (roomFilled) {
-      await db.from('gacha_rooms').update({ status: 'purchasing', updated_at: new Date().toISOString() }).eq('id', roomId);
-      this.purchaseAndOpenRoom(roomId).catch((e) => this.logger.error(`Room ${roomId}: purchase/open failed: ${e.message}`));
-    }
-    this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: seatNumber, seats: room.seats, status: roomFilled ? 'purchasing' : 'waiting' });
+    this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: seatNumber, seats: room.seats, status: 'waiting' });
+    // Same threshold check a real participant's lock_mascot triggers — a bot filling/locking the
+    // last seat must be able to start the exclusion draw too, since it has no socket to do it via.
+    await this.maybeAdvanceToExcluding(roomId);
   }
 
   /** Debits the account that lost the most USDC in `tx` and returns its owner — same technique
@@ -684,19 +724,137 @@ export class GachaService {
     }
     const seatNumber = inserted.seat_number;
 
+    // Filling the last seat no longer starts the pack purchase directly — the room stays
+    // 'waiting' until every seated participant has also locked in a mascot (see lockMascot /
+    // maybeAdvanceToExcluding below), which is what actually kicks off the exclusion draw and,
+    // once that resolves, the pack purchase.
     const roomFilled = seatNumber === room.seats;
-    if (roomFilled) {
-      await db.from('gacha_rooms').update({ status: 'purchasing', updated_at: new Date().toISOString() }).eq('id', roomId);
-      // Fire-and-forget: the joiner whose payment fills the room shouldn't have their HTTP
-      // response blocked on the full purchase+open round trip (which can take up to ~1 minute —
-      // see OPEN_POLL_MAX_ATTEMPTS). room:update below carries the seat count to everyone else
-      // watching the lobby; purchaseAndOpenRoom emits its own room:opened once the pack reveals.
-      this.purchaseAndOpenRoom(roomId).catch((e) => this.logger.error(`Room ${roomId}: purchase/open failed: ${e.message}`));
-    }
-
-    this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: seatNumber, seats: room.seats, status: roomFilled ? 'purchasing' : 'waiting' });
+    this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: seatNumber, seats: room.seats, status: 'waiting' });
 
     return { seatNumber, roomFilled };
+  }
+
+  // ── Mascot lock-in + VRF exclusion draw (replaces the old bid auction) ────────────────
+  // New room lifecycle: waiting -> excluding -> purchasing -> opening -> settled. A room stays
+  // 'waiting' once every seat is filled until every seated participant has ALSO locked in a
+  // mascot (see maybeAdvanceToExcluding) — only then does the exclusion draw start, and only once
+  // that resolves does the pack purchase begin (see advanceExclusionDraw).
+
+  /** Called from the gateway's lock_mascot handler. Rejects re-locking (once set, immutable) —
+   *  the mascot whitelist itself is only enforced here (MASCOT_KEYS), not duplicated in the
+   *  gateway, since this is the one place mascot state actually lives (persisted, not in-memory
+   *  like the emoji picker — see migration 20260808120000 for why). */
+  async lockMascot(roomId: string, userId: string, mascotKey: string): Promise<{ seatNumber: number }> {
+    if (!(MASCOT_KEYS as readonly string[]).includes(mascotKey)) throw new BadRequestException('Unknown mascot');
+    const db = this.supabase.getClient();
+    const { data: room } = await db.from('gacha_rooms').select('id, status').eq('id', roomId).maybeSingle();
+    if (!room) throw new NotFoundException('Room not found');
+    if (room.status !== 'waiting') throw new BadRequestException('Mascots can only be locked in while the room is still filling');
+
+    const { data: participant } = await db.from('gacha_room_participants').select('id, seat_number, mascot_locked_at').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
+    if (!participant) throw new BadRequestException('You are not a participant in this room');
+    if (participant.mascot_locked_at) throw new BadRequestException('Your mascot is already locked in');
+
+    await db.from('gacha_room_participants').update({ mascot_key: mascotKey, mascot_locked_at: new Date().toISOString() }).eq('id', participant.id);
+    await this.maybeAdvanceToExcluding(roomId);
+    return { seatNumber: participant.seat_number };
+  }
+
+  /** Re-checked after every mascot lock (real, via lockMascot) and every bot join (which
+   *  auto-locks immediately, having no socket to call lockMascot with) — mirrors the "recheck the
+   *  threshold on every relevant event" posture GachaGateway.maybeFireAllReady already uses for
+   *  the ready-check. Flips the room to 'excluding' and kicks the VRF request the instant the
+   *  LAST lock lands, whichever of the two paths that lock came through. */
+  private async maybeAdvanceToExcluding(roomId: string): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: room } = await db.from('gacha_rooms').select('id, seats, status').eq('id', roomId).maybeSingle();
+    if (!room || room.status !== 'waiting') return;
+
+    const { data: participants } = await db.from('gacha_room_participants').select('mascot_locked_at').eq('room_id', roomId);
+    const rows = participants ?? [];
+    if (rows.length < room.seats) return;
+    if (rows.some((p: any) => !p.mascot_locked_at)) return;
+
+    await db.from('gacha_rooms').update({ status: 'excluding', updated_at: new Date().toISOString() }).eq('id', roomId);
+    this.logger.log(`Room ${roomId}: all ${room.seats} seats filled and locked in — exclusion draw starting`);
+    this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: rows.length, seats: room.seats, status: 'excluding' });
+
+    // Fire-and-forget — the room-filling moment should feel instant rather than waiting for the
+    // next cron tick. advanceExcludingRooms's sweep then carries the poll-to-fulfillment step
+    // forward exactly as it would for a request it hadn't originated itself.
+    this.vrf
+      .requestRandomness(roomId)
+      .then(({ slot }) => db.from('gacha_rooms').update({ vrf_requested_at: new Date().toISOString(), vrf_request_slot: slot }).eq('id', roomId))
+      .catch((e: any) => this.logger.error(`Room ${roomId}: VRF request failed (will retry via cron): ${e.message}`));
+  }
+
+  /** Cron entrypoint — advances every room currently mid-exclusion-draw one step (mirrors
+   *  settleDueRooms below). Safe to call repeatedly; each room's own randomness/status columns
+   *  make every branch idempotent. */
+  async advanceExcludingRooms(): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: rooms } = await db.from('gacha_rooms').select('id').eq('status', 'excluding');
+    for (const room of rooms ?? []) {
+      await this.advanceExclusionDraw(room.id).catch((e) => this.logger.error(`Room ${room.id}: exclusion draw advance failed: ${e.message}`));
+    }
+  }
+
+  /** Ticks the on-chain VRF request forward exactly one step, using vrf_requested_at/
+   *  vrf_randomness nullability as an implicit sub-state within 'excluding' — same pattern
+   *  giveaway-draw.service.ts's advanceVrf uses. Once fulfilled: computes the exclusion set via
+   *  the same selectRandomWinners the giveaways draw uses (called with exclusionCount and treated
+   *  as EXCLUDED, not winners), persists it, and moves the room on to purchasing/opening exactly
+   *  as the old "room just filled" path used to. Never falls back to non-VRF randomness silently —
+   *  a stalled request is only logged, same posture as giveaways. */
+  private async advanceExclusionDraw(roomId: string): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: room } = await db.from('gacha_rooms').select('id, status, exclusion_count, vrf_requested_at, vrf_randomness').eq('id', roomId).single();
+    if (!room || room.status !== 'excluding') return;
+
+    let randomnessHex: string | null = room.vrf_randomness;
+    if (!randomnessHex) {
+      if (!room.vrf_requested_at) {
+        try {
+          const { slot } = await this.vrf.requestRandomness(roomId);
+          await db.from('gacha_rooms').update({ vrf_requested_at: new Date().toISOString(), vrf_request_slot: slot }).eq('id', roomId);
+          this.logger.log(`Room ${roomId}: VRF randomness requested (slot=${slot})`);
+        } catch (e: any) {
+          this.logger.error(`Room ${roomId}: VRF request failed: ${e.message} (will retry next tick)`);
+        }
+        return;
+      }
+
+      randomnessHex = await this.vrf.pollFulfillment(roomId);
+      if (!randomnessHex) {
+        const requestedAgeMs = Date.now() - new Date(room.vrf_requested_at).getTime();
+        if (requestedAgeMs >= EXCLUSION_VRF_STALL_MS) {
+          this.logger.error(`Room ${roomId}: VRF request has been pending longer than the stall threshold — needs manual attention`);
+        }
+        return;
+      }
+      await db.from('gacha_rooms').update({ vrf_randomness: randomnessHex, vrf_fulfilled_at: new Date().toISOString() }).eq('id', roomId);
+      this.logger.log(`Room ${roomId}: VRF randomness fulfilled`);
+    }
+
+    const { data: participants } = await db.from('gacha_room_participants').select('id, user_id, seat_number').eq('room_id', roomId).order('seat_number', { ascending: true });
+    const rows = participants ?? [];
+    // user_id is unique per room (UNIQUE(room_id, user_id)), so keying the selection by it is safe.
+    const excludedUserIds = new Set(selectRandomWinners(rows.map((p: any) => p.user_id), randomnessHex, room.exclusion_count));
+    const excludedSeatNumbers: number[] = [];
+    for (const p of rows) {
+      if (excludedUserIds.has(p.user_id)) {
+        await db.from('gacha_room_participants').update({ excluded: true }).eq('id', p.id);
+        excludedSeatNumbers.push(p.seat_number);
+      }
+    }
+
+    await db.from('gacha_rooms').update({ status: 'purchasing', updated_at: new Date().toISOString() }).eq('id', roomId);
+    this.logger.log(`Room ${roomId}: exclusion draw resolved — ${excludedSeatNumbers.length}/${rows.length} excluded (seats ${excludedSeatNumbers.join(', ')})`);
+    this.events.emit(GACHA_EVENTS.ROOM_EXCLUDED, { roomId, excludedSeatNumbers });
+
+    // Same fire-and-forget posture confirmJoin used to use — whoever/whatever triggered this tick
+    // shouldn't be blocked on the full purchase+open round trip (up to ~1 minute).
+    this.purchaseAndOpenRoom(roomId).catch((e) => this.logger.error(`Room ${roomId}: purchase/open failed: ${e.message}`));
   }
 
   // ── Pack purchase + open (treasury is the sole Collectorcrypt "player" — see plan doc) ──
@@ -761,20 +919,26 @@ export class GachaService {
       }
     }
 
-    const bidWindowEndsAt = new Date(Date.now() + BID_WINDOW_MS).toISOString();
+    // No more bid auction — the room goes straight to settlement once opened (see
+    // finalizeBuybackSettlement, now scoped to survivors only). 'settling' here is just a brief
+    // holding status while that buyback tx confirms, same caption/UI-null status the old
+    // bid-payment-grace path used, reused rather than adding a new status value.
     await db.from('gacha_rooms').update({
       nft_metadata: nftMetadata,
       rarity,
       open_tx_sig: opened.transactionSignature ?? null,
       buyback_amount_usdc: buybackAmountUsdc,
-      status: 'bidding',
-      bid_window_ends_at: bidWindowEndsAt,
+      status: 'settling',
       opened_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('id', roomId);
 
-    this.logger.log(`Room ${roomId}: opened rarity=${rarity} buyback=$${buybackAmountUsdc} — bidding window open`);
-    this.events.emit(GACHA_EVENTS.ROOM_OPENED, { roomId, nftMetadata, rarity, buybackAmountUsdc, bidWindowEndsAt });
+    this.logger.log(`Room ${roomId}: opened rarity=${rarity} buyback=$${buybackAmountUsdc} — settling`);
+    this.events.emit(GACHA_EVENTS.ROOM_OPENED, { roomId, nftMetadata, rarity, buybackAmountUsdc, bidWindowEndsAt: null });
+
+    // Fire-and-forget, same posture as every other multi-second money-moving step in this flow —
+    // whoever/whatever triggered purchaseAndOpenRoom shouldn't block on the buyback tx too.
+    this.finalizeBuybackSettlement(roomId).catch((e) => this.logger.error(`Room ${roomId}: settlement failed: ${e.message}`));
   }
 
   private async signAndSubmit(unsignedTxBase64: string, signer: Keypair, conn: Connection): Promise<string> {
@@ -843,6 +1007,30 @@ export class GachaService {
     await this.advanceToNextBidCandidate(roomId);
     const { data: after } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
     return { status: after?.status ?? room.status };
+  }
+
+  /** Dev-only escape hatch for the exclusion draw, same reasoning as devForceSettleRoom: the
+   *  cron sweep that advances 'excluding' rooms is hard-gated to NODE_ENV=production, so a local
+   *  dev room would otherwise sit mid-draw forever. Loops advanceExclusionDraw the same way
+   *  giveaways' forceRunDrawNow loops its own VRF advance — real on-chain VRF fulfillment (~2-4s
+   *  observed) can't be skipped even when forced, only waited out faster than a 15s cron tick. */
+  async devForceAdvanceExcluding(roomId: string): Promise<{ status: string }> {
+    if (this.config.get<string>('NODE_ENV') === 'production') {
+      throw new BadRequestException('Force-advance is not available in production');
+    }
+    const db = this.supabase.getClient();
+    const { data: room } = await db.from('gacha_rooms').select('id, status').eq('id', roomId).maybeSingle();
+    if (!room) throw new NotFoundException('Room not found');
+    if (room.status !== 'excluding') throw new BadRequestException(`Room isn't mid-exclusion-draw (status: ${room.status})`);
+
+    let status = room.status;
+    for (let i = 0; i < 15 && status === 'excluding'; i++) {
+      await this.advanceExclusionDraw(roomId);
+      const { data: after } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
+      status = after?.status ?? status;
+      if (status === 'excluding') await new Promise((r) => setTimeout(r, 1000));
+    }
+    return { status };
   }
 
   /** Cron entrypoint — advances every room whose bidding window has closed or whose current
@@ -972,7 +1160,7 @@ export class GachaService {
       throw new Error(`Room ${roomId}: buyback tx ${buybackTxSig} confirmed but treasury balance did not increase`);
     }
 
-    await this.splitPayoutAndMarkSettled(roomId, room.seats, receivedUnits, { buybackTxSig });
+    await this.splitPayoutAndMarkSettled(roomId, receivedUnits, { buybackTxSig });
   }
 
   /** A room participant won the auction outright — treasury transfers the actual NFT to their
@@ -990,7 +1178,7 @@ export class GachaService {
     const nftTransferTxSig = await this.transferNftToWinner(conn, treasuryKeypair, new PublicKey(room.nft_metadata.mint), new PublicKey(winnerAddress));
 
     const receivedUnits = BigInt(Math.round(bidAmountUsdc * 1_000_000));
-    await this.splitPayoutAndMarkSettled(roomId, room.seats, receivedUnits, { winningBidId: bidId, nftTransferTxSig });
+    await this.splitPayoutAndMarkSettled(roomId, receivedUnits, { winningBidId: bidId, nftTransferTxSig });
   }
 
   private async transferNftToWinner(conn: Connection, treasuryKeypair: Keypair, nftMint: PublicKey, winner: PublicKey): Promise<string> {
@@ -1030,19 +1218,31 @@ export class GachaService {
     }
   }
 
-  /** Splits `totalUnits` evenly across `seats` participants (any leftover dust from integer
-   *  division goes to seat 1 — same "someone has to get the extra cent" tie-break other split
-   *  logic in this codebase uses), records each participant's payout_usdc, and marks the room
-   *  settled. Does NOT push any money yet — see claimPayout for why (private/public is each
-   *  participant's own choice, made when they claim, not decided for them at settlement time). */
-  private async splitPayoutAndMarkSettled(roomId: string, seats: number, totalUnits: bigint, extra: { buybackTxSig?: string; winningBidId?: string; nftTransferTxSig?: string }): Promise<void> {
+  /** Splits `totalUnits` evenly across the room's SURVIVING (non-excluded) participants only —
+   *  any leftover dust from integer division goes to the first survivor by seat number, same
+   *  "someone has to get the extra cent" tie-break other split logic in this codebase uses.
+   *  Excluded participants are recorded with payout_usdc = 0 (not left null), so the settled UI
+   *  can tell "excluded, nothing to claim" apart from "payout not computed yet". Does NOT push any
+   *  money yet — see claimPayout for why (private/public is each participant's own choice, made
+   *  when they claim, not decided for them at settlement time). */
+  private async splitPayoutAndMarkSettled(roomId: string, totalUnits: bigint, extra: { buybackTxSig?: string; winningBidId?: string; nftTransferTxSig?: string }): Promise<void> {
     const db = this.supabase.getClient();
-    const shareUnits = totalUnits / BigInt(seats);
-    const dustUnits = totalUnits - shareUnits * BigInt(seats);
+    const { data: participants } = await db.from('gacha_room_participants').select('id, seat_number, excluded').eq('room_id', roomId).order('seat_number', { ascending: true });
+    const rows = participants ?? [];
+    const survivors = rows.filter((p: any) => !p.excluded);
+    // Guard against the pathological case of everyone somehow being excluded (exclusion_count
+    // misconfigured >= seats) — falls back to splitting across everyone rather than dividing by 0.
+    const payoutRows = survivors.length ? survivors : rows;
+    const shareUnits = totalUnits / BigInt(payoutRows.length || 1);
+    const dustUnits = totalUnits - shareUnits * BigInt(payoutRows.length || 1);
+    const dustSeat = payoutRows[0]?.seat_number;
 
-    const { data: participants } = await db.from('gacha_room_participants').select('id, seat_number').eq('room_id', roomId).order('seat_number', { ascending: true });
-    for (const p of participants ?? []) {
-      const units = shareUnits + (p.seat_number === 1 ? dustUnits : 0n);
+    for (const p of rows) {
+      if (!payoutRows.includes(p)) {
+        await db.from('gacha_room_participants').update({ payout_usdc: 0 }).eq('id', p.id);
+        continue;
+      }
+      const units = shareUnits + (p.seat_number === dustSeat ? dustUnits : 0n);
       await db.from('gacha_room_participants').update({ payout_usdc: Number(units) / 1_000_000 }).eq('id', p.id);
     }
 
@@ -1057,7 +1257,7 @@ export class GachaService {
       ...(extra.nftTransferTxSig ? { nft_transfer_tx_sig: extra.nftTransferTxSig } : {}),
     }).eq('id', roomId);
 
-    this.logger.log(`Room ${roomId}: settled, ${seats} payouts of ~${Number(shareUnits) / 1_000_000} USDC each`);
+    this.logger.log(`Room ${roomId}: settled, ${payoutRows.length} payouts of ~${Number(shareUnits) / 1_000_000} USDC each (${rows.length - payoutRows.length} excluded)`);
     // Per-participant payout amounts + wallets are fetched over authenticated REST
     // (getRoomDetail), never broadcast — this event is just "go check your own claim screen".
     this.events.emit(GACHA_EVENTS.ROOM_SETTLED, { roomId, won: !!extra.winningBidId });
@@ -1173,7 +1373,7 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data, count, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at', { count: 'exact' })
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range((page - 1) * pageSize, page * pageSize - 1);
     if (error) throw new Error(`Failed to load gacha rooms: ${error.message}`);
@@ -1182,6 +1382,7 @@ export class GachaService {
     return {
       data: (data ?? []).map((r: any) => ({
         id: r.id, configKey: r.config_key, packType: r.pack_type, seats: r.seats, entryUsdc: Number(r.entry_usdc),
+        exclusionCount: r.exclusion_count,
         status: r.status, seatsFilled: counts[r.id] ?? 0, nftMetadata: r.nft_metadata, rarity: r.rarity,
         buybackAmountUsdc: r.buyback_amount_usdc !== null ? Number(r.buyback_amount_usdc) : null,
         bidWindowEndsAt: r.bid_window_ends_at, createdAt: r.created_at,

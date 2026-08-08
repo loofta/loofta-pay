@@ -21,19 +21,33 @@
 // blank.
 
 import { useEffect, useRef, useState } from 'react';
+import { getMascot, mascotImageSrc } from '@/lib/mascots';
 
 export interface TableSeat {
   seatNumber: number;
   username: string | null;
   isMe?: boolean;
-  /** The emoji this participant actually picked, if any — falls back to a deterministic one. */
+  /** The emoji this participant actually picked, if any — falls back to a deterministic one.
+   *  Superseded by mascotKey wherever both are present (see below); still supported for the demo
+   *  page and any seat that hasn't locked in a mascot yet. */
   emoji?: string | null;
+  /** The mascot this participant locked in (gacha_room_participants.mascot_key), if any — takes
+   *  priority over emoji when present. */
+  mascotKey?: string | null;
 }
 
 export const AVATAR_EMOJIS = ['🦊', '🐼', '🐨', '🦁', '🐯', '🐸', '🐙', '🦉', '🐺', '🐵', '🐰', '🐹', '🦝', '🐻', '🐧', '🦄'];
 // 10 entries — matches the largest room config (10 seats) so assigning by seat number (below)
 // can never repeat a color within one room, unlike hashing each person's seed independently.
 const BG_COLORS = ['#F59E0B', '#10B981', '#8B5CF6', '#EC4899', '#3B82F6', '#EF4444', '#14B8A6', '#F97316', '#84CC16', '#0EA5E9'];
+
+// 'hero' is a bigger version of the exact same layout, used for the waiting-room/exclusion-draw
+// moments this component is meant to dominate the page for; 'compact' (the original sizing) is
+// used everywhere else so it doesn't crowd out the pack itself.
+const SIZE_PRESETS = {
+  compact: { container: 'h-24 sm:h-28', back: { size: 24, fontSize: 12 }, front: { size: 32, fontSize: 16 } },
+  hero: { container: 'h-40 sm:h-52', back: { size: 36, fontSize: 18 }, front: { size: 52, fontSize: 26 } },
+} as const;
 
 function hashSeed(seed: string): number {
   let h = 0;
@@ -68,6 +82,9 @@ export default function PokerTable({
   participants,
   onPickEmoji,
   readySeats,
+  size = 'compact',
+  excludedSeats,
+  spinning,
 }: {
   /** Room capacity — 5 or 10 today. Drives the FIXED grid shape; never how many have joined. */
   seats: number;
@@ -77,6 +94,15 @@ export default function PokerTable({
   /** Seat numbers that have marked themselves ready — draws a green ring + check badge directly
    *  on that seat's avatar instead of only surfacing readiness as a bare "3/10 ready" count. */
   readySeats?: number[];
+  /** 'hero' (bigger) for the lobby/exclusion-draw moments this table should dominate the page
+   *  for; 'compact' (default, original sizing) everywhere else. */
+  size?: 'compact' | 'hero';
+  /** Seat numbers the exclusion draw has knocked out — rendered dim/greyscale with an "OUT" badge
+   *  instead of the ready checkmark, regardless of that seat's ready state. */
+  excludedSeats?: number[];
+  /** True while the exclusion draw's VRF result is pending — every seat's avatar spins in place,
+   *  slot-machine style, for suspense. Ignored on seats already in excludedSeats. */
+  spinning?: boolean;
 }) {
   const me = participants.find((p) => p.isMe) ?? null;
   const others = participants.filter((p) => !p.isMe).sort((a, b) => a.seatNumber - b.seatNumber);
@@ -101,6 +127,8 @@ export default function PokerTable({
   for (const idx of backFillOrder) { if (oi >= others.length) break; backSlots[idx] = others[oi++]; }
 
   const readySet = new Set(readySeats ?? []);
+  const excludedSet = new Set(excludedSeats ?? []);
+  const preset = SIZE_PRESETS[size];
 
   const [revealedSeat, setRevealedSeat] = useState<number | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -135,15 +163,21 @@ export default function PokerTable({
 
       const seed = seat.username ?? `seat-${seat.seatNumber}`;
       const emoji = seat.emoji ?? fallbackEmoji(seed);
-      const bg = bgForSeat(seat.seatNumber);
+      const mascot = getMascot(seat.mascotKey);
+      // The rainbow per-seat color only made sense for flat emoji glyphs (no bg of their own).
+      // Mascot art is already a full-color illustration — a colored disc behind it just clashes —
+      // so every mascot seat gets the same neutral bubble instead of a seat-hashed color.
+      const bg = mascot ? 'rgba(255,255,255,0.08)' : bgForSeat(seat.seatNumber);
       const isReady = readySet.has(seat.seatNumber);
+      const isExcluded = excludedSet.has(seat.seatNumber);
+      const isSpinning = !!spinning && !isExcluded;
       const size = seat.isMe ? Math.round(opts.size * 1.22) : opts.size;
       const fontSize = seat.isMe ? Math.round(opts.fontSize * 1.15) : opts.fontSize;
       return (
         <div key={seat.seatNumber} className="absolute" style={wrapStyle}>
           {revealedSeat === seat.seatNumber && !seat.isMe && (
             <div className="absolute left-1/2 bottom-full mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/85 border border-white/10 px-2.5 py-1 text-sm text-slate-100">
-              {seat.username ?? `Seat ${seat.seatNumber}`}
+              {mascot ? `${mascot.name} · ` : ''}{seat.username ?? `Seat ${seat.seatNumber}`}
             </div>
           )}
           {seat.isMe && pickerOpen && onPickEmoji && (
@@ -163,12 +197,34 @@ export default function PokerTable({
           <button
             type="button"
             onClick={() => (seat.isMe && onPickEmoji ? setPickerOpen((o) => !o) : reveal(seat.seatNumber))}
+            onMouseEnter={() => !seat.isMe && reveal(seat.seatNumber)}
+            onMouseLeave={() => !seat.isMe && setRevealedSeat((cur) => (cur === seat.seatNumber ? null : cur))}
             aria-label={seat.isMe ? 'Pick your emoji' : seat.username ?? `Seat ${seat.seatNumber}`}
-            className={`relative rounded-full flex items-center justify-center ring-2 shadow-md cursor-pointer transition-shadow ${isReady ? 'ring-emerald-400' : seat.isMe ? 'ring-amber-400' : 'ring-white/20'}`}
-            style={{ width: size, height: size, background: bg, fontSize, opacity: opts.zBase === 10 ? 0.85 : 1 }}
+            className={`relative rounded-full flex items-center justify-center ring-2 shadow-md cursor-pointer transition-all ${isExcluded ? 'ring-white/10 grayscale' : isReady ? 'ring-emerald-400' : seat.isMe ? 'ring-amber-400' : 'ring-white/20'}`}
+            style={{ width: size, height: size, background: bg, fontSize, opacity: isExcluded ? 0.35 : opts.zBase === 10 ? 0.85 : 1 }}
           >
-            {emoji}
-            {isReady && (
+            {mascot ? (
+              // eslint-disable-next-line @next/next/no-img-element -- small local SVG sticker, not a next/image candidate
+              <img
+                src={mascotImageSrc(mascot.key)}
+                alt={mascot.name}
+                width={size}
+                height={size}
+                className={`rounded-full ${isSpinning ? 'animate-spin' : ''}`}
+                style={isSpinning ? { animationDuration: '0.6s' } : undefined}
+                draggable={false}
+              />
+            ) : (
+              emoji
+            )}
+            {isExcluded ? (
+              <span
+                className="absolute -bottom-0.5 -right-0.5 rounded-full bg-red-500/90 border border-black/40 flex items-center justify-center text-white leading-none font-bold uppercase"
+                style={{ width: Math.max(20, size * 0.55), height: Math.max(12, size * 0.32), fontSize: Math.max(7, size * 0.2) }}
+              >
+                Out
+              </span>
+            ) : isReady && (
               <span
                 className="absolute -bottom-0.5 -right-0.5 rounded-full bg-emerald-500 border border-black/40 flex items-center justify-center text-white leading-none"
                 style={{ width: Math.max(12, size * 0.4), height: Math.max(12, size * 0.4), fontSize: Math.max(8, size * 0.26) }}
@@ -183,9 +239,9 @@ export default function PokerTable({
   }
 
   return (
-    <div className="relative w-full mb-1 select-none h-24 sm:h-28">
-      {renderRow(backSlots, { size: 24, fontSize: 12, topBase: 2, topSpread: 30, zBase: 10 })}
-      {renderRow(frontSlots, { size: 32, fontSize: 16, topBase: 32, topSpread: 45, zBase: 50 })}
+    <div className={`relative w-full mb-1 select-none transition-[height] duration-300 ${preset.container}`}>
+      {renderRow(backSlots, { ...preset.back, topBase: 2, topSpread: 30, zBase: 10 })}
+      {renderRow(frontSlots, { ...preset.front, topBase: 32, topSpread: 45, zBase: 50 })}
     </div>
   );
 }

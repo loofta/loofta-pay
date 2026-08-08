@@ -1,7 +1,7 @@
 "use client";
 
-// Gacha room — the whole pooled-pack lifecycle on one page: lobby (waiting for seats) -> pack
-// purchase/open -> ready check -> 3D rip -> room-participants-only bidding -> settlement ->
+// Gacha room — the whole pooled-pack lifecycle on one page: lobby (waiting for seats + mascot
+// lock-in) -> VRF exclusion draw -> pack purchase/open -> ready check -> 3D rip -> settlement ->
 // claim (public or private). Backend contract:
 // apps/backend/src/modules/gacha/{gacha.service,gacha.controller,gacha.gateway}.ts.
 // Live updates come from useGachaRoomSocket (GachaGateway); every event just triggers a REST
@@ -10,7 +10,11 @@
 //
 // No click-to-open: every participant marks themselves ready (see the ready UI below), and once
 // the backend sees everyone has, `room:all_ready` fires and the 3D rip plays automatically for
-// everyone watching, in sync — nobody taps anything to start it.
+// everyone watching, in sync — nobody taps anything to start it. The old room-participants-only
+// bid auction that used to follow the reveal is gone — replaced by a MagicBlock-VRF exclusion
+// draw that runs BEFORE the pack is even purchased (see the 'excluding' status below); the
+// bid-auction backend code (gacha_bids, advanceToNextBidCandidate, etc.) still exists but is
+// unreachable from this new flow — left dormant rather than deleted.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -24,6 +28,9 @@ import GachaPack from "@/components/GachaPack";
 import GachaCard from "@/components/GachaCard";
 import PokerTable from "@/components/PokerTable";
 import CardAttributesPanel from "@/components/CardAttributesPanel";
+import MascotPicker from "@/components/MascotPicker";
+import ExclusionReveal from "@/components/ExclusionReveal";
+import { getMascot } from "@/lib/mascots";
 import type { GachaOpenResult, GachaRarity, GachaNftAttribute } from "@/components/GachaPack3D";
 import { useGachaRoomSocket } from "@/hooks/useGachaRoomSocket";
 
@@ -37,6 +44,7 @@ interface RoomDetail {
     packType: string;
     seats: number;
     entryUsdc: number;
+    exclusionCount: number;
     status: string;
     seatsFilled: number;
     nftMetadata: { image?: string; backImage?: string; name?: string; insuredValueUsdc?: number; attributes?: GachaNftAttribute[] } | null;
@@ -45,11 +53,21 @@ interface RoomDetail {
     bidWindowEndsAt: string | null;
     createdAt: string;
   };
-  myParticipant: { seatNumber: number; payoutUsdc: number | null; payoutIsPrivate: boolean | null; claimed: boolean } | null;
+  myParticipant: {
+    seatNumber: number;
+    payoutUsdc: number | null;
+    payoutIsPrivate: boolean | null;
+    claimed: boolean;
+    mascotKey: string | null;
+    mascotLocked: boolean;
+    excluded: boolean;
+  } | null;
   bestBid: { amountUsdc: number } | null;
   pendingBid: { bidId: string; userId: string; amountUsdc: number; deadline: string } | null;
-  participants: Array<{ seatNumber: number; username: string | null; isMe: boolean }>;
+  participants: Array<{ seatNumber: number; username: string | null; isMe: boolean; mascotKey: string | null; mascotLocked: boolean; excluded: boolean }>;
 }
+
+const READY_SECONDS = 30;
 
 const RARITY_STYLE: Record<string, string> = {
   common: "border-slate-500/30 bg-slate-500/10 text-slate-300",
@@ -57,25 +75,6 @@ const RARITY_STYLE: Record<string, string> = {
   rare: "border-purple-400/30 bg-purple-400/10 text-purple-300",
   epic: "border-amber-400/40 bg-amber-400/10 text-amber-300",
 };
-
-function useCountdown(deadline: string | null): number {
-  const [msLeft, setMsLeft] = useState(0);
-  useEffect(() => {
-    if (!deadline) { setMsLeft(0); return; }
-    const tick = () => setMsLeft(Math.max(0, new Date(deadline).getTime() - Date.now()));
-    tick();
-    const interval = setInterval(tick, 500);
-    return () => clearInterval(interval);
-  }, [deadline]);
-  return msLeft;
-}
-
-function formatCountdown(ms: number): string {
-  const totalSeconds = Math.ceil(ms / 1000);
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
 
 export default function GachaRoomPage() {
   const params = useParams<{ roomId: string }>();
@@ -96,7 +95,6 @@ export default function GachaRoomPage() {
   const [detail, setDetail] = useState<RoomDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [bidInput, setBidInput] = useState("");
   const [isPrivate, setIsPrivate] = useState(true);
 
   // Mirrors `detail` for waitForReveal's poll loop below (a plain closure captured once inside
@@ -140,15 +138,16 @@ export default function GachaRoomPage() {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  const { lastUpdate, lastOpened, lastBid, lastSettled, lastReadyUpdate, allReadyTick, emojiBySeat, readySeats, markReady, pickEmoji } = useGachaRoomSocket(roomId, accessToken);
-  useEffect(() => { refresh(); }, [lastUpdate, lastOpened, lastBid, lastSettled]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { lastUpdate, lastOpened, lastSettled, lastExcluded, lastReadyUpdate, allReadyTick, readySeats, markReady, lockMascot } = useGachaRoomSocket(roomId, accessToken);
+  useEffect(() => { refresh(); }, [lastUpdate, lastOpened, lastSettled, lastExcluded]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (allReadyTick > 0) setAutoOpen(true); }, [allReadyTick]);
 
-  const bidDeadlineMs = useCountdown(detail?.room.status === "bidding" ? detail.room.bidWindowEndsAt : null);
-  const payDeadlineMs = useCountdown(detail?.pendingBid?.deadline ?? null);
+  // Drives the full-screen ExclusionReveal takeover below — stays true for the whole cinematic
+  // sequence regardless of what room.status has moved on to underneath by the time it finishes.
+  const [exclusionRevealActive, setExclusionRevealActive] = useState(false);
+  useEffect(() => { if (lastExcluded) setExclusionRevealActive(true); }, [lastExcluded]);
 
   const room = detail?.room;
-  const isWinningBidder = !!detail?.pendingBid && detail.pendingBid.userId === user?.id;
 
   // GachaPack3D's resolveOpen contract: unlike Mystery Pack, the pack doesn't START a purchase
   // when the reveal triggers (the room already bought and is opening the pack automatically the
@@ -159,8 +158,12 @@ export default function GachaRoomPage() {
       const deadline = Date.now() + 90_000; // generous — matches the backend's own ~60s openPack poll ceiling plus buffer
       const check = () => {
         const nft = detailRef.current?.room.nftMetadata;
-        const rarity = detailRef.current?.room.rarity;
-        if (nft && rarity) { resolve({ nftMetadata: nft, rarity: rarity as GachaRarity }); return; }
+        // Only nftMetadata gates the reveal — rarity is cosmetic (a badge/border color) and
+        // Collector Crypt doesn't always return one of our 4 known tiers, so it can legitimately
+        // be null. Requiring it truthy here used to leave the pack shaking forever whenever that
+        // happened, since nothing ever flips it non-null. Same "common" fallback the flat/no-3D
+        // render path already uses below.
+        if (nft) { resolve({ nftMetadata: nft, rarity: (detailRef.current?.room.rarity ?? "common") as GachaRarity }); return; }
         if (detailRef.current?.room.status === "failed") { reject(new Error("This room ran into a problem opening the pack.")); return; }
         if (Date.now() > deadline) { reject(new Error("Taking longer than expected — check back in a moment.")); return; }
         setTimeout(check, 700);
@@ -246,14 +249,14 @@ export default function GachaRoomPage() {
     setError(null);
     try {
       const token = await getAccessToken();
-      const res = await fetch(`/api/gacha/rooms/${roomId}/force-settle`, {
+      const res = await fetch(`/api/gacha/rooms/${roomId}/force-exclude`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Failed to force-settle");
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Failed to force the exclusion draw");
       refresh();
     } catch (err: any) {
-      setError(err?.message?.length < 200 ? err.message : "Failed to force-settle.");
+      setError(err?.message?.length < 200 ? err.message : "Failed to force the exclusion draw.");
     } finally {
       setForceSettling(false);
     }
@@ -264,56 +267,29 @@ export default function GachaRoomPage() {
     markReady();
   }, [markReady]);
 
-  const handleBid = useCallback(async () => {
-    const amount = parseFloat(bidInput);
-    if (!Number.isFinite(amount) || amount <= 0) { setError("Enter a valid bid amount"); return; }
-    setBusy(true);
-    setError(null);
-    try {
-      const token = await getAccessToken();
-      const res = await fetch(`/api/gacha/rooms/${roomId}/bid`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ amountUsdc: amount }),
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Bid failed");
-      setBidInput("");
-      refresh();
-    } catch (err: any) {
-      setError(err?.message?.length < 200 ? err.message : "Bid failed — please try again.");
-    } finally {
-      setBusy(false);
-    }
-  }, [bidInput, roomId, getAccessToken, refresh]);
+  // Same "don't let one distracted player stall the room" pattern as MascotPicker's own 30s
+  // timer — the ready-gate used to wait indefinitely for a manual click with no fallback. Mirrors
+  // showReadyGate's own condition (computed again below from the same source state, since that
+  // const is declared after the early-return and hooks can't live there).
+  const [readyCountdown, setReadyCountdown] = useState(READY_SECONDS);
+  const readyGateEligible = !arrivedAlreadyRevealedRef.current && !played3DReveal
+    && detail?.room.status !== "failed" && detail?.room.status !== "cancelled"
+    && !!detail?.room.nftMetadata && !!detail?.myParticipant && !autoOpen;
+  useEffect(() => {
+    if (!readyGateEligible || iAmReady) return;
+    setReadyCountdown(READY_SECONDS);
+    const interval = setInterval(() => setReadyCountdown((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(interval);
+  }, [readyGateEligible, iAmReady]);
+  useEffect(() => {
+    if (readyGateEligible && !iAmReady && readyCountdown === 0) handleMarkReady();
+  }, [readyCountdown, readyGateEligible, iAmReady, handleMarkReady]);
 
-  const handlePayBid = useCallback(async () => {
-    if (!embeddedWallet?.address) { setError("No Solana wallet found"); return; }
-    setBusy(true);
-    setError(null);
-    try {
-      const token = await getAccessToken();
-      const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-      const payTxRes = await fetch(`/api/gacha/rooms/${roomId}/pay-bid-tx`, { method: "POST", headers: authHeader });
-      if (!payTxRes.ok) throw new Error((await payTxRes.json().catch(() => null))?.message ?? "Failed to prepare payment");
-      const { txBase64 } = await payTxRes.json();
-
-      const txBytes = Buffer.from(txBase64, "base64");
-      const { signature: sigBytes } = await signAndSendTransaction({ transaction: txBytes as unknown as Uint8Array, wallet: embeddedWallet as any, chain: "solana:devnet" });
-      const paymentTxHash = bs58.encode(sigBytes as Uint8Array);
-
-      const res = await fetch(`/api/gacha/rooms/${roomId}/pay-bid`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ paymentTxHash }),
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Payment failed");
-      refresh();
-    } catch (err: any) {
-      setError(err?.message?.length < 200 ? err.message : "Payment failed — please try again.");
-    } finally {
-      setBusy(false);
-    }
-  }, [embeddedWallet, roomId, getAccessToken, signAndSendTransaction, refresh]);
+  const handleLockMascot = useCallback(async (mascotKey: string) => {
+    const res = await lockMascot(mascotKey);
+    if (res.ok) refresh();
+    return res;
+  }, [lockMascot, refresh]);
 
   const handleClaim = useCallback(async () => {
     setBusy(true);
@@ -338,6 +314,7 @@ export default function GachaRoomPage() {
     if (!room) return "";
     switch (room.status) {
       case "waiting": return `Waiting for ${room.seats - room.seatsFilled} more player${room.seats - room.seatsFilled === 1 ? "" : "s"}…`;
+      case "excluding": return "Running the exclusion draw…";
       case "purchasing": return "Buying the pack…";
       case "opening": return "Opening the pack…";
       case "bidding": return "Bidding is open";
@@ -366,9 +343,20 @@ export default function GachaRoomPage() {
   // and showing "waiting for everyone to be ready" during that window is misleading: there is
   // nothing yet for anyone to be ready to watch.
   const showReadyGate = show3D && !!room.nftMetadata && !!detail.myParticipant && !autoOpen;
+  // Mascot lock-in is its own isolated screen — no poker table, no pack behind it — so it reads
+  // as "pick your character" before the room itself is shown, arcade-select-screen style. Once
+  // locked, this flips off and the big poker-table "everyone's here" view takes over.
+  const isPicking = room.status === "waiting" && !!detail.myParticipant && !detail.myParticipant.mascotLocked;
 
   return (
     <div className="relative w-full min-h-[calc(100vh-var(--header-h,0px))] bg-[#111114] text-slate-100">
+      {exclusionRevealActive && lastExcluded && (
+        <ExclusionReveal
+          excludedSeatNumbers={lastExcluded.excludedSeatNumbers}
+          getMascotForSeat={(seatNumber) => getMascot(detail.participants.find((p) => p.seatNumber === seatNumber)?.mascotKey)}
+          onDone={() => setExclusionRevealActive(false)}
+        />
+      )}
       <div className="max-w-2xl mx-auto px-5 pt-6 pb-16">
         <div className="flex items-center justify-between mb-6">
           <Link href="/app/gacha" className="flex items-center gap-1 text-slate-400 hover:text-white transition-colors text-base">
@@ -379,211 +367,197 @@ export default function GachaRoomPage() {
 
         {error && <div className="mb-5 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-base text-red-300">{error}</div>}
 
-        <div className="flex flex-col items-center gap-4 mb-8">
-          <div className="w-full -mb-4 relative z-10">
-            <PokerTable
-              seats={room.seats}
-              participants={detail.participants.map((p) => ({ ...p, emoji: emojiBySeat[p.seatNumber] }))}
-              onPickEmoji={detail.myParticipant && room.status !== "settled" ? pickEmoji : undefined}
-              readySeats={readySeats}
-            />
+        {isPicking ? (
+          <div className="min-h-[60vh] flex items-center justify-center py-8">
+            <div className="w-full max-w-lg">
+              <MascotPicker lockedMascotKey={null} onLock={handleLockMascot} />
+            </div>
           </div>
-          {show3D ? (
-            room.status === "waiting" ? (
-              <GachaPack width={180} />
-            ) : (
-              <div className="w-full h-[380px] rounded-2xl overflow-hidden border border-white/10">
-                <GachaPack3D
-                  autoOpen={autoOpen}
-                  resolveOpen={waitForReveal}
-                  onOpened={(result) => { setRevealedCard(result); setPlayed3DReveal(true); }}
-                  onError={(err: unknown) => setError(err instanceof Error ? err.message : "Couldn't open the pack right now.")}
-                  idleSubtitle={autoOpen ? statusCaption : "Waiting for everyone to be ready…"}
-                  openingLabel={statusCaption}
+        ) : (
+          <>
+            <div className="flex flex-col items-center gap-4 mb-8">
+              <div className="w-full -mb-4 relative z-10">
+                <PokerTable
+                  seats={room.seats}
+                  participants={detail.participants}
+                  readySeats={readySeats}
+                  size={room.status === "waiting" || room.status === "excluding" ? "hero" : "compact"}
+                  excludedSeats={detail.participants.filter((p) => p.excluded).map((p) => p.seatNumber)}
+                  spinning={room.status === "excluding" && !lastExcluded}
                 />
               </div>
-            )
-          ) : cardResult ? (
-            <div className="w-full flex flex-col sm:flex-row items-center sm:items-start justify-center gap-6">
-              <GachaCard
-                width={220}
-                card={{
-                  name: cardResult.nftMetadata?.name ?? "Mystery Card",
-                  rarity: cardResult.rarity,
-                  // faceImage/backImage render the actual Collector Crypt scan edge-to-edge, no
-                  // Loofta frame — `image` alone would cover the illustration in the branded pack
-                  // art instead, which is exactly what real card reveals shouldn't look like.
-                  faceImage: cardResult.nftMetadata?.image,
-                  backImage: cardResult.nftMetadata?.backImage,
-                }}
-              />
-              <CardAttributesPanel
-                name={cardResult.nftMetadata?.name}
-                attributes={cardResult.nftMetadata?.attributes}
-                insuredValueUsdc={cardResult.nftMetadata?.insuredValueUsdc}
-                rarity={cardResult.rarity}
-                className="sm:mt-2"
-              />
+              {show3D ? (
+                room.status === "waiting" || room.status === "excluding" ? (
+                  <GachaPack width={180} />
+                ) : (
+                  <div className="w-full h-[460px] sm:h-[560px] rounded-2xl overflow-hidden">
+                    <GachaPack3D
+                      autoOpen={autoOpen}
+                      resolveOpen={waitForReveal}
+                      onOpened={(result) => { setRevealedCard(result); setPlayed3DReveal(true); }}
+                      onError={(err: unknown) => setError(err instanceof Error ? err.message : "Couldn't open the pack right now.")}
+                      idleSubtitle={autoOpen ? statusCaption : "Waiting for everyone to be ready…"}
+                      openingLabel={statusCaption}
+                    />
+                  </div>
+                )
+              ) : cardResult ? (
+                <div className="w-full flex flex-col sm:flex-row items-center sm:items-start justify-center gap-6">
+                  <GachaCard
+                    width={220}
+                    card={{
+                      name: cardResult.nftMetadata?.name ?? "Mystery Card",
+                      rarity: cardResult.rarity,
+                      // faceImage/backImage render the actual Collector Crypt scan edge-to-edge, no
+                      // Loofta frame — `image` alone would cover the illustration in the branded pack
+                      // art instead, which is exactly what real card reveals shouldn't look like.
+                      faceImage: cardResult.nftMetadata?.image,
+                      backImage: cardResult.nftMetadata?.backImage,
+                    }}
+                  />
+                  <CardAttributesPanel
+                    name={cardResult.nftMetadata?.name}
+                    attributes={cardResult.nftMetadata?.attributes}
+                    insuredValueUsdc={cardResult.nftMetadata?.insuredValueUsdc}
+                    rarity={cardResult.rarity}
+                    className="sm:mt-2"
+                  />
+                </div>
+              ) : (
+                <GachaPack width={180} face="back" />
+              )}
+              {room.rarity && !show3D && (
+                <span className={`text-sm font-semibold uppercase tracking-wide px-3 py-1 rounded-full border ${RARITY_STYLE[room.rarity] ?? RARITY_STYLE.common}`}>
+                  {room.rarity}
+                </span>
+              )}
+              {!show3D && <p className="text-slate-300 text-base font-medium">{statusCaption}</p>}
             </div>
-          ) : (
-            <GachaPack width={180} face="back" />
-          )}
-          {room.rarity && !show3D && (
-            <span className={`text-sm font-semibold uppercase tracking-wide px-3 py-1 rounded-full border ${RARITY_STYLE[room.rarity] ?? RARITY_STYLE.common}`}>
-              {room.rarity}
-            </span>
-          )}
-          {!show3D && <p className="text-slate-300 text-base font-medium">{statusCaption}</p>}
-        </div>
 
-        {room.status === "waiting" && !detail.myParticipant && (
-          <button
-            type="button"
-            onClick={handleJoin}
-            disabled={busy}
-            className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors disabled:opacity-50"
-          >
-            {busy ? "Joining…" : `Join for $${room.entryUsdc.toFixed(2)}`}
-          </button>
-        )}
-
-        {showGachaDevTools && room.status === "waiting" && (
-          <button
-            type="button"
-            onClick={handleFillWithBots}
-            disabled={fillingBots}
-            className="w-full h-10 mt-2 rounded-full border border-emerald-400/30 bg-emerald-500/10 text-emerald-200 text-base font-medium hover:bg-emerald-500/15 transition-colors disabled:opacity-50"
-          >
-            {fillingBots ? "Filling…" : "Dev: fill remaining seats with bots"}
-          </button>
-        )}
-
-        {showGachaDevTools && (room.status === "bidding" || room.status === "settling") && (
-          <button
-            type="button"
-            onClick={handleForceSettle}
-            disabled={forceSettling}
-            className="w-full h-10 mt-2 rounded-full border border-emerald-400/30 bg-emerald-500/10 text-emerald-200 text-base font-medium hover:bg-emerald-500/15 transition-colors disabled:opacity-50"
-          >
-            {forceSettling ? "Settling…" : "Dev: force settle now (skip cron wait)"}
-          </button>
-        )}
-
-        {showReadyGate && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 text-center space-y-3">
-            {iAmReady ? (
-              <p className="text-slate-300 text-base">
-                Waiting for everyone to be ready — {lastReadyUpdate?.readyCount ?? 1}/{room.seatsFilled} ready. The reveal starts automatically once everyone is.
-              </p>
-            ) : (
-              <>
-                <p className="text-slate-300 text-base">Everyone marks ready, then the pack opens for the whole room at once.</p>
-                <button
-                  type="button"
-                  onClick={handleMarkReady}
-                  className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors"
-                >
-                  I&apos;m ready
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {room.status === "bidding" && detail.myParticipant && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-slate-400 text-base">Current best</p>
-                <p className="text-2xl font-bold text-slate-100">${(detail.bestBid?.amountUsdc ?? room.buybackAmountUsdc ?? 0).toFixed(2)}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-slate-400 text-base">Time left</p>
-                <p className="text-2xl font-bold text-slate-100 tabular-nums">{formatCountdown(bidDeadlineMs)}</p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                inputMode="decimal"
-                value={bidInput}
-                onChange={(e) => setBidInput(e.target.value)}
-                placeholder={`> $${(detail.bestBid?.amountUsdc ?? room.buybackAmountUsdc ?? 0).toFixed(2)}`}
-                className="flex-1 h-11 rounded-full bg-white/10 border border-white/10 px-4 text-base text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-amber-400/50"
-              />
+            {room.status === "waiting" && !detail.myParticipant && (
               <button
                 type="button"
-                onClick={handleBid}
-                disabled={busy || bidDeadlineMs <= 0}
-                className="h-11 px-6 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors disabled:opacity-50"
+                onClick={handleJoin}
+                disabled={busy}
+                className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors disabled:opacity-50"
               >
-                Bid
+                {busy ? "Joining…" : `Join for $${room.entryUsdc.toFixed(2)}`}
               </button>
-            </div>
-            <p className="text-slate-500 text-base">No bid? The card auto-sells back and everyone splits the buyback evenly.</p>
-          </div>
-        )}
-
-        {room.status === "settling" && detail.pendingBid && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-3 text-center">
-            {isWinningBidder ? (
-              <>
-                <p className="text-slate-100 text-lg font-bold">You won the bid — ${detail.pendingBid.amountUsdc.toFixed(2)}</p>
-                <p className="text-slate-400 text-base">Pay within {formatCountdown(payDeadlineMs)} to claim the card.</p>
-                <button
-                  type="button"
-                  onClick={handlePayBid}
-                  disabled={busy || payDeadlineMs <= 0}
-                  className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors disabled:opacity-50"
-                >
-                  {busy ? "Confirming…" : `Pay $${detail.pendingBid.amountUsdc.toFixed(2)}`}
-                </button>
-              </>
-            ) : (
-              <p className="text-slate-300 text-base">Waiting on the winning bidder to pay ({formatCountdown(payDeadlineMs)} left) — falls back automatically if they don&apos;t.</p>
             )}
-          </div>
-        )}
 
-        {room.status === "settled" && detail.myParticipant && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
-            {detail.myParticipant.claimed ? (
-              <p className="text-center text-slate-100 text-lg font-bold">
-                Claimed{detail.myParticipant.payoutIsPrivate ? " privately" : ""} — ${detail.myParticipant.payoutUsdc?.toFixed(2)}
-              </p>
-            ) : (
-              <>
-                <p className="text-center text-slate-100 text-lg font-bold">Your payout: ${detail.myParticipant.payoutUsdc?.toFixed(2)}</p>
-                <div>
-                  <p className="text-slate-400 text-base mb-2">Claim</p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setIsPrivate(true)}
-                      className={`flex-1 h-10 rounded-xl border text-base font-medium transition-colors ${isPrivate ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}
-                    >
-                      Private
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsPrivate(false)}
-                      className={`flex-1 h-10 rounded-xl border text-base font-medium transition-colors ${!isPrivate ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}
-                    >
-                      Not private
-                    </button>
-                  </div>
+            {showGachaDevTools && room.status === "waiting" && (
+              <button
+                type="button"
+                onClick={handleFillWithBots}
+                disabled={fillingBots}
+                className="w-full h-10 mt-2 rounded-full border border-emerald-400/30 bg-emerald-500/10 text-emerald-200 text-base font-medium hover:bg-emerald-500/15 transition-colors disabled:opacity-50"
+              >
+                {fillingBots ? "Filling…" : "Dev: fill remaining seats with bots"}
+              </button>
+            )}
+
+            {showGachaDevTools && room.status === "excluding" && (
+              <button
+                type="button"
+                onClick={handleForceSettle}
+                disabled={forceSettling}
+                className="w-full h-10 mt-2 rounded-full border border-emerald-400/30 bg-emerald-500/10 text-emerald-200 text-base font-medium hover:bg-emerald-500/15 transition-colors disabled:opacity-50"
+              >
+                {forceSettling ? "Running…" : "Dev: force the exclusion draw now (skip cron wait)"}
+              </button>
+            )}
+
+            {room.status === "excluding" && !lastExcluded && (
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center space-y-3">
+                <p className="font-display text-3xl sm:text-4xl font-medium tracking-[-0.02em] text-white">The draw is running…</p>
+                <p className="text-slate-400 text-base">
+                  {room.exclusionCount} of {room.seats} {room.exclusionCount === 1 ? "player gets" : "players get"} excluded — survivors split the buyback.
+                </p>
+              </div>
+            )}
+
+
+            {showReadyGate && (
+              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-5 text-center space-y-3">
+                <div className="absolute inset-x-0 top-0 h-1 bg-white/10">
+                  <div
+                    className="h-full bg-gradient-to-r from-[#FF1301] via-[#FF6A00] to-[#EAB308] transition-[width] duration-1000 ease-linear"
+                    style={{ width: `${(readyCountdown / READY_SECONDS) * 100}%` }}
+                  />
                 </div>
-                <button
-                  type="button"
-                  onClick={handleClaim}
-                  disabled={busy}
-                  className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors disabled:opacity-50"
-                >
-                  {busy ? "Claiming…" : `Claim $${detail.myParticipant.payoutUsdc?.toFixed(2)}`}
-                </button>
-              </>
+                {iAmReady ? (
+                  <p className="text-slate-300 text-base">
+                    Waiting for everyone to be ready — {lastReadyUpdate?.readyCount ?? 1}/{room.seatsFilled} ready. The reveal starts automatically once everyone is.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-slate-300 text-base">Everyone marks ready, then the pack opens for the whole room at once.</p>
+                    <button
+                      type="button"
+                      onClick={handleMarkReady}
+                      className="w-full h-11 rounded-full bg-gradient-to-r from-[#FF1301] via-[#FF6A00] to-[#EAB308] text-white font-display font-semibold hover:opacity-90 transition-opacity"
+                    >
+                      I&apos;m ready ({readyCountdown}s)
+                    </button>
+                  </>
+                )}
+              </div>
             )}
-          </div>
+
+            {room.status === "settled" && detail.myParticipant?.excluded && (
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-5 text-center space-y-2">
+                <p className="text-slate-100 text-lg font-bold">You were excluded this round</p>
+                <p className="text-slate-400 text-base">No payout this time — the survivors split the buyback.</p>
+                <Link
+                  href="/app/gacha"
+                  className="inline-block mt-2 w-full h-11 leading-[44px] rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors"
+                >
+                  Back to rooms
+                </Link>
+              </div>
+            )}
+
+            {room.status === "settled" && detail.myParticipant && !detail.myParticipant.excluded && (
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
+                {detail.myParticipant.claimed ? (
+                  <p className="text-center text-slate-100 text-lg font-bold">
+                    Claimed{detail.myParticipant.payoutIsPrivate ? " privately" : ""} — ${detail.myParticipant.payoutUsdc?.toFixed(2)}
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-center text-slate-100 text-lg font-bold">Your payout: ${detail.myParticipant.payoutUsdc?.toFixed(2)}</p>
+                    <div>
+                      <p className="text-slate-400 text-base mb-2">Claim</p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsPrivate(true)}
+                          className={`flex-1 h-10 rounded-xl border text-base font-medium transition-colors ${isPrivate ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}
+                        >
+                          Private
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsPrivate(false)}
+                          className={`flex-1 h-10 rounded-xl border text-base font-medium transition-colors ${!isPrivate ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : "border-white/10 bg-white/5 text-slate-400 hover:text-white"}`}
+                        >
+                          Not private
+                        </button>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleClaim}
+                      disabled={busy}
+                      className="w-full h-11 rounded-full bg-amber-500/25 border border-amber-400/40 text-amber-100 font-semibold hover:bg-amber-500/40 transition-colors disabled:opacity-50"
+                    >
+                      {busy ? "Claiming…" : `Claim $${detail.myParticipant.payoutUsdc?.toFixed(2)}`}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

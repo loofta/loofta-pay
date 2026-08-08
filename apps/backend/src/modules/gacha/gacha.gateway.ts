@@ -12,7 +12,7 @@ import {
 import type { Server, Socket } from 'socket.io';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { GachaService } from './gacha.service';
-import { GACHA_EVENTS, GachaRoomUpdatePayload, GachaRoomOpenedPayload, GachaBidPlacedPayload, GachaRoomSettledPayload } from './gacha.events';
+import { GACHA_EVENTS, GachaRoomUpdatePayload, GachaRoomOpenedPayload, GachaBidPlacedPayload, GachaRoomSettledPayload, GachaRoomExcludedPayload } from './gacha.events';
 
 // Mirrors main.ts's own CORS logic (see bootstrap()) — read directly from process.env since
 // @WebSocketGateway's cors option is evaluated at class-decoration time, before Nest's DI
@@ -224,6 +224,32 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
     this.server?.to(roomId).emit('room:emoji_update', { seatNumber, emoji: body.emoji });
   }
 
+  /**
+   * Locking in a mascot is a meaningful, irreversible action (unlike pick_emoji, which just
+   * commits on click) — so unlike every other handler in this gateway, this one returns a value,
+   * which NestJS relays back as the ack callback if the client passed one to `socket.emit(...)`.
+   * The mascot whitelist and "already locked" check both live in GachaService.lockMascot (the one
+   * place mascot state is actually persisted); this handler just forwards and relays whatever it
+   * throws, rather than re-validating the same whitelist a second time here.
+   */
+  @SubscribeMessage('lock_mascot')
+  async onLockMascot(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { roomId: string; mascotKey: string },
+  ): Promise<{ ok: boolean; error?: string }> {
+    const roomId = body?.roomId;
+    const userId = client.data?.userId;
+    if (!roomId || !userId || !body?.mascotKey) return { ok: false, error: 'Invalid request' };
+
+    try {
+      const { seatNumber } = await this.gacha.lockMascot(roomId, userId, body.mascotKey);
+      this.server?.to(roomId).emit('room:mascot_locked', { seatNumber, mascotKey: body.mascotKey });
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? 'Failed to lock in your mascot' };
+    }
+  }
+
   @OnEvent(GACHA_EVENTS.ROOM_UPDATE)
   async onRoomUpdate(payload: GachaRoomUpdatePayload): Promise<void> {
     const { roomId, ...rest } = payload;
@@ -253,5 +279,13 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
     this.readyByRoom.delete(roomId);
     this.emojiByRoom.delete(roomId);
     this.server?.to(roomId).emit('room:settled', rest);
+  }
+
+  /** Fired once GachaService.advanceExclusionDraw resolves the VRF draw — the frontend's cue to
+   *  play the kick-reveal animation before the room moves on to the pack purchase/open. */
+  @OnEvent(GACHA_EVENTS.ROOM_EXCLUDED)
+  onRoomExcluded(payload: GachaRoomExcludedPayload): void {
+    const { roomId, ...rest } = payload;
+    this.server?.to(roomId).emit('room:excluded', rest);
   }
 }
