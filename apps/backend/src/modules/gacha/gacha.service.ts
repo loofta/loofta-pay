@@ -25,6 +25,7 @@ import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc } from 
 import { CollectorCryptClient, CollectorCryptPackType, NftMetadata, OpenPackResponse, PackRarityTier } from './collectorcrypt.client';
 import { GACHA_EVENTS } from './gacha.events';
 import { GachaVrfService } from './gacha-vrf.service';
+import { GachaOnchainStateService } from './gacha-onchain-state.service';
 // Pure/dependency-free — same selection math the giveaways VRF draw uses (sha256(randomness+':'+id),
 // sort, take first N). For the exclusion game we call it with exclusionCount and treat the
 // returned ids as EXCLUDED rather than as winners; the function's contract doesn't change.
@@ -111,8 +112,17 @@ export class GachaService {
     private readonly collectorCrypt: CollectorCryptClient,
     private readonly events: EventEmitter2,
     private readonly vrf: GachaVrfService,
+    private readonly onchainState: GachaOnchainStateService,
   ) {
     this.usdcMint = new PublicKey(this.config.get<string>('SOLANA_USDC_MINT_DEVNET') || DEFAULT_DEVNET_USDC_MINT);
+  }
+
+  // Phase 2 of the MagicBlock ER migration (see the plan doc) — vote tallies, default off. When
+  // true, startVoteRound/castVote/round-completion logic below runs against the on-chain
+  // GachaRoomState PDA (same account Phase 1's ready-state uses) instead of voteByRoom/
+  // voteRoundStartedAt. Independent of GACHA_ONCHAIN_READY_STATE — either can be on alone.
+  private get onchainVoteStateEnabled(): boolean {
+    return this.config.get<string>('GACHA_ONCHAIN_VOTE_STATE') === 'true';
   }
 
   // ── Solana plumbing (same pattern as PackService — see pack.service.ts, EXCEPT this module is
@@ -937,15 +947,28 @@ export class GachaService {
    *  every survivor left is a bot (a fully-demo-mode room shouldn't need a human to ever click). */
   private async startVoteRound(roomId: string, round: number): Promise<void> {
     const survivors = await this.getSurvivors(roomId);
-    const tally = new Map<string, boolean>();
     const yesP = Math.max(0.72 - (round - 1) * 0.28, 0.08);
+    this.logger.log(`Room ${roomId}: vote round ${round} started (${survivors.length} survivors)`);
+    this.events.emit(GACHA_EVENTS.ROOM_VOTE_ROUND_STARTED, { roomId, round, survivorSeatNumbers: survivors.map((p) => p.seat_number) });
+
+    if (this.onchainVoteStateEnabled) {
+      const seats = await this.getRoomSeats(roomId);
+      if (seats === null) return;
+      await this.onchainState.ensureRoomDelegated(roomId, seats);
+      await this.onchainState.startVoteRound(roomId, round, survivors.map((p) => p.seat_number));
+      for (const p of survivors) {
+        if (p.user_id.startsWith('bot-')) await this.onchainState.castVote(roomId, p.seat_number, Math.random() < yesP);
+      }
+      await this.checkVoteRoundCompleteOnchain(roomId, round);
+      return;
+    }
+
+    const tally = new Map<string, boolean>();
     for (const p of survivors) {
       if (p.user_id.startsWith('bot-')) tally.set(p.user_id, Math.random() < yesP);
     }
     this.voteByRoom.set(roomId, tally);
     this.voteRoundStartedAt.set(roomId, Date.now());
-    this.logger.log(`Room ${roomId}: vote round ${round} started (${survivors.length} survivors)`);
-    this.events.emit(GACHA_EVENTS.ROOM_VOTE_ROUND_STARTED, { roomId, round, survivorSeatNumbers: survivors.map((p) => p.seat_number) });
     await this.checkVoteRoundComplete(roomId, round);
   }
 
@@ -960,7 +983,14 @@ export class GachaService {
       if (room.vrf_requested_at) throw new BadRequestException('This round has already locked in — wait for the next one');
 
       const survivors = await this.getSurvivors(roomId);
-      if (!survivors.some((p) => p.user_id === userId)) throw new BadRequestException('You are not eligible to vote in this room');
+      const me = survivors.find((p) => p.user_id === userId);
+      if (!me) throw new BadRequestException('You are not eligible to vote in this room');
+
+      if (this.onchainVoteStateEnabled) {
+        await this.onchainState.castVote(roomId, me.seat_number, vote);
+        await this.checkVoteRoundCompleteOnchain(roomId, room.vote_round);
+        return { round: room.vote_round };
+      }
 
       let tally = this.voteByRoom.get(roomId);
       if (!tally) { tally = new Map(); this.voteByRoom.set(roomId, tally); }
@@ -1001,14 +1031,59 @@ export class GachaService {
       .catch((e: any) => this.logger.error(`Room ${roomId}: vote-cut VRF request failed (will retry via cron): ${e.message}`));
   }
 
+  /** On-chain counterpart to checkVoteRoundComplete. Reads the tally BEFORE attempting to
+   *  finalize (not after) so the yes/total counts used for the pass/fail decision below can't be
+   *  changed by a finalize call that itself doesn't touch yes_mask/survivor_mask — and, critically,
+   *  so an already-`finalized` round is caught here and returned on early, before ever calling
+   *  finalize_vote_round again: the on-chain instruction is idempotent (a second call against an
+   *  already-finalized round is a no-op, not an error), so without this pre-read guard every
+   *  subsequent call after the first successful finalize (the next cron tick, another survivor's
+   *  vote landing a moment later) would re-run the passed/!passed branch below a second time —
+   *  double-firing the VRF request or double-calling finalizeBuybackSettlement. Skipping the
+   *  on-chain finalize call entirely when the tally isn't complete and the deadline hasn't passed
+   *  also avoids submitting a transaction that would only fail with RoundStillOpen. */
+  private async checkVoteRoundCompleteOnchain(roomId: string, round: number): Promise<void> {
+    const state = await this.onchainState.getVoteState(roomId);
+    if (!state || state.round !== round || state.finalized) return;
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (state.votedCount < state.totalCount && nowSeconds <= state.roundDeadline) return; // still collecting votes
+
+    try {
+      await this.onchainState.finalizeVoteRound(roomId);
+    } catch (e: any) {
+      this.logger.warn(`Room ${roomId}: finalize_vote_round not ready yet: ${e.message}`);
+      return;
+    }
+
+    const { yesCount, totalCount, passed } = state;
+    this.logger.log(`Room ${roomId}: vote round ${round} complete — ${yesCount}/${totalCount} YES (${passed ? 'cutting one more' : 'locked in'})`);
+    this.events.emit(GACHA_EVENTS.ROOM_VOTE_RESULT, { roomId, round, yesCount, totalCount, passed });
+
+    if (!passed) {
+      await this.finalizeBuybackSettlement(roomId);
+      return;
+    }
+
+    const db = this.supabase.getClient();
+    this.vrf
+      .requestRandomness(`${roomId}:vote:${round}`)
+      .then(({ slot }) => db.from('gacha_rooms').update({ vrf_requested_at: new Date().toISOString(), vrf_request_slot: slot }).eq('id', roomId))
+      .catch((e: any) => this.logger.error(`Room ${roomId}: vote-cut VRF request failed (will retry via cron): ${e.message}`));
+  }
+
   /** Cron entrypoint — for every room in 'voting': if a cut draw is in flight (vrf_requested_at
-   *  set), advance it; otherwise we're still collecting votes, so just check the 30s timeout. */
+   *  set), advance it; otherwise we're still collecting votes, so just check completion (the
+   *  on-chain path enforces the 30s deadline itself via round_deadline; the in-memory path needs
+   *  the separate maybeTimeoutVoteRound check). */
   async advanceVotingRooms(): Promise<void> {
     const db = this.supabase.getClient();
     const { data: rooms } = await db.from('gacha_rooms').select('id, vote_round, vrf_requested_at').eq('status', 'voting');
     for (const room of rooms ?? []) {
       if (room.vrf_requested_at) {
         await this.resolveVoteCutDraw(room.id, room.vote_round).catch((e) => this.logger.error(`Room ${room.id}: vote-cut draw advance failed: ${e.message}`));
+      } else if (this.onchainVoteStateEnabled) {
+        await this.withVoteLock(room.id, () => this.checkVoteRoundCompleteOnchain(room.id, room.vote_round)).catch((e) => this.logger.error(`Room ${room.id}: vote completion check failed: ${e.message}`));
       } else {
         await this.maybeTimeoutVoteRound(room.id, room.vote_round).catch((e) => this.logger.error(`Room ${room.id}: vote timeout check failed: ${e.message}`));
       }

@@ -3,8 +3,9 @@
 // The exclusion draw's reveal — ported 1:1 from pack-party/preview/pack-party-screens.jsx's
 // ScreenEat + ScreenOut (screens 4 and 5): a chip grid that spins a gold "spot" highlight around
 // while the real MagicBlock VRF draw resolves server-side, then freezes on each real victim one
-// at a time ("hit" — sad + OUT tag), then hands off to a static OUUUT casualties screen before
-// letting the caller continue into voting. The spin itself is pure suspense (identical shape to
+// at a time ("hit" — sad + OUT tag). Once every victim is frozen, the full-screen ExclusionReveal
+// cinematic (sword-slash + sad mascot + "OUTTT!!") plays on top before handing off to the static
+// OUUUT casualties recap and on into voting. The spin itself is pure suspense (identical shape to
 // the reference's `startEat` — spins per victim, decaying interval) but the DESTINATION is never
 // random: once `finalVictims` arrives from the real draw, every landing is on an actual result,
 // never a guess.
@@ -13,6 +14,8 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Maximize2, X } from "lucide-react";
 import { Shell, Chip, GRAD_STYLE, money, type ChipPlayer } from "@/components/PackParty";
+import ExclusionReveal from "@/components/ExclusionReveal";
+import { getMascot } from "@/lib/mascots";
 
 export default function GachaRoulette({
   players,
@@ -37,9 +40,10 @@ export default function GachaRoulette({
   const [spotSeat, setSpotSeat] = useState<number | null>(null);
   const [revealedVictims, setRevealedVictims] = useState<number[]>([]);
   const [phase, setPhase] = useState<"spin" | "out">("spin");
+  const [cinematicActive, setCinematicActive] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const revealStartedRef = useRef(false);
-  const advancedToOutRef = useRef(false);
+  const advancedToCinematicRef = useRef(false);
   const advancedToVoteRef = useRef(false);
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -84,12 +88,14 @@ export default function GachaRoulette({
 
   const allRevealed = !!finalVictims && revealedVictims.length >= finalVictims.length;
 
-  // Both hand-offs (reveal -> OUUUT -> voting) now happen on their own, on a fixed beat, instead
-  // of waiting on a click — nobody should have to tap through a moment that already resolved.
+  // Both hand-offs (reveal -> cinematic -> OUUUT -> voting) now happen on their own, on a fixed
+  // beat, instead of waiting on a click — nobody should have to tap through a moment that already
+  // resolved. The cinematic itself calls its own onDone once its animation finishes playing (see
+  // below), which is what actually advances to the OUUUT recap.
   useEffect(() => {
-    if (!allRevealed || advancedToOutRef.current) return;
-    advancedToOutRef.current = true;
-    after(2200, () => setPhase("out"));
+    if (!allRevealed || advancedToCinematicRef.current) return;
+    advancedToCinematicRef.current = true;
+    after(600, () => setCinematicActive(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allRevealed]);
 
@@ -103,28 +109,41 @@ export default function GachaRoulette({
   const outs = players.filter((p) => finalVictims?.includes(p.seatNumber));
   const survivorCount = players.length - (finalVictims?.length ?? 0);
 
+  const cinematic = cinematicActive && finalVictims && (
+    <ExclusionReveal
+      excludedSeatNumbers={finalVictims}
+      getMascotForSeat={(seatNumber) => getMascot(players.find((p) => p.seatNumber === seatNumber)?.mascotKey)}
+      onDone={() => { setCinematicActive(false); setPhase("out"); }}
+    />
+  );
+
   if (phase === "out") {
     const viewerExcluded = outs.some((p) => p.isMe);
     return (
-      <Shell
-        kicker="5 / 7 · CASUALTIES"
-        title={viewerExcluded ? "YOU'RE" : "THEY'RE"}
-        titleGrad="OUUUT"
-        sub="thoughts and prayers. mostly prayers."
-        footer={<span className="pp-small waitpulse" style={{ marginTop: 0 }}>survivors vote next…</span>}
-      >
-        <div className="pp-outrow">
-          {outs.map((p) => (
-            <Chip key={p.seatNumber} p={p} mood="sad" size={110} tag="no soup" />
-          ))}
-        </div>
-        <p className="pp-small">{survivorCount} still standing</p>
-      </Shell>
+      <>
+        {cinematic}
+        <Shell
+          kicker="5 / 7 · CASUALTIES"
+          title={viewerExcluded ? "YOU'RE" : "THEY'RE"}
+          titleGrad="OUUUT"
+          sub="thoughts and prayers. mostly prayers."
+          footer={<span className="pp-small waitpulse" style={{ marginTop: 0 }}>survivors vote next…</span>}
+        >
+          <div className="pp-outrow">
+            {outs.map((p) => (
+              <Chip key={p.seatNumber} p={p} mood="sad" size={110} tag="no soup" />
+            ))}
+          </div>
+          <p className="pp-small">{survivorCount} still standing</p>
+        </Shell>
+      </>
     );
   }
 
   return (
-    <Shell
+    <>
+      {cinematic}
+      <Shell
       kicker="4 / 7 · ROULETTE"
       title="WHO GETS TO"
       titleGrad="EAT?"
@@ -185,6 +204,7 @@ export default function GachaRoulette({
       <p className="pp-small">
         {exclusionCount} of {players.length} {exclusionCount === 1 ? "player gets" : "players get"} excluded — survivors split the buyback.
       </p>
-    </Shell>
+      </Shell>
+    </>
   );
 }

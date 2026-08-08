@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
 import {
   WebSocketGateway,
@@ -12,6 +13,7 @@ import {
 import type { Server, Socket } from 'socket.io';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { GachaService } from './gacha.service';
+import { GachaOnchainStateService } from './gacha-onchain-state.service';
 import {
   GACHA_EVENTS,
   GachaRoomUpdatePayload,
@@ -91,7 +93,27 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
   constructor(
     private readonly privy: PrivyVerificationService,
     private readonly gacha: GachaService,
+    private readonly onchainState: GachaOnchainStateService,
+    private readonly config: ConfigService,
   ) {}
+
+  // Phase 1 of the MagicBlock ER migration (see the plan doc) — ready-checks only, default off.
+  // When true, mark_ready/ready-snapshot/all-ready-threshold logic below runs entirely against
+  // the on-chain GachaRoomState PDA instead of readyByRoom; when false (default), behavior is
+  // byte-for-byte what it was before this flag existed. Deliberately a clean either/or branch per
+  // call site, not a dual-write — see gacha-onchain-state.service.ts's file header.
+  private get onchainReadyStateEnabled(): boolean {
+    return this.config.get<string>('GACHA_ONCHAIN_READY_STATE') === 'true';
+  }
+
+  /** bit i (0-indexed) set => seat i+1 ready — inverse of the program's own mark_ready bit math. */
+  private maskToSeatNumbers(mask: number, seats: number): number[] {
+    const out: number[] = [];
+    for (let seat = 1; seat <= seats; seat++) {
+      if (mask & (1 << (seat - 1))) out.push(seat);
+    }
+    return out;
+  }
 
   /**
    * Same Bearer-token verification AuthGuard does for REST — Socket.IO has no header convention
@@ -146,9 +168,15 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
     // Bot seats are always-ready (see getBotSeatNumbers) and merged in alongside whatever real
     // participants have actually clicked ready, so a late joiner's avatars render correctly
     // without waiting for another ready_update broadcast.
-    const readySet = this.readyByRoom.get(body.roomId);
     const botSeats = await this.gacha.getBotSeatNumbers(body.roomId).catch(() => [] as number[]);
-    const mergedReady = new Set([...(readySet ?? []), ...botSeats]);
+    let realReadySeats: number[] = [];
+    if (this.onchainReadyStateEnabled) {
+      const state = await this.onchainState.getReadyState(body.roomId).catch(() => null);
+      if (state) realReadySeats = this.maskToSeatNumbers(state.readyMask, state.seats);
+    } else {
+      realReadySeats = Array.from(this.readyByRoom.get(body.roomId) ?? []);
+    }
+    const mergedReady = new Set([...realReadySeats, ...botSeats]);
     if (mergedReady.size) client.emit('room:ready_snapshot', { readySeats: Array.from(mergedReady) });
   }
 
@@ -182,6 +210,11 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
     const seatNumber = await this.gacha.getMySeatNumber(roomId, userId).catch(() => null);
     if (seatNumber === null) return;
 
+    if (this.onchainReadyStateEnabled) {
+      await this.markReadyOnchain(roomId, seatNumber);
+      return;
+    }
+
     let set = this.readyByRoom.get(roomId);
     if (!set) { set = new Set(); this.readyByRoom.set(roomId, set); }
     set.add(seatNumber);
@@ -192,6 +225,32 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
 
     const seats = await this.gacha.getRoomSeats(roomId).catch(() => null);
     if (seats !== null) await this.maybeFireAllReady(roomId, seats);
+  }
+
+  private async markReadyOnchain(roomId: string, seatNumber: number): Promise<void> {
+    const seats = await this.gacha.getRoomSeats(roomId).catch(() => null);
+    if (seats === null) return;
+    try {
+      await this.onchainState.ensureRoomDelegated(roomId, seats);
+      await this.onchainState.markReady(roomId, seatNumber);
+    } catch (e: any) {
+      this.logger.error(`[onchain] mark_ready failed for room ${roomId} seat ${seatNumber}: ${e.message}`);
+      return;
+    }
+    await this.maybeFireAllReadyOnchain(roomId, seats, seatNumber);
+  }
+
+  /** On-chain counterpart to maybeFireAllReady — reads the real ready state from the delegated
+   *  PDA instead of readyByRoom, same bot-merge/threshold logic otherwise. `seatNumber` is only
+   *  passed through for the ready_update broadcast payload (the caller that just marked ready);
+   *  omit it for the onRoomUpdate call site, which isn't reacting to a specific seat's click. */
+  private async maybeFireAllReadyOnchain(roomId: string, seats: number, seatNumber?: number): Promise<void> {
+    const state = await this.onchainState.getReadyState(roomId).catch(() => null);
+    if (!state) return;
+    const botSeats = await this.gacha.getBotSeatNumbers(roomId).catch(() => [] as number[]);
+    const readySeats = new Set([...this.maskToSeatNumbers(state.readyMask, state.seats), ...botSeats]);
+    if (seatNumber !== undefined) this.server?.to(roomId).emit('room:ready_update', { readyCount: readySeats.size, seatNumber });
+    if (readySeats.size >= seats) this.server?.to(roomId).emit('room:all_ready', {});
   }
 
   /**
@@ -291,9 +350,10 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
     this.server?.to(roomId).emit('room:update', rest);
     // See maybeFireAllReady's comment — a join completing the room is itself a trigger the
     // threshold might now be met, not just a fresh mark_ready click.
-    await this.maybeFireAllReady(roomId, payload.seats).catch((e) =>
-      this.logger.warn(`onRoomUpdate ${roomId}: maybeFireAllReady failed: ${e.message}`),
-    );
+    const check = this.onchainReadyStateEnabled
+      ? this.maybeFireAllReadyOnchain(roomId, payload.seats)
+      : this.maybeFireAllReady(roomId, payload.seats);
+    await check.catch((e) => this.logger.warn(`onRoomUpdate ${roomId}: maybeFireAllReady failed: ${e.message}`));
   }
 
   @OnEvent(GACHA_EVENTS.ROOM_OPENED)
@@ -313,6 +373,11 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
     const { roomId, ...rest } = payload;
     this.readyByRoom.delete(roomId);
     this.emojiByRoom.delete(roomId);
+    if (this.onchainReadyStateEnabled) {
+      this.onchainState.undelegateRoom(roomId).catch((e) =>
+        this.logger.error(`[onchain] undelegate failed for room ${roomId}: ${e.message}`),
+      );
+    }
     this.server?.to(roomId).emit('room:settled', rest);
   }
 

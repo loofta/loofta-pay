@@ -5,6 +5,7 @@ import { GachaService } from './gacha.service';
 import { GachaCronService } from './gacha-cron.service';
 import { GachaGateway } from './gacha.gateway';
 import { GachaVrfService } from './gacha-vrf.service';
+import { GachaOnchainStateService } from './gacha-onchain-state.service';
 import { CollectorCryptClient } from './collectorcrypt.client';
 import { UsersModule } from '../users/users.module';
 import { DatabaseModule } from '@/database/database.module';
@@ -12,7 +13,7 @@ import { DatabaseModule } from '@/database/database.module';
 @Module({
   imports: [UsersModule, DatabaseModule],
   controllers: [GachaController, AdminGachaController],
-  providers: [GachaService, GachaCronService, GachaGateway, GachaVrfService, CollectorCryptClient],
+  providers: [GachaService, GachaCronService, GachaGateway, GachaVrfService, GachaOnchainStateService, CollectorCryptClient],
   exports: [GachaService],
 })
 export class GachaModule {}

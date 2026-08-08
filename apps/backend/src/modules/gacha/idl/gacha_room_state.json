@@ -1,0 +1,642 @@
+{
+  "address": "9TebHwRo3q3mhncqKpuBvACdiwPthR2JfyBrwJW6a8Lt",
+  "metadata": {
+    "name": "gacha_room_state",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "cast_vote",
+      "docs": [
+        "Ephemeral rollup: casts (or changes) one seat's vote for the current round. This is the",
+        "direct fix for the race `withVoteLock` used to patch in gacha.service.ts — two cast_vote",
+        "transactions against the same PDA can't interleave the way two `await`ed JS calls against",
+        "a shared Map could, so the mutex this replaces is no longer needed at all."
+      ],
+      "discriminator": [
+        20,
+        212,
+        15,
+        189,
+        69,
+        180,
+        69,
+        151
+      ],
+      "accounts": [
+        {
+          "name": "room",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "room"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "seat_number",
+          "type": "u8"
+        },
+        {
+          "name": "vote",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "commit_room",
+      "docs": [
+        "Ephemeral rollup (or base layer, once undelegated): commits the current tally back to",
+        "base layer without ending the ER session — not yet wired to a call site (Phase 1 doesn't",
+        "need mid-session commits, see the plan doc's commit-sponsorship note), included now so the",
+        "account/program shape doesn't need to change when a future phase does need it."
+      ],
+      "discriminator": [
+        138,
+        145,
+        121,
+        138,
+        83,
+        230,
+        52,
+        13
+      ],
+      "accounts": [
+        {
+          "name": "room",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "room"
+          ]
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "delegate_room",
+      "docs": [
+        "Base-layer: hands the room's tally PDA to the ephemeral rollup so subsequent",
+        "mark_ready/cast_vote calls run there instead of on base layer."
+      ],
+      "discriminator": [
+        39,
+        6,
+        122,
+        70,
+        65,
+        76,
+        166,
+        26
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "buffer_room",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "room"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                125,
+                177,
+                25,
+                219,
+                29,
+                254,
+                251,
+                33,
+                143,
+                149,
+                249,
+                114,
+                245,
+                157,
+                234,
+                150,
+                253,
+                127,
+                135,
+                42,
+                171,
+                226,
+                128,
+                86,
+                20,
+                138,
+                148,
+                17,
+                144,
+                27,
+                170,
+                85
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_room",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "room"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_room",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "room"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "room",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  99,
+                  104,
+                  97,
+                  45,
+                  114,
+                  111,
+                  111,
+                  109
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "room_id_seed"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner_program",
+          "address": "9TebHwRo3q3mhncqKpuBvACdiwPthR2JfyBrwJW6a8Lt"
+        },
+        {
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "room_id_seed",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "finalize_vote_round",
+      "docs": [
+        "Ephemeral rollup: closes out the current round once either every survivor has voted or the",
+        "30s deadline has passed (whichever first) — replaces the cron's maybeTimeoutVoteRound",
+        "entirely; there's no separate \"auto-vote NO for stragglers\" write needed, since the tally",
+        "below counts against survivor_mask (everyone who COULD have voted), not voted_mask (who",
+        "actually did) — a straggler's bit simply never got set in yes_mask, which already reads as",
+        "NO. Idempotent: finalizing an already-finalized round is a no-op, not an error, so a retry",
+        "after a dropped ack (or the cron and a client racing to finalize) is harmless."
+      ],
+      "discriminator": [
+        90,
+        133,
+        129,
+        96,
+        105,
+        125,
+        161,
+        189
+      ],
+      "accounts": [
+        {
+          "name": "room",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "room"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "init_room",
+      "docs": [
+        "Base-layer: creates the room's tally PDA. `room_id_seed` is sha256(gacha_rooms.id),",
+        "mirroring loofta-vrf's giveaway_id_seed convention — the program never needs to know",
+        "about Postgres UUIDs directly. Postgres (`gacha_rooms.status`) stays the source of truth",
+        "for the room lifecycle; this account only ever holds the live ready/vote tally."
+      ],
+      "discriminator": [
+        166,
+        102,
+        103,
+        49,
+        179,
+        136,
+        136,
+        113
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "room",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  99,
+                  104,
+                  97,
+                  45,
+                  114,
+                  111,
+                  111,
+                  109
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "room_id_seed"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "room_id_seed",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "seats",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "mark_ready",
+      "docs": [
+        "Ephemeral rollup: marks a seat ready. Idempotent — marking the same seat twice is a no-op,",
+        "not an error, since a client retry after a dropped ack shouldn't fail."
+      ],
+      "discriminator": [
+        12,
+        90,
+        62,
+        28,
+        65,
+        49,
+        62,
+        228
+      ],
+      "accounts": [
+        {
+          "name": "room",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "room"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "seat_number",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "start_vote_round",
+      "docs": [
+        "Ephemeral rollup: starts (or restarts, for the next round) a \"cut one more?\" vote —",
+        "mirrors GachaService.startVoteRound. `survivor_mask` is computed off-chain from Postgres",
+        "(gacha_room_participants.excluded) and passed in fresh each round, same as today's JS",
+        "version reads survivors from the DB each time rather than deriving them on-chain."
+      ],
+      "discriminator": [
+        121,
+        127,
+        247,
+        117,
+        249,
+        16,
+        4,
+        61
+      ],
+      "accounts": [
+        {
+          "name": "room",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "room"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "round",
+          "type": "u16"
+        },
+        {
+          "name": "survivor_mask",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "undelegate_room",
+      "docs": [
+        "Ephemeral rollup: commits the final tally and hands the PDA back to base-layer ownership.",
+        "Called once per room, at settlement (see gacha.service.ts's finalizeBuybackSettlement) —",
+        "this PDA holds no funds, so closing/rent-reclaim happens as a separate, ordinary base-layer",
+        "close once ownership is back, not as part of this instruction."
+      ],
+      "discriminator": [
+        151,
+        179,
+        196,
+        11,
+        39,
+        232,
+        174,
+        131
+      ],
+      "accounts": [
+        {
+          "name": "room",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "room"
+          ]
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "GachaRoomState",
+      "discriminator": [
+        150,
+        69,
+        248,
+        147,
+        181,
+        212,
+        177,
+        103
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Only Loofta's backend can call this instruction"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidSeatCount",
+      "msg": "Seat count must be between 1 and MAX_SEATS"
+    },
+    {
+      "code": 6002,
+      "name": "SeatOutOfRange",
+      "msg": "Seat number is out of range for this room"
+    },
+    {
+      "code": 6003,
+      "name": "RoundAlreadyFinalized",
+      "msg": "This vote round has already been finalized"
+    },
+    {
+      "code": 6004,
+      "name": "NotASurvivor",
+      "msg": "This seat is not a survivor eligible to vote this round"
+    },
+    {
+      "code": 6005,
+      "name": "RoundExpired",
+      "msg": "This vote round's deadline has already passed"
+    },
+    {
+      "code": 6006,
+      "name": "RoundStillOpen",
+      "msg": "This vote round is still open — not every survivor has voted and the deadline hasn't passed yet"
+    }
+  ],
+  "types": [
+    {
+      "name": "GachaRoomState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "room_id_seed",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "seats",
+            "type": "u8"
+          },
+          {
+            "name": "ready_mask",
+            "type": "u16"
+          },
+          {
+            "name": "vote_round",
+            "type": "u16"
+          },
+          {
+            "name": "survivor_mask",
+            "type": "u16"
+          },
+          {
+            "name": "voted_mask",
+            "type": "u16"
+          },
+          {
+            "name": "yes_mask",
+            "type": "u16"
+          },
+          {
+            "name": "round_started_at",
+            "type": "i64"
+          },
+          {
+            "name": "round_deadline",
+            "type": "i64"
+          },
+          {
+            "name": "finalized",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}

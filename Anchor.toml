@@ -7,12 +7,15 @@ skip-lint = false
 
 [programs.localnet]
 loofta_vrf = "5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi"
+gacha_room_state = "9TebHwRo3q3mhncqKpuBvACdiwPthR2JfyBrwJW6a8Lt"
 
 [programs.devnet]
 loofta_vrf = "5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi"
+gacha_room_state = "9TebHwRo3q3mhncqKpuBvACdiwPthR2JfyBrwJW6a8Lt"
 
 [programs.mainnet]
 loofta_vrf = "5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi"
+gacha_room_state = "9TebHwRo3q3mhncqKpuBvACdiwPthR2JfyBrwJW6a8Lt"
 
 [registry]
 url = "https://api.apr.dev"
