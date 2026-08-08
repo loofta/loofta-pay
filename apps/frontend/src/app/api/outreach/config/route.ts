@@ -8,7 +8,7 @@ const DEFAULT_CONFIG = {
   creator_pitch:        "Get paid for your content and collabs in USDC instantly, with no wallet history exposed to brands.",
   freelancer_pitch:     "Get paid across borders in USDC instantly. No bank account required, no fees, no wallet history.",
   web3_project_pitch:   "Hey, Lisa here from Loofta Pay. I'm reaching out to a few projects that pay their team in crypto - is that your case? We're offering free access to our platform to pay your teammates privately, just using their email address. They claim it however they want. Would love to have you in.",
-  giveaway_project_pitch: "Hey, Lisa here from Loofta Pay. Saw you're running a giveaway right now, is that still live? We'd love to co-market it with you and cover payouts through Loofta Pay, so winners can claim straight to their bank or wallet, no crypto knowledge needed. Want to chat?",
+  giveaway_project_pitch: "Hey, Lisa here from Loofta Pay. Saw your giveaway - noticed winners get picked manually and have to drop wallet addresses in replies or DMs. We built a tool that draws winners with verifiable onchain randomness (VRF, anyone can check it wasn't rigged), and they claim with just their email or X handle, no wallet needed, so normies can enter too. If you want to try it out, you can create one here: https://pay.loofta.xyz/rewards/giveaways/create. Let me know once you do, I'll waive the fee for you :)",
 };
 
 function checkSecret(req: NextRequest) {

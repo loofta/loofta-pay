@@ -22,11 +22,17 @@ export type PerPrivateWithdrawalOptions = {
   /** Omit for USDC on Solana direct. Provide for any other destination token/chain (Near Intents bridge, server-side). */
   destinationToken?: PrivateTokenRef;
   onProgress?: (p: PerSelfTransferProgress) => void;
+  /**
+   * Fired once the transaction is built and its real fees are known, and AWAITED before the
+   * signature is requested — so a caller can hold here and show the user what they'll actually
+   * receive first. Reject (or throw) to abort the withdrawal; nothing has been signed or sent at
+   * this point. Resolving immediately keeps the old straight-through behaviour.
+   */
   onTxBuilt?: (data: {
     id: string;
     feeAmountUsdc: number;
     feeBreakdown?: { looftaBpsUsdc: number; solRecoveryUsdc: number; solLamports: number; solPriceUsd: number };
-  }) => void;
+  }) => void | Promise<void>;
 };
 
 /**
@@ -52,9 +58,14 @@ export function usePerPrivateSelfTransfer() {
       const cluster = networkMode === "mainnet" ? "mainnet-beta" : "devnet";
 
       const txData = await buildPrivateWithdrawal(amountUsdc, destinationAddress, privyUserId, accessToken, apiCluster, destinationToken);
-      if (txData.feeAmountUsdc != null) {
-        onTxBuilt?.({ id: txData.id, feeAmountUsdc: txData.feeAmountUsdc, feeBreakdown: txData.feeBreakdown });
-      }
+      // Awaited, and called even when the backend returned no fee figure — this is the caller's
+      // one chance to confirm before a signature is requested, so it must not be skipped just
+      // because the fee is unknown.
+      await onTxBuilt?.({
+        id: txData.id,
+        feeAmountUsdc: txData.feeAmountUsdc ?? 0,
+        feeBreakdown: txData.feeBreakdown,
+      });
 
       const rawTxBytes = Buffer.from(txData.transactionBase64, "base64");
       onProgress?.({ phase: "awaiting_signature" });

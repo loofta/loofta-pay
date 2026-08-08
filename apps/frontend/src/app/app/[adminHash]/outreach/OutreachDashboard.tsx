@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -66,7 +66,7 @@ const DEFAULT_CONFIG: OutreachConfig = {
   web3_project_pitch:
     "Hey, Lisa here from Loofta Pay. I'm reaching out to a few projects that pay their team in crypto - is that your case? We're offering free access to our platform to pay your teammates privately, just using their email address. They claim it however they want. Would love to have you in.",
   giveaway_project_pitch:
-    "Hey, Lisa here from Loofta Pay. Saw you're running a giveaway right now, is that still live? We'd love to co-market it with you and cover payouts through Loofta Pay, so winners can claim straight to their bank or wallet, no crypto knowledge needed. Want to chat?",
+    "Hey, Lisa here from Loofta Pay. Saw your giveaway - noticed winners get picked manually and have to drop wallet addresses in replies or DMs. We built a tool that draws winners with verifiable onchain randomness (VRF, anyone can check it wasn't rigged), and they claim with just their email or X handle, no wallet needed, so normies can enter too. If you want to try it out, you can create one here: https://pay.loofta.xyz/rewards/giveaways/create. Let me know once you do, I'll waive the fee for you :)",
 };
 
 // ─── Type metadata ────────────────────────────────────────────────────────────
@@ -809,23 +809,49 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
     setBulkJob({ id: body.jobId, status: "running", total: body.total, sent: 0, current_handle: null, error: null, finished_at: null });
   }
 
-  // Poll for job status every 5s while a job is running
+  // Drives the job from the browser, one send at a time, instead of trusting a server
+  // background loop to survive (it doesn't — see bulk-send/route.ts). The job's cursor
+  // lives in the DB, so closing this tab just pauses it; reopening the dashboard resumes
+  // from exactly where it left off.
+  const drivingJobId = useRef<string | null>(null);
   useEffect(() => {
     if (bulkJob?.status !== "running") return;
-    const timer = setInterval(async () => {
-      const res = await fetch("/api/outreach/bulk-send", { headers: authH() });
-      if (!res.ok) return;
-      const job: BulkJob = await res.json();
-      setBulkJob(job);
-      if (job.status !== "running") {
+    if (drivingJobId.current === bulkJob.id) return;
+    drivingJobId.current = bulkJob.id;
+    let cancelled = false;
+
+    (async function driveLoop() {
+      while (!cancelled) {
+        const res = await fetch("/api/outreach/bulk-send/next", {
+          method: "POST",
+          headers: { ...authH(), "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: bulkJob.id }),
+        });
+        if (cancelled) break;
+        if (!res.ok) { toast({ title: "Bulk send lost connection", variant: "destructive" }); break; }
+        const body = await res.json();
+        setBulkJob(body.job);
+
         const { prospects: list } = await fetch("/api/outreach/prospects", { headers: authH() }).then((r) => r.json());
-        setProspects(list ?? []);
-        if (job.status === "done")    toast({ title: `Sent ${job.sent} DM${job.sent !== 1 ? "s" : ""}` });
-        if (job.status === "stopped") toast({ title: job.error ?? "Bulk send stopped", variant: "destructive" });
+        if (!cancelled) setProspects(list ?? []);
+
+        if (body.done || body.job?.status !== "running") {
+          if (body.job?.status === "done")    toast({ title: `Sent ${body.job.sent} DM${body.job.sent !== 1 ? "s" : ""}` });
+          if (body.job?.status === "stopped") toast({ title: body.job.error ?? "Bulk send stopped", variant: "destructive" });
+          break;
+        }
+
+        // Only real sends need the randomized human-pacing delay - a skip never touched
+        // the DM endpoint, so there's no rate limit or spam-pattern reason to wait here.
+        if (!body.skipped) {
+          const delay = Math.floor(Math.random() * (60_000 - 15_000 + 1)) + 15_000;
+          await new Promise((r) => setTimeout(r, delay));
+        }
       }
-    }, 5_000);
-    return () => clearInterval(timer);
-  }, [bulkJob?.status, authH]);
+    })();
+
+    return () => { cancelled = true; if (drivingJobId.current === bulkJob.id) drivingJobId.current = null; };
+  }, [bulkJob?.id, bulkJob?.status, authH]);
 
   return (
     <div className="min-h-screen bg-[#0f0f12] text-white font-sans">

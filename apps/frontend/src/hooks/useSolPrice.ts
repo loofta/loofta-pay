@@ -6,6 +6,16 @@ import { useQuery } from "@tanstack/react-query";
  * shared import so this fee-estimate code doesn't pull in or get affected by megapot's module.
  */
 export function useSolPrice(): number {
+  return useSolPriceOrNull() ?? 150;
+}
+
+/**
+ * Same live price, but `null` when it genuinely isn't available (still loading, request failed,
+ * or a nonsense value came back) instead of silently substituting a default. Use this where the
+ * caller needs to *know* the price is unknown — e.g. to fall back to a flat quoted fee rather
+ * than derive a number from a made-up price.
+ */
+export function useSolPriceOrNull(): number | null {
   const { data } = useQuery({
     queryKey: ["sol-price"],
     queryFn: async (): Promise<number> => {
@@ -18,5 +28,5 @@ export function useSolPrice(): number {
     staleTime: 60_000,
     refetchInterval: 60_000,
   });
-  return data && data > 0 ? data : 150;
+  return data && data > 0 ? data : null;
 }

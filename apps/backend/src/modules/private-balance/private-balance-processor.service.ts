@@ -70,8 +70,8 @@ export class PrivateBalanceProcessorService {
   }
 
   /**
-   * Backstop reclaiming ATA rent from terminal ('complete' only) burners — the inline close in
-   * sweepDirectToDestination and the post-delivery/post-bridge reclaims handle the happy path;
+   * Backstop reclaiming ATA rent from terminal ('complete' only) burners — the post-delivery and
+   * post-bridge reclaims handle the happy path;
    * this catches misses plus the historical backlog (rent audit 2026-07-29: 39% of terminal
    * private-balance burners still held their ~0.002 SOL rent). 'failed' rows are deliberately
    * excluded — their burner may still hold the user's funds, which must never be swept.
@@ -444,15 +444,15 @@ export class PrivateBalanceProcessorService {
 
     const conn = this.solanaSponsor.getConnectionForCluster(row.cluster);
 
-    // Confirm leg 1 (user -> burner) actually landed before trusting the burner's balance.
+    // Confirm the user's transaction actually landed before deciding anything.
     const statuses = await conn.getSignatureStatuses([row.leg1_tx_signature], { searchTransactionHistory: true });
     const status = statuses.value[0];
     if (status?.err) {
       await this.supabaseService.privateTransfers.update({
         status: 'failed',
-        error_message: `Leg 1 transaction failed on-chain: ${JSON.stringify(status.err)}`,
+        error_message: `Transaction failed on-chain: ${JSON.stringify(status.err)}`,
       }).eq('id', row.id);
-      this.logger.warn(`[PrivateWithdrawal] ${row.id}: leg1 failed on-chain`);
+      this.logger.warn(`[PrivateWithdrawal] ${row.id}: transaction failed on-chain`);
       return;
     }
     if (status?.confirmationStatus !== 'confirmed' && status?.confirmationStatus !== 'finalized') {
@@ -460,75 +460,87 @@ export class PrivateBalanceProcessorService {
     }
 
     const mint = this.privateBalanceService.getUsdcMint(row.cluster);
-    const burnerKeypair = this.privateBalanceService.decryptBurnerSecret(row.burner_encrypted_secret, row.burner_address);
-    const burnerAta = await getAssociatedTokenAddress(mint, burnerKeypair.publicKey);
-    const expectedUnits = BigInt(Math.round(Number(row.amount_requested_usdc) * 1_000_000));
 
-    let balance = BigInt(0);
-    try { balance = (await getAccount(conn, burnerAta)).amount; } catch { /* ATA not indexed yet */ }
-    if (balance < expectedUnits) return; // leg 1 confirmed but burner ATA not visible yet — checked again next tick
-
-    const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
-    if (!feePayerKp) {
-      this.logger.warn(`[PrivateWithdrawal] ${row.id}: sponsor unavailable — will retry next tick`);
-      return;
-    }
-    const feePayerSol = await conn.getBalance(feePayerKp.publicKey).catch(() => 0);
-    if (feePayerSol < 10_000) {
-      this.logger.warn(`[PrivateWithdrawal] ${row.id}: fee payer low on SOL — will retry next tick`);
-      return;
-    }
-
+    // Cross-chain destinations still route through the burner: bridging needs the funds to sit in
+    // a wallet we control so we can initiate the Near Intents leg. That path is currently disabled
+    // at buildWithdrawal, so nothing reaches here today, but keep it working for when it ships.
     if (row.source_or_dest_token) {
-      await this.startOutboundBridge(row, mint, conn, burnerKeypair, feePayerKp, balance);
-    } else {
-      await this.sweepDirectToDestination(row, mint, conn, burnerKeypair, feePayerKp, balance);
-    }
-  }
+      const burnerKeypair = this.privateBalanceService.decryptBurnerSecret(row.burner_encrypted_secret, row.burner_address);
+      const burnerAta = await getAssociatedTokenAddress(mint, burnerKeypair.publicKey);
+      const expectedUnits = BigInt(Math.round(Number(row.amount_requested_usdc) * 1_000_000));
+      let balance = BigInt(0);
+      try { balance = (await getAccount(conn, burnerAta)).amount; } catch { /* ATA not indexed yet */ }
+      if (balance < expectedUnits) return;
 
-  /** Direct Solana destination: plain SPL transfer, burner -> destination_address. */
-  private async sweepDirectToDestination(
-    row: PrivateTransfer,
-    mint: PublicKey,
-    conn: Connection,
-    burnerKeypair: Keypair,
-    feePayerKp: Keypair,
-    balance: bigint,
-  ) {
-    const burnerAta = await getAssociatedTokenAddress(mint, burnerKeypair.publicKey);
-    const destinationPubkey = new PublicKey(row.destination_address!);
-    const destinationAta = await getAssociatedTokenAddress(mint, destinationPubkey);
-    const sweepTx = new Transaction();
-    if (!(await tokenAccountExists(conn, destinationAta))) {
-      // Anti-drain guard: the destination is a raw client-supplied address with no ownership
-      // check (that's the point — private withdrawal can go anywhere). Without this, a wallet
-      // could create -> close -> get sponsored again indefinitely, draining the fee payer.
-      const allowed = await guardAtaSponsorship(this.supabaseService, destinationPubkey.toBase58(), mint.toBase58(), `private-withdrawal:${row.id}`, this.emailService);
-      if (!allowed) {
-        await this.supabaseService.privateTransfers.update({
-          status: 'failed',
-          error_message: 'This destination wallet already received a sponsored token account once before and closed it. Further free account creation is blocked to prevent abuse. Please contact support.',
-        }).eq('id', row.id);
-        this.logger.warn(`[PrivateWithdrawal] ${row.id}: blocked — destination ATA already sponsored once before`);
+      const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+      if (!feePayerKp) {
+        this.logger.warn(`[PrivateWithdrawal] ${row.id}: sponsor unavailable — will retry next tick`);
         return;
       }
-      sweepTx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, destinationAta, destinationPubkey, mint));
+      const feePayerSol = await conn.getBalance(feePayerKp.publicKey).catch(() => 0);
+      if (feePayerSol < 10_000) {
+        this.logger.warn(`[PrivateWithdrawal] ${row.id}: fee payer low on SOL — will retry next tick`);
+        return;
+      }
+      await this.startOutboundBridge(row, mint, conn, burnerKeypair, feePayerKp, balance);
+      return;
     }
-    sweepTx.add(createTransferInstruction(burnerAta, destinationAta, burnerKeypair.publicKey, balance));
-    // The transfer above drains the burner ATA to exactly zero and the burner is single-use —
-    // close it in the same tx so its ~0.002 SOL rent returns to the fee payer instead of being
-    // stranded (rent audit 2026-07-29: 39% of terminal private-balance burners still held rent).
-    sweepTx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burnerKeypair.publicKey));
-    sweepTx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
-    sweepTx.feePayer = feePayerKp.publicKey;
-    sweepTx.sign(burnerKeypair, feePayerKp);
 
-    const sig = await conn.sendRawTransaction(sweepTx.serialize(), { skipPreflight: true });
-    await this.pollConfirm(conn, sig);
-
-    await this.supabaseService.privateTransfers.update({ status: 'complete', leg2_tx_signature: sig }).eq('id', row.id);
-    this.logger.log(`[PrivateWithdrawal] ${row.id}: complete, burner -> ${row.destination_address!.slice(0, 8)}… tx=${sig}`);
+    // Direct Solana destination: MagicBlock delivers straight to it, so there is no sweep of ours
+    // to perform — only confirmation that the queue has released the funds. Delivery is deferred
+    // 1-10 min and split across several transfers, so watch the destination's balance climb to
+    // the expected amount rather than expecting one arrival.
+    await this.confirmDirectPrivateDelivery(row, mint, conn);
   }
+
+  /**
+   * Watches the destination's USDC balance until MagicBlock's queue has delivered the full amount.
+   * Baseline is captured on the first tick (before anything can have arrived, since the queue's
+   * minimum delay comfortably exceeds one cron interval) so a destination that already held USDC
+   * isn't mistaken for a completed delivery.
+   */
+  private async confirmDirectPrivateDelivery(row: PrivateTransfer, mint: PublicKey, conn: Connection) {
+    // Transition guard: a row built by the OLD two-leg code sent the user's funds to a burner that
+    // this method no longer sweeps. There were no such rows in flight when the one-leg change
+    // shipped, but a signature landing in the deploy window could still produce one — and silently
+    // "confirming" it would strand real money. Detect the burner holding a balance, leave the row
+    // in place, and shout, so it can be swept by hand rather than lost.
+    try {
+      const legacyBurnerAta = await getAssociatedTokenAddress(mint, new PublicKey(row.burner_address));
+      const legacyBalance = (await getAccount(conn, legacyBurnerAta)).amount;
+      if (legacyBalance > BigInt(0)) {
+        this.logger.error(
+          `[PrivateWithdrawal] ${row.id}: NEEDS MANUAL SWEEP — legacy two-leg row, burner ${row.burner_address.slice(0, 8)}… holds ${legacyBalance} base units destined for ${row.destination_address!.slice(0, 8)}…`,
+        );
+        return;
+      }
+    } catch { /* no burner ATA — the expected case for a one-leg withdrawal */ }
+
+    const destinationAta = await getAssociatedTokenAddress(mint, new PublicKey(row.destination_address!));
+    let current = BigInt(0);
+    try { current = (await getAccount(conn, destinationAta)).amount; } catch { /* not created yet */ }
+
+    if (row.delivery_baseline_usdc == null) {
+      await this.supabaseService.privateTransfers
+        .update({ delivery_baseline_usdc: Number(current) / 1_000_000 })
+        .eq('id', row.id);
+      this.logger.log(`[PrivateWithdrawal] ${row.id}: awaiting MagicBlock delivery, destination baseline ${current}`);
+      return;
+    }
+
+    const baseline = BigInt(Math.round(Number(row.delivery_baseline_usdc) * 1_000_000));
+    const expected = BigInt(Math.round(Number(row.amount_requested_usdc) * 1_000_000));
+    // Tolerate a hair under the requested amount: MagicBlock's splits round per-transfer, so the
+    // sum can land a base unit or two short of the exact figure.
+    const delivered = current > baseline ? current - baseline : BigInt(0);
+    if (delivered + BigInt(10) < expected) return; // still arriving — checked again next tick
+
+    await this.supabaseService.privateTransfers
+      .update({ status: 'complete', leg2_tx_signature: row.leg1_tx_signature })
+      .eq('id', row.id);
+    this.logger.log(`[PrivateWithdrawal] ${row.id}: delivered ${delivered} to ${row.destination_address!.slice(0, 8)}… — complete`);
+  }
+
 
   /** Cross-chain destination: quote + fund a Near Intents outbound bridge from the burner. One-time; subsequent ticks poll it via pollOutboundBridge. */
   private async startOutboundBridge(
@@ -581,7 +593,7 @@ export class PrivateBalanceProcessorService {
       // Bridge deposit addresses are freshly generated per quote — never repeated — so
       // guardAtaSponsorship's same-wallet check can't catch a user cycling withdrawals to rack up
       // free ATA creations (2026-08-04 fee-payer audit: this path had no cost recovery at all,
-      // unlike sweepDirectToDestination just above, which closes its burner in the same tx).
+      // unlike the deposit delivery path, which closes its burner in the same tx).
       try {
         await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, row.user_id, 1, 'PrivateWithdrawalBridge');
       } catch (e: unknown) {

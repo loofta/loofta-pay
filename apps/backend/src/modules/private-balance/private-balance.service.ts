@@ -348,9 +348,22 @@ export class PrivateBalanceService {
 
     let txResponse;
     try {
+      // Straight to the user's destination — ONE MagicBlock private transfer, no burner hop.
+      //
+      // The burner used to sit in the middle (leg 1 user -> burner, leg 2 burner -> destination,
+      // swept by cron) but it was never what made this private: MagicBlock's own queue does the
+      // mixing, delaying delivery 1-10 min and splitting it across several transfers. Delivering
+      // from that queue is in fact better privacy than delivering from a burner whose funding
+      // transaction is timing-correlated with leg 1. `to` is just a parameter and needs no
+      // ownership over the recipient — the lottery module has been sending private transfers to
+      // arbitrary user-supplied destinations this way in production (lottery.service.ts).
+      //
+      // Dropping the hop also removes the destination-token-account rent Loofta was absorbing on
+      // leg 2, the leg-2 sponsored transaction fee, and the burner rent churn. `initAtasIfMissing`
+      // (set in requestMagicblockPrivateTransfer) leaves the recipient account to MagicBlock.
       txResponse = await requestMagicblockPrivateTransfer({
         from: userWallet,
-        to: burner.address,
+        to: destinationAddress,
         mint: mint.toBase58(),
         amount: baseUnits,
         cluster: apiCluster,
@@ -364,6 +377,11 @@ export class PrivateBalanceService {
       throw new BadRequestException(`Could not build private withdrawal: ${msg}`);
     }
 
+    // No destination-token-account fee on this path any more: with the burner hop gone there is
+    // no leg of our own that creates the recipient's account, so there is no rent for Loofta to
+    // absorb or recover. MagicBlock delivers (initAtasIfMissing is set) and the fee payer is not
+    // involved. The regular, non-private withdrawal still charges its own setup fee — that path
+    // does create the account itself.
     const { data, error } = await this.supabaseService.privateTransfers.insert({
       user_id: userId,
       direction: 'withdrawal',
@@ -385,7 +403,12 @@ export class PrivateBalanceService {
     // Reports the price actually used below — hits the cache resolveMagicblockRelayFeeUsdc()
     // just populated, no extra network call in the common case.
     const relaySolPriceUsd = await fetchSolPriceUsd();
-    const mbVolumeFeeUnits = estimateMagicblockGrossUp(baseUnits) - baseUnits;
+    // Must gross up for BOTH bps cuts — MagicBlock's own and Loofta's platform fee, which is
+    // passed as platformFeeBps above and so is really charged on-chain. Omitting the platform fee
+    // here (as this line used to) left the quoted fee ~10 bps under what the user was actually
+    // debited. The deposit path at buildDeposit already totals them the same way.
+    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + PRIVATE_BALANCE_PLATFORM_FEE_BPS;
+    const mbVolumeFeeUnits = estimateMagicblockGrossUp(baseUnits, totalBps) - baseUnits;
     const conn = this.solanaSponsor.getConnectionForCluster(cluster);
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, userWallet, mint, conn);
     const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;

@@ -22,7 +22,7 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X, VenetianMask, Ticket } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X, VenetianMask, Ticket, Wallet } from "lucide-react";
 import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, clearPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -61,7 +61,8 @@ async function assertEvmSponsorAllowed(walletAddress: string, userId: string, ac
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
 import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
-import { isValidAddressForChain } from "@/lib/refundAddresses";
+import { isValidAddressForChain, isSolDomain } from "@/lib/refundAddresses";
+import { useSolDomain, type SolDomainState } from "@/hooks/useSolDomain";
 import {
   addWithdrawal,
   getWithdrawalHistory,
@@ -69,8 +70,12 @@ import {
   type WithdrawalHistoryItem,
 } from "@/lib/withdrawalHistory";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
+import { formatTokenAmount } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
+import { useSolPriceOrNull } from "@/hooks/useSolPrice";
+import { PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { QRCodeSVG } from "qrcode.react";
 import { usePerPrivateSelfTransfer } from "@/hooks/usePerPrivateSelfTransfer";
 import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
@@ -85,6 +90,70 @@ import { AmountInput } from "@/components/AmountInput";
 const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
 
 const LOG_PREFIX = "[BalanceModal]";
+
+/**
+ * Resolution status for a typed .sol domain. Always shows the wallet a domain resolved to — the
+ * user is about to send real money to it, and the domain alone doesn't tell them where it lands.
+ */
+function SolDomainHint({ domain, input, dark }: { domain: SolDomainState; input: string; dark: boolean }) {
+  if (!isSolDomain(input)) return null;
+  if (domain.status === "resolving") {
+    return (
+      <p className={`text-base mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
+        <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+        Looking up {input.trim().toLowerCase()}…
+      </p>
+    );
+  }
+  if (domain.status === "resolved") {
+    return (
+      <p className="text-base text-emerald-400 mt-1.5 flex items-start gap-1.5 font-medium">
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-1" />
+        <span className="font-mono break-all">{domain.address}</span>
+      </p>
+    );
+  }
+  if (domain.status === "not-found") {
+    return (
+      <p className="text-base text-red-400 mt-1.5 flex items-center gap-1.5">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        No wallet registered for this domain
+      </p>
+    );
+  }
+  if (domain.status === "error") {
+    return (
+      <p className="text-base text-amber-400 mt-1.5 flex items-center gap-1.5">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        Couldn&apos;t look up that domain — try again, or paste the address
+      </p>
+    );
+  }
+  return null;
+}
+
+/**
+ * Rent-exempt deposit for an SPL token account, in SOL. Fixed by Solana and effectively never
+ * changes (same constant as the backend's ATA_RENT_LAMPORTS).
+ */
+const ATA_RENT_SOL = 0.00203928;
+
+/** Margin over raw rent so a SOL price move between quote and settlement can't leave us short. */
+const ATA_FEE_BUFFER = 1.25;
+
+/**
+ * Charged when a withdrawal destination has never held USDC and Solana therefore needs a token
+ * account created for it. That account's rent leaves our fee payer permanently — it belongs to
+ * the recipient, so only they can ever close it and reclaim the SOL — so it comes out of the
+ * withdrawal instead (see handleWithdraw). Normally derived from the live SOL price; this flat
+ * value is the fallback for when the price feed is unavailable, chosen to comfortably cover the
+ * real cost at typical SOL prices rather than risk quoting under it.
+ */
+const ATA_SETUP_FEE_FALLBACK_USDC = 0.2;
+
+/** Server-enforced floor for a private withdrawal (BuildPrivateWithdrawalDto @Min(1)). Mirrored
+ *  client-side so a sub-minimum amount is caught in the form rather than by the API. */
+const PRIVATE_WITHDRAW_MIN_USDC = 1;
 const PEER_LOG = "[Peer Offramp]";
 const PEER_SESSION_KEY = "loofta_peer_session";
 const PRIVATE_DEPOSIT_SESSION_KEY = "loofta_private_deposit_id";
@@ -239,7 +308,7 @@ function ProgressSteps({
           <div>
             <p className={`text-base ${textSub}`}>You receive (estimated)</p>
             <p className={`text-base font-semibold ${textBase}`}>
-              ~{Number(estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 2 })} {destinationToken}
+              ~{formatTokenAmount(estimatedOut)} {destinationToken}
               <span className={`font-normal ml-1 ${textSub}`}>on {destinationChain}</span>
             </p>
           </div>
@@ -447,6 +516,10 @@ export function BalanceModal({
   const [lotteryPrizePool, setLotteryPrizePool] = useState<string | null>(null);
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
   const [addressRiskStatus, setAddressRiskStatus] = useState<"idle" | "checking" | "safe" | "unsafe">("idle");
+  const [recipientNeedsUsdcAccount, setRecipientNeedsUsdcAccount] = useState(false);
+  // Set once handleWithdraw has confirmed on-chain that the destination has no USDC account —
+  // shows the setup-fee confirm step instead of sending straight away.
+  const [ataFeeConfirmPending, setAtaFeeConfirmPending] = useState(false);
   const [recentWithdrawals, setRecentWithdrawals] = useState<WithdrawalHistoryItem[]>([]);
   const [dbDeposits, setDbDeposits] = useState<{ id: string; type: string; status: string; amount_usdc: number | null; deposit_address: string | null; bridge_status: string | null; created_at: string }[]>([]);
   const [dbDepositsLoading, setDbDepositsLoading] = useState(false);
@@ -546,6 +619,10 @@ export function BalanceModal({
   // withdrawals (withdrawTokens already resolves to [usdcSol, ...otherChains] for any non-near-intents
   // method, private-relay included — no separate token list needed).
   const [privateWithdrawSubmitting, setPrivateWithdrawSubmitting] = useState(false);
+  // Fee-confirmation gate between building the private withdrawal and signing it. The ref holds
+  // the resolver for the promise handlePrivateWithdraw's onTxBuilt is parked on.
+  const [privateFeeConfirmPending, setPrivateFeeConfirmPending] = useState(false);
+  const privateFeeConfirmRef = useRef<((accepted: boolean) => void) | null>(null);
   const [privateWithdrawId, setPrivateWithdrawId] = useState<string | null>(null);
   const [privateWithdrawStatus, setPrivateWithdrawStatus] = useState<PrivateTransferStatus | null>(null);
   const [privateWithdrawError, setPrivateWithdrawError] = useState<string | null>(null);
@@ -949,7 +1026,7 @@ export function BalanceModal({
   const handlePrivateWithdraw = async () => {
     if (!user?.id || !wallet || !solanaAddress) return;
     const amount = parseFloat(withdrawAmount) || 0;
-    const destination = withdrawAddress.trim();
+    const destination = effectiveWithdrawAddress.trim();
     if (!amount || !destination) return;
     setPrivateWithdrawSubmitting(true);
     setPrivateWithdrawError(null);
@@ -965,11 +1042,26 @@ export function BalanceModal({
         accessToken,
         amountUsdc: amount,
         destinationAddress: destination,
+        // The transaction is built (so the fees are real, not guessed) but nothing is signed yet.
+        // Hold here and show the user exactly what lands at the destination; the promise resolves
+        // when they confirm and rejects if they back out.
         onTxBuilt: ({ id: txId, feeAmountUsdc }) => {
           setPrivateWithdrawId(txId);
           setPrivateWithdrawFee(feeAmountUsdc);
-          setPrivateWithdrawStatus("awaiting_signature");
           localStorage.setItem(PRIVATE_WITHDRAW_SESSION_KEY, txId);
+          return new Promise<void>((resolve, reject) => {
+            privateFeeConfirmRef.current = (accepted: boolean) => {
+              privateFeeConfirmRef.current = null;
+              setPrivateFeeConfirmPending(false);
+              if (accepted) {
+                setPrivateWithdrawStatus("awaiting_signature");
+                resolve();
+              } else {
+                reject(new Error("CANCELLED_BY_USER"));
+              }
+            };
+            setPrivateFeeConfirmPending(true);
+          });
         },
       });
       setPrivateWithdrawId(id);
@@ -977,9 +1069,17 @@ export function BalanceModal({
       optimisticWithdrawBalance(amount);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Private withdrawal failed";
+      // Backing out at the fee confirmation isn't a failure — nothing was signed or sent, so
+      // return to the form rather than showing an error over a withdrawal that never started.
+      if (msg === "CANCELLED_BY_USER") {
+        resetPrivateWithdraw();
+        return;
+      }
       setPrivateWithdrawError(msg);
       toast({ variant: "destructive", title: "Private withdrawal failed", description: msg });
     } finally {
+      setPrivateFeeConfirmPending(false);
+      privateFeeConfirmRef.current = null;
       setPrivateWithdrawSubmitting(false);
     }
   };
@@ -1116,7 +1216,21 @@ export function BalanceModal({
   const spendableBalance = Math.floor((balanceExact ?? payFromBalanceNum) * 1_000_000) / 1_000_000;
   const destChain = effectiveToken?.chain || "";
   const isNearIntentsWithdraw = withdrawMethod === "near-intents" && !!selectedFrom && !!usdcSolanaToken;
-  const destinationAddressValid = isValidAddressForChain(withdrawAddress, isUSDCOnSolana ? "solana" : destChain);
+
+  // Live-priced USDC-account setup fee, rounded up to the cent so we're never short; falls back
+  // to the flat quote when the price feed is unavailable.
+  const solPriceUsd = useSolPriceOrNull();
+  const ataSetupFeeUsdc = useMemo(
+    () => (solPriceUsd ? Math.ceil(ATA_RENT_SOL * ATA_FEE_BUFFER * solPriceUsd * 100) / 100 : ATA_SETUP_FEE_FALLBACK_USDC),
+    [solPriceUsd],
+  );
+  // .sol domain support. The user may type either a raw address or a domain; everything
+  // downstream (validation, risk check, ATA lookup, the transfer itself) works off
+  // `effectiveWithdrawAddress`, which is the resolved wallet whenever a domain resolved and the
+  // raw input otherwise. Solana destinations only — a domain means nothing on another chain.
+  const solDomain = useSolDomain(isUSDCOnSolana ? withdrawAddress : "", devnetMode ? "devnet" : "mainnet");
+  const effectiveWithdrawAddress = solDomain.address ?? withdrawAddress;
+  const destinationAddressValid = isValidAddressForChain(effectiveWithdrawAddress, isUSDCOnSolana ? "solana" : destChain);
 
   // Persist active peer session to localStorage so page refresh restores state
   useEffect(() => {
@@ -1745,9 +1859,14 @@ export function BalanceModal({
 
   // Reset token selection and address when withdraw method changes
   useEffect(() => {
+    // Also clear any finished public-withdrawal step — otherwise picking a different withdraw
+    // method still carries the previous run's terminal state, which surfaces as a stale success
+    // panel next to the new flow.
+    setWithdrawStep((s) => (s === "complete" || s === "failed" ? "idle" : s));
     setFromSel(undefined);
     setWithdrawAddress("");
     setAddressRiskStatus("idle");
+    setAtaFeeConfirmPending(false);
   }, [withdrawMethod]);
 
   // On devnet, USDC on Solana is the only supported withdraw method — skip the picker.
@@ -2027,7 +2146,7 @@ export function BalanceModal({
 
   useEffect(() => {
     if (!isUSDCOnSolana) { setAddressRiskStatus("idle"); return; }
-    const raw = withdrawAddress.trim();
+    const raw = effectiveWithdrawAddress.trim();
     if (!raw || !isValidAddressForChain(raw, "solana")) { setAddressRiskStatus("idle"); return; }
     setAddressRiskStatus("checking");
     const t = setTimeout(async () => {
@@ -2035,7 +2154,30 @@ export function BalanceModal({
       setAddressRiskStatus(safe ? "safe" : "unsafe");
     }, 500);
     return () => clearTimeout(t);
-  }, [withdrawAddress, checkAddressRisk, isUSDCOnSolana]);
+  }, [effectiveWithdrawAddress, checkAddressRisk, isUSDCOnSolana]);
+
+  // Does the destination already have a USDC account? If not, Solana requires one to be created
+  // and we charge the setup fee (see ataSetupFeeUsdc) — surfaced in the form BEFORE the
+  // user commits, so the smaller-than-expected amount landing is never a surprise.
+  useEffect(() => {
+    if (!isUSDCOnSolana) { setRecipientNeedsUsdcAccount(false); return; }
+    const raw = effectiveWithdrawAddress.trim();
+    if (!raw || !isValidAddressForChain(raw, "solana")) { setRecipientNeedsUsdcAccount(false); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const conn = new Connection(getRpcForMode(devnetMode ? "devnet" : "mainnet"), "confirmed");
+        const ata = getAssociatedTokenAddressSync(getUsdcMintForMode(devnetMode ? "devnet" : "mainnet"), new PublicKey(raw));
+        const info = await conn.getAccountInfo(ata);
+        if (!cancelled) setRecipientNeedsUsdcAccount(!info);
+      } catch {
+        // Can't tell (RPC hiccup) — don't warn about a fee we're not sure applies. handleWithdraw
+        // re-checks against the chain right before sending, so the charge itself stays correct.
+        if (!cancelled) setRecipientNeedsUsdcAccount(false);
+      }
+    }, 500);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [effectiveWithdrawAddress, isUSDCOnSolana, devnetMode]);
 
   const saveWithdrawalToDB = useCallback(async (item: WithdrawalHistoryItem) => {
     try {
@@ -2504,8 +2646,8 @@ export function BalanceModal({
     }
   };
 
-  const handleWithdraw = async () => {
-    const rawAddress = withdrawAddress.trim();
+  const handleWithdraw = async (ataFeeAcknowledged = false) => {
+    const rawAddress = effectiveWithdrawAddress.trim();
     const amount = withdrawAmountNum;
 
     if (amount <= 0) {
@@ -2533,6 +2675,32 @@ export function BalanceModal({
       if (addressRiskStatus !== "safe") {
         toast({ variant: "destructive", title: "Address not approved", description: "Withdrawals are only allowed to addresses that pass our compliance check." });
         return;
+      }
+
+      // Setup-fee gate. Verified against the chain right here rather than trusting the form's
+      // debounced check, so we only ever ask the user to confirm a fee that genuinely applies.
+      // A failed lookup falls through and lets the send proceed — handleWithdraw re-checks once
+      // more before building the transaction, so the amount charged stays correct either way.
+      if (!ataFeeAcknowledged) {
+        try {
+          const conn = new Connection(getRpcForMode(devnetMode ? "devnet" : "mainnet"), "confirmed");
+          const ata = getAssociatedTokenAddressSync(getUsdcMintForMode(devnetMode ? "devnet" : "mainnet"), new PublicKey(rawAddress));
+          if (!(await conn.getAccountInfo(ata))) {
+            if (ataSetupFeeUsdc >= amount) {
+              toast({
+                variant: "destructive",
+                title: "Amount too small",
+                description: `This wallet has never held USDC and needs a one-time $${ataSetupFeeUsdc.toFixed(2)} account setup — more than you're withdrawing. Withdraw a larger amount, or use a wallet that already holds USDC.`,
+              });
+              return;
+            }
+            setRecipientNeedsUsdcAccount(true);
+            setAtaFeeConfirmPending(true);
+            return;
+          }
+        } catch {
+          // Couldn't check — don't block the withdrawal on an RPC hiccup.
+        }
       }
     } else {
       if (!rawAddress || !destinationAddressValid) {
@@ -2616,20 +2784,54 @@ export function BalanceModal({
 
       setWithdrawStep("sent");
 
+      // Account-rent recovery. If the destination has never held USDC, Solana requires a token
+      // account to be created for it, and its ~0.00204 SOL rent-exempt deposit comes out of our
+      // fee payer — that SOL is gone for good, since the account belongs to the recipient and
+      // only they can ever close it and reclaim it. Absorbing that was fine when it was rare, but
+      // it's ~$0.15 a pop regardless of withdrawal size (15% of a $1 withdrawal), so it comes out
+      // of the withdrawal itself instead: the recipient nets amount - rent, and the rent lands in
+      // our fee payer's USDC account, leaving Loofta exactly even. Costs nothing on the common
+      // path — a destination that already has a USDC account creates nothing and pays nothing.
+      // Re-checked against the chain here (not just the form's debounced check) so the charge is
+      // always based on the account's real state at send time.
+      //
+      // Direct-Solana withdrawals only: a Near Intents `recipientAddress` is a fresh, single-use
+      // deposit address minted per order, which never has a pre-existing ATA, so this would fire
+      // on every cross-chain withdrawal — charging an undisclosed fee and sending less than the
+      // amount Near already quoted, which is enough on its own to make Near see the deposit as
+      // short and refund/fail the order.
+      const mint = getUsdcMintForMode(mode);
+      let ataRentUsdc = 0;
+      if (!isNearIntentsWithdraw) {
+        const recipientAta = getAssociatedTokenAddressSync(mint, new PublicKey(recipientAddress));
+        const recipientAtaInfo = await connection.getAccountInfo(recipientAta);
+        ataRentUsdc = recipientAtaInfo ? 0 : ataSetupFeeUsdc;
+        if (ataRentUsdc > 0) {
+          if (ataRentUsdc >= amount) {
+            throw new Error(
+              `This wallet has never held USDC, so it needs a one-time $${ataRentUsdc.toFixed(2)} account setup — more than you're withdrawing. Withdraw a larger amount, or use a wallet that already holds USDC.`,
+            );
+          }
+          console.log(`${LOG_PREFIX} recipient has no USDC account — charging $${ataRentUsdc.toFixed(2)} setup fee from the withdrawal`);
+        }
+      }
+
       const sig = await sendUsdcWithBackendFeePayer({
         senderAddress: solanaAddress,
         recipientAddress,
-        amountUSDC: amount,
+        amountUSDC: amount - ataRentUsdc,
         connection,
         wallet,
         privyUserId: user!.id,
         signTransaction,
         memo: memo ?? undefined,
-        usdcMint: getUsdcMintForMode(mode),
+        usdcMint: mint,
         chain: getPrivySolanaChainForMode(mode),
         accessToken,
         network: devnetMode ? "devnet" : "mainnet",
         nearIntentsOrderId,
+        // Routes ataRentUsdc to the fee payer's own USDC account in the same signature.
+        looftaFeeUsdc: ataRentUsdc > 0 ? ataRentUsdc : undefined,
       });
 
       // Save to localStorage and DB
@@ -2652,6 +2854,7 @@ export function BalanceModal({
 
       setWithdrawAddress("");
       setAddressRiskStatus("idle");
+      setAtaFeeConfirmPending(false);
       setAddLotteryTicket(false);
 
       if (isNearIntentsWithdraw && depositAddr) {
@@ -3190,7 +3393,7 @@ export function BalanceModal({
                     <div>
                       <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>{bridgeStatusLabel(depositBridgeStatus)}</p>
                       {depositQuoteOut && (
-                        <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>~{Number(depositQuoteOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} USDC expected</p>
+                        <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>~{formatTokenAmount(depositQuoteOut)} USDC expected</p>
                       )}
                     </div>
                   </div>
@@ -3281,7 +3484,7 @@ export function BalanceModal({
                               <span className="flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Fetching quote…</span>
                             ) : depositQuoteOut ? (
                               <>
-                                ~{Number(depositQuoteOut).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC
+                                ~{formatTokenAmount(depositQuoteOut)} USDC
                                 <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>on {usdcSolanaToken?.chain || "solana"}</span>
                               </>
                             ) : (
@@ -3474,7 +3677,7 @@ export function BalanceModal({
                                     ${item.amountUSDC.toFixed(2)} → {item.destinationToken}
                                     {item.estimatedOut && (
                                       <span className={`font-normal text-base ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                                        (~{Number(item.estimatedOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} received)
+                                        (~{formatTokenAmount(item.estimatedOut)} received)
                                       </span>
                                     )}
                                   </p>
@@ -3541,7 +3744,11 @@ export function BalanceModal({
           })()}
 
           {/* Withdraw tab — progress panel (not shown during peer offramp or settling state) */}
-          {tab === "withdraw" && withdrawStep !== "idle" && withdrawStep !== "settling" && withdrawMethod !== "peer-offramp" && (
+          {/* Public-withdrawal progress/result panel. Excludes the flows that render their own
+              status UI (peer-offramp, private-relay) — otherwise a finished withdrawal's success
+              panel stays on screen underneath them, which read as "it worked" while the flow you
+              were actually looking at had failed. */}
+          {tab === "withdraw" && withdrawStep !== "idle" && withdrawStep !== "settling" && withdrawMethod !== "peer-offramp" && withdrawMethod !== "private-relay" && (
             <ProgressSteps
               step={withdrawStep}
               isNearIntents={Boolean(isNearIntentsWithdraw || activeWithdrawal?.isNearIntents)}
@@ -3753,7 +3960,59 @@ export function BalanceModal({
                 <ChevronLeft className="h-4 w-4" />Back
               </button>
 
-              {privateWithdrawId ? (
+              {privateFeeConfirmPending ? (
+                /* ── Fee confirmation — transaction is built (so these are the real fees, not an
+                      estimate) but nothing is signed yet. ── */
+                <div className={cn("rounded-2xl border p-4", dark ? "bg-white/5 border-white/10" : "bg-white border-gray-200")}>
+                  <div className="flex items-start gap-3">
+                    <span className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_8px_20px_rgba(255,122,42,0.35)]">
+                      <VenetianMask className="h-5 w-5 text-white" />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-base font-semibold ${dark ? "text-slate-100" : "text-gray-900"}`}>
+                        Confirm private withdrawal
+                      </p>
+                      <p className={`text-base mt-0.5 ${dark ? "text-slate-400" : "text-gray-600"}`}>
+                        Delivery is delayed and split by the private-transfer relay, which charges a
+                        flat fee regardless of amount.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className={cn("mt-3 rounded-xl px-3 py-2.5 space-y-1.5", dark ? "bg-white/5" : "bg-gray-50")}>
+                    <div className="flex items-center justify-between text-base">
+                      <span className={dark ? "text-slate-400" : "text-gray-600"}>Withdrawing</span>
+                      <span className={dark ? "text-slate-300" : "text-gray-700"}>${(parseFloat(withdrawAmount) || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-base">
+                      <span className={dark ? "text-slate-400" : "text-gray-600"}>Privacy fee</span>
+                      <span className={dark ? "text-slate-300" : "text-gray-700"}>−${(privateWithdrawFee ?? 0).toFixed(2)}</span>
+                    </div>
+                    <div className={cn("flex items-center justify-between pt-1.5 border-t", dark ? "border-white/10" : "border-gray-200")}>
+                      <span className={`text-base font-semibold ${dark ? "text-slate-100" : "text-gray-900"}`}>They receive</span>
+                      <span className={`text-base font-semibold ${dark ? "text-slate-100" : "text-gray-900"}`}>
+                        ${Math.max(0, (parseFloat(withdrawAmount) || 0) - (privateWithdrawFee ?? 0)).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 mt-3">
+                    <Button
+                      variant="outline"
+                      onClick={() => privateFeeConfirmRef.current?.(false)}
+                      className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => privateFeeConfirmRef.current?.(true)}
+                      className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white"
+                    >
+                      Confirm &amp; send
+                    </Button>
+                  </div>
+                </div>
+              ) : privateWithdrawId ? (
                 /* ── Status view ── */
                 <div className="space-y-3">
                   <div className={`flex items-center gap-3 rounded-2xl px-4 py-3.5 ${dark ? "bg-white/5 border border-white/10" : "bg-gradient-to-r from-orange-50/70 to-amber-50/30 border border-orange-100"}`}>
@@ -3818,26 +4077,38 @@ export function BalanceModal({
                     <Label htmlFor="private-withdraw-address" className={dark ? "text-slate-300" : undefined}>Destination Solana address</Label>
                     <Input
                       id="private-withdraw-address"
-                      placeholder="Enter a Solana address"
+                      placeholder="Enter a Solana address or .sol domain"
                       value={withdrawAddress}
                       onChange={(e) => setWithdrawAddress(e.target.value)}
                       className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
                     />
-                    {withdrawAddress && !isValidAddressForChain(withdrawAddress, "solana") && (
+                    <SolDomainHint domain={solDomain} input={withdrawAddress} dark={dark} />
+                    {withdrawAddress && !isSolDomain(withdrawAddress) && !isValidAddressForChain(withdrawAddress, "solana") && (
                       <p className="text-base text-red-400 mt-1 flex items-center gap-1.5">
                         <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                         Invalid Solana address
                       </p>
                     )}
                   </div>
+                  {/* Surface the server's own minimum (BuildPrivateWithdrawalDto @Min(1)) here —
+                      otherwise a sub-$1 amount only fails after the request, and the raw
+                      validator text ("amount_usdc must not be less than 1") is what the user
+                      ends up reading. */}
+                  {parseFloat(withdrawAmount) > 0 && parseFloat(withdrawAmount) < PRIVATE_WITHDRAW_MIN_USDC && (
+                    <p className="text-base text-amber-400 flex items-center gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                      Private withdrawals start at ${PRIVATE_WITHDRAW_MIN_USDC.toFixed(2)}
+                    </p>
+                  )}
                   <Button
                     onClick={handlePrivateWithdraw}
                     disabled={
                       privateWithdrawSubmitting ||
                       !parseFloat(withdrawAmount) ||
+                      parseFloat(withdrawAmount) < PRIVATE_WITHDRAW_MIN_USDC ||
                       parseFloat(withdrawAmount) > spendableBalance ||
-                      !withdrawAddress.trim() ||
-                      !isValidAddressForChain(withdrawAddress, "solana")
+                      !effectiveWithdrawAddress.trim() ||
+                      !isValidAddressForChain(effectiveWithdrawAddress, "solana")
                     }
                     className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
                   >
@@ -3951,7 +4222,11 @@ export function BalanceModal({
           )}
 
           {/* Withdraw tab — form (method selected, not peer-offramp or paj-cash which have their own sections) */}
-          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "peer-offramp" && withdrawMethod !== "paj-cash" && (
+          {/* Generic withdraw form (usdc-sol / near-intents). Every method that brings its own
+              form must be excluded here, or both render stacked — private-relay was missing, and
+              only stayed hidden by accident whenever a previous run had left withdrawStep on a
+              terminal value. */}
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "peer-offramp" && withdrawMethod !== "paj-cash" && withdrawMethod !== "private-relay" && (
             <div className="space-y-4 py-2">
 
               {/* Back button — hidden on devnet (only one method available, nothing to go back to) */}
@@ -4062,7 +4337,7 @@ export function BalanceModal({
                           <span className="flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Fetching quote…</span>
                         ) : quoteAmount ? (
                           <>
-                            ~{Number(quoteAmount).toLocaleString(undefined, { maximumFractionDigits: 2 })} {effectiveToken?.symbol || "token"}
+                            ~{formatTokenAmount(quoteAmount)} {effectiveToken?.symbol || "token"}
                             <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>on {effectiveToken?.chain}</span>
                           </>
                         ) : (
@@ -4081,11 +4356,12 @@ export function BalanceModal({
                 </Label>
                 <Input
                   id="withdraw-address"
-                  placeholder={isUSDCOnSolana ? "Enter Solana address" : `Enter ${effectiveToken?.chain || "destination"} address`}
+                  placeholder={isUSDCOnSolana ? "Enter Solana address or .sol domain" : `Enter ${effectiveToken?.chain || "destination"} address`}
                   value={withdrawAddress}
-                  onChange={(e) => setWithdrawAddress(e.target.value)}
+                  onChange={(e) => { setWithdrawAddress(e.target.value); setAtaFeeConfirmPending(false); }}
                   className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
                 />
+                <SolDomainHint domain={solDomain} input={withdrawAddress} dark={dark} />
                 {isUSDCOnSolana && addressRiskStatus === "checking" && (
                   <p className={`text-base mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
                     <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
@@ -4110,7 +4386,7 @@ export function BalanceModal({
                   Toggling on never blocks on balance: it reduces the withdraw amount by the ticket
                   price instead, so there's always room. Flowing glow border matches the one used
                   around the ticket-purchase confirm button on the lottery page (SlideToPay.tsx). */}
-              {isUSDCOnSolana && spendableBalance >= LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC && withdrawAmountNum > 0 && (
+              {isUSDCOnSolana && spendableBalance >= LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC && withdrawAmountNum > 0 && !ataFeeConfirmPending && (
                 <div className="relative rounded-2xl">
                   <style>{`
                     @keyframes looftaGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
@@ -4169,18 +4445,80 @@ export function BalanceModal({
                 </div>
               )}
 
-              <div className="flex gap-2 pt-2">
+              {/* One-time USDC-account setup fee — shown as an explicit confirm step after the
+                  user hits Withdraw, so the deduction is acknowledged rather than just displayed.
+                  Only reachable once handleWithdraw has verified against the chain that the
+                  destination really has no USDC account. */}
+              {ataFeeConfirmPending && (
+                <div className={cn(
+                  "rounded-2xl border p-4",
+                  dark ? "bg-white/5 border-white/10" : "bg-white border-gray-200"
+                )}>
+                  <div className="flex items-start gap-3">
+                    <span className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_8px_20px_rgba(255,122,42,0.35)]">
+                      <Wallet className="h-5 w-5 text-white" />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-base font-semibold ${dark ? "text-slate-100" : "text-gray-900"}`}>
+                        First time sending USDC here
+                      </p>
+                      <p className={`text-base mt-0.5 ${dark ? "text-slate-400" : "text-gray-600"}`}>
+                        Solana charges a one-time fee to open a USDC account for this wallet
+                        {solPriceUsd ? ` (${ATA_RENT_SOL} SOL at $${solPriceUsd.toFixed(2)})` : ""}.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className={cn(
+                    "mt-3 rounded-xl px-3 py-2.5 space-y-1.5",
+                    dark ? "bg-white/5" : "bg-gray-50"
+                  )}>
+                    <div className="flex items-center justify-between text-base">
+                      <span className={dark ? "text-slate-400" : "text-gray-600"}>Withdrawing</span>
+                      <span className={dark ? "text-slate-300" : "text-gray-700"}>${withdrawAmountNum.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-base">
+                      <span className={dark ? "text-slate-400" : "text-gray-600"}>Account setup</span>
+                      <span className={dark ? "text-slate-300" : "text-gray-700"}>−${ataSetupFeeUsdc.toFixed(2)}</span>
+                    </div>
+                    <div className={cn("flex items-center justify-between pt-1.5 border-t", dark ? "border-white/10" : "border-gray-200")}>
+                      <span className={`text-base font-semibold ${dark ? "text-slate-100" : "text-gray-900"}`}>You receive</span>
+                      <span className={`text-base font-semibold ${dark ? "text-slate-100" : "text-gray-900"}`}>
+                        ${Math.max(0, withdrawAmountNum - ataSetupFeeUsdc).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 mt-3">
+                    <Button
+                      variant="outline"
+                      onClick={() => setAtaFeeConfirmPending(false)}
+                      className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => { setAtaFeeConfirmPending(false); handleWithdraw(true); }}
+                      className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white"
+                    >
+                      Confirm &amp; withdraw
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div className={`flex gap-2 pt-2 ${ataFeeConfirmPending ? "hidden" : ""}`}>
                 <Button variant="outline" onClick={() => setWithdrawMethod(null)} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
                   Back
                 </Button>
                 <Button
-                  onClick={handleWithdraw}
+                  onClick={() => handleWithdraw()}
                   disabled={
                     withdrawing ||
                     withdrawAmountNum <= 0 ||
                     withdrawAmountNum > spendableBalance ||
                     (addLotteryTicket && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) ||
-                    !withdrawAddress.trim() ||
+                    !effectiveWithdrawAddress.trim() ||
                     !wallet ||
                     (withdrawMethod === "near-intents" && !selectedFrom) ||
                     (isUSDCOnSolana ? addressRiskStatus !== "safe" : !destinationAddressValid)
