@@ -153,16 +153,16 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
     ).rejects.toThrow('Claim not found');
   });
 
-  // 2026-08-07 recurrence: a raw client-built transaction with NO claimId/pajOrderId/
-  // nearIntentsOrderId/offrampRequestId/giveawayId used to fall through to "UNBOUND" and rely
-  // solely on the (rotatable) per-user volume cap. Every real caller now passes one of the five
-  // ids, so this must be refused outright, not merely capped.
-  it('rejects a sponsor call with no backing intent id at all, even under the volume cap', async () => {
+  // Plain Solana withdrawals have no backend-tracked record to bind against and never will —
+  // paying the recipient's ATA rent there is normal product cost, not abuse. This briefly threw
+  // (2026-08-07) and broke every real withdrawal to a wallet that had never held USDC; the volume
+  // caps (esp. the per-signer-wallet one) are what bound the farming case instead.
+  it('allows a sponsor call with no backing intent id — bounded by the volume caps, not refused', async () => {
     const txBase64 = buildAtaCreationTxBase64(Keypair.generate().publicKey);
 
     await expect(
-      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'attacker'),
-    ).rejects.toThrow('cannot be verified against a known claim, order, or giveaway');
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'user-1'),
+    ).resolves.toBeUndefined();
   });
 
   it('allows sponsorship when the ATA owner matches the giveaway burner_address on file', async () => {

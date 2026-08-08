@@ -636,16 +636,24 @@ export class SolanaSponsorService {
         }
       }
     } else if (chargeable.length > 0) {
-      // No backing intent id at all. This used to be accepted as "UNBOUND" and rely solely on
-      // the per-user/per-wallet volume caps below — that's exactly the gap the 2026-08-07
-      // recurrence exploited (a raw client-built transaction with no claimId/pajOrderId/
-      // nearIntentsOrderId/offrampRequestId/giveawayId, so intent-binding never even ran). Every
-      // known legitimate caller of this endpoint now passes one of those five ids, so a new
-      // sponsor-paid ATA creation with none of them is refused outright rather than merely capped.
-      this.logger.error(
-        `SolanaSponsor[${label}]: BLOCKED — sponsor-paid ATA creation with no claimId/pajOrderId/nearIntentsOrderId/offrampRequestId/giveawayId (user=${userId ?? 'unknown'}, count=${chargeable.length})`,
+      // No backing intent id — e.g. a plain Solana withdrawal to an address the user typed in.
+      // There is nothing to bind against here and never will be: it's just "send my own money to
+      // this address", with no backend-tracked record behind it.
+      //
+      // Paying the ~$0.15 ATA rent for a recipient who has never held USDC is NORMAL, legitimate
+      // product cost — it's what has always made "send to any wallet" work, and Loofta has
+      // absorbed it for real users since day one. Briefly (2026-08-07 → 2026-08-08) this branch
+      // refused these outright, which broke every real withdrawal to a wallet without a USDC
+      // account. Do not reintroduce that: the 2026-08-07 drain was never "we pay rent at all",
+      // it was ONE actor farming that rent in a loop against wallets they controlled.
+      //
+      // What actually bounds the abuse is the volume caps immediately below — in particular the
+      // per-SIGNER-WALLET cap, which closes the disposable-Privy-account rotation the attacker
+      // used to sail past the per-user cap. Logged at warn so this path stays greppable in a
+      // future investigation.
+      this.logger.warn(
+        `SolanaSponsor[${label}]: UNBOUND sponsor-paid ATA creation (no intent id — expected for plain withdrawals) — bounded only by the per-user/per-wallet volume caps (user=${userId ?? 'unknown'}, count=${chargeable.length}, owners=${chargeable.map((d) => d.owner.slice(0, 8)).join(',')})`,
       );
-      throw new Error('This payment cannot be verified against a known claim, order, or giveaway.');
     }
 
     // NOTE: this function's intended safety net for volume was pricing — recover the rent from
