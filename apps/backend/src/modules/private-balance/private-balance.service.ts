@@ -385,7 +385,12 @@ export class PrivateBalanceService {
     // Reports the price actually used below — hits the cache resolveMagicblockRelayFeeUsdc()
     // just populated, no extra network call in the common case.
     const relaySolPriceUsd = await fetchSolPriceUsd();
-    const mbVolumeFeeUnits = estimateMagicblockGrossUp(baseUnits) - baseUnits;
+    // Must gross up for BOTH bps cuts — MagicBlock's own and Loofta's platform fee, which is
+    // passed as platformFeeBps above and so is really charged on-chain. Omitting the platform fee
+    // here (as this line used to) left the quoted fee ~10 bps under what the user was actually
+    // debited. The deposit path at buildDeposit already totals them the same way.
+    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + PRIVATE_BALANCE_PLATFORM_FEE_BPS;
+    const mbVolumeFeeUnits = estimateMagicblockGrossUp(baseUnits, totalBps) - baseUnits;
     const conn = this.solanaSponsor.getConnectionForCluster(cluster);
     const actualDebitUnits = await decodeActualSenderDebit(txResponse.transactionBase64, userWallet, mint, conn);
     const estimatedFeeUnits = mbVolumeFeeUnits + relayFeeUnits;

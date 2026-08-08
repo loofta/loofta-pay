@@ -576,6 +576,10 @@ export function BalanceModal({
   // withdrawals (withdrawTokens already resolves to [usdcSol, ...otherChains] for any non-near-intents
   // method, private-relay included — no separate token list needed).
   const [privateWithdrawSubmitting, setPrivateWithdrawSubmitting] = useState(false);
+  // Fee-confirmation gate between building the private withdrawal and signing it. The ref holds
+  // the resolver for the promise handlePrivateWithdraw's onTxBuilt is parked on.
+  const [privateFeeConfirmPending, setPrivateFeeConfirmPending] = useState(false);
+  const privateFeeConfirmRef = useRef<((accepted: boolean) => void) | null>(null);
   const [privateWithdrawId, setPrivateWithdrawId] = useState<string | null>(null);
   const [privateWithdrawStatus, setPrivateWithdrawStatus] = useState<PrivateTransferStatus | null>(null);
   const [privateWithdrawError, setPrivateWithdrawError] = useState<string | null>(null);
@@ -995,11 +999,26 @@ export function BalanceModal({
         accessToken,
         amountUsdc: amount,
         destinationAddress: destination,
+        // The transaction is built (so the fees are real, not guessed) but nothing is signed yet.
+        // Hold here and show the user exactly what lands at the destination; the promise resolves
+        // when they confirm and rejects if they back out.
         onTxBuilt: ({ id: txId, feeAmountUsdc }) => {
           setPrivateWithdrawId(txId);
           setPrivateWithdrawFee(feeAmountUsdc);
-          setPrivateWithdrawStatus("awaiting_signature");
           localStorage.setItem(PRIVATE_WITHDRAW_SESSION_KEY, txId);
+          return new Promise<void>((resolve, reject) => {
+            privateFeeConfirmRef.current = (accepted: boolean) => {
+              privateFeeConfirmRef.current = null;
+              setPrivateFeeConfirmPending(false);
+              if (accepted) {
+                setPrivateWithdrawStatus("awaiting_signature");
+                resolve();
+              } else {
+                reject(new Error("CANCELLED_BY_USER"));
+              }
+            };
+            setPrivateFeeConfirmPending(true);
+          });
         },
       });
       setPrivateWithdrawId(id);
@@ -1007,9 +1026,17 @@ export function BalanceModal({
       optimisticWithdrawBalance(amount);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Private withdrawal failed";
+      // Backing out at the fee confirmation isn't a failure — nothing was signed or sent, so
+      // return to the form rather than showing an error over a withdrawal that never started.
+      if (msg === "CANCELLED_BY_USER") {
+        resetPrivateWithdraw();
+        return;
+      }
       setPrivateWithdrawError(msg);
       toast({ variant: "destructive", title: "Private withdrawal failed", description: msg });
     } finally {
+      setPrivateFeeConfirmPending(false);
+      privateFeeConfirmRef.current = null;
       setPrivateWithdrawSubmitting(false);
     }
   };
@@ -3875,7 +3902,59 @@ export function BalanceModal({
                 <ChevronLeft className="h-4 w-4" />Back
               </button>
 
-              {privateWithdrawId ? (
+              {privateFeeConfirmPending ? (
+                /* ── Fee confirmation — transaction is built (so these are the real fees, not an
+                      estimate) but nothing is signed yet. ── */
+                <div className={cn("rounded-2xl border p-4", dark ? "bg-white/5 border-white/10" : "bg-white border-gray-200")}>
+                  <div className="flex items-start gap-3">
+                    <span className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_8px_20px_rgba(255,122,42,0.35)]">
+                      <VenetianMask className="h-5 w-5 text-white" />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-base font-semibold ${dark ? "text-slate-100" : "text-gray-900"}`}>
+                        Confirm private withdrawal
+                      </p>
+                      <p className={`text-base mt-0.5 ${dark ? "text-slate-400" : "text-gray-600"}`}>
+                        Sending privately routes through a one-time burner wallet, which carries a
+                        network and relay cost.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className={cn("mt-3 rounded-xl px-3 py-2.5 space-y-1.5", dark ? "bg-white/5" : "bg-gray-50")}>
+                    <div className="flex items-center justify-between text-base">
+                      <span className={dark ? "text-slate-400" : "text-gray-600"}>Withdrawing</span>
+                      <span className={dark ? "text-slate-300" : "text-gray-700"}>${(parseFloat(withdrawAmount) || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-base">
+                      <span className={dark ? "text-slate-400" : "text-gray-600"}>Privacy fee</span>
+                      <span className={dark ? "text-slate-300" : "text-gray-700"}>−${(privateWithdrawFee ?? 0).toFixed(2)}</span>
+                    </div>
+                    <div className={cn("flex items-center justify-between pt-1.5 border-t", dark ? "border-white/10" : "border-gray-200")}>
+                      <span className={`text-base font-semibold ${dark ? "text-slate-100" : "text-gray-900"}`}>They receive</span>
+                      <span className={`text-base font-semibold ${dark ? "text-slate-100" : "text-gray-900"}`}>
+                        ${Math.max(0, (parseFloat(withdrawAmount) || 0) - (privateWithdrawFee ?? 0)).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 mt-3">
+                    <Button
+                      variant="outline"
+                      onClick={() => privateFeeConfirmRef.current?.(false)}
+                      className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => privateFeeConfirmRef.current?.(true)}
+                      className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white"
+                    >
+                      Confirm &amp; send
+                    </Button>
+                  </div>
+                </div>
+              ) : privateWithdrawId ? (
                 /* ── Status view ── */
                 <div className="space-y-3">
                   <div className={`flex items-center gap-3 rounded-2xl px-4 py-3.5 ${dark ? "bg-white/5 border border-white/10" : "bg-gradient-to-r from-orange-50/70 to-amber-50/30 border border-orange-100"}`}>
