@@ -5,7 +5,7 @@ use ephemeral_rollups_sdk::vrf::{
     instructions::{create_request_scoped_randomness_ix, RequestRandomnessParams},
 };
 
-declare_id!("5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi");
+declare_id!("7vV8V59ziNPvCnXqEsYFonymXpfjq5WPGNyJ1GVKgE9c");
 
 #[cfg(not(feature = "no-entrypoint"))]
 solana_security_txt::security_txt! {

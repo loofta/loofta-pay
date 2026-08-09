@@ -50,15 +50,19 @@ export default function GachaRoulette({
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
   // Suspense-only cycling while the real draw is still in flight — no bearing on the outcome.
+  // Floor raised from 70ms to 130ms — on a small 5-seat grid, sub-100ms random jumps read as a
+  // flicker rather than a spin, especially since the CSS highlight transition (see .pp-roul.spot
+  // below) is itself 90ms; anything faster than that never finishes fading in before the next
+  // step reassigns it, which is exactly what "glitchy" was describing.
   useEffect(() => {
     if (finalVictims || !players.length) return;
     let cancelled = false;
-    let delay = 220;
+    let delay = 260;
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
       if (cancelled) return;
       setSpotSeat(players[Math.floor(Math.random() * players.length)].seatNumber);
-      delay = Math.max(70, delay * 0.93);
+      delay = Math.max(130, delay * 0.95);
       timer = setTimeout(tick, delay);
     };
     timer = setTimeout(tick, delay);
@@ -67,6 +71,9 @@ export default function GachaRoulette({
 
   // The real result arrived — stop guessing and reveal each real victim in turn, same staggered
   // spin-then-land shape as the reference, just landing on a known seat instead of a random one.
+  // Step gap raised from a 55ms floor (55 + i*i*0.9) to a 110ms floor (110 + i*i*1.4) for the same
+  // reason as the suspense spin above — the old floor was faster than the highlight's own CSS
+  // transition, so consecutive steps visually overlapped instead of reading as discrete landings.
   useEffect(() => {
     if (!finalVictims || revealStartedRef.current) return;
     revealStartedRef.current = true;
@@ -75,7 +82,7 @@ export default function GachaRoulette({
       const stillSpinning = players.filter((p) => !finalVictims.slice(0, round).includes(p.seatNumber));
       const spins = 10 + round * 4;
       for (let i = 0; i < spins; i++) {
-        const delay = (t += 55 + i * i * 0.9);
+        const delay = (t += 110 + i * i * 1.4);
         after(delay, () => setSpotSeat(i === spins - 1 ? victimSeat : stillSpinning[Math.floor(Math.random() * stillSpinning.length)].seatNumber));
       }
       t += 450;

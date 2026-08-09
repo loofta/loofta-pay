@@ -415,17 +415,22 @@ export default function GachaPack3D({
       } else if (phase === 'reveal') {
         // The card holds fully emerged (see 'burst' above, which already left it at scale 1,
         // opacity 1, z 0.9) and does one full front -> back -> front flip in place before handing
-        // off — a real look at both sides, not just the front, before <GachaCard> takes over.
-        const dur = 2.0, k = Math.min(e / dur, 1);
+        // off — a real look at both sides, not just the front, before <GachaCard> takes over. The
+        // flip itself only takes flipDur — after that the card just holds still (rotation clamped
+        // at k=1) for the rest of holdDur, fully orbit-able the whole time (OrbitControls keeps
+        // running regardless of phase, see controls.update() below) — previously this whole phase
+        // was only 2s total, nowhere near enough time to actually look the card over before it
+        // auto-advanced to the next screen.
+        const flipDur = 2.0, holdDur = 10.0, k = Math.min(e / flipDur, 1);
         cardGroup.rotation.y = ease(k) * Math.PI * 2;
         parts.visible = false;
         // glowLight was still at ~31.5 (its burst-flash decay floor) the instant 'reveal' starts
         // and nothing after that point ever brought it back down — it stayed that bright for the
-        // full 2s hold, blowing out the card's highlights the whole time it's being shown off.
-        // Fade it the rest of the way to 0 over the flip instead; key/rim/hemisphere lights alone
-        // are enough to read the card clearly.
+        // full hold, blowing out the card's highlights the whole time it's being shown off. Fade
+        // it out over the flip itself (k already clamps at 1, so it just stays at 0 for the rest
+        // of the hold) — key/rim/hemisphere lights alone are enough to read the card clearly.
         glowLight.intensity = 31.5 * (1 - k);
-        if (e > dur) {
+        if (e > holdDur) {
           phase = 'done';
           packRig.visible = false;
           onOpenedRef.current?.(pendingResult!);

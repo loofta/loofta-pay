@@ -64,10 +64,13 @@ export class GachaVrfService {
     return Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey));
   }
 
-  /** sha256(roomId) — the program only ever sees stable 32-byte seed bytes, never a Postgres
-   *  UUID directly. */
+  /** sha256("gacha:" + roomId) — the program only ever sees stable 32-byte seed bytes, never a
+   *  Postgres UUID directly. The "gacha:" domain prefix means this can never derive the same seed
+   *  (and therefore the same draw-request PDA) as GiveawayVrfService.deriveSeed, which shares this
+   *  same loofta_vrf program but has no prefix of its own — without it, a gacha roomId and a
+   *  giveaway id that happened to be identical strings would collide on the exact same PDA. */
   deriveSeed(roomId: string): Buffer {
-    return createHash('sha256').update(roomId).digest();
+    return createHash('sha256').update(`gacha:${roomId}`).digest();
   }
 
   derivePda(roomId: string): [PublicKey, number] {

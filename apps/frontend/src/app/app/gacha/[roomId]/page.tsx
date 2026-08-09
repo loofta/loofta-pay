@@ -37,7 +37,7 @@ import { getMascot } from "@/lib/mascots";
 import type { GachaOpenResult, GachaRarity, GachaNftAttribute } from "@/components/GachaPack3D";
 import { useGachaRoomSocket } from "@/hooks/useGachaRoomSocket";
 import { useGachaRoomStateSubscription } from "@/hooks/useGachaRoomStateSubscription";
-import { GACHA_ROOM_PHASE, countMask, maskToSeatNumbers } from "@/lib/gachaRoomState";
+import { GACHA_ROOM_PHASE, maskToSeatNumbers } from "@/lib/gachaRoomState";
 
 // Client-only (touches window/WebGL) — same ssr:false convention as MegapotPack's own usage.
 const GachaPack3D = dynamic(() => import("@/components/GachaPack3D"), { ssr: false });
@@ -219,16 +219,29 @@ export default function GachaRoomPage() {
         : (erRoomState.yesMask & myBit) !== 0,
     );
   }, [detail?.myParticipant?.seatNumber, erRoomState]);
-  const [voteDrawInProgress, setVoteDrawInProgress] = useState(false);
-  useEffect(() => { if (lastVoteResult?.passed) setVoteDrawInProgress(true); }, [lastVoteResult]);
-  useEffect(() => { setVoteDrawInProgress(false); }, [lastVoteRoundStarted?.round, erRoomState?.voteRound]);
+  // Vote-cut reveal — same full-screen GachaRoulette + ExclusionReveal cinematic the INITIAL
+  // exclusion draw already uses, reused here instead of the old silent "Drawing who gets cut…"
+  // text: that text was the whole reveal moment for a vote-cut, and it read as "nothing happened"
+  // since the survivor list just quietly shrank next time the page re-rendered. Snapshotting
+  // survivors at the moment the round passes (not reading detail.participants live) matters: a
+  // `refresh()` triggered elsewhere by the same lastVoteCut event can land the exclusion in
+  // `detail` before this screen ever mounts, which would show the victim already gone from the
+  // spinning pool instead of getting cut on-screen.
+  const [voteCutRouletteActive, setVoteCutRouletteActive] = useState(false);
+  const [voteCutRound, setVoteCutRound] = useState<number | null>(null);
+  const [voteCutSurvivorsSnapshot, setVoteCutSurvivorsSnapshot] = useState<RoomDetail["participants"]>([]);
+  useEffect(() => {
+    if (!lastVoteResult?.passed) return;
+    setVoteCutSurvivorsSnapshot(detail?.participants.filter((p) => !p.excluded) ?? []);
+    setVoteCutRound(lastVoteResult.round);
+    setVoteCutRouletteActive(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastVoteResult]);
+  const voteCutFinalVictim = lastVoteCut && lastVoteCut.round === voteCutRound ? [lastVoteCut.seatNumber] : null;
   useEffect(() => {
     if (!erRoomState?.finalized) return;
-    const totalCount = countMask(erRoomState.survivorMask);
-    const yesCount = countMask(erRoomState.yesMask & erRoomState.survivorMask);
-    if (totalCount > 1 && yesCount * 2 >= totalCount) setVoteDrawInProgress(true);
     void refresh();
-  }, [erRoomState?.finalized, erRoomState?.survivorMask, erRoomState?.yesMask, refresh]);
+  }, [erRoomState?.finalized, refresh]);
   const handleVote = useCallback(async (vote: boolean) => {
     const res = await castVote(vote);
     if (res.ok) { setMyVote(vote); refresh(); } else setError(res.error ?? "Couldn't cast your vote — please try again.");
@@ -656,6 +669,19 @@ export default function GachaRoomPage() {
         onContinue={() => setRouletteActive(false)}
       />
     );
+  } else if (voteCutRouletteActive) {
+    screen = (
+      <GachaRoulette
+        players={voteCutSurvivorsSnapshot.map(toChipPlayer)}
+        cardName={cardResult?.nftMetadata?.name}
+        cardImage={cardResult?.nftMetadata?.image}
+        rarity={cardResult?.rarity ?? room.rarity}
+        potUsdc={room.buybackAmountUsdc ?? 0}
+        exclusionCount={1}
+        finalVictims={voteCutFinalVictim}
+        onContinue={() => setVoteCutRouletteActive(false)}
+      />
+    );
   } else if (room.status === "waiting") {
     const full = room.seatsFilled >= room.seats;
     screen = (
@@ -703,7 +729,6 @@ export default function GachaRoomPage() {
         potUsdc={room.buybackAmountUsdc ?? 0}
         myVote={myVote}
         onVote={handleVote}
-        drawInProgress={voteDrawInProgress}
       />
     );
   } else if (room.status === "settled" || room.status === "settling") {

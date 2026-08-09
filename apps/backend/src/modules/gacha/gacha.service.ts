@@ -23,7 +23,7 @@ import { UsersService } from '../users/users.service';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc } from '@/common/magicblock-private-transfer';
-import { CollectorCryptClient, CollectorCryptPackType, NftMetadata, OpenPackResponse, PackRarityTier } from './collectorcrypt.client';
+import { CollectorCryptApiError, CollectorCryptClient, CollectorCryptPackType, NftMetadata, OpenPackResponse, PackRarityTier } from './collectorcrypt.client';
 import { GACHA_EVENTS } from './gacha.events';
 import { GachaVrfService } from './gacha-vrf.service';
 import { GACHA_ROOM_PHASE, GachaOnchainStateService, type GachaRoomPhase } from './gacha-onchain-state.service';
@@ -975,6 +975,13 @@ export class GachaService {
     // next cron tick.
     this.purchaseAndOpenRoom(roomId).catch(async (e) => {
       const reason = e instanceof Error ? e.message : String(e);
+      // CollectorCryptApiError's own .message is a generic "Collectorcrypt request failed (400)"
+      // fallback whenever their response body has no `.message` field — which discards the real
+      // reason (rate limit? empty inventory? something else?) every single time this has actually
+      // fired. Logging the raw body here is the difference between "it 400d again" and knowing why.
+      if (e instanceof CollectorCryptApiError) {
+        this.logger.error(`Room ${roomId}: Collectorcrypt error body: ${JSON.stringify(e.body)}`);
+      }
       this.logger.error(`Room ${roomId}: purchase/open failed: ${reason}`);
       await db.from('gacha_rooms').update({
         status: 'failed',
@@ -1059,7 +1066,17 @@ export class GachaService {
       }
     }
 
-    await db.from('gacha_rooms').update({ status: 'voting', vote_round: 1, updated_at: new Date().toISOString() }).eq('id', roomId);
+    // vrf_requested_at/randomness/slot/fulfilled_at still hold the INITIAL EXCLUSION draw's own
+    // (already-consumed, above) VRF request record — must be cleared here exactly like
+    // resolveVoteCutDraw already does between later rounds, or castVote's `if (room.vrf_requested_at)
+    // throw 'already locked in'` guard rejects EVERY round-1 vote unconditionally, before ever
+    // touching on-chain state: confirmed live — a room's first vote round always failed this way,
+    // independent of timing/deadlines/bot behavior, since this column was simply never reset.
+    await db.from('gacha_rooms').update({
+      status: 'voting', vote_round: 1,
+      vrf_requested_at: null, vrf_randomness: null, vrf_request_slot: null, vrf_fulfilled_at: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', roomId);
     await this.syncOnchainInitialExclusion(roomId, room.seats, excludedSeatNumbers);
     this.logger.log(`Room ${roomId}: exclusion draw resolved — ${excludedSeatNumbers.length}/${rows.length} excluded (seats ${excludedSeatNumbers.join(', ')})`);
     this.events.emit(GACHA_EVENTS.ROOM_EXCLUDED, { roomId, excludedSeatNumbers });
@@ -1511,12 +1528,15 @@ export class GachaService {
     if (!room) throw new NotFoundException('Room not found');
     if (room.status !== 'excluding') throw new BadRequestException(`Room isn't mid-exclusion-draw (status: ${room.status})`);
 
+    // 40 * 1.5s = 60s — same reasoning as devForceAdvanceVoting's identical widening below: real
+    // oracle fulfillment latency observed this session could run close to a minute, well past the
+    // old 15s window, which made this look like a no-op rather than a still-pending request.
     let status = room.status;
-    for (let i = 0; i < 15 && status === 'excluding'; i++) {
+    for (let i = 0; i < 40 && status === 'excluding'; i++) {
       await this.advanceExclusionDraw(roomId);
       const { data: after } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
       status = after?.status ?? status;
-      if (status === 'excluding') await new Promise((r) => setTimeout(r, 1000));
+      if (status === 'excluding') await new Promise((r) => setTimeout(r, 1500));
     }
     return { status };
   }
@@ -1546,13 +1566,17 @@ export class GachaService {
       }
     }
 
+    // 40 * 1.5s = 60s, not the old 15 * 1s = 15s — real oracle fulfillment observed this session
+    // ran anywhere from ~10s to nearly 60s, so the old window frequently expired while a request
+    // was still genuinely in flight, silently returning with status still 'voting' and looking
+    // like the button just did nothing (it hadn't failed, it just stopped checking too early).
     let status = room.status;
-    for (let i = 0; i < 15 && status === 'voting'; i++) {
+    for (let i = 0; i < 40 && status === 'voting'; i++) {
       const { data: current } = await db.from('gacha_rooms').select('status, vote_round, vrf_requested_at').eq('id', roomId).single();
       if (current?.vrf_requested_at) await this.resolveVoteCutDraw(roomId, current.vote_round);
       const { data: after } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
       status = after?.status ?? status;
-      if (status === 'voting') await new Promise((r) => setTimeout(r, 1000));
+      if (status === 'voting') await new Promise((r) => setTimeout(r, 1500));
     }
     return { status };
   }

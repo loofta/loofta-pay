@@ -6,11 +6,11 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-loofta_vrf = "5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi"
+loofta_vrf = "7vV8V59ziNPvCnXqEsYFonymXpfjq5WPGNyJ1GVKgE9c"
 gacha_room_state = "45ShoiSQG8J4t1piSwsfYC38dyc9oLBbZmFr6W1KpowH"
 
 [programs.devnet]
-loofta_vrf = "5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi"
+loofta_vrf = "7vV8V59ziNPvCnXqEsYFonymXpfjq5WPGNyJ1GVKgE9c"
 gacha_room_state = "45ShoiSQG8J4t1piSwsfYC38dyc9oLBbZmFr6W1KpowH"
 
 [programs.mainnet]

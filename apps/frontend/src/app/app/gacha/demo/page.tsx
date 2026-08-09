@@ -78,7 +78,6 @@ export default function GachaDemoPage() {
   const [tally, setTally] = useState<Record<number, boolean>>({});
   const [myVote, setMyVote] = useState<boolean | undefined>(undefined);
   const [voting, setVoting] = useState(true);
-  const [voteDrawInProgress, setVoteDrawInProgress] = useState(false);
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
@@ -101,7 +100,6 @@ export default function GachaDemoPage() {
     setTally({});
     setMyVote(undefined);
     setVoting(true);
-    setVoteDrawInProgress(false);
   };
 
   const handleLocalMascotPick = async (key: string) => {
@@ -190,11 +188,9 @@ export default function GachaDemoPage() {
     const passed = yesCount * 2 >= votes.length; // ties count as YES
     after(1100, () => {
       if (passed && alive.length > 1) {
-        setVoteDrawInProgress(true);
         after(1500, () => {
           const victim = alive[Math.floor(Math.random() * alive.length)];
           setPlayers((ps) => ps.map((p) => (p.seatNumber === victim.seatNumber ? { ...p, excluded: true } : p)));
-          setVoteDrawInProgress(false);
           const stillIn = players.filter((p) => !p.excluded && p.seatNumber !== victim.seatNumber);
           if (stillIn.length > 1) launchVoteRound(round + 1);
           else setStage("settled");
@@ -316,7 +312,7 @@ export default function GachaDemoPage() {
       />
     );
   } else if (stage === "voting") {
-    screen = <VoteRound round={round} survivors={voteSurvivors} potUsdc={potUsdc} myVote={myVote} onVote={castVote} drawInProgress={voteDrawInProgress} />;
+    screen = <VoteRound round={round} survivors={voteSurvivors} potUsdc={potUsdc} myVote={myVote} onVote={castVote} />;
   } else {
     screen = (
       <Shell
