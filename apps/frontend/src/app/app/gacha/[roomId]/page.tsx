@@ -36,6 +36,8 @@ import { Shell, Chip, money, GRAD_STYLE, type ChipPlayer } from "@/components/Pa
 import { getMascot } from "@/lib/mascots";
 import type { GachaOpenResult, GachaRarity, GachaNftAttribute } from "@/components/GachaPack3D";
 import { useGachaRoomSocket } from "@/hooks/useGachaRoomSocket";
+import { useGachaRoomStateSubscription } from "@/hooks/useGachaRoomStateSubscription";
+import { GACHA_ROOM_PHASE, countMask, maskToSeatNumbers } from "@/lib/gachaRoomState";
 
 // Client-only (touches window/WebGL) — same ssr:false convention as MegapotPack's own usage.
 const GachaPack3D = dynamic(() => import("@/components/GachaPack3D"), { ssr: false });
@@ -62,6 +64,7 @@ interface RoomDetail {
     payoutUsdc: number | null;
     payoutIsPrivate: boolean | null;
     claimed: boolean;
+    claimPending: boolean;
     mascotKey: string | null;
     mascotLocked: boolean;
     excluded: boolean;
@@ -156,11 +159,43 @@ export default function GachaRoomPage() {
   }, [refresh]);
 
   const {
-    lastUpdate, lastOpened, lastSettled, lastExcluded, lastReadyUpdate, allReadyTick, readySeats, markReady, lockMascot,
+    lastUpdate, lastOpened, lastSettled, lastExcluded, lastReadyUpdate, allReadyTick, readySeats: socketReadySeats, markReady, lockMascot,
     lastVoteRoundStarted, lastVoteResult, lastVoteCut, castVote,
   } = useGachaRoomSocket(roomId, accessToken);
+  const {
+    state: erRoomState,
+    status: erSubscriptionStatus,
+    error: erSubscriptionError,
+  } = useGachaRoomStateSubscription(roomId);
+  // ER is authoritative for on-chain seats. Keep the socket snapshot in this union for the
+  // current dev bot-fill path, whose synthetic ready seats are not persisted in ready_mask.
+  const readySeats = useMemo(() => {
+    const seats = erRoomState
+      ? maskToSeatNumbers(erRoomState.readyMask, erRoomState.seats)
+      : [];
+    return Array.from(new Set([...seats, ...socketReadySeats])).sort((a, b) => a - b);
+  }, [erRoomState, socketReadySeats]);
+  const readyCount = readySeats.length;
   useEffect(() => { refresh(); }, [lastUpdate, lastOpened, lastSettled, lastExcluded, lastVoteRoundStarted, lastVoteResult, lastVoteCut]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!erRoomState) return;
+    if (
+      erRoomState.phase === GACHA_ROOM_PHASE.EXCLUDING
+      || erRoomState.phase === GACHA_ROOM_PHASE.VOTING
+      || erRoomState.phase === GACHA_ROOM_PHASE.SETTLED
+      || erRoomState.lastCutSeat > 0
+    ) {
+      void refresh();
+    }
+  }, [erRoomState?.phase, erRoomState?.lastCutSeat, refresh]);
   useEffect(() => { if (allReadyTick > 0) setAutoOpen(true); }, [allReadyTick]);
+  useEffect(() => {
+    if (erRoomState && readyCount >= erRoomState.seats) setAutoOpen(true);
+  }, [erRoomState, readyCount]);
+  useEffect(() => {
+    const mySeat = detail?.myParticipant?.seatNumber;
+    if (mySeat && readySeats.includes(mySeat)) setIAmReady(true);
+  }, [detail?.myParticipant?.seatNumber, readySeats]);
 
   // Drives the full-screen ROULETTE/OUUUT takeover (GachaRoulette) — stays true for the whole
   // sequence regardless of what room.status has moved on to underneath by the time it finishes
@@ -174,9 +209,26 @@ export default function GachaRoomPage() {
   // a round passing (see checkVoteRoundComplete) and either the next round starting or settling.
   const [myVote, setMyVote] = useState<boolean | undefined>(undefined);
   useEffect(() => { setMyVote(undefined); }, [lastVoteRoundStarted?.round]);
+  useEffect(() => {
+    const mySeat = detail?.myParticipant?.seatNumber;
+    if (!erRoomState || !mySeat || erRoomState.voteRound === 0) return;
+    const myBit = 1 << (mySeat - 1);
+    setMyVote(
+      (erRoomState.votedMask & myBit) === 0
+        ? undefined
+        : (erRoomState.yesMask & myBit) !== 0,
+    );
+  }, [detail?.myParticipant?.seatNumber, erRoomState]);
   const [voteDrawInProgress, setVoteDrawInProgress] = useState(false);
   useEffect(() => { if (lastVoteResult?.passed) setVoteDrawInProgress(true); }, [lastVoteResult]);
-  useEffect(() => { setVoteDrawInProgress(false); }, [lastVoteRoundStarted?.round]);
+  useEffect(() => { setVoteDrawInProgress(false); }, [lastVoteRoundStarted?.round, erRoomState?.voteRound]);
+  useEffect(() => {
+    if (!erRoomState?.finalized) return;
+    const totalCount = countMask(erRoomState.survivorMask);
+    const yesCount = countMask(erRoomState.yesMask & erRoomState.survivorMask);
+    if (totalCount > 1 && yesCount * 2 >= totalCount) setVoteDrawInProgress(true);
+    void refresh();
+  }, [erRoomState?.finalized, erRoomState?.survivorMask, erRoomState?.yesMask, refresh]);
   const handleVote = useCallback(async (vote: boolean) => {
     const res = await castVote(vote);
     if (res.ok) { setMyVote(vote); refresh(); } else setError(res.error ?? "Couldn't cast your vote — please try again.");
@@ -210,6 +262,10 @@ export default function GachaRoomPage() {
   const handleJoin = useCallback(async () => {
     if (!authenticated) { login(); return; }
     if (!embeddedWallet?.address || !room) { setError("No Solana wallet found"); return; }
+    // A spectator opening a settled room has no prior mascot to carry into "Run it back".
+    // Send them through the real mascot-first join flow instead of submitting `null` and being
+    // rejected by the backend's whitelist.
+    if (!detail?.myParticipant?.mascotKey) { router.push("/app/gacha/play"); return; }
     setBusy(true);
     setError(null);
     try {
@@ -218,7 +274,7 @@ export default function GachaRoomPage() {
       const joinTxRes = await fetch("/api/gacha/rooms/join-tx", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ configKey: room.configKey, userSolanaAddress: embeddedWallet.address }),
+        body: JSON.stringify({ configKey: room.configKey }),
       });
       if (!joinTxRes.ok) throw new Error((await joinTxRes.json().catch(() => null))?.message ?? "Failed to prepare entry payment");
       const { txBase64, roomId: targetRoomId, alreadyJoined } = await joinTxRes.json();
@@ -235,9 +291,8 @@ export default function GachaRoomPage() {
       const { signature: sigBytes } = await signAndSendTransaction({ transaction: txBytes as unknown as Uint8Array, wallet: embeddedWallet as any, chain: "solana:devnet" });
       const paymentTxHash = bs58.encode(sigBytes as Uint8Array);
 
-      // This page's own join button fires either as a first-time join for someone who landed on
-      // a room link directly (no pre-chosen mascot — falls back to a random one, same as
-      // MascotPicker's own stall timeout) or as "Run it back" replaying with the same mascot.
+      // "Run it back" keeps this participant's already-locked mascot. First-time spectators are
+      // routed through /app/gacha/play above so they explicitly choose one.
       const joinRes = await fetch(`/api/gacha/rooms/${targetRoomId}/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeader },
@@ -254,7 +309,7 @@ export default function GachaRoomPage() {
     } finally {
       setBusy(false);
     }
-  }, [authenticated, login, embeddedWallet, room, roomId, getAccessToken, signAndSendTransaction, router, refresh]);
+  }, [authenticated, login, embeddedWallet, room, roomId, detail?.myParticipant?.mascotKey, getAccessToken, signAndSendTransaction, router, refresh]);
 
   const handleFillWithBots = useCallback(async () => {
     setFillingBots(true);
@@ -391,7 +446,7 @@ export default function GachaRoomPage() {
   const autoClaimedRef = useRef(false);
   useEffect(() => {
     if (autoClaimedRef.current) return;
-    if (detail?.room.status !== "settled" || !detail.myParticipant || detail.myParticipant.excluded || detail.myParticipant.claimed) return;
+    if (detail?.room.status !== "settled" || !detail.myParticipant || detail.myParticipant.excluded || detail.myParticipant.claimed || detail.myParticipant.claimPending) return;
     autoClaimedRef.current = true;
     handleClaim();
   }, [detail?.room.status, detail?.myParticipant, handleClaim]);
@@ -442,13 +497,24 @@ export default function GachaRoomPage() {
   // preferred when available.
   const excludedNow = detail.participants.filter((p) => p.excluded).map((p) => p.seatNumber);
   const initialExcludedFallback = excludedNow.length === room.exclusionCount ? excludedNow : null;
-  const finalVictims = lastExcluded?.excludedSeatNumbers ?? (room.status !== "excluding" ? initialExcludedFallback : null);
+  const erExcludedSeats = erRoomState ? maskToSeatNumbers(erRoomState.excludedMask, erRoomState.seats) : [];
+  const erInitialExcludedFallback = erRoomState?.lastCutSeat === 0 && erExcludedSeats.length === room.exclusionCount
+    ? erExcludedSeats
+    : null;
+  const finalVictims = lastExcluded?.excludedSeatNumbers ?? erInitialExcludedFallback ?? (room.status !== "excluding" ? initialExcludedFallback : null);
 
   const survivors = detail.participants.filter((p) => !p.excluded);
   const survivorShare = survivors.length && room.buybackAmountUsdc !== null ? room.buybackAmountUsdc / survivors.length : 0;
 
   const devTools = showGachaDevTools && (
     <div className="absolute right-4 bottom-4 z-20 flex flex-col gap-2 items-end">
+      <span
+        className="pp-seg"
+        title={erSubscriptionError ?? undefined}
+        style={{ borderColor: erSubscriptionStatus === "subscribed" ? "#34D399" : "#FBBF24", color: erSubscriptionStatus === "subscribed" ? "#34D399" : "#FBBF24" }}
+      >
+        ER: {erSubscriptionStatus}
+      </span>
       {room.status === "excluding" && (
         <button type="button" onClick={handleForceSettle} disabled={forceSettling} className="pp-seg" style={{ borderColor: "#34D399", color: "#34D399" }}>
           {forceSettling ? "Running…" : "Cheat: force exclusion draw"}
@@ -525,7 +591,7 @@ export default function GachaRoomPage() {
             </button>
           )}
           {showReadyGate && iAmReady && (
-            <span className="pp-small waitpulse">waiting — {lastReadyUpdate?.readyCount ?? 1}/{room.seatsFilled} ready</span>
+            <span className="pp-small waitpulse">waiting — {readyCount || lastReadyUpdate?.readyCount || 1}/{room.seatsFilled} ready</span>
           )}
           {!showReadyGate && !autoOpen && <span className="pp-small waitpulse">waiting on the room…</span>}
           {autoOpen && !played3DReveal && <span className="pp-small waitpulse">pack is ripping itself…</span>}
@@ -632,7 +698,7 @@ export default function GachaRoomPage() {
   } else if (room.status === "voting") {
     screen = (
       <VoteRound
-        round={room.voteRound ?? 1}
+        round={erRoomState?.voteRound || room.voteRound || 1}
         survivors={detail.participants.filter((p) => !p.excluded)}
         potUsdc={room.buybackAmountUsdc ?? 0}
         myVote={myVote}
