@@ -118,9 +118,11 @@ export class GachaOnchainStateService {
    *  not on base layer. Never throws; treats a router error as "not delegated" so callers fall
    *  back to base-layer behavior rather than hard-failing on a router blip. */
   async getDelegationStatus(pda: PublicKey): Promise<DelegationStatus> {
-    const routerEndpoint = this.config.get<string>('MAGICBLOCK_ROUTER_URL') || DEFAULT_ROUTER_ENDPOINT;
+    const routerEndpoint = (this.config.get<string>('MAGICBLOCK_ROUTER_URL') || DEFAULT_ROUTER_ENDPOINT).replace(/\/+$/, '');
     try {
-      const res = await fetch(routerEndpoint, {
+      // Match @magicblock-labs/ephemeral-rollups-sdk's ConnectionMagicRouter implementation:
+      // it posts getDelegationStatus to `${router}/getDelegationStatus`, not the router root.
+      const res = await fetch(`${routerEndpoint}/getDelegationStatus`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getDelegationStatus', params: [pda.toBase58()] }),
