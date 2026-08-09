@@ -16,7 +16,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Maximize2, RotateCw, X } from 'lucide-react';
-import { drawCardFront, drawCardBack, loadSvg, loadImage, CW, CH, type Rarity } from './gachaArt';
+import { drawCardFront, drawCardBack, loadSvg, loadImage, extractCardStats, CW, CH, type Rarity, type CardStatAttribute } from './gachaArt';
 
 export type { Rarity };
 export type CardData = {
@@ -24,10 +24,16 @@ export type CardData = {
   rarity: Rarity;
   /** Illustration URL, cover-cropped into the framed card's art window. */
   image?: string;
-  /** A COMPLETE card front (real card scan) — used edge-to-edge, frame skipped. */
+  /** A COMPLETE card front (real card scan) — rendered inset in the appraisal template's art
+   *  window (see gachaArt.ts's drawCardFrontAppraisal), not edge-to-edge. */
   faceImage?: string;
   /** A COMPLETE card back — pairs with faceImage so you can swipe front <-> back. */
   backImage?: string;
+  /** Drives the appraisal header's YEAR/GRADE rows (best-effort, see extractCardStats) — pass
+   *  Collector Crypt's raw attribute list straight through. */
+  attributes?: CardStatAttribute[];
+  /** Drives the appraisal footer's price line — omitted entirely when unset. */
+  insuredValueUsdc?: number;
 };
 
 export type CardAssets = { logoDark: string; logoWhite: string };
@@ -59,6 +65,20 @@ function getArt(url?: string) {
   return p;
 }
 
+/** Routes a real Collector Crypt scan through our own same-origin image-proxy route (see
+ *  app/api/gacha/image-proxy/route.ts) instead of loading collectorcrypt.com/cloudfront.net/
+ *  arweave.net directly — a direct load is exempt from nothing: CSP's img-src allowlist applies
+ *  to a plain canvas Image() load exactly like an <img> tag, and a host missing from that list
+ *  fails SILENTLY (no network-tab entry, just a CSP refusal — confirmed live for arweave.net,
+ *  see next.config.mjs's img-src comment) with no fallback, leaving this card's front face to
+ *  fall through to the plain mystery-placeholder template as if there were no scan at all. The
+ *  proxy is same-origin, so it's unaffected by which external hosts are or aren't allowlisted.
+ *  Only call this for faceImage/backImage — never card.image (the generic brand illustration),
+ *  which isn't a Collector Crypt scan and would fail the proxy's own host allowlist. */
+function proxiedScanUrl(url?: string): string | undefined {
+  return url ? `/api/gacha/image-proxy?url=${encodeURIComponent(url)}` : undefined;
+}
+
 /** Preload a set of card images so reveals never pop in late. */
 export function preloadCards(cards: CardData[]) {
   const urls = cards.flatMap((c) => [c.image, c.faceImage, c.backImage]).filter(Boolean) as string[];
@@ -70,6 +90,10 @@ function Face({ width, card, side, assets }: { width: number; card: CardData; si
   const ref = useRef<HTMLCanvasElement>(null);
   // No real back scan -> the back face reuses the front image instead (see the file header).
   const backSrc = card.backImage ?? card.faceImage ?? card.image;
+  // Only proxy when backSrc is actually a real scan — if it fell all the way through to
+  // card.image (the generic brand illustration), that's not a Collector Crypt host and proxying
+  // it would just fail the route's own allowlist for no reason.
+  const backIsRealScan = !!(card.backImage ?? card.faceImage);
   // Real Collector Crypt scans commonly run 1-4MB+ (full-resolution PSA vault photos) — without
   // this, a slow fetch and "no artwork available" looked identical (blank canvas, then the same
   // framed placeholder either way), which read as broken rather than just loading.
@@ -82,8 +106,8 @@ function Face({ width, card, side, assets }: { width: number; card: CardData; si
       const [brand, art, faceImage, backImage] = await Promise.all([
         getBrand(assets),
         side === 'front' ? getArt(card.image) : Promise.resolve(null),
-        side === 'front' ? getArt(card.faceImage) : Promise.resolve(null),
-        side === 'back' ? getArt(backSrc) : Promise.resolve(null),
+        side === 'front' ? getArt(proxiedScanUrl(card.faceImage)) : Promise.resolve(null),
+        side === 'back' ? getArt(backIsRealScan ? proxiedScanUrl(backSrc) : backSrc) : Promise.resolve(null),
       ]);
       if (!live || !ref.current) return;
       const c = ref.current;
@@ -92,7 +116,8 @@ function Face({ width, card, side, assets }: { width: number; card: CardData; si
       const x = c.getContext('2d')!;
       x.scale(dpr, dpr);
       if (side === 'front') {
-        drawCardFront(x, { ...card, art, faceImage, logoDark: brand.logoDark });
+        const { year } = extractCardStats(card.attributes);
+        drawCardFront(x, { ...card, art, faceImage, logoDark: brand.logoDark, year });
       } else {
         drawCardBack(x, { logoWhite: brand.logoWhite, backImage });
       }
@@ -100,7 +125,7 @@ function Face({ width, card, side, assets }: { width: number; card: CardData; si
     })();
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- hasRealArt is derived from card.*, already covered below
-  }, [card.name, card.rarity, card.image, card.faceImage, card.backImage, side, assets]);
+  }, [card.name, card.rarity, card.image, card.faceImage, card.backImage, card.attributes, card.insuredValueUsdc, side, assets]);
   const height = (width * CH) / CW;
   return (
     <div style={{ position: 'relative', width, height }}>

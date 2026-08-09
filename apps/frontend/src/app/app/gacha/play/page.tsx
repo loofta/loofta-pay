@@ -147,7 +147,7 @@ export default function GachaPlayPage() {
 
       {stage === "size" && (
         <Shell
-          kicker="2 / 7 · LOBBY"
+          kicker="2 / 6 · LOBBY"
           title="THE"
           titleGrad="ROOM"
           sub={

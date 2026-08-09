@@ -1,13 +1,16 @@
 'use client';
 // GachaPack3D.tsx — the 3D "rip" spectacle for Gacha Pooled Packs: idle float, shake, then the
 // pack bursts open with a confetti/gold particle burst and the REAL revealed card (a textured
-// plane, loaded from the actual nftMetadata.image the moment the result is known — see
-// startOpen()'s TextureLoader call and the 'burst' phase of tick()) rises up out of the halves.
-// No click — see the header comment further down. That card plane is deliberately just a flat
-// textured rectangle, not a readable/flippable/framed trading card: duplicating GachaCard's real
-// work (readable text, drag-to-flip, framing) inside WebGL isn't worth it for a ~1.5s flourish —
-// the separate, DOM-based <GachaCard> component takes over for the actual interactive reveal
-// right after this fires onOpened; this component's job ends at "the pack is now open."
+// plane, drawn from the actual nftMetadata.image the moment the result is known — see
+// startOpen()'s loadImage/drawCardFront call and the 'burst' phase of tick()) rises up out of the
+// halves. No click — see the header comment further down. The card's FRONT face reuses gachaArt.ts's
+// appraisal template (same one GachaCard.tsx's DOM reveal draws — see drawCardFront), rendered
+// into an offscreen canvas and handed to THREE as a CanvasTexture, so it reads as "the same card"
+// through both the 3D flourish and the interactive reveal that follows — not a raw, unframed
+// photo here and a templated one moments later. It's still deliberately NOT drag-to-flip or
+// otherwise interactive here (the back face stays a plain untemplated scan) — that richer
+// interaction is what the separate, DOM-based <GachaCard> component takes over once onOpened
+// fires; this component's job ends at "the pack is now open."
 //
 // Ported from the design handoff at `/gacha/Gacha Pack 3D (standalone).html` (a plain-Three.js
 // prototype reusing Mystery Pack's own pouch/foil pack rig, reskinned with the Gacha pack art —
@@ -22,9 +25,10 @@
 //     is no single "the person who taps this pack" the way Mystery Pack's own real-money click
 //     works. This component is driven entirely by the `autoOpen` prop instead: it flips true and
 //     the shake/burst sequence starts on its own, in sync for everyone watching.
-//  2. A real (but intentionally simple) in-3D card. Just a plain textured plane using the actual
-//     revealed image — no framing, no flip, no readable stat text. That richer, interactive
-//     version is what the parent page swaps in via <GachaCard> right after onOpened fires.
+//  2. A real (but intentionally simple) in-3D card. A plain textured plane, no flip — but its
+//     front face IS the same templated card gachaArt.ts draws for GachaCard.tsx, not a raw photo.
+//     The richer, INTERACTIVE version (drag-to-flip, zoom) is what the parent page swaps in via
+//     <GachaCard> right after onOpened fires.
 //
 // Trimmed relative to MegapotPack on purpose, to land this as a working first pass:
 //  - No adaptive frame-time quality monitor (always renders at full quality/clearcoat).
@@ -39,7 +43,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { drawGachaPack, loadSvg, AW, AH, CW, CH } from './gachaArt';
+import { drawGachaPack, drawCardFront, loadSvg, loadImage, extractCardStats, AW, AH, CW, CH } from './gachaArt';
 
 const GOLD_L = '#FFE9A8', GOLD_M = '#E8B23A';
 
@@ -311,12 +315,25 @@ export default function GachaPack3D({
           // that component's file header) — the flip should always land on something real.
           const backUrl = result.nftMetadata?.backImage ?? frontUrl;
           if (frontUrl) {
-            new THREE.TextureLoader().load(`/api/gacha/image-proxy?url=${encodeURIComponent(frontUrl)}`, (t) => {
-              t.colorSpace = THREE.SRGBColorSpace;
-              cardFrontMat.map = t;
+            // Front goes through the same appraisal template GachaCard.tsx's DOM reveal uses
+            // (gachaArt.ts's drawCardFront/drawCardFrontAppraisal) instead of a raw textured
+            // plane — draw into an offscreen canvas via the existing loadImage/cv/tex helpers
+            // (same pattern this file already uses for the pack's own faces), then hand THREE the
+            // resulting CanvasTexture. Still routed through the image-proxy (see the file header
+            // comment above) since loadImage ultimately does its own <img> load under the hood.
+            loadImage(`/api/gacha/image-proxy?url=${encodeURIComponent(frontUrl)}`).then((img) => {
+              if (!img) return; // no real scan — card plane just stays hidden, no fallback texture
+              const { year } = extractCardStats(result.nftMetadata?.attributes);
+              const c = cv(CW, CH);
+              drawCardFront(c.getContext('2d')!, {
+                rarity: result.rarity,
+                faceImage: img,
+                year,
+              });
+              cardFrontMat.map = tex(c);
               cardFrontMat.needsUpdate = true;
               cardTextureReady = true;
-            }, undefined, () => { /* no real scan — card plane just stays hidden, no fallback texture */ });
+            });
           }
           if (backUrl) {
             new THREE.TextureLoader().load(`/api/gacha/image-proxy?url=${encodeURIComponent(backUrl)}`, (t) => {
@@ -367,7 +384,10 @@ export default function GachaPack3D({
         // rather than popping in from a wrong mid-animation position.
         if (cardTextureReady) {
           cardGroup.visible = true;
-          cardGroup.position.y = q * 1.4;
+          // Peak rise kept modest (was 1.4) so the held card lands close to the camera's look
+          // target (controls.target.y = 0.5, packRig itself already offset +0.5) instead of well
+          // above center of frame during the 'reveal' flip below.
+          cardGroup.position.y = q * 0.6;
           cardGroup.position.z = q * 0.9;
           cardGroup.scale.setScalar(0.5 + q * 0.5);
           cardGroup.rotation.y = (1 - q) * 0.6;
@@ -399,6 +419,12 @@ export default function GachaPack3D({
         const dur = 2.0, k = Math.min(e / dur, 1);
         cardGroup.rotation.y = ease(k) * Math.PI * 2;
         parts.visible = false;
+        // glowLight was still at ~31.5 (its burst-flash decay floor) the instant 'reveal' starts
+        // and nothing after that point ever brought it back down — it stayed that bright for the
+        // full 2s hold, blowing out the card's highlights the whole time it's being shown off.
+        // Fade it the rest of the way to 0 over the flip instead; key/rim/hemisphere lights alone
+        // are enough to read the card clearly.
+        glowLight.intensity = 31.5 * (1 - k);
         if (e > dur) {
           phase = 'done';
           packRig.visible = false;

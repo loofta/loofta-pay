@@ -1,14 +1,15 @@
 "use client";
 
 // The exclusion draw's reveal — ported 1:1 from pack-party/preview/pack-party-screens.jsx's
-// ScreenEat + ScreenOut (screens 4 and 5): a chip grid that spins a gold "spot" highlight around
-// while the real MagicBlock VRF draw resolves server-side, then freezes on each real victim one
-// at a time ("hit" — sad + OUT tag). Once every victim is frozen, the full-screen ExclusionReveal
-// cinematic (sword-slash + sad mascot + "OUTTT!!") plays on top before handing off to the static
-// OUUUT casualties recap and on into voting. The spin itself is pure suspense (identical shape to
-// the reference's `startEat` — spins per victim, decaying interval) but the DESTINATION is never
-// random: once `finalVictims` arrives from the real draw, every landing is on an actual result,
-// never a guess.
+// ScreenEat (screen 4): a chip grid that spins a gold "spot" highlight around while the real
+// MagicBlock VRF draw resolves server-side, then freezes on each real victim one at a time ("hit"
+// — sad + OUT tag). Once every victim is frozen, the full-screen ExclusionReveal cinematic
+// (sword-slash + sad mascot + "OUTTT!!") plays on top and hands straight off into voting once it
+// finishes — no separate static casualties recap after it (the reference's ScreenOut screen 5):
+// that read as a redundant second "they're excluded" beat once the cinematic already showed it.
+// The spin itself is pure suspense (identical shape to the reference's `startEat` — spins per
+// victim, decaying interval) but the DESTINATION is never random: once `finalVictims` arrives
+// from the real draw, every landing is on an actual result, never a guess.
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -39,12 +40,10 @@ export default function GachaRoulette({
 }) {
   const [spotSeat, setSpotSeat] = useState<number | null>(null);
   const [revealedVictims, setRevealedVictims] = useState<number[]>([]);
-  const [phase, setPhase] = useState<"spin" | "out">("spin");
   const [cinematicActive, setCinematicActive] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const revealStartedRef = useRef(false);
   const advancedToCinematicRef = useRef(false);
-  const advancedToVoteRef = useRef(false);
 
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const after = (ms: number, fn: () => void) => { const t = setTimeout(fn, ms); timers.current.push(t); };
@@ -88,10 +87,10 @@ export default function GachaRoulette({
 
   const allRevealed = !!finalVictims && revealedVictims.length >= finalVictims.length;
 
-  // Both hand-offs (reveal -> cinematic -> OUUUT -> voting) now happen on their own, on a fixed
-  // beat, instead of waiting on a click — nobody should have to tap through a moment that already
-  // resolved. The cinematic itself calls its own onDone once its animation finishes playing (see
-  // below), which is what actually advances to the OUUUT recap.
+  // The hand-off (reveal -> cinematic -> voting) happens on its own, on a fixed beat, instead of
+  // waiting on a click — nobody should have to tap through a moment that already resolved. The
+  // cinematic itself calls its own onDone once its animation finishes playing (see below), which
+  // is what actually advances to voting — no separate recap screen after it (see file header).
   useEffect(() => {
     if (!allRevealed || advancedToCinematicRef.current) return;
     advancedToCinematicRef.current = true;
@@ -99,52 +98,19 @@ export default function GachaRoulette({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allRevealed]);
 
-  useEffect(() => {
-    if (phase !== "out" || advancedToVoteRef.current) return;
-    advancedToVoteRef.current = true;
-    after(3000, onContinue);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
-
-  const outs = players.filter((p) => finalVictims?.includes(p.seatNumber));
-  const survivorCount = players.length - (finalVictims?.length ?? 0);
-
   const cinematic = cinematicActive && finalVictims && (
     <ExclusionReveal
       excludedSeatNumbers={finalVictims}
       getMascotForSeat={(seatNumber) => getMascot(players.find((p) => p.seatNumber === seatNumber)?.mascotKey)}
-      onDone={() => { setCinematicActive(false); setPhase("out"); }}
+      onDone={() => { setCinematicActive(false); onContinue(); }}
     />
   );
-
-  if (phase === "out") {
-    const viewerExcluded = outs.some((p) => p.isMe);
-    return (
-      <>
-        {cinematic}
-        <Shell
-          kicker="5 / 7 · CASUALTIES"
-          title={viewerExcluded ? "YOU'RE" : "THEY'RE"}
-          titleGrad="OUUUT"
-          sub="thoughts and prayers. mostly prayers."
-          footer={<span className="pp-small waitpulse" style={{ marginTop: 0 }}>survivors vote next…</span>}
-        >
-          <div className="pp-outrow">
-            {outs.map((p) => (
-              <Chip key={p.seatNumber} p={p} mood="sad" size={110} tag="no soup" />
-            ))}
-          </div>
-          <p className="pp-small">{survivorCount} still standing</p>
-        </Shell>
-      </>
-    );
-  }
 
   return (
     <>
       {cinematic}
       <Shell
-      kicker="4 / 7 · ROULETTE"
+      kicker="4 / 6 · ROULETTE"
       title="WHO GETS TO"
       titleGrad="EAT?"
       sub={allRevealed ? "the wheel has spoken." : "pure luck. no crying. (ok some crying)"}

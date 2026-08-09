@@ -72,6 +72,7 @@ interface RoomDetail {
 }
 
 const READY_SECONDS = 30;
+const CARD_REVEAL_SECONDS = 30;
 
 export default function GachaRoomPage() {
   const params = useParams<{ roomId: string }>();
@@ -343,6 +344,23 @@ export default function GachaRoomPage() {
     if (readyGateEligible && !iAmReady && readyCountdown === 0) handleMarkReady();
   }, [readyCountdown, readyGateEligible, iAmReady, handleMarkReady]);
 
+  // Same "don't let one distracted player stall the room" pattern as the ready-gate above — the
+  // card-reveal screen ("WHO GETS TO EAT?") used to wait indefinitely for a manual click. Can't
+  // reference the `cardResult`/`show3D` consts directly (hooks must run unconditionally, before
+  // the `!detail || !room` early return below, and those consts are computed after it) — mirrors
+  // cardResult's own revealedCard-then-room.nftMetadata fallback instead.
+  const cardRevealActive = played3DReveal && !cardRevealDismissed && !!(revealedCard || room?.nftMetadata);
+  const [cardRevealCountdown, setCardRevealCountdown] = useState(CARD_REVEAL_SECONDS);
+  useEffect(() => {
+    if (!cardRevealActive) return;
+    setCardRevealCountdown(CARD_REVEAL_SECONDS);
+    const interval = setInterval(() => setCardRevealCountdown((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(interval);
+  }, [cardRevealActive]);
+  useEffect(() => {
+    if (cardRevealActive && cardRevealCountdown === 0) setCardRevealDismissed(true);
+  }, [cardRevealActive, cardRevealCountdown]);
+
   const handleLockMascot = useCallback(async (mascotKey: string) => {
     const res = await lockMascot(mascotKey);
     if (res.ok) refresh();
@@ -485,7 +503,7 @@ export default function GachaRoomPage() {
               );
             })}
           </div>
-          <span className="pp-kicker">3 / 7 · {statusCaption}</span>
+          <span className="pp-kicker">3 / 6 · {statusCaption}</span>
         </div>
         <div className="absolute inset-0">
           <GachaPack3D
@@ -517,12 +535,12 @@ export default function GachaRoomPage() {
   } else if (played3DReveal && !cardRevealDismissed && cardResult) {
     screen = (
       <Shell
-        kicker="3 / 7 · RIPPED"
+        kicker="3 / 6 · RIPPED"
         title={cardResult.nftMetadata?.name ?? "YOU GOT"}
         sub={(cardResult.rarity ?? "common").toUpperCase()}
         footer={
           <button type="button" className="pp-btn" onClick={() => setCardRevealDismissed(true)}>
-            WHO GETS TO EAT? →
+            WHO GETS TO EAT? → ({cardRevealCountdown}s)
           </button>
         }
       >
@@ -544,6 +562,8 @@ export default function GachaRoomPage() {
                 rarity: cardResult.rarity,
                 faceImage: cardResult.nftMetadata?.image,
                 backImage: cardResult.nftMetadata?.backImage,
+                attributes: cardResult.nftMetadata?.attributes,
+                insuredValueUsdc: cardResult.nftMetadata?.insuredValueUsdc,
               }}
             />
           </motion.div>
@@ -574,7 +594,7 @@ export default function GachaRoomPage() {
     const full = room.seatsFilled >= room.seats;
     screen = (
       <Shell
-        kicker="2 / 7 · LOBBY"
+        kicker="2 / 6 · LOBBY"
         title="THE"
         titleGrad="ROOM"
         sub={statusCaption}
@@ -608,7 +628,7 @@ export default function GachaRoomPage() {
   } else if (room.status === "purchasing" || room.status === "opening") {
     // Not yet eligible for the full RIP screen (no nftMetadata to rip open yet, or already
     // arrived post-reveal — see showRipScreen above) — a minimal buying/opening holding screen.
-    screen = <Shell kicker="3 / 7 · RIP" title="LOOFTA" titleGrad="RIP PARTY" sub={statusCaption} />;
+    screen = <Shell kicker="3 / 6 · RIP" title="LOOFTA" titleGrad="RIP PARTY" sub={statusCaption} />;
   } else if (room.status === "voting") {
     screen = (
       <VoteRound
@@ -627,7 +647,7 @@ export default function GachaRoomPage() {
     // claim (auto-fired once status is actually 'settled', see the effect above) waits on it.
     screen = (
       <Shell
-        kicker="7 / 7 · PAYOUT"
+        kicker="6 / 6 · PAYOUT"
         title="WINNERS"
         titleGrad="EAT"
         sub="buyback settled. instantly. obviously."

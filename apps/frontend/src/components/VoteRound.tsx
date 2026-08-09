@@ -71,7 +71,7 @@ export default function VoteRound({
 
   return (
     <Shell
-      kicker={`6 / 7 · VOTE · ROUND ${round}`}
+      kicker={`5 / 6 · VOTE · ROUND ${round}`}
       title="CUT ONE"
       titleGrad="MORE?"
       sub="majority YES (ties count as YES) cuts one more random survivor. fewer mouths, fatter share."

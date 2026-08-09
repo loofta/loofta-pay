@@ -237,7 +237,7 @@ export default function GachaDemoPage() {
     const full = joinedCount >= seats;
     screen = (
       <Shell
-        kicker="2 / 7 · LOBBY"
+        kicker="2 / 6 · LOBBY"
         title="THE"
         titleGrad="ROOM"
         sub={full ? "room is full. no backing out now." : "degens joining…"}
@@ -278,7 +278,7 @@ export default function GachaDemoPage() {
               );
             })}
           </div>
-          <span className="pp-kicker">3 / 7 · {autoOpen ? "ripping…" : `ready ${readySeatNumbers.length}/${seats}`}</span>
+          <span className="pp-kicker">3 / 6 · {autoOpen ? "ripping…" : `ready ${readySeatNumbers.length}/${seats}`}</span>
         </div>
         <div className="absolute inset-0">
           <GachaPack3D
@@ -320,7 +320,7 @@ export default function GachaDemoPage() {
   } else {
     screen = (
       <Shell
-        kicker="7 / 7 · PAYOUT"
+        kicker="6 / 6 · PAYOUT"
         title="WINNERS"
         titleGrad="EAT"
         sub="buyback settled. instantly. obviously."

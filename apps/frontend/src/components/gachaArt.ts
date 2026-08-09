@@ -368,11 +368,12 @@ function drawContain(x: CanvasRenderingContext2D, img: CanvasImageSource & { wid
   x.drawImage(img, rx + (w - dw) / 2, ry + (h - dh) / 2, dw, dh);
 }
 
-/** Paint an image as the ENTIRE card face (for real card scans) — genuinely edge-to-edge, no
- *  colored rim showing (a real scan doesn't need Loofta's brand frame around it), and the full
- *  photo always visible rather than cropped to the trading-card aspect ratio. `matColor` (a light
- *  rarity/brand tint) fills whichever letterbox margin the photo's own aspect ratio leaves, so it
- *  reads as an intentional mat rather than a cropped-off gap. */
+/** Paint an image as the ENTIRE card face — genuinely edge-to-edge, no colored rim showing, and
+ *  the full photo always visible rather than cropped to the trading-card aspect ratio. `matColor`
+ *  (a light rarity/brand tint) fills whichever letterbox margin the photo's own aspect ratio
+ *  leaves, so it reads as an intentional mat rather than a cropped-off gap. Only used for the card
+ *  BACK now (drawCardBack below) — the front face always goes through the appraisal template
+ *  (drawCardFrontAppraisal) once a real scan exists, see that function's own comment for why. */
 function drawFullFace(x: CanvasRenderingContext2D, img: HTMLImageElement, matColor: string) {
   roundPath(x, 0, 0, CW, CH, 44);
   x.save();
@@ -381,24 +382,157 @@ function drawFullFace(x: CanvasRenderingContext2D, img: HTMLImageElement, matCol
   x.restore();
 }
 
+export interface CardStatAttribute {
+  trait_type: string;
+  value: string;
+}
+
+const YEAR_TRAIT_TYPES = ['Year', 'Card Year', 'Release Year', 'Set Year'];
+
+function findAttr(attributes: CardStatAttribute[] | undefined, traitTypes: string[]): string | undefined {
+  if (!attributes) return undefined;
+  for (const tt of traitTypes) {
+    const hit = attributes.find((a) => a?.trait_type === tt);
+    if (hit?.value) return String(hit.value);
+  }
+  return undefined;
+}
+
+/** Pulls the appraisal header's Year/Grade fields from Collector Crypt's raw attribute list.
+ *  'The Grade'/'Grading Company' are the same confirmed-real keys CardAttributesPanel.tsx already
+ *  trusts. 'Year' is NOT a confirmed-present key (unverified whether Collector Crypt sends one at
+ *  all) — checked under a few plausible names and simply omitted, not shown as a placeholder, when
+ *  none match; the appraisal header renders fine with 2 rows instead of 3. */
+export function extractCardStats(attributes?: CardStatAttribute[]): { year?: string; grade?: string } {
+  const year = findAttr(attributes, YEAR_TRAIT_TYPES);
+  const gradeValue = findAttr(attributes, ['The Grade']);
+  const gradingCompany = findAttr(attributes, ['Grading Company']);
+  const grade = gradeValue ? (gradingCompany ? `${gradingCompany} ${gradeValue}` : gradeValue) : undefined;
+  return { year, grade };
+}
+
+/**
+ * Card front for a REAL Collector Crypt scan — an "appraisal" template: a single slim metadata
+ * bar (YEAR, best-effort — left; VALUE, the rarity tier as a pill — right, always present) with
+ * the real scan filling essentially the rest of the card (contain-fit, never cropped — a real
+ * card's grading label/corners matter). Deliberately minimal — no name, no grade line, no price,
+ * no brand footer chrome — the point of a real reveal is showing as much of the real photo as
+ * possible; that other detail already lives in CardAttributesPanel next to the card. Replaces the
+ * old plain edge-to-edge full-bleed treatment: a raw scan with no Loofta framing at all read as
+ * generic, not like something that came out of a Loofta pack.
+ */
+function drawCardFrontAppraisal(
+  x: CanvasRenderingContext2D,
+  opts: { rarity: Rarity; faceImage: HTMLImageElement; year?: string },
+) {
+  const { rarity, faceImage, year } = opts;
+  const R = RARITIES[rarity] || RARITIES.common;
+  x.clearRect(0, 0, CW, CH);
+
+  const ob = x.createLinearGradient(0, 0, CW, CH);
+  ob.addColorStop(0, R.a);
+  ob.addColorStop(0.42, R.b);
+  ob.addColorStop(0.72, R.a);
+  ob.addColorStop(1, R.b);
+  roundPath(x, 0, 0, CW, CH, 44);
+  x.fillStyle = ob;
+  x.fill();
+
+  const m = 26;
+  roundPath(x, m, m, CW - m * 2, CH - m * 2, 30);
+  const body = x.createLinearGradient(0, m, 0, CH - m);
+  body.addColorStop(0, '#FFFFFF');
+  body.addColorStop(1, '#EFEBE0');
+  x.fillStyle = body;
+  x.fill();
+  x.lineWidth = 3;
+  x.strokeStyle = 'rgba(11,11,15,.14)';
+  x.stroke();
+
+  // Single compact metadata bar — ~5% of card height, not the old stacked 3-row header — so the
+  // art window below can take up ~90% of the card instead of roughly half of it.
+  const headerH = 60;
+  x.save();
+  roundPath(x, m, m, CW - m * 2, CH - m * 2, 30);
+  x.clip();
+  x.fillStyle = INK;
+  x.fillRect(m, m, CW - m * 2, headerH);
+  x.fillStyle = goldGrad(x, m, 0, CW - m, 0);
+  x.fillRect(m, m + headerH, CW - m * 2, 4);
+  x.restore();
+
+  const hy = m + headerH / 2;
+  if (year) {
+    x.textAlign = 'left';
+    x.fillStyle = 'rgba(255,255,255,.5)';
+    x.font = '600 18px "Clash Grotesk"';
+    (x as any).letterSpacing = '2px';
+    x.fillText('YEAR', m + 32, hy + 6);
+    const labelW = x.measureText('YEAR').width;
+    (x as any).letterSpacing = '0px';
+    x.fillStyle = '#fff';
+    x.font = '500 26px "Clash Display"';
+    x.fillText(year, m + 32 + labelW + 16, hy + 9);
+  }
+
+  // VALUE pill — the rarity tier, right-aligned, always present.
+  x.font = '600 22px "Clash Grotesk"';
+  (x as any).letterSpacing = '3px';
+  const pillTextW = x.measureText(R.label).width;
+  (x as any).letterSpacing = '0px';
+  const pillPad = 18;
+  const pillH = 40;
+  const pillW = pillTextW + pillPad * 2;
+  const pillX = CW - m - 32 - pillW;
+  const pillY = hy - pillH / 2;
+  roundPath(x, pillX, pillY, pillW, pillH, pillH / 2);
+  const rp = x.createLinearGradient(pillX, pillY, pillX + pillW, pillY + pillH);
+  rp.addColorStop(0, R.a);
+  rp.addColorStop(1, R.b);
+  x.fillStyle = rp;
+  x.fill();
+  x.fillStyle = R.ink;
+  x.textAlign = 'center';
+  x.font = '600 22px "Clash Grotesk"';
+  (x as any).letterSpacing = '3px';
+  x.fillText(R.label, pillX + pillW / 2 + 1, hy + 7);
+  (x as any).letterSpacing = '0px';
+
+  // Art window fills the rest of the card, down to the outer margin — ~90% of CH.
+  const ax = 50;
+  const ay = m + headerH + 4 + 10;
+  const aw = CW - ax * 2;
+  const ah = CH - m - ay;
+  x.save();
+  roundPath(x, ax, ay, aw, ah, 18);
+  x.clip();
+  drawContain(x, faceImage, ax, ay, aw, ah, R.b);
+  x.restore();
+  x.lineWidth = 5;
+  x.strokeStyle = goldGrad(x, ax, ay, ax + aw, ay + ah);
+  roundPath(x, ax, ay, aw, ah, 18);
+  x.stroke();
+}
+
 export interface CardFrontOptions {
   name?: string;
   rarity?: Rarity;
   art?: HTMLImageElement | null;
   faceImage?: HTMLImageElement | null;
   logoDark?: HTMLImageElement | null;
+  /** Best-effort — see extractCardStats. Omitted from the appraisal header when unknown. */
+  year?: string;
 }
 
 /**
- * Card front. `art` is drawn into the framed Loofta card's art window; `faceImage` makes the
- * image the whole card face (a real, owned card scan) with the frame skipped entirely.
+ * Card front. `art` is drawn into the framed Loofta card's art window (the generic/no-real-scan
+ * mystery-card look); `faceImage` (a real, owned card scan) goes through the appraisal template
+ * instead — see drawCardFrontAppraisal.
  */
 export function drawCardFront(x: CanvasRenderingContext2D, opts: CardFrontOptions = {}) {
-  const { name = 'Mystery', rarity = 'common', art = null, faceImage = null, logoDark = null } = opts;
+  const { name = 'Mystery', rarity = 'common', art = null, faceImage = null, logoDark = null, year } = opts;
   if (faceImage) {
-    const Rf = RARITIES[rarity] || RARITIES.common;
-    x.clearRect(0, 0, CW, CH);
-    drawFullFace(x, faceImage, Rf.b);
+    drawCardFrontAppraisal(x, { rarity, faceImage, year });
     return;
   }
   const R = RARITIES[rarity] || RARITIES.common;

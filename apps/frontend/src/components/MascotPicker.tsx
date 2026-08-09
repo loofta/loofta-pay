@@ -59,7 +59,7 @@ export default function MascotPicker({
   if (lockedMascotKey) {
     const mascot = MASCOTS.find((m) => m.key === lockedMascotKey);
     return (
-      <Shell kicker="1 / 7 · PICK" title="LOCKED" titleGrad="IN" sub="waiting on everyone else to lock in too…">
+      <Shell kicker="1 / 6 · PICK" title="LOCKED" titleGrad="IN" sub="waiting on everyone else to lock in too…">
         <aside className="pp-preview" style={{ position: "static" }}>
           {mascot && <Mascot key={mascot.key} name={mascot.key} mood="happy" size={230} />}
           <div className="pp-preview-name">{mascot?.name ?? lockedMascotKey}</div>
@@ -73,7 +73,7 @@ export default function MascotPicker({
 
   return (
     <Shell
-      kicker={<span className={secondsLeft <= 10 ? "text-red-300" : undefined}>1 / 7 · PICK · 0:{secondsLeft.toString().padStart(2, "0")}</span>}
+      kicker={<span className={secondsLeft <= 10 ? "text-red-300" : undefined}>1 / 6 · PICK · 0:{secondsLeft.toString().padStart(2, "0")}</span>}
       title="PICK YOUR"
       titleGrad="FIGHTER"
       sub="this dork represents you in the room"
