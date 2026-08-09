@@ -23,7 +23,7 @@ import { UsersService } from '../users/users.service';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc } from '@/common/magicblock-private-transfer';
-import { CollectorCryptApiError, CollectorCryptClient, CollectorCryptPackType, NftMetadata, OpenPackResponse, PackRarityTier } from './collectorcrypt.client';
+import { CollectorCryptApiError, CollectorCryptClient, CollectorCryptPackType, GeneratePackResponse, NftMetadata, OpenPackResponse, PackRarityTier } from './collectorcrypt.client';
 import { GACHA_EVENTS } from './gacha.events';
 import { GachaVrfService } from './gacha-vrf.service';
 import { GACHA_ROOM_PHASE, GachaOnchainStateService, type GachaRoomPhase } from './gacha-onchain-state.service';
@@ -1353,6 +1353,34 @@ export class GachaService {
 
   // ── Pack purchase + open (treasury is the sole Collectorcrypt "player" — see plan doc) ──
 
+  /** generatePack has 400d transiently 3 times this session — every time, the exact same request
+   *  (identical packType/playerAddress, zero changes on our side) succeeded on manual retest
+   *  seconds to minutes later, so this is CollectorCrypt-side flakiness, not a bad request. Safe
+   *  to retry blindly here: generatePack only returns an unsigned transaction template, nothing
+   *  has been signed or submitted yet at this point, so a retry can't double-purchase or
+   *  double-charge anything. Previously every one of these transient blips permanently failed a
+   *  fully-paid, fully-seated room and needed manual admin refund — see the plan/session notes. */
+  private async generatePackWithRetry(packType: CollectorCryptPackType, playerAddress: string): Promise<GeneratePackResponse> {
+    const retryDelaysMs = [2000, 5000, 10000];
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= retryDelaysMs.length; attempt++) {
+      try {
+        return await this.collectorCrypt.generatePack(packType, playerAddress);
+      } catch (e) {
+        lastError = e;
+        const reason = e instanceof Error ? e.message : String(e);
+        const body = e instanceof CollectorCryptApiError ? ` body=${JSON.stringify(e.body)}` : '';
+        if (attempt < retryDelaysMs.length) {
+          this.logger.warn(`generatePack attempt ${attempt + 1}/${retryDelaysMs.length + 1} failed, retrying in ${retryDelaysMs[attempt]}ms: ${reason}${body}`);
+          await new Promise((r) => setTimeout(r, retryDelaysMs[attempt]));
+        } else {
+          this.logger.error(`generatePack failed after ${retryDelaysMs.length + 1} attempts: ${reason}${body}`);
+        }
+      }
+    }
+    throw lastError;
+  }
+
   private async purchaseAndOpenRoom(roomId: string): Promise<void> {
     const db = this.supabase.getClient();
     const { data: room, error } = await db.from('gacha_rooms').select('id, pack_type, seats').eq('id', roomId).single();
@@ -1361,7 +1389,7 @@ export class GachaService {
     const treasuryKeypair = await this.getTreasuryKeypair();
     const conn = await this.getSolanaConnection();
 
-    const generated = await this.collectorCrypt.generatePack(room.pack_type as CollectorCryptPackType, treasuryKeypair.publicKey.toBase58());
+    const generated = await this.generatePackWithRetry(room.pack_type as CollectorCryptPackType, treasuryKeypair.publicKey.toBase58());
     const purchaseTxSig = await this.signAndSubmit(generated.transaction, treasuryKeypair, conn);
     await db.from('gacha_rooms').update({
       collectorcrypt_memo: generated.memo,

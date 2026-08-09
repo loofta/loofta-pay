@@ -49,25 +49,32 @@ export default function GachaRoulette({
   const after = (ms: number, fn: () => void) => { const t = setTimeout(fn, ms); timers.current.push(t); };
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
+  // Players already excluded BEFORE this roulette even started (a prior round's victims, when
+  // this is a vote-cut reveal reusing this component past round 1) — never eligible to be spun to
+  // or landed on again; rendered separately below in a permanent greyed-out state instead of
+  // either disappearing or being mixed back into the live spin pool.
+  const alreadyOutSeats = new Set(players.filter((p) => p.excluded).map((p) => p.seatNumber));
+  const spinPool = players.filter((p) => !alreadyOutSeats.has(p.seatNumber));
+
   // Suspense-only cycling while the real draw is still in flight — no bearing on the outcome.
   // Floor raised from 70ms to 130ms — on a small 5-seat grid, sub-100ms random jumps read as a
   // flicker rather than a spin, especially since the CSS highlight transition (see .pp-roul.spot
   // below) is itself 90ms; anything faster than that never finishes fading in before the next
   // step reassigns it, which is exactly what "glitchy" was describing.
   useEffect(() => {
-    if (finalVictims || !players.length) return;
+    if (finalVictims || !spinPool.length) return;
     let cancelled = false;
     let delay = 260;
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
       if (cancelled) return;
-      setSpotSeat(players[Math.floor(Math.random() * players.length)].seatNumber);
+      setSpotSeat(spinPool[Math.floor(Math.random() * spinPool.length)].seatNumber);
       delay = Math.max(130, delay * 0.95);
       timer = setTimeout(tick, delay);
     };
     timer = setTimeout(tick, delay);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [finalVictims, players]);
+  }, [finalVictims, spinPool]);
 
   // The real result arrived — stop guessing and reveal each real victim in turn, same staggered
   // spin-then-land shape as the reference, just landing on a known seat instead of a random one.
@@ -79,7 +86,7 @@ export default function GachaRoulette({
     revealStartedRef.current = true;
     let t = 400;
     finalVictims.forEach((victimSeat, round) => {
-      const stillSpinning = players.filter((p) => !finalVictims.slice(0, round).includes(p.seatNumber));
+      const stillSpinning = spinPool.filter((p) => !finalVictims.slice(0, round).includes(p.seatNumber));
       const spins = 10 + round * 4;
       for (let i = 0; i < spins; i++) {
         const delay = (t += 110 + i * i * 1.4);
@@ -90,7 +97,7 @@ export default function GachaRoulette({
       t += 550;
     });
     after(t + 300, () => setSpotSeat(null));
-  }, [finalVictims, players]);
+  }, [finalVictims, spinPool]);
 
   const allRevealed = !!finalVictims && revealedVictims.length >= finalVictims.length;
 
@@ -165,17 +172,21 @@ export default function GachaRoulette({
       )}
       <div className="pp-lobbygrid">
         {players.map((p) => {
-          const isSpot = spotSeat === p.seatNumber;
-          const hit = revealedVictims.includes(p.seatNumber);
+          // Already out BEFORE this round (a prior round's victim, when this is a vote-cut reveal
+          // past round 1) — permanently greyed out, never highlighted, never re-selectable; a
+          // distinct persistent state from `hit`, which is THIS round's fresh reveal animation.
+          const alreadyOut = alreadyOutSeats.has(p.seatNumber);
+          const isSpot = !alreadyOut && spotSeat === p.seatNumber;
+          const hit = !alreadyOut && revealedVictims.includes(p.seatNumber);
           return (
-            <div key={p.seatNumber} className={"pp-roul" + (isSpot ? " spot" : "") + (hit ? " hit" : "")}>
-              <Chip p={p} mood={hit ? "sad" : isSpot ? "happy" : "idle"} ring={isSpot ? "#E8B23A" : hit ? "#FF1301" : null} tag={hit ? "OUT" : undefined} />
+            <div key={p.seatNumber} className={"pp-roul" + (isSpot ? " spot" : "") + (hit ? " hit" : "") + (alreadyOut ? " out" : "")}>
+              <Chip p={p} mood={alreadyOut || hit ? "sad" : isSpot ? "happy" : "idle"} ring={isSpot ? "#E8B23A" : hit ? "#FF1301" : null} tag={alreadyOut || hit ? "OUT" : undefined} />
             </div>
           );
         })}
       </div>
       <p className="pp-small">
-        {exclusionCount} of {players.length} {exclusionCount === 1 ? "player gets" : "players get"} excluded — survivors split the buyback.
+        {exclusionCount} of {spinPool.length} {exclusionCount === 1 ? "player gets" : "players get"} excluded — survivors split the buyback.
       </p>
       </Shell>
     </>

@@ -232,7 +232,11 @@ export default function GachaRoomPage() {
   const [voteCutSurvivorsSnapshot, setVoteCutSurvivorsSnapshot] = useState<RoomDetail["participants"]>([]);
   useEffect(() => {
     if (!lastVoteResult?.passed) return;
-    setVoteCutSurvivorsSnapshot(detail?.participants.filter((p) => !p.excluded) ?? []);
+    // Full roster, not just current survivors — GachaRoulette needs to see prior rounds' victims
+    // too (via their already-true `excluded` flag) so it can render them permanently greyed out
+    // instead of just vanishing from the grid. Nothing here is "this round's" victim yet — that
+    // hasn't been decided when lastVoteResult.passed fires, only once lastVoteCut arrives.
+    setVoteCutSurvivorsSnapshot(detail?.participants ?? []);
     setVoteCutRound(lastVoteResult.round);
     setVoteCutRouletteActive(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
