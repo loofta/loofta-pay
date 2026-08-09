@@ -16,7 +16,7 @@ Everything in this module is explicitly Solana devnet, independent of the app-wi
 settings.
 
 - Gacha USDC-Dev mint: `Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr` (6 decimals)
-- Gacha room-state program: `9TebHwRo3q3mhncqKpuBvACdiwPthR2JfyBrwJW6a8Lt`
+- Gacha room-state program: `45ShoiSQG8J4t1piSwsfYC38dyc9oLBbZmFr6W1KpowH`
 - Loofta VRF program: `5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi`
 - MagicBlock base RPC: `https://rpc.magicblock.app/devnet`
 - MagicBlock router: `https://devnet-router.magicblock.app/`
@@ -26,6 +26,13 @@ Both program IDs were verified executable on devnet on 2026-08-09. The room-stat
 its initializer are controlled by the existing backend fee-payer public key
 `5dCTWJj277c41ex92RFxSRUa8ckU4EAurWftDRASBKuq`. A newly generated wallet cannot enable the
 on-chain ready/vote flags without deploying a new program configured for that new authority.
+
+The room-state program was redeployed to this fresh id on 2026-08-09 (superseding the previous
+`9TebHwRo3q3mhncqKpuBvACdiwPthR2JfyBrwJW6a8Lt`) specifically because of the ER bytecode-caching
+behavior noted below: that id had already been referenced on the devnet ephemeral rollup during
+earlier Phase 1/2 testing, and an in-place upgrade would not have exposed `set_phase`/
+`record_initial_exclusion`/`record_vote_cut` there even though base-layer calls would have worked
+fine. Any *future* instruction-layout change needs another fresh id for the same reason.
 
 ## State machine
 

@@ -1,7 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
 
 export const GACHA_ROOM_STATE_PROGRAM_ID = new PublicKey(
-  "9TebHwRo3q3mhncqKpuBvACdiwPthR2JfyBrwJW6a8Lt",
+  "45ShoiSQG8J4t1piSwsfYC38dyc9oLBbZmFr6W1KpowH",
 );
 
 const ROOM_PDA_SEED = new TextEncoder().encode("gacha-room");

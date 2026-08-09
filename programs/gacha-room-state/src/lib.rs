@@ -3,7 +3,7 @@ use ephemeral_rollups_sdk::anchor::{commit, delegate, ephemeral};
 use ephemeral_rollups_sdk::cpi::DelegateConfig;
 use ephemeral_rollups_sdk::ephem::MagicIntentBundleBuilder;
 
-declare_id!("9TebHwRo3q3mhncqKpuBvACdiwPthR2JfyBrwJW6a8Lt");
+declare_id!("45ShoiSQG8J4t1piSwsfYC38dyc9oLBbZmFr6W1KpowH");
 
 #[cfg(not(feature = "no-entrypoint"))]
 solana_security_txt::security_txt! {
