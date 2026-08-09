@@ -28,6 +28,24 @@ function popcount(mask: number): number {
   return count;
 }
 
+export const GACHA_ROOM_PHASE = {
+  WAITING: 0,
+  PURCHASING: 1,
+  OPENING: 2,
+  EXCLUDING: 3,
+  VOTING: 4,
+  SETTLING: 5,
+  SETTLED: 6,
+  FAILED: 7,
+  CANCELLED: 8,
+} as const;
+
+export type GachaRoomPhase = typeof GACHA_ROOM_PHASE[keyof typeof GACHA_ROOM_PHASE];
+
+function seatMask(seatNumbers: number[]): number {
+  return seatNumbers.reduce((mask, seat) => mask | (1 << (seat - 1)), 0);
+}
+
 /** Minimal Anchor `Wallet` adapter around a raw `Keypair` — same shape as GachaVrfService's and
  *  GiveawayVrfService's, deliberately duplicated rather than shared (see gacha-vrf.service.ts's
  *  own comment on why these small per-feature adapters aren't a shared abstraction here). */
@@ -100,9 +118,11 @@ export class GachaOnchainStateService {
    *  not on base layer. Never throws; treats a router error as "not delegated" so callers fall
    *  back to base-layer behavior rather than hard-failing on a router blip. */
   async getDelegationStatus(pda: PublicKey): Promise<DelegationStatus> {
-    const routerEndpoint = this.config.get<string>('MAGICBLOCK_ROUTER_URL') || DEFAULT_ROUTER_ENDPOINT;
+    const routerEndpoint = (this.config.get<string>('MAGICBLOCK_ROUTER_URL') || DEFAULT_ROUTER_ENDPOINT).replace(/\/+$/, '');
     try {
-      const res = await fetch(routerEndpoint, {
+      // Match @magicblock-labs/ephemeral-rollups-sdk's ConnectionMagicRouter implementation:
+      // it posts getDelegationStatus to `${router}/getDelegationStatus`, not the router root.
+      const res = await fetch(`${routerEndpoint}/getDelegationStatus`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getDelegationStatus', params: [pda.toBase58()] }),
@@ -198,10 +218,42 @@ export class GachaOnchainStateService {
     if (status.isDelegated) return;
     const existing = await this.getBaseConnection().getAccountInfo(roomPda).catch(() => null);
     if (existing) {
-      this.logger.warn(`[GachaOnchainState] room ${roomId}: state account exists but isn't delegated — leaving as-is (likely already settled/undelegated)`);
+      await this.delegateExistingRoom(roomId);
       return;
     }
-    await this.initAndDelegateRoom(roomId, seats);
+    try {
+      await this.initAndDelegateRoom(roomId, seats);
+    } catch (e) {
+      // A concurrent ready/vote request may have won the create/delegate race. Re-read the
+      // router/base state before surfacing an error so the losing request remains idempotent.
+      const after = await this.getDelegationStatus(roomPda);
+      if (after.isDelegated) return;
+      const createdByPeer = await this.getBaseConnection().getAccountInfo(roomPda).catch(() => null);
+      if (!createdByPeer) throw e;
+      await this.delegateExistingRoom(roomId);
+    }
+  }
+
+  /** Recovers a room whose base account was initialized but whose delegation transaction failed
+   *  (or was interrupted by a process restart). Active callers need the account in the ER; simply
+   *  returning on "exists but not delegated" permanently stranded ready/vote state. */
+  private async delegateExistingRoom(roomId: string): Promise<void> {
+    const connection = this.getBaseConnection();
+    const feePayer = await this.getFeePayerKeypair();
+    const program = this.program(connection, feePayer);
+    const seed = this.deriveSeed(roomId);
+    const [roomPda] = this.derivePda(roomId);
+    try {
+      const tx = await program.methods
+        .delegateRoom(Array.from(seed))
+        .accounts({ payer: feePayer.publicKey })
+        .transaction();
+      await this.send(connection, tx, feePayer);
+      this.logger.log(`[GachaOnchainState] room ${roomId}: recovered delegation (pda=${roomPda.toBase58()})`);
+    } catch (e) {
+      const after = await this.getDelegationStatus(roomPda);
+      if (!after.isDelegated) throw e;
+    }
   }
 
   /** Ephemeral rollup: marks a seat ready. Idempotent on-chain (see the program's own comment) —
@@ -216,6 +268,29 @@ export class GachaOnchainStateService {
     await this.send(connection, tx, feePayer);
   }
 
+  /** Ephemeral rollup: compact room phase for realtime gameplay UI. This intentionally mirrors
+   *  only the phase, not heavy DB/API payloads such as NFT metadata. */
+  async setPhase(roomId: string, phase: GachaRoomPhase): Promise<void> {
+    const [roomPda] = this.derivePda(roomId);
+    const { connection, program, feePayer } = await this.erContext(roomPda);
+    const tx = await program.methods
+      .setPhase(phase)
+      .accounts({ room: roomPda, authority: feePayer.publicKey })
+      .transaction();
+    await this.send(connection, tx, feePayer);
+  }
+
+  /** Ephemeral rollup: records the first VRF exclusion result as a bitmask. */
+  async recordInitialExclusion(roomId: string, excludedSeatNumbers: number[]): Promise<void> {
+    const [roomPda] = this.derivePda(roomId);
+    const { connection, program, feePayer } = await this.erContext(roomPda);
+    const tx = await program.methods
+      .recordInitialExclusion(seatMask(excludedSeatNumbers))
+      .accounts({ room: roomPda, authority: feePayer.publicKey })
+      .transaction();
+    await this.send(connection, tx, feePayer);
+  }
+
   /** Ephemeral rollup: starts (or restarts, for the next round) a vote round — mirrors
    *  GachaService.startVoteRound. `survivorSeatNumbers` are computed off-chain from Postgres
    *  (gacha_room_participants.excluded), same as today's JS version. */
@@ -225,6 +300,17 @@ export class GachaOnchainStateService {
     const survivorMask = survivorSeatNumbers.reduce((mask, seat) => mask | (1 << (seat - 1)), 0);
     const tx = await program.methods
       .startVoteRound(round, survivorMask)
+      .accounts({ room: roomPda, authority: feePayer.publicKey })
+      .transaction();
+    await this.send(connection, tx, feePayer);
+  }
+
+  /** Ephemeral rollup: records the extra seat cut by a passed vote round. */
+  async recordVoteCut(roomId: string, round: number, seatNumber: number): Promise<void> {
+    const [roomPda] = this.derivePda(roomId);
+    const { connection, program, feePayer } = await this.erContext(roomPda);
+    const tx = await program.methods
+      .recordVoteCut(round, seatNumber)
       .accounts({ room: roomPda, authority: feePayer.publicKey })
       .transaction();
     await this.send(connection, tx, feePayer);
