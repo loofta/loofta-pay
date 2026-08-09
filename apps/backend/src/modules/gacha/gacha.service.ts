@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -25,7 +26,8 @@ import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc } from 
 import { CollectorCryptClient, CollectorCryptPackType, NftMetadata, OpenPackResponse, PackRarityTier } from './collectorcrypt.client';
 import { GACHA_EVENTS } from './gacha.events';
 import { GachaVrfService } from './gacha-vrf.service';
-import { GachaOnchainStateService } from './gacha-onchain-state.service';
+import { GACHA_ROOM_PHASE, GachaOnchainStateService, type GachaRoomPhase } from './gacha-onchain-state.service';
+import { calculateGachaPayoutUnits } from './gacha-payout';
 // Pure/dependency-free — same selection math the giveaways VRF draw uses (sha256(randomness+':'+id),
 // sort, take first N). For the exclusion game we call it with exclusionCount and treat the
 // returned ids as EXCLUDED rather than as winners; the function's contract doesn't change.
@@ -69,6 +71,15 @@ const EXCLUSION_VRF_STALL_MS = 15 * 60_000; // same threshold as GIVEAWAY_VRF_ST
 
 // See ensureDevnetTestFunds — devnet-only test-wallet funding, covers several room joins/bids.
 const DEVNET_TEST_TOPUP_USDC = 100;
+
+/** The transaction was accepted by RPC, but its final outcome could not be observed. Callers
+ * must keep their idempotency lock instead of blindly retrying a potentially successful send. */
+class SubmittedTransactionUnconfirmedError extends Error {
+  constructor(public readonly signature: string, message: string) {
+    super(message);
+    this.name = 'SubmittedTransactionUnconfirmedError';
+  }
+}
 
 export interface RoomConfigPublic {
   configKey: string;
@@ -123,6 +134,44 @@ export class GachaService {
   // voteRoundStartedAt. Independent of GACHA_ONCHAIN_READY_STATE — either can be on alone.
   private get onchainVoteStateEnabled(): boolean {
     return this.config.get<string>('GACHA_ONCHAIN_VOTE_STATE') === 'true';
+  }
+
+  private get onchainGameplayStateEnabled(): boolean {
+    return this.config.get<string>('GACHA_ONCHAIN_READY_STATE') === 'true'
+      || this.config.get<string>('GACHA_ONCHAIN_VOTE_STATE') === 'true'
+      || this.config.get<string>('GACHA_ONCHAIN_LIFECYCLE_STATE') === 'true';
+  }
+
+  private async syncOnchainPhase(roomId: string, seats: number, phase: GachaRoomPhase): Promise<void> {
+    if (!this.onchainGameplayStateEnabled) return;
+    try {
+      await this.onchainState.ensureRoomDelegated(roomId, seats);
+      await this.onchainState.setPhase(roomId, phase);
+    } catch (e: any) {
+      this.logger.warn(`Room ${roomId}: failed to sync ER phase ${phase}: ${e.message}`);
+    }
+  }
+
+  private async syncOnchainInitialExclusion(roomId: string, seats: number, excludedSeatNumbers: number[]): Promise<void> {
+    if (!this.onchainGameplayStateEnabled) return;
+    try {
+      await this.onchainState.ensureRoomDelegated(roomId, seats);
+      await this.onchainState.recordInitialExclusion(roomId, excludedSeatNumbers);
+    } catch (e: any) {
+      this.logger.warn(`Room ${roomId}: failed to sync ER initial exclusion: ${e.message}`);
+    }
+  }
+
+  private async syncOnchainVoteCut(roomId: string, round: number, seatNumber: number): Promise<void> {
+    if (!this.onchainGameplayStateEnabled) return;
+    const seats = await this.getRoomSeats(roomId);
+    if (seats === null) return;
+    try {
+      await this.onchainState.ensureRoomDelegated(roomId, seats);
+      await this.onchainState.recordVoteCut(roomId, round, seatNumber);
+    } catch (e: any) {
+      this.logger.warn(`Room ${roomId}: failed to sync ER vote cut: ${e.message}`);
+    }
   }
 
   // ── Solana plumbing (same pattern as PackService — see pack.service.ts, EXCEPT this module is
@@ -193,7 +242,7 @@ export class GachaService {
     const { data: rooms, error } = await db
       .from('gacha_rooms')
       .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
-      .in('status', ['waiting', 'excluding', 'purchasing', 'opening', 'bidding', 'settling'])
+      .in('status', ['waiting', 'purchasing', 'opening', 'excluding', 'voting', 'bidding', 'settling'])
       .order('created_at', { ascending: true });
     if (error) throw new Error(`Failed to list gacha rooms: ${error.message}`);
 
@@ -334,7 +383,7 @@ export class GachaService {
    *  room screen can poll one endpoint through the whole lobby -> bidding -> settled flow. */
   async getRoomDetail(roomId: string, userId: string): Promise<{
     room: RoomSummary;
-    myParticipant: { seatNumber: number; payoutUsdc: number | null; payoutIsPrivate: boolean | null; claimed: boolean; mascotKey: string | null; mascotLocked: boolean; excluded: boolean } | null;
+    myParticipant: { seatNumber: number; payoutUsdc: number | null; payoutIsPrivate: boolean | null; claimed: boolean; claimPending: boolean; mascotKey: string | null; mascotLocked: boolean; excluded: boolean } | null;
     bestBid: { amountUsdc: number } | null;
     pendingBid: { bidId: string; userId: string; amountUsdc: number; deadline: string } | null;
     participants: Array<{ seatNumber: number; username: string | null; isMe: boolean; mascotKey: string | null; mascotLocked: boolean; excluded: boolean }>;
@@ -348,7 +397,7 @@ export class GachaService {
     if (error || !room) throw new NotFoundException('Room not found');
 
     const counts = await this.countParticipantsByRoom([roomId]);
-    const { data: mine } = await db.from('gacha_room_participants').select('seat_number, payout_usdc, payout_is_private, payout_tx_sig, mascot_key, mascot_locked_at, excluded').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
+    const { data: mine } = await db.from('gacha_room_participants').select('seat_number, payout_usdc, payout_is_private, payout_tx_sig, payout_claim_token, mascot_key, mascot_locked_at, excluded').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
     const { data: bestBid } = await db.from('gacha_bids').select('amount_usdc').eq('room_id', roomId).order('amount_usdc', { ascending: false }).limit(1).maybeSingle();
 
     // Seat + username only, for the round-table UI — never the wallet or full user id, same
@@ -390,6 +439,7 @@ export class GachaService {
             payoutUsdc: mine.payout_usdc !== null ? Number(mine.payout_usdc) : null,
             payoutIsPrivate: mine.payout_is_private,
             claimed: !!mine.payout_tx_sig,
+            claimPending: !!mine.payout_claim_token && !mine.payout_tx_sig,
             mascotKey: mine.mascot_key ?? null,
             mascotLocked: !!mine.mascot_locked_at,
             excluded: !!mine.excluded,
@@ -410,7 +460,7 @@ export class GachaService {
    * because, unlike Mystery Pack, many rooms share this one treasury address at once, so a
    * payment must be attributable to a specific room, not just "≥$X arrived" (see confirmJoin).
    */
-  async buildJoinTx(configKey: string, userSolanaAddress: string, userId: string): Promise<{ txBase64: string | null; roomId: string; entryUsdc: number; alreadyJoined?: boolean }> {
+  async buildJoinTx(configKey: string, userId: string): Promise<{ txBase64: string | null; roomId: string; entryUsdc: number; alreadyJoined?: boolean }> {
     const cfg = await this.getConfig(configKey);
 
     // Without this, a user re-clicking Join for the same config (e.g. after navigating away and
@@ -428,14 +478,19 @@ export class GachaService {
         .in('id', myRoomIds.map((r: any) => r.room_id))
         .eq('config_key', configKey)
         .eq('status', 'waiting')
+        .limit(1)
         .maybeSingle();
       // No transaction to sign — the caller already has a seat here. Send them straight back to
       // it (alreadyJoined: true, txBase64 omitted) instead of erroring into a dead end.
       if (existingSeat) return { txBase64: null, roomId: existingSeat.id, entryUsdc: cfg.entryUsdc, alreadyJoined: true };
     }
 
-    const room = await this.findOrCreateWaitingRoom(cfg);
+    // Never trust a client-supplied wallet for a treasury-funded transaction. The authenticated
+    // Privy identity is the source of truth for both optional devnet funding and payment
+    // verification, so a caller cannot use this endpoint as an arbitrary-wallet faucet.
+    const userSolanaAddress = await this.usersService.getSolanaWalletAddress(userId);
     await this.ensureDevnetTestFunds(userSolanaAddress, cfg.entryUsdc);
+    const room = await this.findOrCreateWaitingRoom(cfg);
 
     const treasuryKeypair = await this.getTreasuryKeypair();
     const conn = await this.getSolanaConnection();
@@ -507,9 +562,16 @@ export class GachaService {
     const minUnits = BigInt(Math.round(minUsdc * 1_000_000));
     if (currentUnits >= minUnits) return;
 
+    // Auto-funding is an explicit local/dev convenience, never an implicit production faucet.
+    // A shared dev deployment should leave this off and point testers at the documented faucet.
+    if (this.config.get<string>('NODE_ENV') === 'production' || this.config.get<string>('GACHA_DEVNET_AUTO_FUND') !== 'true') {
+      throw new BadRequestException(`Your Gacha devnet wallet needs at least ${minUsdc.toFixed(2)} USDC-Dev before joining`);
+    }
+
     const treasuryKeypair = await this.getTreasuryKeypair();
     const fromAta = await getAssociatedTokenAddress(this.usdcMint, treasuryKeypair.publicKey);
-    const topUpUnits = BigInt(Math.round(DEVNET_TEST_TOPUP_USDC * 1_000_000));
+    const defaultTopUpUnits = BigInt(Math.round(DEVNET_TEST_TOPUP_USDC * 1_000_000));
+    const topUpUnits = defaultTopUpUnits > minUnits - currentUnits ? defaultTopUpUnits : minUnits - currentUnits;
 
     const tx = new Transaction();
     tx.add(createAssociatedTokenAccountIdempotentInstruction(treasuryKeypair.publicKey, ata, pubkey, this.usdcMint));
@@ -519,8 +581,8 @@ export class GachaService {
     tx.recentBlockhash = blockhash;
     tx.sign(treasuryKeypair);
     const sig = await conn.sendRawTransaction(tx.serialize());
-    await conn.confirmTransaction(sig, 'confirmed');
-    this.logger.log(`Devnet test top-up: sent ${DEVNET_TEST_TOPUP_USDC} USDC-Dev to ${userSolanaAddress} (sig=${sig})`);
+    await this.pollConfirmed(conn, sig);
+    this.logger.log(`Devnet test top-up: sent ${Number(topUpUnits) / 1_000_000} USDC-Dev to ${userSolanaAddress} (sig=${sig})`);
   }
 
   /**
@@ -605,7 +667,7 @@ export class GachaService {
     fundTx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
     fundTx.sign(treasuryKeypair);
     const fundSig = await this.sendAndLog(conn, fundTx, `Room ${roomId}: bot ${botUserId} fund tx`);
-    await conn.confirmTransaction(fundSig, 'confirmed');
+    await this.pollConfirmed(conn, fundSig);
 
     const treasuryToAta = await getAssociatedTokenAddress(this.usdcMint, treasuryKeypair.publicKey);
     const joinTx = new Transaction();
@@ -616,7 +678,7 @@ export class GachaService {
     joinTx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
     joinTx.sign(treasuryKeypair, bot);
     const joinSig = await this.sendAndLog(conn, joinTx, `Room ${roomId}: bot ${botUserId} join tx`);
-    await conn.confirmTransaction(joinSig, 'confirmed');
+    await this.pollConfirmed(conn, joinSig);
 
     // seat_number is NOT set here — the enforce_gacha_room_seat_cap trigger assigns it
     // atomically under a row lock on the room (see that migration) and ignores whatever's
@@ -748,15 +810,26 @@ export class GachaService {
       mascot_locked_at: new Date().toISOString(),
     }).select('seat_number').single();
     if (insertError || !inserted) {
-      // Two different unique constraints can both raise 23505 here, and they mean different
-      // things — buildJoinTx's own pre-check (see there) should catch the (room_id, user_id)
-      // case before a payment is ever built, but this is the last line of defense against a
-      // genuine race (e.g. two concurrent requests for the same already-seated user).
-      const message = (insertError as any)?.message ?? '';
-      if (message.includes('room_id_user_id')) throw new BadRequestException("You're already in this room.");
-      if ((insertError as any)?.code === '23505') throw new BadRequestException('This payment has already been used to join a room');
-      // Trigger-raised exception (room full) also lands here — Postgres reports it as a generic error, not 23505.
-      throw new BadRequestException('This room just filled up — try another room');
+      // A retry of the SAME confirmed payment may race its own first request. Treat the already-
+      // inserted participant as idempotent success; never refund a payment that actually owns a
+      // seat, or the caller would receive both the seat and their money back.
+      const { data: paymentSeat } = await db.from('gacha_room_participants')
+        .select('room_id, user_id, seat_number')
+        .eq('payment_tx_hash', paymentTxHash)
+        .maybeSingle();
+      if (paymentSeat) {
+        if (paymentSeat.room_id === roomId && paymentSeat.user_id === userId) {
+          await this.maybeAdvanceToRipping(roomId);
+          return { seatNumber: paymentSeat.seat_number, roomFilled: paymentSeat.seat_number === room.seats };
+        }
+        throw new BadRequestException('This payment has already been used to join a room');
+      }
+
+      // The payment is valid and reached the treasury, but the seat did not land (normally the
+      // room filled in the build->sign->confirm window, or a second distinct payment raced for
+      // the same user's one seat). Return it through an idempotent refund ledger.
+      const refundTxSig = await this.refundFailedJoin(roomId, userId, paymentTxHash, Number(room.entry_usdc), userSolanaAddress);
+      throw new BadRequestException(`This room just filled up. Your entry payment was automatically refunded (${refundTxSig})`);
     }
     const seatNumber = inserted.seat_number;
 
@@ -767,6 +840,71 @@ export class GachaService {
     await this.maybeAdvanceToRipping(roomId);
 
     return { seatNumber, roomFilled };
+  }
+
+  private async refundFailedJoin(
+    roomId: string,
+    userId: string,
+    paymentTxHash: string,
+    amountUsdc: number,
+    destination: string,
+  ): Promise<string> {
+    const db = this.supabase.getClient();
+    const now = new Date().toISOString();
+    const { data: created, error: createError } = await db.from('gacha_entry_refunds').insert({
+      payment_tx_hash: paymentTxHash,
+      room_id: roomId,
+      user_id: userId,
+      amount_usdc: amountUsdc,
+      status: 'processing',
+      updated_at: now,
+    }).select('payment_tx_hash').maybeSingle();
+
+    let acquired = !!created;
+    if (createError && (createError as any).code !== '23505') {
+      throw new Error(`Failed to create Gacha refund record: ${createError.message}`);
+    }
+
+    if (!acquired) {
+      const { data: existing, error } = await db.from('gacha_entry_refunds')
+        .select('status, refund_tx_sig')
+        .eq('payment_tx_hash', paymentTxHash)
+        .single();
+      if (error || !existing) throw new Error(`Failed to load Gacha refund record: ${error?.message}`);
+      if (existing.status === 'refunded' && existing.refund_tx_sig) return existing.refund_tx_sig;
+      if (existing.status === 'processing') throw new BadRequestException('Your entry refund is already being processed');
+
+      const { data: reclaimed, error: reclaimError } = await db.from('gacha_entry_refunds')
+        .update({ status: 'processing', failure_reason: null, updated_at: now })
+        .eq('payment_tx_hash', paymentTxHash)
+        .eq('status', 'failed')
+        .select('payment_tx_hash');
+      if (reclaimError) throw new Error(`Failed to retry Gacha refund: ${reclaimError.message}`);
+      acquired = !!reclaimed?.length;
+    }
+
+    if (!acquired) throw new BadRequestException('Your entry refund is already being processed');
+    try {
+      const refundTxSig = await this.sendPublicPayout(destination, amountUsdc);
+      const { error } = await db.from('gacha_entry_refunds').update({
+        status: 'refunded',
+        refund_tx_sig: refundTxSig,
+        failure_reason: null,
+        updated_at: new Date().toISOString(),
+      }).eq('payment_tx_hash', paymentTxHash).eq('status', 'processing');
+      if (error) this.logger.error(`Entry refund ${refundTxSig} sent for ${paymentTxHash} but could not be recorded: ${error.message}`);
+      return refundTxSig;
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      // A submitted-but-unconfirmed refund may still land. Preserve `processing` so a retry
+      // cannot send it twice; only definite pre-submit/on-chain failures become retryable.
+      await db.from('gacha_entry_refunds').update({
+        ...(e instanceof SubmittedTransactionUnconfirmedError ? {} : { status: 'failed' }),
+        failure_reason: reason.slice(0, 500),
+        updated_at: new Date().toISOString(),
+      }).eq('payment_tx_hash', paymentTxHash).eq('status', 'processing');
+      throw e;
+    }
   }
 
   // ── Mascot lock-in, VRF exclusion draw, and vote-to-cut-more (Pack Party flow) ─────────
@@ -819,13 +957,32 @@ export class GachaService {
     if (rows.length < room.seats) return;
     if (rows.some((p: any) => !p.mascot_locked_at)) return;
 
-    await db.from('gacha_rooms').update({ status: 'purchasing', updated_at: new Date().toISOString() }).eq('id', roomId);
+    // Atomic state claim: the last two joins can both observe a full room, but only one caller is
+    // allowed to move waiting -> purchasing and submit the real CollectorCrypt purchase.
+    const { data: claimed, error: claimError } = await db
+      .from('gacha_rooms')
+      .update({ status: 'purchasing', updated_at: new Date().toISOString() })
+      .eq('id', roomId)
+      .eq('status', 'waiting')
+      .select('id');
+    if (claimError) throw new Error(`Room ${roomId}: failed to claim purchase transition: ${claimError.message}`);
+    if (!claimed?.length) return;
+    await this.syncOnchainPhase(roomId, room.seats, GACHA_ROOM_PHASE.PURCHASING);
     this.logger.log(`Room ${roomId}: all ${room.seats} seats filled and locked in — buying the pack`);
     this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: rows.length, seats: room.seats, status: 'purchasing' });
 
     // Fire-and-forget — the room-filling moment should feel instant rather than waiting for the
     // next cron tick.
-    this.purchaseAndOpenRoom(roomId).catch((e) => this.logger.error(`Room ${roomId}: purchase/open failed: ${e.message}`));
+    this.purchaseAndOpenRoom(roomId).catch(async (e) => {
+      const reason = e instanceof Error ? e.message : String(e);
+      this.logger.error(`Room ${roomId}: purchase/open failed: ${reason}`);
+      await db.from('gacha_rooms').update({
+        status: 'failed',
+        failure_reason: `Purchase/open failed: ${reason}`.slice(0, 500),
+        updated_at: new Date().toISOString(),
+      }).eq('id', roomId).in('status', ['purchasing', 'opening']);
+      await this.syncOnchainPhase(roomId, room.seats, GACHA_ROOM_PHASE.FAILED);
+    });
   }
 
   /** Ticks a VRF draw forward exactly one step for the given (roomId, seed) pair, using
@@ -884,7 +1041,7 @@ export class GachaService {
    *  this draw even started (see purchaseAndOpenRoom). */
   private async advanceExclusionDraw(roomId: string): Promise<void> {
     const db = this.supabase.getClient();
-    const { data: room } = await db.from('gacha_rooms').select('id, status, exclusion_count').eq('id', roomId).single();
+    const { data: room } = await db.from('gacha_rooms').select('id, status, seats, exclusion_count').eq('id', roomId).single();
     if (!room || room.status !== 'excluding') return;
 
     const randomnessHex = await this.pollOrRequestVrf(roomId, roomId);
@@ -903,6 +1060,7 @@ export class GachaService {
     }
 
     await db.from('gacha_rooms').update({ status: 'voting', vote_round: 1, updated_at: new Date().toISOString() }).eq('id', roomId);
+    await this.syncOnchainInitialExclusion(roomId, room.seats, excludedSeatNumbers);
     this.logger.log(`Room ${roomId}: exclusion draw resolved — ${excludedSeatNumbers.length}/${rows.length} excluded (seats ${excludedSeatNumbers.join(', ')})`);
     this.events.emit(GACHA_EVENTS.ROOM_EXCLUDED, { roomId, excludedSeatNumbers });
 
@@ -952,13 +1110,7 @@ export class GachaService {
     this.events.emit(GACHA_EVENTS.ROOM_VOTE_ROUND_STARTED, { roomId, round, survivorSeatNumbers: survivors.map((p) => p.seat_number) });
 
     if (this.onchainVoteStateEnabled) {
-      const seats = await this.getRoomSeats(roomId);
-      if (seats === null) return;
-      await this.onchainState.ensureRoomDelegated(roomId, seats);
-      await this.onchainState.startVoteRound(roomId, round, survivors.map((p) => p.seat_number));
-      for (const p of survivors) {
-        if (p.user_id.startsWith('bot-')) await this.onchainState.castVote(roomId, p.seat_number, Math.random() < yesP);
-      }
+      await this.ensureOnchainVoteRoundStarted(roomId, round, survivors, yesP);
       await this.checkVoteRoundCompleteOnchain(roomId, round);
       return;
     }
@@ -970,6 +1122,38 @@ export class GachaService {
     this.voteByRoom.set(roomId, tally);
     this.voteRoundStartedAt.set(roomId, Date.now());
     await this.checkVoteRoundComplete(roomId, round);
+  }
+
+  /** Recovers the process-crash gap between Postgres entering a vote round and the delegated PDA
+   *  actually starting it. The DB marker prevents a transient ER read failure from resetting a
+   *  live round and erasing votes; the on-chain round check covers a crash after the transaction
+   *  succeeded but before the marker update landed. */
+  private async ensureOnchainVoteRoundStarted(
+    roomId: string,
+    round: number,
+    survivors?: Array<{ id: string; user_id: string; seat_number: number }>,
+    yesProbability?: number,
+  ): Promise<void> {
+    const currentSurvivors = survivors ?? await this.getSurvivors(roomId);
+    const botYesProbability = yesProbability ?? Math.max(0.72 - (round - 1) * 0.28, 0.08);
+    const db = this.supabase.getClient();
+    const seats = await this.getRoomSeats(roomId);
+    if (seats === null) throw new Error(`Room ${roomId}: cannot start on-chain vote without seat capacity`);
+    // Active voting requires the PDA in the ER even if the round marker/state already exists
+    // (for example after a process restart between an accidental undelegation and the next vote).
+    await this.onchainState.ensureRoomDelegated(roomId, seats);
+    const { data: room } = await db.from('gacha_rooms').select('onchain_vote_round').eq('id', roomId).single();
+    const state = await this.onchainState.getVoteState(roomId);
+    if (state?.round === round || room?.onchain_vote_round === round) return;
+
+    await this.onchainState.startVoteRound(roomId, round, currentSurvivors.map((p) => p.seat_number));
+    const { error } = await db.from('gacha_rooms').update({ onchain_vote_round: round }).eq('id', roomId);
+    if (error) throw new Error(`Room ${roomId}: failed to record on-chain vote round ${round}: ${error.message}`);
+    for (const participant of currentSurvivors) {
+      if (participant.user_id.startsWith('bot-')) {
+        await this.onchainState.castVote(roomId, participant.seat_number, Math.random() < botYesProbability);
+      }
+    }
   }
 
   /** Called from the gateway's cast_vote handler. Only a CURRENT survivor can vote, and only
@@ -1083,7 +1267,10 @@ export class GachaService {
       if (room.vrf_requested_at) {
         await this.resolveVoteCutDraw(room.id, room.vote_round).catch((e) => this.logger.error(`Room ${room.id}: vote-cut draw advance failed: ${e.message}`));
       } else if (this.onchainVoteStateEnabled) {
-        await this.withVoteLock(room.id, () => this.checkVoteRoundCompleteOnchain(room.id, room.vote_round)).catch((e) => this.logger.error(`Room ${room.id}: vote completion check failed: ${e.message}`));
+        await this.withVoteLock(room.id, async () => {
+          await this.ensureOnchainVoteRoundStarted(room.id, room.vote_round);
+          await this.checkVoteRoundCompleteOnchain(room.id, room.vote_round);
+        }).catch((e) => this.logger.error(`Room ${room.id}: vote completion check failed: ${e.message}`));
       } else {
         await this.maybeTimeoutVoteRound(room.id, room.vote_round).catch((e) => this.logger.error(`Room ${room.id}: vote timeout check failed: ${e.message}`));
       }
@@ -1126,6 +1313,7 @@ export class GachaService {
     const [victimUserId] = selectRandomWinners(survivors.map((p) => p.user_id), randomnessHex, 1);
     const victim = survivors.find((p) => p.user_id === victimUserId)!;
     await db.from('gacha_room_participants').update({ excluded: true }).eq('id', victim.id);
+    await this.syncOnchainVoteCut(roomId, round, victim.seat_number);
     this.logger.log(`Room ${roomId}: vote round ${round} cut seat ${victim.seat_number}`);
     this.events.emit(GACHA_EVENTS.ROOM_VOTE_CUT, { roomId, round, seatNumber: victim.seat_number });
 
@@ -1150,7 +1338,7 @@ export class GachaService {
 
   private async purchaseAndOpenRoom(roomId: string): Promise<void> {
     const db = this.supabase.getClient();
-    const { data: room, error } = await db.from('gacha_rooms').select('id, pack_type').eq('id', roomId).single();
+    const { data: room, error } = await db.from('gacha_rooms').select('id, pack_type, seats').eq('id', roomId).single();
     if (error || !room) throw new Error(`Room ${roomId} not found for purchase`);
 
     const treasuryKeypair = await this.getTreasuryKeypair();
@@ -1164,6 +1352,7 @@ export class GachaService {
       status: 'opening',
       updated_at: new Date().toISOString(),
     }).eq('id', roomId);
+    await this.syncOnchainPhase(roomId, room.seats, GACHA_ROOM_PHASE.OPENING);
 
     // result.success + result.nftWon is the real completion signal (confirmed live — see
     // OpenPackResponse's comment); result.status === 'waiting_for_webhook' is kept as a pending
@@ -1176,6 +1365,7 @@ export class GachaService {
     }
     if (!opened?.nftWon) {
       await db.from('gacha_rooms').update({ status: 'failed', failure_reason: 'openPack never confirmed', updated_at: new Date().toISOString() }).eq('id', roomId);
+      await this.syncOnchainPhase(roomId, room.seats, GACHA_ROOM_PHASE.FAILED);
       throw new Error(`Room ${roomId}: openPack never confirmed (timed out polling)`);
     }
 
@@ -1221,6 +1411,7 @@ export class GachaService {
       opened_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('id', roomId);
+    await this.syncOnchainPhase(roomId, room.seats, GACHA_ROOM_PHASE.EXCLUDING);
 
     this.logger.log(`Room ${roomId}: opened rarity=${rarity} buyback=$${buybackAmountUsdc} — exclusion draw starting`);
     this.events.emit(GACHA_EVENTS.ROOM_OPENED, { roomId, nftMetadata, rarity, buybackAmountUsdc, bidWindowEndsAt: null });
@@ -1235,17 +1426,22 @@ export class GachaService {
 
   private async signAndSubmit(unsignedTxBase64: string, signer: Keypair, conn: Connection): Promise<string> {
     const bytes = Buffer.from(unsignedTxBase64, 'base64');
+    let versioned: VersionedTransaction | null = null;
     try {
-      const vtx = VersionedTransaction.deserialize(bytes);
-      vtx.sign([signer]);
-      const submitted = await this.collectorCrypt.submitTransaction(Buffer.from(vtx.serialize()).toString('base64'));
-      return submitted.signature;
+      versioned = VersionedTransaction.deserialize(bytes);
     } catch {
-      const tx = Transaction.from(bytes);
-      tx.partialSign(signer);
-      const submitted = await this.collectorCrypt.submitTransaction(tx.serialize({ requireAllSignatures: false }).toString('base64'));
+      // CollectorCrypt may return a legacy transaction; parse it below. Do not wrap submission
+      // in this catch, otherwise a real API/RPC error gets misreported as a legacy parse error.
+    }
+    if (versioned) {
+      versioned.sign([signer]);
+      const submitted = await this.collectorCrypt.submitTransaction(Buffer.from(versioned.serialize()).toString('base64'));
       return submitted.signature;
     }
+    const tx = Transaction.from(bytes);
+    tx.partialSign(signer);
+    const submitted = await this.collectorCrypt.submitTransaction(tx.serialize({ requireAllSignatures: false }).toString('base64'));
+    return submitted.signature;
   }
 
   // ── Bidding (room participants only — see gacha_bids) ─────────────────────────────────
@@ -1339,8 +1535,15 @@ export class GachaService {
     if (room.status !== 'voting') throw new BadRequestException(`Room isn't mid-voting (status: ${room.status})`);
 
     if (!room.vrf_requested_at) {
-      this.voteRoundStartedAt.set(roomId, 0); // force the 30s window to already be elapsed
-      await this.maybeTimeoutVoteRound(roomId, room.vote_round);
+      if (this.onchainVoteStateEnabled) {
+        // The ER program reads the chain clock and deliberately cannot be forced past its 30s
+        // deadline. This still recovers/advances any genuinely complete on-chain round.
+        await this.ensureOnchainVoteRoundStarted(roomId, room.vote_round);
+        await this.checkVoteRoundCompleteOnchain(roomId, room.vote_round);
+      } else {
+        this.voteRoundStartedAt.set(roomId, 0); // force the 30s window to already be elapsed
+        await this.maybeTimeoutVoteRound(roomId, room.vote_round);
+      }
     }
 
     let status = room.status;
@@ -1442,8 +1645,9 @@ export class GachaService {
    *  the next cron tick, since the winner is sitting there waiting for their reveal moment. */
   async confirmBidPayment(roomId: string, userId: string, paymentTxHash: string): Promise<void> {
     const db = this.supabase.getClient();
-    const { data: room } = await db.from('gacha_rooms').select('id, status, pending_bid_id, entry_usdc').eq('id', roomId).maybeSingle();
+    const { data: room } = await db.from('gacha_rooms').select('id, status, pending_bid_id, pending_bid_deadline, entry_usdc').eq('id', roomId).maybeSingle();
     if (!room || room.status !== 'settling' || !room.pending_bid_id) throw new BadRequestException('No bid is currently awaiting payment on this room');
+    if (!room.pending_bid_deadline || new Date(room.pending_bid_deadline).getTime() <= Date.now()) throw new BadRequestException('Payment window has expired');
 
     const { data: bid } = await db.from('gacha_bids').select('id, user_id, amount_usdc, status').eq('id', room.pending_bid_id).single();
     if (!bid || bid.user_id !== userId) throw new BadRequestException('You are not the current winning bidder on this room');
@@ -1473,6 +1677,7 @@ export class GachaService {
 
     const { data: room } = await db.from('gacha_rooms').select('id, seats, nft_metadata').eq('id', roomId).single();
     if (!room?.nft_metadata?.mint) throw new Error(`Room ${roomId}: cannot buyback — no NFT mint recorded`);
+    await this.syncOnchainPhase(roomId, room.seats, GACHA_ROOM_PHASE.SETTLING);
 
     const treasuryKeypair = await this.getTreasuryKeypair();
     const conn = await this.getSolanaConnection();
@@ -1487,6 +1692,7 @@ export class GachaService {
 
     if (receivedUnits <= 0n) {
       await db.from('gacha_rooms').update({ status: 'failed', failure_reason: 'Buyback settled but no USDC credit detected on-chain', updated_at: new Date().toISOString() }).eq('id', roomId);
+      await this.syncOnchainPhase(roomId, room.seats, GACHA_ROOM_PHASE.FAILED);
       throw new Error(`Room ${roomId}: buyback tx ${buybackTxSig} confirmed but treasury balance did not increase`);
     }
 
@@ -1528,7 +1734,9 @@ export class GachaService {
     const { blockhash } = await conn.getLatestBlockhash();
     tx.recentBlockhash = blockhash;
     tx.sign(treasuryKeypair);
-    return conn.sendRawTransaction(tx.serialize());
+    const sig = await conn.sendRawTransaction(tx.serialize());
+    await this.pollConfirmed(conn, sig);
+    return sig;
   }
 
   private async getTreasuryUsdcUnits(conn: Connection, treasury: PublicKey): Promise<bigint> {
@@ -1541,11 +1749,17 @@ export class GachaService {
 
   private async pollConfirmed(conn: Connection, sig: string, attempts = 20): Promise<void> {
     for (let i = 0; i < attempts; i++) {
-      const status = await conn.getSignatureStatus(sig);
+      let status: Awaited<ReturnType<Connection['getSignatureStatus']>>;
+      try {
+        status = await conn.getSignatureStatus(sig);
+      } catch (e) {
+        throw new SubmittedTransactionUnconfirmedError(sig, `Transaction ${sig} was submitted but its status could not be read: ${e instanceof Error ? e.message : String(e)}`);
+      }
       if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') return;
       if (status.value?.err) throw new Error(`Transaction ${sig} failed: ${JSON.stringify(status.value.err)}`);
       await new Promise((r) => setTimeout(r, 1500));
     }
+    throw new SubmittedTransactionUnconfirmedError(sig, `Transaction ${sig} was submitted but not confirmed after ${attempts} attempts`);
   }
 
   /** Splits `totalUnits` evenly across the room's SURVIVING (non-excluded) participants only —
@@ -1559,24 +1773,16 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data: participants } = await db.from('gacha_room_participants').select('id, seat_number, excluded').eq('room_id', roomId).order('seat_number', { ascending: true });
     const rows = participants ?? [];
-    const survivors = rows.filter((p: any) => !p.excluded);
-    // Guard against the pathological case of everyone somehow being excluded (exclusion_count
-    // misconfigured >= seats) — falls back to splitting across everyone rather than dividing by 0.
-    const payoutRows = survivors.length ? survivors : rows;
-    const shareUnits = totalUnits / BigInt(payoutRows.length || 1);
-    const dustUnits = totalUnits - shareUnits * BigInt(payoutRows.length || 1);
-    const dustSeat = payoutRows[0]?.seat_number;
+    const unitsByParticipant = calculateGachaPayoutUnits(rows, totalUnits);
+    const survivorCount = rows.filter((p: any) => !p.excluded).length;
 
     for (const p of rows) {
-      if (!payoutRows.includes(p)) {
-        await db.from('gacha_room_participants').update({ payout_usdc: 0 }).eq('id', p.id);
-        continue;
-      }
-      const units = shareUnits + (p.seat_number === dustSeat ? dustUnits : 0n);
-      await db.from('gacha_room_participants').update({ payout_usdc: Number(units) / 1_000_000 }).eq('id', p.id);
+      const units = unitsByParticipant.get(p.id) ?? 0n;
+      const { error } = await db.from('gacha_room_participants').update({ payout_usdc: Number(units) / 1_000_000 }).eq('id', p.id);
+      if (error) throw new Error(`Room ${roomId}: failed to record payout for seat ${p.seat_number}: ${error.message}`);
     }
 
-    await db.from('gacha_rooms').update({
+    const { error: settleError } = await db.from('gacha_rooms').update({
       status: 'settled',
       settled_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -1586,8 +1792,10 @@ export class GachaService {
       ...(extra.winningBidId ? { winning_bid_id: extra.winningBidId } : {}),
       ...(extra.nftTransferTxSig ? { nft_transfer_tx_sig: extra.nftTransferTxSig } : {}),
     }).eq('id', roomId);
+    if (settleError) throw new Error(`Room ${roomId}: failed to mark settlement complete: ${settleError.message}`);
+    await this.syncOnchainPhase(roomId, rows.length, GACHA_ROOM_PHASE.SETTLED);
 
-    this.logger.log(`Room ${roomId}: settled, ${payoutRows.length} payouts of ~${Number(shareUnits) / 1_000_000} USDC each (${rows.length - payoutRows.length} excluded)`);
+    this.logger.log(`Room ${roomId}: settled, ${survivorCount} survivor payouts (${rows.length - survivorCount} excluded)`);
     // Per-participant payout amounts + wallets are fetched over authenticated REST
     // (getRoomDetail), never broadcast — this event is just "go check your own claim screen".
     this.events.emit(GACHA_EVENTS.ROOM_SETTLED, { roomId, won: !!extra.winningBidId });
@@ -1612,18 +1820,53 @@ export class GachaService {
     const { data: room } = await db.from('gacha_rooms').select('id, status').eq('id', roomId).maybeSingle();
     if (!room || room.status !== 'settled') throw new BadRequestException('This room has not settled yet');
 
-    const { data: participant } = await db.from('gacha_room_participants').select('id, payout_usdc, payout_tx_sig').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
+    const { data: participant } = await db.from('gacha_room_participants').select('id, payout_usdc, payout_tx_sig, payout_claim_token').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
     if (!participant) throw new BadRequestException('You are not a participant in this room');
     if (participant.payout_tx_sig) throw new BadRequestException('Payout already claimed');
+    if (participant.payout_claim_token) throw new BadRequestException('Payout claim is already being processed');
     if (participant.payout_usdc === null) throw new BadRequestException('Payout has not been computed yet');
+    if (Number(participant.payout_usdc) <= 0) throw new BadRequestException('There is no payout to claim for this seat');
+
+    // Acquire a durable per-participant claim lock before any transfer is submitted. This closes
+    // the auto-claim/manual-retry race where two requests could both observe payout_tx_sig=NULL
+    // and send the treasury transfer twice.
+    const claimToken = randomUUID();
+    const { data: claimed, error: claimError } = await db
+      .from('gacha_room_participants')
+      .update({ payout_claim_token: claimToken, payout_claim_started_at: new Date().toISOString() })
+      .eq('id', participant.id)
+      .is('payout_tx_sig', null)
+      .is('payout_claim_token', null)
+      .select('id');
+    if (claimError) throw new Error(`Failed to lock payout claim: ${claimError.message}`);
+    if (!claimed?.length) throw new BadRequestException('Payout claim is already being processed');
 
     const destination = await this.usersService.getSolanaWalletAddress(userId);
-    const txSig = isPrivate
-      ? await this.sendPrivatePayout(destination, Number(participant.payout_usdc))
-      : await this.sendPublicPayout(destination, Number(participant.payout_usdc));
+    try {
+      const txSig = isPrivate
+        ? await this.sendPrivatePayout(destination, Number(participant.payout_usdc))
+        : await this.sendPublicPayout(destination, Number(participant.payout_usdc));
 
-    await db.from('gacha_room_participants').update({ payout_tx_sig: txSig, payout_is_private: isPrivate }).eq('id', participant.id);
-    return { txSig };
+      const { error: recordError } = await db.from('gacha_room_participants').update({
+        payout_tx_sig: txSig,
+        payout_is_private: isPrivate,
+        payout_claim_token: null,
+        payout_claim_started_at: null,
+      }).eq('id', participant.id).eq('payout_claim_token', claimToken);
+      // Do not clear the claim lock if recording fails after funds moved: that would make a
+      // blind client retry send twice. Ops can reconcile the logged signature safely.
+      if (recordError) this.logger.error(`Payout ${txSig} sent for participant ${participant.id} but could not be recorded: ${recordError.message}`);
+      return { txSig };
+    } catch (e) {
+      if (e instanceof SubmittedTransactionUnconfirmedError) {
+        // The transfer may still land. Keep the durable lock so an automatic retry cannot send
+        // twice; ops can reconcile the known signature from the error/log.
+        this.logger.error(`Payout claim for participant ${participant.id} is awaiting manual confirmation of ${e.signature}`);
+      } else {
+        await db.from('gacha_room_participants').update({ payout_claim_token: null, payout_claim_started_at: null }).eq('id', participant.id).eq('payout_claim_token', claimToken);
+      }
+      throw e;
+    }
   }
 
   private async sendPublicPayout(toAddress: string, amountUsdc: number): Promise<string> {
@@ -1644,7 +1887,9 @@ export class GachaService {
     const { blockhash } = await conn.getLatestBlockhash();
     tx.recentBlockhash = blockhash;
     tx.sign(treasuryKeypair);
-    return conn.sendRawTransaction(tx.serialize());
+    const sig = await conn.sendRawTransaction(tx.serialize());
+    await this.pollConfirmed(conn, sig);
+    return sig;
   }
 
   private async sendPrivatePayout(toAddress: string, amountUsdc: number): Promise<string> {
@@ -1653,6 +1898,7 @@ export class GachaService {
     const cluster = 'devnet'; // Gacha Pooled Packs is devnet-only — see getSolanaConnection
     const relayFeeUnits = Math.round((await resolveMagicblockRelayFeeUsdc()) * 1_000_000);
     const transferUnits = Math.round(amountUsdc * 1_000_000) - relayFeeUnits; // exact-in: fee comes out of the payout, same as claims.service.ts's "claim privately" branch
+    if (transferUnits <= 0) throw new BadRequestException('Payout is too small to cover the private-transfer relay fee — claim publicly instead');
 
     const txResponse = await requestMagicblockPrivateTransfer({
       from: treasuryKeypair.publicKey.toBase58(),
