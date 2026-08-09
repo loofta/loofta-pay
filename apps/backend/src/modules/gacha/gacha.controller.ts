@@ -7,9 +7,6 @@ import { GachaService } from './gacha.service';
 class JoinTxDto {
   @IsString()
   configKey: string;
-
-  @IsString()
-  userSolanaAddress: string;
 }
 
 class ConfirmJoinDto {
@@ -95,7 +92,7 @@ export class GachaController {
   @Post('rooms/join-tx')
   @ApiOperation({ summary: 'Find-or-create a waiting room for this config and build the entry payment tx to sign' })
   async joinTx(@Body() dto: JoinTxDto, @Request() req: any) {
-    return this.gacha.buildJoinTx(dto.configKey, dto.userSolanaAddress, req.user.id);
+    return this.gacha.buildJoinTx(dto.configKey, req.user.id);
   }
 
   @Post('rooms/:id/join')

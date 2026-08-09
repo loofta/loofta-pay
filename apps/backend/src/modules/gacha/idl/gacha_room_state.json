@@ -51,8 +51,8 @@
     {
       "name": "commit_room",
       "docs": [
-        "Ephemeral rollup (or base layer, once undelegated): commits the current tally back to",
-        "base layer without ending the ER session — not yet wired to a call site (Phase 1 doesn't",
+        "Ephemeral rollup only: commits the current tally back to base layer without ending the ER",
+        "session — not yet wired to a call site (Phase 1 doesn't",
         "need mid-session commits, see the plan doc's commit-sponsorship note), included now so the",
         "account/program shape doesn't need to change when a future phase does need it."
       ],
@@ -440,6 +440,118 @@
       ]
     },
     {
+      "name": "record_initial_exclusion",
+      "docs": [
+        "Ephemeral rollup: records the initial exclusion draw result as a mask so late/subscribed",
+        "clients don't need a custom socket event to know which seats were cut before voting."
+      ],
+      "discriminator": [
+        89,
+        205,
+        208,
+        238,
+        16,
+        9,
+        10,
+        242
+      ],
+      "accounts": [
+        {
+          "name": "room",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "room"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "excluded_mask",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "record_vote_cut",
+      "docs": [
+        "Ephemeral rollup: records the seat cut by a passed vote round. This keeps the cut animation",
+        "and survivor state subscribable from ER while Postgres remains the durable payout source."
+      ],
+      "discriminator": [
+        81,
+        202,
+        216,
+        38,
+        63,
+        64,
+        185,
+        45
+      ],
+      "accounts": [
+        {
+          "name": "room",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "room"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "round",
+          "type": "u16"
+        },
+        {
+          "name": "seat_number",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "set_phase",
+      "docs": [
+        "Ephemeral rollup: records the compact game phase clients can subscribe to. The database",
+        "still owns business workflow and heavy metadata; this byte is the real-time gameplay cue."
+      ],
+      "discriminator": [
+        111,
+        105,
+        112,
+        240,
+        6,
+        217,
+        210,
+        215
+      ],
+      "accounts": [
+        {
+          "name": "room",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "room"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "phase",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "start_vote_round",
       "docs": [
         "Ephemeral rollup: starts (or restarts, for the next round) a \"cut one more?\" vote —",
@@ -574,6 +686,11 @@
       "code": 6006,
       "name": "RoundStillOpen",
       "msg": "This vote round is still open — not every survivor has voted and the deadline hasn't passed yet"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidPhase",
+      "msg": "Room phase is out of range"
     }
   ],
   "types": [
@@ -634,6 +751,26 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "phase",
+            "type": "u8"
+          },
+          {
+            "name": "excluded_mask",
+            "type": "u16"
+          },
+          {
+            "name": "last_cut_round",
+            "type": "u16"
+          },
+          {
+            "name": "last_cut_seat",
+            "type": "u8"
+          },
+          {
+            "name": "settled",
+            "type": "bool"
           }
         ]
       }

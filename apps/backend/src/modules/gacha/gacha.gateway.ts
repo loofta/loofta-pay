@@ -89,6 +89,10 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
   // Privy user id — see onPickEmoji) so a late joiner's `room:emoji_snapshot` never leaks other
   // participants' identities beyond what the REST participants list already exposes.
   private readonly emojiByRoom = new Map<string, Map<number, string>>();
+  // On-chain ready bits remain set until undelegation, so every later room update would otherwise
+  // rebroadcast room:all_ready and replay the reveal animation. This is only an emission guard;
+  // the durable readiness source remains the delegated PDA.
+  private readonly allReadyEmitted = new Set<string>();
 
   constructor(
     private readonly privy: PrivyVerificationService,
@@ -250,7 +254,10 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
     const botSeats = await this.gacha.getBotSeatNumbers(roomId).catch(() => [] as number[]);
     const readySeats = new Set([...this.maskToSeatNumbers(state.readyMask, state.seats), ...botSeats]);
     if (seatNumber !== undefined) this.server?.to(roomId).emit('room:ready_update', { readyCount: readySeats.size, seatNumber });
-    if (readySeats.size >= seats) this.server?.to(roomId).emit('room:all_ready', {});
+    if (readySeats.size >= seats && !this.allReadyEmitted.has(roomId)) {
+      this.allReadyEmitted.add(roomId);
+      this.server?.to(roomId).emit('room:all_ready', {});
+    }
   }
 
   /**
@@ -373,6 +380,7 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
     const { roomId, ...rest } = payload;
     this.readyByRoom.delete(roomId);
     this.emojiByRoom.delete(roomId);
+    this.allReadyEmitted.delete(roomId);
     if (this.onchainReadyStateEnabled) {
       this.onchainState.undelegateRoom(roomId).catch((e) =>
         this.logger.error(`[onchain] undelegate failed for room ${roomId}: ${e.message}`),

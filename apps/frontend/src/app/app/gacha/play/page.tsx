@@ -87,7 +87,7 @@ export default function GachaPlayPage() {
         const joinTxRes = await fetch("/api/gacha/rooms/join-tx", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeader },
-          body: JSON.stringify({ configKey, userSolanaAddress: embeddedWallet.address }),
+          body: JSON.stringify({ configKey }),
         });
         if (!joinTxRes.ok) throw new Error((await joinTxRes.json().catch(() => null))?.message ?? "Failed to prepare entry payment");
         const { txBase64, roomId, alreadyJoined } = await joinTxRes.json();
