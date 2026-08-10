@@ -557,21 +557,26 @@ export class SolanaSponsorService {
           throw new Error('This transaction does not match the claim it is being paid against.');
         }
       }
-      // Self-issued-and-self-paid check (2026-08-07). Intent-binding above only proves the
-      // claim record is real and the destination matches it — it can't tell a genuine "pay
-      // someone else's claim" from an attacker who created the claim themselves and is now
-      // paying into it, since both look identical: a real row, a matching destination. Unlike
-      // pajOrder/nearIntentsOrder/offrampRequest — where the creator paying their OWN order is
-      // the entire point of those flows — a claim exists to be paid by someone OTHER than its
-      // creator; self-payment has no legitimate use here and is exactly the "self-created claim,
-      // self-controlled destination" pattern called out in the 2026-08-06 incident. Refusing a
-      // NEW ATA in this case costs nothing to real users (paying your own claim was never a
-      // supported flow) while removing the one identity-verification-proof path still open to a
-      // rent-farming attacker; they're left with the (already-capped) alternative of a claim
-      // whose destination already has a funded token account, which is free.
-      if (userId && claimRow!.created_by && claimRow!.created_by === userId) {
+      // Self-issued-and-self-paid check (2026-08-07, corrected 2026-08-10 after a false positive
+      // blocked a real "Loofta x Paj campaign" payment — payment_id c5c5e123-6db7-4e53-
+      // 91b3-dccd9ee78d0c). Originally blocked ANY claim paid by its own creator, on the theory
+      // that "a claim exists to be paid by someone other than its creator." That's wrong: claims
+      // are routinely created by staff/integrators on behalf of a real third-party recipient
+      // (@looftaxyz here), and the creator completing that payment themselves is legitimate —
+      // nothing about it resembles the actual exploit.
+      //
+      // The exploit this exists to stop needs the payer to be able to LATER reclaim the rent
+      // themselves, which requires them to hold the destination's private key — impossible when
+      // the destination is one of our own generated burners (`burner_address` set): we hold that
+      // key, not them, and its rent already comes back to our own fee payer on sweep regardless
+      // of who paid it (see claims.service.ts's createCloseAccountInstruction calls). Every claim
+      // gets a burner unless creation failed (claims.service.ts:151-154's "always create a
+      // burner" policy) or the destination came from the recipient-supplied-raw-address fallback
+      // — only THAT narrower case is where self-payment is actually the same shape as the
+      // self-issued-claim attack, so it's the only case still blocked here.
+      if (userId && !claimRow!.burner_address && claimRow!.created_by && claimRow!.created_by === userId) {
         this.logger.error(
-          `SolanaSponsor[${label}]: BLOCKED — claimId=${claimId} was created and is being paid by the same user=${userId} — refusing to sponsor a new token account for a self-issued claim`,
+          `SolanaSponsor[${label}]: BLOCKED — claimId=${claimId} (no burner) was created and is being paid by the same user=${userId} — refusing to sponsor a new token account for a self-issued claim`,
         );
         throw new Error('You cannot sponsor a new token account for a claim you created yourself.');
       }

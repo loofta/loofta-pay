@@ -257,10 +257,12 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('blocks sponsorship when the claim was created and is being paid by the same user (self-issued)', async () => {
+  it('blocks sponsorship when a NO-BURNER claim was created and is being paid by the same user (self-issued)', async () => {
+    // recipient_address set, burner_address null — the only shape where the payer could later
+    // reclaim the rent themselves (they'd need to hold the destination's own key).
     const recipient = Keypair.generate().publicKey;
     mockPayments.maybeSingle.mockResolvedValueOnce({
-      data: { id: 'pay-1', recipient_address: null, burner_address: recipient.toBase58(), created_by: 'attacker' },
+      data: { id: 'pay-1', recipient_address: recipient.toBase58(), burner_address: null, created_by: 'attacker' },
       error: null,
     });
     const txBase64 = buildAtaCreationTxBase64(recipient);
@@ -268,6 +270,23 @@ describe('SolanaSponsorService — intent-binding (claimId) checks', () => {
     await expect(
       (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'attacker', 'pay-1'),
     ).rejects.toThrow('a claim you created yourself');
+  });
+
+  it('allows self-payment when the claim HAS a burner — the 2026-08-10 false-positive regression', async () => {
+    // This is the exact shape of payment_id c5c5e123-6db7-4e53-91b3-dccd9ee78d0c: a real claim
+    // ("Loofta x Paj campaign") with a burner we generated, paid by the same account that
+    // created it. We hold the burner's key, not the payer, so self-payment here is harmless —
+    // must NOT be blocked.
+    const burner = Keypair.generate().publicKey;
+    mockPayments.maybeSingle.mockResolvedValueOnce({
+      data: { id: 'pay-1', recipient_address: null, burner_address: burner.toBase58(), created_by: 'staff-user', amount: 50 },
+      error: null,
+    });
+    const txBase64 = buildAtaCreationTxBase64(burner, 50_000_000);
+
+    await expect(
+      (service as any).assertAtaCreationsAllowed(txBase64, {}, 'test', 'staff-user', 'pay-1'),
+    ).resolves.toBeUndefined();
   });
 
   it('allows sponsorship when the claim was created by someone else, even if the payer is authenticated', async () => {
