@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description: "Loofta Pay Terms of Service — read our terms before using the non-custodial payment platform.",
 };
 
-const EFFECTIVE_DATE = "June 1, 2026";
+const EFFECTIVE_DATE = "August 10, 2026";
 
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -45,18 +45,22 @@ const TOC = [
   { id: "non-custodial", label: "5. Non-Custodial Nature" },
   { id: "fees", label: "6. Fees" },
   { id: "transactions", label: "7. Transactions & Payments" },
-  { id: "compliance", label: "8. Compliance Screening" },
-  { id: "prohibited", label: "9. Prohibited Uses" },
-  { id: "rewards", label: "10. Rewards Program" },
-  { id: "third-party", label: "11. Third-Party Services" },
-  { id: "ip", label: "12. Intellectual Property" },
-  { id: "disclaimer", label: "13. Disclaimers" },
-  { id: "liability", label: "14. Limitation of Liability" },
-  { id: "indemnification", label: "15. Indemnification" },
-  { id: "termination", label: "16. Termination" },
-  { id: "governing-law", label: "17. Governing Law" },
-  { id: "changes", label: "18. Changes to These Terms" },
-  { id: "contact", label: "19. Contact" },
+  { id: "lottery", label: "8. Lottery & Prize-Based Features" },
+  { id: "mystery-pack", label: "9. Mystery Pack" },
+  { id: "giveaways", label: "10. Giveaways" },
+  { id: "fiat-offramp", label: "11. Fiat Off-Ramp Services" },
+  { id: "compliance", label: "12. Compliance Screening" },
+  { id: "prohibited", label: "13. Prohibited Uses" },
+  { id: "rewards", label: "14. Rewards Program" },
+  { id: "third-party", label: "15. Third-Party Services" },
+  { id: "ip", label: "16. Intellectual Property" },
+  { id: "disclaimer", label: "17. Disclaimers" },
+  { id: "liability", label: "18. Limitation of Liability" },
+  { id: "indemnification", label: "19. Indemnification" },
+  { id: "termination", label: "20. Termination" },
+  { id: "governing-law", label: "21. Governing Law" },
+  { id: "changes", label: "22. Changes to These Terms" },
+  { id: "contact", label: "23. Contact" },
 ];
 
 export default function TermsPage() {
@@ -119,6 +123,10 @@ export default function TermsPage() {
               "Create reusable payment request links that can be shared with payers.",
               "Deposit supported tokens from other chains into your Loofta balance via third-party cross-chain protocols.",
               "Withdraw USDC to external Solana wallets or to other supported chains via third-party bridge protocols.",
+              "Withdraw USDC as Nigerian Naira (NGN) to a linked bank account via a third-party fiat off-ramp partner, where available.",
+              "Purchase tickets in a third-party, blockchain-based lottery for a chance to win a prize pool.",
+              "Purchase Mystery Packs, a chance-based feature that allocates a randomized number of lottery tickets.",
+              "Create, fund, or enter giveaways distributed through the Service.",
               "View complete transaction history.",
               "Earn rewards through our loyalty and referral program.",
             ]} />
@@ -138,6 +146,9 @@ export default function TermsPage() {
             ]} />
             <P>
               By using the Service, you represent and warrant that you meet all eligibility requirements. We reserve the right to restrict access to the Service in any jurisdiction at our sole discretion.
+            </P>
+            <P>
+              Certain features — including our lottery, Mystery Pack, and giveaway features described in Sections 8 through 10 — may be classified as games of chance and may be restricted, illegal, or separately regulated in your jurisdiction. It is solely your responsibility to determine whether your access to and use of these features is lawful where you are located, and we accept no liability for your use of these features in violation of local law.
             </P>
           </Section>
 
@@ -204,11 +215,66 @@ export default function TermsPage() {
               <strong className="text-white font-medium">Cross-chain deposits:</strong> Deposits from other chains or tokens are facilitated by third-party protocols including Defuse Protocol and Near Intents. These operations are subject to the terms and conditions of those protocols. Loofta does not control cross-chain bridging infrastructure and is not responsible for delays, failures, or losses that occur within those third-party systems.
             </P>
             <P>
-              <strong className="text-white font-medium">Withdrawals:</strong> USDC withdrawals to external Solana wallets are processed on-chain. Cross-chain withdrawals (beta) are routed through third-party bridge protocols. Withdrawal addresses are subject to compliance screening as described in Section 8.
+              <strong className="text-white font-medium">Withdrawals:</strong> USDC withdrawals to external Solana wallets are processed on-chain. Cross-chain withdrawals (beta) are routed through third-party bridge protocols. Withdrawal addresses are subject to compliance screening as described in Section 12.
             </P>
           </Section>
 
-          <Section id="compliance" title="8. Compliance Screening">
+          <Section id="lottery" title="8. Lottery & Prize-Based Features">
+            <P>
+              The Service provides access to a blockchain-based lottery operated by an independent third-party protocol. You may use USDC held in your Loofta balance to purchase tickets for a chance to win a prize pool. By purchasing a ticket, you acknowledge and agree that:
+            </P>
+            <UL items={[
+              "Ticket purchases are final once submitted on-chain and are non-refundable, including if you do not win.",
+              "Winners are selected through a drawing mechanism operated and controlled by the underlying third-party protocol, not by Loofta. We do not control, operate, guarantee, or take responsibility for the outcome, timing, fairness, or integrity of any drawing.",
+              "Purchasing one or more tickets does not guarantee that you will win any prize. Your odds of winning depend on the total number of tickets sold in a given round and other factors outside our control.",
+              "Any promotional mechanics described in the application (such as bonus tickets, multipliers, or free entries) are subject to change or removal at any time and are not a contractual entitlement.",
+              "Prize payouts, if any, are distributed by the underlying third-party protocol according to its own rules and timelines. Delays or failures in that protocol are not attributable to Loofta.",
+              "We reserve the right to modify, suspend, restrict, or discontinue access to lottery features at any time, including on a jurisdiction-by-jurisdiction basis, without liability to you.",
+            ]} />
+            <P>
+              Lottery and prize-based features may be considered games of chance and may be illegal, restricted, or separately licensed or taxed in certain jurisdictions. You represent that your participation is lawful in your jurisdiction and you assume all legal and financial risk associated with your participation.
+            </P>
+          </Section>
+
+          <Section id="mystery-pack" title="9. Mystery Pack">
+            <P>
+              Mystery Pack is a chance-based feature that, in exchange for a fixed USDC payment, allocates you a randomized number of lottery tickets (as described in Section 8) within a disclosed range. The specific number of tickets you receive is determined at random at the time of purchase and is not known to you in advance.
+            </P>
+            <UL items={[
+              "Mystery Pack purchases are final and non-refundable once submitted.",
+              "The value of the tickets you receive may be more or less than the amount paid; we do not guarantee any minimum or expected value.",
+              "Available Mystery Pack tiers, pricing, and ticket ranges are subject to change or discontinuation at any time and are disclosed in the application at the time of purchase.",
+              "All disclaimers, risk acknowledgments, and jurisdictional restrictions set out in Section 8 apply equally to Mystery Pack purchases.",
+            ]} />
+          </Section>
+
+          <Section id="giveaways" title="10. Giveaways">
+            <P>
+              The Service allows users ("sponsors") to create and fund giveaways that other users may enter, including giveaways tied to engagement with a linked X (Twitter) post. By creating, funding, or entering a giveaway, you agree that:
+            </P>
+            <UL items={[
+              "Sponsors are solely responsible for funding the giveaway prize, setting eligibility criteria, and complying with any laws applicable to sweepstakes, contests, or promotions in the jurisdictions where the giveaway is offered.",
+              "Loofta acts only as a technical platform that facilitates entry verification and prize distribution; we are not the sponsor of any giveaway unless expressly stated otherwise.",
+              "Winner selection is performed using the mechanism disclosed in the application (which may rely on on-chain randomness or third-party data, such as X API data, to verify entries). We do not guarantee the availability, accuracy, or continued operation of any third-party data source used to verify entries.",
+              "We reserve the right to remove, cancel, or refuse to process any giveaway that we believe, in our sole discretion, violates these Terms, applicable law, or the policies of any third-party platform (including X).",
+              "Loofta is not liable for a sponsor's failure to fund or fulfill a prize, for disputes between sponsors and entrants, or for entries that fail to be recorded due to third-party platform outages or rate limits.",
+            ]} />
+          </Section>
+
+          <Section id="fiat-offramp" title="11. Fiat Off-Ramp Services">
+            <P>
+              Where available, the Service allows eligible users to convert USDC into Nigerian Naira (NGN) and withdraw the proceeds to a linked Nigerian bank account through a third-party financial partner. This feature is currently offered on a limited, best-efforts basis and may not be available to all users at all times.
+            </P>
+            <UL items={[
+              "Fiat off-ramp transactions are subject to the third-party partner's own identity verification (KYC), anti-money-laundering checks, terms of service, and privacy policy, which you must separately accept to use this feature.",
+              "To facilitate a fiat off-ramp transaction, we share your wallet address and transaction details with our third-party partner. The partner may independently collect additional information from you, including bank account details and identity documents, which Loofta does not control.",
+              "Settlement times for bank transfers are determined by our third-party partner and local banking infrastructure and are outside our control. We do not guarantee any particular settlement time.",
+              "Loofta is not a licensed money transmitter, payment service provider, or bank in Nigeria or any other jurisdiction. Regulated fiat payment activity is performed by our third-party partner, not by Loofta.",
+              "We may suspend, limit, or discontinue fiat off-ramp availability at any time, including due to partner outages, regulatory changes, or risk decisions, without liability to you.",
+            ]} />
+          </Section>
+
+          <Section id="compliance" title="12. Compliance Screening">
             <P>
               To help prevent the use of the Service for money laundering, sanctions evasion, or other illegal purposes, we use third-party compliance services including Range Protocol to screen wallet addresses involved in transactions, particularly withdrawals.
             </P>
@@ -220,7 +286,7 @@ export default function TermsPage() {
             </P>
           </Section>
 
-          <Section id="prohibited" title="9. Prohibited Uses">
+          <Section id="prohibited" title="13. Prohibited Uses">
             <P>You agree not to use the Service to:</P>
             <UL items={[
               "Violate any applicable law, regulation, or treaty, including anti-money laundering laws, sanctions regulations, and counter-terrorism financing laws.",
@@ -239,13 +305,13 @@ export default function TermsPage() {
             </P>
           </Section>
 
-          <Section id="rewards" title="10. Rewards Program">
+          <Section id="rewards" title="14. Rewards Program">
             <P>
               Loofta may offer a rewards, loyalty, or referral program from time to time. Rewards are at our sole discretion, have no guaranteed monetary value, and may be modified, suspended, or terminated at any time without notice. Rewards cannot be redeemed for cash unless explicitly stated. We reserve the right to void rewards obtained through abuse, fraud, or violation of these Terms.
             </P>
           </Section>
 
-          <Section id="third-party" title="11. Third-Party Services">
+          <Section id="third-party" title="15. Third-Party Services">
             <P>
               The Service integrates with or relies upon a number of third-party services, including but not limited to:
             </P>
@@ -255,16 +321,18 @@ export default function TermsPage() {
               "Helius — Solana RPC infrastructure.",
               "Range Protocol — wallet address compliance screening.",
               "Defuse Protocol / Near Intents — cross-chain deposit and withdrawal routing.",
+              "MagicBlock — ephemeral rollup infrastructure used for private and accelerated on-chain transactions.",
+              "PAJ Cash — third-party fiat off-ramp partner for Nigerian Naira withdrawals.",
               "Vercel — frontend hosting and analytics.",
               "Cloudflare — bot protection and security (Turnstile).",
-              "X (Twitter) — optional social login and integrations.",
+              "X (Twitter) — optional social login, giveaway entry verification, and integrations.",
             ]} />
             <P>
               Your use of any third-party service is governed by that service's own terms and privacy policy. We are not responsible for the actions, data practices, or availability of any third-party service. The inclusion of third-party integrations does not constitute an endorsement of those services.
             </P>
           </Section>
 
-          <Section id="ip" title="12. Intellectual Property">
+          <Section id="ip" title="16. Intellectual Property">
             <P>
               All content, branding, software, and technology comprising the Service — including but not limited to the Loofta name, logo, interface design, and source code — is the exclusive property of Loofta or its licensors and is protected by copyright, trademark, and other intellectual property laws.
             </P>
@@ -273,9 +341,12 @@ export default function TermsPage() {
             </P>
           </Section>
 
-          <Section id="disclaimer" title="13. Disclaimers">
+          <Section id="disclaimer" title="17. Disclaimers">
             <P>
               <strong className="text-white font-medium">No financial advice.</strong> Nothing on the Service constitutes financial, investment, legal, or tax advice. Cryptocurrency values are volatile and you may lose money. You are solely responsible for your own financial decisions.
+            </P>
+            <P>
+              <strong className="text-white font-medium">Assumption of risk for chance-based features.</strong> Participation in the lottery, Mystery Pack, and giveaway features described in Sections 8 through 10 is entirely at your own risk. We make no representation or warranty, express or implied, that you will win any prize, that any drawing will occur on a particular schedule, or that any third-party protocol, sponsor, or data source involved in those features will perform as expected. You assume full responsibility for any financial loss arising from your decision to participate.
             </P>
             <P>
               <strong className="text-white font-medium">As-is basis.</strong> The Service is provided "as is" and "as available" without warranty of any kind, whether express, implied, or statutory. We disclaim all warranties, including implied warranties of merchantability, fitness for a particular purpose, title, and non-infringement.
@@ -288,34 +359,37 @@ export default function TermsPage() {
             </P>
           </Section>
 
-          <Section id="liability" title="14. Limitation of Liability">
+          <Section id="liability" title="18. Limitation of Liability">
             <P>
               To the maximum extent permitted by applicable law, Loofta and its officers, directors, employees, agents, and licensors shall not be liable for any indirect, incidental, special, consequential, exemplary, or punitive damages, including loss of profits, data, goodwill, funds, or other intangible losses, arising from or relating to your use of or inability to use the Service.
             </P>
             <P>
-              Our total cumulative liability to you for any claims arising out of or relating to the Service shall not exceed the greater of (a) the total fees paid by you to Loofta in the twelve (12) months preceding the claim, or (b) USD $100.
+              Without limiting the foregoing, and to the maximum extent permitted by applicable law, we shall not be liable for any losses arising from or relating to: (a) your participation in, or failure to win a prize through, the lottery, Mystery Pack, or giveaway features; (b) the acts, omissions, insolvency, or unavailability of any third-party protocol, sponsor, or fiat off-ramp partner referenced in these Terms; or (c) delays, failures, or errors in any third-party service we integrate with but do not control.
+            </P>
+            <P>
+              Our total cumulative liability to you for any claims arising out of or relating to the Service shall not exceed the greater of (a) the total platform fees paid by you to Loofta in the twelve (12) months preceding the claim, or (b) USD $100.
             </P>
             <P>
               These limitations apply regardless of the legal theory on which the claim is based and even if we have been advised of the possibility of such damages. Some jurisdictions do not allow certain limitations of liability, so some of the above may not apply to you.
             </P>
           </Section>
 
-          <Section id="indemnification" title="15. Indemnification">
+          <Section id="indemnification" title="19. Indemnification">
             <P>
               You agree to defend, indemnify, and hold harmless Loofta and its affiliates, officers, directors, employees, and agents from and against any claims, damages, obligations, losses, liabilities, costs, and expenses (including reasonable attorneys' fees) arising from: (a) your use of the Service; (b) your violation of these Terms; (c) your violation of any third-party rights; or (d) any claim that content you submitted caused damage to a third party.
             </P>
           </Section>
 
-          <Section id="termination" title="16. Termination">
+          <Section id="termination" title="20. Termination">
             <P>
               You may stop using the Service at any time. We may suspend or terminate your access to the Service at any time, with or without cause, with or without notice, effective immediately.
             </P>
             <P>
-              Upon termination, your right to use the Service ceases immediately. Sections 5, 9, 12, 13, 14, 15, and 17 of these Terms survive termination. Because the Service is non-custodial, termination of your account does not affect your ability to access funds in your own wallet directly on-chain.
+              Upon termination, your right to use the Service ceases immediately. Sections 5, 8, 9, 10, 11, 13, 16, 17, 18, 19, and 21 of these Terms survive termination. Because the Service is non-custodial, termination of your account does not affect your ability to access funds in your own wallet directly on-chain.
             </P>
           </Section>
 
-          <Section id="governing-law" title="17. Governing Law">
+          <Section id="governing-law" title="21. Governing Law">
             <P>
               These Terms are governed by and construed in accordance with the laws of the State of Delaware, United States, without regard to conflict of law principles. Any dispute arising from these Terms or the Service shall be resolved exclusively in the state or federal courts located in Delaware, and you consent to personal jurisdiction in those courts.
             </P>
@@ -324,13 +398,13 @@ export default function TermsPage() {
             </P>
           </Section>
 
-          <Section id="changes" title="18. Changes to These Terms">
+          <Section id="changes" title="22. Changes to These Terms">
             <P>
               We may update these Terms from time to time. When we make material changes, we will update the effective date at the top of this page and, where required by applicable law, notify you through the application or by email. Your continued use of the Service after any such changes constitutes your acceptance of the new Terms.
             </P>
           </Section>
 
-          <Section id="contact" title="19. Contact">
+          <Section id="contact" title="23. Contact">
             <P>
               If you have any questions about these Terms, please contact us at:
             </P>

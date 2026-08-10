@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   description: "Loofta Pay Privacy Policy — how we collect, use, and protect your information.",
 };
 
-const EFFECTIVE_DATE = "June 1, 2026";
+const EFFECTIVE_DATE = "August 10, 2026";
 
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -65,17 +65,19 @@ const TOC = [
   { id: "information-collected", label: "2. Information We Collect" },
   { id: "how-we-use", label: "3. How We Use Your Information" },
   { id: "third-parties", label: "4. Third-Party Services" },
-  { id: "blockchain", label: "5. Blockchain & Public Data" },
-  { id: "sharing", label: "6. Information Sharing" },
-  { id: "retention", label: "7. Data Retention" },
-  { id: "security", label: "8. Security" },
-  { id: "cookies", label: "9. Cookies & Local Storage" },
-  { id: "gdpr", label: "10. Your Rights (GDPR)" },
-  { id: "ccpa", label: "11. Your Rights (CCPA / California)" },
-  { id: "children", label: "12. Children's Privacy" },
-  { id: "international", label: "13. International Transfers" },
-  { id: "changes", label: "14. Changes to This Policy" },
-  { id: "contact", label: "15. Contact" },
+  { id: "chance-features", label: "5. Lottery, Mystery Pack & Giveaway Data" },
+  { id: "fiat-offramp-data", label: "6. Fiat Off-Ramp Data (Naira)" },
+  { id: "blockchain", label: "7. Blockchain & Public Data" },
+  { id: "sharing", label: "8. Information Sharing" },
+  { id: "retention", label: "9. Data Retention" },
+  { id: "security", label: "10. Security" },
+  { id: "cookies", label: "11. Cookies & Local Storage" },
+  { id: "gdpr", label: "12. Your Rights (GDPR)" },
+  { id: "ccpa", label: "13. Your Rights (CCPA / California)" },
+  { id: "children", label: "14. Children's Privacy" },
+  { id: "international", label: "15. International Transfers" },
+  { id: "changes", label: "16. Changes to This Policy" },
+  { id: "contact", label: "17. Contact" },
 ];
 
 export default function PrivacyPage() {
@@ -140,6 +142,8 @@ Loofta Inc., a Delaware corporation with a registered address at 131 Continental
               "Transaction records — sender/recipient identifiers, amount, timestamp, transaction hash, and status for all payments you send or receive through the Service.",
               "Payment links — metadata associated with payment links you create, including any message or emoji attached.",
               "Deposit and withdrawal records — including third-party protocol identifiers and transaction hashes.",
+              "Lottery, Mystery Pack, and giveaway activity — ticket purchase records, purchase amount, associated wallet address, giveaway entries you submit or create, and draw or winner results. See Section 5 for details.",
+              "Fiat off-ramp activity — if you use the Naira withdrawal feature, we record the withdrawal amount, wallet address used, and transaction status. See Section 6 for details.",
               "Rewards and referral activity.",
             ]} />
 
@@ -155,6 +159,8 @@ Loofta Inc., a Delaware corporation with a registered address at 131 Continental
             <UL items={[
               "Privy user identifier — a unique identifier assigned by Privy that we use to link your identity to your Loofta account.",
               "Compliance signals — wallet address risk signals from Range Protocol used to screen withdrawal addresses.",
+              "X (Twitter) engagement data — for giveaways tied to a linked X post, we retrieve public engagement data (e.g., quote-tweet author identifiers) from the X API to verify entry eligibility. This data is cached for a short period (up to 60 seconds) to limit repeated API calls.",
+              "Fiat off-ramp verification signals — if you use the Naira withdrawal feature, our third-party partner PAJ Cash may independently verify your identity and share limited status information (e.g., verification or transaction status) back to us.",
             ]} />
           </Section>
 
@@ -165,6 +171,8 @@ Loofta Inc., a Delaware corporation with a registered address at 131 Continental
               "Authenticate you via Privy when you log in.",
               "Process, record, and display payment transactions you initiate or receive.",
               "Enable you to find other users by email or username to send payments.",
+              "Process lottery, Mystery Pack, and giveaway participation, including verifying giveaway entries and recording draw results.",
+              "Facilitate fiat off-ramp transactions by sharing necessary wallet and transaction details with our third-party partner.",
               "Screen wallet addresses against sanctions lists and risk databases as required by law.",
               "Provide customer support and respond to your inquiries.",
               "Detect and prevent fraud, abuse, and unauthorized use of the Service.",
@@ -186,15 +194,38 @@ Loofta Inc., a Delaware corporation with a registered address at 131 Continental
               ["Helius", "Solana RPC infrastructure. Transaction data is broadcast to the Solana network via Helius."],
               ["Range Protocol", "Wallet address compliance and sanctions screening for withdrawals."],
               ["Defuse Protocol / Near Intents", "Cross-chain deposit and withdrawal routing. Your wallet address and intended transaction are shared to facilitate cross-chain operations."],
+              ["MagicBlock", "Ephemeral rollup infrastructure used to process private and accelerated on-chain transactions."],
+              ["PAJ Cash", "Third-party fiat off-ramp partner. Processes Naira withdrawals and independently collects identity verification (KYC) and bank account information directly from you."],
               ["Cloudflare", "Bot and spam protection (Turnstile). Cloudflare may process IP address and behavioral signals."],
-              ["X (Twitter)", "Optional social login. If you log in with X, Privy processes your X account identifier."],
+              ["X (Twitter)", "Optional social login and giveaway entry verification. If you log in with X, or enter an X-linked giveaway, Privy or our giveaway feature processes your public X account identifier and engagement data."],
             ]} />
             <P>
               We do not sell your personal information to any third party. We do not share your data with advertisers. We may disclose information to law enforcement or regulators if required by applicable law, court order, or to protect the safety of users or the public.
             </P>
           </Section>
 
-          <Section id="blockchain" title="5. Blockchain & Public Data">
+          <Section id="chance-features" title="5. Lottery, Mystery Pack & Giveaway Data">
+            <P>
+              When you purchase lottery tickets, purchase a Mystery Pack, or create or enter a giveaway, we collect and store records of that activity, including the wallet address used, amount paid, ticket count, entry timestamp, and (where applicable) draw or winner results. This data is used to operate the feature, display your activity history to you, and detect abuse.
+            </P>
+            <P>
+              For giveaways tied to a linked X (Twitter) post, we process public X data (such as the identifier of an account that quote-tweets the linked post) solely to verify entry eligibility, as described in Section 2(d). We do not access private X account data, and we do not use this data for advertising.
+            </P>
+            <P>
+              Because lottery, Mystery Pack, and giveaway transactions are recorded on the Solana blockchain, the wallet-level activity associated with these features is subject to the public-ledger considerations described in Section 7.
+            </P>
+          </Section>
+
+          <Section id="fiat-offramp-data" title="6. Fiat Off-Ramp Data (Naira)">
+            <P>
+              If you use the Naira fiat off-ramp feature, we share your wallet address and the relevant transaction details (amount, timestamp, status) with our third-party partner, PAJ Cash, to facilitate the conversion and bank transfer.
+            </P>
+            <P>
+              PAJ Cash independently collects and processes additional information directly from you to complete the off-ramp, including bank account details and identity verification (KYC) documentation. That information is collected and controlled by PAJ Cash under its own privacy policy, not by Loofta. We do not store your bank account number or KYC documents ourselves; we retain only the wallet address, amount, and status of the associated transaction.
+            </P>
+          </Section>
+
+          <Section id="blockchain" title="7. Blockchain & Public Data">
             <P>
               All transactions processed through the Service are recorded on the Solana blockchain, which is a public, immutable ledger. This means:
             </P>
@@ -208,7 +239,7 @@ Loofta Inc., a Delaware corporation with a registered address at 131 Continental
             </P>
           </Section>
 
-          <Section id="sharing" title="6. Information Sharing">
+          <Section id="sharing" title="8. Information Sharing">
             <P>We may share your information in the following circumstances:</P>
             <UL items={[
               "With service providers listed in Section 4 as necessary to operate the Service.",
@@ -219,19 +250,19 @@ Loofta Inc., a Delaware corporation with a registered address at 131 Continental
             ]} />
           </Section>
 
-          <Section id="retention" title="7. Data Retention">
+          <Section id="retention" title="9. Data Retention">
             <P>
               We retain your account information and transaction history for as long as your account is active, plus a reasonable period thereafter to comply with legal obligations, resolve disputes, and enforce our agreements.
             </P>
             <P>
-              If you request deletion of your account, we will delete or anonymize your personal information within 30 days, subject to our obligation to retain certain records under applicable law (e.g., AML regulations may require us to retain transaction records for up to 5 years).
+              If you request deletion of your account, we will delete or anonymize your personal information within 30 days, subject to our obligation to retain certain records under applicable law (e.g., AML regulations may require us to retain transaction, lottery, giveaway, and fiat off-ramp records for up to 5 years).
             </P>
             <P>
-              Blockchain transaction data is permanent and cannot be deleted, as described in Section 5.
+              Blockchain transaction data is permanent and cannot be deleted, as described in Section 7.
             </P>
           </Section>
 
-          <Section id="security" title="8. Security">
+          <Section id="security" title="10. Security">
             <P>
               We implement industry-standard technical and organizational security measures to protect your information, including:
             </P>
@@ -247,7 +278,7 @@ Loofta Inc., a Delaware corporation with a registered address at 131 Continental
             </P>
           </Section>
 
-          <Section id="cookies" title="9. Cookies & Local Storage">
+          <Section id="cookies" title="11. Cookies & Local Storage">
             <P>
               The Service uses minimal cookies and browser storage:
             </P>
@@ -261,7 +292,7 @@ Loofta Inc., a Delaware corporation with a registered address at 131 Continental
             </P>
           </Section>
 
-          <Section id="gdpr" title="10. Your Rights (GDPR)">
+          <Section id="gdpr" title="12. Your Rights (GDPR)">
             <P>
               If you are located in the European Economic Area (EEA), United Kingdom, or Switzerland, you have the following rights under the General Data Protection Regulation (GDPR) or equivalent laws:
             </P>
@@ -282,7 +313,7 @@ Loofta Inc., a Delaware corporation with a registered address at 131 Continental
             </P>
           </Section>
 
-          <Section id="ccpa" title="11. Your Rights (CCPA / California)">
+          <Section id="ccpa" title="13. Your Rights (CCPA / California)">
             <P>
               If you are a California resident, the California Consumer Privacy Act (CCPA) provides you with additional rights:
             </P>
@@ -297,13 +328,13 @@ Loofta Inc., a Delaware corporation with a registered address at 131 Continental
             </P>
           </Section>
 
-          <Section id="children" title="12. Children's Privacy">
+          <Section id="children" title="14. Children's Privacy">
             <P>
               The Service is not directed to individuals under the age of 18. We do not knowingly collect personal information from children. If you believe we have inadvertently collected information from a child under 18, please contact us immediately at contact@loofta.xyz and we will delete such information promptly.
             </P>
           </Section>
 
-          <Section id="international" title="13. International Data Transfers">
+          <Section id="international" title="15. International Data Transfers">
             <P>
               Loofta operates globally and your information may be transferred to, stored in, and processed in the United States and other countries where our service providers maintain infrastructure. By using the Service, you consent to such transfers.
             </P>
@@ -312,13 +343,13 @@ Loofta Inc., a Delaware corporation with a registered address at 131 Continental
             </P>
           </Section>
 
-          <Section id="changes" title="14. Changes to This Policy">
+          <Section id="changes" title="16. Changes to This Policy">
             <P>
               We may update this Privacy Policy from time to time. When we make material changes, we will update the effective date and, where required, notify you through the application or by email. We encourage you to review this policy periodically.
             </P>
           </Section>
 
-          <Section id="contact" title="15. Contact">
+          <Section id="contact" title="17. Contact">
             <P>
               If you have questions, concerns, or requests regarding this Privacy Policy or your personal data, please contact us:
             </P>
