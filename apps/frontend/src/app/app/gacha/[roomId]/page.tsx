@@ -253,6 +253,22 @@ export default function GachaRoomPage() {
 
   const room = detail?.room;
 
+  // Preload the revealed card's image(s) the moment we know the URL — independent of the
+  // ready-gate countdown or the 3D shake sequence, which starts well after purchase/open already
+  // resolved server-side (the pack buys and opens automatically once the room fills; nobody has
+  // to be ready yet for nftMetadata to already be known). GachaPack3D only starts its own texture
+  // fetch once its shake phase begins, so on a slow connection the image sometimes wasn't ready by
+  // the time burst needed it. Same-origin proxy URL as GachaPack3D uses, so this hits the browser
+  // cache (the proxy route sets a hard immutable Cache-Control) instead of double-fetching —
+  // by the time the pack starts trembling, the image has usually already been loading for seconds.
+  useEffect(() => {
+    const nftMetadata = revealedCard?.nftMetadata ?? room?.nftMetadata;
+    const frontUrl = nftMetadata?.image;
+    const backUrl = nftMetadata?.backImage ?? frontUrl;
+    if (frontUrl) new window.Image().src = `/api/gacha/image-proxy?url=${encodeURIComponent(frontUrl)}`;
+    if (backUrl) new window.Image().src = `/api/gacha/image-proxy?url=${encodeURIComponent(backUrl)}`;
+  }, [revealedCard?.nftMetadata, room?.nftMetadata]);
+
   // GachaPack3D's resolveOpen contract: unlike Mystery Pack, the pack doesn't START a purchase
   // when the reveal triggers (the room already bought and is opening the pack automatically the
   // moment it filled) — it just waits for that already-in-flight process to finish, polling the
