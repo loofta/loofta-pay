@@ -59,9 +59,14 @@ export async function POST(request: NextRequest) {
     await ensureBucket(supabase);
     const filePath = `task-proofs/${userId.replace(/[^a-zA-Z0-9_-]/g, "")}_${Date.now()}.jpg`;
 
+    // sharp's .toBuffer() returns a Buffer backed by native (libvips) memory, not a plain JS-heap
+    // ArrayBuffer. Passed straight to supabase-js's upload(), Vercel's runtime throws
+    // "ArrayBuffer: SharedArrayBuffer is not allowed" (confirmed in prod logs 2026-08-11) — it
+    // misidentifies that native-backed buffer as a SharedArrayBuffer. Wrapping in a Blob forces a
+    // copy into a normal, owned buffer before it reaches the upload call.
     const { error: uploadError } = await supabase.storage
       .from(BUCKET)
-      .upload(filePath, outputBuffer, { contentType: "image/jpeg", upsert: false });
+      .upload(filePath, new Blob([Uint8Array.from(outputBuffer)], { type: "image/jpeg" }), { contentType: "image/jpeg", upsert: false });
     if (uploadError) {
       console.error("[Giveaways API] Proof upload error:", uploadError);
       return NextResponse.json({ error: uploadError.message }, { status: 500 });
