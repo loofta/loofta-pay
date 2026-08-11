@@ -134,10 +134,13 @@ export default function GiveawaysListPage() {
                   className="block rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors p-4"
                 >
                   <div className="flex items-center justify-between gap-2 mb-2">
-                    {(g.is_official || g.logo_url || g.project_name) ? (
+                    {g.is_official ? (
                       <div className="flex items-center gap-1.5">
-                        {g.is_official && <Image src="/loofta_icon_magic.png" alt="" width={16} height={16} className="rounded-full" />}
-                        {g.is_official && <span className="text-sm font-medium text-slate-400">Loofta</span>}
+                        <Image src="/loofta_icon_magic.png" alt="" width={16} height={16} className="rounded-full" />
+                        <span className="text-sm font-medium text-slate-400">Loofta</span>
+                      </div>
+                    ) : (g.logo_url || g.project_name) ? (
+                      <div className="flex items-center gap-1.5">
                         {g.logo_url && <Image src={g.logo_url} alt="" width={16} height={16} className="rounded-full object-cover shrink-0" />}
                         {g.project_name && <span className="text-sm font-medium text-slate-400">{g.project_name}</span>}
                       </div>
@@ -178,10 +181,13 @@ export default function GiveawaysListPage() {
                     className="block rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors p-4"
                   >
                     <div className="flex items-center justify-between gap-2 mb-2">
-                      {(g.is_official || g.logo_url || g.project_name) ? (
+                      {g.is_official ? (
                         <div className="flex items-center gap-1.5">
-                          {g.is_official && <Image src="/loofta_icon_magic.png" alt="" width={16} height={16} className="rounded-full" />}
-                          {g.is_official && <span className="text-sm font-medium text-slate-400">Loofta</span>}
+                          <Image src="/loofta_icon_magic.png" alt="" width={16} height={16} className="rounded-full" />
+                          <span className="text-sm font-medium text-slate-400">Loofta</span>
+                        </div>
+                      ) : (g.logo_url || g.project_name) ? (
+                        <div className="flex items-center gap-1.5">
                           {g.logo_url && <Image src={g.logo_url} alt="" width={16} height={16} className="rounded-full object-cover shrink-0" />}
                           {g.project_name && <span className="text-sm font-medium text-slate-400">{g.project_name}</span>}
                         </div>
