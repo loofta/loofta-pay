@@ -78,6 +78,14 @@
     "claimMany": "すべて受け取る",
     "dismiss": "閉じる"
   },
+  "AddEmailToast": {
+    "title": "支払いを見逃さない",
+    "body": "新しい支払いやギフトの通知を受け取るには、メールアドレスを追加してください。",
+    "addEmail": "メールを追加",
+    "adding": "追加中…",
+    "alreadyLinked": "このメールアドレスはすでに別のアカウントに連携されています。",
+    "dismiss": "閉じる"
+  },
   "HomePage": {
     "send": "送金",
     "to": "宛先",

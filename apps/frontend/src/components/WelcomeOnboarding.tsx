@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { usePrivy, useUser, useLinkAccount } from "@privy-io/react-auth";
 
 const LOO_PREFIX = "loo-";
-const EMAIL_SKIP_KEY = "loofta_email_step_skip_until";
+export const EMAIL_SKIP_KEY = "loofta_email_step_skip_until";
 const EMAIL_SKIP_DURATION_MS = 8 * 60 * 60 * 1000; // 8 hours
 
 function isEmailSkipActive(): boolean {

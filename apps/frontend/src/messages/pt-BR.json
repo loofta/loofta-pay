@@ -78,6 +78,14 @@
     "claimMany": "Resgatar",
     "dismiss": "Fechar"
   },
+  "AddEmailToast": {
+    "title": "Nunca perca um pagamento",
+    "body": "Adicione seu e-mail para ser notificado sobre novos pagamentos e presentes.",
+    "addEmail": "Adicionar e-mail",
+    "adding": "Adicionando…",
+    "alreadyLinked": "Este e-mail já está vinculado a outra conta.",
+    "dismiss": "Dispensar"
+  },
   "HomePage": {
     "send": "Enviar",
     "to": "Para",

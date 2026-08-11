@@ -78,6 +78,14 @@
     "claimMany": "全部领取",
     "dismiss": "关闭"
   },
+  "AddEmailToast": {
+    "title": "不错过任何一笔付款",
+    "body": "添加你的邮箱，以便在收到新付款和礼物时收到通知。",
+    "addEmail": "添加邮箱",
+    "adding": "添加中…",
+    "alreadyLinked": "该邮箱已绑定到另一个账户。",
+    "dismiss": "关闭"
+  },
   "HomePage": {
     "send": "发送",
     "to": "至",

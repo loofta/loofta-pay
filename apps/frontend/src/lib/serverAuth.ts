@@ -65,9 +65,13 @@ export async function getVerifiedLiveHandle(
   for (const account of (user.linkedAccounts || []) as Array<{ type?: string; username?: string | null; name?: string | null; address?: string | null }>) {
     const type = (account.type || "").toLowerCase();
     if (!oauthTypes.includes(type)) continue;
+    // Discord's legacy discriminator (e.g. "username#0") still shows up in some OAuth responses
+    // even though Discord itself dropped discriminators for migrated accounts — strip it so we
+    // never persist a handle senders can't type without knowing the discriminator.
     const handle = (account.username || account.name || account.address || "")
       .toString()
       .replace(/^@/, "")
+      .replace(/#\d+$/, "")
       .toLowerCase()
       .trim();
     if (handle) return handle;

@@ -78,6 +78,14 @@
     "claimMany": "Beanspruchen",
     "dismiss": "Schließen"
   },
+  "AddEmailToast": {
+    "title": "Verpasse keine Zahlung mehr",
+    "body": "Füge deine E-Mail-Adresse hinzu, um über neue Zahlungen und Geschenke benachrichtigt zu werden.",
+    "addEmail": "E-Mail hinzufügen",
+    "adding": "Wird hinzugefügt…",
+    "alreadyLinked": "Diese E-Mail ist bereits mit einem anderen Konto verknüpft.",
+    "dismiss": "Schließen"
+  },
   "HomePage": {
     "send": "Senden",
     "to": "An",

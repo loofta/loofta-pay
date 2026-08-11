@@ -78,6 +78,14 @@
     "claimMany": "Réclamer",
     "dismiss": "Fermer"
   },
+  "AddEmailToast": {
+    "title": "Ne manquez plus aucun paiement",
+    "body": "Ajoutez votre e-mail pour être averti des nouveaux paiements et cadeaux.",
+    "addEmail": "Ajouter un e-mail",
+    "adding": "Ajout en cours…",
+    "alreadyLinked": "Cet e-mail est déjà lié à un autre compte.",
+    "dismiss": "Ignorer"
+  },
   "HomePage": {
     "send": "Envoyer",
     "to": "À",

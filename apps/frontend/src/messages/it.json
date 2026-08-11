@@ -78,6 +78,14 @@
     "claimMany": "Riscuoti",
     "dismiss": "Chiudi"
   },
+  "AddEmailToast": {
+    "title": "Non perdere nessun pagamento",
+    "body": "Aggiungi la tua email per ricevere notifiche su nuovi pagamenti e regali.",
+    "addEmail": "Aggiungi email",
+    "adding": "Aggiunta in corso…",
+    "alreadyLinked": "Questa email è già collegata a un altro account.",
+    "dismiss": "Ignora"
+  },
   "HomePage": {
     "send": "Invia",
     "to": "A",

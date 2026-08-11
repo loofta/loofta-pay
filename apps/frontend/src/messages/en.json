@@ -78,6 +78,14 @@
     "claimMany": "Claim them",
     "dismiss": "Dismiss"
   },
+  "AddEmailToast": {
+    "title": "Never miss a payment",
+    "body": "Add your email to get notified about new payments and gifts.",
+    "addEmail": "Add email",
+    "adding": "Adding…",
+    "alreadyLinked": "This email is linked to another account.",
+    "dismiss": "Dismiss"
+  },
   "HomePage": {
     "send": "Send",
     "to": "To",

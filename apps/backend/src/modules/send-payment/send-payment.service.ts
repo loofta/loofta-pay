@@ -932,7 +932,9 @@ export class SendPaymentService {
   private normalizeIdentifier(type: 'email' | 'twitter' | 'username' | SocialPlatform, value: string): string {
     const v = value.trim();
     if (type === 'email') return v.toLowerCase();
-    return v.replace(/^@/, '').toLowerCase();
+    // Strip a trailing Discord discriminator (e.g. "username#0") — senders no longer need to
+    // type one; see UsersService.normalizeRecipientIdentifier for the matching counterpart.
+    return v.replace(/^@/, '').replace(/#\d+$/, '').toLowerCase();
   }
 
   /**

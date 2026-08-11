@@ -2274,7 +2274,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             disabled={claimActionDisabled}
             className={cn(
               "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
-              mobile ? "py-4 text-base" : "py-3",
+              mobile ? "py-4 text-base" : "py-3 text-sm",
               "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
               claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
             )}
@@ -2314,8 +2314,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 whileHover={claimActionDisabled ? undefined : { scale: 1.02 }}
                 whileTap={claimActionDisabled ? undefined : { scale: 0.98 }}
                 className={cn(
-                  "w-full flex items-center justify-center gap-2 rounded-2xl bg-black/30 border border-white/15 font-display font-semibold text-slate-200 transition-colors hover:bg-black/40 hover:border-white/25",
-                  mobile ? "py-3 text-base" : "py-3 text-sm",
+                  "w-full flex items-center justify-center gap-2 rounded-xl bg-black/30 border border-white/15 font-semibold text-slate-200 transition-colors hover:bg-black/40 hover:border-white/25",
+                  mobile ? "py-4 text-base" : "py-3 text-sm",
                   claimActionDisabled && "opacity-50 cursor-not-allowed hover:bg-black/30",
                 )}
               >
