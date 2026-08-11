@@ -451,7 +451,7 @@ async function loadDraft(
     });
     if (!res.ok) throw new Error("Giveaway not found, or you don't have access to edit it");
     const data: RemoteGiveaway = await res.json();
-    if (data.status !== "PENDING_APPROVAL") {
+    if (!["DRAFT", "PENDING_APPROVAL", "PENDING_FUNDING"].includes(data.status)) {
       throw new Error(`This giveaway is ${data.status.replace(/_/g, " ").toLowerCase()} and can no longer be edited here — contact support for changes.`);
     }
     return draftFromRemote(data);

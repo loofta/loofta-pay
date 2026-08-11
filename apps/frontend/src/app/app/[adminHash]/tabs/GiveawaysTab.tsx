@@ -705,44 +705,99 @@ export function GiveawaysTab() {
                                 <div>
                                   <label className="text-gray-500 text-sm block mb-1">Tasks</label>
                                   <div className="space-y-2">
-                                    {editForm.tasks.map((t, i) => (
-                                      <div key={t.id} className="rounded-lg border border-gray-800 p-2 space-y-1.5">
-                                        <div className="flex items-center justify-between">
-                                          <p className="text-xs text-gray-500 uppercase tracking-wide">{t.task_type.replace(/_/g, " ")}</p>
-                                          <button
-                                            type="button"
-                                            title="Delete task — also removes any entrant's completion (verified or not) for it"
-                                            onClick={() => {
-                                              const tasks = editForm.tasks.filter((_, idx) => idx !== i);
-                                              setEditForm({ ...editForm, tasks, deletedTaskIds: [...editForm.deletedTaskIds, t.id] });
-                                            }}
-                                            className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-900/20"
-                                          >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                          </button>
+                                    {groupEditableTasksForDisplay(editForm.tasks).map((group) => {
+                                      const deleteTask = (id: string, i: number) => {
+                                        const tasks = editForm.tasks.filter((_, idx) => idx !== i);
+                                        setEditForm({ ...editForm, tasks, deletedTaskIds: [...editForm.deletedTaskIds, id] });
+                                      };
+                                      const updateTask = (i: number, patch: Partial<EditableTask>) => {
+                                        const tasks = [...editForm.tasks];
+                                        tasks[i] = { ...tasks[i], ...patch };
+                                        setEditForm({ ...editForm, tasks });
+                                      };
+                                      const requireProofToggle = (task: EditableTask, i: number) =>
+                                        SELF_REPORT_TASK_TYPES.has(task.task_type) && (
+                                          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                                            <input
+                                              type="checkbox"
+                                              checked={!!task.restConfig.require_proof}
+                                              onChange={(e) => updateTask(i, { restConfig: { ...task.restConfig, require_proof: e.target.checked } })}
+                                              className="accent-orange-500"
+                                            />
+                                            Require proof (link/screenshot)
+                                          </label>
+                                        );
+                                      if (group.kind === "engage") {
+                                        return (
+                                          <div key={`engage-${group.target}`} className="rounded-lg border border-gray-800 p-2 space-y-1.5">
+                                            <p className="text-xs text-gray-500 uppercase tracking-wide">Engage with post</p>
+                                            <input
+                                              value={group.target}
+                                              placeholder="Tweet URL"
+                                              onChange={(e) => {
+                                                const tasks = [...editForm.tasks];
+                                                for (const { index } of group.items) tasks[index] = { ...tasks[index], target: e.target.value };
+                                                setEditForm({ ...editForm, tasks });
+                                              }}
+                                              className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                            />
+                                            <div className="space-y-1.5 pl-2 border-l border-gray-800">
+                                              {group.items.map(({ task, index }) => (
+                                                <div key={task.id} className="space-y-1">
+                                                  <div className="flex items-center justify-between">
+                                                    <p className="text-xs text-gray-400">{ENGAGE_ACTION_LABELS[task.task_type] ?? task.task_type}</p>
+                                                    <button
+                                                      type="button"
+                                                      title="Delete task — also removes any entrant's completion (verified or not) for it"
+                                                      onClick={() => deleteTask(task.id, index)}
+                                                      className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-900/20"
+                                                    >
+                                                      <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
+                                                  </div>
+                                                  <input
+                                                    value={task.note}
+                                                    placeholder="Instructions shown to entrants (optional)"
+                                                    onChange={(e) => updateTask(index, { note: e.target.value })}
+                                                    className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                                  />
+                                                  {requireProofToggle(task, index)}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        );
+                                      }
+                                      const { task: t, index: i } = group;
+                                      return (
+                                        <div key={t.id} className="rounded-lg border border-gray-800 p-2 space-y-1.5">
+                                          <div className="flex items-center justify-between">
+                                            <p className="text-xs text-gray-500 uppercase tracking-wide">{t.task_type.replace(/_/g, " ")}</p>
+                                            <button
+                                              type="button"
+                                              title="Delete task — also removes any entrant's completion (verified or not) for it"
+                                              onClick={() => deleteTask(t.id, i)}
+                                              className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-900/20"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          </div>
+                                          <input
+                                            value={t.target}
+                                            placeholder="Target (URL or handle)"
+                                            onChange={(e) => updateTask(i, { target: e.target.value })}
+                                            className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                          />
+                                          <input
+                                            value={t.note}
+                                            placeholder="Instructions shown to entrants (optional)"
+                                            onChange={(e) => updateTask(i, { note: e.target.value })}
+                                            className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                          />
+                                          {requireProofToggle(t, i)}
                                         </div>
-                                        <input
-                                          value={t.target}
-                                          placeholder="Target (URL or handle)"
-                                          onChange={(e) => {
-                                            const tasks = [...editForm.tasks];
-                                            tasks[i] = { ...t, target: e.target.value };
-                                            setEditForm({ ...editForm, tasks });
-                                          }}
-                                          className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
-                                        />
-                                        <input
-                                          value={t.note}
-                                          placeholder="Instructions shown to entrants (optional)"
-                                          onChange={(e) => {
-                                            const tasks = [...editForm.tasks];
-                                            tasks[i] = { ...t, note: e.target.value };
-                                            setEditForm({ ...editForm, tasks });
-                                          }}
-                                          className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
-                                        />
-                                      </div>
-                                    ))}
+                                      );
+                                    })}
                                     {editForm.newTasks.map((nt, i) => (
                                       <div key={`new-${i}`} className="rounded-lg border border-green-900/40 bg-green-900/5 p-2 space-y-1.5">
                                         <div className="flex items-center justify-between gap-2">
@@ -787,6 +842,21 @@ export function GiveawaysTab() {
                                           }}
                                           className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
                                         />
+                                        {SELF_REPORT_TASK_TYPES.has(nt.task_type) && (
+                                          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                                            <input
+                                              type="checkbox"
+                                              checked={nt.requireProof}
+                                              onChange={(e) => {
+                                                const newTasks = [...editForm.newTasks];
+                                                newTasks[i] = { ...nt, requireProof: e.target.checked };
+                                                setEditForm({ ...editForm, newTasks });
+                                              }}
+                                              className="accent-orange-500"
+                                            />
+                                            Require proof (link/screenshot)
+                                          </label>
+                                        )}
                                       </div>
                                     ))}
                                   </div>

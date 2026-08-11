@@ -50,6 +50,9 @@ export class GiveawayEntriesService {
 
   async enter(giveawayId: string, userId: string): Promise<GiveawayEntry> {
     const giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+    if (giveaway.created_by === userId) {
+      throw new ForbiddenException('You can\'t enter your own giveaway.');
+    }
     if (giveaway.status !== GiveawayStatus.OPEN) {
       throw new BadRequestException(`Giveaway is ${giveaway.status}, not open for entries`);
     }

@@ -120,7 +120,7 @@ const taskLinkClass = "block text-base font-normal mt-2 truncate hover:underline
 // accent-colored prize amounts and links on this page.
 const taskActionButtonClass = "rounded-lg bg-white/10 text-white text-base font-semibold hover:bg-white/20 transition-colors disabled:opacity-40 disabled:hover:bg-white/10";
 
-type PublicTask = { id: string; task_type: string; config: { target?: string; comment_requirement?: string; instructions?: string; title?: string }; order_index: number; verification_mode: string };
+type PublicTask = { id: string; task_type: string; config: { target?: string; comment_requirement?: string; instructions?: string; title?: string; require_proof?: boolean }; order_index: number; verification_mode: string };
 type TaskDisplayGroup = { kind: "engage"; target: string; tasks: PublicTask[] } | { kind: "single"; task: PublicTask };
 
 /** Groups engage-type tasks that share the same tweet URL into one display card; everything else
@@ -519,7 +519,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const fundingPct = giveaway.funding_required_usd
     ? Math.min(100, Math.round((Number(giveaway.funding_confirmed_usd) / Number(giveaway.funding_required_usd)) * 100))
     : 0;
-  const canEnter = giveaway.status === "OPEN" && !myEntry;
+  const canEnter = giveaway.status === "OPEN" && !myEntry && !isOwner;
   const giveawayEnded = giveaway.status !== "OPEN";
   const canShare = giveaway.status !== "REJECTED" && giveaway.status !== "CANCELLED";
   // Matches the current environment (localhost in dev, pay.loofta.xyz in prod) instead of a
@@ -573,7 +573,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               {giveaway.is_devnet && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">Devnet</span>
               )}
-              {isOwner && giveaway.status === "PENDING_APPROVAL" && (
+              {isOwner && ["DRAFT", "PENDING_APPROVAL", "PENDING_FUNDING"].includes(giveaway.status) && (
                 <Link
                   href={`/rewards/giveaways/${resolvedId}/edit`}
                   aria-label="Edit giveaway"
@@ -985,7 +985,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                               <button
                                 type="button"
                                 onClick={() => markTaskDone(task.id)}
-                                className="shrink-0 text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
+                                className={`shrink-0 px-4 py-2.5 ${taskActionButtonClass}`}
                               >
                                 Try again
                               </button>
@@ -994,7 +994,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                             <button
                               type="button"
                               onClick={() => markTaskDone(task.id)}
-                              className="w-full text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
+                              className={`w-full px-4 py-2.5 ${taskActionButtonClass}`}
                             >
                               {task.verification_mode === "auto_api" ? "Verify" : "Mark done"}
                             </button>
