@@ -1868,12 +1868,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     return () => { cancelled = true; };
   }, [pajDefaultBankAccount, claim?.amount, getAccessToken]);
 
-  // Two-way "claim to wallet / claim to bank" layout — only once the recipient already has a
-  // default Naira payout account set up (i.e. has done this before). Being in Nigeria by IP or
-  // merely PAJ-linked with no bank account saved yet does NOT count on its own — those recipients
-  // get the small discovery link below instead, since "Claim to bank" here would otherwise imply
-  // they already have Naira payouts configured when they don't.
-  const showBankClaimOption = previewOverride?.showBankClaimOption ?? (PAJ_CASH_ENABLED && isRecipient && !!pajDefaultBankAccount);
+  // Two-way "claim to wallet / claim to bank" layout — shown once the recipient already has a
+  // default Naira payout account set up (i.e. has done this before), OR they're in Nigeria by IP
+  // (pajNigeria) even without one yet, so first-time Nigerian claimers see the bank option as a
+  // real button instead of a buried text link. "Claim to bank" already handles the no-account
+  // case itself (opens the setup dialog on click, see below) so no separate branch is needed here.
+  // Merely PAJ-linked-from-elsewhere with no bank account and no NG IP still falls back to the
+  // small discovery link, since showing a full "Claim to bank" button to a non-Nigerian who has
+  // no path to pass PAJ's BVN/NIN KYC would just be a dead end dressed up as a primary option.
+  const showBankClaimOption = previewOverride?.showBankClaimOption ?? (PAJ_CASH_ENABLED && isRecipient && (!!pajDefaultBankAccount || pajNigeria));
   // Once the recipient picks "Claim to wallet", drop into the original public/private choice —
   // "Claim to bank" no longer shows alongside it, matching the pre-bank-option flow exactly.
   const [walletClaimChosen, setWalletClaimChosen] = useState(false);
