@@ -55,6 +55,39 @@ const ACCENT = "#FF7A2A";
 const MAGICBLOCK_VOLUME_FEE_BPS = 10;
 const MAGICBLOCK_GAS_SOL = 0.002;
 
+// Raw screenshots (especially high-DPI Android phones) routinely land in the 4-8MB range, which
+// exceeds the ~4.5MB Vercel serverless function body limit before /api/giveaways/upload-proof's
+// own handler even runs — resulting in an opaque failure with no useful message. Compress in the
+// browser first so users never have to think about file size at all; the server (sharp) still
+// re-compresses on top of this as a safety net for whatever we send it.
+const PROOF_MAX_DIMENSION = 1600;
+const PROOF_JPEG_QUALITY = 0.7;
+// Sanity cap on what we'll even attempt to decode client-side — guards against a multi-hundred-MB
+// file hanging a weak/low-memory phone browser. Any normal screenshot or photo is far under this.
+const PROOF_MAX_SOURCE_SIZE = 30 * 1024 * 1024;
+
+async function compressProofImage(file: File): Promise<File> {
+  if (!file.type.startsWith("image/") || file.type === "image/svg+xml") return file;
+  if (file.size > PROOF_MAX_SOURCE_SIZE) return file; // let the server reject it with a clear message
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, PROOF_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+    const width = Math.round(bitmap.width * scale);
+    const height = Math.round(bitmap.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", PROOF_JPEG_QUALITY));
+    if (!blob) return file;
+    return new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
+  } catch {
+    return file; // decoding failed (e.g. unsupported format) — fall back to the original, server decides
+  }
+}
+
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",
   PENDING_APPROVAL: "Pending review",
@@ -335,15 +368,16 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const uploadTaskProof = useCallback(async (taskId: string, file: File) => {
     setUploadingTaskProof((prev) => ({ ...prev, [taskId]: true }));
     try {
+      const compressed = await compressProofImage(file);
       const form = new FormData();
-      form.append("file", file);
+      form.append("file", compressed);
       const res = await fetch("/api/giveaways/upload-proof", {
         method: "POST",
         headers: await authHeaders(getAccessToken),
         body: form,
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || "Failed to upload image");
+      if (!res.ok) throw new Error(body?.error || (res.status === 413 ? "Image too large, try a different screenshot" : "Failed to upload image"));
       setTaskProofImageUrl((prev) => ({ ...prev, [taskId]: body.proof_url }));
     } catch (err: any) {
       toast({ variant: "destructive", title: "Could not upload screenshot", description: err.message });
