@@ -552,19 +552,23 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
         <div className="max-w-lg mx-auto px-4 py-6 pb-24">
           <div className="flex items-center justify-between gap-2 mb-3">
             <div className="flex items-center gap-1.5 min-w-0">
-              {giveaway.is_official ? (
+              {/* Official badge and a custom project logo/name are shown together, not one
+                  instead of the other — an official ("create as Loofta") giveaway still carries
+                  the Loofta brand even when the admin also set a project logo. */}
+              {giveaway.is_official && (
                 <>
                   <Image src="/loofta_icon_magic.png" alt="" width={16} height={16} className="rounded-full shrink-0" />
                   <span className="text-sm font-medium text-slate-400 truncate">Loofta</span>
                 </>
-              ) : (giveaway.logo_url || giveaway.project_name) ? (
+              )}
+              {(giveaway.logo_url || giveaway.project_name) && (
                 <>
                   {giveaway.logo_url && (
                     <Image src={giveaway.logo_url} alt="" width={16} height={16} className="rounded-full object-cover shrink-0" />
                   )}
                   {giveaway.project_name && <span className="text-sm font-medium text-slate-400 truncate">{giveaway.project_name}</span>}
                 </>
-              ) : null}
+              )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${statusColor(giveaway.status)}`}>
@@ -1016,6 +1020,10 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             </p>
           )}
 
+          <p className="text-base text-slate-500 mb-3">
+            Winners will have 30 days to claim their payment once announced.
+          </p>
+
           {!authenticated ? (
             // Every giveaway requires a linked X account to enter (see eligibility text above) —
             // sign in with X directly instead of offering methods that would just dead-end at a
@@ -1042,7 +1050,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
           ) : myEntry?.status === "winner" && myEntry.claim_payment_id ? (
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
               <p className="font-semibold text-lg mb-1 text-emerald-400">You won!</p>
-              <p className="text-base text-slate-300 mb-3">Claim your prize below — you can choose to claim it publicly or privately.</p>
+              <p className="text-base text-slate-300 mb-3">Claim your prize below — you can choose to claim it publicly or privately. You have 30 days to claim it.</p>
               <GradientActionButton onClick={() => router.push(`/c/${myEntry.claim_payment_id}`)}>
                 Claim your prize
               </GradientActionButton>
