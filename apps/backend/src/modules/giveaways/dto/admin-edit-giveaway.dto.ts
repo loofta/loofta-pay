@@ -1,4 +1,4 @@
-import { IsArray, IsInt, IsISO8601, IsObject, IsOptional, IsString, Min, MaxLength, ValidateNested } from 'class-validator';
+import { IsArray, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUrl, Min, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { CreateGiveawayTaskDto } from './create-giveaway.dto';
@@ -37,6 +37,12 @@ export class AdminEditGiveawayDto {
   @IsString()
   @MaxLength(2000)
   description?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUrl({ require_tld: false })
+  @MaxLength(500)
+  logo_url?: string;
 
   @ApiPropertyOptional({ description: 'ISO 8601 timestamp entries close at.' })
   @IsOptional()

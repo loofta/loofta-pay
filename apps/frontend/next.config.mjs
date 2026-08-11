@@ -17,6 +17,7 @@ const nextConfig = {
     '@walletconnect/core',
     '@walletconnect/ethereum-provider',
     '@supabase/supabase-js',
+    'sharp',
   ],
   experimental: {
     // Tree-shake large icon/UI packages so only used exports are bundled

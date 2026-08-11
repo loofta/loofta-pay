@@ -115,6 +115,11 @@ function taskTargetHref(target: string, taskType: string): string {
  *  body text, colored with the app's accent instead of a bordered pill. */
 const taskLinkClass = "block text-base font-normal mt-2 truncate hover:underline underline-offset-2 transition-opacity hover:opacity-80";
 
+// Same translucent-white style as the "Connect X" / "Connect Telegram" buttons on the /c/[id]
+// claim page, used for every task-verification action so it doesn't compete visually with the
+// accent-colored prize amounts and links on this page.
+const taskActionButtonClass = "rounded-lg bg-white/10 text-white text-base font-semibold hover:bg-white/20 transition-colors disabled:opacity-40 disabled:hover:bg-white/10";
+
 type PublicTask = { id: string; task_type: string; config: { target?: string; comment_requirement?: string; instructions?: string; title?: string }; order_index: number; verification_mode: string };
 type TaskDisplayGroup = { kind: "engage"; target: string; tasks: PublicTask[] } | { kind: "single"; task: PublicTask };
 
@@ -183,6 +188,12 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [downloadingImage, setDownloadingImage] = useState(false);
   const [showProofModal, setShowProofModal] = useState(false);
+
+  // Proof-of-completion inputs for require_proof tasks, keyed by task id — a link/text field plus
+  // an uploaded (server-compressed) screenshot, either of which is enough to submit.
+  const [taskProofText, setTaskProofText] = useState<Record<string, string>>({});
+  const [taskProofImageUrl, setTaskProofImageUrl] = useState<Record<string, string>>({});
+  const [uploadingTaskProof, setUploadingTaskProof] = useState<Record<string, boolean>>({});
 
   // Funding — "Pay now" mirrors the app's existing send-payment/multi-send pattern instead of
   // asking the creator to copy a raw address into another wallet. Lives here (not on /manage) so
@@ -306,20 +317,44 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     }
   }, [resolvedId, getAccessToken, toast, refetchEntry, giveaway]);
 
-  const submitTask = useCallback(async (taskId: string, submissionText: string): Promise<string | undefined> => {
+  const submitTask = useCallback(async (taskId: string, submission: { text?: string; proofImageUrl?: string }): Promise<string | undefined> => {
+    const submission_data =
+      submission.text || submission.proofImageUrl
+        ? { proof: submission.text || undefined, proof_image_url: submission.proofImageUrl || undefined }
+        : undefined;
     const res = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}/tasks/${taskId}/submit`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(await authHeaders(getAccessToken)) },
-      body: JSON.stringify({ submission_data: submissionText ? { proof: submissionText } : undefined }),
+      body: JSON.stringify({ submission_data }),
     });
     const body = await res.json().catch(() => null);
     if (!res.ok) throw new Error(body?.message || "Failed to submit task");
     return body?.completion?.verification_status;
   }, [resolvedId, getAccessToken]);
 
-  const markTaskDone = useCallback(async (taskId: string, submissionText: string) => {
+  const uploadTaskProof = useCallback(async (taskId: string, file: File) => {
+    setUploadingTaskProof((prev) => ({ ...prev, [taskId]: true }));
     try {
-      const status = await submitTask(taskId, submissionText);
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/giveaways/upload-proof", {
+        method: "POST",
+        headers: await authHeaders(getAccessToken),
+        body: form,
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || "Failed to upload image");
+      setTaskProofImageUrl((prev) => ({ ...prev, [taskId]: body.proof_url }));
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Could not upload screenshot", description: err.message });
+    } finally {
+      setUploadingTaskProof((prev) => ({ ...prev, [taskId]: false }));
+    }
+  }, [toast, getAccessToken]);
+
+  const markTaskDone = useCallback(async (taskId: string, submission: { text?: string; proofImageUrl?: string } = {}) => {
+    try {
+      const status = await submitTask(taskId, submission);
       // X tasks (retweet/like/follow/comment) verify instantly against the live X API — give
       // accurate feedback right away instead of a generic "marked done" that implies it's still pending.
       if (status === "auto_verified" || status === "verified") {
@@ -341,7 +376,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   // for real against the live X API.
   const verifyEngageGroup = useCallback(async (taskIds: string[]) => {
     try {
-      const results = await Promise.all(taskIds.map((taskId) => submitTask(taskId, "")));
+      const results = await Promise.all(taskIds.map((taskId) => submitTask(taskId, {})));
       const allVerified = results.every((s) => s === "auto_verified" || s === "verified");
       const anyRejected = results.some((s) => s === "rejected");
       if (allVerified) {
@@ -839,7 +874,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                                 <button
                                   type="button"
                                   onClick={() => verifyEngageGroup(groupTaskIds)}
-                                  className="shrink-0 text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
+                                  className={`shrink-0 px-4 py-2.5 ${taskActionButtonClass}`}
                                 >
                                   Try again
                                 </button>
@@ -851,7 +886,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                             <button
                               type="button"
                               onClick={() => verifyEngageGroup(groupTaskIds)}
-                              className="w-full text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
+                              className={`w-full px-4 py-2.5 ${taskActionButtonClass}`}
                             >
                               Verify
                             </button>
@@ -892,38 +927,81 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                         {task.config.comment_requirement || task.config.instructions}
                       </p>
                     )}
-                    {myEntry && (
-                      <div className="mt-3">
-                        {verified ? (
-                          <span className="inline-flex items-center gap-1 text-base font-medium text-emerald-400"><Check className="w-3.5 h-3.5" /> Verified</span>
-                        ) : rejected ? (
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-base font-medium text-red-400">Rejected</span>
-                            {!giveawayEnded && (
+                    {myEntry && (() => {
+                      const requiresProof = !!task.config?.require_proof && task.verification_mode !== "auto_api";
+                      const proofText = taskProofText[task.id] ?? "";
+                      const proofImageUrl = taskProofImageUrl[task.id];
+                      const uploadingProof = !!uploadingTaskProof[task.id];
+                      const canSubmitProof = !!(proofText.trim() || proofImageUrl);
+                      return (
+                        <div className="mt-3">
+                          {verified ? (
+                            <span className="inline-flex items-center gap-1 text-base font-medium text-emerald-400"><Check className="w-3.5 h-3.5" /> Verified</span>
+                          ) : completion?.submission_data && !rejected ? (
+                            <span className="text-base font-medium text-amber-400">Pending review</span>
+                          ) : giveawayEnded ? (
+                            <span className="text-base font-medium text-slate-500">Giveaway ended, can no longer be verified</span>
+                          ) : requiresProof ? (
+                            <div className="space-y-2">
+                              {rejected && <p className="text-base font-medium text-red-400">Rejected — submit new proof to try again</p>}
+                              <input
+                                type="text"
+                                value={proofText}
+                                onChange={(e) => setTaskProofText((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                                placeholder="Link to your proof (optional if you upload a screenshot)"
+                                className="w-full text-base rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-white placeholder:text-slate-500 focus:outline-none focus:border-[#FF7A2A]/40"
+                              />
+                              <div className="flex items-center gap-3">
+                                <label className="cursor-pointer text-base font-medium border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all rounded-lg px-3 py-2">
+                                  {uploadingProof ? "Uploading…" : proofImageUrl ? "Change screenshot" : "Upload screenshot"}
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    disabled={uploadingProof}
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) uploadTaskProof(task.id, file);
+                                      e.target.value = "";
+                                    }}
+                                  />
+                                </label>
+                                {proofImageUrl && (
+                                  <Image src={proofImageUrl} alt="" width={36} height={36} className="rounded-lg object-cover border border-white/10 shrink-0" />
+                                )}
+                              </div>
                               <button
                                 type="button"
-                                onClick={() => markTaskDone(task.id, "")}
+                                disabled={!canSubmitProof || uploadingProof}
+                                onClick={() => markTaskDone(task.id, { text: proofText.trim(), proofImageUrl })}
+                                className={`w-full px-4 py-2.5 ${taskActionButtonClass}`}
+                              >
+                                Submit for review
+                              </button>
+                            </div>
+                          ) : rejected ? (
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-base font-medium text-red-400">Rejected</span>
+                              <button
+                                type="button"
+                                onClick={() => markTaskDone(task.id)}
                                 className="shrink-0 text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
                               >
                                 Try again
                               </button>
-                            )}
-                          </div>
-                        ) : completion?.submission_data ? (
-                          <span className="text-base font-medium text-amber-400">Pending review</span>
-                        ) : giveawayEnded ? (
-                          <span className="text-base font-medium text-slate-500">Giveaway ended, can no longer be verified</span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => markTaskDone(task.id, "")}
-                            className="w-full text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
-                          >
-                            {task.verification_mode === "auto_api" ? "Verify" : "Mark done"}
-                          </button>
-                        )}
-                      </div>
-                    )}
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => markTaskDone(task.id)}
+                              className="w-full text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
+                            >
+                              {task.verification_mode === "auto_api" ? "Verify" : "Mark done"}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}

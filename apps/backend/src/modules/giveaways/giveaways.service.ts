@@ -195,16 +195,43 @@ export class GiveawaysService {
     return giveaway as Giveaway;
   }
 
-  /** Creator self-service edit — full rewrite of the same shape create() accepts, only while
-   *  still PENDING_APPROVAL. Nothing has happened yet at that point (no admin review, no burner,
-   *  no money), so unlike the admin edit (post-approval, deliberately narrow) this can safely
-   *  touch every field including prize/winner-count/tasks. Once approved, this endpoint refuses —
-   *  from there it's the admin edit (narrow) or support (everything else). */
-  async updateBeforeApproval(id: string, userId: string, dto: CreateGiveawayDto): Promise<Giveaway> {
+  /** Creator self-service edit — full rewrite of the same shape create() accepts, any time before
+   *  the giveaway is actually FUNDED (DRAFT, PENDING_APPROVAL, or PENDING_FUNDING). Unlike the
+   *  admin edit (post-approval, deliberately narrow) this can touch every field including
+   *  prize/winner-count/tasks, since no money has moved yet at any of these statuses — but once
+   *  PENDING_FUNDING, "no money has moved" has to be checked live, not assumed: a deposit can land
+   *  mid-edit. If anything has already landed in the burner, prize_amount_usd/winner_count/
+   *  selection_mode (the fields that drive funding_required_usd) are frozen — changing the target
+   *  out from under a partial depositor risks the funding cron flipping OPEN against a stale
+   *  threshold (see checkAndUpdateFundingStatus's own optimistic-concurrency guard for the other
+   *  half of this race). Title/description/tasks/eligibility/entries_close_at stay editable
+   *  regardless. Once FUNDED, this endpoint refuses entirely — from there it's the admin edit
+   *  (narrow) or support (everything else). */
+  async updateBeforeFunded(id: string, userId: string, dto: CreateGiveawayDto): Promise<Giveaway> {
     const giveaway = await this.findOneOrThrow(id);
     if (giveaway.created_by !== userId) throw new ForbiddenException('Not your giveaway');
-    if (giveaway.status !== GiveawayStatus.PENDING_APPROVAL) {
-      throw new BadRequestException(`Cannot edit — giveaway is ${giveaway.status}, not pending approval`);
+    if (
+      giveaway.status !== GiveawayStatus.DRAFT &&
+      giveaway.status !== GiveawayStatus.PENDING_APPROVAL &&
+      giveaway.status !== GiveawayStatus.PENDING_FUNDING
+    ) {
+      throw new BadRequestException(`Cannot edit — giveaway is ${giveaway.status}, already funded or beyond`);
+    }
+
+    if (giveaway.status === GiveawayStatus.PENDING_FUNDING) {
+      // Re-check on-chain rather than trusting the DB's (possibly stale) confirmed amount — same
+      // pattern as cancelOrDelete's PENDING_FUNDING branch.
+      const { fundingConfirmedUsd } = await this.fundingService.checkAndUpdateFundingStatus(giveaway);
+      const moneyShapeChanged =
+        Number(giveaway.prize_amount_usd) !== dto.prize_amount_usd ||
+        giveaway.winner_count !== dto.winner_count ||
+        giveaway.selection_mode !== dto.selection_mode;
+      if (fundingConfirmedUsd > 0 && moneyShapeChanged) {
+        throw new BadRequestException(
+          'Funds have already started arriving for this giveaway, so the prize amount, winner count, and ' +
+          'selection mode can no longer be changed. Contact support if you need to change them: hello@loofta.xyz or t.me/looftapay.',
+        );
+      }
     }
 
     const closeAt = new Date(dto.entries_close_at);
@@ -235,7 +262,7 @@ export class GiveawaysService {
     if (error || !data) throw new BadRequestException(`Failed to update giveaway: ${error?.message ?? 'unknown error'}`);
 
     // Replace tasks wholesale — simplest correct approach given no entries/completions can exist
-    // yet for a giveaway still awaiting its first admin review.
+    // yet for a giveaway that hasn't reached OPEN (entries only start once OPEN).
     const { error: deleteError } = await this.supabaseService.giveawayTasks.delete().eq('giveaway_id', id);
     if (deleteError) throw new BadRequestException(`Failed to update tasks: ${deleteError.message}`);
     const taskRows = dto.tasks.map((t, index) => ({
@@ -248,7 +275,7 @@ export class GiveawaysService {
     const { error: tasksError } = await this.supabaseService.giveawayTasks.insert(taskRows);
     if (tasksError) throw new BadRequestException(`Failed to update giveaway tasks: ${tasksError.message}`);
 
-    await this.logEvent(id, 'edited_before_approval', { by: userId });
+    await this.logEvent(id, 'edited', { by: userId, status: giveaway.status });
     return data as Giveaway;
   }
 
@@ -424,6 +451,7 @@ export class GiveawaysService {
     const update: Record<string, unknown> = {};
     if (dto.title !== undefined) update.title = dto.title;
     if (dto.description !== undefined) update.description = dto.description;
+    if (dto.logo_url !== undefined) update.logo_url = dto.logo_url;
     if (dto.entries_close_at !== undefined) {
       const closeAt = new Date(dto.entries_close_at);
       if (Number.isNaN(closeAt.getTime())) throw new BadRequestException('entries_close_at must be a valid date');
