@@ -203,8 +203,12 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: [0.25, 0.46, 0.45, 0.94] }}
       >
-        {/* Mainnet warning */}
-        {networkMode === 'mainnet' && (
+        {/* Mainnet warning — only when THIS request is actually devnet-only (integrator-level
+            flag, stored per-row at creation time), not just because the viewer's wallet happens
+            to be in mainnet mode. Previously fired for every mainnet-mode viewer regardless of
+            the request's real cluster, so it kept showing even after the bot's integrator was
+            flipped to mainnet. */}
+        {request.is_devnet && networkMode === 'mainnet' && (
           <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
             <div className="flex items-center gap-2">
               <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
@@ -280,7 +284,7 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
                     <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
                     <p className="text-sm text-emerald-300">Payment created — finish sending it</p>
                   </div>
-                  <GradientActionButton onClick={handleSend} loading={sending} loadingText="Loading payment…" disabled={networkMode === 'mainnet'}>
+                  <GradientActionButton onClick={handleSend} loading={sending} loadingText="Loading payment…" disabled={request.is_devnet && networkMode === 'mainnet'}>
                     Proceed to payment <ArrowRight className="h-4 w-4" />
                   </GradientActionButton>
                 </div>
@@ -333,7 +337,7 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
                     <p className="text-sm text-emerald-300">Logged in as @{linkedHandle}</p>
                   </div>
                   <IncognitoModeToggle checked={isPrivateMode} onCheckedChange={setIsPrivateMode} />
-                  <GradientActionButton onClick={handleSend} loading={sending} loadingText="Setting up payment…" disabled={networkMode === 'mainnet'}>
+                  <GradientActionButton onClick={handleSend} loading={sending} loadingText="Setting up payment…" disabled={request.is_devnet && networkMode === 'mainnet'}>
                     Send {amountDisplay} to @{request.recipient_twitter}
                   </GradientActionButton>
                 </div>
