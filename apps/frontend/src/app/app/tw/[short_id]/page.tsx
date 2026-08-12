@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import { usePrivy, useLinkAccount } from '@privy-io/react-auth'
 import { useAuthStore } from '@/store/auth'
 import { motion } from 'framer-motion'
-import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight, Mail } from 'lucide-react'
+import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight, Mail, Ticket } from 'lucide-react'
 import { GradientActionButton } from '@/components/ui/GradientActionButton'
 import { IncognitoModeToggle } from '@/components/IncognitoModeToggle'
 import confetti from 'canvas-confetti'
@@ -33,6 +33,20 @@ interface TwitterPaymentRequest {
   expires_at: string
 }
 
+interface TwitterTicketGiftRequest {
+  short_id: string
+  sender_twitter: string
+  recipient_twitter: string
+  num_tickets: number
+  is_devnet: boolean
+  delivered_instantly: boolean
+  created_at: string
+}
+
+type TwitterShortLink =
+  | { type: 'payment'; data: TwitterPaymentRequest }
+  | { type: 'ticket_gift'; data: TwitterTicketGiftRequest }
+
 function getLinkedTwitterHandle(user: ReturnType<typeof usePrivy>['user']): string | null {
   const account = user?.linkedAccounts?.find((a: any) =>
     ['twitter_oauth', 'twitter_oauth2', 'twitter', 'x'].includes((a.type ?? '').toLowerCase()),
@@ -56,14 +70,18 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
 
   const hasEmail = user?.linkedAccounts?.some((a: any) => a.type === 'email' || a.type === 'google' || a.type === 'apple')
 
-  const { data: request, isLoading } = useQuery<TwitterPaymentRequest>({
-    queryKey: ['twitter-payment', short_id],
+  const { data: link, isLoading } = useQuery<TwitterShortLink | null>({
+    queryKey: ['twitter-short-link', short_id],
     queryFn: async () => {
-      const res = await fetch(`/api/twitter-payments/${short_id}`)
-      if (!res.ok) throw new Error('Not found')
-      return res.json()
+      const paymentRes = await fetch(`/api/twitter-payments/${short_id}`)
+      if (paymentRes.ok) return { type: 'payment', data: await paymentRes.json() }
+      const giftRes = await fetch(`/api/twitter-ticket-gifts/${short_id}`)
+      if (giftRes.ok) return { type: 'ticket_gift', data: await giftRes.json() }
+      return null
     },
   })
+  const request = link?.type === 'payment' ? link.data : undefined
+  const ticketGift = link?.type === 'ticket_gift' ? link.data : undefined
 
   const linkedHandle = getLinkedTwitterHandle(user)
   const isSender = !!linkedHandle && linkedHandle === request?.sender_twitter
@@ -122,14 +140,59 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
     )
   }
 
-  if (!request) {
+  if (!link) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3 px-6 text-center">
         <p className="text-white font-semibold text-lg">Link not found</p>
-        <p className="text-white/40 text-base">This payment link may have expired or been cancelled.</p>
+        <p className="text-white/40 text-base">This link may have expired or been cancelled.</p>
         <Link href="/" className="text-base text-white/50 hover:text-white underline underline-offset-2 mt-2">Go to Loofta Pay</Link>
       </div>
     )
+  }
+
+  // ── Ticket gift — only ever the instant-delivery case (unregistered recipients get the
+  // existing lottery gift claim page directly from the bot's reply, not this route). ──
+  if (ticketGift) {
+    return (
+      <div className="flex flex-col items-center px-4 pt-6 pb-16 min-h-[calc(100vh-64px)]">
+        <motion.div
+          className="w-full max-w-sm space-y-4"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: [0.25, 0.46, 0.45, 0.94] }}
+        >
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.03] overflow-hidden">
+            <div className="flex items-center justify-center gap-2 border-b border-white/[0.06] px-5 py-4">
+              <Ticket className="h-4 w-4 text-emerald-400" />
+              <span className="text-base font-semibold text-white">Tickets gifted</span>
+            </div>
+            <div className="flex flex-col items-center gap-2 px-6 py-7">
+              <span className="text-xl font-bold text-white">@{ticketGift.sender_twitter}</span>
+              <div className="flex flex-col items-center gap-1.5 py-2">
+                <ArrowDown className="h-4 w-4 text-emerald-500/40" />
+                <Ticket className="h-10 w-10 text-emerald-400" />
+                <span className="text-5xl font-bold tracking-tight text-emerald-400">{ticketGift.num_tickets}</span>
+                <span className="text-sm text-white/30 font-medium tracking-widest uppercase">
+                  {ticketGift.num_tickets === 1 ? 'lottery ticket' : 'lottery tickets'}
+                </span>
+                <ArrowDown className="h-4 w-4 text-emerald-500/40" />
+              </div>
+              <span className="text-xl font-bold text-white">@{ticketGift.recipient_twitter}</span>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-5 py-5 space-y-4">
+            <GradientActionButton onClick={() => router.push('/app/megapot?tab=history')}>
+              View my tickets <ArrowRight className="h-4 w-4" />
+            </GradientActionButton>
+          </div>
+        </motion.div>
+      </div>
+    )
+  }
+
+  if (!request) {
+    return null
   }
 
   return (

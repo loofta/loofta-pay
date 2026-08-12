@@ -60,3 +60,58 @@ export function parseTweet(
 
   return { senderHandle: sender, recipientHandle: recipient, amountUsd: amount }
 }
+
+export interface ParsedTicketGift {
+  senderHandle: string
+  recipientHandle: string
+  numTickets: number
+}
+
+/**
+ * Matches "@looftapay gift N ticket(s) to @handle" / "@looftapay send N tickets to @handle".
+ * Deliberately distinct from the payment regex — the required literal "ticket(s)" between the
+ * number and "to" means a tweet can only ever match one of the two commands, never both, so
+ * callers can safely try payment first then this one with no ambiguity.
+ *
+ *   @looftapay gift 3 tickets to @alice   ✓
+ *   @looftapay send 1 ticket to @bob      ✓
+ *   @looftapay send $5 to @alice          ✗ (matches the payment command instead)
+ *
+ * 1–100 tickets per gift, same cap as the underlying admin-gift endpoint.
+ */
+function buildTicketGiftRe(botHandle: string): RegExp {
+  const escaped = botHandle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(
+    `@${escaped}\\s+(?:gift|send)\\s+([\\d]+)\\s+tickets?\\s+to\\s+@([a-zA-Z0-9_]{1,50})`,
+    'i',
+  )
+}
+
+export function parseTicketGift(
+  tweetText: string,
+  authorHandle: string,
+): ParsedTicketGift | null {
+  const botHandle = (process.env.TWITTER_BOT_HANDLE ?? 'looftapay').toLowerCase()
+  const TICKET_RE = buildTicketGiftRe(botHandle)
+  const match = TICKET_RE.exec(tweetText)
+  if (!match) return null
+
+  const numTickets = parseInt(match[1], 10)
+  if (isNaN(numTickets) || numTickets < 1 || numTickets > 100) return null
+
+  const recipient = match[2].toLowerCase()
+  const sender = authorHandle.replace(/^@/, '').toLowerCase()
+
+  if (recipient === sender) return null
+  if (recipient === botHandle) return null
+
+  const extra = tweetText
+    .replace(match[0], '')
+    .replace(/@\w+/g, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .trim()
+  const extraWords = extra.split(/\s+/).filter(w => w.length >= 3)
+  if (extraWords.length > 4) return null
+
+  return { senderHandle: sender, recipientHandle: recipient, numTickets }
+}

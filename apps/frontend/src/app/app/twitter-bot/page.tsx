@@ -232,11 +232,15 @@ export default function TwitterBotPage() {
               </GradientActionButton>
             ) : (
               // Not admin — everything above still renders normally, only the enable action
-              // itself is replaced. Access is limited while this rolls out, not the visibility
-              // of the settings.
+              // itself is replaced. Framed as "you need to request access" rather than "this is
+              // admin-only" — same underlying gate, but the copy shouldn't sound like a locked
+              // door. Also: this isn't just auto-pay specifically, it's the whole bot — an
+              // unenrolled handle gets no reply from @looftapay at all (TwitterPaymentsService
+              // and TwitterTicketGiftsService both gate on enrollment), so say "the bot," not
+              // "auto-pay."
               <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-5 py-5 space-y-3 text-center">
                 <p className="text-lg text-slate-300">
-                  Auto-pay is limited to admins while we roll it out. Request access and we&apos;ll get you set up.
+                  To use the Twitter bot, request access first and we&apos;ll get you set up.
                 </p>
                 <div className="flex items-center justify-center gap-5 text-lg">
                   <a href="https://t.me/looftapay" target="_blank" rel="noreferrer" className="text-white/60 hover:text-white underline underline-offset-2">

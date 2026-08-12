@@ -4,7 +4,7 @@ import { resolve } from 'path'
 config({ path: resolve(__dirname, '..', '.env.local') })
 
 import { TwitterApi, type TweetV2 } from 'twitter-api-v2'
-import { parseTweet } from './parser'
+import { parseTweet, parseTicketGift } from './parser'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 function required(name: string): string {
@@ -69,11 +69,47 @@ async function createPaymentRequest(params: {
   }
 }
 
+async function createTicketGiftRequest(params: {
+  sender_twitter: string
+  recipient_twitter: string
+  num_tickets: number
+  tweet_id: string
+  tweet_url: string
+}): Promise<{ short_id: string; link: string; already_exists?: boolean; delivered_instantly?: boolean } | null> {
+  try {
+    const res = await fetch(`${LOOFTA_API_URL}/twitter-ticket-gifts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${LOOFTA_INTEGRATOR_API_KEY}`,
+      },
+      body: JSON.stringify(params),
+    })
+    if (!res.ok) {
+      const body = await res.text()
+      console.error(`[loofta] create ticket gift failed ${res.status}: ${body}`)
+      return null
+    }
+    return res.json()
+  } catch (err) {
+    console.error('[loofta] network error creating ticket gift:', err)
+    return null
+  }
+}
+
 // ─── Process a single mention tweet ──────────────────────────────────────────
 async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void> {
+  const tweetUrl = `https://x.com/${authorHandle}/status/${tweet.id}`
+
+  const ticketGift = parseTicketGift(tweet.text, authorHandle)
+  if (ticketGift) {
+    await processTicketGiftTweet(tweet, ticketGift, tweetUrl)
+    return
+  }
+
   const parsed = parseTweet(tweet.text, authorHandle)
   if (!parsed) {
-    console.log(`[bot] skipped tweet ${tweet.id} — no payment pattern matched`)
+    console.log(`[bot] skipped tweet ${tweet.id} — no payment or ticket-gift pattern matched`)
     return
   }
 
@@ -81,7 +117,6 @@ async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void>
     `[bot] matched: @${parsed.senderHandle} → $${parsed.amountUsd} → @${parsed.recipientHandle} (tweet ${tweet.id})`,
   )
 
-  const tweetUrl = `https://x.com/${authorHandle}/status/${tweet.id}`
   const payment = await createPaymentRequest({
     sender_twitter: parsed.senderHandle,
     recipient_twitter: parsed.recipientHandle,
@@ -113,6 +148,46 @@ async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void>
   try {
     await twitter.v2.reply(replyText, tweet.id)
     console.log(`[bot] replied to tweet ${tweet.id} with link ${payment.short_id}`)
+  } catch (err) {
+    console.error(`[bot] failed to reply to tweet ${tweet.id}:`, err)
+  }
+}
+
+async function processTicketGiftTweet(
+  tweet: TweetV2,
+  parsed: { senderHandle: string; recipientHandle: string; numTickets: number },
+  tweetUrl: string,
+): Promise<void> {
+  console.log(
+    `[bot] matched ticket gift: @${parsed.senderHandle} → ${parsed.numTickets} ticket(s) → @${parsed.recipientHandle} (tweet ${tweet.id})`,
+  )
+
+  const gift = await createTicketGiftRequest({
+    sender_twitter: parsed.senderHandle,
+    recipient_twitter: parsed.recipientHandle,
+    num_tickets: parsed.numTickets,
+    tweet_id: tweet.id,
+    tweet_url: tweetUrl,
+  })
+
+  if (!gift) {
+    console.error(`[bot] failed to create ticket gift for tweet ${tweet.id}`)
+    return
+  }
+
+  if (gift.already_exists) {
+    console.log(`[bot] tweet ${tweet.id} already processed — skipping reply`)
+    return
+  }
+
+  // gift.link is already the right destination either way — the backend picks between our
+  // own /tw/:short_id confirmation (instant delivery) and the existing lottery gift claim page
+  // (recipient not registered yet), see TwitterTicketGiftsService.create().
+  const replyText = composeTicketGiftReply(parsed.senderHandle, parsed.recipientHandle, parsed.numTickets, gift.link, !!gift.delivered_instantly)
+
+  try {
+    await twitter.v2.reply(replyText, tweet.id)
+    console.log(`[bot] replied to tweet ${tweet.id} with ticket gift link ${gift.short_id}`)
   } catch (err) {
     console.error(`[bot] failed to reply to tweet ${tweet.id}:`, err)
   }
@@ -168,6 +243,36 @@ function composeFundedReply(sender: string, recipient: string, amount: string, l
     (l: string) => ` ${l}`,
   ]
   return pick(openers)(sender, recipient, amount) + pick(closers)(link)
+}
+
+// Ticket gifts are always instant-or-claim, never "come back and confirm" — so this only ever
+// speaks in the past/imperative-done register, same principle as composeFundedReply.
+function composeTicketGiftReply(sender: string, recipient: string, numTickets: number, link: string, deliveredInstantly: boolean): string {
+  const ticketWord = numTickets === 1 ? 'ticket' : 'tickets'
+  if (deliveredInstantly) {
+    const openers = [
+      (s: string, r: string, n: number) => `sent @${r} ${n} lottery ${ticketWord} on @${s}'s behalf.`,
+      (s: string, r: string, n: number) => `@${r}, @${s} just gifted you ${n} ${ticketWord}.`,
+      (s: string, r: string, n: number) => `gifted ${n} ${ticketWord} to @${r}, from @${s}.`,
+      (s: string, r: string, n: number) => `done, @${r} just got ${n} ${ticketWord} courtesy of @${s}.`,
+    ]
+    const closers = [
+      (l: string) => `\nsee it here: ${l}`,
+      (l: string) => `\n${l}`,
+      (l: string) => ` ${l}`,
+    ]
+    return pick(openers)(sender, recipient, numTickets) + pick(closers)(link)
+  }
+  const openers = [
+    (s: string, r: string, n: number) => `@${s} gifted @${r} ${n} lottery ${ticketWord}.`,
+    (s: string, r: string, n: number) => `${n} ${ticketWord} waiting for @${r}, from @${s}.`,
+    (s: string, r: string, n: number) => `@${r}, @${s} sent you ${n} ${ticketWord} to claim.`,
+  ]
+  const closers = [
+    (l: string) => `\nclaim them here: ${l}`,
+    (l: string) => `\n${l}`,
+  ]
+  return pick(openers)(sender, recipient, numTickets) + pick(closers)(link)
 }
 
 // ─── Poll mentions ────────────────────────────────────────────────────────────

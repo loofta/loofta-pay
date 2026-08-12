@@ -24,34 +24,40 @@ const TELEGRAM_HREF = "https://t.me/looftaxyz";
 
 const PRODUCTS = [
   {
-    icon: "🎁",
-    title: "Gifts",
-    body: "Send a crypto gift with a claim link — no wallet address needed on either end. Drop it into any flow: a signup reward, a referral bonus, a thank-you.",
-  },
-  {
-    icon: "🔗",
-    title: "Payment links",
-    body: "One-off or recurring payment links your users can share and get paid on, across chains and tokens, without an account required from the payer.",
-  },
-  {
-    icon: "🪙",
-    title: "List your token",
-    body: "Bring your own SPL token onto the rail and let your community send it privately — Loofta shields the amount and counterparty the same way it does for USDC.",
-  },
-  {
-    icon: "📡",
-    title: "Airdrops to social handles",
-    body: "Drop tokens straight to an email, Discord, X, or Telegram handle — no wallet collection needed. Built on ZK compression, so airdropping to thousands of recipients stays cheap.",
+    icon: "🐦",
+    title: "Twitter bot",
+    body: "Tag @looftapay on X to send USDC or gift lottery tickets — no app switch, no wallet address. Enrolled accounts can even skip the confirm step entirely.",
+    cta: { label: "Get started", href: "https://pay.loofta.xyz/twitter-bot" },
   },
   {
     icon: "🎟️",
     title: "Giveaways",
     body: "Prize drops and jackpot-style giveaways for a community — built for the kind of viral, low-friction acquisition loop a rewards or referral program needs.",
+    cta: { label: "View giveaways", href: "https://pay.loofta.xyz/rewards/giveaways" },
+  },
+  {
+    icon: "🔗",
+    title: "Payment links",
+    body: "One-off payment links your users can share and get paid on, across chains and tokens, without an account required from the payer.",
+    cta: { label: "Create a link", href: "https://pay.loofta.xyz/app?tab=receive" },
+  },
+  {
+    icon: "🛠️",
+    title: "SDK",
+    body: "Drop-in TypeScript SDK to create payments, resolve identities, and go live inside your own product — for teams that want a code-level integration, not hosted checkout.",
+    cta: { label: "Talk to team", href: TELEGRAM_HREF },
+  },
+  {
+    icon: "📡",
+    title: "Airdrops to social handles",
+    body: "Drop tokens straight to an email, Discord, X, or Telegram handle — no wallet collection needed. Built on ZK compression, so airdropping to thousands of recipients stays cheap.",
+    cta: { label: "Talk to team", href: TELEGRAM_HREF },
   },
   {
     icon: "🧾",
     title: "Team payouts",
     body: "Scheduled payroll, recurring payments, and bulk contractor payouts across countries and payout methods, with compliance gating built in.",
+    cta: { label: "Try multi-send", href: "https://pay.loofta.xyz/app?tab=send" },
   },
 ];
 
@@ -138,10 +144,21 @@ export default function PartnersContent() {
             </p>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {PRODUCTS.map((p) => (
-                <div key={p.title} className={`rounded-[26px] border ${BORDER_LINE} ${BG_PAPER_2} p-7`}>
+                <div key={p.title} className={`flex flex-col rounded-[26px] border ${BORDER_LINE} ${BG_PAPER_2} p-7`}>
                   <div className="mb-3 text-[28px] leading-none">{p.icon}</div>
                   <h3 className={`font-display text-xl font-medium ${INK}`}>{p.title}</h3>
-                  <p className={`mt-2 font-grotesk text-lg leading-[1.6] ${INK_2}`}>{p.body}</p>
+                  <p className={`mt-2 flex-1 font-grotesk text-lg leading-[1.6] ${INK_2}`}>{p.body}</p>
+                  {p.cta && (
+                    <a
+                      href={p.cta.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`mt-6 inline-flex w-fit items-center gap-2 rounded-full px-6 py-3 font-display text-base font-medium text-white transition-all hover:opacity-90 active:scale-[0.98] ${BRAND_GRADIENT} ${BRAND_SHADOW}`}
+                    >
+                      {p.cta.label}
+                      <span className="text-white/70">→</span>
+                    </a>
+                  )}
                 </div>
               ))}
             </div>
