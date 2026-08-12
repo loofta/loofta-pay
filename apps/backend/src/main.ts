@@ -78,4 +78,11 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  // Without this, a thrown/rejected bootstrap() relies on Node's default unhandled-rejection
+  // handling to surface the error — which doesn't always print a clear message before exit,
+  // making a healthcheck failure look like a silent crash with no cause in the logs.
+  // eslint-disable-next-line no-console
+  console.error('Fatal error during backend bootstrap:', err);
+  process.exit(1);
+});
