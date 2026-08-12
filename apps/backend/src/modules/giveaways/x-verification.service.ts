@@ -43,6 +43,16 @@ const FETCH_CACHE_TTL_MS = 3 * 60 * 1000;
 // to re-check after growing their account, which is an edge case, not a functional regression.
 const PROFILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
+// Hard backstop, independent of any single code path being bug-free. Real cost incidents so far:
+// ~$3/67 entries (2026-08-06, the old always-on 2-min cron) and ~$19.60/day (2026-08-11, the
+// sweep-without-idempotency bug that redesign left behind — see giveaway-draw.service.ts). Two
+// logic bugs in one area in a week is a pattern, not a fluke — this caps worst-case daily spend
+// regardless of whatever the next bug turns out to be. Counts fetch *units* (one per getCachedIds
+// miss or resolveXProfile call), not raw HTTP calls, since a single unit can internally page/batch
+// — a deliberately conservative proxy, not an exact request count. Override via
+// GIVEAWAY_X_API_DAILY_CALL_CAP if legitimate traffic ever needs more.
+const DEFAULT_DAILY_CALL_CAP = 300;
+
 /**
  * Real X API v2 verification for X-based giveaway tasks, reusing the same OAuth1 user-context
  * credentials apps/twitter-bot already runs on (TWITTER_API_KEY/SECRET/ACCESS_TOKEN/ACCESS_SECRET)
@@ -59,14 +69,36 @@ export class XVerificationService {
   private client: TwitterApi | null = null;
   private readonly fetchCache = new Map<string, { ids: Set<string>; expiresAt: number }>();
   private readonly profileCache = new Map<string, { profile: XProfile; expiresAt: number }>();
+  private dailyCallCount = 0;
+  private dailyCallCountDate = '';
+  private readonly dailyCallCap: number;
 
-  /** Shared cache wrapper for every fetch*Ids helper below — see FETCH_CACHE_TTL_MS. */
+  /** Shared cache wrapper for every fetch*Ids helper below — see FETCH_CACHE_TTL_MS. Throws (into
+   *  verifyPendingCompletions' existing api_error path) rather than returning an empty set on cap
+   *  hit, so a capped-out fetch never gets misread as "nobody matched" and falsely rejects
+   *  genuine entrants. */
   private async getCachedIds(key: string, fetch: () => Promise<Set<string>>): Promise<Set<string>> {
     const cached = this.fetchCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.ids;
+    this.consumeDailyCapOrThrow(key);
     const ids = await fetch();
     this.fetchCache.set(key, { ids, expiresAt: Date.now() + FETCH_CACHE_TTL_MS });
     return ids;
+  }
+
+  /** Increments today's fetch-unit count and throws once DAILY_CALL_CAP is hit, resetting at UTC
+   *  midnight. See DEFAULT_DAILY_CALL_CAP's doc comment for why this exists. */
+  private consumeDailyCapOrThrow(context: string): void {
+    const today = new Date().toISOString().slice(0, 10);
+    if (today !== this.dailyCallCountDate) {
+      this.dailyCallCountDate = today;
+      this.dailyCallCount = 0;
+    }
+    if (this.dailyCallCount >= this.dailyCallCap) {
+      this.logger.error(`[XVerification] daily X API call cap (${this.dailyCallCap}) reached — refusing further calls today (blocked: ${context})`);
+      throw new Error(`X API daily call cap (${this.dailyCallCap}) reached`);
+    }
+    this.dailyCallCount++;
   }
 
   constructor(private readonly configService: ConfigService, private readonly supabaseService: SupabaseService) {
@@ -79,6 +111,7 @@ export class XVerificationService {
     } else {
       this.logger.warn('X API credentials not configured (TWITTER_API_KEY/SECRET/ACCESS_TOKEN/ACCESS_SECRET) — giveaway X verification disabled.');
     }
+    this.dailyCallCap = Number(this.configService.get<string>('GIVEAWAY_X_API_DAILY_CALL_CAP')) || DEFAULT_DAILY_CALL_CAP;
   }
 
   isAvailable(): boolean {
@@ -94,6 +127,7 @@ export class XVerificationService {
     const cached = this.profileCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.profile;
     try {
+      this.consumeDailyCapOrThrow(`resolveXProfile:${cleanHandle}`);
       const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics'] });
       if (!result.data) return null;
       const profile: XProfile = {
