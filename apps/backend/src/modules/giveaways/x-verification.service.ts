@@ -38,10 +38,10 @@ const FETCH_CACHE_TTL_MS = 3 * 60 * 1000;
 
 // resolveXProfile is called on every enter() attempt, including ones that fail eligibility (no DB
 // row gets created for those, so nothing else stops a rejected user from immediately retrying).
-// Eligibility data (follower count, account age) doesn't need to be real-time — a short cache
-// absorbs double-clicks and repeated retries by the same handle without changing behavior for a
-// genuine one-shot entry.
-const PROFILE_CACHE_TTL_MS = 5 * 60 * 1000;
+// Eligibility data (follower count, account age) doesn't move fast enough to need a fresh fetch on
+// every retry — Lisa: 24h is fine. Worst case a borderline follower-count entrant waits up to a day
+// to re-check after growing their account, which is an edge case, not a functional regression.
+const PROFILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Real X API v2 verification for X-based giveaway tasks, reusing the same OAuth1 user-context
