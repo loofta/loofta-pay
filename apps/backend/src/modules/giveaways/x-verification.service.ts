@@ -23,16 +23,25 @@ export interface XProfile {
  *  when hit, since a truncated list means some real completions could be missed. */
 const MAX_PAGINATED_USERS = 5_000;
 
-/** X API calls are metered/expensive (confirmed real cost, ~$3/67 entries on 2026-08-06), and
- *  verifyPendingCompletions is invoked from two independent paths — the 2-minute cron batch AND
- *  every entrant's inline "Verify"/"Try again" click. The cron (`giveaway-cron.service.ts`'s
- *  `verifyXTasks`, every 2 min) re-fetches the FULL retweeter/quote/liker list from scratch every
- *  single tick as long as anything is pending, with no awareness of whether the underlying data
- *  could plausibly have changed — this dominates cost, not the inline clicks. TTL is set just
- *  above the cron interval so most ticks reuse the same cached fetch instead of re-hitting X; the
- *  design was already "batched, not real-time" (see class doc below), so a few extra minutes of
- *  staleness costs nothing functionally. */
+/** X API calls are metered/expensive (confirmed real cost, ~$3/67 entries on 2026-08-06, and a
+ *  separate $19.60/day spike on 2026-08-11 traced to a giveaway stuck in ENTRIES_CLOSED re-running
+ *  the final sweep on every cron tick — see the run-once guard in
+ *  GiveawayDrawService.freezeSnapshotAndStartDrawing/hasSweptAlready).
+ *  verifyPendingCompletions is invoked from two independent paths — GiveawayEntriesService's
+ *  runFinalXVerificationSweep (now guarded to run exactly once per giveaway by the caller) AND
+ *  every entrant's inline "Verify"/"Try again" click (rate-limited per-entrant by
+ *  MAX_VERIFY_ATTEMPTS_PER_WINDOW in giveaway-entries.service.ts). This TTL is the last line of
+ *  defense against either path re-fetching the FULL retweeter/quote/liker/follower list from
+ *  scratch when nothing plausibly changed; the design is already "batched, not real-time" (see
+ *  class doc below), so a few extra minutes of staleness costs nothing functionally. */
 const FETCH_CACHE_TTL_MS = 3 * 60 * 1000;
+
+// resolveXProfile is called on every enter() attempt, including ones that fail eligibility (no DB
+// row gets created for those, so nothing else stops a rejected user from immediately retrying).
+// Eligibility data (follower count, account age) doesn't need to be real-time — a short cache
+// absorbs double-clicks and repeated retries by the same handle without changing behavior for a
+// genuine one-shot entry.
+const PROFILE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Real X API v2 verification for X-based giveaway tasks, reusing the same OAuth1 user-context
@@ -49,6 +58,7 @@ export class XVerificationService {
   private readonly logger = new Logger(XVerificationService.name);
   private client: TwitterApi | null = null;
   private readonly fetchCache = new Map<string, { ids: Set<string>; expiresAt: number }>();
+  private readonly profileCache = new Map<string, { profile: XProfile; expiresAt: number }>();
 
   /** Shared cache wrapper for every fetch*Ids helper below — see FETCH_CACHE_TTL_MS. */
   private async getCachedIds(key: string, fetch: () => Promise<Set<string>>): Promise<Set<string>> {
@@ -75,19 +85,25 @@ export class XVerificationService {
     return this.client !== null;
   }
 
-  /** Single cheap lookup — used at entry time for eligibility (follower count + account age), not part of the batched per-giveaway task verification below. */
+  /** Lookup used at entry time for eligibility (follower count + account age), not part of the
+   *  batched per-giveaway task verification below. Cached per-handle — see PROFILE_CACHE_TTL_MS. */
   async resolveXProfile(handle: string): Promise<XProfile | null> {
     if (!this.client) return null;
     const cleanHandle = handle.replace(/^@/, '').trim();
+    const cacheKey = cleanHandle.toLowerCase();
+    const cached = this.profileCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.profile;
     try {
       const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics'] });
       if (!result.data) return null;
-      return {
+      const profile: XProfile = {
         id: result.data.id,
         username: result.data.username,
         createdAt: result.data.created_at ?? new Date(0).toISOString(),
         followersCount: result.data.public_metrics?.followers_count ?? 0,
       };
+      this.profileCache.set(cacheKey, { profile, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
+      return profile;
     } catch (e) {
       this.logger.warn(`[XVerification] resolveXProfile(${cleanHandle}) failed: ${String(e)}`);
       return null;

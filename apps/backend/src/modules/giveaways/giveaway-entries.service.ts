@@ -363,15 +363,15 @@ export class GiveawayEntriesService {
     return byTask;
   }
 
-  /** Final catch-all X-verification pass, run exactly once per giveaway at its actual end date —
-   *  called from GiveawayDrawService right as entries close, before the eligibility snapshot
-   *  freezes. Replaces the old fixed-schedule cron (removed 2026-08-06, Lisa: "we don't have
-   *  budget to automatically do it, they need to click verify"): during the giveaway, verification
-   *  is click-only via submitTaskCompletion's inline path above. This sweep exists so an entrant
-   *  who genuinely did the X task but never clicked "Verify" in-app isn't unfairly excluded from
-   *  the draw — same cache-shared fetch as every other verification call (XVerificationService's
-   *  FETCH_CACHE_TTL_MS), so it costs at most one real X call per still-pending task, not per
-   *  entrant. */
+  /** Final catch-all X-verification pass, called from GiveawayDrawService while a giveaway sits in
+   *  ENTRIES_CLOSED with pending completions. Replaces the old fixed-schedule cron (removed
+   *  2026-08-06, Lisa: "we don't have budget to automatically do it, they need to click verify"):
+   *  during the giveaway, verification is click-only via submitTaskCompletion's inline path above.
+   *  This sweep exists so an entrant who genuinely did the X task but never clicked "Verify" in-app
+   *  isn't unfairly excluded from the draw. The caller (freezeSnapshotAndStartDrawing) guards this
+   *  to run exactly once per giveaway (via a 'final_sweep_ran' giveaway_event) — a giveaway can sit
+   *  in ENTRIES_CLOSED for a long time waiting on a human review queue, and without that guard this
+   *  would otherwise fire (and hit the real X API) on every single cron tick indefinitely. */
   async runFinalXVerificationSweep(giveaway: Giveaway): Promise<void> {
     if (!this.xVerification.isAvailable()) return;
     try {
