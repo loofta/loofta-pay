@@ -70,6 +70,7 @@
     "@jest/test-sequencer": "^29.7.0",
     "@nestjs/cli": "^10.4.0",
     "@nestjs/schematics": "^10.1.0",
+    "patch-package": "^8.0.1",
     "@nestjs/testing": "^10.4.0",
     "@swc/cli": "^0.5.2",
     "@swc/core": "^1.15.33",
