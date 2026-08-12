@@ -22,6 +22,7 @@ import { SendPaymentModule } from './modules/send-payment/send-payment.module';
 import { RewardsModule } from './modules/rewards/rewards.module';
 import { WaitlistModule } from './modules/waitlist/waitlist.module';
 import { TwitterPaymentsModule } from './modules/twitter-payments/twitter-payments.module';
+import { TwitterAutopayModule } from './modules/twitter-autopay/twitter-autopay.module';
 import { OfframpModule } from './modules/offramp/offramp.module';
 import { LotteryModule } from './modules/lottery/lottery.module';
 import { MagicblockQuestModule } from './modules/magicblock-quest/magicblock-quest.module';
@@ -85,6 +86,7 @@ import { MarketingModule } from './modules/marketing/marketing.module';
     RewardsModule,
     WaitlistModule,
     TwitterPaymentsModule,
+    TwitterAutopayModule,
     OfframpModule,
     LotteryModule,
     MagicblockQuestModule,

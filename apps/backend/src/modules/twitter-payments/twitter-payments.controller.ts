@@ -4,6 +4,7 @@ import {
   Get,
   Body,
   Param,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -14,6 +15,8 @@ import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { TwitterPaymentsService } from './twitter-payments.service';
 import { CreateTwitterPaymentDto } from './dto/create-twitter-payment.dto';
+import { FundTwitterPaymentDto } from './dto/fund-twitter-payment.dto';
+import type { AuthenticatedIntegrator } from '../integrators/integrators.service';
 
 @ApiTags('twitter-payments')
 @Controller('twitter-payments')
@@ -32,12 +35,13 @@ export class TwitterPaymentsController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @UseGuards(IntegratorGuard)
+  @UseGuards(IntegratorGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'twitter-payments:create', 'integrator')
   @ApiSecurity('integrator-key')
   @ApiOperation({ summary: 'Integrator (bot) creates a pending Twitter payment request' })
   @ApiResponse({ status: 201, description: '{ short_id, link }' })
-  async create(@Body() dto: CreateTwitterPaymentDto) {
-    return this.twitterPayments.create(dto);
+  async create(@Body() dto: CreateTwitterPaymentDto, @Req() req: { integrator: AuthenticatedIntegrator }) {
+    return this.twitterPayments.create(dto, req.integrator);
   }
 
   /** Public: get payment request details for the funding page */
@@ -58,8 +62,9 @@ export class TwitterPaymentsController {
   @ApiResponse({ status: 200, description: '{ payment_id, payment_link }' })
   async fund(
     @Param('short_id') shortId: string,
+    @Body() dto: FundTwitterPaymentDto,
     @PrivyUser() user: { id: string },
   ) {
-    return this.twitterPayments.fund(shortId, user.id);
+    return this.twitterPayments.fund(shortId, user.id, dto.is_private ?? true);
   }
 }

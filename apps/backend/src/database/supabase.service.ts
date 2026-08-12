@@ -139,6 +139,10 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('integrator_api_keys');
   }
 
+  get twitterAutopayEnrollments() {
+    return this.client.from('twitter_autopay_enrollments');
+  }
+
   get giveaways() {
     return this.client.from('giveaways');
   }

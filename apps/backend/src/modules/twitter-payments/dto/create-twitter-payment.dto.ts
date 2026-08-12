@@ -16,9 +16,13 @@ export class CreateTwitterPaymentDto {
   @Matches(TWITTER_HANDLE_REGEX)
   recipient_twitter: string;
 
+  // Raised from 0.5 — private payments enforce a $5 minimum in claims.service.ts's
+  // buildPrivateTransferForPayer, and the bot's own parser already enforces MIN_AMOUNT_USD = 5;
+  // this closes the same gap at the DTO so the private/regular toggle is safe to offer
+  // unconditionally rather than needing per-amount gating on the funding page.
   @ApiProperty({ description: 'Amount in USD', example: 5 })
   @IsNumber()
-  @Min(0.5)
+  @Min(5)
   @Max(10000)
   amount_usd: number;
 

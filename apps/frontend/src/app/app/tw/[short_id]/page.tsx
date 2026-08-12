@@ -9,6 +9,7 @@ import { useAuthStore } from '@/store/auth'
 import { motion } from 'framer-motion'
 import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight, Mail } from 'lucide-react'
 import { GradientActionButton } from '@/components/ui/GradientActionButton'
+import { IncognitoModeToggle } from '@/components/IncognitoModeToggle'
 import confetti from 'canvas-confetti'
 
 function XLogo({ className }: { className?: string }) {
@@ -48,6 +49,9 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Default true — preserves the prior always-private behavior for anyone who doesn't touch
+  // the toggle, matching the pattern already proven on c/[id]/page.tsx.
+  const [isPrivateMode, setIsPrivateMode] = useState(true)
 
   const hasEmail = user?.linkedAccounts?.some((a: any) => a.type === 'email' || a.type === 'google' || a.type === 'apple')
 
@@ -88,7 +92,8 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'
       const res = await fetch(`${backendUrl}/twitter-payments/${short_id}/fund`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_private: isPrivateMode }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.message ?? 'Failed to create payment')
@@ -161,7 +166,7 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
               <XLogo className="h-4 w-4 text-white/60" />
             )}
             <span className="text-base font-semibold text-white">
-              {isPaid ? (isRecipient ? 'Payment received' : 'Payment sent') : 'Pay privately on X'}
+              {isPaid ? (isRecipient ? 'Payment received' : 'Payment sent') : isPrivateMode ? 'Pay privately on X' : 'Pay on X'}
             </span>
           </div>
 
@@ -181,11 +186,14 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
             <span className="text-xl font-bold text-white">@{request.recipient_twitter}</span>
           </div>
 
-          {/* Privacy note */}
-          <div className="flex items-center justify-center gap-1.5 border-t border-white/[0.06] px-5 py-3">
-            <Lock className="h-3.5 w-3.5 text-white/25" />
-            <span className="text-sm text-white/30">End-to-end private via MagicBlock</span>
-          </div>
+          {/* Privacy note — only when the sender has private mode on (or the payment already
+              settled privately); a regular payment shouldn't claim a privacy guarantee it didn't use. */}
+          {(isPrivateMode || (isPaid && request.payment_status?.toUpperCase() === 'PRIVATE_TRANSFER_PENDING')) && (
+            <div className="flex items-center justify-center gap-1.5 border-t border-white/[0.06] px-5 py-3">
+              <Lock className="h-3.5 w-3.5 text-white/25" />
+              <span className="text-sm text-white/30">End-to-end private via MagicBlock</span>
+            </div>
+          )}
         </div>
 
         {/* CTA card */}
@@ -260,6 +268,7 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
                     <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
                     <p className="text-sm text-emerald-300">Logged in as @{linkedHandle}</p>
                   </div>
+                  <IncognitoModeToggle checked={isPrivateMode} onCheckedChange={setIsPrivateMode} />
                   <GradientActionButton onClick={handleSend} loading={sending} loadingText="Setting up payment…" disabled={networkMode === 'mainnet'}>
                     Send {amountDisplay} to @{request.recipient_twitter}
                   </GradientActionButton>

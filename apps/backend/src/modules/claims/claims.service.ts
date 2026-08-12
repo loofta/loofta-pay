@@ -301,7 +301,8 @@ export class ClaimsService {
     const { platform, handle, amount, userId, isPrivate = false, description, cluster } = dto;
     const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
     const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
-    const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    // Strip a trailing Discord discriminator (e.g. "username#0") — senders no longer need to type one.
+    const cleanHandle = handle.replace(/^@/, '').replace(/#\d+$/, '').toLowerCase().trim();
     if (!cleanHandle) throw new BadRequestException('A valid handle is required.');
 
     let recipientAddress: string;
@@ -1567,7 +1568,7 @@ export class ClaimsService {
       if (!platform || !['discord', 'github', 'telegram', 'twitter'].includes(platform)) {
         throw new BadRequestException('A valid platform (discord, github, telegram, or twitter) is required.');
       }
-      const cleanHandle = opts.recipientIdentifier.trim().replace(/^@/, '').toLowerCase();
+      const cleanHandle = opts.recipientIdentifier.trim().replace(/^@/, '').replace(/#\d+$/, '').toLowerCase();
       if (!cleanHandle) throw new BadRequestException('A valid handle is required.');
       recipientAddress = `${ClaimsService.PENDING_SOCIAL_PREFIX}${platform}:${cleanHandle}`;
       extraFields.recipient_username = null;

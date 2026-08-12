@@ -26,6 +26,11 @@ const KMS_SECRETS = [
   'SOLANA_FEE_PAYER_PRIVATE_KEY',
   'SEND_PAYMENT_ENC_KEY',
   'SEND_PAYMENT_ENC_KEY_OLD',
+  // Twitter bot auto-pay authorization key (see docs/GCP_KMS_SECRETS.md). Deliberately NOT in
+  // REQUIRED_IN_PRODUCTION yet — the auto-pay signing code that actually consumes this hasn't
+  // shipped, so failing boot over a still-unused secret would be wrong. Add it there once that
+  // code path exists and depends on it.
+  'LOOFTA_BOT_AUTH_PRIVATE_KEY',
 ] as const;
 
 // _OLD is only ever present during a key-rotation window, so it's excluded here —

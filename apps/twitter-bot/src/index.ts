@@ -25,7 +25,6 @@ const LOOFTA_INTEGRATOR_API_KEY = required('LOOFTA_INTEGRATOR_API_KEY')
 const APP_URL              = process.env.APP_URL ?? 'https://pay.loofta.xyz'
 const BOT_HANDLE           = (process.env.TWITTER_BOT_HANDLE ?? 'looftapay').toLowerCase()
 const POLL_INTERVAL_MS     = parseInt(process.env.POLL_INTERVAL_MS ?? '180000', 10) // 3 min default
-const IS_DEVNET            = process.env.NODE_ENV !== 'production'
 
 // ─── Twitter client ───────────────────────────────────────────────────────────
 const twitter = new TwitterApi({
@@ -53,7 +52,10 @@ async function createPaymentRequest(params: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${LOOFTA_INTEGRATOR_API_KEY}`,
       },
-      body: JSON.stringify({ ...params, is_devnet: true }), // devnet-only for now; flip to IS_DEVNET when mainnet is ready
+      // is_devnet intentionally omitted — the backend derives it from this bot's own integrator
+      // row (is_devnet_only) unless explicitly overridden here. Mainnet cutover = flipping that
+      // integrator's flag via the admin endpoint, not a bot-side env change.
+      body: JSON.stringify(params),
     })
     if (!res.ok) {
       const body = await res.text()
@@ -103,32 +105,7 @@ async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void>
       ? `$${parsed.amountUsd}`
       : `$${parsed.amountUsd.toFixed(2)}`
 
-const replies = [
-  `@${parsed.senderHandle} ready to finalize this ${amountDisplay} devnet USDC payment to @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
-
-  `@${parsed.senderHandle} does everything look good for this devnet payment to @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
-
-  `@${parsed.senderHandle} want to complete this ${amountDisplay} transfer to @${parsed.recipientHandle} on devnet?\n${APP_URL}/tw/${payment.short_id}`,
-
-  `@${parsed.senderHandle} your devnet USDC payment for @${parsed.recipientHandle} is ready — finalize it here?\n${APP_URL}/tw/${payment.short_id}`,
-
-  `@${parsed.senderHandle} is this the correct payment for @${parsed.recipientHandle}?\nYou can finalize it here:\n${APP_URL}/tw/${payment.short_id}`,
-
-  `@${parsed.senderHandle} everything set for this devnet transfer to @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
-
-  `@${parsed.senderHandle} ready to continue with this payment to @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
-
-  `@${parsed.senderHandle} can you confirm this ${amountDisplay} devnet USDC payment to @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
-
-  `@${parsed.senderHandle} your payment request for @${parsed.recipientHandle} is ready.\nWould you like to finalize it?\n${APP_URL}/tw/${payment.short_id}`,
-
-  `@${parsed.senderHandle} want to review and complete this devnet payment for @${parsed.recipientHandle}?\n${APP_URL}/tw/${payment.short_id}`,
-
-  `@${parsed.senderHandle} this ${amountDisplay} devnet transaction to @${parsed.recipientHandle} is ready.\nFinalize it here?\n${APP_URL}/tw/${payment.short_id}`,
-
-  `@${parsed.senderHandle} does this devnet USDC transfer to @${parsed.recipientHandle} look correct?\n${APP_URL}/tw/${payment.short_id}`,
-]
-  const replyText = replies[Math.floor(Math.random() * replies.length)]
+  const replyText = composeReply(parsed.senderHandle, parsed.recipientHandle, amountDisplay, `${APP_URL}/tw/${payment.short_id}`)
 
   try {
     await twitter.v2.reply(replyText, tweet.id)
@@ -136,6 +113,38 @@ const replies = [
   } catch (err) {
     console.error(`[bot] failed to reply to tweet ${tweet.id}:`, err)
   }
+}
+
+// ─── Reply composer ───────────────────────────────────────────────────────────
+// Fragment-based rather than a flat template list: independently randomizing opener/closer
+// produces far more structurally distinct output than word-swapping a fixed set of full
+// sentences ever could, and mixes declarative phrasing in with questions instead of every
+// reply being a "ready to...?" — X's platform-manipulation flag was likely driven by replies
+// that, while not literally identical, all shared the same shape and closing-link pattern.
+// "devnet" deliberately doesn't appear here — the /tw/[short_id] page already discloses it,
+// so repeating it in every reply just adds another fixed, repeated substring across the account.
+function pick<T>(items: T[]): T {
+  return items[Math.floor(Math.random() * items.length)]
+}
+
+function composeReply(sender: string, recipient: string, amount: string, link: string): string {
+  const openers = [
+    (s: string, r: string, a: string) => `@${s} ready to send ${a} to @${r}?`,
+    (s: string, r: string, a: string) => `@${s} confirm this ${a} payment to @${r} here.`,
+    (s: string, r: string, a: string) => `@${s} your ${a} request to @${r} is ready.`,
+    (s: string, r: string, a: string) => `@${s} one click to send ${a} to @${r}.`,
+    (s: string, r: string, a: string) => `@${s} ${a} to @${r}, ready when you are.`,
+    (s: string, r: string, a: string) => `@${s} does this ${a} payment to @${r} look right?`,
+    (s: string, r: string, a: string) => `@${s} finish sending ${a} to @${r} here.`,
+    (s: string, r: string, a: string) => `@${s} want to complete this ${a} transfer to @${r}?`,
+  ]
+  const closers = [
+    (l: string) => `\n${l}`,
+    (l: string) => ` ${l}`,
+    (l: string) => `\nfinish it here: ${l}`,
+    (l: string) => `\n${l} (takes a few seconds)`,
+  ]
+  return pick(openers)(sender, recipient, amount) + pick(closers)(link)
 }
 
 // ─── Poll mentions ────────────────────────────────────────────────────────────
@@ -178,6 +187,10 @@ async function pollMentions(botUserId: string): Promise<void> {
       if (!authorHandle || authorHandle.toLowerCase() === BOT_HANDLE) continue
 
       await processTweet(tweet, authorHandle)
+
+      // Jittered pacing between replies — a mention backlog processed back-to-back would post
+      // several replies in the same few seconds, a burst signal independent of any rate limit.
+      await sleep(3000 + Math.random() * 4000)
     }
   } catch (err: any) {
     // Twitter rate limit — back off gracefully
