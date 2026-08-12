@@ -44,7 +44,7 @@ async function createPaymentRequest(params: {
   amount_usd: number
   tweet_id: string
   tweet_url: string
-}): Promise<{ short_id: string; link: string; already_exists?: boolean, status?: string } | null> {
+}): Promise<{ short_id: string; link: string; already_exists?: boolean; funded?: boolean; status?: string } | null> {
   try {
     const res = await fetch(`${LOOFTA_API_URL}/twitter-payments`, {
       method: 'POST',
@@ -105,7 +105,10 @@ async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void>
       ? `$${parsed.amountUsd}`
       : `$${parsed.amountUsd.toFixed(2)}`
 
-  const replyText = composeReply(parsed.senderHandle, parsed.recipientHandle, amountDisplay, `${APP_URL}/tw/${payment.short_id}`)
+  const link = `${APP_URL}/tw/${payment.short_id}`
+  const replyText = payment.funded
+    ? composeFundedReply(parsed.senderHandle, parsed.recipientHandle, amountDisplay, link)
+    : composeReply(parsed.senderHandle, parsed.recipientHandle, amountDisplay, link)
 
   try {
     await twitter.v2.reply(replyText, tweet.id)
@@ -143,6 +146,26 @@ function composeReply(sender: string, recipient: string, amount: string, link: s
     (l: string) => ` ${l}`,
     (l: string) => `\nfinish it here: ${l}`,
     (l: string) => `\n${l} (takes a few seconds)`,
+  ]
+  return pick(openers)(sender, recipient, amount) + pick(closers)(link)
+}
+
+// Used when the sender is enrolled in auto-pay and the payment already went through — past
+// tense, confirming a completed action rather than asking the sender to come finish one. Every
+// reply in this register corresponds to money that has actually moved, not a pending invitation.
+function composeFundedReply(sender: string, recipient: string, amount: string, link: string): string {
+  const openers = [
+    (s: string, r: string, a: string) => `sent ${a} to @${r} on @${s}'s behalf.`,
+    (s: string, r: string, a: string) => `@${s}'s ${a} to @${r} just went through.`,
+    (s: string, r: string, a: string) => `${a} sent to @${r}, on its way.`,
+    (s: string, r: string, a: string) => `done, ${a} to @${r} from @${s}.`,
+    (s: string, r: string, a: string) => `@${r}, @${s} just sent you ${a}.`,
+    (s: string, r: string, a: string) => `paid @${r} ${a} on @${s}'s behalf.`,
+  ]
+  const closers = [
+    (l: string) => `\nclaim it here: ${l}`,
+    (l: string) => `\n${l}`,
+    (l: string) => ` ${l}`,
   ]
   return pick(openers)(sender, recipient, amount) + pick(closers)(link)
 }

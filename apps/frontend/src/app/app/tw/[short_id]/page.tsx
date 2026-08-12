@@ -49,9 +49,10 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Default true — preserves the prior always-private behavior for anyone who doesn't touch
-  // the toggle, matching the pattern already proven on c/[id]/page.tsx.
-  const [isPrivateMode, setIsPrivateMode] = useState(true)
+  // Default false — matches the auto-pay execution path (TwitterAutopayService.executeAutoPay
+  // hardcodes isPrivate: false), so this manual fallback flow doesn't silently default to a
+  // different privacy behavior than the primary auto-pay path.
+  const [isPrivateMode, setIsPrivateMode] = useState(false)
 
   const hasEmail = user?.linkedAccounts?.some((a: any) => a.type === 'email' || a.type === 'google' || a.type === 'apple')
 

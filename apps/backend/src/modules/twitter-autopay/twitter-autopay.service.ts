@@ -1,7 +1,9 @@
-import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
+import { ClaimsService } from '../claims/claims.service';
+import { AutopaySignerService } from './autopay-signer.service';
 import { isPrivyUserAdmin } from '@/common/admin-check';
 
 export interface TwitterAutopayStatus {
@@ -9,6 +11,12 @@ export interface TwitterAutopayStatus {
   twitterHandle: string | null;
   enrolled: boolean;
   signerGranted: boolean;
+}
+
+export interface TwitterAutopayResult {
+  paymentId: string;
+  shortId: string | null;
+  claimLink: string;
 }
 
 /**
@@ -19,10 +27,14 @@ export interface TwitterAutopayStatus {
  */
 @Injectable()
 export class TwitterAutopayService {
+  private readonly logger = new Logger(TwitterAutopayService.name);
+
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
+    private readonly claimsService: ClaimsService,
+    private readonly autopaySigner: AutopaySignerService,
   ) {}
 
   async getStatus(userId: string): Promise<TwitterAutopayStatus> {
@@ -74,6 +86,74 @@ export class TwitterAutopayService {
       .eq('enabled', true)
       .maybeSingle();
     return !!data;
+  }
+
+  /** Used by TwitterPaymentsService.create() to decide whether to attempt real auto-execution
+   *  vs. falling back to the manual create-then-fund flow. */
+  async getEnrollmentByHandle(twitterHandle: string): Promise<{ userId: string; signerGranted: boolean } | null> {
+    const clean = twitterHandle.replace(/^@/, '').toLowerCase();
+    const { data } = await this.supabaseService.twitterAutopayEnrollments
+      .select('user_id, signer_granted')
+      .eq('twitter_handle', clean)
+      .eq('enabled', true)
+      .maybeSingle();
+    if (!data) return null;
+    return { userId: data.user_id, signerGranted: !!data.signer_granted };
+  }
+
+  /**
+   * Real execution path: creates the claim/burner (same machinery as the manual fund() flow)
+   * then immediately signs and broadcasts the sender->burner transfer using the sender's granted
+   * Privy authorization key — no separate confirm click. Throws on any failure (unresolved
+   * wallet, signing rejected by policy, RPC error) — caller is expected to fall back to the
+   * manual pending-request flow rather than treat this as fatal, since a legitimate enrolled
+   * user's tweet failing here for a transient reason shouldn't just vanish with no way to pay.
+   */
+  async executeAutoPay(params: {
+    senderUserId: string;
+    recipientHandle: string;
+    amountUsd: number;
+    isPrivate: boolean;
+    isDevnet: boolean;
+  }): Promise<TwitterAutopayResult> {
+    if (!this.autopaySigner.isAvailable) {
+      throw new Error('Auto-pay signing is not configured (LOOFTA_BOT_AUTH_PRIVATE_KEY missing)');
+    }
+
+    const wallet = await this.autopaySigner.resolveSenderWallet(params.senderUserId);
+    if (!wallet) {
+      throw new Error('Sender has no delegated Solana wallet — signer grant may not have completed');
+    }
+
+    const payment = await this.claimsService.createFromUsername({
+      username: params.recipientHandle,
+      amount: params.amountUsd,
+      userId: params.senderUserId,
+      isPrivate: params.isPrivate,
+      description: 'Sent via @looftapay on X',
+      cluster: params.isDevnet ? 'devnet' : 'mainnet',
+    });
+
+    const { data: paymentRow } = await this.supabaseService.payments
+      .select('burner_address')
+      .eq('id', payment.id)
+      .maybeSingle();
+    if (!paymentRow?.burner_address) {
+      throw new Error(`Payment ${payment.id} has no burner address — cannot auto-fund`);
+    }
+
+    await this.autopaySigner.signAndSendTransfer({
+      senderPrivyUserId: params.senderUserId,
+      senderWalletId: wallet.walletId,
+      senderAddress: wallet.address,
+      destinationAddress: paymentRow.burner_address,
+      amountUsd: params.amountUsd,
+      isDevnet: params.isDevnet,
+      paymentId: payment.id,
+    });
+
+    this.logger.log(`Auto-pay executed: payment ${payment.id} funded via granted authorization key`);
+    return { paymentId: payment.id, shortId: payment.short_id, claimLink: payment.link };
   }
 
   private async assertAdmin(userId: string): Promise<void> {

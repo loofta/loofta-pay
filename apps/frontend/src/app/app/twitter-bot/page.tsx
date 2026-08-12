@@ -77,12 +77,20 @@ export default function TwitterBotPage() {
       setError('Not configured yet — the Loofta bot authorization key hasn’t been set up. Ask an engineer to finish the Privy setup.')
       return
     }
+    if (!BOT_POLICY_ID) {
+      // Refuse rather than fall back to policyIds: [] — an empty array grants the signer
+      // FULL, UNRESTRICTED permission on the wallet (Privy's own semantics), not "no access."
+      // Silently granting unlimited signing power because a config value was missing would be
+      // exactly the kind of gap that's caused real drains elsewhere in this app.
+      setError('Not configured yet — no spending-limit policy is set up. Ask an engineer to finish the Privy setup before enabling.')
+      return
+    }
     setWorking(true)
     setError(null)
     try {
       await addSigners({
         address: solanaAddress,
-        signers: [{ signerId: BOT_SIGNER_ID, policyIds: BOT_POLICY_ID ? [BOT_POLICY_ID] : [] }],
+        signers: [{ signerId: BOT_SIGNER_ID, policyIds: [BOT_POLICY_ID] }],
       })
       const updated = await callBackend('enroll')
       queryClient.setQueryData(['twitter-autopay-status'], updated)
@@ -145,8 +153,9 @@ export default function TwitterBotPage() {
               <div className="flex items-start gap-2.5">
                 <AtSign className="h-5 w-5 text-white/30 shrink-0 mt-0.5" />
                 <p className="text-lg text-slate-300 leading-relaxed">
-                  Enable auto-pay below, then tag <span className="text-white/80 font-medium">@looftapay</span> on X:
-                  &ldquo;send $10 to @alice&rdquo;
+                  Enable auto-pay below, then tag{' '}
+                  <span className="text-white/80 font-medium">@looftapay</span>{' '}
+                  on X: &ldquo;send $10 to @alice&rdquo;
                 </p>
               </div>
             </div>

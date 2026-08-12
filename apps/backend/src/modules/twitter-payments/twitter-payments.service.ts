@@ -50,7 +50,7 @@ export class TwitterPaymentsService {
   async create(
     dto: CreateTwitterPaymentDto,
     integrator: AuthenticatedIntegrator,
-  ): Promise<{ short_id: string; link: string; already_exists?: boolean }> {
+  ): Promise<{ short_id: string; link: string; already_exists?: boolean; funded?: boolean }> {
     const supabase = this.db.getClient();
 
     const senderTwitter = normaliseHandle(dto.sender_twitter);
@@ -66,8 +66,8 @@ export class TwitterPaymentsService {
     // already treats any non-2xx here as "log and skip reply", so this alone is enough — no
     // bot-side change needed). This bounds reply volume to consented, enrolled senders only,
     // which is the compliance lever that actually matters (see the bankr.bot precedent).
-    const senderEnrolled = await this.autopay.isHandleEnrolled(senderTwitter);
-    if (!senderEnrolled) {
+    const enrollment = await this.autopay.getEnrollmentByHandle(senderTwitter);
+    if (!enrollment) {
       throw new ForbiddenException(`@${senderTwitter} is not enrolled in Twitter auto-pay`);
     }
 
@@ -118,6 +118,8 @@ export class TwitterPaymentsService {
       throw new BadRequestException('Daily reply limit reached — try again tomorrow');
     }
 
+    const isDevnet = dto.is_devnet ?? integrator.isDevnetOnly;
+
     // Generate unique short_id
     let shortId = generateShortId();
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -130,6 +132,51 @@ export class TwitterPaymentsService {
       shortId = generateShortId();
     }
 
+    // Real execution attempt — only for senders who completed the Privy authorization-key grant.
+    // No tweet-keyword privacy selection yet (that's still a follow-up); auto-executed payments
+    // default to regular/public. Any failure here (unresolved wallet, policy rejection, RPC
+    // error) falls through to the existing manual pending-request flow below rather than
+    // erroring the whole create() call — a legitimate enrolled user shouldn't lose their payment
+    // over a transient auto-pay failure, they just get the "click to confirm" flow instead.
+    if (enrollment.signerGranted) {
+      try {
+        const result = await this.autopay.executeAutoPay({
+          senderUserId: enrollment.userId,
+          recipientHandle: recipientTwitter,
+          amountUsd: dto.amount_usd,
+          isPrivate: false,
+          isDevnet,
+        });
+        const { error: linkError } = await supabase
+          .from('twitter_payment_requests')
+          .insert({
+            short_id: shortId,
+            sender_twitter: senderTwitter,
+            recipient_twitter: recipientTwitter,
+            amount_usd: dto.amount_usd,
+            tweet_id: dto.tweet_id ?? null,
+            tweet_url: dto.tweet_url ?? null,
+            is_devnet: isDevnet,
+            integrator_id: integrator.id,
+            payment_id: result.paymentId,
+          })
+          .select('short_id')
+          .single();
+        if (linkError) {
+          if (linkError.code === '23505') throw new ConflictException('Duplicate tweet_id');
+          // Payment already succeeded on-chain at this point — log loudly but still return the
+          // real claim link rather than a generic failure, since the money already moved.
+          this.logger.error(`Auto-pay succeeded (payment ${result.paymentId}) but failed to link twitter_payment_requests row`, linkError);
+        }
+        this.logger.log(`Auto-pay funded $${dto.amount_usd} from @${senderTwitter} to @${recipientTwitter} — payment ${result.paymentId}`);
+        return { short_id: shortId, link: `${baseUrl}/tw/${shortId}`, funded: true };
+      } catch (autoPayError) {
+        this.logger.warn(
+          `Auto-pay failed for @${senderTwitter} -> @${recipientTwitter} ($${dto.amount_usd}), falling back to manual flow: ${(autoPayError as Error).message}`,
+        );
+      }
+    }
+
     const { data, error } = await supabase
       .from('twitter_payment_requests')
       .insert({
@@ -139,7 +186,7 @@ export class TwitterPaymentsService {
         amount_usd: dto.amount_usd,
         tweet_id: dto.tweet_id ?? null,
         tweet_url: dto.tweet_url ?? null,
-        is_devnet: dto.is_devnet ?? integrator.isDevnetOnly,
+        is_devnet: isDevnet,
         integrator_id: integrator.id,
       })
       .select('short_id')
@@ -153,7 +200,7 @@ export class TwitterPaymentsService {
 
     const link = `${baseUrl}/tw/${data.short_id}`;
     this.logger.log(`Created twitter payment request ${data.short_id} — $${dto.amount_usd} from @${senderTwitter} to @${recipientTwitter}`);
-    return { short_id: data.short_id, link };
+    return { short_id: data.short_id, link, funded: false };
   }
 
   async getPublic(shortId: string) {

@@ -15,7 +15,7 @@ export interface ParsedPayment {
  *   @looftapay pay 20 usdc to @bob        ✓
  *   I used @looftapay to send $5 to @alice ✗  (words between bot and "send")
  *
- * Minimum amount: $5. Maximum: $10 000.
+ * Minimum amount: $1. Maximum: $10 000.
  * Handle: 1–50 alphanumeric / underscore chars (Twitter rules).
  */
 function buildPaymentRe(botHandle: string): RegExp {
@@ -26,7 +26,7 @@ function buildPaymentRe(botHandle: string): RegExp {
   )
 }
 
-const MIN_AMOUNT_USD = 5
+const MIN_AMOUNT_USD = 1
 
 export function parseTweet(
   tweetText: string,
