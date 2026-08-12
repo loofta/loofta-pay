@@ -35,7 +35,10 @@ const twitter = new TwitterApi({
 })
 
 // ─── State ────────────────────────────────────────────────────────────────────
+// Seeded from the backend on startup (see loadPollCursor) — process.env.SINCE_TWEET_ID is only
+// a manual override for local testing, not the normal source of truth anymore.
 let lastSeenTweetId: string | undefined = process.env.SINCE_TWEET_ID
+let enrolledHandles = new Set<string>()
 
 // ─── Loofta API ───────────────────────────────────────────────────────────────
 async function createPaymentRequest(params: {
@@ -94,6 +97,60 @@ async function createTicketGiftRequest(params: {
   } catch (err) {
     console.error('[loofta] network error creating ticket gift:', err)
     return null
+  }
+}
+
+// ─── Enrollment pre-filter + poll cursor persistence ─────────────────────────
+// Fetched fresh each poll cycle rather than cached indefinitely — enrollment changes (someone
+// enables/disables via /app/twitter-bot) should take effect on the next poll, not require a
+// bot restart.
+async function fetchEnrolledHandles(): Promise<Set<string>> {
+  try {
+    const res = await fetch(`${LOOFTA_API_URL}/twitter-autopay/enrolled-handles`, {
+      headers: { Authorization: `Bearer ${LOOFTA_INTEGRATOR_API_KEY}` },
+    })
+    if (!res.ok) {
+      console.error(`[loofta] failed to fetch enrolled handles ${res.status} — keeping previous list`)
+      return enrolledHandles
+    }
+    const data = await res.json() as { handles: string[] }
+    return new Set(data.handles.map((h) => h.toLowerCase()))
+  } catch (err) {
+    console.error('[loofta] network error fetching enrolled handles — keeping previous list:', err)
+    return enrolledHandles
+  }
+}
+
+async function loadPollCursor(): Promise<void> {
+  if (lastSeenTweetId) return // env override already set, don't clobber it
+  try {
+    const res = await fetch(`${LOOFTA_API_URL}/twitter-autopay/poll-cursor?bot_handle=${encodeURIComponent(BOT_HANDLE)}`, {
+      headers: { Authorization: `Bearer ${LOOFTA_INTEGRATOR_API_KEY}` },
+    })
+    if (!res.ok) {
+      console.error(`[loofta] failed to load poll cursor ${res.status} — starting from current mentions`)
+      return
+    }
+    const data = await res.json() as { last_seen_tweet_id: string | null }
+    if (data.last_seen_tweet_id) {
+      lastSeenTweetId = data.last_seen_tweet_id
+      console.log(`[bot] resumed poll cursor from backend: ${lastSeenTweetId}`)
+    }
+  } catch (err) {
+    console.error('[loofta] network error loading poll cursor — starting from current mentions:', err)
+  }
+}
+
+async function savePollCursor(tweetId: string): Promise<void> {
+  try {
+    const res = await fetch(`${LOOFTA_API_URL}/twitter-autopay/poll-cursor`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${LOOFTA_INTEGRATOR_API_KEY}` },
+      body: JSON.stringify({ bot_handle: BOT_HANDLE, last_seen_tweet_id: tweetId }),
+    })
+    if (!res.ok) console.error(`[loofta] failed to save poll cursor ${res.status}`)
+  } catch (err) {
+    console.error('[loofta] network error saving poll cursor:', err)
   }
 }
 
@@ -279,6 +336,9 @@ function composeTicketGiftReply(sender: string, recipient: string, numTickets: n
 async function pollMentions(botUserId: string): Promise<void> {
   console.log(`[bot] polling mentions… (since_id: ${lastSeenTweetId ?? 'none'})`)
 
+  // Refreshed every cycle — enable/disable via /app/twitter-bot takes effect on the next poll.
+  enrolledHandles = await fetchEnrolledHandles()
+
   try {
     const timeline = await twitter.v2.userMentionTimeline(botUserId, {
       ...(lastSeenTweetId ? { since_id: lastSeenTweetId } : {}),
@@ -301,8 +361,13 @@ async function pollMentions(botUserId: string): Promise<void> {
 
     console.log(`[bot] ${tweets.length} new mention(s)`)
 
-    // Newest tweet first — update since_id to the most recent
+    // Newest tweet first — persist since_id to the backend so a restart doesn't forget it and
+    // re-scan this same batch (harmless — tweet_id dedup prevents any double-reply — but noisy
+    // and wastes API quota).
     lastSeenTweetId = tweets[0].id
+    await savePollCursor(lastSeenTweetId)
+
+    let skippedNotEnrolled = 0
 
     // Process oldest → newest so replies appear in order
     for (const tweet of [...tweets].reverse()) {
@@ -314,11 +379,23 @@ async function pollMentions(botUserId: string): Promise<void> {
       const authorHandle = users[tweet.author_id ?? '']
       if (!authorHandle || authorHandle.toLowerCase() === BOT_HANDLE) continue
 
+      // Enrollment pre-filter — skip before even trying to parse the tweet text, instead of
+      // parsing every mention and only finding out at create() time that the sender isn't
+      // authorized. Counted and logged once per poll rather than per-tweet to keep logs quiet.
+      if (!enrolledHandles.has(authorHandle.toLowerCase())) {
+        skippedNotEnrolled++
+        continue
+      }
+
       await processTweet(tweet, authorHandle)
 
       // Jittered pacing between replies — a mention backlog processed back-to-back would post
       // several replies in the same few seconds, a burst signal independent of any rate limit.
       await sleep(3000 + Math.random() * 4000)
+    }
+
+    if (skippedNotEnrolled > 0) {
+      console.log(`[bot] ignored ${skippedNotEnrolled} mention(s) from non-enrolled account(s)`)
     }
   } catch (err: any) {
     // Twitter rate limit — back off gracefully
@@ -334,6 +411,10 @@ async function pollMentions(botUserId: string): Promise<void> {
 // ─── Entry point ──────────────────────────────────────────────────────────────
 async function main() {
   console.log(`[bot] starting @${BOT_HANDLE} — polling every ${POLL_INTERVAL_MS / 1000}s`)
+
+  // Resume the mention-timeline cursor from the backend, so a Railway restart doesn't re-scan
+  // a batch of already-seen mentions from scratch.
+  await loadPollCursor()
 
   // Resolve bot user ID once
   const botUser = await twitter.v2.userByUsername(BOT_HANDLE)

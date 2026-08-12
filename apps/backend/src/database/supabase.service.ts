@@ -147,6 +147,10 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('twitter_ticket_gifts');
   }
 
+  get twitterBotPollState() {
+    return this.client.from('twitter_bot_poll_state');
+  }
+
   get giveaways() {
     return this.client.from('giveaways');
   }

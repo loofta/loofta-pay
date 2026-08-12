@@ -88,6 +88,35 @@ export class TwitterAutopayService {
     return !!data;
   }
 
+  /** Bot pre-filter: fetch once per poll cycle so it can skip non-enrolled mentions before
+   *  parsing their text, instead of parsing everything and only rejecting at create() time. */
+  async listEnrolledHandles(): Promise<string[]> {
+    const { data } = await this.supabaseService.twitterAutopayEnrollments
+      .select('twitter_handle')
+      .eq('enabled', true);
+    return (data ?? []).map((r) => r.twitter_handle as string);
+  }
+
+  /**
+   * Persists the bot's mention-timeline since_id cursor so a Railway restart doesn't forget it
+   * and re-fetch/re-parse a batch of already-seen mentions from scratch. Harmless (tweet_id
+   * dedup prevents any double-reply) but noisy and wastes API quota — this closes that.
+   */
+  async getPollCursor(botHandle: string): Promise<string | null> {
+    const { data } = await this.supabaseService.twitterBotPollState
+      .select('last_seen_tweet_id')
+      .eq('bot_handle', botHandle)
+      .maybeSingle();
+    return data?.last_seen_tweet_id ?? null;
+  }
+
+  async setPollCursor(botHandle: string, lastSeenTweetId: string): Promise<void> {
+    await this.supabaseService.twitterBotPollState.upsert(
+      { bot_handle: botHandle, last_seen_tweet_id: lastSeenTweetId, updated_at: new Date().toISOString() },
+      { onConflict: 'bot_handle' },
+    );
+  }
+
   /** Used by TwitterPaymentsService.create() to decide whether to attempt real auto-execution
    *  vs. falling back to the manual create-then-fund flow. */
   async getEnrollmentByHandle(twitterHandle: string): Promise<{ userId: string; signerGranted: boolean } | null> {
