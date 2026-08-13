@@ -262,22 +262,22 @@ function pick<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)]
 }
 
+// Neutral, declarative — no CTA verbs ("confirm", "click", "complete", "want to", "ready to").
+// This path only fires when auto-pay didn't execute (unenrolled sender, or a transient auto-pay
+// failure), so it can't claim the money already moved — but it also shouldn't read as a directive
+// to click a link, which is the exact pattern that reads as solicitation at any reply volume.
 function composeReply(sender: string, recipient: string, amount: string, link: string): string {
   const openers = [
-    (s: string, r: string, a: string) => `@${s} ready to send ${a} to @${r}?`,
-    (s: string, r: string, a: string) => `@${s} confirm this ${a} payment to @${r} here.`,
-    (s: string, r: string, a: string) => `@${s} your ${a} request to @${r} is ready.`,
-    (s: string, r: string, a: string) => `@${s} one click to send ${a} to @${r}.`,
-    (s: string, r: string, a: string) => `@${s} ${a} to @${r}, ready when you are.`,
-    (s: string, r: string, a: string) => `@${s} does this ${a} payment to @${r} look right?`,
-    (s: string, r: string, a: string) => `@${s} finish sending ${a} to @${r} here.`,
-    (s: string, r: string, a: string) => `@${s} want to complete this ${a} transfer to @${r}?`,
+    (s: string, r: string, a: string) => `@${s} → @${r}: ${a} pending.`,
+    (s: string, r: string, a: string) => `${a} from @${s} to @${r} is open.`,
+    (s: string, r: string, a: string) => `a ${a} request between @${s} and @${r} is waiting.`,
+    (s: string, r: string, a: string) => `@${r}, there's a ${a} request from @${s}.`,
+    (s: string, r: string, a: string) => `${a}, @${s} to @${r} — pending.`,
   ]
   const closers = [
     (l: string) => `\n${l}`,
     (l: string) => ` ${l}`,
-    (l: string) => `\nfinish it here: ${l}`,
-    (l: string) => `\n${l} (takes a few seconds)`,
+    (l: string) => `\ndetails: ${l}`,
   ]
   return pick(openers)(sender, recipient, amount) + pick(closers)(link)
 }
