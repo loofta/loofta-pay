@@ -3012,7 +3012,7 @@ export function BalanceModal({
           </div>
 
           {/* Top Up tab — method cards */}
-          {tab === "topup" && topUpView === null && (
+          {tab === "topup" && (topUpView === null || topUpView === "crypto-picker") && (
             <div className="py-2">
               {devnetMode ? (
                 <div className={`rounded-xl border-2 p-4 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
