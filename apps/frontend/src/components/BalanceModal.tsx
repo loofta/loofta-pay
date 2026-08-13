@@ -541,7 +541,7 @@ export function BalanceModal({
   const dialogContentRef = useRef<HTMLDivElement>(null);
 
   const [coinbaseLoading, setCoinbaseLoading] = useState(false);
-  const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | "peer-offramp" | "private-relay" | "paj-cash" | null>(null);
+  const [withdrawMethod, setWithdrawMethod] = useState<"crypto-picker" | "usdc-sol" | "near-intents" | "peer-offramp" | "private-relay" | "paj-cash" | null>(null);
   const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
   const [showFiatOfframpPicker, setShowFiatOfframpPicker] = useState(false);
   const [showFiatOnrampPicker, setShowFiatOnrampPicker] = useState(false);
@@ -3762,10 +3762,18 @@ export function BalanceModal({
           )}
 
           {/* Withdraw tab — method selection */}
-          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod === null && !showFiatOfframpPicker && (
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod === "crypto-picker" && !showFiatOfframpPicker && (
             <div className="py-2 space-y-3">
+              <button
+                type="button"
+                onClick={() => setWithdrawMethod(null)}
+                className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Back
+              </button>
 
-              {/* 1. USDC on Solana */}
+              {/* USDC on Solana */}
               <button
                 type="button"
                 disabled={!solanaAddress}
@@ -3784,6 +3792,85 @@ export function BalanceModal({
                   <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>USDC on Solana</p>
                   <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
                     Any Solana wallet · Free &amp; instant
+                  </p>
+                </div>
+                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+              </button>
+
+              {/* Other tokens — Near Intents cross-chain withdrawal */}
+              {spendableBalance >= 1 && (
+                <button
+                  type="button"
+                  disabled={!solanaAddress}
+                  onClick={() => setWithdrawMethod("near-intents")}
+                  className={cn(
+                    "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                    dark
+                      ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                      : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  )}
+                >
+                  <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                    <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Other tokens</p>
+                    <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      ETH · BTC · SOL · USDT — any chain
+                    </p>
+                  </div>
+                  <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                </button>
+              )}
+
+              {/* Private withdrawal — burner-relay MagicBlock private transfer */}
+              <button
+                type="button"
+                disabled={!solanaAddress}
+                onClick={() => setWithdrawMethod("private-relay")}
+                className={cn(
+                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                  dark
+                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                )}
+              >
+                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                  <VenetianMask className={`h-7 w-7 ${dark ? "text-slate-300" : "text-gray-500"}`} strokeWidth={1.75} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Private Withdrawal</p>
+                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    To any Solana wallet · not linked on-chain
+                  </p>
+                </div>
+                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+              </button>
+            </div>
+          )}
+
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod === null && !showFiatOfframpPicker && (
+            <div className="py-2 space-y-3">
+
+              {/* 1. Crypto withdrawal — USDC on Solana, other tokens, private withdrawal */}
+              <button
+                type="button"
+                disabled={!solanaAddress}
+                onClick={() => setWithdrawMethod("crypto-picker")}
+                className={cn(
+                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                  dark
+                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                )}
+              >
+                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                  <img src="/images/icons/withdraw-usdc.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Crypto withdrawal</p>
+                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    USDC on Solana · other tokens · private
                   </p>
                 </div>
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
@@ -3817,30 +3904,6 @@ export function BalanceModal({
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
               </button>
 
-              {/* 3. Private withdrawal — burner-relay MagicBlock private transfer, opens directly */}
-              <button
-                type="button"
-                disabled={!solanaAddress}
-                onClick={() => setWithdrawMethod("private-relay")}
-                className={cn(
-                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                  dark
-                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                )}
-              >
-                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                  <VenetianMask className={`h-7 w-7 ${dark ? "text-slate-300" : "text-gray-500"}`} strokeWidth={1.75} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Private Withdrawal</p>
-                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    To any Solana wallet · not linked on-chain
-                  </p>
-                </div>
-                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-              </button>
-
             </div>
           )}
 
@@ -3849,7 +3912,7 @@ export function BalanceModal({
             <div className="space-y-4 py-2">
 
               {/* Back */}
-              <button type="button" onClick={() => { setWithdrawMethod(null); resetPrivateWithdraw(); }}
+              <button type="button" onClick={() => { setWithdrawMethod("crypto-picker"); resetPrivateWithdraw(); }}
                 className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
                 <ChevronLeft className="h-4 w-4" />Back
               </button>
@@ -4146,13 +4209,13 @@ export function BalanceModal({
               form must be excluded here, or both render stacked — private-relay was missing, and
               only stayed hidden by accident whenever a previous run had left withdrawStep on a
               terminal value. */}
-          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "peer-offramp" && withdrawMethod !== "paj-cash" && withdrawMethod !== "private-relay" && (
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "crypto-picker" && withdrawMethod !== "peer-offramp" && withdrawMethod !== "paj-cash" && withdrawMethod !== "private-relay" && (
             <div className="space-y-4 py-2">
 
               {/* Back button — hidden on devnet (only one method available, nothing to go back to) */}
               {!devnetMode && <button
                 type="button"
-                onClick={() => setWithdrawMethod(null)}
+                onClick={() => setWithdrawMethod("crypto-picker")}
                 className={cn(
                   "flex items-center gap-1 text-base font-medium transition-colors",
                   dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"
@@ -4428,7 +4491,7 @@ export function BalanceModal({
               )}
 
               <div className={`flex gap-2 pt-2 ${ataFeeConfirmPending ? "hidden" : ""}`}>
-                <Button variant="outline" onClick={() => setWithdrawMethod(null)} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
+                <Button variant="outline" onClick={() => setWithdrawMethod("crypto-picker")} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
                   Back
                 </Button>
                 <Button
@@ -4527,12 +4590,11 @@ export function BalanceModal({
                       )}>
                       <img src={p.logo} alt={p.name} className="w-10 h-10 rounded-xl object-cover" />
                       <span className={`text-base font-medium leading-tight ${dark ? "text-white" : "text-gray-900"}`}>{p.name}</span>
-                      {inCooldown
-                        ? <span className="text-sm text-amber-400 leading-tight">{formatCooldown(cooldownMins)}</span>
-                        : p.maxUSDC != null
-                          ? <span className={`text-sm leading-tight ${dark ? "text-slate-500" : "text-gray-400"}`}>${p.maxUSDC} max</span>
-                          : <span className={`text-sm leading-tight ${dark ? "text-slate-500" : "text-gray-400"}`}>No limit</span>
-                      }
+                      {inCooldown ? (
+                        <span className="text-sm text-amber-400 leading-tight">{formatCooldown(cooldownMins)}</span>
+                      ) : p.maxUSDC != null ? (
+                        <span className={`text-sm leading-tight ${dark ? "text-slate-500" : "text-gray-400"}`}>${p.maxUSDC} max</span>
+                      ) : null}
                     </button>
                   );
                 })}
