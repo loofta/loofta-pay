@@ -7,8 +7,11 @@ export interface PeerCurrency {
   spreadPercent: number;
 }
 
+// Peer Cash (@zkp2p/cash) prices every cash-out at the live oracle rate with zero spread — there
+// is no spread knob to configure anymore, so this stays 0. (The old @zkp2p/sdk integration let us
+// bake in a spread to incentivize faster fills; that concept doesn't exist in the new SDK.)
 export const PEER_CURRENCIES: PeerCurrency[] = [
-  { code: 'USD', label: 'US Dollar',          flag: '🇺🇸', symbol: '$',  spreadPercent: 2 },
+  { code: 'USD', label: 'US Dollar',          flag: '🇺🇸', symbol: '$',  spreadPercent: 0 },
 ];
 
 export function getPeerCurrency(code: string): PeerCurrency | undefined {
@@ -23,8 +26,15 @@ export interface PeerPlatform {
   placeholder: string;
   currencies: string[];
   logo: string;
-  maxUSDC: number;
-  cooldownHours: number | null; // null = no cooldown
+  /**
+   * Loofta-side cap, not a Peer Cash protocol limit — Peer Cash itself applies no
+   * platform-specific max or cooldown to Venmo/Cash App (or Revolut/Zelle). Chargeback risk on
+   * those rails is the taker's, handled protocol-side by restricting fills to vetted buyer groups
+   * (Plus: $2k+ fulfilled chargebackable volume, Pro: $10k+), not by capping the maker's deposit.
+   * null = no Loofta-side cap either (bounded only by the user's spendable balance).
+   */
+  maxUSDC: number | null;
+  cooldownHours: number | null; // null = no cooldown — also a Loofta-side choice, not protocol-required
 }
 
 export const PEER_PLATFORMS: PeerPlatform[] = [
@@ -35,9 +45,9 @@ export const PEER_PLATFORMS: PeerPlatform[] = [
     idLabel: 'Venmo handle',
     placeholder: '@yourusername',
     currencies: ['USD'],
-    logo: "data:image/svg+xml,%3csvg%20xmlns='http://www.w3.org/2000/svg'%20width='64'%20height='64'%3e%3cg%20transform='matrix(.124031%200%200%20.124031%20-.000001%2056.062016)'%3e%3crect%20y='-452'%20rx='61'%20height='516'%20width='516'%20fill='%233396cd'/%3e%3cpath%20d='M385.16-347c11.1%2018.3%2016.08%2037.17%2016.08%2061%200%2076-64.87%20174.7-117.52%20244H163.5l-48.2-288.35%20105.3-10%2025.6%20205.17C270-174%20299.43-235%20299.43-276.56c0-22.77-3.9-38.25-10-51z'%20fill='%23fff'/%3e%3c/g%3e%3c/svg%3e",
-    maxUSDC: 5,
-    cooldownHours: 12,
+    logo: '/images/platforms/venmo.png',
+    maxUSDC: null,
+    cooldownHours: null,
   },
   {
     id: 'cashapp',
@@ -47,8 +57,30 @@ export const PEER_PLATFORMS: PeerPlatform[] = [
     placeholder: '$yourtag',
     currencies: ['USD'],
     logo: '/images/platforms/cashapp.webp',
-    maxUSDC: 100,
-    cooldownHours: 12,
+    maxUSDC: null,
+    cooldownHours: null,
+  },
+  {
+    id: 'revolut',
+    name: 'Revolut',
+    processorName: 'revolut',
+    idLabel: 'Revolut username',
+    placeholder: '@yourusername',
+    currencies: ['USD'],
+    logo: '/images/platforms/revolut.png',
+    maxUSDC: null,
+    cooldownHours: null,
+  },
+  {
+    id: 'zelle',
+    name: 'Zelle',
+    processorName: 'zelle',
+    idLabel: 'Zelle email or phone',
+    placeholder: 'you@email.com',
+    currencies: ['USD'],
+    logo: '/images/platforms/zelle.png',
+    maxUSDC: null,
+    cooldownHours: null,
   },
 ];
 

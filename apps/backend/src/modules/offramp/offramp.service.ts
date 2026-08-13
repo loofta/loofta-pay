@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createPublicClient, http, erc20Abi, type Address } from 'viem';
+import { createPublicClient, http, type Address } from 'viem';
 import { base } from 'viem/chains';
 import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
@@ -22,6 +22,15 @@ export class OfframpService {
   private getPublicClient() {
     const rpc = this.config.get<string>('BASE_RPC_URL', DEFAULT_BASE_RPC);
     return createPublicClient({ chain: base, transport: http(rpc) });
+  }
+
+  private cashClient: import('@zkp2p/cash').CashClient | null = null;
+  private async getCashClient() {
+    if (!this.cashClient) {
+      const { createCashClient } = await import('@zkp2p/cash');
+      this.cashClient = createCashClient({ environment: 'production' });
+    }
+    return this.cashClient;
   }
 
   // Fund Base wallet with ETH for gas if below threshold. Requires BASE_FUNDER_PRIVATE_KEY env var.
@@ -115,8 +124,16 @@ export class OfframpService {
     return { status: 'BRIDGING' };
   }
 
-  // Called by frontend after user signs ZKP2P approve + createDeposit on Base.
-  async recordDeposit(offrampId: string, userId: string, depositId: string | null, txHash: string | null) {
+  // Called by frontend after user signs the Peer Cash cashout() on Base.
+  async recordDeposit(
+    offrampId: string,
+    userId: string,
+    depositId: string | null,
+    txHash: string | null,
+    accessPolicyTxHash: string | null = null,
+    etaSeconds: number | null = null,
+    etaLabel: string | null = null,
+  ) {
     const record = await this.getRecord(offrampId, userId);
 
     if (!['BRIDGING', 'BRIDGE_COMPLETE', 'PENDING_BRIDGE'].includes(record.status)) {
@@ -126,10 +143,13 @@ export class OfframpService {
     await this.supabase.getClient()
       .from('offramp_requests')
       .update({
-        zkp2p_deposit_id: depositId ?? null,
-        zkp2p_tx_hash:    txHash ?? null,
-        status:           'DEPOSITED',
-        updated_at:       new Date().toISOString(),
+        zkp2p_deposit_id:      depositId ?? null,
+        zkp2p_tx_hash:         txHash ?? null,
+        access_policy_tx_hash: accessPolicyTxHash ?? null,
+        eta_seconds:           etaSeconds ?? null,
+        eta_label:             etaLabel ?? null,
+        status:                'DEPOSITED',
+        updated_at:            new Date().toISOString(),
       })
       .eq('id', offrampId);
 
@@ -263,19 +283,10 @@ export class OfframpService {
 
   private async checkFulfilment(record: any) {
     try {
-      const { getContracts } = await import('@zkp2p/sdk');
-      const { addresses, abis } = getContracts(base.id, 'production');
-      const publicClient = this.getPublicClient();
+      const cash = await this.getCashClient();
+      const order = await cash.order(record.zkp2p_deposit_id);
 
-      const deposit = await publicClient.readContract({
-        address: addresses.escrow as Address,
-        abi:     abis.escrow as any,
-        functionName: 'getDeposit',
-        args:    [BigInt(record.zkp2p_deposit_id)],
-      }) as any;
-
-      const remaining = deposit?.remainingDeposits ?? deposit?.remainingAmount;
-      if (remaining !== undefined && BigInt(remaining) === 0n) {
+      if (order.state === 'delivered' && !order.isInFlight) {
         await this.supabase.getClient()
           .from('offramp_requests')
           .update({ status: 'COMPLETE', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -290,7 +301,7 @@ export class OfframpService {
     const from = (page - 1) * limit;
     const { data, count, error } = await this.supabase.getClient()
       .from('offramp_requests')
-      .select('id, created_at, updated_at, user_id, platform, platform_identifier, currency, amount_usdc, status, zkp2p_deposit_id, zkp2p_tx_hash, near_intents_deposit_address, completed_at, cancelled_at', { count: 'exact' })
+      .select('id, created_at, updated_at, user_id, platform, platform_identifier, currency, amount_usdc, status, zkp2p_deposit_id, zkp2p_tx_hash, access_policy_tx_hash, eta_seconds, eta_label, near_intents_deposit_address, completed_at, cancelled_at', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, from + limit - 1);
 

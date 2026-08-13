@@ -40,9 +40,13 @@ export class OfframpController {
   async recordDeposit(
     @Req() req: any,
     @Param('id') id: string,
-    @Body() body: { depositId?: string; txHash?: string },
+    @Body() body: { depositId?: string; txHash?: string; accessPolicyTxHash?: string; etaSeconds?: number; etaLabel?: string },
   ) {
-    return this.offramp.recordDeposit(id, req.user.id, body.depositId ?? null, body.txHash ?? null);
+    return this.offramp.recordDeposit(
+      id, req.user.id,
+      body.depositId ?? null, body.txHash ?? null,
+      body.accessPolicyTxHash ?? null, body.etaSeconds ?? null, body.etaLabel ?? null,
+    );
   }
 
   @Post(':id/bridge-back')

@@ -160,11 +160,6 @@ const PRIVATE_DEPOSIT_SESSION_KEY = "loofta_private_deposit_id";
 const PRIVATE_WITHDRAW_SESSION_KEY = "loofta_private_withdraw_id";
 const PRIVATE_TRANSFER_TERMINAL_STATUSES = new Set(["complete", "failed"]);
 const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
-const ZKP2P_RATE_UNIT = 1_000_000_000_000_000_000n; // 1e18
-function zkp2pRate(spreadPercent: number): string {
-  // conversionRate = (1 - spread) * 1e18 — peers pay less fiat per USDC, incentivizing faster fills
-  return ((ZKP2P_RATE_UNIT * BigInt(Math.round((1 - spreadPercent / 100) * 10_000))) / 10_000n).toString();
-}
 const BRIDGE_FEE_PCT = 0.6; // Near Intents ~0.1% + 50 BPS Loofta referral fee (Solana → Base)
 
 // Withdraw-flow lottery ticket add-on. Mirrors megapot/page.tsx's handlePublicBuy/randomTicket
@@ -575,9 +570,10 @@ export function BalanceModal({
   const [peerBridgeBackStatus, setPeerBridgeBackStatus] = useState<string | null>(null);
   const peerBridgeBackPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [platformCooldowns, setPlatformCooldowns] = useState<Record<string, number>>({});
-  const [peerFxRates, setPeerFxRates] = useState<Record<string, number>>({});
-  const [peerFxLoading, setPeerFxLoading] = useState(false);
-  const [peerUsdcUsdPrice, setPeerUsdcUsdPrice] = useState<number>(1); // USDC/USD, defaults to 1
+  // Live oracle estimate + real fill-time ETA from @zkp2p/cash's estimate(), replacing the old
+  // hand-rolled spread/FX math (now that Peer Cash always prices at zero-spread oracle rate).
+  const [peerEstimate, setPeerEstimate] = useState<{ receiveAmount: number; eta: { seconds?: number; label: string } | null } | null>(null);
+  const [peerEstimateLoading, setPeerEstimateLoading] = useState(false);
 
   // Near Intents top-up deposit
   const [topUpView, setTopUpView] = useState<"crypto-picker" | "near-intents-deposit" | "private-deposit" | "paj-cash-onramp" | null>(null);
@@ -1359,10 +1355,6 @@ export function BalanceModal({
           account: peerBaseWalletAddress as `0x${string}`,
         });
 
-        const { OfframpClient, getContracts } = await import("@zkp2p/sdk");
-        const client = new OfframpClient({ walletClient: sponsoredClient as any, chainId: base.id, runtimeEnv: 'production' });
-        const { addresses } = getContracts(base.id, "production");
-
         // Use actual on-chain balance — bridge fee may have reduced the delivered amount
         const pubClient = mkPublic({ chain: base, transport: httpT("https://mainnet.base.org") });
         const rawBalance = await pubClient.readContract({
@@ -1375,87 +1367,34 @@ export function BalanceModal({
         const atomicUsdc = rawBalance;
         console.log(PEER_LOG, "Base USDC balance", rawBalance.toString(), "requested", Math.round(peerAmountUSDC * 1_000_000));
 
-        // Check allowance — approve via Privy sponsored tx if needed
-        const currentAllowance = await pubClient.readContract({
-          address: BASE_USDC_ADDRESS,
-          abi: _erc20Abi,
-          functionName: "allowance",
-          args: [peerBaseWalletAddress as `0x${string}`, addresses.escrow as `0x${string}`],
-        }) as bigint;
-        console.log(PEER_LOG, "current allowance", currentAllowance.toString(), "needed", atomicUsdc.toString());
-        if (currentAllowance < atomicUsdc) {
-          console.log(PEER_LOG, "approving USDC for Peer escrow (Privy sponsored)...");
-          await privySendTx({
-            to: BASE_USDC_ADDRESS,
-            data: encodeFunctionData({ abi: _erc20Abi, functionName: 'approve', args: [addresses.escrow as `0x${string}`, atomicUsdc] }),
-            chainId: base.id,
-          }, { sponsor: true });
-          console.log(PEER_LOG, "approval complete");
-        } else {
-          console.log(PEER_LOG, "allowance sufficient, skipping approval");
-        }
-
         if (cancelled) return;
 
         // ZKP2P expects the raw username without display prefixes (@ for Revolut/Venmo, $ for Cash App)
         const zkp2pId = peerIdentifier.trim().replace(/^[@$]/, "");
-        // Minimum intent: larger of 10% of deposit or $5 USDC (allows partial fills)
-        const FIVE_USDC = 5_000_000n;
-        const tenPercent = atomicUsdc / 10n;
-        const minIntent = tenPercent > FIVE_USDC ? tenPercent : FIVE_USDC;
-        console.log(PEER_LOG, "signing createDeposit...", { platform: platform.processorName, identifier: zkp2pId, currency: peerCurrency, minIntent: minIntent.toString(), maxIntent: atomicUsdc.toString() });
-        const { hash: depositTxHash } = await client.createDeposit({
-          token: BASE_USDC_ADDRESS,
-          amount: atomicUsdc,
-          intentAmountRange: { min: minIntent, max: atomicUsdc },
-          processorNames: [platform.processorName],
-          payeeData: [{ offchainId: zkp2pId }],
-          conversionRates: [[{ currency: peerCurrency.toUpperCase(), conversionRate: zkp2pRate(getPeerCurrency(peerCurrency)?.spreadPercent ?? 0) }]],
+        console.log(PEER_LOG, "signing cashout()...", { platform: platform.processorName, identifier: zkp2pId, currency: peerCurrency, amount: atomicUsdc.toString() });
+
+        // cash.cashout() owns the whole deposit flow now: approve (if needed), createDeposit, and
+        // for Venmo/Cash App/PayPal the follow-up access-policy transaction — replacing what used
+        // to be a hand-rolled allowance check + OfframpClient.createDeposit + receipt-log parse.
+        const { peerCashout } = await import("@/services/peerCash");
+        const { depositId, txHash: depositTxHash, accessPolicyTxHash } = await peerCashout({
+          amountAtomicUsdc: atomicUsdc,
+          platform: platform.processorName,
+          currency: peerCurrency,
+          payee: zkp2pId,
+          signer: sponsoredClient as any,
         });
 
         if (cancelled) return;
 
-        // Wait for tx to be mined, then extract deposit ID from receipt logs
-        const receipt = await pubClient.waitForTransactionReceipt({ hash: depositTxHash as `0x${string}`, timeout: 90_000 });
-        let depositId: string | null = null;
-
-        // Primary: parse deposit ID from emitted event logs
-        try {
-          const { parseEventLogs } = await import("viem");
-          const { getContracts: getZkpContracts } = await import("@zkp2p/sdk");
-          const { abis } = getZkpContracts(base.id, 'production');
-          const parsed = parseEventLogs({ abi: abis.escrow as any, logs: receipt.logs });
-          for (const log of parsed as any[]) {
-            if (log.args?.depositId !== undefined) {
-              depositId = log.args.depositId.toString();
-              break;
-            }
-          }
-        } catch { /* fall through to polling */ }
-
-        // Fallback: poll getAccountDeposits until the new deposit appears
-        if (!depositId) {
-          for (let attempt = 0; attempt < 6; attempt++) {
-            try {
-              const deposits = await client.getAccountDeposits(peerBaseWalletAddress as `0x${string}`);
-              if (Array.isArray(deposits) && deposits.length > 0) {
-                const latest = deposits[deposits.length - 1];
-                depositId = latest?.depositId?.toString() ?? null;
-                if (depositId) break;
-              }
-            } catch { /* retry */ }
-            await new Promise(r => setTimeout(r, 2000));
-          }
-        }
-
-        console.log(PEER_LOG, "Peer deposit created", { depositId, depositTxHash });
+        console.log(PEER_LOG, "Peer deposit created", { depositId, depositTxHash, accessPolicyTxHash });
 
         // Notify backend to record the deposit
         const accessToken = await getAccessToken();
         await fetch(`/api/offramp/${peerOfframpId}?action=record-deposit`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-          body: JSON.stringify({ depositId, txHash: depositTxHash }),
+          body: JSON.stringify({ depositId, txHash: depositTxHash, accessPolicyTxHash: accessPolicyTxHash ?? null, etaSeconds: peerEstimate?.eta?.seconds ?? null, etaLabel: peerEstimate?.eta?.label ?? null }),
         });
 
         if (!cancelled) {
@@ -1597,44 +1536,8 @@ export function BalanceModal({
     setPlatformCooldowns(cooldowns);
   }, [withdrawMethod, peerStep]);
 
-  // Fetch USDC/USD price + full FX table whenever a non-USD currency is selected
-  useEffect(() => {
-    if (peerCurrency === "USD") return;
-    if (peerFxRates[peerCurrency]) return; // already fetched this currency
-    setPeerFxLoading(true);
-    Promise.all([
-      // USD → all fiat rates
-      fetch("https://open.er-api.com/v6/latest/USD").then(r => r.json()),
-      // USDC/USD price from CoinGecko (no key needed for simple queries)
-      fetch("https://api.coingecko.com/api/v3/simple/price?ids=usd-coin&vs_currencies=usd")
-        .then(r => r.json())
-        .catch(() => null),
-    ])
-      .then(([fxData, cgData]) => {
-        if (fxData?.rates) setPeerFxRates(prev => ({ ...prev, ...fxData.rates }));
-        const usdcPrice = cgData?.["usd-coin"]?.usd;
-        if (usdcPrice) setPeerUsdcUsdPrice(usdcPrice);
-      })
-      .catch(() => { })
-      .finally(() => setPeerFxLoading(false));
-  }, [peerCurrency]);
-
-  const getPeerEstimate = (amountUsdc: number, currency: string): { formatted: string; spreadPct: number } | null => {
-    if (!amountUsdc || amountUsdc <= 0) return null;
-    const cur = getPeerCurrency(currency);
-    if (!cur) return null;
-    const afterBridge = amountUsdc * (1 - BRIDGE_FEE_PCT / 100);
-    if (currency === "USD") {
-      const usd = afterBridge * peerUsdcUsdPrice * (1 - cur.spreadPercent / 100);
-      return { formatted: `$${usd.toFixed(2)} USD`, spreadPct: cur.spreadPercent };
-    }
-    const usdToTarget = peerFxRates[currency];
-    if (!usdToTarget) return null; // still loading
-    const receive = afterBridge * peerUsdcUsdPrice * usdToTarget * (1 - cur.spreadPercent / 100);
-    const decimals = currency === "EUR" ? 2 : 0;
-    const formatted = `${cur.symbol}${receive.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals })} ${currency}`;
-    return { formatted, spreadPct: cur.spreadPercent };
-  };
+  // Live oracle estimate + real fill-time ETA from @zkp2p/cash — see the effect below
+  // withdrawAmountNum's declaration further down in this component.
 
   // Clear Blink error and reset states when modal closes
   useEffect(() => {
@@ -2091,6 +1994,34 @@ export function BalanceModal({
 
   const withdrawAmountNum = parseFloat(withdrawAmount) || 0;
 
+  // Live oracle estimate + real fill-time ETA from @zkp2p/cash, debounced on amount/platform
+  // change. Peer Cash always prices at the live zero-spread oracle rate — no more hand-rolled
+  // spread/FX math — so this is the actual "you'll receive" number, not an approximation.
+  useEffect(() => {
+    if (withdrawMethod !== "peer-offramp" || peerStep !== "form") return;
+    const platform = getPlatform(peerPlatformId ?? "");
+    if (!platform || withdrawAmountNum < 1) { setPeerEstimate(null); return; }
+
+    let cancelled = false;
+    setPeerEstimateLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const afterBridge = withdrawAmountNum * (1 - BRIDGE_FEE_PCT / 100);
+        const { getPeerEstimate: fetchEstimate, usdc } = await import("@/services/peerCash");
+        const est = await fetchEstimate(usdc(afterBridge), peerCurrency, platform.processorName, true);
+        if (cancelled) return;
+        setPeerEstimate({ receiveAmount: est.receiveAmount, eta: est.eta ?? null });
+      } catch (err) {
+        console.warn(PEER_LOG, "estimate fetch failed", err);
+        if (!cancelled) setPeerEstimate(null);
+      } finally {
+        if (!cancelled) setPeerEstimateLoading(false);
+      }
+    }, 400);
+
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [withdrawMethod, peerStep, peerPlatformId, peerCurrency, withdrawAmountNum]);
+
   // Quote estimation for cross-chain withdrawals (re-runs when amount changes)
   useEffect(() => {
     if (!isNearIntentsWithdraw || !usdcSolanaToken || !effectiveToken || !withdrawAmountNum) {
@@ -2204,6 +2135,8 @@ export function BalanceModal({
     setPeerBridgeBackDepositAddress(null);
     setPeerBridgeBackStatus(null);
     setPeerCancelSubStep(null);
+    setPeerEstimate(null);
+    setPeerEstimateLoading(false);
   };
 
   const fetchPeerHistory = async () => {
@@ -2279,37 +2212,30 @@ export function BalanceModal({
       });
       const walletClient = createWalletClient({ chain: base, transport: sponsoredTransport, account: peerBaseWalletAddress as `0x${string}` });
 
-      // Step 2: Close any open ZKP2P deposit — if deposit found but withdrawal fails, STOP (don't mark cancelled)
+      // Step 2: Close any open Peer deposit — if deposit found but withdrawal fails, STOP (don't mark cancelled)
       setPeerCancelSubStep("signing-withdraw");
-      let foundDepositId: bigint | null = null;
+      let foundDepositId: string | null = null;
       {
-        const { OfframpClient } = await import("@zkp2p/sdk");
-        const offrampClient = new OfframpClient({ walletClient: walletClient as any, chainId: base.id, runtimeEnv: 'production' });
+        const { peerWithdraw, peerOrders } = await import("@/services/peerCash");
 
-        // Find deposit ID: use known value first, otherwise scan on-chain
+        // Find deposit ID: use known value first, otherwise scan on-chain orders
         if (peerZkp2pDepositId) {
-          foundDepositId = BigInt(peerZkp2pDepositId);
+          foundDepositId = peerZkp2pDepositId;
           console.log(PEER_LOG, "bridge-back: using known deposit ID", peerZkp2pDepositId);
         } else {
           try {
-            const deposits = await offrampClient.getAccountDeposits(peerBaseWalletAddress as `0x${string}`);
-            const activeDeposit = Array.isArray(deposits) ? deposits.find((d: any) => {
-              const remaining = d.remainingDeposits ?? d.remainingAmount ?? d.deposit?.remainingDeposits;
-              return remaining !== undefined && BigInt(remaining) > 0n;
-            }) : null;
-            if (activeDeposit) {
-              const depositId = (activeDeposit as any).depositId ?? (activeDeposit as any).deposit?.depositId;
-              foundDepositId = BigInt(depositId);
-            }
+            const orders = await peerOrders(peerBaseWalletAddress as string, { inFlight: true });
+            const activeOrder = orders.find((o) => o.isInFlight && !o.withdrawn);
+            if (activeOrder) foundDepositId = activeOrder.depositId;
           } catch (err: any) {
             console.warn(PEER_LOG, "bridge-back: deposit lookup failed (will check balance anyway)", err.message);
           }
         }
 
         if (foundDepositId !== null) {
-          console.log(PEER_LOG, "bridge-back: withdrawing Peer deposit", { depositId: foundDepositId.toString() });
+          console.log(PEER_LOG, "bridge-back: withdrawing Peer deposit", { depositId: foundDepositId });
           try {
-            await offrampClient.withdrawDeposit({ depositId: foundDepositId });
+            await peerWithdraw(foundDepositId, walletClient as any);
             console.log(PEER_LOG, "bridge-back: Peer deposit withdrawn");
           } catch (err: any) {
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -2402,7 +2328,7 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "Insufficient balance" });
       return;
     }
-    if (withdrawAmountNum > platform.maxUSDC) {
+    if (platform.maxUSDC != null && withdrawAmountNum > platform.maxUSDC) {
       toast({ variant: "destructive", title: `${platform.name} limit is $${platform.maxUSDC} USDC` });
       return;
     }
@@ -2557,12 +2483,11 @@ export function BalanceModal({
           account: peerBaseWalletAddress as `0x${string}`,
         });
 
-        // Sign ZKP2P withdrawDeposit (returns USDC to user's Base wallet)
+        // Withdraw the Peer deposit (returns USDC to user's Base wallet)
         setPeerCancelSubStep("signing-withdraw");
-        console.log(PEER_LOG, "cancel step 2 — signing Peer withdrawDeposit (sponsored)", { depositId: peerZkp2pDepositId });
-        const { OfframpClient } = await import("@zkp2p/sdk");
-        const client = new OfframpClient({ walletClient, chainId: base.id, runtimeEnv: 'production' });
-        await client.withdrawDeposit({ depositId: BigInt(peerZkp2pDepositId) });
+        console.log(PEER_LOG, "cancel step 2 — signing Peer withdraw (sponsored)", { depositId: peerZkp2pDepositId });
+        const { peerWithdraw } = await import("@/services/peerCash");
+        await peerWithdraw(peerZkp2pDepositId, walletClient as any);
         console.log(PEER_LOG, "cancel step 2 done — Peer deposit withdrawn");
 
         // Read ACTUAL balance after ZKP2P withdrawal (quote must match what we send)
@@ -4604,7 +4529,9 @@ export function BalanceModal({
                       <span className={`text-base font-medium leading-tight ${dark ? "text-white" : "text-gray-900"}`}>{p.name}</span>
                       {inCooldown
                         ? <span className="text-sm text-amber-400 leading-tight">{formatCooldown(cooldownMins)}</span>
-                        : <span className={`text-sm leading-tight ${dark ? "text-slate-500" : "text-gray-400"}`}>${p.maxUSDC} max</span>
+                        : p.maxUSDC != null
+                          ? <span className={`text-sm leading-tight ${dark ? "text-slate-500" : "text-gray-400"}`}>${p.maxUSDC} max</span>
+                          : <span className={`text-sm leading-tight ${dark ? "text-slate-500" : "text-gray-400"}`}>No limit</span>
                       }
                     </button>
                   );
@@ -4617,6 +4544,7 @@ export function BalanceModal({
           {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "form" && (() => {
             const platform = getPlatform(peerPlatformId ?? "");
             if (!platform) return null;
+            const platformCap = platform.maxUSDC ?? Infinity; // null = no Loofta-side cap
             return (
               <div className="space-y-4 py-2">
                 <button type="button" onClick={() => setPeerStep("platform")}
@@ -4630,7 +4558,8 @@ export function BalanceModal({
                   <div>
                     <p className={`text-base font-bold ${dark ? "text-white" : "text-gray-900"}`}>{platform.name}</p>
                     <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                      USDC → {peerCurrency} · max ${platform.maxUSDC}
+                      USDC → {peerCurrency}
+                      {platform.maxUSDC != null ? ` · max $${platform.maxUSDC}` : ""}
                       {platform.cooldownHours ? ` · ${platform.cooldownHours}h cooldown` : ""}
                     </p>
                   </div>
@@ -4660,7 +4589,7 @@ export function BalanceModal({
                       className="flex-1"
                     />
                     <Button type="button" variant="outline" size="sm"
-                      onClick={() => setWithdrawAmount(Math.min(spendableBalance, platform.maxUSDC).toFixed(2).replace(/\.?0+$/, ""))}
+                      onClick={() => setWithdrawAmount(Math.min(spendableBalance, platformCap).toFixed(2).replace(/\.?0+$/, ""))}
                       className={`shrink-0 px-3 ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}>
                       Max
                     </Button>
@@ -4668,37 +4597,37 @@ export function BalanceModal({
                   {withdrawAmountNum > 0 && withdrawAmountNum < 1 && (
                     <p className="text-base text-red-400 mt-1">Minimum is $1.00 USDC.</p>
                   )}
-                  {withdrawAmountNum > platform.maxUSDC && (
+                  {platform.maxUSDC != null && withdrawAmountNum > platform.maxUSDC && (
                     <p className="text-base text-red-400 mt-1">{platform.name} limit is ${platform.maxUSDC} USDC.</p>
                   )}
-                  {withdrawAmountNum > spendableBalance && withdrawAmountNum <= platform.maxUSDC && spendableBalance > 0 && (
+                  {withdrawAmountNum > spendableBalance && withdrawAmountNum <= platformCap && spendableBalance > 0 && (
                     <p className="text-base text-red-400 mt-1">Exceeds your balance.</p>
                   )}
                 </div>
 
-                {/* Estimated receive */}
+                {/* Estimated receive + real fill-time ETA (live oracle rate, zero spread) */}
                 {withdrawAmountNum >= 1 && (
-                  <div className={`rounded-xl border px-4 py-3 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-orange-100 bg-orange-50/50"}`}>
-                    <div>
+                  <div className={`rounded-xl border px-4 py-3 space-y-1.5 ${dark ? "border-white/10 bg-white/5" : "border-orange-100 bg-orange-50/50"}`}>
+                    <div className="flex items-center justify-between">
                       <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>You'll receive</span>
-                      {(() => {
-                        const est = getPeerEstimate(withdrawAmountNum, peerCurrency);
-                        if (est?.spreadPct && est.spreadPct > 0) {
-                          return null;
-                        }
-                        return null;
-                      })()}
+                      {peerEstimateLoading ? (
+                        <span className={`text-base flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-400"}`}>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />Fetching rate…
+                        </span>
+                      ) : peerEstimate ? (
+                        <span className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
+                          ≈ {getPeerCurrency(peerCurrency)?.symbol}{peerEstimate.receiveAmount.toFixed(2)} {peerCurrency}
+                        </span>
+                      ) : (
+                        <span className={`text-base ${dark ? "text-slate-500" : "text-gray-400"}`}>—</span>
+                      )}
                     </div>
-                    {peerFxLoading && peerCurrency !== "USD" ? (
-                      <span className={`text-base flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-400"}`}>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />Fetching rate…
-                      </span>
-                    ) : (() => {
-                      const est = getPeerEstimate(withdrawAmountNum, peerCurrency);
-                      return est
-                        ? <span className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>≈ {est.formatted}</span>
-                        : <span className={`text-base ${dark ? "text-slate-500" : "text-gray-400"}`}>—</span>;
-                    })()}
+                    {peerEstimate?.eta && (
+                      <div className="flex items-center justify-between">
+                        <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>Time to fill</span>
+                        <span className={`text-base ${dark ? "text-slate-300" : "text-gray-700"}`}>{peerEstimate.eta.label}</span>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -4715,7 +4644,7 @@ export function BalanceModal({
                   </Button>
                   <Button
                     onClick={handlePeerSubmit}
-                    disabled={peerSubmitting || !peerIdentifier.trim() || withdrawAmountNum < (devnetMode ? 0.01 : 1) || withdrawAmountNum > Math.min(spendableBalance, platform.maxUSDC)}
+                    disabled={peerSubmitting || !peerIdentifier.trim() || withdrawAmountNum < (devnetMode ? 0.01 : 1) || withdrawAmountNum > Math.min(spendableBalance, platformCap)}
                     className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50">
                     {peerSubmitting
                       ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Preparing…</span>
@@ -4828,7 +4757,9 @@ export function BalanceModal({
                   </div>
                   <p className={`text-base ${dark ? "text-slate-400" : "text-gray-600"}`}>
                     A peer will send <strong>{peerCurrency}</strong> to your {platform?.name} account (<strong>{peerIdentifier}</strong>).
-                    This usually takes a few minutes, but may take longer depending on availability.
+                    {peerEstimate?.eta
+                      ? ` Typical fill time: ${peerEstimate.eta.label}.`
+                      : " This usually takes a few minutes, but may take longer depending on availability."}
                   </p>
                 </div>
 
@@ -4841,7 +4772,7 @@ export function BalanceModal({
                 </div>
 
                 <div className={`rounded-xl border p-3 text-base ${dark ? "border-amber-400/20 bg-amber-400/5 text-amber-300" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                  Taking too long? You can cancel to get your USDC back. Cash outs usually complete within minutes, but can take longer if peers are busy.
+                  Taking too long? You can cancel to get your USDC back.{peerEstimate?.eta ? ` Typical fill time for ${platform?.name} is ${peerEstimate.eta.label}.` : " Cash outs usually complete within minutes, but can take longer if peers are busy."}
                 </div>
 
                 <Button
