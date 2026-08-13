@@ -17,6 +17,7 @@ import {
 } from '@solana/spl-token';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { SolanaSponsorService } from '../claims/solana-sponsor.service';
+import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 
 const USDC_DECIMALS = 6;
 
@@ -92,9 +93,12 @@ export class AutopaySignerService {
       throw new BadRequestException('Auto-pay signing is not configured');
     }
 
+    // Mainnet always goes through the shared Alchemy resolver (see solana-cluster-env.ts) —
+    // falling back to SOLANA_RPC_URL/public mainnet-beta here caused the exact "policy
+    // violation" RPC rejections that resolver was built to eliminate.
     const rpcUrl = params.isDevnet
       ? this.config.get<string>('SOLANA_DEVNET_RPC_URL') || 'https://api.devnet.solana.com'
-      : this.config.get<string>('SOLANA_RPC_URL') || 'https://api.mainnet-beta.solana.com';
+      : getMainnetSolanaRpcUrl(this.config);
     const mintAddress = params.isDevnet
       ? this.config.get<string>('SOLANA_USDC_MINT_DEVNET') || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
       : this.config.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
