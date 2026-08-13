@@ -61,7 +61,7 @@ async function assertEvmSponsorAllowed(walletAddress: string, userId: string, ac
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
 import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
-import { prepareSolWithdrawal, executeSolWithdrawal } from "@/services/jupiterWithdraw";
+import { prepareSolWithdrawal, executeSolSwap } from "@/services/jupiterSwap";
 import { isValidAddressForChain, isSolDomain } from "@/lib/refundAddresses";
 import { useSolDomain, type SolDomainState } from "@/hooks/useSolDomain";
 import {
@@ -2960,7 +2960,7 @@ export function BalanceModal({
 
       setSolWithdrawStep("sending");
       const accessToken = await getAccessToken();
-      const { signature } = await executeSolWithdrawal(solWithdrawPrepared.requestId, Buffer.from(signedTransaction).toString("base64"), accessToken);
+      const { signature } = await executeSolSwap(solWithdrawPrepared.requestId, Buffer.from(signedTransaction).toString("base64"), accessToken);
       setSolWithdrawSig(signature);
 
       const item = addWithdrawal({

@@ -4,8 +4,6 @@
  * signs and pays for the swap itself, never Loofta's fee payer, so this doesn't go through the
  * generic sign-and-broadcast sponsor endpoint at all. Jupiter's own /execute broadcasts +
  * confirms the signed transaction, so there's no separate client-side RPC send/confirm step.
- * The completed withdrawal is recorded the same way every other Solana withdrawal is, via
- * BalanceModal.tsx's saveWithdrawalToDB.
  */
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -35,7 +33,7 @@ export async function prepareSolWithdrawal(
   return r.json();
 }
 
-export async function executeSolWithdrawal(
+export async function executeSolSwap(
   requestId: string,
   signedTransactionBase64: string,
   accessToken?: string | null,
@@ -48,6 +46,6 @@ export async function executeSolWithdrawal(
     },
     body: JSON.stringify({ requestId, signedTransaction: signedTransactionBase64 }),
   });
-  if (!r.ok) throw new Error(await parseErrorDetail(r, "Failed to execute SOL withdrawal"));
+  if (!r.ok) throw new Error(await parseErrorDetail(r, "Failed to execute swap"));
   return r.json();
 }

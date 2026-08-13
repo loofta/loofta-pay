@@ -143,7 +143,7 @@ export class JupiterService {
   }
 
   /** Submits the user-signed transaction to Jupiter, which broadcasts and confirms it. */
-  async executeSolWithdrawal(requestId: string, signedTransactionBase64: string) {
+  async executeSwap(requestId: string, signedTransactionBase64: string) {
     const res = await fetch(`${JUPITER_API_BASE}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': this.getApiKey() },
