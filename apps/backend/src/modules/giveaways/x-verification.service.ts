@@ -67,7 +67,7 @@ const DEFAULT_DAILY_CALL_CAP = 300;
 export class XVerificationService {
   private readonly logger = new Logger(XVerificationService.name);
   private client: TwitterApi | null = null;
-  private readonly fetchCache = new Map<string, { ids: Set<string>; expiresAt: number }>();
+  private readonly fetchCache = new Map<string, { promise: Promise<Set<string>>; expiresAt: number }>();
   private readonly profileCache = new Map<string, { profile: XProfile; expiresAt: number }>();
   private dailyCallCount = 0;
   private dailyCallCountDate = '';
@@ -76,14 +76,23 @@ export class XVerificationService {
   /** Shared cache wrapper for every fetch*Ids helper below — see FETCH_CACHE_TTL_MS. Throws (into
    *  verifyPendingCompletions' existing api_error path) rather than returning an empty set on cap
    *  hit, so a capped-out fetch never gets misread as "nobody matched" and falsely rejects
-   *  genuine entrants. */
+   *  genuine entrants.
+   *
+   *  Caches the in-flight PROMISE, not just the resolved ids: confirmed live 2026-08-13 that several
+   *  entrants clicking "Verify" within the same second all saw a cache miss and each fired their own
+   *  live X API call for the same tweet — a stampede that alone can burn through X's 75-req/15min
+   *  budget and 429 everyone, including genuine retweeters. Sharing one in-flight fetch across
+   *  concurrent callers fixes that at the source. A failed fetch is evicted immediately (not left
+   *  cached for the full TTL) so the next click can retry cleanly once the rate limit clears, instead
+   *  of replaying the same error to everyone for 3 more minutes. */
   private async getCachedIds(key: string, fetch: () => Promise<Set<string>>): Promise<Set<string>> {
     const cached = this.fetchCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.ids;
+    if (cached && cached.expiresAt > Date.now()) return cached.promise;
     this.consumeDailyCapOrThrow(key);
-    const ids = await fetch();
-    this.fetchCache.set(key, { ids, expiresAt: Date.now() + FETCH_CACHE_TTL_MS });
-    return ids;
+    const promise = fetch();
+    this.fetchCache.set(key, { promise, expiresAt: Date.now() + FETCH_CACHE_TTL_MS });
+    promise.catch(() => this.fetchCache.delete(key));
+    return promise;
   }
 
   /** Increments today's fetch-unit count and throws once DAILY_CALL_CAP is hit, resetting at UTC
