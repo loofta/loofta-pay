@@ -12,6 +12,13 @@ RUN npm install --legacy-peer-deps
 # Copy source code
 COPY . .
 
+# @onsol/tldparser (used for .skr Seeker ID lookups) declares "borsh": "^2.0.0", but npm hoists
+# the root borsh@0.7.0 (needed elsewhere) over it instead, breaking tldparser at runtime. And
+# rpc-websockets (a transitive dep of @solana/web3.js) ships a broken uuid import that crashes
+# RPC subscriptions. In local dev both are fixed by the monorepo root's postinstall hook — this
+# build installs apps/backend standalone and never runs that hook, so apply both explicitly here.
+RUN npx patch-package && node patches/fix-tldparser-borsh.js
+
 # Build the application
 RUN npm run build
 

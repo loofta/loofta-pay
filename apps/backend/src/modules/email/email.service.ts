@@ -1325,7 +1325,7 @@ export class EmailService {
                 <tr>
                   <td style="padding:12px 0;">
                     <p style="margin:0;font-size:13px;color:#6b7280;">Off-ramp</p>
-                    <p style="margin:2px 0 0;font-size:15px;color:#ffffff;font-weight:500;">Withdraw privately to Cash App, Wise, Revolut or Venmo at a low fee</p>
+                    <p style="margin:2px 0 0;font-size:15px;color:#ffffff;font-weight:500;">Withdraw privately to Cash App, Revolut, Zelle or Venmo at a low fee</p>
                   </td>
                 </tr>
               </table>

@@ -55,6 +55,7 @@ function MobileMenu({
     { href: "/", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/megapot", label: "Lottery", description: "Play the daily jackpot privately" },
+    { href: "/twitter-bot", label: "Twitter bot", description: "Pay or gift tickets by tagging @looftapay" },
   ];
 
   return (
@@ -252,6 +253,7 @@ export function MinimalHeader() {
 
   const isRewardsActive = pathname?.startsWith("/rewards");
   const isWinActive = pathname?.includes("/megapot");
+  const isTwitterBotActive = pathname?.startsWith("/twitter-bot");
 
   return (
     <>
@@ -306,6 +308,19 @@ export function MinimalHeader() {
                   ].join(" ")}
                 >
                   <span>Lottery</span>
+                </Link>
+
+                {/* Desktop: Twitter bot link */}
+                <Link
+                  href="/twitter-bot"
+                  className={[
+                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    isTwitterBotActive
+                      ? "text-sky-300 bg-sky-500/10"
+                      : "text-slate-300 hover:text-white hover:bg-white/10",
+                  ].join(" ")}
+                >
+                  <span>Twitter bot</span>
                 </Link>
 
                 {/* Desktop: Balance button */}

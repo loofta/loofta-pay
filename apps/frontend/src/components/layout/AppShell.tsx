@@ -15,6 +15,8 @@ import { useTranslations } from "next-intl";
 import { useUpdateJun26 } from "@/hooks/useUpdateJun26";
 import { useUnclaimedPaymentToast } from "@/hooks/useUnclaimedPaymentToast";
 import { UnclaimedPaymentToast } from "@/components/UnclaimedPaymentToast";
+import { useAddEmailToast } from "@/hooks/useAddEmailToast";
+import { AddEmailToast } from "@/components/AddEmailToast";
 
 function ShellContent({ children }: { children: ReactNode }) {
   const t = useTranslations('AppShell');
@@ -22,6 +24,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   const networkMode = useAuthStore((s) => s.networkMode);
   const { show: updateShow, resolved: updateResolved } = useUpdateJun26();
   const { unclaimed, dismiss: dismissUnclaimed } = useUnclaimedPaymentToast();
+  const { showAddEmail, addEmail, linking: addingEmail, error: addEmailError, dismiss: dismissAddEmail } = useAddEmailToast();
   const [bannerDismissed, setBannerDismissed] = useState(false);
   useEffect(() => {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
@@ -71,7 +74,19 @@ function ShellContent({ children }: { children: ReactNode }) {
       <UserSync />
       <UpdateJun26Modal show={updateShow} />
       <MainnetLaunchCelebration blockedByUpdate={!updateResolved || updateShow} />
-      {unclaimed && <UnclaimedPaymentToast payments={unclaimed} onDismiss={dismissUnclaimed} />}
+      {(unclaimed || showAddEmail) && (
+        <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:bottom-4 z-[100] sm:max-w-sm flex flex-col-reverse gap-3">
+          {unclaimed && <UnclaimedPaymentToast payments={unclaimed} onDismiss={dismissUnclaimed} />}
+          {showAddEmail && (
+            <AddEmailToast
+              onAddEmail={addEmail}
+              onDismiss={dismissAddEmail}
+              loading={addingEmail}
+              alreadyLinked={addEmailError === "already_linked"}
+            />
+          )}
+        </div>
+      )}
       {showBanner && (
         <div className="relative w-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-3 mb-3 flex items-center text-white overflow-hidden">
           {/* Mobile: single-line scrolling ticker */}

@@ -61,6 +61,7 @@ async function assertEvmSponsorAllowed(walletAddress: string, userId: string, ac
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
 import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
+import { prepareSolWithdrawal, executeSolSwap } from "@/services/jupiterSwap";
 import { isValidAddressForChain, isSolDomain } from "@/lib/refundAddresses";
 import { useSolDomain, type SolDomainState } from "@/hooks/useSolDomain";
 import {
@@ -160,11 +161,6 @@ const PRIVATE_DEPOSIT_SESSION_KEY = "loofta_private_deposit_id";
 const PRIVATE_WITHDRAW_SESSION_KEY = "loofta_private_withdraw_id";
 const PRIVATE_TRANSFER_TERMINAL_STATUSES = new Set(["complete", "failed"]);
 const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
-const ZKP2P_RATE_UNIT = 1_000_000_000_000_000_000n; // 1e18
-function zkp2pRate(spreadPercent: number): string {
-  // conversionRate = (1 - spread) * 1e18 — peers pay less fiat per USDC, incentivizing faster fills
-  return ((ZKP2P_RATE_UNIT * BigInt(Math.round((1 - spreadPercent / 100) * 10_000))) / 10_000n).toString();
-}
 const BRIDGE_FEE_PCT = 0.6; // Near Intents ~0.1% + 50 BPS Loofta referral fee (Solana → Base)
 
 // Withdraw-flow lottery ticket add-on. Mirrors megapot/page.tsx's handlePublicBuy/randomTicket
@@ -520,6 +516,13 @@ export function BalanceModal({
   // Set once handleWithdraw has confirmed on-chain that the destination has no USDC account —
   // shows the setup-fee confirm step instead of sending straight away.
   const [ataFeeConfirmPending, setAtaFeeConfirmPending] = useState(false);
+  // SOL withdrawal (USDC -> native SOL via Jupiter, apps/backend/src/modules/jupiter). The user's
+  // own embedded wallet signs and pays for the swap itself — see solana-sponsor-safety project
+  // memory for why this deliberately does not go through the generic sign-and-broadcast sponsor.
+  const [solWithdrawStep, setSolWithdrawStep] = useState<"form" | "preparing" | "signing" | "sending" | "complete">("form");
+  const [solWithdrawPrepared, setSolWithdrawPrepared] = useState<{ requestId: string; swapTransactionBase64: string; estimatedSolOut: number } | null>(null);
+  const [solWithdrawSig, setSolWithdrawSig] = useState<string | null>(null);
+  const [solWithdrawError, setSolWithdrawError] = useState<string | null>(null);
   const [recentWithdrawals, setRecentWithdrawals] = useState<WithdrawalHistoryItem[]>([]);
   const [dbDeposits, setDbDeposits] = useState<{ id: string; type: string; status: string; amount_usdc: number | null; deposit_address: string | null; bridge_status: string | null; created_at: string }[]>([]);
   const [dbDepositsLoading, setDbDepositsLoading] = useState(false);
@@ -546,7 +549,7 @@ export function BalanceModal({
   const dialogContentRef = useRef<HTMLDivElement>(null);
 
   const [coinbaseLoading, setCoinbaseLoading] = useState(false);
-  const [withdrawMethod, setWithdrawMethod] = useState<"usdc-sol" | "near-intents" | "peer-offramp" | "private-relay" | "paj-cash" | null>(null);
+  const [withdrawMethod, setWithdrawMethod] = useState<"crypto-picker" | "usdc-sol" | "sol-jupiter" | "near-intents" | "peer-offramp" | "private-relay" | "paj-cash" | null>(null);
   const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
   const [showFiatOfframpPicker, setShowFiatOfframpPicker] = useState(false);
   const [showFiatOnrampPicker, setShowFiatOnrampPicker] = useState(false);
@@ -575,12 +578,13 @@ export function BalanceModal({
   const [peerBridgeBackStatus, setPeerBridgeBackStatus] = useState<string | null>(null);
   const peerBridgeBackPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [platformCooldowns, setPlatformCooldowns] = useState<Record<string, number>>({});
-  const [peerFxRates, setPeerFxRates] = useState<Record<string, number>>({});
-  const [peerFxLoading, setPeerFxLoading] = useState(false);
-  const [peerUsdcUsdPrice, setPeerUsdcUsdPrice] = useState<number>(1); // USDC/USD, defaults to 1
+  // Live oracle estimate + real fill-time ETA from @zkp2p/cash's estimate(), replacing the old
+  // hand-rolled spread/FX math (now that Peer Cash always prices at zero-spread oracle rate).
+  const [peerEstimate, setPeerEstimate] = useState<{ receiveAmount: number; eta: { seconds?: number; label: string } | null } | null>(null);
+  const [peerEstimateLoading, setPeerEstimateLoading] = useState(false);
 
   // Near Intents top-up deposit
-  const [topUpView, setTopUpView] = useState<"near-intents-deposit" | "private-deposit" | "paj-cash-onramp" | null>(null);
+  const [topUpView, setTopUpView] = useState<"crypto-picker" | "near-intents-deposit" | "private-deposit" | "paj-cash-onramp" | null>(null);
 
   // PAJ Cash (Naira on/off-ramp) history
   const [pajCashHistory, setPajCashHistory] = useState<PajCashOrder[]>([]);
@@ -1359,10 +1363,6 @@ export function BalanceModal({
           account: peerBaseWalletAddress as `0x${string}`,
         });
 
-        const { OfframpClient, getContracts } = await import("@zkp2p/sdk");
-        const client = new OfframpClient({ walletClient: sponsoredClient as any, chainId: base.id, runtimeEnv: 'production' });
-        const { addresses } = getContracts(base.id, "production");
-
         // Use actual on-chain balance — bridge fee may have reduced the delivered amount
         const pubClient = mkPublic({ chain: base, transport: httpT("https://mainnet.base.org") });
         const rawBalance = await pubClient.readContract({
@@ -1375,87 +1375,34 @@ export function BalanceModal({
         const atomicUsdc = rawBalance;
         console.log(PEER_LOG, "Base USDC balance", rawBalance.toString(), "requested", Math.round(peerAmountUSDC * 1_000_000));
 
-        // Check allowance — approve via Privy sponsored tx if needed
-        const currentAllowance = await pubClient.readContract({
-          address: BASE_USDC_ADDRESS,
-          abi: _erc20Abi,
-          functionName: "allowance",
-          args: [peerBaseWalletAddress as `0x${string}`, addresses.escrow as `0x${string}`],
-        }) as bigint;
-        console.log(PEER_LOG, "current allowance", currentAllowance.toString(), "needed", atomicUsdc.toString());
-        if (currentAllowance < atomicUsdc) {
-          console.log(PEER_LOG, "approving USDC for Peer escrow (Privy sponsored)...");
-          await privySendTx({
-            to: BASE_USDC_ADDRESS,
-            data: encodeFunctionData({ abi: _erc20Abi, functionName: 'approve', args: [addresses.escrow as `0x${string}`, atomicUsdc] }),
-            chainId: base.id,
-          }, { sponsor: true });
-          console.log(PEER_LOG, "approval complete");
-        } else {
-          console.log(PEER_LOG, "allowance sufficient, skipping approval");
-        }
-
         if (cancelled) return;
 
         // ZKP2P expects the raw username without display prefixes (@ for Revolut/Venmo, $ for Cash App)
         const zkp2pId = peerIdentifier.trim().replace(/^[@$]/, "");
-        // Minimum intent: larger of 10% of deposit or $5 USDC (allows partial fills)
-        const FIVE_USDC = 5_000_000n;
-        const tenPercent = atomicUsdc / 10n;
-        const minIntent = tenPercent > FIVE_USDC ? tenPercent : FIVE_USDC;
-        console.log(PEER_LOG, "signing createDeposit...", { platform: platform.processorName, identifier: zkp2pId, currency: peerCurrency, minIntent: minIntent.toString(), maxIntent: atomicUsdc.toString() });
-        const { hash: depositTxHash } = await client.createDeposit({
-          token: BASE_USDC_ADDRESS,
-          amount: atomicUsdc,
-          intentAmountRange: { min: minIntent, max: atomicUsdc },
-          processorNames: [platform.processorName],
-          payeeData: [{ offchainId: zkp2pId }],
-          conversionRates: [[{ currency: peerCurrency.toUpperCase(), conversionRate: zkp2pRate(getPeerCurrency(peerCurrency)?.spreadPercent ?? 0) }]],
+        console.log(PEER_LOG, "signing cashout()...", { platform: platform.processorName, identifier: zkp2pId, currency: peerCurrency, amount: atomicUsdc.toString() });
+
+        // cash.cashout() owns the whole deposit flow now: approve (if needed), createDeposit, and
+        // for Venmo/Cash App/PayPal the follow-up access-policy transaction — replacing what used
+        // to be a hand-rolled allowance check + OfframpClient.createDeposit + receipt-log parse.
+        const { peerCashout } = await import("@/services/peerCash");
+        const { depositId, txHash: depositTxHash, accessPolicyTxHash } = await peerCashout({
+          amountAtomicUsdc: atomicUsdc,
+          platform: platform.processorName,
+          currency: peerCurrency,
+          payee: zkp2pId,
+          signer: sponsoredClient as any,
         });
 
         if (cancelled) return;
 
-        // Wait for tx to be mined, then extract deposit ID from receipt logs
-        const receipt = await pubClient.waitForTransactionReceipt({ hash: depositTxHash as `0x${string}`, timeout: 90_000 });
-        let depositId: string | null = null;
-
-        // Primary: parse deposit ID from emitted event logs
-        try {
-          const { parseEventLogs } = await import("viem");
-          const { getContracts: getZkpContracts } = await import("@zkp2p/sdk");
-          const { abis } = getZkpContracts(base.id, 'production');
-          const parsed = parseEventLogs({ abi: abis.escrow as any, logs: receipt.logs });
-          for (const log of parsed as any[]) {
-            if (log.args?.depositId !== undefined) {
-              depositId = log.args.depositId.toString();
-              break;
-            }
-          }
-        } catch { /* fall through to polling */ }
-
-        // Fallback: poll getAccountDeposits until the new deposit appears
-        if (!depositId) {
-          for (let attempt = 0; attempt < 6; attempt++) {
-            try {
-              const deposits = await client.getAccountDeposits(peerBaseWalletAddress as `0x${string}`);
-              if (Array.isArray(deposits) && deposits.length > 0) {
-                const latest = deposits[deposits.length - 1];
-                depositId = latest?.depositId?.toString() ?? null;
-                if (depositId) break;
-              }
-            } catch { /* retry */ }
-            await new Promise(r => setTimeout(r, 2000));
-          }
-        }
-
-        console.log(PEER_LOG, "Peer deposit created", { depositId, depositTxHash });
+        console.log(PEER_LOG, "Peer deposit created", { depositId, depositTxHash, accessPolicyTxHash });
 
         // Notify backend to record the deposit
         const accessToken = await getAccessToken();
         await fetch(`/api/offramp/${peerOfframpId}?action=record-deposit`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-          body: JSON.stringify({ depositId, txHash: depositTxHash }),
+          body: JSON.stringify({ depositId, txHash: depositTxHash, accessPolicyTxHash: accessPolicyTxHash ?? null, etaSeconds: peerEstimate?.eta?.seconds ?? null, etaLabel: peerEstimate?.eta?.label ?? null }),
         });
 
         if (!cancelled) {
@@ -1597,44 +1544,8 @@ export function BalanceModal({
     setPlatformCooldowns(cooldowns);
   }, [withdrawMethod, peerStep]);
 
-  // Fetch USDC/USD price + full FX table whenever a non-USD currency is selected
-  useEffect(() => {
-    if (peerCurrency === "USD") return;
-    if (peerFxRates[peerCurrency]) return; // already fetched this currency
-    setPeerFxLoading(true);
-    Promise.all([
-      // USD → all fiat rates
-      fetch("https://open.er-api.com/v6/latest/USD").then(r => r.json()),
-      // USDC/USD price from CoinGecko (no key needed for simple queries)
-      fetch("https://api.coingecko.com/api/v3/simple/price?ids=usd-coin&vs_currencies=usd")
-        .then(r => r.json())
-        .catch(() => null),
-    ])
-      .then(([fxData, cgData]) => {
-        if (fxData?.rates) setPeerFxRates(prev => ({ ...prev, ...fxData.rates }));
-        const usdcPrice = cgData?.["usd-coin"]?.usd;
-        if (usdcPrice) setPeerUsdcUsdPrice(usdcPrice);
-      })
-      .catch(() => { })
-      .finally(() => setPeerFxLoading(false));
-  }, [peerCurrency]);
-
-  const getPeerEstimate = (amountUsdc: number, currency: string): { formatted: string; spreadPct: number } | null => {
-    if (!amountUsdc || amountUsdc <= 0) return null;
-    const cur = getPeerCurrency(currency);
-    if (!cur) return null;
-    const afterBridge = amountUsdc * (1 - BRIDGE_FEE_PCT / 100);
-    if (currency === "USD") {
-      const usd = afterBridge * peerUsdcUsdPrice * (1 - cur.spreadPercent / 100);
-      return { formatted: `$${usd.toFixed(2)} USD`, spreadPct: cur.spreadPercent };
-    }
-    const usdToTarget = peerFxRates[currency];
-    if (!usdToTarget) return null; // still loading
-    const receive = afterBridge * peerUsdcUsdPrice * usdToTarget * (1 - cur.spreadPercent / 100);
-    const decimals = currency === "EUR" ? 2 : 0;
-    const formatted = `${cur.symbol}${receive.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals })} ${currency}`;
-    return { formatted, spreadPct: cur.spreadPercent };
-  };
+  // Live oracle estimate + real fill-time ETA from @zkp2p/cash — see the effect below
+  // withdrawAmountNum's declaration further down in this component.
 
   // Clear Blink error and reset states when modal closes
   useEffect(() => {
@@ -1857,16 +1768,31 @@ export function BalanceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbDeposits]);
 
-  // Reset token selection and address when withdraw method changes
+  // Reset token selection and address when withdraw method changes — except switching between
+  // usdc-sol and sol-jupiter, which is just toggling the output token for the same Solana
+  // destination, so the address (and its compliance check) the user already entered carries over.
+  const prevWithdrawMethodRef = useRef(withdrawMethod);
   useEffect(() => {
+    const prev = prevWithdrawMethodRef.current;
+    prevWithdrawMethodRef.current = withdrawMethod;
+    const isSolanaTokenToggle =
+      (prev === "usdc-sol" && withdrawMethod === "sol-jupiter") ||
+      (prev === "sol-jupiter" && withdrawMethod === "usdc-sol");
+
     // Also clear any finished public-withdrawal step — otherwise picking a different withdraw
     // method still carries the previous run's terminal state, which surfaces as a stale success
     // panel next to the new flow.
     setWithdrawStep((s) => (s === "complete" || s === "failed" ? "idle" : s));
     setFromSel(undefined);
-    setWithdrawAddress("");
-    setAddressRiskStatus("idle");
     setAtaFeeConfirmPending(false);
+    setSolWithdrawStep("form");
+    setSolWithdrawPrepared(null);
+    setSolWithdrawSig(null);
+    setSolWithdrawError(null);
+    if (!isSolanaTokenToggle) {
+      setWithdrawAddress("");
+      setAddressRiskStatus("idle");
+    }
   }, [withdrawMethod]);
 
   // On devnet, USDC on Solana is the only supported withdraw method — skip the picker.
@@ -2091,6 +2017,34 @@ export function BalanceModal({
 
   const withdrawAmountNum = parseFloat(withdrawAmount) || 0;
 
+  // Live oracle estimate + real fill-time ETA from @zkp2p/cash, debounced on amount/platform
+  // change. Peer Cash always prices at the live zero-spread oracle rate — no more hand-rolled
+  // spread/FX math — so this is the actual "you'll receive" number, not an approximation.
+  useEffect(() => {
+    if (withdrawMethod !== "peer-offramp" || peerStep !== "form") return;
+    const platform = getPlatform(peerPlatformId ?? "");
+    if (!platform || withdrawAmountNum < 1) { setPeerEstimate(null); return; }
+
+    let cancelled = false;
+    setPeerEstimateLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const afterBridge = withdrawAmountNum * (1 - BRIDGE_FEE_PCT / 100);
+        const { getPeerEstimate: fetchEstimate, usdc } = await import("@/services/peerCash");
+        const est = await fetchEstimate(usdc(afterBridge), peerCurrency, platform.processorName, true);
+        if (cancelled) return;
+        setPeerEstimate({ receiveAmount: est.receiveAmount, eta: est.eta ?? null });
+      } catch (err) {
+        console.warn(PEER_LOG, "estimate fetch failed", err);
+        if (!cancelled) setPeerEstimate(null);
+      } finally {
+        if (!cancelled) setPeerEstimateLoading(false);
+      }
+    }, 400);
+
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [withdrawMethod, peerStep, peerPlatformId, peerCurrency, withdrawAmountNum]);
+
   // Quote estimation for cross-chain withdrawals (re-runs when amount changes)
   useEffect(() => {
     if (!isNearIntentsWithdraw || !usdcSolanaToken || !effectiveToken || !withdrawAmountNum) {
@@ -2145,7 +2099,7 @@ export function BalanceModal({
   }, []);
 
   useEffect(() => {
-    if (!isUSDCOnSolana) { setAddressRiskStatus("idle"); return; }
+    if (!isUSDCOnSolana && withdrawMethod !== "sol-jupiter") { setAddressRiskStatus("idle"); return; }
     const raw = effectiveWithdrawAddress.trim();
     if (!raw || !isValidAddressForChain(raw, "solana")) { setAddressRiskStatus("idle"); return; }
     setAddressRiskStatus("checking");
@@ -2154,7 +2108,7 @@ export function BalanceModal({
       setAddressRiskStatus(safe ? "safe" : "unsafe");
     }, 500);
     return () => clearTimeout(t);
-  }, [effectiveWithdrawAddress, checkAddressRisk, isUSDCOnSolana]);
+  }, [effectiveWithdrawAddress, checkAddressRisk, isUSDCOnSolana, withdrawMethod]);
 
   // Does the destination already have a USDC account? If not, Solana requires one to be created
   // and we charge the setup fee (see ataSetupFeeUsdc) — surfaced in the form BEFORE the
@@ -2204,6 +2158,8 @@ export function BalanceModal({
     setPeerBridgeBackDepositAddress(null);
     setPeerBridgeBackStatus(null);
     setPeerCancelSubStep(null);
+    setPeerEstimate(null);
+    setPeerEstimateLoading(false);
   };
 
   const fetchPeerHistory = async () => {
@@ -2279,37 +2235,30 @@ export function BalanceModal({
       });
       const walletClient = createWalletClient({ chain: base, transport: sponsoredTransport, account: peerBaseWalletAddress as `0x${string}` });
 
-      // Step 2: Close any open ZKP2P deposit — if deposit found but withdrawal fails, STOP (don't mark cancelled)
+      // Step 2: Close any open Peer deposit — if deposit found but withdrawal fails, STOP (don't mark cancelled)
       setPeerCancelSubStep("signing-withdraw");
-      let foundDepositId: bigint | null = null;
+      let foundDepositId: string | null = null;
       {
-        const { OfframpClient } = await import("@zkp2p/sdk");
-        const offrampClient = new OfframpClient({ walletClient: walletClient as any, chainId: base.id, runtimeEnv: 'production' });
+        const { peerWithdraw, peerOrders } = await import("@/services/peerCash");
 
-        // Find deposit ID: use known value first, otherwise scan on-chain
+        // Find deposit ID: use known value first, otherwise scan on-chain orders
         if (peerZkp2pDepositId) {
-          foundDepositId = BigInt(peerZkp2pDepositId);
+          foundDepositId = peerZkp2pDepositId;
           console.log(PEER_LOG, "bridge-back: using known deposit ID", peerZkp2pDepositId);
         } else {
           try {
-            const deposits = await offrampClient.getAccountDeposits(peerBaseWalletAddress as `0x${string}`);
-            const activeDeposit = Array.isArray(deposits) ? deposits.find((d: any) => {
-              const remaining = d.remainingDeposits ?? d.remainingAmount ?? d.deposit?.remainingDeposits;
-              return remaining !== undefined && BigInt(remaining) > 0n;
-            }) : null;
-            if (activeDeposit) {
-              const depositId = (activeDeposit as any).depositId ?? (activeDeposit as any).deposit?.depositId;
-              foundDepositId = BigInt(depositId);
-            }
+            const orders = await peerOrders(peerBaseWalletAddress as string, { inFlight: true });
+            const activeOrder = orders.find((o) => o.isInFlight && !o.withdrawn);
+            if (activeOrder) foundDepositId = activeOrder.depositId;
           } catch (err: any) {
             console.warn(PEER_LOG, "bridge-back: deposit lookup failed (will check balance anyway)", err.message);
           }
         }
 
         if (foundDepositId !== null) {
-          console.log(PEER_LOG, "bridge-back: withdrawing Peer deposit", { depositId: foundDepositId.toString() });
+          console.log(PEER_LOG, "bridge-back: withdrawing Peer deposit", { depositId: foundDepositId });
           try {
-            await offrampClient.withdrawDeposit({ depositId: foundDepositId });
+            await peerWithdraw(foundDepositId, walletClient as any);
             console.log(PEER_LOG, "bridge-back: Peer deposit withdrawn");
           } catch (err: any) {
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -2402,7 +2351,7 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "Insufficient balance" });
       return;
     }
-    if (withdrawAmountNum > platform.maxUSDC) {
+    if (platform.maxUSDC != null && withdrawAmountNum > platform.maxUSDC) {
       toast({ variant: "destructive", title: `${platform.name} limit is $${platform.maxUSDC} USDC` });
       return;
     }
@@ -2557,12 +2506,11 @@ export function BalanceModal({
           account: peerBaseWalletAddress as `0x${string}`,
         });
 
-        // Sign ZKP2P withdrawDeposit (returns USDC to user's Base wallet)
+        // Withdraw the Peer deposit (returns USDC to user's Base wallet)
         setPeerCancelSubStep("signing-withdraw");
-        console.log(PEER_LOG, "cancel step 2 — signing Peer withdrawDeposit (sponsored)", { depositId: peerZkp2pDepositId });
-        const { OfframpClient } = await import("@zkp2p/sdk");
-        const client = new OfframpClient({ walletClient, chainId: base.id, runtimeEnv: 'production' });
-        await client.withdrawDeposit({ depositId: BigInt(peerZkp2pDepositId) });
+        console.log(PEER_LOG, "cancel step 2 — signing Peer withdraw (sponsored)", { depositId: peerZkp2pDepositId });
+        const { peerWithdraw } = await import("@/services/peerCash");
+        await peerWithdraw(peerZkp2pDepositId, walletClient as any);
         console.log(PEER_LOG, "cancel step 2 done — Peer deposit withdrawn");
 
         // Read ACTUAL balance after ZKP2P withdrawal (quote must match what we send)
@@ -2882,6 +2830,172 @@ export function BalanceModal({
     }
   };
 
+  // A quote is only valid for the amount/address it was built against — editing either after
+  // getting one (or after a failed attempt) invalidates it, so the effect below re-quotes instead
+  // of the button silently signing (or refusing to retry) against stale numbers.
+  useEffect(() => {
+    setSolWithdrawPrepared(null);
+    setSolWithdrawError(null);
+  }, [withdrawAmount, withdrawAddress]);
+
+  // Auto-quote, debounced — the Withdraw button's label doubles as the live estimate ("Withdraw
+  // ≈X SOL"), so there's no separate "Get quote" step for the user to trigger by hand. Only fires
+  // once the address has cleared the compliance check; a request-id guard drops a stale response
+  // if the amount/address changed again before this one came back.
+  const solWithdrawReqIdRef = useRef(0);
+  useEffect(() => {
+    if (withdrawMethod !== "sol-jupiter" || solWithdrawStep !== "form") return;
+    if (solWithdrawPrepared || solWithdrawError) return;
+    if (withdrawAmountNum < 1 || withdrawAmountNum > spendableBalance) return;
+    const rawAddress = effectiveWithdrawAddress.trim();
+    if (!rawAddress || !isValidAddressForChain(rawAddress, "solana") || addressRiskStatus !== "safe") return;
+
+    const myReqId = ++solWithdrawReqIdRef.current;
+    const t = setTimeout(() => {
+      if (solWithdrawReqIdRef.current === myReqId) handleSolWithdrawPrepare();
+    }, 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withdrawMethod, solWithdrawStep, solWithdrawPrepared, solWithdrawError, withdrawAmountNum, effectiveWithdrawAddress, addressRiskStatus, spendableBalance]);
+
+  // SOL withdrawal step 1: quote + build the unsigned swap tx server-side (persists a
+  // sol_withdrawal_requests row as an audit trail — see jupiter.service.ts).
+  const handleSolWithdrawPrepare = async () => {
+    const rawAddress = effectiveWithdrawAddress.trim();
+    const amount = withdrawAmountNum;
+    if (amount <= 0) {
+      toast({ variant: "destructive", title: "Invalid amount", description: "Enter an amount greater than 0." });
+      return;
+    }
+    if (amount > spendableBalance) {
+      toast({ variant: "destructive", title: "Insufficient balance", description: `You have ${spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC available.` });
+      return;
+    }
+    if (addLotteryTicket && amount + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
+      toast({ variant: "destructive", title: "Insufficient balance", description: `Adding a $${LOTTERY_TICKET_PRICE_USDC.toFixed(2)} ticket needs a bit more USDC than you have available.` });
+      return;
+    }
+    if (!rawAddress || !isValidAddressForChain(rawAddress, "solana")) {
+      toast({ variant: "destructive", title: "Invalid address", description: "Enter a valid Solana wallet address." });
+      return;
+    }
+    if (addressRiskStatus !== "safe") {
+      toast({ variant: "destructive", title: "Address not approved", description: "Withdrawals are only allowed to addresses that pass our compliance check." });
+      return;
+    }
+    if (!solanaAddress || !wallet) {
+      toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta wallet is not available. Try refreshing or logging out and back in." });
+      return;
+    }
+
+    setSolWithdrawStep("preparing");
+    setSolWithdrawError(null);
+    try {
+      const accessToken = await getAccessToken();
+      const prepared = await prepareSolWithdrawal({ solanaAddress, destinationAddress: rawAddress, amountUSDC: amount }, accessToken);
+      setSolWithdrawPrepared(prepared);
+      setSolWithdrawStep("form");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not get a swap quote. Please try again.";
+      setSolWithdrawError(msg);
+      setSolWithdrawStep("form");
+      toast({ variant: "destructive", title: "Quote failed", description: msg });
+    }
+  };
+
+  // Single "Withdraw" button drives both steps: first click quotes (button becomes "Getting
+  // quote…"), second click — once the button is already showing the quoted SOL amount — signs.
+  const handleSolWithdrawClick = () => {
+    if (solWithdrawPrepared) {
+      handleSolWithdrawSign();
+    } else {
+      handleSolWithdrawPrepare();
+    }
+  };
+
+  // SOL withdrawal step 2: user signs the already-built swap with their own embedded wallet
+  // (never Loofta's fee payer — the transaction's payer is the user's own, gas-topped-up, wallet).
+  const handleSolWithdrawSign = async () => {
+    if (!solWithdrawPrepared || !solanaAddress || !wallet) return;
+    setSolWithdrawStep("signing");
+    setSolWithdrawError(null);
+    try {
+      // Ticket add-on goes first and never blocks the withdrawal itself — a failed purchase just
+      // means no ticket, the swap (already quoted for the requested amount, unaffected by the
+      // ticket) still proceeds. Mirrors handleWithdraw's identical pattern.
+      if (addLotteryTicket) {
+        const ticketAdded = await buyQuickLotteryTicket();
+        if (ticketAdded) {
+          toast({
+            duration: Infinity,
+            title: "Ticket added! 🎟️",
+            description: (
+              <span className="text-base">
+                Good luck — you&apos;re in for today&apos;s draw, a shot at {lotteryPrizePoolDisplay}.
+              </span>
+            ),
+            action: (
+              <ToastAction altText="View your lottery tickets" asChild>
+                <Link
+                  href="/app/megapot?tab=history"
+                  className="!bg-gradient-to-r !from-[#FF1301] !to-[#EAB308] !text-white !border-0 !font-semibold hover:!opacity-90"
+                >
+                  View tickets
+                </Link>
+              </ToastAction>
+            ),
+          });
+        } else {
+          toast({ variant: "destructive", title: "Couldn't add your ticket", description: "Continuing with your withdrawal." });
+        }
+      }
+
+      const mode = devnetMode ? "devnet" : "mainnet";
+      const rawTxBytes = Buffer.from(solWithdrawPrepared.swapTransactionBase64, "base64");
+      const { signedTransaction } = await signTransaction({
+        transaction: rawTxBytes,
+        wallet,
+        chain: getPrivySolanaChainForMode(mode),
+      });
+
+      setSolWithdrawStep("sending");
+      const accessToken = await getAccessToken();
+      const { signature } = await executeSolSwap(solWithdrawPrepared.requestId, Buffer.from(signedTransaction).toString("base64"), accessToken);
+      setSolWithdrawSig(signature);
+
+      const item = addWithdrawal({
+        id: signature,
+        amountUSDC: withdrawAmountNum,
+        txSignature: signature,
+        destinationAddress: effectiveWithdrawAddress.trim(),
+        destinationChain: "solana",
+        destinationToken: "SOL",
+        isNearIntents: false,
+        estimatedOut: solWithdrawPrepared.estimatedSolOut.toFixed(6),
+        nearIntentsComplete: true,
+      });
+      setActiveWithdrawal(item);
+      setRecentWithdrawals(getWithdrawalHistory());
+      saveWithdrawalToDB(item);
+      optimisticWithdrawBalance(withdrawAmountNum);
+      setAddLotteryTicket(false);
+
+      setSolWithdrawStep("complete");
+      toast({ title: "Sent!", description: "Your SOL is on its way." });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSolWithdrawError(msg);
+      // Not "form" — solWithdrawPrepared is untouched (the failure was in signing/execute, not
+      // the quote), so the button still shows the SOL amount, ready to retry signing directly.
+      setSolWithdrawStep("form");
+      if (msg.includes("user rejected") || msg.includes("denied")) {
+        toast({ variant: "destructive", title: "Signing cancelled" });
+      } else {
+        toast({ variant: "destructive", title: "Withdrawal failed", description: msg });
+      }
+    }
+  };
+
   const contentCls = dark
     ? "sm:max-w-xl border-white/10 bg-[#0f0f12] text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-gray-400]:!text-slate-500 [&_.bg-gray-100]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.border-gray-300]:!border-white/20 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&>button]:!text-slate-400 [&>button:hover]:!text-white"
     : "sm:max-w-xl";
@@ -3012,7 +3126,7 @@ export function BalanceModal({
           </div>
 
           {/* Top Up tab — method cards */}
-          {tab === "topup" && topUpView === null && (
+          {tab === "topup" && (topUpView === null || topUpView === "crypto-picker") && (
             <div className="py-2">
               {devnetMode ? (
                 <div className={`rounded-xl border-2 p-4 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50"}`}>
@@ -3045,7 +3159,56 @@ export function BalanceModal({
                     Choose your provider
                   </p>
 
-                  {/* Coinbase */}
+                  {/* MoonPay — card, via Privy's fund-wallet modal */}
+                  <button
+                    type="button"
+                    disabled={!solanaAddress || moonpayOnrampLoading}
+                    onClick={handleMoonpayOnramp}
+                    className={cn(
+                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                      dark
+                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      {moonpayOnrampLoading
+                        ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
+                        : <img src="/images/icons/moonpay-logo.svg" alt="MoonPay" className="w-10 h-10 object-contain" />
+                      }
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>MoonPay</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Apple Pay · debit or credit card</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+
+                  {/* PAJ Cash — Naira on-ramp, Nigeria only */}
+                  {PAJ_CASH_ENABLED && (
+                    <button
+                      type="button"
+                      disabled={!solanaAddress}
+                      onClick={() => { setShowFiatOnrampPicker(false); setTopUpView("paj-cash-onramp"); }}
+                      className={cn(
+                        "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                        dark
+                          ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                          : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      )}
+                    >
+                      <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                        <img src="/images/icons/paj-cash-logo.svg" alt="" className="w-10 h-10 object-contain" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>PAJ Cash</p>
+                        <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>NGN bank transfer · Nigeria only</p>
+                      </div>
+                      <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                    </button>
+                  )}
+
+                  {/* Coinbase — always last */}
                   <button
                     type="button"
                     disabled={!solanaAddress || coinbaseLoading}
@@ -3069,73 +3232,88 @@ export function BalanceModal({
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
-
-                  {/* PAJ Cash — Naira on-ramp */}
-                  {PAJ_CASH_ENABLED && (
-                    <button
-                      type="button"
-                      disabled={!solanaAddress}
-                      onClick={() => { setShowFiatOnrampPicker(false); setTopUpView("paj-cash-onramp"); }}
-                      className={cn(
-                        "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                        dark
-                          ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                          : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      )}
-                    >
-                      <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                        <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Naira · PAJ Cash</p>
-                        <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Bank transfer in Nigeria</p>
-                      </div>
-                      <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                    </button>
-                  )}
-
-                  {/* Disabled/coming-soon options last — no reason to make working ones compete
-                      with providers that aren't live yet. */}
-                  {/* MoonPay — disabled pending KYB approval */}
-                  <div
+                </div>
+              ) : topUpView === "crypto-picker" ? (
+                <div className="py-2 space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => setTopUpView(null)}
                     className={cn(
-                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left opacity-50 cursor-not-allowed",
-                      dark
-                        ? "border-white/10 bg-white/5"
-                        : "border-gray-100 bg-white shadow-sm"
+                      "flex items-center gap-1 text-base font-medium transition-colors",
+                      dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"
                     )}
                   >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      <img src="/images/icons/moonpay-logo.svg" alt="MoonPay" className="w-10 h-10 object-contain" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>MoonPay</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Coming soon</p>
-                    </div>
-                  </div>
+                    <ChevronLeft className="h-4 w-4" />
+                    Back
+                  </button>
 
-                  {/* Stripe — coming soon */}
-                  <div
-                    className={cn(
-                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left opacity-50 cursor-not-allowed",
-                      dark
-                        ? "border-white/10 bg-white/5"
-                        : "border-gray-100 bg-white shadow-sm"
-                    )}
+                  <p className={`text-base font-medium ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    Choose your network
+                  </p>
+
+                  {/* Blink */}
+                  <button type="button" disabled={!solanaAddress || blinkDepositing || coinbaseLoading} onClick={handleBlinkDeposit}
+                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
                     <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      <img src="/images/icons/stripe-logo.svg" alt="Stripe" className="rounded-[6px] h-7 w-7" />
+                      {blinkDepositing ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" /> : <img src="/images/blink/icon-yellow.png" alt="" className="w-10 h-10 object-contain drop-shadow-md" />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Stripe</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Coming soon</p>
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Blink</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>USDC · USDT · SOL · ETH · BNB</p>
                     </div>
-                  </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+
+                  {blinkError && <p className="text-base text-orange-500 text-center px-1">{blinkError}</p>}
+
+                  {/* Near */}
+                  <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("near-intents-deposit")}
+                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      <img src="/images/icons/near-logo.png" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Near</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>ZEC · TON · BTC — cross-chain</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
                 </div>
               ) : (
                 <div className="py-2 space-y-3">
 
-                  {/* 1. Private deposit — burner-relay MagicBlock private transfer */}
+                  {/* 1. Crypto deposit — Blink or Near */}
+                  <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("crypto-picker")}
+                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center -space-x-3">
+                      <img src="/images/blink/icon-yellow.png" alt="" className="w-8 h-8 rounded-full ring-2 ring-white object-contain bg-white" />
+                      <img src="/images/icons/near-logo.png" alt="" className="w-8 h-8 rounded-full ring-2 ring-white object-contain bg-white" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Crypto deposit</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Blink · Near</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+
+                  {/* 2. Bank & Card — MoonPay, Coinbase, PAJ Cash */}
+                  <button type="button" disabled={!solanaAddress || blinkDepositing} onClick={() => setShowFiatOnrampPicker(true)}
+                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Bank & Card</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>MoonPay · Coinbase · PAJ Cash</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+
+                  {/* 3. Private deposit — burner-relay MagicBlock private transfer, opens directly */}
                   <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("private-deposit")}
                     className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
@@ -3145,50 +3323,6 @@ export function BalanceModal({
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Private Deposit</p>
                       <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>USDC on Solana · not linked on-chain</p>
-                    </div>
-                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                  </button>
-
-                  {/* 2. Crypto deposit via Blink */}
-                  <button type="button" disabled={!solanaAddress || blinkDepositing || coinbaseLoading} onClick={handleBlinkDeposit}
-                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
-                  >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      {blinkDepositing ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" /> : <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with Blink</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>USDC · USDT — any chain</p>
-                    </div>
-                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                  </button>
-
-                  {blinkError && <p className="text-base text-orange-500 text-center px-1">{blinkError}</p>}
-
-                  {/* 3. More crypto via Near Intents */}
-                  <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("near-intents-deposit")}
-                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
-                  >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      <img src="/images/icons/deposit-receive.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Deposit with Near</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>ZEC · TON · BTC — cross-chain</p>
-                    </div>
-                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                  </button>
-
-                  {/* 4. Fiat / bank — opens provider picker */}
-                  <button type="button" disabled={!solanaAddress || blinkDepositing} onClick={() => setShowFiatOnrampPicker(true)}
-                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
-                  >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Buy with card or bank</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Apple Pay · card · bank transfer</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
@@ -3647,7 +3781,7 @@ export function BalanceModal({
                                 <div className="flex items-start justify-between gap-3">
                                   <div className="min-w-0 flex-1">
                                     <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
-                                      {order.direction === "ON_RAMP" ? "Naira top-up" : "Naira withdrawal"}
+                                      {order.direction === "ON_RAMP" ? "NGN top-up" : "NGN withdrawal"}
                                       {order.fiat_amount ? <span className={`font-normal ml-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>· ₦{Number(order.fiat_amount).toLocaleString()}</span> : ""}
                                     </p>
                                     <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
@@ -3817,10 +3951,68 @@ export function BalanceModal({
           )}
 
           {/* Withdraw tab — method selection */}
-          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod === null && !showFiatOfframpPicker && (
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod === "crypto-picker" && !showFiatOfframpPicker && (
             <div className="py-2 space-y-3">
+              <button
+                type="button"
+                onClick={() => setWithdrawMethod(null)}
+                className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Back
+              </button>
 
-              {/* 1. Private withdrawal — burner-relay MagicBlock private transfer */}
+              {/* Solana — USDC direct or swapped to native SOL; the form itself lets you switch */}
+              <button
+                type="button"
+                disabled={!solanaAddress}
+                onClick={() => setWithdrawMethod("usdc-sol")}
+                className={cn(
+                  "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                  dark
+                    ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                    : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                )}
+              >
+                <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                  <img src="/images/icons/withdraw-usdc.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>USDC or SOL</p>
+                  <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    Any Solana wallet · Free &amp; instant
+                  </p>
+                </div>
+                <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+              </button>
+
+              {/* Other tokens — Near Intents cross-chain withdrawal */}
+              {spendableBalance >= 1 && (
+                <button
+                  type="button"
+                  disabled={!solanaAddress}
+                  onClick={() => setWithdrawMethod("near-intents")}
+                  className={cn(
+                    "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                    dark
+                      ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                      : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  )}
+                >
+                  <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                    <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Other tokens</p>
+                    <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      ETH · BTC · USDT — any chain
+                    </p>
+                  </div>
+                  <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                </button>
+              )}
+
+              {/* Private withdrawal — burner-relay MagicBlock private transfer */}
               <button
                 type="button"
                 disabled={!solanaAddress}
@@ -3843,12 +4035,206 @@ export function BalanceModal({
                 </div>
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
               </button>
+            </div>
+          )}
 
-              {/* 2. USDC on Solana */}
+          {/* ── SOL withdrawal (USDC -> native SOL via Jupiter) — amount + destination form ── */}
+          {tab === "withdraw" && withdrawMethod === "sol-jupiter" && solWithdrawStep !== "complete" && (
+            <div className="space-y-4 py-2">
+              <button type="button" onClick={() => setWithdrawMethod("crypto-picker")}
+                className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                <ChevronLeft className="h-4 w-4" />Back
+              </button>
+
+              {/* USDC / SOL toggle — same Solana destination, switches which token lands there */}
+              <div className={cn("inline-flex rounded-xl border p-1 gap-1", dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>
+                <button type="button" onClick={() => setWithdrawMethod("usdc-sol")}
+                  disabled={solWithdrawStep !== "form"}
+                  className={cn("px-4 py-1.5 rounded-lg text-base font-medium transition-colors disabled:opacity-50", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                  USDC
+                </button>
+                <button type="button"
+                  className={cn("px-4 py-1.5 rounded-lg text-base font-medium transition-colors", dark ? "bg-white/15 text-white" : "bg-white text-gray-900 shadow-sm")}>
+                  SOL
+                </button>
+              </div>
+
+              <div>
+                <Label htmlFor="sol-withdraw-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
+                <div className="mt-1 flex items-center gap-2">
+                  <AmountInput id="sol-withdraw-amount" dark={dark}
+                    value={withdrawAmount}
+                    onChange={setWithdrawAmount}
+                    maxDecimals={2}
+                    suffix="USDC"
+                    disabled={solWithdrawStep !== "form"}
+                    className="flex-1"
+                  />
+                  <Button type="button" variant="outline" size="sm"
+                    onClick={() => {
+                      const max = Math.max(0, spendableBalance - (addLotteryTicket ? LOTTERY_TICKET_PRICE_USDC : 0));
+                      setWithdrawAmount(max.toFixed(6).replace(/\.?0+$/, ""));
+                    }}
+                    disabled={solWithdrawStep !== "form"}
+                    className={`shrink-0 px-3 ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}>
+                    Max
+                  </Button>
+                </div>
+                {withdrawAmountNum > 0 && withdrawAmountNum < 1 && (
+                  <p className="text-base text-red-400 mt-1">Minimum is $1.00 USDC.</p>
+                )}
+                {withdrawAmountNum > spendableBalance && spendableBalance > 0 && (
+                  <p className="text-base text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
+                )}
+                {addLotteryTicket && withdrawAmountNum > 0 && withdrawAmountNum <= spendableBalance && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance && (
+                  <p className="text-base text-red-400 mt-1">Not enough left over for the ${LOTTERY_TICKET_PRICE_USDC.toFixed(2)} ticket — lower the amount or turn it off.</p>
+                )}
+              </div>
+
+              <div>
+                <Label htmlFor="sol-withdraw-address" className={dark ? "text-slate-300" : undefined}>Destination Solana wallet</Label>
+                <Input
+                  id="sol-withdraw-address"
+                  placeholder="Enter a Solana address"
+                  value={withdrawAddress}
+                  onChange={(e) => setWithdrawAddress(e.target.value)}
+                  disabled={solWithdrawStep !== "form"}
+                  className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                />
+                {addressRiskStatus === "checking" && (
+                  <p className={`text-base mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />Checking address…
+                  </p>
+                )}
+                {addressRiskStatus === "unsafe" && (
+                  <p className="text-base text-red-400 mt-1.5">This address did not pass our compliance check.</p>
+                )}
+              </div>
+
+              {spendableBalance >= LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC && withdrawAmountNum > 0 && (
+                <div className="relative rounded-2xl">
+                  <style>{`
+                    @keyframes looftaGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+                    @keyframes looftaGlowPulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+                  `}</style>
+                  <div
+                    aria-hidden
+                    className="absolute -inset-[2.5px] rounded-2xl blur-[7px]"
+                    style={{
+                      background: "linear-gradient(110deg,#FF1301,#FF6A00,#EAB308,#FF4A26,#FF1301)",
+                      backgroundSize: "220% 100%",
+                      animation: reduceMotion ? undefined : "looftaGlowShift 2.4s linear infinite, looftaGlowPulse 2.4s ease-in-out infinite",
+                      opacity: reduceMotion ? 0.7 : undefined,
+                    }}
+                  />
+                  <div
+                    className={cn(
+                      "relative rounded-2xl border p-4",
+                      dark ? "bg-[#15110d] border-white/10" : "bg-white border-orange-100"
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_8px_20px_rgba(255,122,42,0.35)]">
+                        <Ticket className="h-5 w-5 text-white" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
+                          Multiply your win — add a lottery ticket
+                        </p>
+                        <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
+                          The Loofta lottery draws every day. $1 = 1 ticket, a shot at {lotteryPrizePoolDisplay} prize pool.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={addLotteryTicket}
+                        disabled={solWithdrawStep !== "form"}
+                        onCheckedChange={(checked) => {
+                          setAddLotteryTicket(checked);
+                          if (checked && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
+                            const adjusted = Math.max(0, spendableBalance - LOTTERY_TICKET_PRICE_USDC);
+                            setWithdrawAmount(adjusted.toFixed(6).replace(/\.?0+$/, ""));
+                          }
+                        }}
+                        className="shrink-0 mt-1 data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-[#FF4A26] data-[state=checked]:to-[#E1A041]"
+                      />
+                    </div>
+                    {addLotteryTicket && (
+                      <div className={cn(
+                        "mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-base font-semibold",
+                        dark ? "bg-white/10 text-white" : "bg-orange-50 text-gray-900"
+                      )}>
+                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 lottery ticket added</span>
+                        <span>+${LOTTERY_TICKET_PRICE_USDC.toFixed(2)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {solWithdrawError && <p className="text-base text-red-400">{solWithdrawError}</p>}
+
+              <Button
+                onClick={handleSolWithdrawClick}
+                disabled={
+                  solWithdrawStep === "preparing" || solWithdrawStep === "signing" || solWithdrawStep === "sending" ||
+                  !effectiveWithdrawAddress.trim() || withdrawAmountNum < 1 || withdrawAmountNum > spendableBalance ||
+                  addressRiskStatus !== "safe" ||
+                  // Stays disabled until a quote is actually showing — clicking to retry after a
+                  // failed attempt is the one exception.
+                  (!solWithdrawPrepared && !solWithdrawError)
+                }
+                className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
+              >
+                {solWithdrawStep === "preparing"
+                  ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Getting quote…</span>
+                  : solWithdrawStep === "signing"
+                    ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Approve in your wallet…</span>
+                    : solWithdrawStep === "sending"
+                      ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Sending…</span>
+                      : solWithdrawPrepared
+                        ? `Withdraw ≈${solWithdrawPrepared.estimatedSolOut.toFixed(6)} SOL`
+                        : solWithdrawError
+                          ? "Retry quote"
+                          : "Withdraw"}
+              </Button>
+            </div>
+          )}
+
+          {/* ── SOL withdrawal: complete ── */}
+          {tab === "withdraw" && withdrawMethod === "sol-jupiter" && solWithdrawStep === "complete" && solWithdrawPrepared && (
+            <div className="py-2 space-y-4">
+              <div className={`rounded-2xl border p-5 flex flex-col items-center gap-3 text-center ${dark ? "border-white/10 bg-white/5" : "border-emerald-100 bg-emerald-50/60"}`}>
+                <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+                <p className={`text-xl font-bold ${dark ? "text-white" : "text-gray-900"}`}>Sent!</p>
+                <p className={`text-base ${dark ? "text-slate-400" : "text-gray-600"}`}>
+                  ≈ {solWithdrawPrepared.estimatedSolOut.toFixed(6)} SOL is on its way.
+                </p>
+              </div>
+              {solWithdrawSig && (
+                <a
+                  href={getExplorerTxUrl("solana", solWithdrawSig)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`flex items-center gap-2 text-base rounded-lg border px-3 py-2 transition-colors ${dark ? "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10" : "border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100"}`}
+                >
+                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                  View Solana transaction
+                </a>
+              )}
+              <Button onClick={() => { setWithdrawMethod(null); onRefresh(); }} className="w-full bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white">
+                Done
+              </Button>
+            </div>
+          )}
+
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod === null && !showFiatOfframpPicker && (
+            <div className="py-2 space-y-3">
+
+              {/* 1. Crypto withdrawal — USDC on Solana, other tokens, private withdrawal */}
               <button
                 type="button"
                 disabled={!solanaAddress}
-                onClick={() => setWithdrawMethod("usdc-sol")}
+                onClick={() => setWithdrawMethod("crypto-picker")}
                 className={cn(
                   "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
                   dark
@@ -3860,70 +4246,19 @@ export function BalanceModal({
                   <img src="/images/icons/withdraw-usdc.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>USDC on Solana</p>
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Crypto withdrawal</p>
                   <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    Any Solana wallet · Free &amp; instant
+                    USDC on Solana · other tokens · private
                   </p>
                 </div>
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
               </button>
 
-              {spendableBalance >= 1 && (
-                <>
-                  {/* 3. Other token via Near Intents */}
-                  <button
-                    type="button"
-                    disabled={!solanaAddress}
-                    onClick={() => setWithdrawMethod("near-intents")}
-                    className={cn(
-                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                      dark
-                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    )}
-                  >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      <img src="/images/icons/deposit-bridge.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Other token or chain</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        ETH · BTC · SOL · USDT — any chain
-                      </p>
-                    </div>
-                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                  </button>
-
-                  {/* 4. Cash out via Peer (ZKP2P) */}
-                  <button
-                    type="button"
-                    disabled={!solanaAddress}
-                    onClick={() => { resetPeer(); setWithdrawMethod("peer-offramp"); }}
-                    className={cn(
-                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                      dark
-                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    )}
-                  >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      <img src="/images/icons/withdraw-peer.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cash out with Peer</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        Venmo · Cash App
-                      </p>
-                    </div>
-                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                  </button>
-                </>
-              )}
-
-              {/* 5. Bank or card — shows provider picker. Deliberately NOT gated on spendableBalance
-                  >= 1 (unlike items 3/4 above): PAJ Cash / Naira lives behind this, and users need
-                  to be able to open it at $0 balance to link their PAJ account and set up a default
-                  bank account ahead of time — not just when they already have funds to move. */}
+              {/* 2. Bank — shows provider picker: Cash out with Peer, Coinbase, PAJ Cash.
+                  Deliberately NOT gated on spendableBalance >= 1: PAJ Cash / Naira lives behind
+                  this, and users need to be able to open it at $0 balance to link their PAJ
+                  account and set up a default bank account ahead of time — not just when they
+                  already have funds to move. */}
               <button
                 type="button"
                 disabled={!solanaAddress}
@@ -3939,9 +4274,9 @@ export function BalanceModal({
                   <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Bank or credit card</p>
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Bank</p>
                   <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    Apple Pay · card · bank transfer
+                    Peer · Coinbase · PAJ Cash
                   </p>
                 </div>
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
@@ -3955,7 +4290,7 @@ export function BalanceModal({
             <div className="space-y-4 py-2">
 
               {/* Back */}
-              <button type="button" onClick={() => { setWithdrawMethod(null); resetPrivateWithdraw(); }}
+              <button type="button" onClick={() => { setWithdrawMethod("crypto-picker"); resetPrivateWithdraw(); }}
                 className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
                 <ChevronLeft className="h-4 w-4" />Back
               </button>
@@ -4140,7 +4475,57 @@ export function BalanceModal({
                 Choose your provider
               </p>
 
-              {/* Coinbase */}
+              {/* Cash out via Peer (ZKP2P) */}
+              {spendableBalance >= 1 && (
+                <button
+                  type="button"
+                  disabled={!solanaAddress}
+                  onClick={() => { setShowFiatOfframpPicker(false); resetPeer(); setWithdrawMethod("peer-offramp"); }}
+                  className={cn(
+                    "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                    dark
+                      ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                      : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  )}
+                >
+                  <div className="w-12 h-12 shrink-0 rounded-xl bg-[#111114] flex items-center justify-center p-2">
+                    <img src="/images/icons/peer-logo.svg" alt="" className="w-full h-full object-contain" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cash out with Peer</p>
+                    <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      Venmo · Cash App
+                    </p>
+                  </div>
+                  <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                </button>
+              )}
+
+              {/* PAJ Cash — NGN off-ramp */}
+              {PAJ_CASH_ENABLED && (
+                <button
+                  type="button"
+                  disabled={!solanaAddress}
+                  onClick={() => { setShowFiatOfframpPicker(false); setWithdrawMethod("paj-cash"); }}
+                  className={cn(
+                    "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                    dark
+                      ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                      : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  )}
+                >
+                  <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                    <img src="/images/icons/paj-cash-logo.svg" alt="" className="w-10 h-10 object-contain" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>NGN with PAJ Cash</p>
+                    <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Bank transfer · Nigeria only</p>
+                  </div>
+                  <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                </button>
+              )}
+
+              {/* Coinbase — always last */}
               <button
                 type="button"
                 disabled={!solanaAddress || coinbaseOfframpLoading}
@@ -4166,30 +4551,6 @@ export function BalanceModal({
                 </div>
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
               </button>
-
-              {/* PAJ Cash — Naira off-ramp */}
-              {PAJ_CASH_ENABLED && (
-                <button
-                  type="button"
-                  disabled={!solanaAddress}
-                  onClick={() => { setShowFiatOfframpPicker(false); setWithdrawMethod("paj-cash"); }}
-                  className={cn(
-                    "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                    dark
-                      ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                      : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  )}
-                >
-                  <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                    <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Naira · PAJ Cash</p>
-                    <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Bank transfer in Nigeria</p>
-                  </div>
-                  <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                </button>
-              )}
             </div>
           )}
 
@@ -4226,13 +4587,13 @@ export function BalanceModal({
               form must be excluded here, or both render stacked — private-relay was missing, and
               only stayed hidden by accident whenever a previous run had left withdrawStep on a
               terminal value. */}
-          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "peer-offramp" && withdrawMethod !== "paj-cash" && withdrawMethod !== "private-relay" && (
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "crypto-picker" && withdrawMethod !== "sol-jupiter" && withdrawMethod !== "peer-offramp" && withdrawMethod !== "paj-cash" && withdrawMethod !== "private-relay" && (
             <div className="space-y-4 py-2">
 
               {/* Back button — hidden on devnet (only one method available, nothing to go back to) */}
               {!devnetMode && <button
                 type="button"
-                onClick={() => setWithdrawMethod(null)}
+                onClick={() => setWithdrawMethod("crypto-picker")}
                 className={cn(
                   "flex items-center gap-1 text-base font-medium transition-colors",
                   dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"
@@ -4241,6 +4602,20 @@ export function BalanceModal({
                 <ChevronLeft className="h-4 w-4" />
                 Back
               </button>}
+
+              {/* USDC / SOL toggle — same Solana destination, switches which token lands there */}
+              {isUSDCOnSolana && (
+                <div className={cn("inline-flex rounded-xl border p-1 gap-1", dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>
+                  <button type="button"
+                    className={cn("px-4 py-1.5 rounded-lg text-base font-medium transition-colors", dark ? "bg-white/15 text-white" : "bg-white text-gray-900 shadow-sm")}>
+                    USDC
+                  </button>
+                  <button type="button" onClick={() => setWithdrawMethod("sol-jupiter")}
+                    className={cn("px-4 py-1.5 rounded-lg text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                    SOL
+                  </button>
+                </div>
+              )}
 
               {/* Balance + route summary */}
               {withdrawMethod === "near-intents" ? (
@@ -4508,7 +4883,7 @@ export function BalanceModal({
               )}
 
               <div className={`flex gap-2 pt-2 ${ataFeeConfirmPending ? "hidden" : ""}`}>
-                <Button variant="outline" onClick={() => setWithdrawMethod(null)} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
+                <Button variant="outline" onClick={() => setWithdrawMethod("crypto-picker")} className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
                   Back
                 </Button>
                 <Button
@@ -4607,10 +4982,11 @@ export function BalanceModal({
                       )}>
                       <img src={p.logo} alt={p.name} className="w-10 h-10 rounded-xl object-cover" />
                       <span className={`text-base font-medium leading-tight ${dark ? "text-white" : "text-gray-900"}`}>{p.name}</span>
-                      {inCooldown
-                        ? <span className="text-sm text-amber-400 leading-tight">{formatCooldown(cooldownMins)}</span>
-                        : <span className={`text-sm leading-tight ${dark ? "text-slate-500" : "text-gray-400"}`}>${p.maxUSDC} max</span>
-                      }
+                      {inCooldown ? (
+                        <span className="text-sm text-amber-400 leading-tight">{formatCooldown(cooldownMins)}</span>
+                      ) : p.maxUSDC != null ? (
+                        <span className={`text-sm leading-tight ${dark ? "text-slate-500" : "text-gray-400"}`}>${p.maxUSDC} max</span>
+                      ) : null}
                     </button>
                   );
                 })}
@@ -4622,6 +4998,7 @@ export function BalanceModal({
           {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "form" && (() => {
             const platform = getPlatform(peerPlatformId ?? "");
             if (!platform) return null;
+            const platformCap = platform.maxUSDC ?? Infinity; // null = no Loofta-side cap
             return (
               <div className="space-y-4 py-2">
                 <button type="button" onClick={() => setPeerStep("platform")}
@@ -4635,7 +5012,8 @@ export function BalanceModal({
                   <div>
                     <p className={`text-base font-bold ${dark ? "text-white" : "text-gray-900"}`}>{platform.name}</p>
                     <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                      USDC → {peerCurrency} · max ${platform.maxUSDC}
+                      USDC → {peerCurrency}
+                      {platform.maxUSDC != null ? ` · max $${platform.maxUSDC}` : ""}
                       {platform.cooldownHours ? ` · ${platform.cooldownHours}h cooldown` : ""}
                     </p>
                   </div>
@@ -4665,7 +5043,7 @@ export function BalanceModal({
                       className="flex-1"
                     />
                     <Button type="button" variant="outline" size="sm"
-                      onClick={() => setWithdrawAmount(Math.min(spendableBalance, platform.maxUSDC).toFixed(2).replace(/\.?0+$/, ""))}
+                      onClick={() => setWithdrawAmount(Math.min(spendableBalance, platformCap).toFixed(6).replace(/\.?0+$/, ""))}
                       className={`shrink-0 px-3 ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}>
                       Max
                     </Button>
@@ -4673,37 +5051,37 @@ export function BalanceModal({
                   {withdrawAmountNum > 0 && withdrawAmountNum < 1 && (
                     <p className="text-base text-red-400 mt-1">Minimum is $1.00 USDC.</p>
                   )}
-                  {withdrawAmountNum > platform.maxUSDC && (
+                  {platform.maxUSDC != null && withdrawAmountNum > platform.maxUSDC && (
                     <p className="text-base text-red-400 mt-1">{platform.name} limit is ${platform.maxUSDC} USDC.</p>
                   )}
-                  {withdrawAmountNum > spendableBalance && withdrawAmountNum <= platform.maxUSDC && spendableBalance > 0 && (
+                  {withdrawAmountNum > spendableBalance && withdrawAmountNum <= platformCap && spendableBalance > 0 && (
                     <p className="text-base text-red-400 mt-1">Exceeds your balance.</p>
                   )}
                 </div>
 
-                {/* Estimated receive */}
+                {/* Estimated receive + real fill-time ETA (live oracle rate, zero spread) */}
                 {withdrawAmountNum >= 1 && (
-                  <div className={`rounded-xl border px-4 py-3 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-orange-100 bg-orange-50/50"}`}>
-                    <div>
+                  <div className={`rounded-xl border px-4 py-3 space-y-1.5 ${dark ? "border-white/10 bg-white/5" : "border-orange-100 bg-orange-50/50"}`}>
+                    <div className="flex items-center justify-between">
                       <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>You'll receive</span>
-                      {(() => {
-                        const est = getPeerEstimate(withdrawAmountNum, peerCurrency);
-                        if (est?.spreadPct && est.spreadPct > 0) {
-                          return null;
-                        }
-                        return null;
-                      })()}
+                      {peerEstimateLoading ? (
+                        <span className={`text-base flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-400"}`}>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />Fetching rate…
+                        </span>
+                      ) : peerEstimate ? (
+                        <span className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
+                          ≈ {getPeerCurrency(peerCurrency)?.symbol}{peerEstimate.receiveAmount.toFixed(2)} {peerCurrency}
+                        </span>
+                      ) : (
+                        <span className={`text-base ${dark ? "text-slate-500" : "text-gray-400"}`}>—</span>
+                      )}
                     </div>
-                    {peerFxLoading && peerCurrency !== "USD" ? (
-                      <span className={`text-base flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-400"}`}>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />Fetching rate…
-                      </span>
-                    ) : (() => {
-                      const est = getPeerEstimate(withdrawAmountNum, peerCurrency);
-                      return est
-                        ? <span className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>≈ {est.formatted}</span>
-                        : <span className={`text-base ${dark ? "text-slate-500" : "text-gray-400"}`}>—</span>;
-                    })()}
+                    {peerEstimate?.eta && (
+                      <div className="flex items-center justify-between">
+                        <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>Time to fill</span>
+                        <span className={`text-base ${dark ? "text-slate-300" : "text-gray-700"}`}>{peerEstimate.eta.label}</span>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -4720,7 +5098,7 @@ export function BalanceModal({
                   </Button>
                   <Button
                     onClick={handlePeerSubmit}
-                    disabled={peerSubmitting || !peerIdentifier.trim() || withdrawAmountNum < (devnetMode ? 0.01 : 1) || withdrawAmountNum > Math.min(spendableBalance, platform.maxUSDC)}
+                    disabled={peerSubmitting || !peerIdentifier.trim() || withdrawAmountNum < (devnetMode ? 0.01 : 1) || withdrawAmountNum > Math.min(spendableBalance, platformCap)}
                     className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50">
                     {peerSubmitting
                       ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Preparing…</span>
@@ -4833,7 +5211,9 @@ export function BalanceModal({
                   </div>
                   <p className={`text-base ${dark ? "text-slate-400" : "text-gray-600"}`}>
                     A peer will send <strong>{peerCurrency}</strong> to your {platform?.name} account (<strong>{peerIdentifier}</strong>).
-                    This usually takes a few minutes, but may take longer depending on availability.
+                    {peerEstimate?.eta
+                      ? ` Typical fill time: ${peerEstimate.eta.label}.`
+                      : " This usually takes a few minutes, but may take longer depending on availability."}
                   </p>
                 </div>
 
@@ -4846,7 +5226,7 @@ export function BalanceModal({
                 </div>
 
                 <div className={`rounded-xl border p-3 text-base ${dark ? "border-amber-400/20 bg-amber-400/5 text-amber-300" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                  Taking too long? You can cancel to get your USDC back. Cash outs usually complete within minutes, but can take longer if peers are busy.
+                  Taking too long? You can cancel to get your USDC back.{peerEstimate?.eta ? ` Typical fill time for ${platform?.name} is ${peerEstimate.eta.label}.` : " Cash outs usually complete within minutes, but can take longer if peers are busy."}
                 </div>
 
                 <Button

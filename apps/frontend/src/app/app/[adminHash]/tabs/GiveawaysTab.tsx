@@ -11,9 +11,25 @@ import { Loader2, Gift, Check, X, AlertTriangle, ChevronDown, ChevronRight, Ban,
 import { useToast } from "@/components/ui/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { RichTextEditor } from "@/components/RichTextEditor";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 const TERMINAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "REJECTED", "REFUNDED", "UNDERFUNDED_EXPIRED"]);
+
+// Mirrors GiveawayDetailClient.tsx's own ENGAGE_TASK_TYPES/ENGAGE_ACTION_LABELS — x_retweet/
+// x_like/x_comment/x_bookmark tied to the same tweet render as one grouped card there, so the
+// admin edit view groups them the same way instead of four flat unrelated-looking rows.
+const ENGAGE_TASK_TYPES = new Set(["x_retweet", "x_like", "x_comment", "x_bookmark"]);
+const ENGAGE_ACTION_LABELS: Record<string, string> = {
+  x_retweet: "Retweet / Quote",
+  x_like: "Like",
+  x_comment: "Comment",
+  x_bookmark: "Bookmark",
+};
+// require_proof only applies to self-report task types (mirrors GIVEAWAY_TASK_VERIFICATION_MODE
+// in entities/giveaway.entity.ts) — x_follow/x_retweet/x_comment verify live against the X API,
+// so asking for a screenshot on top of that would be redundant and is never offered for them.
+const SELF_REPORT_TASK_TYPES = new Set(["x_like", "x_bookmark", "telegram_join", "discord_join", "visit_link", "custom"]);
 
 interface EditableTask {
   id: string;
@@ -31,17 +47,45 @@ interface NewTask {
   task_type: string;
   target: string;
   note: string;
+  requireProof: boolean;
 }
 
 interface EditForm {
   title: string;
   description: string;
+  logo_url: string;
   entries_close_at: string;
   min_followers: string;
   min_account_age_days: string;
   tasks: EditableTask[];
   deletedTaskIds: string[];
   newTasks: NewTask[];
+}
+
+type EditableTaskGroup =
+  | { kind: "engage"; target: string; items: Array<{ task: EditableTask; index: number }> }
+  | { kind: "single"; task: EditableTask; index: number };
+
+/** Mirrors GiveawayDetailClient.tsx's groupTasksForDisplay, adapted for the editable task shape —
+ *  groups by the shared `target` so editing it updates every task in the group at once, same
+ *  invariant the create wizard establishes ("engage with a post" = one target, several actions). */
+function groupEditableTasksForDisplay(tasks: EditableTask[]): EditableTaskGroup[] {
+  const groups: EditableTaskGroup[] = [];
+  const engageByTarget = new Map<string, EditableTaskGroup & { kind: "engage" }>();
+  tasks.forEach((task, index) => {
+    if (ENGAGE_TASK_TYPES.has(task.task_type)) {
+      let group = engageByTarget.get(task.target);
+      if (!group) {
+        group = { kind: "engage", target: task.target, items: [] };
+        engageByTarget.set(task.target, group);
+        groups.push(group);
+      }
+      group.items.push({ task, index });
+    } else {
+      groups.push({ kind: "single", task, index });
+    }
+  });
+  return groups;
 }
 
 const TASK_TYPE_OPTIONS = [
@@ -76,6 +120,7 @@ interface EscalationCompletion {
 interface AdminGiveawayDetail {
   id: string;
   description: string | null;
+  logo_url: string | null;
   entries_close_at: string;
   eligibility: { min_followers?: number; min_account_age_days?: number };
   funding_required_usd: string | null;
@@ -107,11 +152,34 @@ export function GiveawaysTab() {
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [loadingEditDetail, setLoadingEditDetail] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
 
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const token = await getAccessToken().catch(() => null);
     return token ? { authorization: `Bearer ${token}` } : {};
   }, [getAccessToken]);
+
+  const uploadLogo = useCallback(async (file: File) => {
+    if (!editForm) return;
+    setUploadingLogo(true);
+    try {
+      const token = await getAccessToken().catch(() => null);
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/giveaways/upload-logo", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || "Failed to upload logo");
+      setEditForm((prev) => (prev ? { ...prev, logo_url: body.logo_url } : prev));
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Could not upload logo", description: err.message });
+    } finally {
+      setUploadingLogo(false);
+    }
+  }, [editForm, getAccessToken, toast]);
 
   // Public detail endpoint works regardless of status (not just OPEN), and needs no auth —
   // safe to reuse here for a pending giveaway's full description/tasks/eligibility.
@@ -196,6 +264,7 @@ export function GiveawaysTab() {
       setEditForm({
         title: g.title,
         description: detail.description ?? "",
+        logo_url: detail.logo_url ?? "",
         entries_close_at: detail.entries_close_at ? detail.entries_close_at.slice(0, 16) : "",
         min_followers: detail.eligibility?.min_followers != null ? String(detail.eligibility.min_followers) : "",
         min_account_age_days: detail.eligibility?.min_account_age_days != null ? String(detail.eligibility.min_account_age_days) : "",
@@ -229,6 +298,7 @@ export function GiveawaysTab() {
       const body: Record<string, unknown> = {
         title: editForm.title,
         description: editForm.description || undefined,
+        logo_url: editForm.logo_url || undefined,
       };
       if (editForm.entries_close_at) body.entries_close_at = new Date(editForm.entries_close_at).toISOString();
       if (editForm.min_followers !== "") body.min_followers = Number(editForm.min_followers);
@@ -251,7 +321,11 @@ export function GiveawaysTab() {
             const noteKey = NOTE_KEY_BY_TASK_TYPE[t.task_type] ?? "instructions";
             return {
               task_type: t.task_type,
-              config: { target: t.target.trim(), ...(t.note.trim() ? { [noteKey]: t.note.trim() } : {}) },
+              config: {
+                target: t.target.trim(),
+                ...(t.note.trim() ? { [noteKey]: t.note.trim() } : {}),
+                ...(SELF_REPORT_TASK_TYPES.has(t.task_type) && t.requireProof ? { require_proof: true } : {}),
+              },
             };
           });
       }
@@ -567,12 +641,34 @@ export function GiveawaysTab() {
                               </div>
                               <div>
                                 <label className="text-gray-500 text-sm block mb-1">Description</label>
-                                <textarea
+                                <RichTextEditor
                                   value={editForm.description}
-                                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                                  onChange={(v) => setEditForm({ ...editForm, description: v })}
                                   rows={3}
-                                  className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
                                 />
+                              </div>
+                              <div>
+                                <label className="text-gray-500 text-sm block mb-1">Project logo</label>
+                                <div className="flex items-center gap-3">
+                                  {editForm.logo_url && (
+                                    // eslint-disable-next-line @next/next/no-img-element -- admin-only thumbnail preview
+                                    <img src={editForm.logo_url} alt="" className="w-8 h-8 rounded-full object-cover border border-gray-800 shrink-0" />
+                                  )}
+                                  <label className="cursor-pointer px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-700 text-gray-300 hover:bg-gray-800">
+                                    {uploadingLogo ? "Uploading…" : editForm.logo_url ? "Change logo" : "Upload logo"}
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      disabled={uploadingLogo}
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) uploadLogo(file);
+                                        e.target.value = "";
+                                      }}
+                                    />
+                                  </label>
+                                </div>
                               </div>
                               <div className="grid grid-cols-3 gap-2">
                                 <div>
@@ -609,44 +705,99 @@ export function GiveawaysTab() {
                                 <div>
                                   <label className="text-gray-500 text-sm block mb-1">Tasks</label>
                                   <div className="space-y-2">
-                                    {editForm.tasks.map((t, i) => (
-                                      <div key={t.id} className="rounded-lg border border-gray-800 p-2 space-y-1.5">
-                                        <div className="flex items-center justify-between">
-                                          <p className="text-xs text-gray-500 uppercase tracking-wide">{t.task_type.replace(/_/g, " ")}</p>
-                                          <button
-                                            type="button"
-                                            title="Delete task — also removes any entrant's completion (verified or not) for it"
-                                            onClick={() => {
-                                              const tasks = editForm.tasks.filter((_, idx) => idx !== i);
-                                              setEditForm({ ...editForm, tasks, deletedTaskIds: [...editForm.deletedTaskIds, t.id] });
-                                            }}
-                                            className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-900/20"
-                                          >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                          </button>
+                                    {groupEditableTasksForDisplay(editForm.tasks).map((group) => {
+                                      const deleteTask = (id: string, i: number) => {
+                                        const tasks = editForm.tasks.filter((_, idx) => idx !== i);
+                                        setEditForm({ ...editForm, tasks, deletedTaskIds: [...editForm.deletedTaskIds, id] });
+                                      };
+                                      const updateTask = (i: number, patch: Partial<EditableTask>) => {
+                                        const tasks = [...editForm.tasks];
+                                        tasks[i] = { ...tasks[i], ...patch };
+                                        setEditForm({ ...editForm, tasks });
+                                      };
+                                      const requireProofToggle = (task: EditableTask, i: number) =>
+                                        SELF_REPORT_TASK_TYPES.has(task.task_type) && (
+                                          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                                            <input
+                                              type="checkbox"
+                                              checked={!!task.restConfig.require_proof}
+                                              onChange={(e) => updateTask(i, { restConfig: { ...task.restConfig, require_proof: e.target.checked } })}
+                                              className="accent-orange-500"
+                                            />
+                                            Require proof (link/screenshot)
+                                          </label>
+                                        );
+                                      if (group.kind === "engage") {
+                                        return (
+                                          <div key={`engage-${group.target}`} className="rounded-lg border border-gray-800 p-2 space-y-1.5">
+                                            <p className="text-xs text-gray-500 uppercase tracking-wide">Engage with post</p>
+                                            <input
+                                              value={group.target}
+                                              placeholder="Tweet URL"
+                                              onChange={(e) => {
+                                                const tasks = [...editForm.tasks];
+                                                for (const { index } of group.items) tasks[index] = { ...tasks[index], target: e.target.value };
+                                                setEditForm({ ...editForm, tasks });
+                                              }}
+                                              className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                            />
+                                            <div className="space-y-1.5 pl-2 border-l border-gray-800">
+                                              {group.items.map(({ task, index }) => (
+                                                <div key={task.id} className="space-y-1">
+                                                  <div className="flex items-center justify-between">
+                                                    <p className="text-xs text-gray-400">{ENGAGE_ACTION_LABELS[task.task_type] ?? task.task_type}</p>
+                                                    <button
+                                                      type="button"
+                                                      title="Delete task — also removes any entrant's completion (verified or not) for it"
+                                                      onClick={() => deleteTask(task.id, index)}
+                                                      className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-900/20"
+                                                    >
+                                                      <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
+                                                  </div>
+                                                  <input
+                                                    value={task.note}
+                                                    placeholder="Instructions shown to entrants (optional)"
+                                                    onChange={(e) => updateTask(index, { note: e.target.value })}
+                                                    className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                                  />
+                                                  {requireProofToggle(task, index)}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        );
+                                      }
+                                      const { task: t, index: i } = group;
+                                      return (
+                                        <div key={t.id} className="rounded-lg border border-gray-800 p-2 space-y-1.5">
+                                          <div className="flex items-center justify-between">
+                                            <p className="text-xs text-gray-500 uppercase tracking-wide">{t.task_type.replace(/_/g, " ")}</p>
+                                            <button
+                                              type="button"
+                                              title="Delete task — also removes any entrant's completion (verified or not) for it"
+                                              onClick={() => deleteTask(t.id, i)}
+                                              className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-900/20"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          </div>
+                                          <input
+                                            value={t.target}
+                                            placeholder="Target (URL or handle)"
+                                            onChange={(e) => updateTask(i, { target: e.target.value })}
+                                            className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                          />
+                                          <input
+                                            value={t.note}
+                                            placeholder="Instructions shown to entrants (optional)"
+                                            onChange={(e) => updateTask(i, { note: e.target.value })}
+                                            className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
+                                          />
+                                          {requireProofToggle(t, i)}
                                         </div>
-                                        <input
-                                          value={t.target}
-                                          placeholder="Target (URL or handle)"
-                                          onChange={(e) => {
-                                            const tasks = [...editForm.tasks];
-                                            tasks[i] = { ...t, target: e.target.value };
-                                            setEditForm({ ...editForm, tasks });
-                                          }}
-                                          className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
-                                        />
-                                        <input
-                                          value={t.note}
-                                          placeholder="Instructions shown to entrants (optional)"
-                                          onChange={(e) => {
-                                            const tasks = [...editForm.tasks];
-                                            tasks[i] = { ...t, note: e.target.value };
-                                            setEditForm({ ...editForm, tasks });
-                                          }}
-                                          className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
-                                        />
-                                      </div>
-                                    ))}
+                                      );
+                                    })}
                                     {editForm.newTasks.map((nt, i) => (
                                       <div key={`new-${i}`} className="rounded-lg border border-green-900/40 bg-green-900/5 p-2 space-y-1.5">
                                         <div className="flex items-center justify-between gap-2">
@@ -691,6 +842,21 @@ export function GiveawaysTab() {
                                           }}
                                           className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-gray-600"
                                         />
+                                        {SELF_REPORT_TASK_TYPES.has(nt.task_type) && (
+                                          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                                            <input
+                                              type="checkbox"
+                                              checked={nt.requireProof}
+                                              onChange={(e) => {
+                                                const newTasks = [...editForm.newTasks];
+                                                newTasks[i] = { ...nt, requireProof: e.target.checked };
+                                                setEditForm({ ...editForm, newTasks });
+                                              }}
+                                              className="accent-orange-500"
+                                            />
+                                            Require proof (link/screenshot)
+                                          </label>
+                                        )}
                                       </div>
                                     ))}
                                   </div>
@@ -698,7 +864,7 @@ export function GiveawaysTab() {
                               )}
                               <button
                                 type="button"
-                                onClick={() => setEditForm({ ...editForm, newTasks: [...editForm.newTasks, { task_type: "x_retweet", target: "", note: "" }] })}
+                                onClick={() => setEditForm({ ...editForm, newTasks: [...editForm.newTasks, { task_type: "x_retweet", target: "", note: "", requireProof: false }] })}
                                 className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-gray-400 hover:text-gray-200 hover:bg-gray-800 w-fit"
                               >
                                 <Plus className="w-3.5 h-3.5" /> Add task

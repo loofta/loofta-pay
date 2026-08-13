@@ -444,14 +444,21 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
               Task review queue {reviewQueue ? `(${reviewQueue.length})` : ""}
             </p>
             <div className="space-y-2">
-              {(reviewQueue ?? []).map((item) => (
+              {(reviewQueue ?? []).map((item) => {
+                const proofImageUrl = typeof item.submission_data?.proof_image_url === "string" ? item.submission_data.proof_image_url : null;
+                const proofText = typeof item.submission_data?.proof === "string" ? item.submission_data.proof : null;
+                return (
                 <div key={item.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-base font-medium text-white">@{item.entry.x_handle} — {item.task.task_type.replace(/_/g, " ")}</p>
-                      {item.submission_data && (
-                        <p className="text-base text-slate-500 truncate">{JSON.stringify(item.submission_data)}</p>
+                    <div className="min-w-0 flex items-start gap-3">
+                      {proofImageUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element -- admin review-only thumbnail, not worth the next/image plumbing here
+                        <img src={proofImageUrl} alt="Submitted proof" className="w-14 h-14 rounded-lg object-cover border border-white/10 shrink-0" />
                       )}
+                      <div className="min-w-0">
+                        <p className="text-base font-medium text-white">@{item.entry.x_handle} — {item.task.task_type.replace(/_/g, " ")}</p>
+                        {proofText && <p className="text-base text-slate-500 truncate">{proofText}</p>}
+                      </div>
                     </div>
                     <div className="flex gap-1.5 shrink-0">
                       <button type="button" onClick={() => review(item.id, "verified")} className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors" aria-label="Approve">
@@ -463,7 +470,8 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
               {reviewQueue && reviewQueue.length === 0 && <p className="text-base text-slate-500">Nothing to review right now</p>}
             </div>
           </div>

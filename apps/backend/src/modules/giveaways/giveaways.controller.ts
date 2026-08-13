@@ -45,13 +45,13 @@ export class GiveawaysController {
   }
 
   @Put(':id')
-  @ApiOperation({ summary: 'Edit a giveaway you created — only while still pending admin approval. Once approved, budget/scope changes go through support/admin instead.' })
+  @ApiOperation({ summary: 'Edit a giveaway you created — any time before it is FUNDED. Once funded, budget/scope changes go through support/admin instead.' })
   async update(
     @Req() req: { user?: { id: string } },
     @Param('id') id: string,
     @Body() dto: CreateGiveawayDto,
   ): Promise<{ giveaway: Giveaway }> {
-    const giveaway = await this.giveawaysService.updateBeforeApproval(id, req.user!.id, dto);
+    const giveaway = await this.giveawaysService.updateBeforeFunded(id, req.user!.id, dto);
     return { giveaway };
   }
 

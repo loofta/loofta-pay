@@ -1,5 +1,6 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { Reflector } from '@nestjs/core';
 import { AuthGuard } from './auth.guard';
 import { OptionalAuthGuard } from './optional-auth.guard';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
@@ -27,6 +28,10 @@ function makeContext(headers: Record<string, string | undefined>): ExecutionCont
     switchToHttp: () => ({
       getRequest: () => req,
     }),
+    // AuthGuard checks @Public() via Reflector.getAllAndOverride(key, [getHandler(), getClass()])
+    // — the mock just needs to return something the Reflector can key metadata lookups off of.
+    getHandler: () => ({}),
+    getClass: () => ({}),
   } as unknown as ExecutionContext;
 }
 
@@ -44,6 +49,7 @@ describe('AuthGuard', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthGuard,
+        Reflector,
         { provide: PrivyVerificationService, useValue: privy },
       ],
     }).compile();

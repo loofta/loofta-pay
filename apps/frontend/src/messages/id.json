@@ -78,6 +78,14 @@
     "claimMany": "Klaim semua",
     "dismiss": "Tutup"
   },
+  "AddEmailToast": {
+    "title": "Jangan lewatkan pembayaran",
+    "body": "Tambahkan email kamu untuk mendapat notifikasi pembayaran dan hadiah baru.",
+    "addEmail": "Tambah email",
+    "adding": "Menambahkan…",
+    "alreadyLinked": "Email ini sudah terhubung ke akun lain.",
+    "dismiss": "Tutup"
+  },
   "HomePage": {
     "send": "Kirim",
     "to": "Ke",

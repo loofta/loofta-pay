@@ -22,7 +22,7 @@ export function UnclaimedPaymentToast({
   const totalAmount = payments.reduce((sum, p) => sum + parseFloat(p.amount || "0"), 0);
 
   return (
-    <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:bottom-4 z-[100] sm:max-w-sm animate-in slide-in-from-bottom-4 fade-in duration-300">
+    <div className="animate-in slide-in-from-bottom-4 fade-in duration-300">
       <div className="relative rounded-2xl border border-white/10 bg-[#0f0f12]/95 backdrop-blur-xl shadow-2xl shadow-black/50 p-4">
         <button
           type="button"

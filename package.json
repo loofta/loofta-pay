@@ -15,13 +15,15 @@
     "start": "npm run start --workspace=@loofta/frontend",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspace=@loofta/backend",
-    "postinstall": "patch-package && node patches/fix-tldparser-borsh.js"
+    "postinstall": "patch-package && node patches/fix-tldparser-borsh.js",
+    "prepare": "husky"
   },
   "overrides": {
     "uuid": "9.0.1"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
+    "husky": "9.1.7",
     "patch-package": "^8.0.1"
   },
   "dependencies": {

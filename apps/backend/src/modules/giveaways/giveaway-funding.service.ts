@@ -90,12 +90,18 @@ export class GiveawayFundingService {
     const requiredUsd = Number(giveaway.funding_required_usd ?? 0);
     const justFunded = confirmedUsd >= requiredUsd && requiredUsd > 0;
 
+    // Optimistic-concurrency guard: funding_required_usd can now change mid-PENDING_FUNDING via
+    // GiveawaysService.updateBeforeFunded (blocked once fundingConfirmedUsd > 0, but this cron
+    // reads its batch snapshot up to 30s before writing). Scoping the write to the threshold this
+    // calculation actually used makes a stale write a no-op instead of committing a decision based
+    // on an amount the creator has since changed — the next tick re-reads fresh and gets it right.
     const { error } = await this.supabaseService.giveaways
       .update({
         funding_confirmed_usd: confirmedUsd,
         ...(justFunded ? { status: GiveawayStatus.OPEN } : {}),
       })
-      .eq('id', giveaway.id);
+      .eq('id', giveaway.id)
+      .eq('funding_required_usd', giveaway.funding_required_usd);
     if (error) {
       this.logger.warn(`[GiveawayFunding] ${giveaway.id}: failed to persist funding status: ${error.message}`);
       return { fundingConfirmedUsd: confirmedUsd, justFunded: false };

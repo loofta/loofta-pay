@@ -78,6 +78,14 @@
     "claimMany": "Nhận tất cả",
     "dismiss": "Đóng"
   },
+  "AddEmailToast": {
+    "title": "Không bỏ lỡ khoản thanh toán nào",
+    "body": "Thêm email của bạn để nhận thông báo về các khoản thanh toán và quà tặng mới.",
+    "addEmail": "Thêm email",
+    "adding": "Đang thêm…",
+    "alreadyLinked": "Email này đã được liên kết với một tài khoản khác.",
+    "dismiss": "Bỏ qua"
+  },
   "HomePage": {
     "send": "Gửi",
     "to": "Đến",

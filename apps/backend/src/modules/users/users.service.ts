@@ -123,7 +123,8 @@ export class UsersService {
     email: string | null;
     username: string | null;
   }> {
-    const cleanHandle = (handle || '').replace(/^@/, '').toLowerCase().trim();
+    // Strip Discord's legacy "#0"-style discriminator suffix — see verifyRecipientIdentityForSendPayment.
+    const cleanHandle = (handle || '').replace(/^@/, '').replace(/#\d+$/, '').toLowerCase().trim();
     if (!cleanHandle) throw new NotFoundException('Handle is required');
 
     const { data: social, error: socialError } = await this.supabaseService.socialAccounts
@@ -526,7 +527,7 @@ export class UsersService {
     // columns or (for Telegram) Privy linked_accounts at all — see findSocialHandle.
     if (recipientType === 'discord' || recipientType === 'github' || recipientType === 'telegram') {
       const handle = await this.findSocialHandle(privyUserId, recipientType);
-      if (handle && handle.replace(/^@/, '').toLowerCase().trim() === normalized) return true;
+      if (handle && handle.replace(/^@/, '').replace(/#\d+$/, '').toLowerCase().trim() === normalized) return true;
 
       // Telegram is linked via a separate throwaway Privy login on the loofta.com relay domain
       // (Telegram's widget is blocked on pay.loofta.xyz's .xyz TLD), not the user's main Privy
@@ -541,9 +542,13 @@ export class UsersService {
       for (const account of user.linked_accounts) {
         const type = (account.type || '').toLowerCase();
         if (!oauthTypes.includes(type)) continue;
+        // Discord's legacy discriminator (e.g. "username#0") can still show up in Privy's raw
+        // linked_accounts even though Discord dropped it for migrated accounts — strip it so a
+        // sender who typed the plain username still matches.
         const handle = (account.username || account.name || account.address || '')
           .toString()
           .replace(/^@/, '')
+          .replace(/#\d+$/, '')
           .toLowerCase()
           .trim();
         if (handle && normalized === handle) return true;
@@ -587,7 +592,9 @@ export class UsersService {
   private normalizeRecipientIdentifier(type: RecipientType, value: string): string {
     const v = value.trim();
     if (type === 'email') return v.toLowerCase();
-    return v.replace(/^@/, '').toLowerCase();
+    // Strip a trailing Discord discriminator (e.g. "username#0") — senders no longer need to
+    // type one, and this keeps old habits working against handles stored without it.
+    return v.replace(/^@/, '').replace(/#\d+$/, '').toLowerCase();
   }
 
   /**

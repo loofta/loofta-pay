@@ -1885,6 +1885,11 @@ export class LotteryService {
    * (e.g. the buyTickets dry-run false-positive this was written after, or a DB write racing a
    * real success) — never re-buy one that's already there. Capped at MAX_AUTO_RETRIES attempts
    * and AUTO_RETRY_MAX_AGE_MS age so a genuinely, permanently broken ticket isn't retried forever.
+   *
+   * Excludes bridge_status CANCELLED/RESCUED — same guard retryTicket uses (see there). Without
+   * it, a ticket the user explicitly cancelled (or that was rescued) gets flipped to 'buying' by
+   * this cron with no bridge ever restarted, so it sits there forever with no on-chain activity
+   * and — because it's no longer 'failed' — no longer matches the fee-refund cron either.
    */
   async autoRetryFailedTickets(): Promise<void> {
     if (this.processingAutoRetry) return;
@@ -1899,6 +1904,9 @@ export class LotteryService {
         .lt('retry_count', MAX_AUTO_RETRIES)
         .gte('created_at', cutoff)
         .is('deleted_at', null)
+        // NOT IN excludes NULL bridge_status rows in Postgres (NULL IN (...) is NULL, not FALSE) —
+        // most 'failed' writes never set bridge_status at all, so it must be let through explicitly.
+        .or('bridge_status.is.null,bridge_status.not.in.(CANCELLED,RESCUED)')
         .order('created_at', { ascending: true })
         .limit(10);
 
@@ -1922,8 +1930,16 @@ export class LotteryService {
    *
    * Uses a status='failed' compare-and-swap on every write so this can never race a concurrent
    * manual retry or another auto-retry pass into double-queuing or double-correcting the same row.
+   *
+   * Guards CANCELLED/RESCUED here too (not just in the callers' selection queries) — this is the
+   * one place that actually re-queues a purchase, so it's the last line of defense against
+   * resurrecting a ticket that was deliberately cancelled or already made whole via rescue.
    */
   private async reconcileOrRetryFailedTicket(ticket: any): Promise<void> {
+    if (['CANCELLED', 'RESCUED'].includes(ticket.bridge_status)) {
+      this.logger.warn(`Ticket ${ticket.id}: retry skipped — bridge_status is ${ticket.bridge_status}`);
+      return;
+    }
     const db = this.supabase.getClient();
     if (!ticket.companion_address) {
       this.logger.warn(`Ticket ${ticket.id}: retry skipped — no companion_address on row`);

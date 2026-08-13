@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, Loader2, Trash2, Download, Pencil, ShieldCheck, ExternalLink } from "lucide-react";
+import {
+  ArrowLeft, Check, Loader2, Trash2, Download, Pencil, ShieldCheck, ExternalLink, ChevronDown,
+  Repeat2, Heart, MessageCircle, Bookmark, Send, MessageSquare, Link2, Sparkles, Twitter,
+} from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePrivy, useLinkAccount } from "@privy-io/react-auth";
 import { useWallets, useSignTransaction } from "@privy-io/react-auth/solana";
@@ -55,6 +58,39 @@ const ACCENT = "#FF7A2A";
 const MAGICBLOCK_VOLUME_FEE_BPS = 10;
 const MAGICBLOCK_GAS_SOL = 0.002;
 
+// Raw screenshots (especially high-DPI Android phones) routinely land in the 4-8MB range, which
+// exceeds the ~4.5MB Vercel serverless function body limit before /api/giveaways/upload-proof's
+// own handler even runs — resulting in an opaque failure with no useful message. Compress in the
+// browser first so users never have to think about file size at all; the server (sharp) still
+// re-compresses on top of this as a safety net for whatever we send it.
+const PROOF_MAX_DIMENSION = 1600;
+const PROOF_JPEG_QUALITY = 0.7;
+// Sanity cap on what we'll even attempt to decode client-side — guards against a multi-hundred-MB
+// file hanging a weak/low-memory phone browser. Any normal screenshot or photo is far under this.
+const PROOF_MAX_SOURCE_SIZE = 30 * 1024 * 1024;
+
+async function compressProofImage(file: File): Promise<File> {
+  if (!file.type.startsWith("image/") || file.type === "image/svg+xml") return file;
+  if (file.size > PROOF_MAX_SOURCE_SIZE) return file; // let the server reject it with a clear message
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, PROOF_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+    const width = Math.round(bitmap.width * scale);
+    const height = Math.round(bitmap.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", PROOF_JPEG_QUALITY));
+    if (!blob) return file;
+    return new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
+  } catch {
+    return file; // decoding failed (e.g. unsupported format) — fall back to the original, server decides
+  }
+}
+
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",
   PENDING_APPROVAL: "Pending review",
@@ -71,6 +107,20 @@ const STATUS_LABELS: Record<string, string> = {
   UNDERFUNDED_EXPIRED: "Expired — underfunded",
   REFUNDED: "Refunded",
 };
+
+/** "Closes in 11d 9h" reads better in the moment than a raw timestamp — the exact date is still
+ *  available via the element's title attribute for anyone who wants the precise time. */
+function formatCloseCountdown(closeIso: string): string {
+  const diffMs = new Date(closeIso).getTime() - Date.now();
+  if (diffMs <= 0) return "closed";
+  const totalMinutes = Math.floor(diffMs / 60_000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  const minutes = totalMinutes % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${Math.max(1, minutes)}m`;
+}
 
 function statusColor(status: string): string {
   if (status === "PENDING_APPROVAL") return "text-amber-400 bg-amber-500/10 border-amber-500/30";
@@ -91,6 +141,45 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   visit_link: "Visit the link",
   custom: "Custom task",
 };
+
+const TASK_TYPE_ICON: Record<string, typeof Repeat2> = {
+  x_follow: Twitter,
+  x_retweet: Repeat2,
+  x_like: Heart,
+  x_comment: MessageCircle,
+  x_bookmark: Bookmark,
+  telegram_join: Send,
+  discord_join: MessageSquare,
+  visit_link: Link2,
+  custom: Sparkles,
+};
+
+type RowStatus = "verified" | "rejected" | "api_error" | "pending_review" | "todo";
+
+/** Same semantic colors this app already uses everywhere else (emerald/red/amber/slate) — just
+ *  applied consistently across every task-row status instead of each branch picking its own. */
+const ROW_STATUS_META: Record<RowStatus, { label: string; textColor: string; iconBg: string; iconBorder: string; iconColor: string }> = {
+  verified: { label: "Verified", textColor: "text-emerald-400", iconBg: "bg-emerald-500/10", iconBorder: "border-emerald-500/30", iconColor: "text-emerald-400" },
+  rejected: { label: "Not verified", textColor: "text-red-400", iconBg: "bg-red-500/10", iconBorder: "border-red-500/30", iconColor: "text-red-400" },
+  api_error: { label: "Couldn't check", textColor: "text-amber-400", iconBg: "bg-amber-500/10", iconBorder: "border-amber-500/30", iconColor: "text-amber-400" },
+  pending_review: { label: "Pending review", textColor: "text-amber-400", iconBg: "bg-amber-500/10", iconBorder: "border-amber-500/30", iconColor: "text-amber-400" },
+  todo: { label: "To do", textColor: "text-slate-400", iconBg: "bg-white/5", iconBorder: "border-white/10", iconColor: "text-slate-300" },
+};
+
+function resolveEngageStatus(subStatuses: string[]): RowStatus {
+  if (subStatuses.every((s) => s === "verified" || s === "auto_verified")) return "verified";
+  if (subStatuses.some((s) => s === "rejected")) return "rejected";
+  if (subStatuses.some((s) => s === "api_error")) return "api_error";
+  return "todo";
+}
+
+function resolveSingleStatus(status: string | undefined, hasSubmission: boolean): RowStatus {
+  if (status === "verified" || status === "auto_verified") return "verified";
+  if (status === "rejected") return "rejected";
+  if (status === "api_error") return "api_error";
+  if (hasSubmission) return "pending_review";
+  return "todo";
+}
 
 /** x_retweet/x_like/x_comment/x_bookmark on the same tweet render as one grouped card instead of
  *  four separate ones — matches how a creator set it up in the wizard ("engage with a post" with
@@ -115,7 +204,12 @@ function taskTargetHref(target: string, taskType: string): string {
  *  body text, colored with the app's accent instead of a bordered pill. */
 const taskLinkClass = "block text-base font-normal mt-2 truncate hover:underline underline-offset-2 transition-opacity hover:opacity-80";
 
-type PublicTask = { id: string; task_type: string; config: { target?: string; comment_requirement?: string; instructions?: string; title?: string }; order_index: number; verification_mode: string };
+// Same translucent-white style as the "Connect X" / "Connect Telegram" buttons on the /c/[id]
+// claim page, used for every task-verification action so it doesn't compete visually with the
+// accent-colored prize amounts and links on this page.
+const taskActionButtonClass = "rounded-lg bg-white/10 text-white text-base font-semibold hover:bg-white/20 transition-colors disabled:opacity-40 disabled:hover:bg-white/10";
+
+type PublicTask = { id: string; task_type: string; config: { target?: string; comment_requirement?: string; instructions?: string; title?: string; require_proof?: boolean }; order_index: number; verification_mode: string };
 type TaskDisplayGroup = { kind: "engage"; target: string; tasks: PublicTask[] } | { kind: "single"; task: PublicTask };
 
 /** Groups engage-type tasks that share the same tweet URL into one display card; everything else
@@ -184,6 +278,22 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const [downloadingImage, setDownloadingImage] = useState(false);
   const [showProofModal, setShowProofModal] = useState(false);
 
+  // Single-open accordion for the task list (mirrors giveaway-page.tsx's reference design) —
+  // only one task's link/instructions/verify-action is visible at a time instead of every task
+  // permanently expanded, so the list reads as a checklist instead of a wall of text.
+  const [expandedTaskKey, setExpandedTaskKey] = useState<string | null>(null);
+  const hasAutoExpandedRef = useRef(false);
+  // Tracks which task/group currently has a verify request in flight, so the button can show a
+  // spinner instead of appearing to do nothing while waiting on the network (see 2026-08-13
+  // giveaway support thread — "try again doesn't do anything" was this exact missing feedback).
+  const [verifyingKey, setVerifyingKey] = useState<string | null>(null);
+
+  // Proof-of-completion inputs for require_proof tasks, keyed by task id — a link/text field plus
+  // an uploaded (server-compressed) screenshot, either of which is enough to submit.
+  const [taskProofText, setTaskProofText] = useState<Record<string, string>>({});
+  const [taskProofImageUrl, setTaskProofImageUrl] = useState<Record<string, string>>({});
+  const [uploadingTaskProof, setUploadingTaskProof] = useState<Record<string, boolean>>({});
+
   // Funding — "Pay now" mirrors the app's existing send-payment/multi-send pattern instead of
   // asking the creator to copy a raw address into another wallet. Lives here (not on /manage) so
   // the creator can fund right where they see the giveaway's status, no extra click required.
@@ -238,6 +348,25 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     staleTime: 10_000,
     refetchOnWindowFocus: false,
   });
+
+  // Open on the first thing the entrant still needs to do, once — after that, expand state is
+  // entirely user-driven (re-running this on every refetch would snap the accordion shut under
+  // someone mid-upload).
+  useEffect(() => {
+    if (hasAutoExpandedRef.current || !giveaway || !myEntry) return;
+    hasAutoExpandedRef.current = true;
+    const firstIncomplete = groupTasksForDisplay(giveaway.tasks).find((group) => {
+      if (group.kind === "engage") {
+        const subStatuses = group.tasks.map((t) => myEntry.completions.find((c) => c.giveaway_task_id === t.id)?.verification_status);
+        return resolveEngageStatus(subStatuses.map((s) => s ?? "pending")) !== "verified";
+      }
+      const completion = myEntry.completions.find((c) => c.giveaway_task_id === group.task.id);
+      return resolveSingleStatus(completion?.verification_status, !!completion?.submission_data) !== "verified";
+    });
+    if (firstIncomplete) {
+      setExpandedTaskKey(firstIncomplete.kind === "engage" ? `engage-${firstIncomplete.target}` : firstIncomplete.task.id);
+    }
+  }, [giveaway, myEntry]);
 
   const { data: isOwner } = useQuery({
     queryKey: ["giveaway-is-owner", resolvedId, userId],
@@ -306,32 +435,63 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     }
   }, [resolvedId, getAccessToken, toast, refetchEntry, giveaway]);
 
-  const submitTask = useCallback(async (taskId: string, submissionText: string): Promise<string | undefined> => {
+  const submitTask = useCallback(async (taskId: string, submission: { text?: string; proofImageUrl?: string }): Promise<string | undefined> => {
+    const submission_data =
+      submission.text || submission.proofImageUrl
+        ? { proof: submission.text || undefined, proof_image_url: submission.proofImageUrl || undefined }
+        : undefined;
     const res = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}/tasks/${taskId}/submit`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(await authHeaders(getAccessToken)) },
-      body: JSON.stringify({ submission_data: submissionText ? { proof: submissionText } : undefined }),
+      body: JSON.stringify({ submission_data }),
     });
     const body = await res.json().catch(() => null);
     if (!res.ok) throw new Error(body?.message || "Failed to submit task");
     return body?.completion?.verification_status;
   }, [resolvedId, getAccessToken]);
 
-  const markTaskDone = useCallback(async (taskId: string, submissionText: string) => {
+  const uploadTaskProof = useCallback(async (taskId: string, file: File) => {
+    setUploadingTaskProof((prev) => ({ ...prev, [taskId]: true }));
     try {
-      const status = await submitTask(taskId, submissionText);
+      const compressed = await compressProofImage(file);
+      const form = new FormData();
+      form.append("file", compressed);
+      const res = await fetch("/api/giveaways/upload-proof", {
+        method: "POST",
+        headers: await authHeaders(getAccessToken),
+        body: form,
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || (res.status === 413 ? "Image too large, try a different screenshot" : "Failed to upload image"));
+      setTaskProofImageUrl((prev) => ({ ...prev, [taskId]: body.proof_url }));
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Could not upload screenshot", description: err.message });
+    } finally {
+      setUploadingTaskProof((prev) => ({ ...prev, [taskId]: false }));
+    }
+  }, [toast, getAccessToken]);
+
+  const markTaskDone = useCallback(async (taskId: string, submission: { text?: string; proofImageUrl?: string } = {}, key: string = taskId) => {
+    setVerifyingKey(key);
+    try {
+      const status = await submitTask(taskId, submission);
       // X tasks (retweet/like/follow/comment) verify instantly against the live X API — give
       // accurate feedback right away instead of a generic "marked done" that implies it's still pending.
       if (status === "auto_verified" || status === "verified") {
         toast({ title: "Verified! ✅", description: "Confirmed on X." });
+        setExpandedTaskKey((cur) => (cur === key ? null : cur));
       } else if (status === "rejected") {
         toast({ variant: "destructive", title: "Not verified", description: "We couldn't confirm this on X yet — make sure you've actually done it, then try again." });
+      } else if (status === "api_error") {
+        toast({ variant: "destructive", title: "Couldn't check right now", description: "X's API is temporarily unavailable — nothing was verified. Wait a few minutes and try again." });
       } else {
         toast({ title: "Task marked done" });
       }
       refetchEntry();
     } catch (err: any) {
       toast({ variant: "destructive", title: "Could not submit task", description: err.message });
+    } finally {
+      setVerifyingKey((cur) => (cur === key ? null : cur));
     }
   }, [submitTask, toast, refetchEntry]);
 
@@ -339,21 +499,28 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   // comment, like, bookmark) instead of requiring a separate click per action — like and bookmark
   // are trusted on click server-side (X has no API to check either), retweet/comment are checked
   // for real against the live X API.
-  const verifyEngageGroup = useCallback(async (taskIds: string[]) => {
+  const verifyEngageGroup = useCallback(async (taskIds: string[], key: string) => {
+    setVerifyingKey(key);
     try {
-      const results = await Promise.all(taskIds.map((taskId) => submitTask(taskId, "")));
+      const results = await Promise.all(taskIds.map((taskId) => submitTask(taskId, {})));
       const allVerified = results.every((s) => s === "auto_verified" || s === "verified");
       const anyRejected = results.some((s) => s === "rejected");
+      const anyApiError = results.some((s) => s === "api_error");
       if (allVerified) {
         toast({ title: "Verified! ✅", description: "Confirmed on X." });
+        setExpandedTaskKey((cur) => (cur === key ? null : cur));
       } else if (anyRejected) {
         toast({ variant: "destructive", title: "Not fully verified", description: "We couldn't confirm everything on X yet — make sure you've actually done it, then try again." });
+      } else if (anyApiError) {
+        toast({ variant: "destructive", title: "Couldn't check right now", description: "X's API is temporarily unavailable — nothing was verified. Wait a few minutes and try again." });
       } else {
         toast({ title: "Marked done" });
       }
       refetchEntry();
     } catch (err: any) {
       toast({ variant: "destructive", title: "Could not submit task", description: err.message });
+    } finally {
+      setVerifyingKey((cur) => (cur === key ? null : cur));
     }
   }, [submitTask, toast, refetchEntry]);
 
@@ -484,7 +651,13 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const fundingPct = giveaway.funding_required_usd
     ? Math.min(100, Math.round((Number(giveaway.funding_confirmed_usd) / Number(giveaway.funding_required_usd)) * 100))
     : 0;
-  const canEnter = giveaway.status === "OPEN" && !myEntry;
+  // "Secured" = funds are actually locked on-chain already, not just pledged — drives the prize
+  // card's green/escrow framing. Statuses before FUNDED (draft/pending approval/pending funding)
+  // haven't received the money yet, so the escrow-trust framing would be a false claim there.
+  const isEscrowSecured = ["FUNDED", "OPEN", "ENTRIES_CLOSED", "DRAWING", "WINNERS_SELECTED", "PAYOUT_IN_PROGRESS", "COMPLETED"].includes(giveaway.status);
+  const totalPoolNum = Number(giveaway.prize_amount_usd) * giveaway.winner_count;
+  const totalPoolLabel = Number.isInteger(totalPoolNum) ? totalPoolNum.toString() : totalPoolNum.toFixed(2);
+  const canEnter = giveaway.status === "OPEN" && !myEntry && !isOwner;
   const giveawayEnded = giveaway.status !== "OPEN";
   const canShare = giveaway.status !== "REJECTED" && giveaway.status !== "CANCELLED";
   // Matches the current environment (localhost in dev, pay.loofta.xyz in prod) instead of a
@@ -517,10 +690,12 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
         <div className="max-w-lg mx-auto px-4 py-6 pb-24">
           <div className="flex items-center justify-between gap-2 mb-3">
             <div className="flex items-center gap-1.5 min-w-0">
+              {/* An official ("create as Loofta") giveaway always shows just the Loofta brand —
+                  never alongside or replaced by a project logo/name, regardless of what's set. */}
               {giveaway.is_official ? (
                 <>
-                  <Image src="/loofta_icon_magic.png" alt="" width={16} height={16} className="rounded-full shrink-0" />
-                  <span className="text-sm font-medium text-slate-400 truncate">Loofta</span>
+                  <Image src="/loofta_icon_magic.png" alt="" width={24} height={24} className="rounded-full shrink-0" />
+                  <span className="text-lg font-semibold text-white truncate">Loofta</span>
                 </>
               ) : (giveaway.logo_url || giveaway.project_name) ? (
                 <>
@@ -532,13 +707,14 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               ) : null}
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${statusColor(giveaway.status)}`}>
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-base font-semibold border ${statusColor(giveaway.status)}`}>
+                {isEscrowSecured && <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" aria-hidden="true" />}
                 {STATUS_LABELS[giveaway.status] ?? giveaway.status.replace(/_/g, " ")}
               </span>
               {giveaway.is_devnet && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">Devnet</span>
               )}
-              {isOwner && giveaway.status === "PENDING_APPROVAL" && (
+              {isOwner && ["DRAFT", "PENDING_APPROVAL", "PENDING_FUNDING"].includes(giveaway.status) && (
                 <Link
                   href={`/rewards/giveaways/${resolvedId}/edit`}
                   aria-label="Edit giveaway"
@@ -660,18 +836,37 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             </div>
           )}
 
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-5">
-            <div className="flex items-end justify-between mb-1">
-              <p className="text-base font-semibold uppercase tracking-wider" style={{ color: `${ACCENT}99` }}>Prize per winner</p>
-              <p className="text-base text-slate-500">{giveaway.entry_count} entered</p>
+          <div
+            className="rounded-3xl p-5 mb-5 shadow-[0_10px_30px_-10px_rgba(0,0,0,0.35)]"
+            style={
+              isEscrowSecured
+                ? { background: "linear-gradient(160deg, rgba(52,211,153,0.10), rgba(255,255,255,0.02) 55%)", border: "1px solid rgba(52,211,153,0.28)" }
+                : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.10)" }
+            }
+          >
+            <div className="flex items-center justify-between mb-3">
+              <p className={`text-base font-semibold uppercase tracking-widest ${isEscrowSecured ? "text-emerald-400" : ""}`} style={!isEscrowSecured ? { color: `${ACCENT}99` } : undefined}>
+                Prize pool{isEscrowSecured ? " · in escrow" : ""}
+              </p>
+              <Image src="/images/icons/shield-icon.png" alt="" width={26} height={26} className="shrink-0 opacity-90" />
             </div>
-            <p className="text-3xl font-medium" style={{ color: ACCENT }}>${giveaway.prize_amount_usd} × {giveaway.winner_count}</p>
-            <p className="text-base text-slate-500 mt-2">
-              Closes {new Date(giveaway.entries_close_at).toLocaleString()} ·{" "}
-              {giveaway.selection_mode === "random" ? "Random draw" : giveaway.selection_mode === "first_come" ? "First come, first serve" : "Picked by creator"}
+            <p className="flex items-baseline gap-2.5 mb-3">
+              <span className="text-5xl font-bold tracking-tight text-white">${totalPoolLabel}</span>
+              <span className="text-base text-slate-400">USDC</span>
             </p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
+                ${giveaway.prize_amount_usd} each
+              </span>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
+                {giveaway.winner_count} winner{giveaway.winner_count === 1 ? "" : "s"}
+              </span>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
+                {giveaway.selection_mode === "random" ? "Random draw" : giveaway.selection_mode === "first_come" ? "First come, first serve" : "Picked by creator"}
+              </span>
+            </div>
             {(giveaway.status === "PENDING_FUNDING" || giveaway.status === "FUNDED") && giveaway.funding_required_usd && (
-              <div className="mt-3">
+              <div className="mb-3">
                 <div className="flex justify-between items-center mb-1">
                   <span className="text-base text-slate-400">Funding: ${giveaway.funding_confirmed_usd} / ${giveaway.funding_required_usd}</span>
                   <span className="text-base text-slate-400">{fundingPct}%</span>
@@ -684,6 +879,11 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 </div>
               </div>
             )}
+            {isEscrowSecured && (
+              <p className="text-base text-slate-400 mb-3">
+                The full prize is already locked on-chain — winners get paid the moment the draw ends.
+              </p>
+            )}
             {/* draw_request_pda is only ever set by the backend once it has independently
                 confirmed the on-chain account exists AND matches the stored randomness — never
                 gate this on vrf_fulfilled_at/vrf_randomness alone, since those columns can be
@@ -692,14 +892,14 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               <button
                 type="button"
                 onClick={() => setShowProofModal(true)}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all"
+                className="mb-3 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all"
               >
                 <ShieldCheck className="w-4 h-4" />
                 View on-chain proof
               </button>
             )}
             {winnerHandles.length > 0 && (
-              <div className="mt-3">
+              <div className="mb-3">
                 <p className="text-base text-slate-400 mb-2">Winners</p>
                 <div className="flex flex-wrap gap-2">
                   {winnerHandles.map((handle) => (
@@ -716,6 +916,15 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 </div>
               </div>
             )}
+            <div className={`flex items-center justify-between pt-3 ${isEscrowSecured ? "border-t border-white/[0.08]" : "border-t border-white/10"}`}>
+              <span
+                className="text-base text-slate-400"
+                title={new Date(giveaway.entries_close_at).toLocaleString()}
+              >
+                {giveawayEnded ? `Closed ${new Date(giveaway.entries_close_at).toLocaleDateString()}` : <>Closes in <span className="font-semibold text-white">{formatCloseCountdown(giveaway.entries_close_at)}</span></>}
+              </span>
+              <span className="text-base text-slate-400"><span className="font-semibold text-white">{giveaway.entry_count}</span> entered</span>
+            </div>
           </div>
 
           {isOwner && giveaway.status === "PENDING_FUNDING" && giveaway.burner_address && (() => {
@@ -787,148 +996,264 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             );
           })()}
 
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-5">
-            <p className="text-base font-medium text-slate-400 uppercase tracking-widest mb-2">Tasks</p>
-            <div className="space-y-2">
-              {groupTasksForDisplay(giveaway.tasks).map((group) => {
-                if (group.kind === "engage") {
-                  const subStatuses = group.tasks.map(
-                    (t) => myEntry?.completions.find((c) => c.giveaway_task_id === t.id)?.verification_status ?? "pending",
-                  );
-                  const allVerified = subStatuses.every((s) => s === "verified" || s === "auto_verified");
-                  const anyRejected = subStatuses.some((s) => s === "rejected");
-                  const instructions = group.tasks.find((t) => t.config?.comment_requirement || t.config?.instructions);
-                  const groupTaskIds = group.tasks.map((t) => t.id);
-                  return (
-                    <div key={`engage-${group.target}`} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                      <p className="text-base font-medium text-white">Engage with the post</p>
-                      <p className="text-base mt-1.5">
-                        {group.tasks.map((t, i) => {
-                          const status = myEntry?.completions.find((c) => c.giveaway_task_id === t.id)?.verification_status;
-                          const ok = status === "verified" || status === "auto_verified";
-                          return (
-                            <span key={t.id} className="inline-flex items-center">
-                              {i > 0 && <span className="text-slate-500 font-semibold mx-1">+</span>}
-                              <span className={`inline-flex items-center gap-1 ${ok ? "text-emerald-400" : "text-slate-400"}`}>
-                                {ok && <Check className="w-3.5 h-3.5" />}
-                                {ENGAGE_ACTION_LABELS[t.task_type] ?? t.task_type}
-                              </span>
-                            </span>
-                          );
-                        })}
-                      </p>
-                      {group.target && (
-                        <a href={taskTargetHref(group.target, "x_retweet")} target="_blank" rel="noopener noreferrer" className={taskLinkClass} style={{ color: ACCENT }}>
-                          {group.target}
-                        </a>
-                      )}
-                      {instructions && (
-                        <p className="text-base text-slate-300 mt-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-                          <span className="font-medium text-white">Instructions: </span>
-                          {instructions.config.comment_requirement || instructions.config.instructions}
-                        </p>
-                      )}
-                      {myEntry && (
-                        <div className="mt-3">
-                          {allVerified ? (
-                            <span className="inline-flex items-center gap-1 text-base font-medium text-emerald-400"><Check className="w-3.5 h-3.5" /> Verified</span>
-                          ) : anyRejected ? (
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="text-base font-medium text-red-400">Not fully verified</span>
-                              {!giveawayEnded && (
-                                <button
-                                  type="button"
-                                  onClick={() => verifyEngageGroup(groupTaskIds)}
-                                  className="shrink-0 text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
-                                >
-                                  Try again
-                                </button>
-                              )}
-                            </div>
-                          ) : giveawayEnded ? (
-                            <span className="text-base font-medium text-slate-500">Giveaway ended, can no longer be verified</span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => verifyEngageGroup(groupTaskIds)}
-                              className="w-full text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
-                            >
-                              Verify
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
+          {(() => {
+            const displayGroups = groupTasksForDisplay(giveaway.tasks);
+            const groupStatuses: RowStatus[] = myEntry
+              ? displayGroups.map((group) => {
+                  if (group.kind === "engage") {
+                    const subStatuses = group.tasks.map((t) => myEntry.completions.find((c) => c.giveaway_task_id === t.id)?.verification_status ?? "pending");
+                    return resolveEngageStatus(subStatuses);
+                  }
+                  const completion = myEntry.completions.find((c) => c.giveaway_task_id === group.task.id);
+                  return resolveSingleStatus(completion?.verification_status, !!completion?.submission_data);
+                })
+              : [];
+            const doneGroupCount = groupStatuses.filter((s) => s === "verified").length;
+            const taskPct = displayGroups.length ? Math.round((doneGroupCount / displayGroups.length) * 100) : 0;
 
-                const task = group.task;
-                const completion = myEntry?.completions.find((c) => c.giveaway_task_id === task.id);
-                const verified = completion?.verification_status === "verified" || completion?.verification_status === "auto_verified";
-                const rejected = completion?.verification_status === "rejected";
-                const isCustom = task.task_type === "custom";
-                const hasStructuredTitle = isCustom && typeof task.config?.title === "string" && task.config.title.trim().length > 0;
-                const title = hasStructuredTitle ? (task.config.title as string) : (TASK_TYPE_LABELS[task.task_type] ?? task.task_type);
-                // Legacy custom tasks (created before config.title existed) stored a free-text
-                // description in `target` — that's not a real URL, so render it as plain text
-                // instead of a broken link. New-format custom tasks (with a title) use `target`
-                // as the actual accompanying link.
-                const showTargetAsLink = task.config?.target && (!isCustom || hasStructuredTitle);
-                const showTargetAsText = isCustom && !hasStructuredTitle && task.config?.target;
-                return (
-                  <div key={task.order_index} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                    <p className="text-base font-medium text-white">{title}</p>
-                    {showTargetAsLink && (
-                      <a href={taskTargetHref(task.config.target as string, task.task_type)} target="_blank" rel="noopener noreferrer" className={taskLinkClass} style={{ color: ACCENT }}>
-                        {task.config.target}
-                      </a>
-                    )}
-                    {showTargetAsText && (
-                      <p className="text-base text-slate-300 mt-1.5">{task.config.target}</p>
-                    )}
-                    {(task.config?.comment_requirement || task.config?.instructions) && (
-                      <p className="text-base text-slate-300 mt-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-                        <span className="font-medium text-white">Instructions: </span>
-                        {task.config.comment_requirement || task.config.instructions}
-                      </p>
-                    )}
-                    {myEntry && (
-                      <div className="mt-3">
-                        {verified ? (
-                          <span className="inline-flex items-center gap-1 text-base font-medium text-emerald-400"><Check className="w-3.5 h-3.5" /> Verified</span>
-                        ) : rejected ? (
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-base font-medium text-red-400">Rejected</span>
-                            {!giveawayEnded && (
-                              <button
-                                type="button"
-                                onClick={() => markTaskDone(task.id, "")}
-                                className="shrink-0 text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
-                              >
-                                Try again
-                              </button>
-                            )}
-                          </div>
-                        ) : completion?.submission_data ? (
-                          <span className="text-base font-medium text-amber-400">Pending review</span>
-                        ) : giveawayEnded ? (
-                          <span className="text-base font-medium text-slate-500">Giveaway ended, can no longer be verified</span>
-                        ) : (
+            return (
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-5">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-base font-medium text-slate-400 uppercase tracking-widest">Tasks</p>
+                  {myEntry && (
+                    <span className="text-sm text-slate-400">
+                      <span className="font-semibold text-emerald-400">{doneGroupCount}</span> of {displayGroups.length} verified
+                    </span>
+                  )}
+                </div>
+                {myEntry && (
+                  <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden mb-3">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] transition-all duration-500 ease-out"
+                      style={{ width: `${taskPct}%` }}
+                    />
+                  </div>
+                )}
+                <div className="space-y-2">
+                  {displayGroups.map((group, groupIndex) => {
+                    const status: RowStatus | null = myEntry ? groupStatuses[groupIndex] : null;
+                    const meta = status ? ROW_STATUS_META[status] : null;
+
+                    if (group.kind === "engage") {
+                      const key = `engage-${group.target}`;
+                      const instructions = group.tasks.find((t) => t.config?.comment_requirement || t.config?.instructions);
+                      const groupTaskIds = group.tasks.map((t) => t.id);
+                      const subtitle = group.tasks.map((t) => ENGAGE_ACTION_LABELS[t.task_type] ?? t.task_type).join(" + ");
+                      const isOpen = expandedTaskKey === key;
+                      const isVerifying = verifyingKey === key;
+                      return (
+                        <div key={key} className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden transition-colors">
                           <button
                             type="button"
-                            onClick={() => markTaskDone(task.id, "")}
-                            className="w-full text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-lg px-4 py-2.5"
+                            onClick={() => setExpandedTaskKey((cur) => (cur === key ? null : key))}
+                            aria-expanded={isOpen}
+                            className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.02] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF7A2A]/50"
                           >
-                            {task.verification_mode === "auto_api" ? "Verify" : "Mark done"}
+                            <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 border transition-colors ${meta ? `${meta.iconBg} ${meta.iconBorder}` : "bg-white/5 border-white/10"}`}>
+                              {status === "verified" ? <Check className="w-4 h-4 text-emerald-400" /> : <Repeat2 className={`w-4 h-4 ${meta ? meta.iconColor : "text-slate-300"}`} />}
+                            </span>
+                            <span className="flex-1 min-w-0">
+                              <span className="block text-base font-medium text-white truncate">Engage with the post</span>
+                              <span className="block text-sm text-slate-400 truncate">{subtitle}</span>
+                            </span>
+                            {meta && <span className={`shrink-0 text-sm font-medium ${meta.textColor}`}>{meta.label}</span>}
+                            <ChevronDown className={`w-4 h-4 shrink-0 text-slate-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
                           </button>
+                          {isOpen && (
+                            <div className="px-3 pb-3 pt-3 border-t border-white/[0.06] space-y-2.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                              <p className="text-base">
+                                {group.tasks.map((t, i) => {
+                                  const s = myEntry?.completions.find((c) => c.giveaway_task_id === t.id)?.verification_status;
+                                  const ok = s === "verified" || s === "auto_verified";
+                                  return (
+                                    <span key={t.id} className="inline-flex items-center">
+                                      {i > 0 && <span className="text-slate-500 font-semibold mx-1">+</span>}
+                                      <span className={`inline-flex items-center gap-1 ${ok ? "text-emerald-400" : "text-slate-400"}`}>
+                                        {ok && <Check className="w-3.5 h-3.5" />}
+                                        {ENGAGE_ACTION_LABELS[t.task_type] ?? t.task_type}
+                                      </span>
+                                    </span>
+                                  );
+                                })}
+                              </p>
+                              {group.target && (
+                                <a href={taskTargetHref(group.target, "x_retweet")} target="_blank" rel="noopener noreferrer" className={taskLinkClass} style={{ color: ACCENT }}>
+                                  {group.target}
+                                </a>
+                              )}
+                              {instructions && (
+                                <p className="text-base text-slate-300 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                                  <span className="font-medium text-white">Instructions: </span>
+                                  {instructions.config.comment_requirement || instructions.config.instructions}
+                                </p>
+                              )}
+                              {myEntry && status !== "verified" && (
+                                giveawayEnded ? (
+                                  <span className="block text-base font-medium text-slate-500">Giveaway ended, can no longer be verified</span>
+                                ) : status === "rejected" || status === "api_error" ? (
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span className={`text-base font-medium ${meta?.textColor}`}>{meta?.label}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => verifyEngageGroup(groupTaskIds, key)}
+                                      disabled={isVerifying}
+                                      className={`shrink-0 flex items-center justify-center gap-2 px-4 py-2.5 ${taskActionButtonClass}`}
+                                    >
+                                      {isVerifying && <Loader2 className="w-4 h-4 animate-spin" />}
+                                      {isVerifying ? "Verifying…" : "Try again"}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => verifyEngageGroup(groupTaskIds, key)}
+                                    disabled={isVerifying}
+                                    className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 ${taskActionButtonClass}`}
+                                  >
+                                    {isVerifying && <Loader2 className="w-4 h-4 animate-spin" />}
+                                    {isVerifying ? "Verifying…" : "Verify"}
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    const task = group.task;
+                    const key = task.id;
+                    const completion = myEntry?.completions.find((c) => c.giveaway_task_id === task.id);
+                    const Icon = TASK_TYPE_ICON[task.task_type] ?? Sparkles;
+                    const isCustom = task.task_type === "custom";
+                    const hasStructuredTitle = isCustom && typeof task.config?.title === "string" && task.config.title.trim().length > 0;
+                    const title = hasStructuredTitle ? (task.config.title as string) : (TASK_TYPE_LABELS[task.task_type] ?? task.task_type);
+                    // Legacy custom tasks (created before config.title existed) stored a free-text
+                    // description in `target` — that's not a real URL, so render it as plain text
+                    // instead of a broken link. New-format custom tasks (with a title) use `target`
+                    // as the actual accompanying link.
+                    const showTargetAsLink = task.config?.target && (!isCustom || hasStructuredTitle);
+                    const showTargetAsText = isCustom && !hasStructuredTitle && task.config?.target;
+                    const requiresProof = !!task.config?.require_proof && task.verification_mode !== "auto_api";
+                    const proofText = taskProofText[task.id] ?? "";
+                    const proofImageUrl = taskProofImageUrl[task.id];
+                    const uploadingProof = !!uploadingTaskProof[task.id];
+                    const canSubmitProof = !!(proofText.trim() || proofImageUrl);
+                    const isOpen = expandedTaskKey === key;
+                    const isVerifying = verifyingKey === key;
+                    return (
+                      <div key={task.id} className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden transition-colors">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedTaskKey((cur) => (cur === key ? null : key))}
+                          aria-expanded={isOpen}
+                          className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.02] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF7A2A]/50"
+                        >
+                          <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 border transition-colors ${meta ? `${meta.iconBg} ${meta.iconBorder}` : "bg-white/5 border-white/10"}`}>
+                            {status === "verified" ? <Check className="w-4 h-4 text-emerald-400" /> : <Icon className={`w-4 h-4 ${meta ? meta.iconColor : "text-slate-300"}`} />}
+                          </span>
+                          <span className="flex-1 min-w-0">
+                            <span className="block text-base font-medium text-white truncate">{title}</span>
+                            {(showTargetAsLink || showTargetAsText) && (
+                              <span className="block text-sm text-slate-400 truncate">{task.config.target}</span>
+                            )}
+                          </span>
+                          {meta && <span className={`shrink-0 text-sm font-medium ${meta.textColor}`}>{meta.label}</span>}
+                          <ChevronDown className={`w-4 h-4 shrink-0 text-slate-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
+                        </button>
+                        {isOpen && (
+                          <div className="px-3 pb-3 pt-3 border-t border-white/[0.06] space-y-2.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                            {showTargetAsLink && (
+                              <a href={taskTargetHref(task.config.target as string, task.task_type)} target="_blank" rel="noopener noreferrer" className={taskLinkClass} style={{ color: ACCENT }}>
+                                {task.config.target}
+                              </a>
+                            )}
+                            {showTargetAsText && (
+                              <p className="text-base text-slate-300">{task.config.target}</p>
+                            )}
+                            {(task.config?.comment_requirement || task.config?.instructions) && (
+                              <p className="text-base text-slate-300 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                                <span className="font-medium text-white">Instructions: </span>
+                                {task.config.comment_requirement || task.config.instructions}
+                              </p>
+                            )}
+                            {myEntry && status !== "verified" && (
+                              status === "pending_review" ? (
+                                <span className="block text-base font-medium text-amber-400">Pending review</span>
+                              ) : giveawayEnded ? (
+                                <span className="block text-base font-medium text-slate-500">Giveaway ended, can no longer be verified</span>
+                              ) : requiresProof ? (
+                                <div className="space-y-2">
+                                  {status === "rejected" && <p className="text-base font-medium text-red-400">Rejected — submit new proof to try again</p>}
+                                  <input
+                                    type="text"
+                                    value={proofText}
+                                    onChange={(e) => setTaskProofText((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                                    placeholder="Link to your proof (optional if you upload a screenshot)"
+                                    className="w-full text-base rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-white placeholder:text-slate-500 focus:outline-none focus:border-[#FF7A2A]/40"
+                                  />
+                                  <div className="flex items-center gap-3">
+                                    <label className="cursor-pointer text-base font-medium border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all rounded-lg px-3 py-2">
+                                      {uploadingProof ? "Uploading…" : proofImageUrl ? "Change screenshot" : "Upload screenshot"}
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        disabled={uploadingProof}
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (file) uploadTaskProof(task.id, file);
+                                          e.target.value = "";
+                                        }}
+                                      />
+                                    </label>
+                                    {proofImageUrl && (
+                                      <Image src={proofImageUrl} alt="" width={36} height={36} className="rounded-lg object-cover border border-white/10 shrink-0" />
+                                    )}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={!canSubmitProof || uploadingProof}
+                                    onClick={() => markTaskDone(task.id, { text: proofText.trim(), proofImageUrl })}
+                                    className={`w-full px-4 py-2.5 ${taskActionButtonClass}`}
+                                  >
+                                    Submit for review
+                                  </button>
+                                </div>
+                              ) : status === "rejected" || status === "api_error" ? (
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className={`text-base font-medium ${meta?.textColor}`}>{meta?.label}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => markTaskDone(task.id)}
+                                    disabled={isVerifying}
+                                    className={`shrink-0 flex items-center justify-center gap-2 px-4 py-2.5 ${taskActionButtonClass}`}
+                                  >
+                                    {isVerifying && <Loader2 className="w-4 h-4 animate-spin" />}
+                                    {isVerifying ? "Verifying…" : "Try again"}
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => markTaskDone(task.id)}
+                                  disabled={isVerifying}
+                                  className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 ${taskActionButtonClass}`}
+                                >
+                                  {isVerifying && <Loader2 className="w-4 h-4 animate-spin" />}
+                                  {isVerifying ? "Verifying…" : task.verification_mode === "auto_api" ? "Verify" : "Mark done"}
+                                </button>
+                              )
+                            )}
+                          </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {(giveaway.eligibility?.min_followers || giveaway.eligibility?.min_account_age_days) && (
             <p className="text-base text-slate-500 mb-3">
@@ -937,6 +1262,10 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               {giveaway.eligibility?.min_account_age_days ? `, account ${giveaway.eligibility.min_account_age_days}+ days old` : ""}
             </p>
           )}
+
+          <p className="text-base text-slate-500 mb-3">
+            Winners will have 30 days to claim their payment once announced.
+          </p>
 
           {!authenticated ? (
             // Every giveaway requires a linked X account to enter (see eligibility text above) —
@@ -964,7 +1293,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
           ) : myEntry?.status === "winner" && myEntry.claim_payment_id ? (
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
               <p className="font-semibold text-lg mb-1 text-emerald-400">You won!</p>
-              <p className="text-base text-slate-300 mb-3">Claim your prize below — you can choose to claim it publicly or privately.</p>
+              <p className="text-base text-slate-300 mb-3">Claim your prize below — you can choose to claim it publicly or privately. You have 30 days to claim it.</p>
               <GradientActionButton onClick={() => router.push(`/c/${myEntry.claim_payment_id}`)}>
                 Claim your prize
               </GradientActionButton>

@@ -110,13 +110,14 @@ export function CashoutTab({
                     <th className="text-right px-4 py-2.5">Amount</th>
                     <th className="text-left px-4 py-2.5">Currency</th>
                     <th className="text-left px-4 py-2.5">Status</th>
+                    <th className="text-left px-4 py-2.5">Time to fill</th>
                     <th className="text-left px-4 py-2.5">Deposit ID</th>
                     <th className="text-left px-4 py-2.5 max-w-[120px]">User ID</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.length === 0 && (
-                    <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-600">No cash out requests found.</td></tr>
+                    <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-600">No cash out requests found.</td></tr>
                   )}
                   {data.map((row: any) => {
                     const statusColors: Record<string, string> = {
@@ -138,6 +139,9 @@ export function CashoutTab({
                         <td className="px-4 py-2.5 text-right tabular-nums font-medium">${Number(row.amount_usdc).toFixed(2)}</td>
                         <td className="px-4 py-2.5">{row.currency}</td>
                         <td className={`px-4 py-2.5 font-medium ${statusColors[row.status] ?? "text-gray-400"}`}>{row.status}</td>
+                        <td className="px-4 py-2.5 text-gray-400">
+                          {row.eta_label ?? <span className="text-gray-700">—</span>}
+                        </td>
                         <td className="px-4 py-2.5 font-mono text-gray-400">
                           {row.zkp2p_deposit_id ?? <span className="text-gray-700">—</span>}
                         </td>

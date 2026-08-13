@@ -7,8 +7,9 @@ import { useQuery } from '@tanstack/react-query'
 import { usePrivy, useLinkAccount } from '@privy-io/react-auth'
 import { useAuthStore } from '@/store/auth'
 import { motion } from 'framer-motion'
-import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight, Mail } from 'lucide-react'
+import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight, Mail, Ticket } from 'lucide-react'
 import { GradientActionButton } from '@/components/ui/GradientActionButton'
+import { IncognitoModeToggle } from '@/components/IncognitoModeToggle'
 import confetti from 'canvas-confetti'
 
 function XLogo({ className }: { className?: string }) {
@@ -32,6 +33,20 @@ interface TwitterPaymentRequest {
   expires_at: string
 }
 
+interface TwitterTicketGiftRequest {
+  short_id: string
+  sender_twitter: string
+  recipient_twitter: string
+  num_tickets: number
+  is_devnet: boolean
+  delivered_instantly: boolean
+  created_at: string
+}
+
+type TwitterShortLink =
+  | { type: 'payment'; data: TwitterPaymentRequest }
+  | { type: 'ticket_gift'; data: TwitterTicketGiftRequest }
+
 function getLinkedTwitterHandle(user: ReturnType<typeof usePrivy>['user']): string | null {
   const account = user?.linkedAccounts?.find((a: any) =>
     ['twitter_oauth', 'twitter_oauth2', 'twitter', 'x'].includes((a.type ?? '').toLowerCase()),
@@ -48,17 +63,25 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Default false — matches the auto-pay execution path (TwitterAutopayService.executeAutoPay
+  // hardcodes isPrivate: false), so this manual fallback flow doesn't silently default to a
+  // different privacy behavior than the primary auto-pay path.
+  const [isPrivateMode, setIsPrivateMode] = useState(false)
 
   const hasEmail = user?.linkedAccounts?.some((a: any) => a.type === 'email' || a.type === 'google' || a.type === 'apple')
 
-  const { data: request, isLoading } = useQuery<TwitterPaymentRequest>({
-    queryKey: ['twitter-payment', short_id],
+  const { data: link, isLoading } = useQuery<TwitterShortLink | null>({
+    queryKey: ['twitter-short-link', short_id],
     queryFn: async () => {
-      const res = await fetch(`/api/twitter-payments/${short_id}`)
-      if (!res.ok) throw new Error('Not found')
-      return res.json()
+      const paymentRes = await fetch(`/api/twitter-payments/${short_id}`)
+      if (paymentRes.ok) return { type: 'payment', data: await paymentRes.json() }
+      const giftRes = await fetch(`/api/twitter-ticket-gifts/${short_id}`)
+      if (giftRes.ok) return { type: 'ticket_gift', data: await giftRes.json() }
+      return null
     },
   })
+  const request = link?.type === 'payment' ? link.data : undefined
+  const ticketGift = link?.type === 'ticket_gift' ? link.data : undefined
 
   const linkedHandle = getLinkedTwitterHandle(user)
   const isSender = !!linkedHandle && linkedHandle === request?.sender_twitter
@@ -88,7 +111,8 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'
       const res = await fetch(`${backendUrl}/twitter-payments/${short_id}/fund`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_private: isPrivateMode }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.message ?? 'Failed to create payment')
@@ -116,14 +140,59 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
     )
   }
 
-  if (!request) {
+  if (!link) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3 px-6 text-center">
         <p className="text-white font-semibold text-lg">Link not found</p>
-        <p className="text-white/40 text-base">This payment link may have expired or been cancelled.</p>
+        <p className="text-white/40 text-base">This link may have expired or been cancelled.</p>
         <Link href="/" className="text-base text-white/50 hover:text-white underline underline-offset-2 mt-2">Go to Loofta Pay</Link>
       </div>
     )
+  }
+
+  // ── Ticket gift — only ever the instant-delivery case (unregistered recipients get the
+  // existing lottery gift claim page directly from the bot's reply, not this route). ──
+  if (ticketGift) {
+    return (
+      <div className="flex flex-col items-center px-4 pt-6 pb-16 min-h-[calc(100vh-64px)]">
+        <motion.div
+          className="w-full max-w-sm space-y-4"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: [0.25, 0.46, 0.45, 0.94] }}
+        >
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.03] overflow-hidden">
+            <div className="flex items-center justify-center gap-2 border-b border-white/[0.06] px-5 py-4">
+              <Ticket className="h-4 w-4 text-emerald-400" />
+              <span className="text-base font-semibold text-white">Tickets gifted</span>
+            </div>
+            <div className="flex flex-col items-center gap-2 px-6 py-7">
+              <span className="text-xl font-bold text-white">@{ticketGift.sender_twitter}</span>
+              <div className="flex flex-col items-center gap-1.5 py-2">
+                <ArrowDown className="h-4 w-4 text-emerald-500/40" />
+                <Ticket className="h-10 w-10 text-emerald-400" />
+                <span className="text-5xl font-bold tracking-tight text-emerald-400">{ticketGift.num_tickets}</span>
+                <span className="text-sm text-white/30 font-medium tracking-widest uppercase">
+                  {ticketGift.num_tickets === 1 ? 'lottery ticket' : 'lottery tickets'}
+                </span>
+                <ArrowDown className="h-4 w-4 text-emerald-500/40" />
+              </div>
+              <span className="text-xl font-bold text-white">@{ticketGift.recipient_twitter}</span>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-5 py-5 space-y-4">
+            <GradientActionButton onClick={() => router.push('/app/megapot?tab=history')}>
+              View my tickets <ArrowRight className="h-4 w-4" />
+            </GradientActionButton>
+          </div>
+        </motion.div>
+      </div>
+    )
+  }
+
+  if (!request) {
+    return null
   }
 
   return (
@@ -134,8 +203,12 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: [0.25, 0.46, 0.45, 0.94] }}
       >
-        {/* Mainnet warning */}
-        {networkMode === 'mainnet' && (
+        {/* Mainnet warning — only when THIS request is actually devnet-only (integrator-level
+            flag, stored per-row at creation time), not just because the viewer's wallet happens
+            to be in mainnet mode. Previously fired for every mainnet-mode viewer regardless of
+            the request's real cluster, so it kept showing even after the bot's integrator was
+            flipped to mainnet. */}
+        {request.is_devnet && networkMode === 'mainnet' && (
           <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
             <div className="flex items-center gap-2">
               <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
@@ -161,7 +234,7 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
               <XLogo className="h-4 w-4 text-white/60" />
             )}
             <span className="text-base font-semibold text-white">
-              {isPaid ? (isRecipient ? 'Payment received' : 'Payment sent') : 'Pay privately on X'}
+              {isPaid ? (isRecipient ? 'Payment received' : 'Payment sent') : isPrivateMode ? 'Pay privately on X' : 'Pay on X'}
             </span>
           </div>
 
@@ -181,11 +254,14 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
             <span className="text-xl font-bold text-white">@{request.recipient_twitter}</span>
           </div>
 
-          {/* Privacy note */}
-          <div className="flex items-center justify-center gap-1.5 border-t border-white/[0.06] px-5 py-3">
-            <Lock className="h-3.5 w-3.5 text-white/25" />
-            <span className="text-sm text-white/30">End-to-end private via MagicBlock</span>
-          </div>
+          {/* Privacy note — only when the sender has private mode on (or the payment already
+              settled privately); a regular payment shouldn't claim a privacy guarantee it didn't use. */}
+          {(isPrivateMode || (isPaid && request.payment_status?.toUpperCase() === 'PRIVATE_TRANSFER_PENDING')) && (
+            <div className="flex items-center justify-center gap-1.5 border-t border-white/[0.06] px-5 py-3">
+              <Lock className="h-3.5 w-3.5 text-white/25" />
+              <span className="text-sm text-white/30">End-to-end private via MagicBlock</span>
+            </div>
+          )}
         </div>
 
         {/* CTA card */}
@@ -208,7 +284,7 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
                     <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
                     <p className="text-sm text-emerald-300">Payment created — finish sending it</p>
                   </div>
-                  <GradientActionButton onClick={handleSend} loading={sending} loadingText="Loading payment…" disabled={networkMode === 'mainnet'}>
+                  <GradientActionButton onClick={handleSend} loading={sending} loadingText="Loading payment…" disabled={request.is_devnet && networkMode === 'mainnet'}>
                     Proceed to payment <ArrowRight className="h-4 w-4" />
                   </GradientActionButton>
                 </div>
@@ -260,7 +336,8 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
                     <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
                     <p className="text-sm text-emerald-300">Logged in as @{linkedHandle}</p>
                   </div>
-                  <GradientActionButton onClick={handleSend} loading={sending} loadingText="Setting up payment…" disabled={networkMode === 'mainnet'}>
+                  <IncognitoModeToggle checked={isPrivateMode} onCheckedChange={setIsPrivateMode} />
+                  <GradientActionButton onClick={handleSend} loading={sending} loadingText="Setting up payment…" disabled={request.is_devnet && networkMode === 'mainnet'}>
                     Send {amountDisplay} to @{request.recipient_twitter}
                   </GradientActionButton>
                 </div>

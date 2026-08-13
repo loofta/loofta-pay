@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { NearIntentsService } from './near-intents.service';
+import { SupabaseService } from '@/database/supabase.service';
 
 // Mock the OneClick SDK
 jest.mock('@defuse-protocol/one-click-sdk-typescript', () => ({
@@ -57,6 +58,16 @@ describe('NearIntentsService', () => {
     }),
   };
 
+  // Only used by NearIntentsService's withdrawal-order persistence, which none of these tests
+  // exercise — present solely so Nest can resolve the constructor dependency.
+  const mockSupabaseService = {
+    nearIntentsWithdrawalOrders: {
+      insert: jest.fn(),
+      update: jest.fn(),
+      select: jest.fn(),
+    },
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -66,6 +77,10 @@ describe('NearIntentsService', () => {
         {
           provide: ConfigService,
           useValue: mockConfigService,
+        },
+        {
+          provide: SupabaseService,
+          useValue: mockSupabaseService,
         },
       ],
     }).compile();
@@ -151,7 +166,9 @@ describe('NearIntentsService', () => {
     });
 
     it('should return token price', async () => {
-      const price = await service.getTokenPrice('ETH', 'eth');
+      // getTokenPrice does a plain chain-string match (unlike getDefuseAssetId's alias-aware
+      // normalizeChain) against mapSdkToken's normalized output, which maps 'eth' -> 'ethereum'.
+      const price = await service.getTokenPrice('ETH', 'ethereum');
       expect(price).toBe(3000);
     });
 

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState, type SVGProps } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
@@ -122,6 +122,69 @@ function formatPerTransferStepName(step: string): string {
 /** When embedInApp: only the pay content in a dark card (no tabs, no full page). When false: full page with SendReceiveTabs and white card. */
 /** Claim-to-external-wallet is built but disabled for now — flip to re-enable. */
 const SHOW_EXTERNAL_CLAIM = false;
+
+// ─── Dev preview: jump the claim-panel/sender-card UI into any state via ?preview=... ─────────
+// Same pattern as /app/megapot's DevPreviewPanel — localhost-only, overrides local derived
+// booleans on the REAL page instead of mocking a separate component, so what you see is the
+// actual render path. Visit any real claim link (any [id] works) and append ?preview=<key>.
+//
+// "Waiting to be paid" and the generic sender view need no override — they're just what a real
+// unpaid claim's own link shows by default, before any preview param.
+const DEV_PREVIEW_STATES: Record<
+  string,
+  {
+    showBankClaimOption?: boolean;
+    canClaimPrivately?: boolean;
+    walletNotReady?: boolean;
+    waitingForBurnerFunds?: boolean;
+    isPrivateMode?: boolean;
+    forcePrivatelyPaidNotice?: boolean;
+  }
+> = {
+  "recipient-paj": { showBankClaimOption: true, canClaimPrivately: true, walletNotReady: false, waitingForBurnerFunds: false },
+  "recipient-no-paj": { showBankClaimOption: false, canClaimPrivately: true, walletNotReady: false, waitingForBurnerFunds: false },
+  "recipient-wallet-setup": { showBankClaimOption: true, canClaimPrivately: true, walletNotReady: true, waitingForBurnerFunds: false },
+  "recipient-funds-pending": { showBankClaimOption: true, canClaimPrivately: false, walletNotReady: false, waitingForBurnerFunds: true },
+  "recipient-paid-public": { showBankClaimOption: false, canClaimPrivately: false, walletNotReady: false, waitingForBurnerFunds: false },
+  "recipient-paid-private": { showBankClaimOption: false, canClaimPrivately: false, walletNotReady: false, waitingForBurnerFunds: false, forcePrivatelyPaidNotice: true },
+  "sender-public": { isPrivateMode: false },
+  "sender-private": { isPrivateMode: true },
+};
+
+const DEV_PREVIEW_LINKS: { key: keyof typeof DEV_PREVIEW_STATES; label: string }[] = [
+  { key: "recipient-paj", label: "Recipient — has PAJ Cash" },
+  { key: "recipient-no-paj", label: "Recipient — no PAJ account" },
+  { key: "recipient-wallet-setup", label: "Recipient — wallet setting up" },
+  { key: "recipient-funds-pending", label: "Recipient — funds pending" },
+  { key: "recipient-paid-public", label: "Recipient — sender paid publicly" },
+  { key: "recipient-paid-private", label: "Recipient — sender paid privately" },
+  { key: "sender-public", label: "Sender — public" },
+  { key: "sender-private", label: "Sender — private/incognito" },
+];
+
+function DevPreviewPanel() {
+  const pathname = usePathname();
+  return (
+    <div className="fixed bottom-4 right-4 z-[90] flex flex-col gap-1 p-2 rounded-2xl bg-black/85 backdrop-blur border border-white/10 shadow-2xl max-h-[80vh] overflow-y-auto">
+      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider px-1.5 pt-0.5">Preview state (dev)</p>
+      <Link
+        href={pathname}
+        className="text-sm font-medium text-slate-500 hover:text-white hover:bg-white/10 rounded-lg px-2 py-1.5 transition-colors"
+      >
+        Reset (real data)
+      </Link>
+      {DEV_PREVIEW_LINKS.map((l) => (
+        <Link
+          key={l.key}
+          href={`${pathname}?preview=${l.key}`}
+          className="text-sm font-medium text-slate-300 hover:text-white hover:bg-white/10 rounded-lg px-2 py-1.5 transition-colors"
+        >
+          {l.label}
+        </Link>
+      ))}
+    </div>
+  );
+}
 
 /** Small icon-only mark on the top edge of the pay card — the incognito-mode "window chrome
  *  changes" moment (à la Brave/Chrome private windows). Caller wraps this in <AnimatePresence>
@@ -1044,6 +1107,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     const h = window.location.hostname;
     setIsClaimPageLocalhost(h === "localhost" || h === "127.0.0.1");
   }, []);
+  // Dev-only: jump the claim-panel/sender-card UI into any state via ?preview=... (see
+  // DEV_PREVIEW_STATES / DevPreviewPanel above).
+  const previewParam = isClaimPageLocalhost ? searchParams.get("preview") : null;
+  const previewOverride = previewParam ? DEV_PREVIEW_STATES[previewParam] : undefined;
   const { toast } = useToast();
   const { user, logout, login, authenticated, ready: privyReady, getAccessToken } = usePrivy();
 
@@ -1532,9 +1599,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const burnerIsChecking = burnerReadyQuery.isLoading || (!burnerReadyQuery.isFetched && !!burnerAddr);
   /** Logged-in pending recipient cannot claim until burner USDC ATA has a balance (or burner address is missing). */
   const waitingForBurnerFunds =
-    !!user?.id && isPendingRecipientClaim && (!burnerAddr || !burnerIsReady);
+    previewOverride?.waitingForBurnerFunds ??
+    (!!user?.id && isPendingRecipientClaim && (!burnerAddr || !burnerIsReady));
   /** True while Privy hasn't finished creating the user's embedded Solana wallet (created async after login). */
-  const walletNotReady = !!user?.id && !deriveSolanaEmbeddedAddress(user);
+  const walletNotReady = previewOverride?.walletNotReady ?? (!!user?.id && !deriveSolanaEmbeddedAddress(user));
 
   const solPriceQuery = useQuery({
     queryKey: ["sol-price"],
@@ -1800,12 +1868,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     return () => { cancelled = true; };
   }, [pajDefaultBankAccount, claim?.amount, getAccessToken]);
 
-  // Two-way "claim to wallet / claim to bank" layout — only once the recipient already has a
-  // default Naira payout account set up (i.e. has done this before). Being in Nigeria by IP or
-  // merely PAJ-linked with no bank account saved yet does NOT count on its own — those recipients
-  // get the small discovery link below instead, since "Claim to bank" here would otherwise imply
-  // they already have Naira payouts configured when they don't.
-  const showBankClaimOption = PAJ_CASH_ENABLED && isRecipient && !!pajDefaultBankAccount;
+  // Two-way "claim to wallet / claim to bank" layout — shown once the recipient already has a
+  // default Naira payout account set up (i.e. has done this before), OR they're in Nigeria by IP
+  // (pajNigeria) even without one yet, so first-time Nigerian claimers see the bank option as a
+  // real button instead of a buried text link. "Claim to bank" already handles the no-account
+  // case itself (opens the setup dialog on click, see below) so no separate branch is needed here.
+  // Merely PAJ-linked-from-elsewhere with no bank account and no NG IP still falls back to the
+  // small discovery link, since showing a full "Claim to bank" button to a non-Nigerian who has
+  // no path to pass PAJ's BVN/NIN KYC would just be a dead end dressed up as a primary option.
+  const showBankClaimOption = previewOverride?.showBankClaimOption ?? (PAJ_CASH_ENABLED && isRecipient && (!!pajDefaultBankAccount || pajNigeria));
   // Once the recipient picks "Claim to wallet", drop into the original public/private choice —
   // "Claim to bank" no longer shows alongside it, matching the pre-bank-option flow exactly.
   const [walletClaimChosen, setWalletClaimChosen] = useState(false);
@@ -2109,7 +2180,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   /** Redundant to offer once the payment already arrived privately — the burner's incoming leg
    *  already broke any on-chain link back to the sender, so a plain public sweep out reveals
    *  nothing new (see the Context section of the universal-claim plan). */
-  const canClaimPrivately = !claim?.is_private;
+  const canClaimPrivately = previewOverride?.canClaimPrivately ?? !claim?.is_private;
   const claimActionDisabled = claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady;
   /** Recipient pays this fee out of the claimed amount when upgrading a public burner to a
    *  private claim (exact-in) — mirrors sweepClaimBurnerPrivately's math server-side. Estimate
@@ -2132,6 +2203,12 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
    *  first-claim-only "claim privately" button) with the full set of choices, for every claim. */
   const renderClaimPanel = (mobile: boolean) => (
     <div className={mobile ? "w-full" : "hidden md:flex flex-col w-full max-w-md mx-auto"}>
+      {previewOverride?.forcePrivatelyPaidNotice && (
+        <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-300 mb-3">
+          <PrivacyGlyph size={16} opacity={1} />
+          <span>This payment was sent privately</span>
+        </div>
+      )}
       {showBankClaimOption && !walletClaimChosen ? (
         <>
           <button
@@ -2139,16 +2216,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             onClick={() => setWalletClaimChosen(true)}
             disabled={claimActionDisabled}
             className={cn(
-              "w-full flex flex-col items-center justify-center gap-0.5 rounded-xl font-semibold transition-all",
+              "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
               mobile ? "py-4 text-base" : "py-3",
               "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
               claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
             )}
           >
-            <span className="flex items-center gap-1.5"><CheckCircle2 className={mobile ? "h-5 w-5" : "h-4 w-4"} />Claim to wallet</span>
-            {(walletNotReady || waitingForBurnerFunds) && (
-              <span className="text-xs font-normal opacity-80">{walletNotReady ? "setting up wallet…" : "not ready"}</span>
-            )}
+            {!(walletNotReady || waitingForBurnerFunds) && <Wallet className={mobile ? "h-5 w-5" : "h-4 w-4"} />}
+            <span>Claim to wallet{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
           </button>
 
           <div className="flex items-center gap-3 my-2.5 w-full">
@@ -2180,11 +2255,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             >
               {claimAsRecipientMutation.isPending && claimAsRecipientMutation.variables?.claimToNaira ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
+              ) : !(walletNotReady || waitingForBurnerFunds) ? (
                 <Landmark className="h-4 w-4" />
-              )}
+              ) : null}
               <span>
-                {claimAsRecipientMutation.isPending && claimAsRecipientMutation.variables?.claimToNaira ? "Claiming…" : "Claim to bank"}
+                {claimAsRecipientMutation.isPending && claimAsRecipientMutation.variables?.claimToNaira
+                  ? "Claiming…"
+                  : `Claim to bank${walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}`}
               </span>
             </span>
           </button>
@@ -2197,7 +2274,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             disabled={claimActionDisabled}
             className={cn(
               "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
-              mobile ? "py-4 text-base" : "py-3",
+              mobile ? "py-4 text-base" : "py-3 text-sm",
               "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
               claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
             )}
@@ -2237,8 +2314,8 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 whileHover={claimActionDisabled ? undefined : { scale: 1.02 }}
                 whileTap={claimActionDisabled ? undefined : { scale: 0.98 }}
                 className={cn(
-                  "w-full flex items-center justify-center gap-2 rounded-2xl bg-black/30 border border-white/15 font-display font-semibold text-slate-200 transition-colors hover:bg-black/40 hover:border-white/25",
-                  mobile ? "py-3 text-base" : "py-3 text-sm",
+                  "w-full flex items-center justify-center gap-2 rounded-xl bg-black/30 border border-white/15 font-semibold text-slate-200 transition-colors hover:bg-black/40 hover:border-white/25",
+                  mobile ? "py-4 text-base" : "py-3 text-sm",
                   claimActionDisabled && "opacity-50 cursor-not-allowed hover:bg-black/30",
                 )}
               >
@@ -2619,6 +2696,15 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [txInput, setTxInput] = useState<string>("");
   const [submittingTx, setSubmittingTx] = useState<boolean>(false);
   const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
+  // Dev-only: jump straight into the private/public sender card via ?preview=sender-private|
+  // sender-public (see DEV_PREVIEW_STATES) — an effect rather than a lazy useState initializer
+  // since previewOverride isn't available until after the localhost-detection effect runs on
+  // mount (isClaimPageLocalhost starts false).
+  useEffect(() => {
+    if (previewOverride?.isPrivateMode === undefined) return;
+    setIsPrivateMode(previewOverride.isPrivateMode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewParam]);
   /** Confetti burst from the bottom of the screen — the celebratory "entering incognito mode"
    *  moment, separate from the small "Private" badge that lives on the card itself. Non-null key
    *  mounts one <PrivacyConfettiBurst>; it clears itself via onDone. */
@@ -6047,7 +6133,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         </DialogContent>
       </Dialog>
 
-
+      {isClaimPageLocalhost && <DevPreviewPanel />}
     </>
   );
 }

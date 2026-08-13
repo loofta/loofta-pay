@@ -78,6 +78,14 @@
     "claimMany": "Kunin ang mga ito",
     "dismiss": "Isara"
   },
+  "AddEmailToast": {
+    "title": "Huwag palampasin ang anumang bayad",
+    "body": "Idagdag ang iyong email para maabisuhan sa mga bagong bayad at regalo.",
+    "addEmail": "Magdagdag ng email",
+    "adding": "Idinaragdag…",
+    "alreadyLinked": "Naka-link na ang email na ito sa ibang account.",
+    "dismiss": "I-dismiss"
+  },
   "HomePage": {
     "send": "Magpadala",
     "to": "Kay",

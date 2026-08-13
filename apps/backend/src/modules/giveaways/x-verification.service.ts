@@ -23,16 +23,35 @@ export interface XProfile {
  *  when hit, since a truncated list means some real completions could be missed. */
 const MAX_PAGINATED_USERS = 5_000;
 
-/** X API calls are metered/expensive (confirmed real cost, ~$3/67 entries on 2026-08-06), and
- *  verifyPendingCompletions is invoked from two independent paths — the 2-minute cron batch AND
- *  every entrant's inline "Verify"/"Try again" click. The cron (`giveaway-cron.service.ts`'s
- *  `verifyXTasks`, every 2 min) re-fetches the FULL retweeter/quote/liker list from scratch every
- *  single tick as long as anything is pending, with no awareness of whether the underlying data
- *  could plausibly have changed — this dominates cost, not the inline clicks. TTL is set just
- *  above the cron interval so most ticks reuse the same cached fetch instead of re-hitting X; the
- *  design was already "batched, not real-time" (see class doc below), so a few extra minutes of
- *  staleness costs nothing functionally. */
+/** X API calls are metered/expensive (confirmed real cost, ~$3/67 entries on 2026-08-06, and a
+ *  separate $19.60/day spike on 2026-08-11 traced to a giveaway stuck in ENTRIES_CLOSED re-running
+ *  the final sweep on every cron tick — see the run-once guard in
+ *  GiveawayDrawService.freezeSnapshotAndStartDrawing/hasSweptAlready).
+ *  verifyPendingCompletions is invoked from two independent paths — GiveawayEntriesService's
+ *  runFinalXVerificationSweep (now guarded to run exactly once per giveaway by the caller) AND
+ *  every entrant's inline "Verify"/"Try again" click (rate-limited per-entrant by
+ *  MAX_VERIFY_ATTEMPTS_PER_WINDOW in giveaway-entries.service.ts). This TTL is the last line of
+ *  defense against either path re-fetching the FULL retweeter/quote/liker/follower list from
+ *  scratch when nothing plausibly changed; the design is already "batched, not real-time" (see
+ *  class doc below), so a few extra minutes of staleness costs nothing functionally. */
 const FETCH_CACHE_TTL_MS = 3 * 60 * 1000;
+
+// resolveXProfile is called on every enter() attempt, including ones that fail eligibility (no DB
+// row gets created for those, so nothing else stops a rejected user from immediately retrying).
+// Eligibility data (follower count, account age) doesn't move fast enough to need a fresh fetch on
+// every retry — Lisa: 24h is fine. Worst case a borderline follower-count entrant waits up to a day
+// to re-check after growing their account, which is an edge case, not a functional regression.
+const PROFILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Hard backstop, independent of any single code path being bug-free. Real cost incidents so far:
+// ~$3/67 entries (2026-08-06, the old always-on 2-min cron) and ~$19.60/day (2026-08-11, the
+// sweep-without-idempotency bug that redesign left behind — see giveaway-draw.service.ts). Two
+// logic bugs in one area in a week is a pattern, not a fluke — this caps worst-case daily spend
+// regardless of whatever the next bug turns out to be. Counts fetch *units* (one per getCachedIds
+// miss or resolveXProfile call), not raw HTTP calls, since a single unit can internally page/batch
+// — a deliberately conservative proxy, not an exact request count. Override via
+// GIVEAWAY_X_API_DAILY_CALL_CAP if legitimate traffic ever needs more.
+const DEFAULT_DAILY_CALL_CAP = 300;
 
 /**
  * Real X API v2 verification for X-based giveaway tasks, reusing the same OAuth1 user-context
@@ -48,15 +67,47 @@ const FETCH_CACHE_TTL_MS = 3 * 60 * 1000;
 export class XVerificationService {
   private readonly logger = new Logger(XVerificationService.name);
   private client: TwitterApi | null = null;
-  private readonly fetchCache = new Map<string, { ids: Set<string>; expiresAt: number }>();
+  private readonly fetchCache = new Map<string, { promise: Promise<Set<string>>; expiresAt: number }>();
+  private readonly profileCache = new Map<string, { profile: XProfile; expiresAt: number }>();
+  private dailyCallCount = 0;
+  private dailyCallCountDate = '';
+  private readonly dailyCallCap: number;
 
-  /** Shared cache wrapper for every fetch*Ids helper below — see FETCH_CACHE_TTL_MS. */
+  /** Shared cache wrapper for every fetch*Ids helper below — see FETCH_CACHE_TTL_MS. Throws (into
+   *  verifyPendingCompletions' existing api_error path) rather than returning an empty set on cap
+   *  hit, so a capped-out fetch never gets misread as "nobody matched" and falsely rejects
+   *  genuine entrants.
+   *
+   *  Caches the in-flight PROMISE, not just the resolved ids: confirmed live 2026-08-13 that several
+   *  entrants clicking "Verify" within the same second all saw a cache miss and each fired their own
+   *  live X API call for the same tweet — a stampede that alone can burn through X's 75-req/15min
+   *  budget and 429 everyone, including genuine retweeters. Sharing one in-flight fetch across
+   *  concurrent callers fixes that at the source. A failed fetch is evicted immediately (not left
+   *  cached for the full TTL) so the next click can retry cleanly once the rate limit clears, instead
+   *  of replaying the same error to everyone for 3 more minutes. */
   private async getCachedIds(key: string, fetch: () => Promise<Set<string>>): Promise<Set<string>> {
     const cached = this.fetchCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.ids;
-    const ids = await fetch();
-    this.fetchCache.set(key, { ids, expiresAt: Date.now() + FETCH_CACHE_TTL_MS });
-    return ids;
+    if (cached && cached.expiresAt > Date.now()) return cached.promise;
+    this.consumeDailyCapOrThrow(key);
+    const promise = fetch();
+    this.fetchCache.set(key, { promise, expiresAt: Date.now() + FETCH_CACHE_TTL_MS });
+    promise.catch(() => this.fetchCache.delete(key));
+    return promise;
+  }
+
+  /** Increments today's fetch-unit count and throws once DAILY_CALL_CAP is hit, resetting at UTC
+   *  midnight. See DEFAULT_DAILY_CALL_CAP's doc comment for why this exists. */
+  private consumeDailyCapOrThrow(context: string): void {
+    const today = new Date().toISOString().slice(0, 10);
+    if (today !== this.dailyCallCountDate) {
+      this.dailyCallCountDate = today;
+      this.dailyCallCount = 0;
+    }
+    if (this.dailyCallCount >= this.dailyCallCap) {
+      this.logger.error(`[XVerification] daily X API call cap (${this.dailyCallCap}) reached — refusing further calls today (blocked: ${context})`);
+      throw new Error(`X API daily call cap (${this.dailyCallCap}) reached`);
+    }
+    this.dailyCallCount++;
   }
 
   constructor(private readonly configService: ConfigService, private readonly supabaseService: SupabaseService) {
@@ -69,25 +120,33 @@ export class XVerificationService {
     } else {
       this.logger.warn('X API credentials not configured (TWITTER_API_KEY/SECRET/ACCESS_TOKEN/ACCESS_SECRET) — giveaway X verification disabled.');
     }
+    this.dailyCallCap = Number(this.configService.get<string>('GIVEAWAY_X_API_DAILY_CALL_CAP')) || DEFAULT_DAILY_CALL_CAP;
   }
 
   isAvailable(): boolean {
     return this.client !== null;
   }
 
-  /** Single cheap lookup — used at entry time for eligibility (follower count + account age), not part of the batched per-giveaway task verification below. */
+  /** Lookup used at entry time for eligibility (follower count + account age), not part of the
+   *  batched per-giveaway task verification below. Cached per-handle — see PROFILE_CACHE_TTL_MS. */
   async resolveXProfile(handle: string): Promise<XProfile | null> {
     if (!this.client) return null;
     const cleanHandle = handle.replace(/^@/, '').trim();
+    const cacheKey = cleanHandle.toLowerCase();
+    const cached = this.profileCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.profile;
     try {
+      this.consumeDailyCapOrThrow(`resolveXProfile:${cleanHandle}`);
       const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics'] });
       if (!result.data) return null;
-      return {
+      const profile: XProfile = {
         id: result.data.id,
         username: result.data.username,
         createdAt: result.data.created_at ?? new Date(0).toISOString(),
         followersCount: result.data.public_metrics?.followers_count ?? 0,
       };
+      this.profileCache.set(cacheKey, { profile, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
+      return profile;
     } catch (e) {
       this.logger.warn(`[XVerification] resolveXProfile(${cleanHandle}) failed: ${String(e)}`);
       return null;

@@ -10,6 +10,16 @@ import { hashEntrySnapshot, selectRandomWinners, selectFirstComeWinners } from '
 
 const DEFAULT_VRF_STALL_MINUTES = 15;
 
+// runFinalXVerificationSweep hits the real X API. It's meant to run exactly once, right as entries
+// close — but advanceDraws ticks every minute, and a giveaway sits in ENTRIES_CLOSED for as long as
+// anything is pending (e.g. one entrant who never clicked "Verify", or a self-report task the
+// creator hasn't reviewed yet), so without a run-once guard the sweep re-fired on every single tick,
+// forever — this is what actually burned ~4.4k X API calls for one stuck giveaway on 2026-08-11
+// (confirmed via giveaway_events; the 3-min per-target fetch cache in XVerificationService only
+// dampened it, it didn't stop it). After the one sweep, anything still pending just sits in the
+// review queue / waits on the entrant — the draw stays deferred (see countPendingCompletions below)
+// without spending another API call on every subsequent tick.
+
 @Injectable()
 export class GiveawayDrawService {
   private readonly logger = new Logger(GiveawayDrawService.name);
@@ -95,6 +105,19 @@ export class GiveawayDrawService {
     this.logger.log(`[GiveawayDraw] ${giveaway.id}: entries closed`);
   }
 
+  /** Whether the final X-verification sweep has already run for this giveaway — it's meant to fire
+   *  exactly once (see comment above), not on every cron tick while the giveaway sits stuck in
+   *  ENTRIES_CLOSED. */
+  private async hasSweptAlready(giveawayId: string): Promise<boolean> {
+    const { data } = await this.supabaseService.giveawayEvents
+      .select('id')
+      .eq('giveaway_id', giveawayId)
+      .eq('type', 'final_sweep_ran')
+      .limit(1)
+      .maybeSingle();
+    return !!data;
+  }
+
   private async getFrozenEntryIds(giveawayId: string): Promise<string[]> {
     const { data, error } = await this.supabaseService.giveawayEvents
       .select('payload')
@@ -108,16 +131,22 @@ export class GiveawayDrawService {
   }
 
   private async freezeSnapshotAndStartDrawing(giveaway: Giveaway, opts: { throwIfPending?: boolean } = {}): Promise<void> {
-    // One last chance for anyone who did the X task for real but never clicked "Verify" in-app —
-    // see runFinalXVerificationSweep's doc comment for why this replaced the old scheduled cron.
-    await this.entriesService.runFinalXVerificationSweep(giveaway);
-
     // Never freeze the pool while real work is still outstanding — a self-report task the
     // creator hasn't reviewed yet (or an X-verification that's still pending for some other
     // reason) must not silently exclude that entrant. The cron path just defers and retries next
     // tick; forceRunDrawNow surfaces this to the creator instead, since it's an explicit action
     // expecting an immediate result.
-    const pendingCount = await this.entriesService.countPendingCompletions(giveaway.id);
+    let pendingCount = await this.entriesService.countPendingCompletions(giveaway.id);
+
+    // Only pay for a real X API sweep if there's something to sweep AND it hasn't already run for
+    // this giveaway (the creator forcing a draw now is the one exception — a rare, human-paced
+    // action, not a cost driver, so it always gets a fresh attempt).
+    if (pendingCount > 0 && (opts.throwIfPending || !(await this.hasSweptAlready(giveaway.id)))) {
+      await this.entriesService.runFinalXVerificationSweep(giveaway);
+      await this.logEvent(giveaway.id, 'final_sweep_ran');
+      pendingCount = await this.entriesService.countPendingCompletions(giveaway.id);
+    }
+
     if (pendingCount > 0) {
       if (opts.throwIfPending) {
         throw new BadRequestException(

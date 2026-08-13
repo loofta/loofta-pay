@@ -78,6 +78,14 @@
     "claimMany": "Talep et",
     "dismiss": "Kapat"
   },
+  "AddEmailToast": {
+    "title": "Hiçbir ödemeyi kaçırma",
+    "body": "Yeni ödemeler ve hediyeler hakkında bildirim almak için e-posta adresini ekle.",
+    "addEmail": "E-posta ekle",
+    "adding": "Ekleniyor…",
+    "alreadyLinked": "Bu e-posta zaten başka bir hesaba bağlı.",
+    "dismiss": "Kapat"
+  },
   "HomePage": {
     "send": "Gönder",
     "to": "Kime",
