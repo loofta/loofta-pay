@@ -61,6 +61,7 @@ async function assertEvmSponsorAllowed(walletAddress: string, userId: string, ac
 import { getDepositInfo, getAccurateQuote, getExecutionStatus } from "@/services/nearIntents";
 import type { NearToken } from "@/services/nearIntents";
 import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
+import { prepareSolWithdrawal, executeSolWithdrawal } from "@/services/jupiterWithdraw";
 import { isValidAddressForChain, isSolDomain } from "@/lib/refundAddresses";
 import { useSolDomain, type SolDomainState } from "@/hooks/useSolDomain";
 import {
@@ -515,6 +516,13 @@ export function BalanceModal({
   // Set once handleWithdraw has confirmed on-chain that the destination has no USDC account —
   // shows the setup-fee confirm step instead of sending straight away.
   const [ataFeeConfirmPending, setAtaFeeConfirmPending] = useState(false);
+  // SOL withdrawal (USDC -> native SOL via Jupiter, apps/backend/src/modules/jupiter). The user's
+  // own embedded wallet signs and pays for the swap itself — see solana-sponsor-safety project
+  // memory for why this deliberately does not go through the generic sign-and-broadcast sponsor.
+  const [solWithdrawStep, setSolWithdrawStep] = useState<"form" | "preparing" | "signing" | "sending" | "complete">("form");
+  const [solWithdrawPrepared, setSolWithdrawPrepared] = useState<{ requestId: string; swapTransactionBase64: string; estimatedSolOut: number } | null>(null);
+  const [solWithdrawSig, setSolWithdrawSig] = useState<string | null>(null);
+  const [solWithdrawError, setSolWithdrawError] = useState<string | null>(null);
   const [recentWithdrawals, setRecentWithdrawals] = useState<WithdrawalHistoryItem[]>([]);
   const [dbDeposits, setDbDeposits] = useState<{ id: string; type: string; status: string; amount_usdc: number | null; deposit_address: string | null; bridge_status: string | null; created_at: string }[]>([]);
   const [dbDepositsLoading, setDbDepositsLoading] = useState(false);
@@ -541,7 +549,7 @@ export function BalanceModal({
   const dialogContentRef = useRef<HTMLDivElement>(null);
 
   const [coinbaseLoading, setCoinbaseLoading] = useState(false);
-  const [withdrawMethod, setWithdrawMethod] = useState<"crypto-picker" | "usdc-sol" | "near-intents" | "peer-offramp" | "private-relay" | "paj-cash" | null>(null);
+  const [withdrawMethod, setWithdrawMethod] = useState<"crypto-picker" | "usdc-sol" | "sol-jupiter" | "near-intents" | "peer-offramp" | "private-relay" | "paj-cash" | null>(null);
   const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
   const [showFiatOfframpPicker, setShowFiatOfframpPicker] = useState(false);
   const [showFiatOnrampPicker, setShowFiatOnrampPicker] = useState(false);
@@ -1760,16 +1768,31 @@ export function BalanceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dbDeposits]);
 
-  // Reset token selection and address when withdraw method changes
+  // Reset token selection and address when withdraw method changes — except switching between
+  // usdc-sol and sol-jupiter, which is just toggling the output token for the same Solana
+  // destination, so the address (and its compliance check) the user already entered carries over.
+  const prevWithdrawMethodRef = useRef(withdrawMethod);
   useEffect(() => {
+    const prev = prevWithdrawMethodRef.current;
+    prevWithdrawMethodRef.current = withdrawMethod;
+    const isSolanaTokenToggle =
+      (prev === "usdc-sol" && withdrawMethod === "sol-jupiter") ||
+      (prev === "sol-jupiter" && withdrawMethod === "usdc-sol");
+
     // Also clear any finished public-withdrawal step — otherwise picking a different withdraw
     // method still carries the previous run's terminal state, which surfaces as a stale success
     // panel next to the new flow.
     setWithdrawStep((s) => (s === "complete" || s === "failed" ? "idle" : s));
     setFromSel(undefined);
-    setWithdrawAddress("");
-    setAddressRiskStatus("idle");
     setAtaFeeConfirmPending(false);
+    setSolWithdrawStep("form");
+    setSolWithdrawPrepared(null);
+    setSolWithdrawSig(null);
+    setSolWithdrawError(null);
+    if (!isSolanaTokenToggle) {
+      setWithdrawAddress("");
+      setAddressRiskStatus("idle");
+    }
   }, [withdrawMethod]);
 
   // On devnet, USDC on Solana is the only supported withdraw method — skip the picker.
@@ -2076,7 +2099,7 @@ export function BalanceModal({
   }, []);
 
   useEffect(() => {
-    if (!isUSDCOnSolana) { setAddressRiskStatus("idle"); return; }
+    if (!isUSDCOnSolana && withdrawMethod !== "sol-jupiter") { setAddressRiskStatus("idle"); return; }
     const raw = effectiveWithdrawAddress.trim();
     if (!raw || !isValidAddressForChain(raw, "solana")) { setAddressRiskStatus("idle"); return; }
     setAddressRiskStatus("checking");
@@ -2085,7 +2108,7 @@ export function BalanceModal({
       setAddressRiskStatus(safe ? "safe" : "unsafe");
     }, 500);
     return () => clearTimeout(t);
-  }, [effectiveWithdrawAddress, checkAddressRisk, isUSDCOnSolana]);
+  }, [effectiveWithdrawAddress, checkAddressRisk, isUSDCOnSolana, withdrawMethod]);
 
   // Does the destination already have a USDC account? If not, Solana requires one to be created
   // and we charge the setup fee (see ataSetupFeeUsdc) — surfaced in the form BEFORE the
@@ -2804,6 +2827,172 @@ export function BalanceModal({
       }
     } finally {
       setWithdrawing(false);
+    }
+  };
+
+  // A quote is only valid for the amount/address it was built against — editing either after
+  // getting one (or after a failed attempt) invalidates it, so the effect below re-quotes instead
+  // of the button silently signing (or refusing to retry) against stale numbers.
+  useEffect(() => {
+    setSolWithdrawPrepared(null);
+    setSolWithdrawError(null);
+  }, [withdrawAmount, withdrawAddress]);
+
+  // Auto-quote, debounced — the Withdraw button's label doubles as the live estimate ("Withdraw
+  // ≈X SOL"), so there's no separate "Get quote" step for the user to trigger by hand. Only fires
+  // once the address has cleared the compliance check; a request-id guard drops a stale response
+  // if the amount/address changed again before this one came back.
+  const solWithdrawReqIdRef = useRef(0);
+  useEffect(() => {
+    if (withdrawMethod !== "sol-jupiter" || solWithdrawStep !== "form") return;
+    if (solWithdrawPrepared || solWithdrawError) return;
+    if (withdrawAmountNum < 1 || withdrawAmountNum > spendableBalance) return;
+    const rawAddress = effectiveWithdrawAddress.trim();
+    if (!rawAddress || !isValidAddressForChain(rawAddress, "solana") || addressRiskStatus !== "safe") return;
+
+    const myReqId = ++solWithdrawReqIdRef.current;
+    const t = setTimeout(() => {
+      if (solWithdrawReqIdRef.current === myReqId) handleSolWithdrawPrepare();
+    }, 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withdrawMethod, solWithdrawStep, solWithdrawPrepared, solWithdrawError, withdrawAmountNum, effectiveWithdrawAddress, addressRiskStatus, spendableBalance]);
+
+  // SOL withdrawal step 1: quote + build the unsigned swap tx server-side (persists a
+  // sol_withdrawal_requests row as an audit trail — see jupiter.service.ts).
+  const handleSolWithdrawPrepare = async () => {
+    const rawAddress = effectiveWithdrawAddress.trim();
+    const amount = withdrawAmountNum;
+    if (amount <= 0) {
+      toast({ variant: "destructive", title: "Invalid amount", description: "Enter an amount greater than 0." });
+      return;
+    }
+    if (amount > spendableBalance) {
+      toast({ variant: "destructive", title: "Insufficient balance", description: `You have ${spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC available.` });
+      return;
+    }
+    if (addLotteryTicket && amount + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
+      toast({ variant: "destructive", title: "Insufficient balance", description: `Adding a $${LOTTERY_TICKET_PRICE_USDC.toFixed(2)} ticket needs a bit more USDC than you have available.` });
+      return;
+    }
+    if (!rawAddress || !isValidAddressForChain(rawAddress, "solana")) {
+      toast({ variant: "destructive", title: "Invalid address", description: "Enter a valid Solana wallet address." });
+      return;
+    }
+    if (addressRiskStatus !== "safe") {
+      toast({ variant: "destructive", title: "Address not approved", description: "Withdrawals are only allowed to addresses that pass our compliance check." });
+      return;
+    }
+    if (!solanaAddress || !wallet) {
+      toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta wallet is not available. Try refreshing or logging out and back in." });
+      return;
+    }
+
+    setSolWithdrawStep("preparing");
+    setSolWithdrawError(null);
+    try {
+      const accessToken = await getAccessToken();
+      const prepared = await prepareSolWithdrawal({ solanaAddress, destinationAddress: rawAddress, amountUSDC: amount }, accessToken);
+      setSolWithdrawPrepared(prepared);
+      setSolWithdrawStep("form");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not get a swap quote. Please try again.";
+      setSolWithdrawError(msg);
+      setSolWithdrawStep("form");
+      toast({ variant: "destructive", title: "Quote failed", description: msg });
+    }
+  };
+
+  // Single "Withdraw" button drives both steps: first click quotes (button becomes "Getting
+  // quote…"), second click — once the button is already showing the quoted SOL amount — signs.
+  const handleSolWithdrawClick = () => {
+    if (solWithdrawPrepared) {
+      handleSolWithdrawSign();
+    } else {
+      handleSolWithdrawPrepare();
+    }
+  };
+
+  // SOL withdrawal step 2: user signs the already-built swap with their own embedded wallet
+  // (never Loofta's fee payer — the transaction's payer is the user's own, gas-topped-up, wallet).
+  const handleSolWithdrawSign = async () => {
+    if (!solWithdrawPrepared || !solanaAddress || !wallet) return;
+    setSolWithdrawStep("signing");
+    setSolWithdrawError(null);
+    try {
+      // Ticket add-on goes first and never blocks the withdrawal itself — a failed purchase just
+      // means no ticket, the swap (already quoted for the requested amount, unaffected by the
+      // ticket) still proceeds. Mirrors handleWithdraw's identical pattern.
+      if (addLotteryTicket) {
+        const ticketAdded = await buyQuickLotteryTicket();
+        if (ticketAdded) {
+          toast({
+            duration: Infinity,
+            title: "Ticket added! 🎟️",
+            description: (
+              <span className="text-base">
+                Good luck — you&apos;re in for today&apos;s draw, a shot at {lotteryPrizePoolDisplay}.
+              </span>
+            ),
+            action: (
+              <ToastAction altText="View your lottery tickets" asChild>
+                <Link
+                  href="/app/megapot?tab=history"
+                  className="!bg-gradient-to-r !from-[#FF1301] !to-[#EAB308] !text-white !border-0 !font-semibold hover:!opacity-90"
+                >
+                  View tickets
+                </Link>
+              </ToastAction>
+            ),
+          });
+        } else {
+          toast({ variant: "destructive", title: "Couldn't add your ticket", description: "Continuing with your withdrawal." });
+        }
+      }
+
+      const mode = devnetMode ? "devnet" : "mainnet";
+      const rawTxBytes = Buffer.from(solWithdrawPrepared.swapTransactionBase64, "base64");
+      const { signedTransaction } = await signTransaction({
+        transaction: rawTxBytes,
+        wallet,
+        chain: getPrivySolanaChainForMode(mode),
+      });
+
+      setSolWithdrawStep("sending");
+      const accessToken = await getAccessToken();
+      const { signature } = await executeSolWithdrawal(solWithdrawPrepared.requestId, Buffer.from(signedTransaction).toString("base64"), accessToken);
+      setSolWithdrawSig(signature);
+
+      const item = addWithdrawal({
+        id: signature,
+        amountUSDC: withdrawAmountNum,
+        txSignature: signature,
+        destinationAddress: effectiveWithdrawAddress.trim(),
+        destinationChain: "solana",
+        destinationToken: "SOL",
+        isNearIntents: false,
+        estimatedOut: solWithdrawPrepared.estimatedSolOut.toFixed(6),
+        nearIntentsComplete: true,
+      });
+      setActiveWithdrawal(item);
+      setRecentWithdrawals(getWithdrawalHistory());
+      saveWithdrawalToDB(item);
+      optimisticWithdrawBalance(withdrawAmountNum);
+      setAddLotteryTicket(false);
+
+      setSolWithdrawStep("complete");
+      toast({ title: "Sent!", description: "Your SOL is on its way." });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSolWithdrawError(msg);
+      // Not "form" — solWithdrawPrepared is untouched (the failure was in signing/execute, not
+      // the quote), so the button still shows the SOL amount, ready to retry signing directly.
+      setSolWithdrawStep("form");
+      if (msg.includes("user rejected") || msg.includes("denied")) {
+        toast({ variant: "destructive", title: "Signing cancelled" });
+      } else {
+        toast({ variant: "destructive", title: "Withdrawal failed", description: msg });
+      }
     }
   };
 
@@ -3773,7 +3962,7 @@ export function BalanceModal({
                 Back
               </button>
 
-              {/* USDC on Solana */}
+              {/* Solana — USDC direct or swapped to native SOL; the form itself lets you switch */}
               <button
                 type="button"
                 disabled={!solanaAddress}
@@ -3789,7 +3978,7 @@ export function BalanceModal({
                   <img src="/images/icons/withdraw-usdc.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>USDC on Solana</p>
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>USDC or SOL</p>
                   <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
                     Any Solana wallet · Free &amp; instant
                   </p>
@@ -3816,7 +4005,7 @@ export function BalanceModal({
                   <div className="min-w-0 flex-1">
                     <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Other tokens</p>
                     <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                      ETH · BTC · SOL · USDT — any chain
+                      ETH · BTC · USDT — any chain
                     </p>
                   </div>
                   <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
@@ -3846,6 +4035,195 @@ export function BalanceModal({
                 </div>
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
               </button>
+            </div>
+          )}
+
+          {/* ── SOL withdrawal (USDC -> native SOL via Jupiter) — amount + destination form ── */}
+          {tab === "withdraw" && withdrawMethod === "sol-jupiter" && solWithdrawStep !== "complete" && (
+            <div className="space-y-4 py-2">
+              <button type="button" onClick={() => setWithdrawMethod("crypto-picker")}
+                className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                <ChevronLeft className="h-4 w-4" />Back
+              </button>
+
+              {/* USDC / SOL toggle — same Solana destination, switches which token lands there */}
+              <div className={cn("inline-flex rounded-xl border p-1 gap-1", dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>
+                <button type="button" onClick={() => setWithdrawMethod("usdc-sol")}
+                  disabled={solWithdrawStep !== "form"}
+                  className={cn("px-4 py-1.5 rounded-lg text-base font-medium transition-colors disabled:opacity-50", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                  USDC
+                </button>
+                <button type="button"
+                  className={cn("px-4 py-1.5 rounded-lg text-base font-medium transition-colors", dark ? "bg-white/15 text-white" : "bg-white text-gray-900 shadow-sm")}>
+                  SOL
+                </button>
+              </div>
+
+              <div>
+                <Label htmlFor="sol-withdraw-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
+                <div className="mt-1 flex items-center gap-2">
+                  <AmountInput id="sol-withdraw-amount" dark={dark}
+                    value={withdrawAmount}
+                    onChange={setWithdrawAmount}
+                    maxDecimals={2}
+                    suffix="USDC"
+                    disabled={solWithdrawStep !== "form"}
+                    className="flex-1"
+                  />
+                  <Button type="button" variant="outline" size="sm"
+                    onClick={() => {
+                      const max = Math.max(0, spendableBalance - (addLotteryTicket ? LOTTERY_TICKET_PRICE_USDC : 0));
+                      setWithdrawAmount(max.toFixed(6).replace(/\.?0+$/, ""));
+                    }}
+                    disabled={solWithdrawStep !== "form"}
+                    className={`shrink-0 px-3 ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}>
+                    Max
+                  </Button>
+                </div>
+                {withdrawAmountNum > 0 && withdrawAmountNum < 1 && (
+                  <p className="text-base text-red-400 mt-1">Minimum is $1.00 USDC.</p>
+                )}
+                {withdrawAmountNum > spendableBalance && spendableBalance > 0 && (
+                  <p className="text-base text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
+                )}
+                {addLotteryTicket && withdrawAmountNum > 0 && withdrawAmountNum <= spendableBalance && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance && (
+                  <p className="text-base text-red-400 mt-1">Not enough left over for the ${LOTTERY_TICKET_PRICE_USDC.toFixed(2)} ticket — lower the amount or turn it off.</p>
+                )}
+              </div>
+
+              <div>
+                <Label htmlFor="sol-withdraw-address" className={dark ? "text-slate-300" : undefined}>Destination Solana wallet</Label>
+                <Input
+                  id="sol-withdraw-address"
+                  placeholder="Enter a Solana address"
+                  value={withdrawAddress}
+                  onChange={(e) => setWithdrawAddress(e.target.value)}
+                  disabled={solWithdrawStep !== "form"}
+                  className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
+                />
+                {addressRiskStatus === "checking" && (
+                  <p className={`text-base mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />Checking address…
+                  </p>
+                )}
+                {addressRiskStatus === "unsafe" && (
+                  <p className="text-base text-red-400 mt-1.5">This address did not pass our compliance check.</p>
+                )}
+              </div>
+
+              {spendableBalance >= LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC && withdrawAmountNum > 0 && (
+                <div className="relative rounded-2xl">
+                  <style>{`
+                    @keyframes looftaGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+                    @keyframes looftaGlowPulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+                  `}</style>
+                  <div
+                    aria-hidden
+                    className="absolute -inset-[2.5px] rounded-2xl blur-[7px]"
+                    style={{
+                      background: "linear-gradient(110deg,#FF1301,#FF6A00,#EAB308,#FF4A26,#FF1301)",
+                      backgroundSize: "220% 100%",
+                      animation: reduceMotion ? undefined : "looftaGlowShift 2.4s linear infinite, looftaGlowPulse 2.4s ease-in-out infinite",
+                      opacity: reduceMotion ? 0.7 : undefined,
+                    }}
+                  />
+                  <div
+                    className={cn(
+                      "relative rounded-2xl border p-4",
+                      dark ? "bg-[#15110d] border-white/10" : "bg-white border-orange-100"
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_8px_20px_rgba(255,122,42,0.35)]">
+                        <Ticket className="h-5 w-5 text-white" />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
+                          Multiply your win — add a lottery ticket
+                        </p>
+                        <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
+                          The Loofta lottery draws every day. $1 = 1 ticket, a shot at {lotteryPrizePoolDisplay} prize pool.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={addLotteryTicket}
+                        disabled={solWithdrawStep !== "form"}
+                        onCheckedChange={(checked) => {
+                          setAddLotteryTicket(checked);
+                          if (checked && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
+                            const adjusted = Math.max(0, spendableBalance - LOTTERY_TICKET_PRICE_USDC);
+                            setWithdrawAmount(adjusted.toFixed(6).replace(/\.?0+$/, ""));
+                          }
+                        }}
+                        className="shrink-0 mt-1 data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-[#FF4A26] data-[state=checked]:to-[#E1A041]"
+                      />
+                    </div>
+                    {addLotteryTicket && (
+                      <div className={cn(
+                        "mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-base font-semibold",
+                        dark ? "bg-white/10 text-white" : "bg-orange-50 text-gray-900"
+                      )}>
+                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 lottery ticket added</span>
+                        <span>+${LOTTERY_TICKET_PRICE_USDC.toFixed(2)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {solWithdrawError && <p className="text-base text-red-400">{solWithdrawError}</p>}
+
+              <Button
+                onClick={handleSolWithdrawClick}
+                disabled={
+                  solWithdrawStep === "preparing" || solWithdrawStep === "signing" || solWithdrawStep === "sending" ||
+                  !effectiveWithdrawAddress.trim() || withdrawAmountNum < 1 || withdrawAmountNum > spendableBalance ||
+                  addressRiskStatus !== "safe" ||
+                  // Stays disabled until a quote is actually showing — clicking to retry after a
+                  // failed attempt is the one exception.
+                  (!solWithdrawPrepared && !solWithdrawError)
+                }
+                className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
+              >
+                {solWithdrawStep === "preparing"
+                  ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Getting quote…</span>
+                  : solWithdrawStep === "signing"
+                    ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Approve in your wallet…</span>
+                    : solWithdrawStep === "sending"
+                      ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Sending…</span>
+                      : solWithdrawPrepared
+                        ? `Withdraw ≈${solWithdrawPrepared.estimatedSolOut.toFixed(6)} SOL`
+                        : solWithdrawError
+                          ? "Retry quote"
+                          : "Withdraw"}
+              </Button>
+            </div>
+          )}
+
+          {/* ── SOL withdrawal: complete ── */}
+          {tab === "withdraw" && withdrawMethod === "sol-jupiter" && solWithdrawStep === "complete" && solWithdrawPrepared && (
+            <div className="py-2 space-y-4">
+              <div className={`rounded-2xl border p-5 flex flex-col items-center gap-3 text-center ${dark ? "border-white/10 bg-white/5" : "border-emerald-100 bg-emerald-50/60"}`}>
+                <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+                <p className={`text-xl font-bold ${dark ? "text-white" : "text-gray-900"}`}>Sent!</p>
+                <p className={`text-base ${dark ? "text-slate-400" : "text-gray-600"}`}>
+                  ≈ {solWithdrawPrepared.estimatedSolOut.toFixed(6)} SOL is on its way.
+                </p>
+              </div>
+              {solWithdrawSig && (
+                <a
+                  href={getExplorerTxUrl("solana", solWithdrawSig)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`flex items-center gap-2 text-base rounded-lg border px-3 py-2 transition-colors ${dark ? "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10" : "border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100"}`}
+                >
+                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                  View Solana transaction
+                </a>
+              )}
+              <Button onClick={() => { setWithdrawMethod(null); onRefresh(); }} className="w-full bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white">
+                Done
+              </Button>
             </div>
           )}
 
@@ -4209,7 +4587,7 @@ export function BalanceModal({
               form must be excluded here, or both render stacked — private-relay was missing, and
               only stayed hidden by accident whenever a previous run had left withdrawStep on a
               terminal value. */}
-          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "crypto-picker" && withdrawMethod !== "peer-offramp" && withdrawMethod !== "paj-cash" && withdrawMethod !== "private-relay" && (
+          {tab === "withdraw" && withdrawStep === "idle" && withdrawMethod !== null && withdrawMethod !== "crypto-picker" && withdrawMethod !== "sol-jupiter" && withdrawMethod !== "peer-offramp" && withdrawMethod !== "paj-cash" && withdrawMethod !== "private-relay" && (
             <div className="space-y-4 py-2">
 
               {/* Back button — hidden on devnet (only one method available, nothing to go back to) */}
@@ -4224,6 +4602,20 @@ export function BalanceModal({
                 <ChevronLeft className="h-4 w-4" />
                 Back
               </button>}
+
+              {/* USDC / SOL toggle — same Solana destination, switches which token lands there */}
+              {isUSDCOnSolana && (
+                <div className={cn("inline-flex rounded-xl border p-1 gap-1", dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-gray-50")}>
+                  <button type="button"
+                    className={cn("px-4 py-1.5 rounded-lg text-base font-medium transition-colors", dark ? "bg-white/15 text-white" : "bg-white text-gray-900 shadow-sm")}>
+                    USDC
+                  </button>
+                  <button type="button" onClick={() => setWithdrawMethod("sol-jupiter")}
+                    className={cn("px-4 py-1.5 rounded-lg text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                    SOL
+                  </button>
+                </div>
+              )}
 
               {/* Balance + route summary */}
               {withdrawMethod === "near-intents" ? (
@@ -4651,7 +5043,7 @@ export function BalanceModal({
                       className="flex-1"
                     />
                     <Button type="button" variant="outline" size="sm"
-                      onClick={() => setWithdrawAmount(Math.min(spendableBalance, platformCap).toFixed(2).replace(/\.?0+$/, ""))}
+                      onClick={() => setWithdrawAmount(Math.min(spendableBalance, platformCap).toFixed(6).replace(/\.?0+$/, ""))}
                       className={`shrink-0 px-3 ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}>
                       Max
                     </Button>

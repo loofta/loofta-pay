@@ -25,6 +25,7 @@ import { TwitterPaymentsModule } from './modules/twitter-payments/twitter-paymen
 import { TwitterAutopayModule } from './modules/twitter-autopay/twitter-autopay.module';
 import { TwitterTicketGiftsModule } from './modules/twitter-ticket-gifts/twitter-ticket-gifts.module';
 import { OfframpModule } from './modules/offramp/offramp.module';
+import { JupiterModule } from './modules/jupiter/jupiter.module';
 import { LotteryModule } from './modules/lottery/lottery.module';
 import { MagicblockQuestModule } from './modules/magicblock-quest/magicblock-quest.module';
 import { IntegratorsModule } from './modules/integrators/integrators.module';
@@ -90,6 +91,7 @@ import { MarketingModule } from './modules/marketing/marketing.module';
     TwitterAutopayModule,
     TwitterTicketGiftsModule,
     OfframpModule,
+    JupiterModule,
     LotteryModule,
     MagicblockQuestModule,
     IntegratorsModule,
