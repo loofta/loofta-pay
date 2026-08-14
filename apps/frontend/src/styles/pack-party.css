@@ -138,3 +138,44 @@
 .pp-votebtns { display: flex; gap: 14px; margin-top: 18px; flex-wrap: wrap; justify-content: center; }
 .pp-winner { display: flex; flex-direction: column; align-items: center; }
 .pp-payout { font-family: 'Clash Display'; font-weight: 700; font-size: clamp(20px,2.8vw,30px); background: linear-gradient(90deg,#E8B23A,#FFE9A8); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+/* Room browser + create/private room UI (LOO-6/LOO-7) — new, not ported from the reference (no
+   reference screen for room-picking exists yet). Kept in the same pp-* visual language as
+   everything above: same radii, borders, gold selection accent, Clash Display for anything
+   label-weight. This is UI-only for now — see the mock-data comment in play/page.tsx. */
+/* pp-roomlistwrap separates two concerns: the room rows scroll (pp-roomlist, capped height), but
+   "+ Create Room" stays a fixed, always-visible affordance outside that scroll area rather than
+   being just another row that can scroll out of view. margin-top separates the whole thing from
+   the seat grid above — it read as visually stuck directly under the seats with no breathing
+   room before this. */
+.pp-roomlistwrap { display: flex; flex-direction: column; gap: 10px; width: min(520px,100%); margin: 24px 0 22px; }
+.pp-roomlist { display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; padding: 4px 4px 4px 2px; }
+.pp-roomrow { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; border: 1px solid rgba(255,253,247,0.14); background: rgba(255,253,247,0.04); color: #FFFDF7; cursor: pointer; text-align: left; transition: background 0.15s, border-color 0.15s, box-shadow 0.15s; flex-shrink: 0; }
+.pp-roomrow:hover:not(:disabled) { background: rgba(255,253,247,0.08); border-color: rgba(234,179,8,0.5); }
+.pp-roomrow.sel { background: rgba(234,179,8,0.16); border-color: #EAB308; box-shadow: 0 0 0 2px #EAB308; }
+.pp-roomrow:disabled { opacity: 0.4; cursor: default; }
+.pp-roomrow.create { justify-content: center; border-style: dashed; opacity: 0.8; font-family: 'Clash Display'; font-weight: 600; letter-spacing: 0.05em; gap: 8px; }
+.pp-roomrow.create:hover:not(:disabled) { opacity: 1; }
+.pp-roomrow-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.pp-roomrow-name { font-family: 'Clash Display'; font-weight: 600; font-size: 14px; letter-spacing: 0.05em; }
+.pp-roomrow-fill { font-size: 11px; letter-spacing: 0.08em; opacity: 0.6; }
+.pp-roomrow-spectate { flex-shrink: 0; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #FF8A66; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,138,102,0.4); }
+.pp-roomrow-spectate:hover { background: rgba(255,138,102,0.12); }
+
+.pp-createcard { display: flex; flex-direction: column; gap: 14px; width: min(420px,100%); padding: 20px; border-radius: 18px; border: 1px solid rgba(255,253,247,0.14); background: rgba(255,253,247,0.04); margin: 24px 0 22px; }
+.pp-nameinput { font-family: 'Clash Display'; font-weight: 600; font-size: 16px; letter-spacing: 0.04em; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,253,247,0.2); background: rgba(0,0,0,0.3); color: #FFFDF7; }
+.pp-nameinput:focus { outline: none; border-color: #EAB308; }
+.pp-privaterow { display: flex; align-items: center; justify-content: space-between; font-size: 14px; letter-spacing: 0.04em; }
+.pp-privaterow-label { display: flex; align-items: center; gap: 6px; }
+.pp-switch { position: relative; width: 44px; height: 26px; border-radius: 999px; border: none; background: rgba(255,253,247,0.2); cursor: pointer; padding: 0; transition: background 0.15s; flex-shrink: 0; }
+.pp-switch.on { background: #FF1301; }
+.pp-switch-knob { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #FFFDF7; transition: transform 0.15s; }
+.pp-switch.on .pp-switch-knob { transform: translateX(18px); }
+.pp-privatehint { margin: -4px 0 0; font-size: 12px; opacity: 0.55; letter-spacing: 0.04em; line-height: 1.5; text-align: center; max-width: 420px; }
+.pp-roomlist-back { align-self: flex-start; font-size: 12px; letter-spacing: 0.12em; opacity: 0.6; background: none; border: none; color: #FFFDF7; cursor: pointer; padding: 0; }
+.pp-roomlist-back:hover { opacity: 1; }
+
+.pp-slot.filled { border-style: solid; border-color: rgba(234,179,8,0.5); opacity: 0.9; color: #EAB308; }
+
+.pp-sharewrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.pp-btn-icon { display: inline-flex; align-items: center; gap: 6px; }
