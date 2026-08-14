@@ -1,7 +1,12 @@
 import { PublicKey } from "@solana/web3.js";
 
+// Env-driven (NEXT_PUBLIC_GACHA_ROOM_STATE_PROGRAM_ID) rather than a compiled constant — this id
+// changes on every devnet redeploy (MagicBlock's Ephemeral Rollup caches program bytecode per
+// program id, so any future gacha-room-state change needs a fresh id, not an in-place upgrade;
+// see apps/backend/src/modules/gacha/README.md). Falls back to the id live as of the 2026-08-14
+// devnet key rotation so nothing breaks for anyone who hasn't set the env var yet.
 export const GACHA_ROOM_STATE_PROGRAM_ID = new PublicKey(
-  "45ShoiSQG8J4t1piSwsfYC38dyc9oLBbZmFr6W1KpowH",
+  process.env.NEXT_PUBLIC_GACHA_ROOM_STATE_PROGRAM_ID || "4kiFU74UWmDSyxmCmUXxjVVge5heuMc4ptf1j1hi7iWP",
 );
 
 const ROOM_PDA_SEED = new TextEncoder().encode("gacha-room");

@@ -5,7 +5,6 @@ import { AnchorProvider, Program, type Wallet } from '@coral-xyz/anchor';
 import { Connection, Keypair, PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
 import gacha_room_state_idl from './idl/gacha_room_state.json';
 
-const PROGRAM_ID = new PublicKey(gacha_room_state_idl.address);
 const ROOM_PDA_SEED = Buffer.from('gacha-room');
 
 // Standard (non-Private) MagicBlock ephemeral rollup flow — no TEE auth token, no burner keypair
@@ -91,6 +90,18 @@ export class GachaOnchainStateService {
 
   constructor(private readonly config: ConfigService) {}
 
+  /**
+   * Devnet-only program id — env-driven (GACHA_ROOM_STATE_PROGRAM_ID) rather than a compiled
+   * constant, since this id changes on every redeploy forced by the ER bytecode-caching
+   * constraint documented above the class (each redeploy needs a fresh id — a new devnet key
+   * rotation, not just an authority change, forces this too). Falls back to the committed IDL's
+   * address so nothing breaks for anyone who hasn't set the env var yet.
+   */
+  private getProgramId(): PublicKey {
+    const fromEnv = this.config.get<string>('GACHA_ROOM_STATE_PROGRAM_ID');
+    return new PublicKey(fromEnv || gacha_room_state_idl.address);
+  }
+
   private getBaseConnection(): Connection {
     const rpc = this.config.get<string>('MAGICBLOCK_BASE_RPC_URL') || DEFAULT_BASE_RPC;
     return new Connection(rpc, 'confirmed');
@@ -110,7 +121,7 @@ export class GachaOnchainStateService {
   }
 
   derivePda(roomId: string): [PublicKey, number] {
-    return PublicKey.findProgramAddressSync([ROOM_PDA_SEED, this.deriveSeed(roomId)], PROGRAM_ID);
+    return PublicKey.findProgramAddressSync([ROOM_PDA_SEED, this.deriveSeed(roomId)], this.getProgramId());
   }
 
   /** Queries the MagicBlock router for this account's delegation status — `isDelegated: true` +
@@ -138,7 +149,17 @@ export class GachaOnchainStateService {
 
   private program(connection: Connection, feePayer: Keypair): Program {
     const provider = new AnchorProvider(connection, new KeypairWallet(feePayer), { commitment: 'confirmed' });
-    return new Program(gacha_room_state_idl as never, provider);
+    // Clone with the env-driven address rather than passing the imported IDL straight through —
+    // same reasoning as GiveawayVrfService.program(): without this, a future redeploy that
+    // updates GACHA_ROOM_STATE_PROGRAM_ID but forgets to regenerate this committed IDL file would
+    // have PDA derivation (getProgramId(), already env-driven) pointing at the new program while
+    // this client still silently targets the old one. NOTE: this only fixes the top-level address
+    // — it does NOT fix delegate_room's nested `owner_program` self-reference (see that account's
+    // hardcoded address in the IDL), which Anchor bakes in from the program's own declare_id! at
+    // IDL-build time and can only be corrected by regenerating the IDL, not by overriding a string
+    // here. The committed IDL must still be regenerated (`anchor idl build`) on every redeploy.
+    const idlForCurrentProgram = { ...gacha_room_state_idl, address: this.getProgramId().toBase58() };
+    return new Program(idlForCurrentProgram as never, provider);
   }
 
   /** Resolves the ER connection + Anchor client for an already-delegated room in one call — every

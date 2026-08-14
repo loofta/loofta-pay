@@ -26,7 +26,12 @@ pub const DRAW_PDA_SEED: &[u8] = b"draw";
 // already-fulfilled draw for a few cents. This can never let anyone bias WHO wins (VRF security
 // holds regardless of who requests it), but it's a real griefing/audit-trail risk that has no
 // reason to exist — only our own backend's fee payer ever legitimately calls this.
-pub const AUTHORIZED_REQUESTER: Pubkey = pubkey!("5dCTWJj277c41ex92RFxSRUa8ckU4EAurWftDRASBKuq");
+// Devnet-only key as of 2026-08-14 (this program's devnet deployment only — the separate mainnet
+// program id keeps the original mainnet fee-payer key, untouched by this change). Rotated via an
+// in-place upgrade rather than a fresh program id: unlike gacha-room-state, this program is never
+// itself delegated to a MagicBlock Ephemeral Rollup, so it isn't subject to the ER bytecode-per-
+// program-id caching constraint that forced that one to redeploy. See ENVIRONMENTS.md.
+pub const AUTHORIZED_REQUESTER: Pubkey = pubkey!("6iV2cziP9iiSjkjJDUfxi85rwKRbLRfFQtPqGLz3uUf8");
 
 #[error_code]
 pub enum ErrorCode {

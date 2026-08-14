@@ -9,7 +9,6 @@ import { Connection, Keypair, PublicKey, Transaction, VersionedTransaction } fro
 // interface; not modifying that module at all to avoid any risk to the live giveaways feature.
 import loofta_vrf_idl from '../giveaways/idl/loofta_vrf.json';
 
-const PROGRAM_ID = new PublicKey(loofta_vrf_idl.address);
 const DRAW_PDA_SEED = Buffer.from('draw');
 
 // ephemeral_rollups_sdk::vrf::consts — base-layer oracle queue, shared by devnet and mainnet.
@@ -48,6 +47,16 @@ export class GachaVrfService {
 
   constructor(private readonly config: ConfigService) {}
 
+  /** Env-driven (LOOFTA_VRF_PROGRAM_ID_DEVNET — same var name GiveawayVrfService uses for its
+   *  devnet-flagged giveaways, since it's the same devnet deployment) rather than a compiled
+   *  constant, matching GachaOnchainStateService.getProgramId() — falls back to the committed
+   *  IDL's address. Gacha is devnet-only everywhere, so there's no mainnet variant to pick
+   *  between here (contrast GiveawayVrfService, which does need both). */
+  private getProgramId(): PublicKey {
+    const fromEnv = this.config.get<string>('LOOFTA_VRF_PROGRAM_ID_DEVNET');
+    return new PublicKey(fromEnv || loofta_vrf_idl.address);
+  }
+
   private async getConnection(): Promise<Connection> {
     const rpc =
       this.config.get<string>('SOLANA_DEVNET_RPC_URL') ||
@@ -75,12 +84,15 @@ export class GachaVrfService {
 
   derivePda(roomId: string): [PublicKey, number] {
     const seed = this.deriveSeed(roomId);
-    return PublicKey.findProgramAddressSync([DRAW_PDA_SEED, seed], PROGRAM_ID);
+    return PublicKey.findProgramAddressSync([DRAW_PDA_SEED, seed], this.getProgramId());
   }
 
   private async program(connection: Connection, feePayer: Keypair): Promise<Program> {
     const provider = new AnchorProvider(connection, new KeypairWallet(feePayer), { commitment: 'confirmed' });
-    return new Program(loofta_vrf_idl as never, provider);
+    // Clone with the env-driven address rather than the raw imported IDL — see the equivalent
+    // comment in gacha-onchain-state.service.ts's program() for why.
+    const idlForCurrentProgram = { ...loofta_vrf_idl, address: this.getProgramId().toBase58() };
+    return new Program(idlForCurrentProgram as never, provider);
   }
 
   /** Sends the on-chain `request_randomness` instruction for this room. Re-callable (a fresh,

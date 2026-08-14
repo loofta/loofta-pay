@@ -3,7 +3,7 @@ use ephemeral_rollups_sdk::anchor::{commit, delegate, ephemeral};
 use ephemeral_rollups_sdk::cpi::DelegateConfig;
 use ephemeral_rollups_sdk::ephem::MagicIntentBundleBuilder;
 
-declare_id!("45ShoiSQG8J4t1piSwsfYC38dyc9oLBbZmFr6W1KpowH");
+declare_id!("4kiFU74UWmDSyxmCmUXxjVVge5heuMc4ptf1j1hi7iWP");
 
 #[cfg(not(feature = "no-entrypoint"))]
 solana_security_txt::security_txt! {
@@ -17,12 +17,14 @@ solana_security_txt::security_txt! {
 
 pub const ROOM_PDA_SEED: &[u8] = b"gacha-room";
 
-// Same fee-payer key already public in loofta-vrf's AUTHORIZED_REQUESTER — this program shares
-// the backend's one Solana fee-payer identity, it's not a new disclosure. Same rationale as that
-// constant: init_room's PDA is a public, deterministic sha256(roomId), so without this any
-// outsider could front-run our backend's own init call and occupy the PDA with garbage seat/
-// authority data before the real room ever gets created.
-pub const AUTHORIZED_INITIALIZER: Pubkey = pubkey!("5dCTWJj277c41ex92RFxSRUa8ckU4EAurWftDRASBKuq");
+// Devnet-only key, redeployed 2026-08-14 to a fresh program id (see declare_id! above) so a
+// contributor can hold this key locally without also holding the mainnet fee payer — see
+// ENVIRONMENTS.md. Same fee-payer key already public in loofta-vrf's AUTHORIZED_REQUESTER — this
+// program shares the backend's one Solana devnet fee-payer identity, it's not a new disclosure.
+// Same rationale as that constant: init_room's PDA is a public, deterministic sha256(roomId), so
+// without this any outsider could front-run our backend's own init call and occupy the PDA with
+// garbage seat/authority data before the real room ever gets created.
+pub const AUTHORIZED_INITIALIZER: Pubkey = pubkey!("6iV2cziP9iiSjkjJDUfxi85rwKRbLRfFQtPqGLz3uUf8");
 
 // Max seats any gacha_room_configs row currently allows (see gacha_room_configs.seats in
 // Postgres) — the ready/vote masks are u16, giving headroom well past this; bump the mask width

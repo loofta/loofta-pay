@@ -16,23 +16,28 @@ Everything in this module is explicitly Solana devnet, independent of the app-wi
 settings.
 
 - Gacha USDC-Dev mint: `Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr` (6 decimals)
-- Gacha room-state program: `45ShoiSQG8J4t1piSwsfYC38dyc9oLBbZmFr6W1KpowH`
-- Loofta VRF program: `5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi`
+- Gacha room-state program (devnet): `4kiFU74UWmDSyxmCmUXxjVVge5heuMc4ptf1j1hi7iWP` — read from
+  `GACHA_ROOM_STATE_PROGRAM_ID` / `NEXT_PUBLIC_GACHA_ROOM_STATE_PROGRAM_ID` env, not hardcoded
+- Loofta VRF program (devnet): `7vV8V59ziNPvCnXqEsYFonymXpfjq5WPGNyJ1GVKgE9c` — read from
+  `LOOFTA_VRF_PROGRAM_ID` env (previous revision of this doc listed the *mainnet* id here by
+  mistake; the mainnet giveaways deployment is the separate `5yv9aXx1vjRoCH1Ubxi7RNQggv9NHXxZC7zwUKLG4jYi`)
 - MagicBlock base RPC: `https://rpc.magicblock.app/devnet`
 - MagicBlock router: `https://devnet-router.magicblock.app/`
 - CollectorCrypt API: `https://dev-gacha.collectorcrypt.com`
 
-Both program IDs were verified executable on devnet on 2026-08-09. The room-state program and
-its initializer are controlled by the existing backend fee-payer public key
-`5dCTWJj277c41ex92RFxSRUa8ckU4EAurWftDRASBKuq`. A newly generated wallet cannot enable the
-on-chain ready/vote flags without deploying a new program configured for that new authority.
+Both programs' devnet deployments are controlled by a devnet-only fee-payer key (see
+`.env.development.local` / ENVIRONMENTS.md) — safe to share with any contributor, since it holds
+no mainnet value or authority. It is NOT the same key as the mainnet payments fee payer.
 
-The room-state program was redeployed to this fresh id on 2026-08-09 (superseding the previous
-`9TebHwRo3q3mhncqKpuBvACdiwPthR2JfyBrwJW6a8Lt`) specifically because of the ER bytecode-caching
-behavior noted below: that id had already been referenced on the devnet ephemeral rollup during
-earlier Phase 1/2 testing, and an in-place upgrade would not have exposed `set_phase`/
-`record_initial_exclusion`/`record_vote_cut` there even though base-layer calls would have worked
-fine. Any *future* instruction-layout change needs another fresh id for the same reason.
+The room-state program was redeployed to a fresh id on 2026-08-14 (superseding
+`45ShoiSQG8J4t1piSwsfYC38dyc9oLBbZmFr6W1KpowH`, itself superseding the original
+`9TebHwRo3q3mhncqKpuBvACdiwPthR2JfyBrwJW6a8Lt`) specifically to rotate `AUTHORIZED_INITIALIZER`
+off the shared mainnet/devnet fee-payer key onto a devnet-only one — the ER bytecode-caching
+behavior noted below means this can never be an in-place upgrade once a program id has been
+referenced on the devnet ephemeral rollup, so any *future* instruction-layout change, or any
+future authority rotation, needs another fresh id for the same reason. `loofta-vrf`'s devnet
+deployment does NOT need a fresh id for an authority change — it's never itself delegated to the
+ER, so it was upgraded in place instead (same id, new `AUTHORIZED_REQUESTER`).
 
 ## State machine
 
