@@ -376,11 +376,6 @@ export default function GachaPlayPage() {
             </div>
           )}
 
-          {activeConfig && createdRoom && (
-            <p className="pp-privatehint" style={{ marginBottom: 18 }}>
-              {createdRoom.name} created{createdRoom.isPrivate ? " (private)" : ""} — share the link so friends can join, or enter now.
-            </p>
-          )}
         </Shell>
       )}
     </div>
