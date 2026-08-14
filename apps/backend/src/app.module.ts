@@ -38,13 +38,26 @@ import { MarketingModule } from './modules/marketing/marketing.module';
 @Module({
   imports: [
     // Configuration
+    //
+    // Which local env file loads is picked by LOOFTA_ENV_FILE (set by the npm script that starts
+    // the process — see package.json's start:dev vs start:dev:prod-data), NOT by NODE_ENV. Reusing
+    // NODE_ENV for this would be a real footgun: NODE_ENV=production also gates every money-moving
+    // @Cron job and the KMS-secrets requirement (see kms-secrets.ts REQUIRED_IN_PRODUCTION) — so
+    // picking "the prod-data file" via NODE_ENV would silently turn on production cron jobs on a
+    // laptop just because someone wanted to point at prod data locally. NODE_ENV stays
+    // "development" in both local env files; only the Solana cluster / Supabase project / secrets
+    // actually differ between them. Defaults to .env.development.local — that's the file both this
+    // repo's contributors use day to day, and the only one anyone but the account owner should ever
+    // have a copy of. There is deliberately no fallback to a bare ".env.local" here anymore — a
+    // missing var should fail loudly (undefined) rather than silently resolving from a stale mixed
+    // file. See ENVIRONMENTS.md.
     ConfigModule.forRoot({
       isGlobal: true,
       // Resolve from backend app root so env is found regardless of process cwd (e.g. when started from monorepo root)
       envFilePath: [
-        join(__dirname, '..', '.env.local'),
+        join(__dirname, '..', process.env.LOOFTA_ENV_FILE || '.env.development.local'),
         join(__dirname, '..', '.env'),
-        '.env.local',
+        process.env.LOOFTA_ENV_FILE || '.env.development.local',
         '.env',
       ],
     }),

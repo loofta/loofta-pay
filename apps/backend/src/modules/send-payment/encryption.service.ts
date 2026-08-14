@@ -39,13 +39,16 @@ export function deriveHkdfKey(masterKey: Buffer, context: string): Buffer {
   return createHmac('sha256', prk).update(`${context}\x01`).digest();
 }
 
-/** Read env var from .env.local when ConfigService/process.env don't have it. */
+/** Read env var from the active local env file when ConfigService/process.env don't have it.
+ *  Same file LOOFTA_ENV_FILE picks for ConfigModule itself (see app.module.ts) — kept in sync so
+ *  this fallback never reads a different environment's secrets than the one actually loaded. */
 function getEnvFromFile(varName: string): string | null {
+  const envFileName = process.env.LOOFTA_ENV_FILE || '.env.development.local';
   const tryPaths = [
-    join(process.cwd(), 'apps', 'backend', '.env.local'),
-    join(process.cwd(), '.env.local'),
-    join(__dirname, '..', '..', '..', '.env.local'),
-    join(__dirname, '..', '..', '.env.local'),
+    join(process.cwd(), 'apps', 'backend', envFileName),
+    join(process.cwd(), envFileName),
+    join(__dirname, '..', '..', '..', envFileName),
+    join(__dirname, '..', '..', envFileName),
   ];
   for (const p of tryPaths) {
     try {

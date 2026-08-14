@@ -1,6 +1,16 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-const CLUSTER_DEFAULT_NETWORK_MODE: "devnet" | "mainnet" = "mainnet";
+import { isNonMainnetCluster } from "@/lib/solanaCluster";
+
+// Derived from NEXT_PUBLIC_SOLANA_CLUSTER (build-time), not hardcoded: production builds set
+// that to mainnet-beta, so this still always resolves to "mainnet" there — same end behavior as
+// the "Devnet retired" mainnet-launch hardening this replaces (see git history on this file,
+// commit 7f5c202: before mainnet launch, networkMode was a real per-user persisted preference;
+// that commit force-pinned it to mainnet so a real user could never get stuck in devnet mode from
+// stale localStorage). Deriving from the cluster env instead of a literal keeps that exact
+// production guarantee while letting a genuine devnet build (.env.development.local) default to
+// devnet, which the literal could never do.
+const CLUSTER_DEFAULT_NETWORK_MODE: "devnet" | "mainnet" = isNonMainnetCluster() ? "devnet" : "mainnet";
 
 type AuthState = {
 	authenticated: boolean;
@@ -90,7 +100,7 @@ export const useAuthStore = create<AuthState>()(
 					return {
 						authenticated: true,
 						userId: newUserId,
-						networkMode: "mainnet",
+						networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
 						mainnetAccess: true,
 						email: v.email ?? state.email,
 						...(v.username !== undefined && { username: v.username }),
@@ -124,10 +134,11 @@ export const useAuthStore = create<AuthState>()(
 				mainnetAccess: state.mainnetAccess,
 				// networkMode is NOT persisted here — per-user preference lives in loofta.net.${userId}.
 			}),
-			// Devnet retired: always force mainnet on rehydration regardless of any stored preference.
+			// Force networkMode to the build-time cluster default on every rehydration, regardless of
+			// any stored preference (see CLUSTER_DEFAULT_NETWORK_MODE above for why).
 			onRehydrateStorage: () => (state) => {
 				if (!state) return;
-				state.networkMode = "mainnet";
+				state.networkMode = CLUSTER_DEFAULT_NETWORK_MODE;
 				state.mainnetAccess = true;
 			},
 		}

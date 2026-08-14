@@ -1,13 +1,22 @@
 import { createHash } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AnchorProvider, Program, type Wallet } from '@coral-xyz/anchor';
 import { Connection, Keypair, PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
 import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 import { Giveaway } from './entities/giveaway.entity';
 import loofta_vrf_idl from './idl/loofta_vrf.json';
 
-const PROGRAM_ID = new PublicKey(loofta_vrf_idl.address);
 const DRAW_PDA_SEED = Buffer.from('draw');
+
+// 2026-08-09 postmortem: this program id used to be a single hardcoded constant read from this
+// same committed IDL file — which gacha-vrf.service.ts ALSO imports. A gacha devnet redeploy that
+// day overwrote this file's `address` field from the mainnet id to the devnet one, which silently
+// broke every real mainnet giveaway VRF draw from that point on (PDA derivation and the on-chain
+// Program client both target the wrong, devnet-only program id on mainnet — a program id that was
+// never even deployed to mainnet). Fixed 2026-08-14: program id is now resolved per-call from
+// per-giveaway `is_devnet`, via two separate env vars, so one cluster's redeploy can never again
+// silently break the other's address.
 
 // ephemeral_rollups_sdk::vrf::consts — base-layer oracle queue, shared by devnet and mainnet
 // (only localnet uses a distinct DEFAULT_TEST_QUEUE, which giveaways never run on).
@@ -44,10 +53,28 @@ class KeypairWallet implements Wallet {
 export class GiveawayVrfService {
   private readonly logger = new Logger(GiveawayVrfService.name);
 
-  constructor(private readonly solanaSponsor: SolanaSponsorService) {}
+  constructor(
+    private readonly solanaSponsor: SolanaSponsorService,
+    private readonly config: ConfigService,
+  ) {}
 
   private cluster(giveaway: Giveaway): 'devnet' | 'mainnet' {
     return giveaway.is_devnet ? 'devnet' : 'mainnet';
+  }
+
+  /** Per-cluster program id, env-driven — see the postmortem comment above the imports for why
+   *  this can no longer be a single shared constant. No fallback for mainnet: silently falling
+   *  back to the (devnet) IDL address is exactly the bug this replaces, so an unset mainnet env
+   *  var fails loudly instead. Devnet keeps the IDL fallback since that's genuinely always
+   *  correct today (gacha's devnet program shares this same id). */
+  private getProgramId(cluster: 'devnet' | 'mainnet'): PublicKey {
+    if (cluster === 'mainnet') {
+      const fromEnv = this.config.get<string>('LOOFTA_VRF_PROGRAM_ID_MAINNET');
+      if (!fromEnv) throw new Error('LOOFTA_VRF_PROGRAM_ID_MAINNET not configured — refusing to guess a mainnet program id');
+      return new PublicKey(fromEnv);
+    }
+    const fromEnv = this.config.get<string>('LOOFTA_VRF_PROGRAM_ID_DEVNET');
+    return new PublicKey(fromEnv || loofta_vrf_idl.address);
   }
 
   /** sha256(giveaway.id) — the program only ever sees stable 32-byte seed bytes, never a
@@ -56,26 +83,30 @@ export class GiveawayVrfService {
     return createHash('sha256').update(giveawayId).digest();
   }
 
-  derivePda(giveawayId: string): [PublicKey, number] {
+  derivePda(giveawayId: string, cluster: 'devnet' | 'mainnet'): [PublicKey, number] {
     const seed = this.deriveSeed(giveawayId);
-    return PublicKey.findProgramAddressSync([DRAW_PDA_SEED, seed], PROGRAM_ID);
+    return PublicKey.findProgramAddressSync([DRAW_PDA_SEED, seed], this.getProgramId(cluster));
   }
 
-  private program(connection: Connection): Program {
+  private program(connection: Connection, cluster: 'devnet' | 'mainnet'): Program {
     const feePayer = this.solanaSponsor.getFeePayerKeypair();
     if (!feePayer) throw new Error('GiveawayVrfService: fee payer keypair unavailable');
     const provider = new AnchorProvider(connection, new KeypairWallet(feePayer), { commitment: 'confirmed' });
-    return new Program(loofta_vrf_idl as never, provider);
+    // Clone the IDL with the correct per-cluster address — the imported JSON's own `address`
+    // field can only ever hold one cluster's id at a time (see postmortem comment above).
+    const idlForCluster = { ...loofta_vrf_idl, address: this.getProgramId(cluster).toBase58() };
+    return new Program(idlForCluster as never, provider);
   }
 
   /** Sends the on-chain `request_randomness` instruction. Re-callable for the same giveaway
    *  (e.g. after a manual stall-recovery retry) — a fresh, unfulfilled request just overwrites
    *  the prior one on-chain. Returns the slot the request was submitted at. */
   async requestRandomness(giveaway: Giveaway): Promise<{ slot: number }> {
-    const connection = this.solanaSponsor.getConnectionForCluster(this.cluster(giveaway));
-    const program = this.program(connection);
+    const cluster = this.cluster(giveaway);
+    const connection = this.solanaSponsor.getConnectionForCluster(cluster);
+    const program = this.program(connection, cluster);
     const seed = this.deriveSeed(giveaway.id);
-    const [drawRequestPda] = this.derivePda(giveaway.id);
+    const [drawRequestPda] = this.derivePda(giveaway.id, cluster);
     const feePayer = this.solanaSponsor.getFeePayerKeypair();
     if (!feePayer) throw new Error('GiveawayVrfService: fee payer keypair unavailable');
 
@@ -98,9 +129,10 @@ export class GiveawayVrfService {
   /** Fetches the on-chain DrawRequest PDA. Returns hex randomness once the oracle callback has
    *  fulfilled it, or null while still pending. */
   async pollFulfillment(giveaway: Giveaway): Promise<string | null> {
-    const connection = this.solanaSponsor.getConnectionForCluster(this.cluster(giveaway));
-    const program = this.program(connection);
-    const [drawRequestPda] = this.derivePda(giveaway.id);
+    const cluster = this.cluster(giveaway);
+    const connection = this.solanaSponsor.getConnectionForCluster(cluster);
+    const program = this.program(connection, cluster);
+    const [drawRequestPda] = this.derivePda(giveaway.id, cluster);
 
     try {
       const account = await (program.account as never as Record<string, { fetch: (pda: PublicKey) => Promise<{ fulfilled: boolean; randomness: number[] }> }>)['drawRequest'].fetch(

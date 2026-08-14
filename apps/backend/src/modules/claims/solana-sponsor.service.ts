@@ -45,15 +45,16 @@ const USDC_MINT_SET = new Set([
 const ATA_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 const TOKEN_PROGRAM_ID_STR = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
-/** Read env var from .env.local on disk when ConfigService doesn't have it (e.g. run from monorepo root). */
+/** Read env var from the active local env file on disk when ConfigService doesn't have it (e.g. run from monorepo root). */
 function getEnvFromFile(varName: string): string | null {
-  // Match ConfigModule envFilePath: backend root .env.local (same as SendPaymentService key source)
+  // Match ConfigModule envFilePath: LOOFTA_ENV_FILE (same as SendPaymentService key source) — see app.module.ts
+  const envFileName = process.env.LOOFTA_ENV_FILE || '.env.development.local';
   const tryPaths = [
-    join(process.cwd(), 'apps', 'backend', '.env.local'),
-    join(process.cwd(), '.env.local'),
-    join(__dirname, '..', '..', '..', '.env.local'), // backend root from src/modules/claims or dist
-    join(__dirname, '..', '..', '..', '..', '.env.local'),
-    join(__dirname, '..', '..', '.env.local'),
+    join(process.cwd(), 'apps', 'backend', envFileName),
+    join(process.cwd(), envFileName),
+    join(__dirname, '..', '..', '..', envFileName), // backend root from src/modules/claims or dist
+    join(__dirname, '..', '..', '..', '..', envFileName),
+    join(__dirname, '..', '..', envFileName),
   ];
   for (const p of tryPaths) {
     try {
