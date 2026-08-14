@@ -996,7 +996,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             );
           })()}
 
-          {(() => {
+          {authenticated && hasXLinked && (() => {
             const displayGroups = groupTasksForDisplay(giveaway.tasks);
             const groupStatuses: RowStatus[] = myEntry
               ? displayGroups.map((group) => {

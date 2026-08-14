@@ -2123,54 +2123,73 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
     const netUsd = grossUsd - feeUsd;
     return (
       <Dialog open={nairaClaimConfirmOpen} onOpenChange={(open) => setNairaClaimConfirmOpen(open)}>
-        <DialogContent className="border-white/10 bg-[#0f0f12] text-white sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Claim in Naira</DialogTitle>
-            <DialogDescription className="text-slate-400">
-              {pajDefaultBankAccount ? `To ${pajDefaultBankAccount.bank_name} ····${pajDefaultBankAccount.account_number.slice(-4)}` : ""}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-2">
-            <div className="flex items-center justify-between text-base text-slate-400">
-              <span>Claim amount</span>
-              <span className="font-sans text-slate-200">${grossUsd.toFixed(2)}</span>
-            </div>
-            {feeUsd > 0 && (
-              <div className="flex items-center justify-between text-base text-slate-400">
-                <span>Loofta fee</span>
-                <span className="font-sans text-slate-200">- ${feeUsd.toFixed(2)}</span>
-              </div>
-            )}
-            <div className="h-px bg-white/10 my-1" />
-            <div className="flex items-center justify-between text-lg font-semibold">
-              <span className="text-white">You&apos;ll receive</span>
-              <span className="font-sans text-amber-300">
-                {nairaQuote != null ? `≈ ₦${nairaQuote.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : <Loader2 className="h-4 w-4 animate-spin inline" />}
-              </span>
-            </div>
-            <div className="text-right text-xs text-slate-500">${netUsd.toFixed(2)} USDC after fees</div>
+        <DialogContent
+          className={cn(
+            "border-white/10 bg-[#0f0f12] text-white",
+            "left-0 right-0 top-0 [transform:none] h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col data-[state=open]:!zoom-in-100 data-[state=open]:!animate-none",
+            "sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-2xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block",
+            "[&>button]:h-12 [&>button]:w-12 [&>button]:rounded-full [&>button_svg]:h-5 [&>button_svg]:w-5",
+          )}
+        >
+          {/* Drag handle — mobile only */}
+          <div className="sm:hidden flex justify-center pt-5 pb-2 shrink-0">
+            <div className="w-10 h-1 rounded-full bg-white/20" />
           </div>
-          <div className="flex flex-col-reverse sm:flex-row gap-2 mt-2">
-            <button
-              type="button"
-              onClick={() => setNairaClaimConfirmOpen(false)}
-              disabled={claimActionDisabled}
-              className="flex-1 h-12 rounded-xl text-base font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-40"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setNairaClaimConfirmOpen(false);
-                setClaimInitiated(true);
-                claimAsRecipientMutation.mutate({ claimToNaira: true });
-              }}
-              disabled={claimActionDisabled || nairaQuote == null}
-              className="flex-1 h-12 rounded-xl text-lg font-semibold bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-md hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
-            >
-              Confirm & claim
-            </button>
+
+          <div
+            className="sm:contents px-6 pb-6 sm:p-0 space-y-5 sm:space-y-4"
+            style={{ flex: "1 1 0", height: 0, overflowY: "auto", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
+          >
+            <DialogHeader className="pb-0 pt-2 sm:pt-0">
+              <DialogTitle className="text-3xl sm:text-4xl font-bold tracking-tight text-white">Claim in Naira</DialogTitle>
+              <DialogDescription className="text-base font-medium mt-0.5 text-slate-400">
+                {pajDefaultBankAccount ? `To ${pajDefaultBankAccount.bank_name} ····${pajDefaultBankAccount.account_number.slice(-4)}` : ""}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-2">
+              <div className="flex items-center justify-between text-base text-slate-400">
+                <span>Claim amount</span>
+                <span className="font-sans text-slate-200">${grossUsd.toFixed(2)}</span>
+              </div>
+              {feeUsd > 0 && (
+                <div className="flex items-center justify-between text-base text-slate-400">
+                  <span>Loofta fee</span>
+                  <span className="font-sans text-slate-200">- ${feeUsd.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="h-px bg-white/10 my-1" />
+              <div className="flex items-center justify-between text-lg font-semibold">
+                <span className="text-white">You&apos;ll receive</span>
+                <span className="font-sans text-amber-300">
+                  {nairaQuote != null ? `≈ ₦${nairaQuote.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : <Loader2 className="h-4 w-4 animate-spin inline" />}
+                </span>
+              </div>
+              <div className="text-right text-sm text-slate-500">${netUsd.toFixed(2)} USDC after fees</div>
+            </div>
+
+            <div className="flex flex-col-reverse sm:flex-row gap-2 mt-2">
+              <button
+                type="button"
+                onClick={() => setNairaClaimConfirmOpen(false)}
+                disabled={claimActionDisabled}
+                className="flex-1 h-12 rounded-xl text-base font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNairaClaimConfirmOpen(false);
+                  setClaimInitiated(true);
+                  claimAsRecipientMutation.mutate({ claimToNaira: true });
+                }}
+                disabled={claimActionDisabled || nairaQuote == null}
+                className="flex-1 h-12 rounded-xl text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
+              >
+                Confirm & claim
+              </button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

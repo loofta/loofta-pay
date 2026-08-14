@@ -50,6 +50,8 @@ export function Footer() {
             <h4 className="text-white font-semibold mb-4">Learn</h4>
             <ul className="space-y-2">
               <li><a href="/guides/send-crypto-privately" className="text-slate-400 hover:text-white transition-colors">Send crypto privately</a></li>
+              <li><a href="/usdc-to-ngn" className="text-slate-400 hover:text-white transition-colors">USDC to Naira rate</a></li>
+              <li><a href="/dollar-to-naira-today" className="text-slate-400 hover:text-white transition-colors">Dollar to Naira today</a></li>
               <li><a href="/vs/paypal" className="text-slate-400 hover:text-white transition-colors">Loofta vs PayPal</a></li>
               <li><a href="/blog" className="text-slate-400 hover:text-white transition-colors">Blog</a></li>
             </ul>

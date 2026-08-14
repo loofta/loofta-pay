@@ -59,6 +59,8 @@ export function proxy(request: NextRequest) {
     "/partners",
     "/guides/send-crypto-privately",
     "/vs/paypal",
+    "/usdc-to-ngn",
+    "/dollar-to-naira-today",
     "/blog",
   ]);
   // /blog/[slug] is dynamic, so the exact-match Set above can't cover it — treat any /blog/*

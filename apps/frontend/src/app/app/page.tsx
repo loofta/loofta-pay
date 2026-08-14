@@ -114,6 +114,26 @@ export default function Home() {
     }
   }, [toParam, searchParams]);
 
+  // /me/[@username] personal links land here with ?payto= (not ?to=) — a locked recipient,
+  // distinct from the generic "send again" ?to=/?method= prefill. There's exactly one valid
+  // target for a personal link, so the email/social/username picker is skipped entirely instead
+  // of relying on a ?method= param that the link never carried.
+  const payToParam = searchParams.get("payto");
+  useEffect(() => {
+    if (!payToParam) return;
+    const clean = payToParam.replace(/^@+/, "").trim();
+    if (!clean) return;
+    setActiveTabState("send");
+    setLockedRecipient(clean);
+    const amt = searchParams.get("amount");
+    if (amt != null && amt !== "" && !isNaN(Number(amt)) && Number(amt) >= 0) setAmount(amt);
+  }, [payToParam, searchParams]);
+
+  const clearLockedRecipient = () => {
+    setLockedRecipient(null);
+    router.replace("/?tab=send");
+  };
+
   useEffect(() => {
     if (searchParams.get("create") === "1") {
       setActiveTabState("receive");
@@ -128,6 +148,9 @@ export default function Home() {
   };
   const { toast } = useToast();
   const [recipient, setRecipient] = useState(() => readSendDraft()?.recipient ?? "");
+  /** Set from a /me/[@username] personal link — locks the recipient to that exact account and
+   *  hides the email/social/username picker, since a personal link only ever has one target. */
+  const [lockedRecipient, setLockedRecipient] = useState<string | null>(null);
   const [amount, setAmount] = useState(() => readSendDraft()?.amount ?? "");
   const [description, setDescription] = useState(() => readSendDraft()?.description ?? "");
   const [gifUrl, setGifUrl] = useState<string | null>(() => readSendDraft()?.gifUrl ?? null);
@@ -299,16 +322,17 @@ export default function Home() {
   const apiCluster = networkMode === "mainnet" ? "mainnet" : "devnet";
   const minAmountUsd = 5;
   const amountNum = Number(amount);
-  const canSend =
-    recipient.trim().length > 0 &&
-    !!amount &&
-    Number.isFinite(amountNum) &&
-    amountNum >= minAmountUsd &&
-    (sendMethod !== "social" || !!socialPlatform);
+  const canSend = lockedRecipient
+    ? !!amount && Number.isFinite(amountNum) && amountNum >= minAmountUsd
+    : recipient.trim().length > 0 &&
+      !!amount &&
+      Number.isFinite(amountNum) &&
+      amountNum >= minAmountUsd &&
+      (sendMethod !== "social" || !!socialPlatform);
 
   const handleSend = async () => {
-    const trimmed = recipient.replace(/^@/, "").trim();
-    if (!trimmed || !amount) return;
+    if (!amount) return;
+    if (!lockedRecipient && !recipient.replace(/^@/, "").trim()) return;
     if (!authenticated) {
       privyLogin({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false });
       return;
@@ -318,11 +342,24 @@ export default function Home() {
       return;
     }
     setCreating(true);
+    const trimmed = recipient.replace(/^@/, "").trim();
     const fullDescription = [description.trim(), gifUrl].filter(Boolean).join(" ").trim() || undefined;
     try {
       const accessToken = await getAccessToken();
       let result: { id: string };
-      if (sendMethod === "social" && socialPlatform && socialPlatform !== "twitter") {
+      if (lockedRecipient) {
+        // Exact DB username as embedded in the personal link — no "loo-" reconstruction and
+        // no email/social branching, since the link already pins one specific existing account.
+        result = await createClaimFromUsername({
+          username: lockedRecipient,
+          amount,
+          userId: user?.id,
+          accessToken,
+          isPrivate: false,
+          description: fullDescription,
+          cluster: apiCluster,
+        });
+      } else if (sendMethod === "social" && socialPlatform && socialPlatform !== "twitter") {
         result = await createClaimFromSocial({
           platform: socialPlatform,
           handle: trimmed,
@@ -462,6 +499,27 @@ export default function Home() {
                     <p className="text-sm text-amber-400 -mt-3">Min. amount is $5.00 USDC</p>
                   )}
 
+                  {lockedRecipient ? (
+                    /* Personal /me/[@username] link — one exact, non-editable target. No picker,
+                       no editable field: just show who's getting paid and let them change amount. */
+                    <div>
+                      <Label className="text-slate-400 text-sm mb-2 block">{t('to')}</Label>
+                      <div className="flex items-center justify-between gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
+                        <span className="flex items-center gap-2 min-w-0 text-white text-[20px] font-medium">
+                          <AtSign className="h-4 w-4 text-slate-500 shrink-0" />
+                          <span className="truncate">{lockedRecipient}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={clearLockedRecipient}
+                          className="shrink-0 text-slate-500 hover:text-white text-sm font-medium transition-colors"
+                        >
+                          Change
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
                   {/* SEND TO pills */}
                   <div>
                     <Label className="text-slate-400 text-sm mb-2 block">{t('to')}</Label>
@@ -597,6 +655,8 @@ export default function Home() {
                       }
                     />
                   </div>
+                    </>
+                  )}
 
                   <div>
                     <Label className="text-slate-400 text-sm">Message (optional)</Label>

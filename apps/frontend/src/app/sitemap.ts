@@ -11,6 +11,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/partners",
     "/guides/send-crypto-privately",
     "/vs/paypal",
+    "/usdc-to-ngn",
+    "/dollar-to-naira-today",
     "/blog",
     "/careers",
     "/brand",
@@ -24,13 +26,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/partners": 0.9,
     "/guides/send-crypto-privately": 0.8,
     "/vs/paypal": 0.8,
+    "/usdc-to-ngn": 0.9,
+    "/dollar-to-naira-today": 1,
     "/blog": 0.7,
   };
+  const dailyPaths = new Set(["/usdc-to-ngn", "/dollar-to-naira-today"]);
   const now = new Date();
   const staticEntries: MetadataRoute.Sitemap = urls.map((path) => ({
     url: `${SITE_URL}${path}`,
     lastModified: now,
-    changeFrequency: path === "/" ? "weekly" : "monthly",
+    changeFrequency: dailyPaths.has(path) ? "daily" : path === "/" ? "weekly" : "monthly",
     priority: priority[path] ?? 0.5,
   }));
 
