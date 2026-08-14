@@ -112,7 +112,7 @@ export class GiveawaysPublicController {
     if (giveaway.vrf_fulfilled_at && giveaway.vrf_randomness) {
       const onChainRandomness = await this.vrf.pollFulfillment({ id: realId, is_devnet: giveaway.is_devnet } as Giveaway);
       if (onChainRandomness && onChainRandomness === giveaway.vrf_randomness) {
-        drawRequestPda = this.vrf.derivePda(realId)[0].toBase58();
+        drawRequestPda = this.vrf.derivePda(realId, giveaway.is_devnet ? 'devnet' : 'mainnet')[0].toBase58();
       }
     }
 

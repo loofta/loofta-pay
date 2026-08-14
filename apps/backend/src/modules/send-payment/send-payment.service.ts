@@ -30,7 +30,7 @@ import {
   getAccount,
 } from '@solana/spl-token';
 import { TransactionMessage, VersionedTransaction } from '@solana/web3.js';
-import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig } from '@/common/solana-cluster-env';
+import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig, getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { EmailService } from '../email/email.service';
 import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -73,17 +73,27 @@ export class SendPaymentService {
     private readonly emailService: EmailService,
     private readonly magicblockQuest: MagicblockQuestService,
   ) {
-    const mintStr =
-      this.configService.get<string>('SOLANA_USDC_MINT') ||
-      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    // Both the connection and the mint must branch on the SAME cluster decision
+    // (isSolanaDevnetFromConfig) — previously this always resolved mainnet regardless of cluster
+    // config, so a devnet-configured deployment would connect to devnet RPC (if SOLANA_RPC_URL
+    // happened to be a devnet URL) while still transacting the mainnet USDC mint, or vice versa.
+    // SOLANA_USDC_MINT (singular, cluster-agnostic) is no longer read here — see
+    // SOLANA_USDC_MINT_MAINNET/_DEVNET below, same pattern as private-balance.service.ts.
+    const isDevnetCluster = isSolanaDevnetFromConfig(this.configService);
+    const mintStr = isDevnetCluster
+      ? this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+      : this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
     this.usdcMint = new PublicKey(mintStr);
     this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
-    const rpcUrl =
-      this.configService.get<string>('SOLANA_RPC_URL') ||
-      (this.configService.get<string>('HELIUS_API_KEY')
-        ? `https://mainnet.helius-rpc.com/?api-key=${this.configService.get('HELIUS_API_KEY')}`
-        : 'https://api.mainnet-beta.solana.com');
+    const rpcUrl = isDevnetCluster
+      ? this.configService.get<string>('SOLANA_RPC_URL') ||
+        this.configService.get<string>('SOLANA_DEVNET_RPC_URL') ||
+        (this.configService.get<string>('HELIUS_API_KEY')
+          ? `https://devnet.helius-rpc.com/?api-key=${this.configService.get('HELIUS_API_KEY')}`
+          : 'https://api.devnet.solana.com')
+      : getMainnetSolanaRpcUrl(this.configService);
     this.connection = new Connection(rpcUrl, 'confirmed');
+    this.logger.log(`[SendPayment] cluster=${isDevnetCluster ? 'devnet' : 'mainnet'} rpc=${rpcUrl}`);
     const pkRaw = this.configService.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
     const pk = typeof pkRaw === 'string' ? pkRaw.trim().replace(/^["']|["']$/g, '') : '';
     this.logger.log(
