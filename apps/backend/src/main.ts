@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { loadKmsSecrets } from './common/kms-secrets';
+import { assertEnvironmentCoherence } from './common/env-coherence-guard';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -24,6 +25,10 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
   const isProduction = configService.get<string>('NODE_ENV') === 'production';
+
+  // See ENVIRONMENTS.md — refuses to boot if the loaded env mixes production Supabase with a
+  // non-production Solana fee payer, or vice versa.
+  assertEnvironmentCoherence(configService);
 
   // HTTP security headers
   app.use(helmet());

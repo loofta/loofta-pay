@@ -642,11 +642,13 @@ export class ClaimsService {
    * Tries backend root and cwd so it works whether run from monorepo root or apps/backend.
    */
   private getClaimBurnerDecryptionKeyFromFile(envVar: string = 'SEND_PAYMENT_ENC_KEY'): string | null {
+    // Same file LOOFTA_ENV_FILE picks for ConfigModule itself (see app.module.ts).
+    const envFileName = process.env.LOOFTA_ENV_FILE || '.env.development.local';
     const tryPaths = [
-      join(process.cwd(), 'apps', 'backend', '.env.local'),
-      join(process.cwd(), '.env.local'),
-      join(__dirname, '..', '..', '..', '.env.local'),
-      join(__dirname, '..', '..', '.env.local'),
+      join(process.cwd(), 'apps', 'backend', envFileName),
+      join(process.cwd(), envFileName),
+      join(__dirname, '..', '..', '..', envFileName),
+      join(__dirname, '..', '..', envFileName),
     ];
     const escaped = envVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     for (const p of tryPaths) {

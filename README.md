@@ -114,6 +114,13 @@ RANGE_API_KEY=your_range_api_key   # For /api/risk/address proxy
 
 See `apps/backend/supabase/REMOTE_DEV.md` for using a remote Supabase project instead of local Docker.
 
+**Dev/staging vs. production**: both apps now split their local env into `.env.development.local`
+(devnet Solana + staging Supabase, the default for anyone working on this repo) and a
+production-data counterpart that only the account owner should have — see
+[ENVIRONMENTS.md](ENVIRONMENTS.md) for the full split, how it's loaded, and the boot-time guard
+that refuses to start on a mismatched combination. The `.env.local` example above still works,
+but new setups should follow ENVIRONMENTS.md instead.
+
 ### MagicBlock PER (private USDC send links, devnet)
 
 Send-payment “Pay privately” uses the **MagicBlock Private Ephemeral Rollup** client and the Anchor program in `programs/loofta-per-payments/`.

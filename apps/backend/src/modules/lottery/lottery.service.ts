@@ -4625,11 +4625,22 @@ export class LotteryService {
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
+  /**
+   * Always 'mainnet' — this must stay consistent with getSolanaConnection() and the module-level
+   * USDC_MINT below, both of which are unconditionally mainnet everywhere in this file (ticket
+   * purchase, payout, reclaim, rescue — every real transfer path). Previously this read
+   * NEXT_PUBLIC_SOLANA_CLUSTER with a default of 'devnet', so an unset/devnet-configured env made
+   * this return 'devnet' for the MagicBlock private-transfer `cluster` param while the actual
+   * connection and mint stayed mainnet — a real 3-way mismatch that would surface as MagicBlock
+   * API errors (its devnet/mainnet endpoints are genuinely different infra) on ticket transfers.
+   * Megapot/lottery has no real devnet support anywhere in this class, unlike gacha (a separate,
+   * deliberately devnet-only module) — so this stops pretending otherwise rather than trying to
+   * thread real devnet support through the ~30 other USDC_MINT call sites in this file, which
+   * would be a much larger change to a fragile, frequently-patched, real-money module than what
+   * was asked for.
+   */
   private getSolanaCluster(): 'mainnet' | 'devnet' | 'localhost' {
-    const cluster = this.config.get<string>('NEXT_PUBLIC_SOLANA_CLUSTER', 'devnet');
-    if (cluster === 'mainnet-beta' || cluster === 'mainnet') return 'mainnet';
-    if (cluster === 'localhost') return 'localhost';
-    return 'devnet';
+    return 'mainnet';
   }
 
   private async getSolanaConnection(): Promise<Connection> {
