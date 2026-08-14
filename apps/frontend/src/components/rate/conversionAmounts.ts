@@ -1,0 +1,1 @@
+export const CONVERSION_AMOUNTS = [10, 50, 100, 250, 500, 1000];

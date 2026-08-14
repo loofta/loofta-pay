@@ -3,7 +3,7 @@ import {
   Param, Patch, Post, Query, Req, UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
-import { AuthGuard } from '@/common/guards';
+import { AuthGuard, Public } from '@/common/guards';
 import { PajCashService, PajApiError } from './paj-cash.service';
 import { PajCashSessionService, PajLinkRequiredError } from './paj-cash-session.service';
 import { PajCashBankService } from './paj-cash-bank.service';
@@ -15,6 +15,7 @@ import { SubmitKycDto } from './dto/submit-kyc.dto';
 import { CreateOnrampDto } from './dto/create-onramp.dto';
 import { CreateOfframpDto } from './dto/create-offramp.dto';
 import { ConfirmSentDto } from './dto/confirm-sent.dto';
+import { PAJ_STATIC_BANKS } from './paj-banks-static';
 
 const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
@@ -89,6 +90,18 @@ export class PajCashController {
     }
   }
 
+  @Get('public-rate')
+  @Public()
+  @ApiOperation({ summary: 'Current PAJ off-ramp rate (public, no auth) — for SEO/marketing rate pages' })
+  async publicRate() {
+    try {
+      const { offRampRate } = await this.pajCash.getRate();
+      return offRampRate;
+    } catch (err) {
+      rethrowAsHttp(err);
+    }
+  }
+
   @Get('value')
   @ApiOperation({ summary: 'Live USDC<->fiat quote for an on-ramp or off-ramp amount' })
   async value(
@@ -119,12 +132,18 @@ export class PajCashController {
 
   @Get('banks')
   @ApiOperation({ summary: 'List Nigerian banks supported by PAJ' })
-  async banks(@Req() req: any) {
-    try {
-      return await this.bank.listBanks(req.user.id);
-    } catch (err) {
-      rethrowAsHttp(err);
-    }
+  async banks() {
+    // Served from a static, manually-refreshed snapshot instead of a live per-request call to
+    // PAJ (which required a per-user session round-trip and was the source of slow load times
+    // in the bank picker) — this is reference data that changes rarely. See paj-banks-static.ts.
+    return PAJ_STATIC_BANKS;
+  }
+
+  @Get('public-banks')
+  @Public()
+  @ApiOperation({ summary: 'List Nigerian banks supported by PAJ (public, no auth) — for SEO/marketing pages' })
+  async publicBanks() {
+    return PAJ_STATIC_BANKS;
   }
 
   @Get('bank-account/confirm')

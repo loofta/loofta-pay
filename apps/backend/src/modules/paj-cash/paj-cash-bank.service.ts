@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
-import { PajCashService, type PajBank, type PajResolvedBankAccount } from './paj-cash.service';
+import { PajCashService, type PajResolvedBankAccount } from './paj-cash.service';
 import { PajCashSessionService } from './paj-cash-session.service';
 import type { PajCashBankAccountRow } from './entities/paj-bank-account.entity';
 
@@ -16,11 +16,6 @@ export class PajCashBankService {
 
   private table() {
     return this.supabase.getClient().from('paj_cash_bank_accounts');
-  }
-
-  async listBanks(userId: string): Promise<PajBank[]> {
-    const token = await this.session.getValidSessionToken(userId);
-    return this.pajCash.getBanks(token);
   }
 
   async confirmAccount(userId: string, bankId: string, accountNumber: string): Promise<PajResolvedBankAccount> {
