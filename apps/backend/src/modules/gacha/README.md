@@ -115,7 +115,7 @@ should be entered directly into the ignored backend env file or the team's secre
 
 ## Database
 
-Apply all migrations through `20260815130000_remove_gacha_quick_play.sql`. The Gacha
+Apply all migrations through `20260815170000_gacha_atomic_create_guard.sql`. The Gacha
 hardening and room-browser migrations add:
 
 - atomic payout-claim locks;
@@ -125,6 +125,8 @@ hardening and room-browser migrations add:
 - immutable locked mascots;
 - stable room names, visibility, and creator metadata;
 - advisory-lock-protected room numbering and explicit room creation.
+- an atomic user/config create guard so duplicate create retries cannot make parallel waiting
+  rooms for the same player and size.
 
 All Gacha tables use RLS and are accessible only through the service-role backend.
 
@@ -143,6 +145,10 @@ npm run build:backend
 npm run build
 npm test --workspace=@loofta/backend -- --runInBand src/modules/gacha/gacha-payout.spec.ts
 cargo test -p gacha-room-state
+
+# Opt-in staging DB checks (creates disposable rooms and cleans them up afterward)
+set -a; source apps/backend/.env.development.local; set +a
+GACHA_DB_INTEGRATION=true npm test --workspace=@loofta/backend -- --runInBand src/modules/gacha/gacha-room-browser-db.spec.ts
 ```
 
 The backend cron advances the MagicBlock VRF exclusion and voting lifecycle in every environment,
