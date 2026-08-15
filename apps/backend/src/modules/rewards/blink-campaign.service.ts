@@ -105,9 +105,14 @@ export class BlinkCampaignService {
 
   /**
    * Returns the number of completed Blink deposits since BLINK_CAMPAIGN_START.
-   * Step 1: GET /v1/merchant-users?embeddedWalletAddress={address} → get Blink userId
+   * Step 1: GET /v1/merchant-users?embeddedWalletAddress={address} → get Blink userId(s)
    * Step 2: GET /v1/merchant-deposits?userId={id}&status=completed&createdAfter={start}&limit=2 → count items
-   * Using limit=2 is enough since we only need to know if count is 0, 1, or ≥2.
+   * Using limit=2 per userId is enough since we only need to know if count is 0, 1, or ≥2.
+   *
+   * The same embedded wallet address can resolve to MORE THAN ONE Blink merchant-user record
+   * (e.g. an abandoned/never-confirmed signup followed by a real one) — sum completed deposits
+   * across every userId returned rather than trusting users[0], which may be the stale one with
+   * zero completed deposits while a later userId for the same wallet has the real ones.
    */
   private async getBlinkDepositsCount(solanaAddress?: string): Promise<BlinkDepositLookup> {
     if (!solanaAddress) {
@@ -123,7 +128,7 @@ export class BlinkCampaignService {
     }
 
     try {
-      // Step 1: resolve Blink userId from wallet address
+      // Step 1: resolve Blink userId(s) from wallet address
       const authHeader1 = this.buildMerchantAuthHeader(merchantId, privateKeyRaw);
       const usersUrl = `https://api.blink.cash/v1/merchant-users?embeddedWalletAddress=${encodeURIComponent(solanaAddress)}&chainId=792703809`;
       const usersRes = await fetch(usersUrl, {
@@ -141,31 +146,38 @@ export class BlinkCampaignService {
       const users: Array<{ userId?: string }> =
         Array.isArray(usersBody) ? usersBody : (usersBody.items ?? usersBody.data ?? []);
 
-      const blinkUserId = users[0]?.userId;
-      if (!blinkUserId) {
+      const blinkUserIds = users.map((u) => u.userId).filter((id): id is string => !!id);
+      if (!blinkUserIds.length) {
         this.logger.debug(`No Blink merchant user found for wallet ${solanaAddress}`);
         return { count: 0, error: null };
       }
 
-      // Step 2: count completed deposits since campaign start
-      const authHeader2 = this.buildMerchantAuthHeader(merchantId, privateKeyRaw);
-      const depositsUrl = `https://api.blink.cash/v1/merchant-deposits?userId=${encodeURIComponent(blinkUserId)}&status=completed&createdAfter=${encodeURIComponent(CAMPAIGN_START.toISOString())}&limit=2`;
-      const depositsRes = await fetch(depositsUrl, {
-        headers: { 'X-Merchant-Authorization': authHeader2, 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(8000),
-      });
+      // Step 2: count completed deposits since campaign start, summed across every userId tied
+      // to this wallet. Stop early once we've confirmed ≥2 — that's all the campaign needs.
+      let total = 0;
+      for (const blinkUserId of blinkUserIds) {
+        const authHeader2 = this.buildMerchantAuthHeader(merchantId, privateKeyRaw);
+        const depositsUrl = `https://api.blink.cash/v1/merchant-deposits?userId=${encodeURIComponent(blinkUserId)}&status=completed&createdAfter=${encodeURIComponent(CAMPAIGN_START.toISOString())}&limit=2`;
+        const depositsRes = await fetch(depositsUrl, {
+          headers: { 'X-Merchant-Authorization': authHeader2, 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(8000),
+        });
 
-      if (!depositsRes.ok) {
-        const errText = await depositsRes.text().catch(() => '');
-        this.logger.warn(`Blink merchant-deposits API error for user ${blinkUserId}: ${depositsRes.status} — ${errText}`);
-        return { count: 0, error: `merchant-deposits ${depositsRes.status}` };
+        if (!depositsRes.ok) {
+          const errText = await depositsRes.text().catch(() => '');
+          this.logger.warn(`Blink merchant-deposits API error for user ${blinkUserId}: ${depositsRes.status} — ${errText}`);
+          return { count: 0, error: `merchant-deposits ${depositsRes.status}` };
+        }
+
+        const depositsBody = await depositsRes.json();
+        const deposits: unknown[] =
+          Array.isArray(depositsBody) ? depositsBody : (depositsBody.items ?? depositsBody.data ?? []);
+
+        total += deposits.length;
+        if (total >= 2) break;
       }
 
-      const depositsBody = await depositsRes.json();
-      const deposits: unknown[] =
-        Array.isArray(depositsBody) ? depositsBody : (depositsBody.items ?? depositsBody.data ?? []);
-
-      return { count: deposits.length, error: null };
+      return { count: total, error: null };
     } catch (e) {
       this.logger.warn(`Blink merchant API fetch failed for ${solanaAddress}: ${(e as Error)?.message}`);
       return { count: 0, error: (e as Error)?.message ?? 'fetch_failed' };
