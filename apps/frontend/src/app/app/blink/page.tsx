@@ -11,9 +11,9 @@ import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
 const BLINK_START_DATE = new Date("2026-07-02T12:00:00.000Z");
-// End of day Aug 15 UTC, not the start of it — matches the backend's CAMPAIGN_END and the
-// "Aug 15, 2026" / "ends on Aug 15" copy below, which both mean through the whole day.
-const BLINK_END_DATE = new Date("2026-08-16T00:00:00.000Z");
+// Aug 15, 5pm CEST (Central Europe is on daylight time in August, UTC+2) = 15:00 UTC.
+// Matches the backend's CAMPAIGN_END.
+const BLINK_END_DATE = new Date("2026-08-15T15:00:00.000Z");
 
 type BlinkTaskKey = "setup_passkeys" | "two_deposits" | "two_private_payments";
 
