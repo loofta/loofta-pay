@@ -21,7 +21,9 @@ export interface BlinkCampaignData {
 }
 
 const CAMPAIGN_START = new Date('2026-07-02T12:00:00.000Z');
-const CAMPAIGN_END = new Date('2026-08-15T00:00:00.000Z');
+// End of day Aug 15 UTC, not the start of it — the campaign was always communicated as running
+// through Aug 15 (see the frontend copy), so the cutoff needs to cover the whole day.
+const CAMPAIGN_END = new Date('2026-08-16T00:00:00.000Z');
 
 export interface BlinkAdminUserStatus {
   privyUserId: string;
