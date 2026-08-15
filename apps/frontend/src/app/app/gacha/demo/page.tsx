@@ -214,6 +214,7 @@ export default function GachaDemoPage() {
     seatNumber: p.seatNumber,
     mascotKey: p.mascotKey,
     name: getMascot(p.mascotKey)?.name ?? `Seat ${p.seatNumber}`,
+    mascotName: getMascot(p.mascotKey)?.name,
     isMe: p.isMe,
     excluded: p.excluded,
   });

@@ -493,7 +493,8 @@ export default function GachaRoomPage() {
   const toChipPlayer = (p: RoomDetail["participants"][number]): ChipPlayer => ({
     seatNumber: p.seatNumber,
     mascotKey: p.mascotKey,
-    name: getMascot(p.mascotKey)?.name ?? p.username ?? `Seat ${p.seatNumber}`,
+    name: p.username?.trim() || `Seat ${p.seatNumber}`,
+    mascotName: getMascot(p.mascotKey)?.name,
     isMe: p.isMe,
     excluded: p.excluded,
   });

@@ -10,17 +10,15 @@
 // center slot of the front row — never recentered, never displaced by who else has joined —
 // and everyone else fills outward from that center slot, nearest-to-you first.
 //
-// Compact and label-free by default — usernames don't sit permanently under each bubble (that
-// breaks down fast at 10 seats on a narrow phone); tap/click ANOTHER seat's bubble to reveal
-// their username in a small floating tag for a couple seconds. Tap/click YOUR OWN bubble instead
-// opens a small emoji picker right there, so choosing your avatar is discoverable without a
-// permanently-visible picker row taking up space below the table.
+// Usernames are always visible under occupied seats so players can identify each other at a
+// glance. Tap/click YOUR OWN bubble to open a small emoji picker right there, so choosing your
+// avatar is discoverable without a permanently-visible picker row taking up space below the table.
 //
 // Each seat's avatar is either the emoji that participant actually picked (see onPickEmoji) or,
 // until they pick one, a deterministic fallback hashed from their username/seat so it's never
 // blank.
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { getMascot } from '@/lib/mascots';
 import Mascot, { type MascotMood } from '@/components/Mascot';
 
@@ -140,16 +138,7 @@ export default function PokerTable({
   const excludedSet = new Set(excludedSeats ?? []);
   const preset = SIZE_PRESETS[size];
 
-  const [revealedSeat, setRevealedSeat] = useState<number | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (hideTimer.current) clearTimeout(hideTimer.current); }, []);
-
-  const reveal = (seatNumber: number) => {
-    setRevealedSeat(seatNumber);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setRevealedSeat(null), 2000);
-  };
 
   function renderRow(row: Slot[], opts: { size: number; fontSize: number; topBase: number; topSpread: number; zBase: number }) {
     const rn = row.length;
@@ -172,6 +161,7 @@ export default function PokerTable({
       }
 
       const seed = seat.username ?? `seat-${seat.seatNumber}`;
+      const displayName = seat.username?.trim() || `Seat ${seat.seatNumber}`;
       const emoji = seat.emoji ?? fallbackEmoji(seed);
       const mascot = getMascot(seat.mascotKey);
       // The rainbow per-seat color only made sense for flat emoji glyphs (no bg of their own).
@@ -184,15 +174,42 @@ export default function PokerTable({
       const mood: MascotMood = isExcluded ? 'sad' : isSpotlit ? 'happy' : moodOverride ?? 'idle';
       const size = seat.isMe ? Math.round(opts.size * 1.22) : opts.size;
       const fontSize = seat.isMe ? Math.round(opts.fontSize * 1.15) : opts.fontSize;
+      const avatarClassName = `relative rounded-full flex items-center justify-center ring-2 shadow-md ${seat.isMe && onPickEmoji ? 'cursor-pointer transition-all duration-100' : ''} ${isExcluded ? 'ring-white/10 grayscale' : isSpotlit ? 'ring-[3px] ring-[#EAB308] scale-110 shadow-[0_0_18px_4px_rgba(234,179,8,0.5)]' : isReady ? 'ring-emerald-400' : seat.isMe ? 'ring-amber-400' : 'ring-white/20'}`;
+      const avatarStyle = { width: size, height: size, background: isSpotlit ? 'rgba(234,179,8,0.18)' : bg, fontSize, opacity: isExcluded ? 0.35 : opts.zBase === 10 ? 0.85 : 1 };
+      const avatarContent = (
+        <>
+          {mascot ? (
+            <Mascot name={mascot.key} mood={mood} size={size} title={mascot.name} />
+          ) : (
+            emoji
+          )}
+          {isExcluded ? (
+            <span
+              className="absolute -bottom-0.5 -right-0.5 rounded-full bg-red-500/90 border border-black/40 flex items-center justify-center text-white leading-none font-bold uppercase"
+              style={{ width: Math.max(20, size * 0.55), height: Math.max(12, size * 0.32), fontSize: Math.max(7, size * 0.2) }}
+            >
+              Out
+            </span>
+          ) : isReady && (
+            <span
+              className="absolute -bottom-0.5 -right-0.5 rounded-full bg-emerald-500 border border-black/40 flex items-center justify-center text-white leading-none"
+              style={{ width: Math.max(12, size * 0.4), height: Math.max(12, size * 0.4), fontSize: Math.max(8, size * 0.26) }}
+            >
+              ✓
+            </span>
+          )}
+        </>
+      );
       return (
         <div key={seat.seatNumber} className="absolute" style={wrapStyle}>
-          {revealedSeat === seat.seatNumber && !seat.isMe && (
-            <div className="absolute left-1/2 bottom-full mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/85 border border-white/10 px-2.5 py-1 text-sm text-slate-100">
-              {mascot ? `${mascot.name} · ` : ''}{seat.username ?? `Seat ${seat.seatNumber}`}
-            </div>
-          )}
+          <span
+            className="pointer-events-none absolute left-1/2 top-full z-10 mt-1 -translate-x-1/2 max-w-[72px] sm:max-w-[112px] truncate whitespace-nowrap rounded-full border border-white/10 bg-black/70 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-slate-100 sm:text-xs"
+            title={displayName}
+          >
+            {displayName}
+          </span>
           {seat.isMe && pickerOpen && onPickEmoji && (
-            <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 w-[248px] flex flex-wrap justify-center gap-2 rounded-2xl bg-black/90 border border-white/10 p-3">
+            <div className="absolute left-1/2 top-full z-20 mt-7 -translate-x-1/2 w-[248px] flex flex-wrap justify-center gap-2 rounded-2xl bg-black/90 border border-white/10 p-3">
               {AVATAR_EMOJIS.map((e) => (
                 <button
                   key={e}
@@ -205,36 +222,21 @@ export default function PokerTable({
               ))}
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => (seat.isMe && onPickEmoji ? setPickerOpen((o) => !o) : reveal(seat.seatNumber))}
-            onMouseEnter={() => !seat.isMe && reveal(seat.seatNumber)}
-            onMouseLeave={() => !seat.isMe && setRevealedSeat((cur) => (cur === seat.seatNumber ? null : cur))}
-            aria-label={seat.isMe ? 'Pick your emoji' : seat.username ?? `Seat ${seat.seatNumber}`}
-            className={`relative rounded-full flex items-center justify-center ring-2 shadow-md cursor-pointer transition-all duration-100 ${isExcluded ? 'ring-white/10 grayscale' : isSpotlit ? 'ring-[3px] ring-[#EAB308] scale-110 shadow-[0_0_18px_4px_rgba(234,179,8,0.5)]' : isReady ? 'ring-emerald-400' : seat.isMe ? 'ring-amber-400' : 'ring-white/20'}`}
-            style={{ width: size, height: size, background: isSpotlit ? 'rgba(234,179,8,0.18)' : bg, fontSize, opacity: isExcluded ? 0.35 : opts.zBase === 10 ? 0.85 : 1 }}
-          >
-            {mascot ? (
-              <Mascot name={mascot.key} mood={mood} size={size} title={mascot.name} />
-            ) : (
-              emoji
-            )}
-            {isExcluded ? (
-              <span
-                className="absolute -bottom-0.5 -right-0.5 rounded-full bg-red-500/90 border border-black/40 flex items-center justify-center text-white leading-none font-bold uppercase"
-                style={{ width: Math.max(20, size * 0.55), height: Math.max(12, size * 0.32), fontSize: Math.max(7, size * 0.2) }}
-              >
-                Out
-              </span>
-            ) : isReady && (
-              <span
-                className="absolute -bottom-0.5 -right-0.5 rounded-full bg-emerald-500 border border-black/40 flex items-center justify-center text-white leading-none"
-                style={{ width: Math.max(12, size * 0.4), height: Math.max(12, size * 0.4), fontSize: Math.max(8, size * 0.26) }}
-              >
-                ✓
-              </span>
-            )}
-          </button>
+          {seat.isMe && onPickEmoji ? (
+            <button
+              type="button"
+              onClick={() => setPickerOpen((o) => !o)}
+              aria-label="Pick your emoji"
+              className={avatarClassName}
+              style={avatarStyle}
+            >
+              {avatarContent}
+            </button>
+          ) : (
+            <div role="img" aria-label={displayName} className={avatarClassName} style={avatarStyle}>
+              {avatarContent}
+            </div>
+          )}
         </div>
       );
     });
