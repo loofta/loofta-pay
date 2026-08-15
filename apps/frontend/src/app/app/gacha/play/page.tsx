@@ -77,6 +77,7 @@ export default function GachaPlayPage() {
   const [roomMode, setRoomMode] = useState<RoomMode>("browse");
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [roomName, setRoomName] = useState("");
+  const [roomNameEdited, setRoomNameEdited] = useState(false);
   const [isPrivate, setIsPrivate] = useState(false);
   const [createdRoom, setCreatedRoom] = useState<WaitingRoom | null>(null);
   const roomsRequestIdRef = useRef(0);
@@ -152,12 +153,28 @@ export default function GachaPlayPage() {
   });
 
   const startCreate = useCallback(() => {
+    const fallbackName = `Room #${rooms.length + 1}`;
     setRoomMode("create");
     setSelectedRoomId(null);
     setCreatedRoom(null);
-    setRoomName(`Room #${rooms.length + 1}`);
+    setRoomName(fallbackName);
+    setRoomNameEdited(false);
     setIsPrivate(false);
-  }, [rooms.length]);
+    if (!activeConfig) return;
+
+    // This is only a display hint. If the user leaves the value untouched, the backend omits it
+    // from the request and the database assigns the authoritative number inside its transaction.
+    void fetch(`/api/gacha/rooms/next-number?configKey=${encodeURIComponent(activeConfig.configKey)}`, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json() as Promise<{ roomNumber?: number }>;
+      })
+      .then((next) => {
+        if (!next?.roomNumber) return;
+        setRoomName((current) => current === fallbackName ? `Room #${next.roomNumber}` : current);
+      })
+      .catch(() => { /* fallbackName remains usable; the database still owns the final number */ });
+  }, [rooms.length, activeConfig]);
 
   const handleCreateRoom = useCallback(async () => {
     if (!activeConfig || !roomName.trim()) return;
@@ -166,10 +183,11 @@ export default function GachaPlayPage() {
     setError(null);
     try {
       const token = await getAccessToken();
+      const explicitName = roomNameEdited ? roomName.trim() : undefined;
       const response = await fetch("/api/gacha/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ configKey: activeConfig.configKey, name: roomName.trim(), isPrivate }),
+        body: JSON.stringify({ configKey: activeConfig.configKey, ...(explicitName ? { name: explicitName } : {}), isPrivate }),
       });
       if (!response.ok) throw new Error((await response.json().catch(() => null))?.message ?? "Failed to create room");
       const room: WaitingRoom = await response.json();
@@ -181,7 +199,7 @@ export default function GachaPlayPage() {
     } finally {
       setCreatingRoom(false);
     }
-  }, [activeConfig, roomName, isPrivate, authenticated, login, getAccessToken]);
+  }, [activeConfig, roomName, roomNameEdited, isPrivate, authenticated, login, getAccessToken]);
 
   // MascotPicker normally locks a mascot to an already-joined room seat over the socket — here
   // there's no room yet, so this just captures the local pick and advances the flow.
@@ -432,7 +450,7 @@ export default function GachaPlayPage() {
                 id="gacha-room-name"
                 className="pp-nameinput"
                 value={roomName}
-                onChange={(e) => setRoomName(e.target.value)}
+                onChange={(e) => { setRoomName(e.target.value); setRoomNameEdited(true); }}
                 maxLength={24}
                 autoComplete="off"
                 spellCheck={false}

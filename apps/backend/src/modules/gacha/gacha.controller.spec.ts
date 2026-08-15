@@ -4,6 +4,7 @@ import { GachaService } from "./gacha.service";
 describe("GachaController room browser", () => {
   const gacha = {
     listPublicWaitingRooms: jest.fn(),
+    getNextRoomNumber: jest.fn(),
     createWaitingRoom: jest.fn(),
     buildJoinTxForRoom: jest.fn(),
   };
@@ -18,6 +19,13 @@ describe("GachaController room browser", () => {
       { id: "room-1" },
     ]);
     expect(gacha.listPublicWaitingRooms).toHaveBeenCalledWith("small-5");
+  });
+
+  it("returns the database-backed next room number hint", async () => {
+    gacha.getNextRoomNumber.mockResolvedValue({ roomNumber: 7 });
+
+    await expect(controller.nextRoomNumber("small-5")).resolves.toEqual({ roomNumber: 7 });
+    expect(gacha.getNextRoomNumber).toHaveBeenCalledWith("small-5");
   });
 
   it("creates a named room for the authenticated user", async () => {

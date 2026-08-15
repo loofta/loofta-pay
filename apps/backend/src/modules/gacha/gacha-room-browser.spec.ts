@@ -128,4 +128,19 @@ describe("GachaService explicit room browser", () => {
 
     expect(result.map((room) => room.id)).toEqual(["b", "a"]);
   });
+
+  it("loads the database-backed next room number instead of counting visible rooms", async () => {
+    const query: any = {
+      select: jest.fn(() => query),
+      eq: jest.fn(() => query),
+      order: jest.fn(() => query),
+      limit: jest.fn(() => query),
+      maybeSingle: jest.fn().mockResolvedValue({ data: { room_number: 12 }, error: null }),
+    };
+    const service = makeService({ from: jest.fn(() => query) });
+    jest.spyOn(service as any, "getConfig").mockResolvedValue({ configKey: "small-5" });
+
+    await expect(service.getNextRoomNumber("small-5")).resolves.toEqual({ roomNumber: 13 });
+    expect(query.order).toHaveBeenCalledWith("room_number", { ascending: false });
+  });
 });

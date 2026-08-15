@@ -69,6 +69,13 @@ export class GachaController {
     return this.gacha.listPublicWaitingRooms(configKey);
   }
 
+  @Get('rooms/next-number')
+  @Public()
+  @ApiOperation({ summary: 'Display hint for the next room number in one config' })
+  async nextRoomNumber(@Query('configKey') configKey: string) {
+    return this.gacha.getNextRoomNumber(configKey);
+  }
+
   @Post('rooms')
   @ApiOperation({ summary: 'Create a distinct waiting room; visibility is stored for private-room follow-up support' })
   async createRoom(@Body() dto: CreateRoomDto, @Request() req: any) {
