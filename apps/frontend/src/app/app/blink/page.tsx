@@ -11,7 +11,9 @@ import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
 const BLINK_START_DATE = new Date("2026-07-02T12:00:00.000Z");
-const BLINK_END_DATE = new Date("2026-08-15T00:00:00.000Z");
+// Aug 15, 5pm CEST (Central Europe is on daylight time in August, UTC+2) = 15:00 UTC.
+// Matches the backend's CAMPAIGN_END.
+const BLINK_END_DATE = new Date("2026-08-15T15:00:00.000Z");
 
 type BlinkTaskKey = "setup_passkeys" | "two_deposits" | "two_private_payments";
 
@@ -179,7 +181,7 @@ function Countdown({ target }: { target: Date }) {
 }
 
 // Campaign header banner
-function CampaignHeader({ daysLeft }: { daysLeft: number | null }) {
+function CampaignHeader({ daysLeft, ended }: { daysLeft: number | null; ended?: boolean }) {
   const BLINK_BG_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 180" preserveAspectRatio="xMidYMid slice">
     <defs>
       <radialGradient id="bh-glow" cx="70%" cy="40%" r="50%">
@@ -218,7 +220,11 @@ function CampaignHeader({ daysLeft }: { daysLeft: number | null }) {
           <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-[#F7C948]/15 text-[#F7C948] border border-[#F7C948]/25">
             Mainnet
           </span>
-          {daysLeft !== null && (
+          {ended ? (
+            <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-black/30 text-slate-300 border border-white/15">
+              Campaign Ended
+            </span>
+          ) : daysLeft !== null && (
             <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-black/30 text-slate-300 border border-white/15">
               Ends in {daysLeft}d
             </span>
@@ -255,10 +261,12 @@ export default function BlinkCampaignPage() {
   );
 
   const [isActive, setIsActive] = useState(false);
+  const [hasEnded, setHasEnded] = useState(false);
   const [daysLeft, setDaysLeft] = useState<number | null>(null);
 
   useEffect(() => {
     setIsActive(Date.now() >= BLINK_START_DATE.getTime());
+    setHasEnded(Date.now() >= BLINK_END_DATE.getTime());
     setDaysLeft(getDaysLeft(BLINK_END_DATE));
   }, []);
 
@@ -351,7 +359,7 @@ export default function BlinkCampaignPage() {
   return (
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
-        <CampaignHeader daysLeft={daysLeft} />
+        <CampaignHeader daysLeft={daysLeft} ended={hasEnded} />
 
         {isLoading ? (
           <Skeleton />
@@ -407,7 +415,9 @@ export default function BlinkCampaignPage() {
                 <div className="text-3xl mb-2">🏆</div>
                 <p className="text-[#F7C948] font-semibold text-lg">You qualify!</p>
                 <p className="text-slate-400 text-base mt-1">
-                  All quests complete. Your reward will be sent through Loofta once the campaign ends on Aug 15.
+                  {hasEnded
+                    ? "All quests complete. The campaign has ended — your reward will be sent through Loofta soon."
+                    : "All quests complete. Your reward will be sent through Loofta once the campaign ends on Aug 15."}
                 </p>
               </div>
             )}

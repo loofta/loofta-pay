@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Mail, Plus, X, Calendar as CalendarGlyph } from "lucide-react";
+import { ArrowLeft, Mail, Plus, X, Calendar as CalendarGlyph, Check, ImagePlus } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePrivy, useLinkAccount } from "@privy-io/react-auth";
 import { useAuth } from "@/hooks/useAuth";
@@ -16,6 +16,8 @@ import { RichTextEditor } from "@/components/RichTextEditor";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { LogoCropModal } from "@/components/LogoCropModal";
+import { GiveawayLivePreview, type PreviewTask } from "@/components/GiveawayLivePreview";
 import posthog from "posthog-js";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -63,6 +65,17 @@ const CATEGORY_LABELS: Record<TaskCategory, string> = {
   discord_join: "Join Discord",
   visit_link: "Visit a link",
   custom: "Custom task",
+};
+
+/** Icon shown per task category in the live preview panel only — purely decorative, no bearing
+ *  on the backend task_type. */
+const CATEGORY_ICONS: Record<TaskCategory, string> = {
+  engage: "💬",
+  x_follow: "𝕏",
+  telegram_join: "✈️",
+  discord_join: "🎮",
+  visit_link: "🔗",
+  custom: "✨",
 };
 
 const CATEGORY_TARGET_LABELS: Record<TaskCategory, string> = {
@@ -254,18 +267,43 @@ function RangeSlider({ min, max, step, value, onChange }: { min: number; max: nu
   );
 }
 
-function ProgressBar({ step }: { step: number }) {
-  // One gradient spanning the whole bar, not one gradient repeated per segment — the fill's
-  // own box is narrower than the bar, so backgroundSize is scaled up to compensate (a fill at
-  // 20% width gets a 500%-wide background), keeping the gradient's start/end colors pinned to
-  // the bar's actual start/end regardless of how far it's currently filled.
-  const pct = Math.max(1, Math.min(100, (step / TOTAL_STEPS) * 100));
+const STEP_LABELS = ["Basics", "Prize", "Tasks", "Timing", "Launch"] as const;
+
+/** Dot-per-step stepper with a filling connector between dots — replaces a bare linear progress
+ *  bar so a creator can see exactly which stage they're on and how many are left at a glance.
+ *  `justCompleted` briefly pops the dot that was just finished (set by goNext, cleared ~600ms
+ *  later) as a lightweight "that landed" cue. */
+function StepDots({ step, justCompleted }: { step: number; justCompleted: number }) {
   return (
-    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden mb-6">
-      <div
-        className="h-full rounded-full transition-all duration-500"
-        style={{ width: `${pct}%`, backgroundImage: GRADIENT, backgroundSize: `${(100 / pct) * 100}% 100%` }}
-      />
+    <div className="mb-9 flex items-center">
+      {STEP_LABELS.map((label, i) => {
+        const idx = i + 1;
+        return (
+          <div key={label} className="contents">
+            <div className="flex flex-col items-center gap-1.5">
+              <div
+                className={`flex h-[30px] w-[30px] items-center justify-center rounded-full font-display text-[13px] font-medium transition-all duration-500 ${
+                  justCompleted === idx ? "animate-[g-pop_500ms_cubic-bezier(.16,1,.3,1)]" : ""
+                }`}
+                style={{
+                  background: idx < step ? GRADIENT : idx === step ? "rgba(255,255,255,.08)" : "rgba(255,255,255,.03)",
+                  border: idx === step ? "1.5px solid #FF6A00" : "1.5px solid transparent",
+                  boxShadow: idx === step ? "0 0 20px rgba(255,106,0,.3)" : "none",
+                  color: idx <= step ? "#fff" : "#64748b",
+                }}
+              >
+                {idx < step ? <Check className="h-3 w-3" strokeWidth={3} /> : idx}
+              </div>
+              <span className={`font-grotesk text-[10px] font-medium uppercase tracking-[0.06em] ${idx === step ? "text-white" : "text-slate-600"}`}>{label}</span>
+            </div>
+            {idx < STEP_LABELS.length && (
+              <div className="mx-2 mb-[18px] h-0.5 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+                <div className="h-full rounded-full transition-[width] duration-500" style={{ background: GRADIENT, width: idx < step ? "100%" : "0%" }} />
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -471,7 +509,12 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [pendingLogoFile, setPendingLogoFile] = useState<File | null>(null);
   const [createAsAdmin, setCreateAsAdmin] = useState(false);
+  // Brief glow on the live-preview card, and a brief pop on the stepper dot just finished, when
+  // advancing a step — purely a "your changes landed" cue, no bearing on validation or submission.
+  const [previewPulse, setPreviewPulse] = useState(false);
+  const [justCompletedStep, setJustCompletedStep] = useState(0);
 
   // "Create as Loofta" is admin-only and create-only — the backend re-checks admin status itself
   // (never trusts this), this is purely to decide whether to show the toggle at all.
@@ -624,13 +667,47 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
 
   const stepMeta = useMemo(
     () => [
-      { icon: "/images/icons/giveaway-setup-icon.svg", title: "Let's set up your giveaway" },
-      { icon: "/images/icons/giveaway-prize-icon.svg", title: "Prize and winners" },
-      { icon: "/images/icons/giveaway-tasks-icon.svg", title: "What do people need to do?" },
-      { icon: null as string | null, title: "Entries and eligibility" },
-      { icon: "/images/icons/giveaway-launch-icon.svg", title: "Review and launch" },
+      {
+        icon: "/images/icons/giveaway-setup-icon.svg",
+        title: "Name your giveaway",
+        subtitle: "Watch it build itself in the preview as you type.",
+      },
+      {
+        icon: "/images/icons/giveaway-prize-icon.svg",
+        title: "How much are you giving?",
+        subtitle: "Bigger pools reach further — the estimate updates live.",
+      },
+      {
+        icon: "/images/icons/giveaway-tasks-icon.svg",
+        title: "What do people do to enter?",
+        subtitle: "Each task appears on the card instantly. Fewer tasks → more entries.",
+      },
+      {
+        icon: null as string | null,
+        title: "When does it close?",
+        subtitle: "Shorter windows create urgency. One week is the sweet spot.",
+      },
+      {
+        icon: "/images/icons/giveaway-launch-icon.svg",
+        title: "Ready to launch",
+        subtitle: "One last look — the preview card is exactly what goes live.",
+      },
     ],
     [],
+  );
+
+  // TaskRow -> the small icon+label the live preview shows per task. "engage" rows collapse the
+  // individually-checked actions (retweet/like/...) back into the one category label, matching
+  // how a creator picked it, rather than exploding into several preview rows.
+  const previewTasks: PreviewTask[] = useMemo(
+    () =>
+      tasks
+        .filter(rowIsValid)
+        .map((row) => ({
+          icon: CATEGORY_ICONS[row.category],
+          label: row.category === "custom" ? row.title.trim() || "Custom task" : CATEGORY_LABELS[row.category],
+        })),
+    [tasks],
   );
 
   const goNext = useCallback(() => {
@@ -650,6 +727,10 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
       toast({ variant: "destructive", title: "Set when entries close" });
       return;
     }
+    setJustCompletedStep(step);
+    setTimeout(() => setJustCompletedStep(0), 600);
+    setPreviewPulse(true);
+    setTimeout(() => setPreviewPulse(false), 700);
     setStep((s) => Math.min(TOTAL_STEPS, s + 1));
   }, [step, step1Valid, step2Valid, step3Valid, step4Valid, effectiveMinPool, toast]);
 
@@ -710,11 +791,14 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
 
   const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
+  // The live-preview column only makes sense once there's a form on screen to preview — narrower
+  // single-column width for the sign-in gate, loading/error states, and the post-submit screen.
+  const showPreviewColumn = authenticated && !(mode === "edit" && (draftLoading || draftError)) && !submitted;
 
   return (
     <>
-      <div className="bg-[#0f0f12]">
-        <div className="max-w-lg mx-auto px-4 pt-4 pb-2">
+      <div className="bg-[#0a0a0c]">
+        <div className={`mx-auto px-4 pt-4 pb-2 ${showPreviewColumn ? "max-w-[1200px]" : "max-w-lg"}`}>
           <Link href={backHref} className="inline-flex items-center gap-1.5 text-base text-slate-400 hover:text-white transition-colors">
             <ArrowLeft size={16} />
             <span>{backLabel}</span>
@@ -722,8 +806,13 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
         </div>
       </div>
 
-      <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
-        <div className="max-w-lg mx-auto px-4 py-6 pb-24">
+      <div className="relative min-h-[calc(100vh-var(--header-h,0px))] overflow-x-hidden bg-[#0a0a0c] text-white">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-[-300px] h-[500px] w-[900px] -translate-x-1/2 rounded-full opacity-[0.12] blur-[140px]"
+          style={{ background: "radial-gradient(ellipse, #FF1301, transparent 65%)" }}
+        />
+        <div className={`relative mx-auto px-4 py-6 pb-24 ${showPreviewColumn ? "max-w-[1200px]" : "max-w-lg"}`}>
           {!authenticated ? (
             <div className="rounded-2xl border border-white/15 bg-white/[0.06] shadow-2xl p-8 text-center">
               <p className="text-base text-slate-300 mb-4">Sign in to {mode === "edit" ? "edit this giveaway" : "launch a giveaway"}.</p>
@@ -743,7 +832,8 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
               </Link>
             </div>
           ) : (
-            <div className="rounded-2xl border border-white/15 bg-white/[0.06] shadow-2xl p-6">
+            <div className={showPreviewColumn ? "grid grid-cols-1 lg:grid-cols-[1.15fr_.85fr] gap-8 lg:gap-12 items-start" : ""}>
+            <div className="rounded-3xl border border-white/10 bg-white/[0.05] shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)] p-6">
               {submitted ? (
                 <div className="py-10 text-center">
                   <motion.div
@@ -768,16 +858,14 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                 </div>
               ) : (
                 <>
-                  <ProgressBar step={step} />
-                  <p className="text-base font-semibold uppercase tracking-widest text-slate-500 mb-1">
-                    Step {step} of {TOTAL_STEPS}
-                  </p>
-                  <h1 className="text-2xl font-medium text-white mb-6 flex items-center gap-3">
+                  <StepDots step={step} justCompleted={justCompletedStep} />
+                  <h1 className="font-display text-[32px] font-medium tracking-[-0.025em] text-white mb-2 flex items-center gap-3">
                     {stepMeta[step - 1].icon && (
                       <Image src={stepMeta[step - 1].icon!} alt="" width={30} height={30} className="shrink-0" />
                     )}
                     {stepMeta[step - 1].title}
                   </h1>
+                  <p className="font-grotesk text-[15px] text-slate-400 mb-7">{stepMeta[step - 1].subtitle}</p>
 
                   <AnimatePresence mode="wait">
                     <motion.div
@@ -829,25 +917,34 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                           </div>
                           <div>
                             <FieldLabel optional>Project logo</FieldLabel>
-                            <div className="flex items-center gap-3">
-                              {logoUrl && (
-                                <Image src={logoUrl} alt="" width={44} height={44} className="rounded-full object-cover border border-white/10 shrink-0" />
+                            <label
+                              className={`flex items-center gap-3.5 rounded-xl px-4 py-3.5 cursor-pointer transition-colors ${
+                                logoUrl ? "border border-emerald-400/35 bg-emerald-400/[0.06]" : "border border-dashed border-white/20 bg-white/[0.03] hover:bg-white/[0.06]"
+                              } ${uploadingLogo ? "opacity-60 pointer-events-none" : ""}`}
+                            >
+                              {logoUrl ? (
+                                <Image src={logoUrl} alt="" width={44} height={44} className="rounded-lg object-cover border border-white/10 shrink-0" />
+                              ) : (
+                                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-white/[0.06] shrink-0">
+                                  <ImagePlus className="w-5 h-5 text-slate-400" />
+                                </div>
                               )}
-                              <label className="cursor-pointer text-base font-medium border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all rounded-lg px-3 py-2">
-                                {uploadingLogo ? "Uploading…" : logoUrl ? "Change logo" : "Upload logo"}
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  className="hidden"
-                                  disabled={uploadingLogo}
-                                  onChange={(e) => {
-                                    const file = e.target.files?.[0];
-                                    if (file) uploadLogo(file);
-                                    e.target.value = "";
-                                  }}
-                                />
-                              </label>
-                            </div>
+                              <div className={`text-base ${logoUrl ? "text-emerald-400" : "text-slate-400"}`}>
+                                {uploadingLogo ? "Uploading…" : logoUrl ? "Logo added — click to change" : "Upload your logo"}
+                                <span className="block text-sm text-slate-500 mt-0.5">Square works best — you&apos;ll get to crop it next</span>
+                              </div>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                disabled={uploadingLogo}
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) setPendingLogoFile(file);
+                                  e.target.value = "";
+                                }}
+                              />
+                            </label>
                             <p className="text-sm text-slate-500 mt-1">
                               Shown as a badge next to your project name on the giveaway page, alongside the Loofta badge.
                             </p>
@@ -1135,10 +1232,46 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                   </div>
                 </>
               )}
+              </div>
+              {showPreviewColumn && (
+                <GiveawayLivePreview
+                  title={title}
+                  projectName={projectName}
+                  logoUrl={logoUrl}
+                  description={description}
+                  totalPool={totalPool}
+                  winnerCount={winnerCount}
+                  selectionMode={selectionMode}
+                  entriesCloseAt={entriesCloseAt}
+                  minFollowers={minFollowers}
+                  isOfficial={mode === "create" && createAsAdmin}
+                  tasks={previewTasks}
+                  pulse={previewPulse}
+                />
+              )}
             </div>
           )}
         </div>
       </div>
+
+      {pendingLogoFile && (
+        <LogoCropModal
+          file={pendingLogoFile}
+          onCancel={() => setPendingLogoFile(null)}
+          onConfirm={(blob) => {
+            setPendingLogoFile(null);
+            uploadLogo(new File([blob], "logo.png", { type: "image/png" }));
+          }}
+        />
+      )}
+
+      <style jsx global>{`
+        @keyframes g-pop {
+          0% { transform: scale(1); }
+          40% { transform: scale(1.35); }
+          100% { transform: scale(1); }
+        }
+      `}</style>
     </>
   );
 }
