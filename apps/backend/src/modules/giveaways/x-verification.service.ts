@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TwitterApi } from 'twitter-api-v2';
 import { SupabaseService } from '@/database/supabase.service';
+import { RedisService } from '@/redis/redis.service';
 import {
   Giveaway,
   GiveawayTask,
@@ -88,7 +89,7 @@ export class XVerificationService {
   private async getCachedIds(key: string, fetch: () => Promise<Set<string>>): Promise<Set<string>> {
     const cached = this.fetchCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.promise;
-    this.consumeDailyCapOrThrow(key);
+    await this.consumeDailyCapOrThrow(key);
     const promise = fetch();
     this.fetchCache.set(key, { promise, expiresAt: Date.now() + FETCH_CACHE_TTL_MS });
     promise.catch(() => this.fetchCache.delete(key));
@@ -96,9 +97,27 @@ export class XVerificationService {
   }
 
   /** Increments today's fetch-unit count and throws once DAILY_CALL_CAP is hit, resetting at UTC
-   *  midnight. See DEFAULT_DAILY_CALL_CAP's doc comment for why this exists. */
-  private consumeDailyCapOrThrow(context: string): void {
+   *  midnight. See DEFAULT_DAILY_CALL_CAP's doc comment for why this exists.
+   *
+   *  Backed by Redis (INCR + EXPIRE on a per-UTC-day key) instead of a process-local counter:
+   *  confirmed 2026-08-15 that an in-memory counter resets on every backend redeploy, and this repo
+   *  redeploys many times a day during active work — the "hard backstop" was quietly re-arming
+   *  itself back to 0 on each deploy instead of holding for the full day. Falls back to the old
+   *  in-memory counter only when Redis is unavailable (e.g. local dev without REDIS_URL), so
+   *  behavior there is unchanged. */
+  private async consumeDailyCapOrThrow(context: string): Promise<void> {
     const today = new Date().toISOString().slice(0, 10);
+    const client = this.redis.getClient();
+    if (client) {
+      const key = `xverify:dailycap:${today}`;
+      const count = await client.incr(key);
+      if (count === 1) await client.expire(key, 26 * 60 * 60);
+      if (count > this.dailyCallCap) {
+        this.logger.error(`[XVerification] daily X API call cap (${this.dailyCallCap}) reached — refusing further calls today (blocked: ${context})`);
+        throw new Error(`X API daily call cap (${this.dailyCallCap}) reached`);
+      }
+      return;
+    }
     if (today !== this.dailyCallCountDate) {
       this.dailyCallCountDate = today;
       this.dailyCallCount = 0;
@@ -110,7 +129,11 @@ export class XVerificationService {
     this.dailyCallCount++;
   }
 
-  constructor(private readonly configService: ConfigService, private readonly supabaseService: SupabaseService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly supabaseService: SupabaseService,
+    private readonly redis: RedisService,
+  ) {
     const apiKey = this.configService.get<string>('TWITTER_API_KEY');
     const apiSecret = this.configService.get<string>('TWITTER_API_SECRET');
     const accessToken = this.configService.get<string>('TWITTER_ACCESS_TOKEN');
@@ -128,15 +151,37 @@ export class XVerificationService {
   }
 
   /** Lookup used at entry time for eligibility (follower count + account age), not part of the
-   *  batched per-giveaway task verification below. Cached per-handle — see PROFILE_CACHE_TTL_MS. */
+   *  batched per-giveaway task verification below. Cached per-handle — see PROFILE_CACHE_TTL_MS.
+   *
+   *  Two-tier cache: the in-memory Map is checked first (zero latency for repeat calls within the
+   *  same process), then Redis (survives the backend redeploying — confirmed 2026-08-15 that with
+   *  only 119 real entrants, the process-local Map alone still produced way more than 119 X API
+   *  calls, because every redeploy during active work wiped it and the same handles got re-fetched
+   *  from scratch on the next entry attempt). Privy's linked_accounts does NOT carry followers_count
+   *  or account creation date — only username — so there's no way to skip the X API call entirely;
+   *  this just makes sure we only ever pay for it once per handle per PROFILE_CACHE_TTL_MS window,
+   *  no matter how many times the backend restarts in between. */
   async resolveXProfile(handle: string): Promise<XProfile | null> {
     if (!this.client) return null;
     const cleanHandle = handle.replace(/^@/, '').trim();
     const cacheKey = cleanHandle.toLowerCase();
-    const cached = this.profileCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) return cached.profile;
+    const memCached = this.profileCache.get(cacheKey);
+    if (memCached && memCached.expiresAt > Date.now()) return memCached.profile;
+
+    const redisKey = `xverify:profile:${cacheKey}`;
+    const redisCached = await this.redis.get(redisKey);
+    if (redisCached) {
+      try {
+        const profile = JSON.parse(redisCached) as XProfile;
+        this.profileCache.set(cacheKey, { profile, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
+        return profile;
+      } catch {
+        // corrupt cache entry — fall through to a live fetch
+      }
+    }
+
     try {
-      this.consumeDailyCapOrThrow(`resolveXProfile:${cleanHandle}`);
+      await this.consumeDailyCapOrThrow(`resolveXProfile:${cleanHandle}`);
       const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics'] });
       if (!result.data) return null;
       const profile: XProfile = {
@@ -146,6 +191,7 @@ export class XVerificationService {
         followersCount: result.data.public_metrics?.followers_count ?? 0,
       };
       this.profileCache.set(cacheKey, { profile, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
+      await this.redis.set(redisKey, JSON.stringify(profile), PROFILE_CACHE_TTL_MS / 1000);
       return profile;
     } catch (e) {
       this.logger.warn(`[XVerification] resolveXProfile(${cleanHandle}) failed: ${String(e)}`);
