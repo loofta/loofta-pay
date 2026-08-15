@@ -6,13 +6,13 @@
 // apps/backend/src/modules/gacha for the room lifecycle this leads into (waiting -> purchasing ->
 // opening (rip) -> excluding (roulette) -> voting (cut one more?) -> settled).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ChevronLeft, Lock, Copy, Check, Plus } from "lucide-react";
+import { AlertCircle, ChevronLeft, Lock, Plus, RefreshCw } from "lucide-react";
 import MascotPicker from "@/components/MascotPicker";
 import { Shell } from "@/components/PackParty";
 import Mascot from "@/components/Mascot";
@@ -27,25 +27,17 @@ interface RoomConfig {
   displayOrder: number;
 }
 
-// UI-only mock for LOO-6/LOO-7 (room browser + create/join, private rooms) — no backend room-list
-// or per-room-join API exists yet. Selecting or creating a room here only changes what's shown;
-// the actual payment/join underneath still calls the same config-level join-tx flow it always
-// has (handleJoin below), which auto-assigns a backend room exactly like before this UI existed.
-// Swap this mock data + the TODOs in handleCreateRoom/handleJoin for real API calls once LOO-6
-// ships a per-room join endpoint.
-interface MockRoom {
+interface WaitingRoom {
   id: string;
   name: string;
-  filled: number;
-  joined: string[]; // mascot keys of players already seated, for the "who's joined" preview
+  configKey: string;
+  seats: number;
+  entryUsdc: number;
+  seatsFilled: number;
+  isPrivate: boolean;
+  createdAt: string;
+  participants: Array<{ seatNumber: number; mascotKey: string | null }>;
 }
-const MOCK_ROOMS_BY_SEATS: Record<number, MockRoom[]> = {
-  5: [
-    { id: "mock-5-1", name: "Room #1", filled: 3, joined: ["fox", "bear", "penguin"] },
-    { id: "mock-5-2", name: "Room #2", filled: 1, joined: ["cat"] },
-  ],
-  10: [{ id: "mock-10-1", name: "Room #1", filled: 6, joined: ["fox", "bear", "penguin", "dog", "chick", "bunny"] }],
-};
 
 function friendlyJoinError(rawMessage: string | undefined): string {
   const s = (rawMessage ?? "").toLowerCase();
@@ -71,22 +63,39 @@ export default function GachaPlayPage() {
 
   const [stage, setStage] = useState<Stage>("pick");
   const [configs, setConfigs] = useState<RoomConfig[]>([]);
+  const [configsLoading, setConfigsLoading] = useState(true);
+  const [configsError, setConfigsError] = useState<string | null>(null);
   const [mascotKey, setMascotKey] = useState<string | null>(null);
   const [pickedSeats, setPickedSeats] = useState<number | null>(null);
   const [joiningSeats, setJoiningSeats] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [rooms, setRooms] = useState<WaitingRoom[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [roomsError, setRoomsError] = useState<string | null>(null);
+  const [creatingRoom, setCreatingRoom] = useState(false);
   const [roomMode, setRoomMode] = useState<RoomMode>("browse");
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [roomName, setRoomName] = useState("");
   const [isPrivate, setIsPrivate] = useState(false);
-  const [createdRoom, setCreatedRoom] = useState<{ name: string; isPrivate: boolean; shareUrl: string } | null>(null);
-  const [linkCopied, setLinkCopied] = useState(false);
-  const [spectatingId, setSpectatingId] = useState<string | null>(null);
+  const [createdRoom, setCreatedRoom] = useState<WaitingRoom | null>(null);
+  const roomsRequestIdRef = useRef(0);
 
-  useEffect(() => {
-    fetch("/api/gacha/configs").then((r) => (r.ok ? r.json() : [])).then(setConfigs).catch(() => {});
+  const loadConfigs = useCallback(async () => {
+    setConfigsLoading(true);
+    setConfigsError(null);
+    try {
+      const response = await fetch("/api/gacha/configs");
+      if (!response.ok) throw new Error("Couldn't load room sizes");
+      setConfigs(await response.json());
+    } catch {
+      setConfigsError("Couldn't load room sizes. Check your connection and try again.");
+    } finally {
+      setConfigsLoading(false);
+    }
   }, []);
+
+  useEffect(() => { void loadConfigs(); }, [loadConfigs]);
 
   const enabledConfigs = configs.filter((c) => c.enabled);
   const seatSizes = Array.from(new Set(enabledConfigs.map((c) => c.seats))).sort((a, b) => a - b);
@@ -95,54 +104,84 @@ export default function GachaPlayPage() {
   }, [pickedSeats, seatSizes]);
   const activeConfig = enabledConfigs.find((c) => c.seats === pickedSeats) ?? null;
 
-  const mockRooms = useMemo(() => MOCK_ROOMS_BY_SEATS[pickedSeats ?? 0] ?? [], [pickedSeats]);
+  const loadRooms = useCallback(async (showLoading = false) => {
+    if (!activeConfig) return;
+    const requestId = ++roomsRequestIdRef.current;
+    if (showLoading) setRoomsLoading(true);
+    setRoomsError(null);
+    try {
+      const response = await fetch(`/api/gacha/rooms/waiting?configKey=${encodeURIComponent(activeConfig.configKey)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error("Couldn't load open rooms");
+      const nextRooms: WaitingRoom[] = await response.json();
+      if (requestId !== roomsRequestIdRef.current) return;
+      setRooms(nextRooms);
+      setSelectedRoomId((current) => nextRooms.some((room) => room.id === current) ? current : (nextRooms[0]?.id ?? null));
+    } catch {
+      if (requestId !== roomsRequestIdRef.current) return;
+      setRoomsError("Couldn't load open rooms. This is usually a network hiccup.");
+    } finally {
+      if (requestId === roomsRequestIdRef.current) setRoomsLoading(false);
+    }
+  }, [activeConfig]);
 
-  // Changing room size invalidates whatever room was picked/created/spectated for the old size.
-  // Default to the fullest room (closest to starting) rather than making the player pick first —
-  // they can still switch to any other room in the list below.
+  useEffect(() => {
+    if (!activeConfig) return;
+    roomsRequestIdRef.current += 1;
+    void loadRooms(true);
+    const interval = window.setInterval(() => { void loadRooms(false); }, 5_000);
+    return () => {
+      window.clearInterval(interval);
+      roomsRequestIdRef.current += 1;
+    };
+  }, [activeConfig, loadRooms]);
+
+  // Changing size invalidates a picked/created room. loadRooms selects the first result, and the
+  // backend returns rooms fullest-first so the room closest to starting becomes the default.
   useEffect(() => {
     setRoomMode("browse");
     setCreatedRoom(null);
-    setSpectatingId(null);
-    setLinkCopied(false);
-    const rooms = MOCK_ROOMS_BY_SEATS[pickedSeats ?? 0] ?? [];
-    const fullest = rooms.reduce<MockRoom | null>((best, r) => (!best || r.filled > best.filled ? r : best), null);
-    setSelectedRoomId(fullest?.id ?? null);
+    setSelectedRoomId(null);
   }, [pickedSeats]);
 
-  const selectedRoom = mockRooms.find((r) => r.id === selectedRoomId) ?? null;
-  // Filled seat previews show the actual joined mascots (same data as the room-list avatars),
-  // not a generic dot — the creator's own picked mascot fills seat 0 once they've created a room.
+  const selectedRoom = createdRoom ?? rooms.find((room) => room.id === selectedRoomId) ?? null;
+  // Filled seat previews show only confirmed participants. Creating a room does not take a seat
+  // or charge the entry yet; the creator appears here only after the explicit paid join succeeds.
   const previewMascots: (string | null)[] = Array.from({ length: activeConfig?.seats ?? 0 }, (_, i) => {
-    if (createdRoom) return i === 0 ? mascotKey : null;
-    if (selectedRoom) return selectedRoom.joined[i] ?? null;
+    if (selectedRoom) return selectedRoom.participants.find((participant) => participant.seatNumber === i + 1)?.mascotKey ?? null;
     return null;
   });
 
   const startCreate = useCallback(() => {
     setRoomMode("create");
     setSelectedRoomId(null);
-    setRoomName(`Room #${mockRooms.length + 1}`);
+    setCreatedRoom(null);
+    setRoomName(`Room #${rooms.length + 1}`);
     setIsPrivate(false);
-  }, [mockRooms.length]);
+  }, [rooms.length]);
 
-  const handleCreateRoom = useCallback(() => {
-    if (!roomName.trim()) return;
-    const code = Math.random().toString(36).slice(2, 8);
-    setCreatedRoom({
-      name: roomName.trim(),
-      isPrivate,
-      shareUrl: `${typeof window !== "undefined" ? window.location.origin : "https://pay.loofta.xyz"}/app/gacha/join/${code}`,
-    });
-  }, [roomName, isPrivate]);
-
-  const handleCopyLink = useCallback(() => {
-    if (!createdRoom) return;
-    navigator.clipboard?.writeText(createdRoom.shareUrl).then(() => {
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 2000);
-    });
-  }, [createdRoom]);
+  const handleCreateRoom = useCallback(async () => {
+    if (!activeConfig || !roomName.trim()) return;
+    if (!authenticated) { login(); return; }
+    setCreatingRoom(true);
+    setError(null);
+    try {
+      const token = await getAccessToken();
+      const response = await fetch("/api/gacha/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ configKey: activeConfig.configKey, name: roomName.trim(), isPrivate }),
+      });
+      if (!response.ok) throw new Error((await response.json().catch(() => null))?.message ?? "Failed to create room");
+      const room: WaitingRoom = await response.json();
+      setCreatedRoom(room);
+      setSelectedRoomId(room.id);
+      if (!room.isPrivate) setRooms((current) => [...current.filter((item) => item.id !== room.id), room]);
+    } catch (err: any) {
+      setError(err?.message?.length < 200 ? err.message : "Couldn't create the room — please try again.");
+    } finally {
+      setCreatingRoom(false);
+    }
+  }, [activeConfig, roomName, isPrivate, authenticated, login, getAccessToken]);
 
   // MascotPicker normally locks a mascot to an already-joined room seat over the socket — here
   // there's no room yet, so this just captures the local pick and advances the flow.
@@ -153,20 +192,19 @@ export default function GachaPlayPage() {
   }, []);
 
   const handleJoin = useCallback(
-    async (configKey: string, seats: number) => {
+    async (targetRoom: WaitingRoom) => {
       if (!authenticated) { login(); return; }
       if (!embeddedWallet?.address) { setError("No Solana wallet found"); return; }
       if (!mascotKey) { setStage("pick"); return; }
-      setJoiningSeats(seats);
+      setJoiningSeats(targetRoom.seats);
       setError(null);
       try {
         const token = await getAccessToken();
         const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
 
-        const joinTxRes = await fetch("/api/gacha/rooms/join-tx", {
+        const joinTxRes = await fetch(`/api/gacha/rooms/${targetRoom.id}/join-tx`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeader },
-          body: JSON.stringify({ configKey }),
         });
         if (!joinTxRes.ok) throw new Error((await joinTxRes.json().catch(() => null))?.message ?? "Failed to prepare entry payment");
         const { txBase64, roomId, alreadyJoined } = await joinTxRes.json();
@@ -174,6 +212,7 @@ export default function GachaPlayPage() {
         // Already have a seat in a waiting room for this config — nothing to sign, just go there.
         if (alreadyJoined) { router.push(`/app/gacha/${roomId}`); return; }
 
+        if (!txBase64) throw new Error("The room payment could not be prepared");
         const txBytes = Buffer.from(txBase64, "base64");
         const { signature: sigBytes } = await signAndSendTransaction({
           transaction: txBytes as unknown as Uint8Array,
@@ -196,29 +235,36 @@ export default function GachaPlayPage() {
         router.push(`/app/gacha/${roomId}`);
       } catch (err: any) {
         setError(friendlyJoinError(err?.message));
+        if ((err?.message ?? "").toLowerCase().includes("filled up")) {
+          setCreatedRoom(null);
+          setRoomMode("browse");
+          void loadRooms(true);
+        }
       } finally {
         setJoiningSeats(null);
       }
     },
-    [authenticated, login, embeddedWallet, mascotKey, getAccessToken, signAndSendTransaction, router],
+    [authenticated, login, embeddedWallet, mascotKey, getAccessToken, signAndSendTransaction, router, loadRooms],
   );
 
   const pickedMascot = getMascot(mascotKey);
 
   const ctaLabel = createdRoom
-    ? "ENTER ROOM →"
+    ? `JOIN ${createdRoom.name.toUpperCase()} FOR $${createdRoom.entryUsdc.toFixed(2)} →`
     : roomMode === "create"
-      ? activeConfig && `CREATE ROOM FOR $${activeConfig.entryUsdc.toFixed(2)} →`
+      ? "CREATE ROOM →"
       : selectedRoom
         ? activeConfig && `JOIN ${selectedRoom.name.toUpperCase()} FOR $${activeConfig.entryUsdc.toFixed(2)} →`
         : "SELECT A ROOM";
   const ctaDisabled =
-    joiningSeats !== null || (roomMode === "create" && !createdRoom && !roomName.trim()) || (roomMode === "browse" && !selectedRoom && !createdRoom);
+    configsLoading || roomsLoading || creatingRoom || joiningSeats !== null
+    || (roomMode === "create" && !createdRoom && !roomName.trim())
+    || (roomMode === "browse" && !selectedRoom && !createdRoom);
   const handleCtaClick = () => {
     if (!activeConfig) return;
-    if (createdRoom) { handleJoin(activeConfig.configKey, activeConfig.seats); return; }
-    if (roomMode === "create") { handleCreateRoom(); return; }
-    if (selectedRoom) handleJoin(activeConfig.configKey, activeConfig.seats);
+    if (createdRoom) { void handleJoin(createdRoom); return; }
+    if (roomMode === "create") { void handleCreateRoom(); return; }
+    if (selectedRoom) void handleJoin(selectedRoom);
   };
 
   return (
@@ -232,7 +278,7 @@ export default function GachaPlayPage() {
 
       {error && (
         <div className="absolute left-1/2 top-16 z-20 -translate-x-1/2 w-full max-w-md px-5">
-          <div className="rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-base text-red-300">{error}</div>
+          <div role="alert" className="rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-base text-red-300">{error}</div>
         </div>
       )}
 
@@ -262,29 +308,33 @@ export default function GachaPlayPage() {
           }
           footer={
             activeConfig && (
-              spectatingId ? (
-                <button type="button" className="pp-btn ghost" onClick={() => setSpectatingId(null)}>
-                  STOP SPECTATING
+              <div className="pp-sharewrap">
+                <button
+                  type={roomMode === "create" && !createdRoom ? "submit" : "button"}
+                  form={roomMode === "create" && !createdRoom ? "gacha-create-room-form" : undefined}
+                  className="pp-btn gold"
+                  disabled={ctaDisabled}
+                  onClick={roomMode === "create" && !createdRoom ? undefined : handleCtaClick}
+                  aria-busy={creatingRoom || joiningSeats !== null}
+                >
+                  {creatingRoom ? "CREATING…" : joiningSeats !== null ? "JOINING…" : ctaLabel}
                 </button>
-              ) : (
-                <div className="pp-sharewrap">
-                  {createdRoom && (
-                    <button type="button" className="pp-btn ghost" onClick={handleCopyLink}>
-                      {linkCopied ? (
-                        <span className="pp-btn-icon"><Check className="w-4 h-4" /> LINK COPIED</span>
-                      ) : (
-                        <span className="pp-btn-icon"><Copy className="w-4 h-4" /> COPY INVITE LINK</span>
-                      )}
-                    </button>
-                  )}
-                  <button type="button" className="pp-btn gold" disabled={ctaDisabled} onClick={handleCtaClick}>
-                    {joiningSeats !== null ? "JOINING…" : ctaLabel}
-                  </button>
-                </div>
-              )
+              </div>
             )
           }
         >
+          {configsLoading && <div className="pp-roomstatus" role="status">Loading room sizes…</div>}
+
+          {configsError && (
+            <div className="pp-roomerror" role="alert">
+              <AlertCircle className="h-4 w-4" aria-hidden="true" />
+              <span>{configsError}</span>
+              <button type="button" onClick={() => { void loadConfigs(); }}>
+                <RefreshCw className="h-4 w-4" aria-hidden="true" /> Retry
+              </button>
+            </div>
+          )}
+
           {seatSizes.length > 1 && (
             <div className="pp-sizetoggle">
               {seatSizes.map((s) => (
@@ -292,7 +342,7 @@ export default function GachaPlayPage() {
                   key={s}
                   type="button"
                   className={"pp-seg" + (pickedSeats === s ? " on" : "")}
-                  disabled={joiningSeats !== null}
+                  disabled={joiningSeats !== null || creatingRoom}
                   onClick={() => setPickedSeats(s)}
                 >
                   {s} players
@@ -313,24 +363,49 @@ export default function GachaPlayPage() {
 
           {activeConfig && roomMode === "browse" && (
             <div className="pp-roomlistwrap">
-              <div className="pp-roomlist">
-                {mockRooms.map((r) => (
+              <div className="pp-roomlist" aria-busy={roomsLoading}>
+                {roomsLoading && Array.from({ length: 2 }, (_, index) => (
+                  <div key={index} className="pp-roomrow-skeleton" aria-hidden="true" />
+                ))}
+
+                {!roomsLoading && roomsError && (
+                  <div className="pp-roomerror" role="alert">
+                    <AlertCircle className="h-4 w-4" aria-hidden="true" />
+                    <span>{roomsError}</span>
+                    <button type="button" onClick={() => { void loadRooms(true); }}>
+                      <RefreshCw className="h-4 w-4" aria-hidden="true" /> Retry
+                    </button>
+                  </div>
+                )}
+
+                {!roomsLoading && !roomsError && rooms.length === 0 && (
+                  <div className="pp-roomempty">
+                    <p>No open rooms yet.</p>
+                    <span>Create the first room for this size.</span>
+                  </div>
+                )}
+
+                {!roomsLoading && !roomsError && rooms.map((room) => (
                   <button
-                    key={r.id}
+                    key={room.id}
                     type="button"
-                    className={"pp-roomrow" + (selectedRoomId === r.id && !spectatingId ? " sel" : "")}
-                    disabled={joiningSeats !== null}
-                    onClick={() => { setSelectedRoomId(r.id); setSpectatingId(null); }}
+                    className={"pp-roomrow" + (selectedRoomId === room.id ? " sel" : "")}
+                    disabled={joiningSeats !== null || creatingRoom}
+                    onClick={() => { setSelectedRoomId(room.id); setCreatedRoom(null); }}
+                    aria-pressed={selectedRoomId === room.id}
                   >
-                    <span className="pp-roomrow-info">
-                      <span className="pp-roomrow-name">{r.name}</span>
-                      <span className="pp-roomrow-fill">{r.filled}/{activeConfig.seats} joined</span>
+                    <span className="pp-roomrow-avatars" aria-label={`${room.seatsFilled} players joined`}>
+                      {room.participants.map((participant) => (
+                        <span key={participant.seatNumber} className="pp-roomrow-avatar">
+                          {participant.mascotKey
+                            ? <Mascot name={participant.mascotKey} mood="none" size={28} />
+                            : <span aria-hidden="true">?</span>}
+                        </span>
+                      ))}
                     </span>
-                    <span
-                      className="pp-roomrow-spectate"
-                      onClick={(e) => { e.stopPropagation(); setSpectatingId(r.id); }}
-                    >
-                      {spectatingId === r.id ? "Watching" : "Spectate"}
+                    <span className="pp-roomrow-info">
+                      <span className="pp-roomrow-name">{room.name}</span>
+                      <span className="pp-roomrow-fill">{room.seatsFilled}/{activeConfig.seats} joined</span>
                     </span>
                   </button>
                 ))}
@@ -338,41 +413,61 @@ export default function GachaPlayPage() {
               <button
                 type="button"
                 className="pp-roomrow create"
-                disabled={joiningSeats !== null}
-                onClick={() => { startCreate(); setSpectatingId(null); }}
+                disabled={joiningSeats !== null || creatingRoom}
+                onClick={startCreate}
               >
-                <Plus className="w-4 h-4" /> Create room
+                <Plus className="w-4 h-4" aria-hidden="true" /> Create room
               </button>
             </div>
           )}
 
           {activeConfig && roomMode === "create" && !createdRoom && (
-            <div className="pp-createcard">
+            <form
+              id="gacha-create-room-form"
+              className="pp-createcard"
+              onSubmit={(event) => { event.preventDefault(); void handleCreateRoom(); }}
+            >
+              <label className="pp-namelabel" htmlFor="gacha-room-name">Room name</label>
               <input
+                id="gacha-room-name"
                 className="pp-nameinput"
                 value={roomName}
                 onChange={(e) => setRoomName(e.target.value)}
                 maxLength={24}
-                placeholder="Room name"
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={!roomName.trim()}
+                aria-describedby={!roomName.trim() ? "gacha-room-name-error" : undefined}
+                placeholder="Room #1"
               />
+              {!roomName.trim() && <p id="gacha-room-name-error" className="pp-field-error">Enter a room name.</p>}
               <div className="pp-privaterow">
                 <span className="pp-privaterow-label">
-                  {isPrivate && <Lock className="w-3.5 h-3.5" />} Private room
+                  {isPrivate && <Lock className="w-3.5 h-3.5" aria-hidden="true" />} Private room
                 </span>
                 <button
                   type="button"
                   role="switch"
+                  aria-label="Create a private room"
                   aria-checked={isPrivate}
                   className={"pp-switch" + (isPrivate ? " on" : "")}
-                  onClick={() => setIsPrivate((v) => !v)}
+                  onClick={() => setIsPrivate((value) => !value)}
                 >
                   <span className="pp-switch-knob" />
                 </button>
               </div>
-              {isPrivate && <p className="pp-privatehint">Only people with the invite link can join — you'll get a share link after creating.</p>}
-              <button type="button" className="pp-roomlist-back" onClick={() => setRoomMode("browse")}>
+              {isPrivate && <p className="pp-privatehint">Visibility will be saved. Shareable invite links arrive in the private-room follow-up.</p>}
+              <button type="button" className="pp-roomlist-back" onClick={() => { setRoomMode("browse"); setCreatedRoom(null); }}>
                 ← back to rooms
               </button>
+            </form>
+          )}
+
+          {activeConfig && createdRoom && (
+            <div className="pp-roomcreated" role="status">
+              <span>{createdRoom.isPrivate ? "Private" : "Public"} room created</span>
+              <strong>{createdRoom.name}</strong>
+              <p>Join this room to take the first seat.</p>
             </div>
           )}
 

@@ -22,8 +22,6 @@ import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
-import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
-import bs58 from "bs58";
 import { motion } from "framer-motion";
 import { ChevronLeft } from "lucide-react";
 import MascotPicker from "@/components/MascotPicker";
@@ -81,14 +79,7 @@ export default function GachaRoomPage() {
   const params = useParams<{ roomId: string }>();
   const roomId = params.roomId;
   const router = useRouter();
-  const { user, authenticated, login, getAccessToken } = usePrivy();
-  const { wallets } = useWallets();
-  const { signAndSendTransaction } = useSignAndSendTransaction();
-
-  const embeddedSolAddress = ((user?.linkedAccounts ?? [])
-    .find((a: any) => a.type === "wallet" && a.chainType === "solana" &&
-      (a.walletClientType === "privy" || a.walletClientType === "privy-v2")) as any)?.address ?? "";
-  const embeddedWallet = wallets.find((w) => w.address === embeddedSolAddress) ?? wallets[0];
+  const { getAccessToken } = usePrivy();
 
   const [accessToken, setAccessToken] = useState<string | null>(null);
   useEffect(() => { getAccessToken().then(setAccessToken).catch(() => setAccessToken(null)); }, [getAccessToken]);
@@ -230,6 +221,19 @@ export default function GachaRoomPage() {
   const [voteCutRouletteActive, setVoteCutRouletteActive] = useState(false);
   const [voteCutRound, setVoteCutRound] = useState<number | null>(null);
   const [voteCutSurvivorsSnapshot, setVoteCutSurvivorsSnapshot] = useState<RoomDetail["participants"]>([]);
+
+  // The roulette/cinematic is presentation state, while settlement is authoritative server
+  // state. Background-tab timer throttling, a missed websocket event, or several bot-driven vote
+  // rounds completing faster than the animations can otherwise leave an old roulette mounted
+  // forever in front of an already-settled room. Never let that stale overlay outrank a terminal
+  // room state; the settled screen also tells an excluded player that they received no payout.
+  useEffect(() => {
+    const status = detail?.room.status;
+    if (status !== "settling" && status !== "settled" && status !== "failed" && status !== "cancelled") return;
+    setRouletteActive(false);
+    setVoteCutRouletteActive(false);
+  }, [detail?.room.status]);
+
   useEffect(() => {
     if (!lastVoteResult?.passed) return;
     // Full roster, not just current survivors — GachaRoulette needs to see prior rounds' victims
@@ -252,6 +256,23 @@ export default function GachaRoomPage() {
   }, [castVote, refresh]);
 
   const room = detail?.room;
+  const hasPendingHumanVote =
+    room?.status === "voting"
+    && !!detail?.myParticipant
+    && !detail.myParticipant.excluded
+    && myVote === undefined;
+
+  // The ER vote deadline starts as soon as the backend opens the round. Pack/card/roulette
+  // cinematics can still be playing at that point, so letting those screens keep render priority
+  // can hide the entire 30-second voting window from a survivor. An uncast live vote is the only
+  // time-sensitive player action here: pre-empt stale presentation state and show VoteRound now.
+  useEffect(() => {
+    if (!hasPendingHumanVote) return;
+    setPlayed3DReveal(true);
+    setCardRevealDismissed(true);
+    setRouletteActive(false);
+    setVoteCutRouletteActive(false);
+  }, [hasPendingHumanVote]);
 
   // Preload the revealed card's image(s) the moment we know the URL — independent of the
   // ready-gate countdown or the 3D shake sequence, which starts well after purchase/open already
@@ -292,57 +313,11 @@ export default function GachaRoomPage() {
     });
   }, []);
 
-  const handleJoin = useCallback(async () => {
-    if (!authenticated) { login(); return; }
-    if (!embeddedWallet?.address || !room) { setError("No Solana wallet found"); return; }
-    // A spectator opening a settled room has no prior mascot to carry into "Run it back".
-    // Send them through the real mascot-first join flow instead of submitting `null` and being
-    // rejected by the backend's whitelist.
-    if (!detail?.myParticipant?.mascotKey) { router.push("/app/gacha/play"); return; }
-    setBusy(true);
-    setError(null);
-    try {
-      const token = await getAccessToken();
-      const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-      const joinTxRes = await fetch("/api/gacha/rooms/join-tx", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ configKey: room.configKey }),
-      });
-      if (!joinTxRes.ok) throw new Error((await joinTxRes.json().catch(() => null))?.message ?? "Failed to prepare entry payment");
-      const { txBase64, roomId: targetRoomId, alreadyJoined } = await joinTxRes.json();
-
-      // Already have a seat in a waiting room for this config — nothing to sign, just go there.
-      if (alreadyJoined) {
-        if (targetRoomId !== roomId) router.replace(`/app/gacha/${targetRoomId}`); else refresh();
-        return;
-      }
-
-      const txBytes = Buffer.from(txBase64, "base64");
-      // Gacha Pooled Packs is devnet-only end to end — omitting `chain` defaults to
-      // solana:mainnet, which fails simulation against this devnet-built transaction.
-      const { signature: sigBytes } = await signAndSendTransaction({ transaction: txBytes as unknown as Uint8Array, wallet: embeddedWallet as any, chain: "solana:devnet" });
-      const paymentTxHash = bs58.encode(sigBytes as Uint8Array);
-
-      // "Run it back" keeps this participant's already-locked mascot. First-time spectators are
-      // routed through /app/gacha/play above so they explicitly choose one.
-      const joinRes = await fetch(`/api/gacha/rooms/${targetRoomId}/join`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ paymentTxHash, mascotKey: detail?.myParticipant?.mascotKey }),
-      });
-      if (!joinRes.ok) throw new Error((await joinRes.json().catch(() => null))?.message ?? "Failed to join room");
-
-      // findOrCreateWaitingRoom can land a seat in a DIFFERENT room of the same config if this
-      // one filled up between page load and this click — follow it rather than showing a stale page.
-      if (targetRoomId !== roomId) router.replace(`/app/gacha/${targetRoomId}`);
-      else refresh();
-    } catch (err: any) {
-      setError(err?.message?.length < 200 ? err.message : "Couldn't join right now — please try again.");
-    } finally {
-      setBusy(false);
-    }
-  }, [authenticated, login, embeddedWallet, room, roomId, detail?.myParticipant?.mascotKey, getAccessToken, signAndSendTransaction, router, refresh]);
+  // Starting another game always returns to the explicit room browser. It deliberately does not
+  // carry this group forward or silently place the player in an arbitrary waiting room.
+  const handlePlayAgain = useCallback(() => {
+    router.push("/app/gacha/play");
+  }, [router]);
 
   const handleFillWithBots = useCallback(async () => {
     setFillingBots(true);
@@ -474,7 +449,7 @@ export default function GachaRoomPage() {
     }
   }, [roomId, isPrivate, getAccessToken, refresh]);
 
-  // Auto-claim — the WINNERS screen just shows the split and RUN IT BACK / LEAVE, no manual
+  // Auto-claim — the WINNERS screen just shows the split and PLAY AGAIN / LEAVE, no manual
   // private/public choice or claim button (see isPrivate above for why it's always public).
   const autoClaimedRef = useRef(false);
   useEffect(() => {
@@ -585,6 +560,16 @@ export default function GachaRoomPage() {
 
   if (isPicking) {
     screen = <MascotPicker lockedMascotKey={null} onLock={handleLockMascot} />;
+  } else if (hasPendingHumanVote) {
+    screen = (
+      <VoteRound
+        round={erRoomState?.voteRound || room.voteRound || 1}
+        survivors={detail.participants.filter((p) => !p.excluded)}
+        potUsdc={room.buybackAmountUsdc ?? 0}
+        myVote={myVote}
+        onVote={handleVote}
+      />
+    );
   } else if (showRipScreen) {
     screen = (
       <div className="pp-shell pp-rip">
@@ -764,8 +749,8 @@ export default function GachaRoomPage() {
         sub="buyback settled. instantly. obviously."
         footer={
           <div className="pp-votebtns">
-            <button type="button" className="pp-btn gold" disabled={busy} onClick={handleJoin}>
-              {busy ? "JOINING…" : "RUN IT BACK →"}
+            <button type="button" className="pp-btn gold" onClick={handlePlayAgain}>
+              PLAY AGAIN →
             </button>
             <Link href="/app/gacha" className="pp-btn ghost">
               LEAVE

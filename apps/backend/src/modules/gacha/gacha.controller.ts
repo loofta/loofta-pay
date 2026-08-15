@@ -1,12 +1,21 @@
-import { Body, Controller, Get, Param, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { IsBoolean, IsNumber, IsString, Min } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { AuthGuard, Public } from '@/common/guards';
 import { GachaService } from './gacha.service';
 
-class JoinTxDto {
+class CreateRoomDto {
   @IsString()
+  @IsNotEmpty()
   configKey: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  name?: string;
+
+  @IsBoolean()
+  isPrivate: boolean;
 }
 
 class ConfirmJoinDto {
@@ -53,6 +62,19 @@ export class GachaController {
     return this.gacha.listOpenRooms();
   }
 
+  @Get('rooms/waiting')
+  @Public()
+  @ApiOperation({ summary: 'Public waiting rooms for one config, fullest first, with seated mascot previews' })
+  async waitingRooms(@Query('configKey') configKey: string) {
+    return this.gacha.listPublicWaitingRooms(configKey);
+  }
+
+  @Post('rooms')
+  @ApiOperation({ summary: 'Create a distinct waiting room; visibility is stored for private-room follow-up support' })
+  async createRoom(@Body() dto: CreateRoomDto, @Request() req: any) {
+    return this.gacha.createWaitingRoom(dto.configKey, req.user.id, dto.name, dto.isPrivate);
+  }
+
   @Get('my-devnet-balance')
   @ApiOperation({ summary: "Caller's own devnet USDC-Dev balance at the mint Gacha actually uses (separate from the app's general devnet toggle, which points at a different mint)" })
   async myDevnetBalance(@Request() req: any) {
@@ -89,10 +111,10 @@ export class GachaController {
     return this.gacha.devForceAdvanceVoting(id);
   }
 
-  @Post('rooms/join-tx')
-  @ApiOperation({ summary: 'Find-or-create a waiting room for this config and build the entry payment tx to sign' })
-  async joinTx(@Body() dto: JoinTxDto, @Request() req: any) {
-    return this.gacha.buildJoinTx(dto.configKey, req.user.id);
+  @Post('rooms/:id/join-tx')
+  @ApiOperation({ summary: 'Build the entry payment transaction for this exact waiting room' })
+  async roomJoinTx(@Param('id') id: string, @Request() req: any) {
+    return this.gacha.buildJoinTxForRoom(id, req.user.id);
   }
 
   @Post('rooms/:id/join')
