@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "dev:webpack": "next dev --webpack",
+    "dev:prod-data": "dotenv -e .env.local -- next dev --turbopack",
+    "dev:env": "dotenv -e ${ENV_FILE:-.env.development.local} -- next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
@@ -113,6 +115,7 @@
     "@types/react-world-flags": "^1.6.0",
     "@types/three": "0.185.1",
     "@types/uuid": "^10.0.0",
+    "dotenv-cli": "11.0.0",
     "eslint": "^8",
     "eslint-config-next": "^16.0.7",
     "postcss": "^8",
