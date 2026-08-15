@@ -303,6 +303,25 @@ export class GachaService {
       .sort((a, b) => b.seatsFilled - a.seatsFilled || a.createdAt.localeCompare(b.createdAt));
   }
 
+  /**
+   * Returns a display hint for the create form. The database RPC remains the source of truth and
+   * allocates the number atomically; this endpoint only lets the UI show the right default before
+   * the user submits the form.
+   */
+  async getNextRoomNumber(configKey: string): Promise<{ roomNumber: number }> {
+    await this.getConfig(configKey);
+    const db = this.supabase.getClient();
+    const { data, error } = await db
+      .from('gacha_rooms')
+      .select('room_number')
+      .eq('config_key', configKey)
+      .order('room_number', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(`Failed to load next Gacha room number: ${error.message}`);
+    return { roomNumber: Number(data?.room_number ?? 0) + 1 };
+  }
+
   /** Creates a distinct room even when another room of the same config has open seats. Stable
    *  numbering and the insert happen in one database function under a per-config lock. */
   async createWaitingRoom(
@@ -340,7 +359,13 @@ export class GachaService {
       p_is_private: isPrivate,
       p_invite_code: inviteCode,
     });
-    if (error || !roomId) throw new Error(`Failed to create gacha room: ${error?.message ?? 'No room returned'}`);
+    if (error) {
+      if (error.message?.includes('already have a waiting room')) {
+        throw new BadRequestException('You already have a waiting room for this size');
+      }
+      throw new Error(`Failed to create gacha room: ${error.message}`);
+    }
+    if (!roomId) throw new Error('Failed to create gacha room: No room returned');
 
     return this.getWaitingRoomSummary(String(roomId), userId);
   }

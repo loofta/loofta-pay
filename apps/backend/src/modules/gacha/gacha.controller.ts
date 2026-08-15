@@ -69,6 +69,13 @@ export class GachaController {
     return this.gacha.listPublicWaitingRooms(configKey);
   }
 
+  @Get('rooms/next-number')
+  @Public()
+  @ApiOperation({ summary: 'Display hint for the next room number in one config' })
+  async nextRoomNumber(@Query('configKey') configKey: string) {
+    return this.gacha.getNextRoomNumber(configKey);
+  }
+
   @Get('rooms/invite/:inviteCode')
   @Public()
   @ApiOperation({ summary: 'Safe preview for a private waiting room addressed by its bearer invite code' })
