@@ -7,12 +7,12 @@
 // opening (rip) -> excluding (roulette) -> voting (cut one more?) -> settled).
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { AlertCircle, ChevronLeft, Lock, Plus, RefreshCw } from "lucide-react";
+import { AlertCircle, Check, ChevronLeft, Copy, Lock, Plus, RefreshCw } from "lucide-react";
 import MascotPicker from "@/components/MascotPicker";
 import { Shell } from "@/components/PackParty";
 import Mascot from "@/components/Mascot";
@@ -35,6 +35,7 @@ interface WaitingRoom {
   entryUsdc: number;
   seatsFilled: number;
   isPrivate: boolean;
+  inviteCode?: string | null;
   createdAt: string;
   participants: Array<{ seatNumber: number; mascotKey: string | null }>;
 }
@@ -52,6 +53,8 @@ type RoomMode = "browse" | "create";
 
 export default function GachaPlayPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteCode = searchParams.get("inviteCode");
   const { user, authenticated, login, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
   const { signAndSendTransaction } = useSignAndSendTransaction();
@@ -79,6 +82,9 @@ export default function GachaPlayPage() {
   const [roomName, setRoomName] = useState("");
   const [isPrivate, setIsPrivate] = useState(false);
   const [createdRoom, setCreatedRoom] = useState<WaitingRoom | null>(null);
+  const [invitedRoom, setInvitedRoom] = useState<WaitingRoom | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [copiedInvite, setCopiedInvite] = useState(false);
   const roomsRequestIdRef = useRef(0);
 
   const loadConfigs = useCallback(async () => {
@@ -103,6 +109,35 @@ export default function GachaPlayPage() {
     if (pickedSeats === null && seatSizes.length) setPickedSeats(seatSizes[0]);
   }, [pickedSeats, seatSizes]);
   const activeConfig = enabledConfigs.find((c) => c.seats === pickedSeats) ?? null;
+
+  // A shared private link enters the same explicit flow as a public room, but the private room
+  // is fetched by its bearer code and is never injected into the public waiting-room list.
+  useEffect(() => {
+    if (!inviteCode) {
+      setInvitedRoom(null);
+      setInviteLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setInviteLoading(true);
+    setRoomsError(null);
+    fetch(`/api/gacha/rooms/invite/${encodeURIComponent(inviteCode)}`, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error((await response.json().catch(() => null))?.message ?? "This invite is no longer valid");
+        return response.json() as Promise<WaitingRoom>;
+      })
+      .then((room) => {
+        if (cancelled) return;
+        setInvitedRoom({ ...room, inviteCode });
+        setPickedSeats(room.seats);
+        setRoomMode("browse");
+      })
+      .catch((err: any) => {
+        if (!cancelled) setRoomsError(err?.message?.length < 160 ? err.message : "This invite is no longer valid.");
+      })
+      .finally(() => { if (!cancelled) setInviteLoading(false); });
+    return () => { cancelled = true; };
+  }, [inviteCode]);
 
   const loadRooms = useCallback(async (showLoading = false) => {
     if (!activeConfig) return;
@@ -141,9 +176,12 @@ export default function GachaPlayPage() {
     setRoomMode("browse");
     setCreatedRoom(null);
     setSelectedRoomId(null);
-  }, [pickedSeats]);
+    // The invite preview sets the size from the shared room after it has loaded. Keep that
+    // preview through the resulting size update; a manual size toggle clears it explicitly.
+    if (!inviteCode) setInvitedRoom(null);
+  }, [pickedSeats, inviteCode]);
 
-  const selectedRoom = createdRoom ?? rooms.find((room) => room.id === selectedRoomId) ?? null;
+  const selectedRoom = createdRoom ?? invitedRoom ?? rooms.find((room) => room.id === selectedRoomId) ?? null;
   // Filled seat previews show only confirmed participants. Creating a room does not take a seat
   // or charge the entry yet; the creator appears here only after the explicit paid join succeeds.
   const previewMascots: (string | null)[] = Array.from({ length: activeConfig?.seats ?? 0 }, (_, i) => {
@@ -155,6 +193,7 @@ export default function GachaPlayPage() {
     setRoomMode("create");
     setSelectedRoomId(null);
     setCreatedRoom(null);
+    setInvitedRoom(null);
     setRoomName(`Room #${rooms.length + 1}`);
     setIsPrivate(false);
   }, [rooms.length]);
@@ -183,6 +222,25 @@ export default function GachaPlayPage() {
     }
   }, [activeConfig, roomName, isPrivate, authenticated, login, getAccessToken]);
 
+  const copyInviteLink = useCallback(async () => {
+    if (!createdRoom?.inviteCode) return;
+    const inviteUrl = `${window.location.origin}/app/gacha/invite/${encodeURIComponent(createdRoom.inviteCode)}`;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+    } catch {
+      const input = document.createElement("textarea");
+      input.value = inviteUrl;
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      input.remove();
+    }
+    setCopiedInvite(true);
+    window.setTimeout(() => setCopiedInvite(false), 1800);
+  }, [createdRoom?.inviteCode]);
+
   // MascotPicker normally locks a mascot to an already-joined room seat over the socket — here
   // there's no room yet, so this just captures the local pick and advances the flow.
   const handleLocalMascotPick = useCallback(async (key: string) => {
@@ -201,8 +259,9 @@ export default function GachaPlayPage() {
       try {
         const token = await getAccessToken();
         const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+        const inviteQuery = targetRoom.inviteCode ? `?inviteCode=${encodeURIComponent(targetRoom.inviteCode)}` : "";
 
-        const joinTxRes = await fetch(`/api/gacha/rooms/${targetRoom.id}/join-tx`, {
+        const joinTxRes = await fetch(`/api/gacha/rooms/${targetRoom.id}/join-tx${inviteQuery}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeader },
         });
@@ -225,14 +284,14 @@ export default function GachaPlayPage() {
         });
         const paymentTxHash = bs58.encode(sigBytes as Uint8Array);
 
-        const joinRes = await fetch(`/api/gacha/rooms/${roomId}/join`, {
+        const joinRes = await fetch(`/api/gacha/rooms/${roomId}/join${inviteQuery}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeader },
           body: JSON.stringify({ paymentTxHash, mascotKey }),
         });
         if (!joinRes.ok) throw new Error((await joinRes.json().catch(() => null))?.message ?? "Failed to join room");
 
-        router.push(`/app/gacha/${roomId}`);
+        router.push(`/app/gacha/${roomId}${inviteQuery}`);
       } catch (err: any) {
         setError(friendlyJoinError(err?.message));
         if ((err?.message ?? "").toLowerCase().includes("filled up")) {
@@ -309,6 +368,12 @@ export default function GachaPlayPage() {
           footer={
             activeConfig && (
               <div className="pp-sharewrap">
+                {createdRoom?.isPrivate && createdRoom.inviteCode && (
+                  <button type="button" className="pp-copyinvite" onClick={() => { void copyInviteLink(); }}>
+                    {copiedInvite ? <Check className="w-4 h-4" aria-hidden="true" /> : <Copy className="w-4 h-4" aria-hidden="true" />}
+                    {copiedInvite ? "Invite link copied" : "Copy invite link"}
+                  </button>
+                )}
                 <button
                   type={roomMode === "create" && !createdRoom ? "submit" : "button"}
                   form={roomMode === "create" && !createdRoom ? "gacha-create-room-form" : undefined}
@@ -343,7 +408,7 @@ export default function GachaPlayPage() {
                   type="button"
                   className={"pp-seg" + (pickedSeats === s ? " on" : "")}
                   disabled={joiningSeats !== null || creatingRoom}
-                  onClick={() => setPickedSeats(s)}
+                  onClick={() => { setInvitedRoom(null); setPickedSeats(s); }}
                 >
                   {s} players
                 </button>
@@ -358,6 +423,18 @@ export default function GachaPlayPage() {
                   {key ? <Mascot name={key} mood="none" size={56} /> : "?"}
                 </div>
               ))}
+            </div>
+          )}
+
+          {activeConfig && inviteLoading && (
+            <div className="pp-roomstatus" role="status">Loading private room…</div>
+          )}
+
+          {activeConfig && invitedRoom && !createdRoom && !inviteLoading && (
+            <div className="pp-roomcreated" role="status">
+              <span>Private room invite</span>
+              <strong>{invitedRoom.name}</strong>
+              <p>{invitedRoom.seatsFilled}/{invitedRoom.seats} joined · only people with this link can join</p>
             </div>
           )}
 
@@ -456,7 +533,7 @@ export default function GachaPlayPage() {
                   <span className="pp-switch-knob" />
                 </button>
               </div>
-              {isPrivate && <p className="pp-privatehint">Visibility will be saved. Shareable invite links arrive in the private-room follow-up.</p>}
+              {isPrivate && <p className="pp-privatehint">Only people with the invite link will be able to join this room.</p>}
               <button type="button" className="pp-roomlist-back" onClick={() => { setRoomMode("browse"); setCreatedRoom(null); }}>
                 ← back to rooms
               </button>
@@ -467,7 +544,7 @@ export default function GachaPlayPage() {
             <div className="pp-roomcreated" role="status">
               <span>{createdRoom.isPrivate ? "Private" : "Public"} room created</span>
               <strong>{createdRoom.name}</strong>
-              <p>Join this room to take the first seat.</p>
+              <p>{createdRoom.isPrivate ? "Share the invite link, then join this room to take the first seat." : "Join this room to take the first seat."}</p>
             </div>
           )}
 

@@ -18,7 +18,7 @@
 // dormant rather than deleted.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
@@ -78,6 +78,8 @@ const CARD_REVEAL_SECONDS = 30;
 export default function GachaRoomPage() {
   const params = useParams<{ roomId: string }>();
   const roomId = params.roomId;
+  const searchParams = useSearchParams();
+  const inviteCode = searchParams.get("inviteCode");
   const router = useRouter();
   const { getAccessToken } = usePrivy();
 
@@ -135,13 +137,14 @@ export default function GachaRoomPage() {
   const refresh = useCallback(async () => {
     const token = await getAccessToken().catch(() => null);
     if (!token) return;
-    const res = await fetch(`/api/gacha/rooms/${roomId}`, { headers: { Authorization: `Bearer ${token}` } });
+    const query = inviteCode ? `?inviteCode=${encodeURIComponent(inviteCode)}` : "";
+    const res = await fetch(`/api/gacha/rooms/${roomId}${query}`, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) { setError("Lost sync with the room — refresh the page if this doesn't clear up."); return; }
     const data: RoomDetail = await res.json();
     if (arrivedAlreadyRevealedRef.current === null) arrivedAlreadyRevealedRef.current = !!data.room.nftMetadata;
     setDetail(data);
     setError((e) => (e === "Lost sync with the room — refresh the page if this doesn't clear up." ? null : e));
-  }, [roomId, getAccessToken]);
+  }, [roomId, inviteCode, getAccessToken]);
 
   useEffect(() => {
     refresh();
@@ -152,7 +155,7 @@ export default function GachaRoomPage() {
   const {
     lastUpdate, lastOpened, lastSettled, lastExcluded, lastReadyUpdate, allReadyTick, readySeats: socketReadySeats, markReady, lockMascot,
     lastVoteRoundStarted, lastVoteResult, lastVoteCut, castVote,
-  } = useGachaRoomSocket(roomId, accessToken);
+  } = useGachaRoomSocket(roomId, accessToken, inviteCode);
   const {
     state: erRoomState,
     status: erSubscriptionStatus,

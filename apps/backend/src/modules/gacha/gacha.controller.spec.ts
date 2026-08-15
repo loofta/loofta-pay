@@ -4,6 +4,7 @@ import { GachaService } from "./gacha.service";
 describe("GachaController room browser", () => {
   const gacha = {
     listPublicWaitingRooms: jest.fn(),
+    getWaitingRoomByInviteCode: jest.fn(),
     createWaitingRoom: jest.fn(),
     buildJoinTxForRoom: jest.fn(),
   };
@@ -18,6 +19,13 @@ describe("GachaController room browser", () => {
       { id: "room-1" },
     ]);
     expect(gacha.listPublicWaitingRooms).toHaveBeenCalledWith("small-5");
+  });
+
+  it("forwards a private invite code to the safe preview endpoint", async () => {
+    gacha.getWaitingRoomByInviteCode.mockResolvedValue({ id: "private-room" });
+
+    await expect(controller.inviteRoom("invite-secret")).resolves.toEqual({ id: "private-room" });
+    expect(gacha.getWaitingRoomByInviteCode).toHaveBeenCalledWith("invite-secret");
   });
 
   it("creates a named room for the authenticated user", async () => {
@@ -47,7 +55,7 @@ describe("GachaController room browser", () => {
     });
 
     await expect(
-      controller.roomJoinTx("room-3", { user: { id: "privy-user-2" } }),
+      controller.roomJoinTx("room-3", undefined, { user: { id: "privy-user-2" } }),
     ).resolves.toEqual({
       roomId: "room-3",
       txBase64: "tx",
@@ -55,6 +63,7 @@ describe("GachaController room browser", () => {
     expect(gacha.buildJoinTxForRoom).toHaveBeenCalledWith(
       "room-3",
       "privy-user-2",
+      undefined,
     );
   });
 });

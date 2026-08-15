@@ -196,4 +196,7 @@
 .pp-slot.filled { border-style: solid; border-color: rgba(234,179,8,0.5); opacity: 0.9; color: #EAB308; }
 
 .pp-sharewrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.pp-copyinvite { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 9px 15px; border-radius: 999px; border: 1px solid rgba(255,253,247,0.28); background: rgba(255,253,247,0.06); color: #FFFDF7; font-size: 12px; letter-spacing: 0.08em; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.pp-copyinvite:hover { background: rgba(255,253,247,0.12); border-color: rgba(234,179,8,0.7); }
+.pp-copyinvite:focus-visible { outline: 2px solid #FFE9A8; outline-offset: 3px; }
 .pp-btn-icon { display: inline-flex; align-items: center; gap: 6px; }

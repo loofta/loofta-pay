@@ -13,6 +13,32 @@ function makeService(db: any = {}) {
 }
 
 describe("GachaService explicit room browser", () => {
+  it("requires the exact invite code for a private room join", async () => {
+    const query: any = {
+      select: jest.fn(() => query),
+      eq: jest.fn(() => query),
+      maybeSingle: jest.fn().mockResolvedValue({
+        data: {
+          id: "private-room",
+          config_key: "small-5",
+          seats: 5,
+          entry_usdc: 10,
+          status: "waiting",
+          is_private: true,
+          created_by_user_id: "owner",
+          invite_code: "invite-secret",
+        },
+        error: null,
+      }),
+    };
+    const service = makeService({ from: jest.fn(() => query) });
+
+    await expect((service as any).getJoinableRoom("private-room", "guest", "wrong-code"))
+      .rejects.toThrow("Room not found");
+    await expect((service as any).getJoinableRoom("private-room", "guest", "invite-secret"))
+      .resolves.toMatchObject({ id: "private-room", configKey: "small-5" });
+  });
+
   it("builds payment for the selected room instead of config-level auto-placement", async () => {
     const service = makeService();
     const requested = {
