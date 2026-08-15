@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { TwitterApi } from 'twitter-api-v2';
+import { TwitterApi, ApiResponseError } from 'twitter-api-v2';
 import { SupabaseService } from '@/database/supabase.service';
 import { RedisService } from '@/redis/redis.service';
 import {
@@ -18,6 +18,19 @@ export interface XProfile {
   createdAt: string;
   followersCount: number;
   profileImageUrl: string | null;
+}
+
+/** Unwraps the real reason X rejected a request — `String(e)` on a twitter-api-v2 ApiResponseError
+ *  just gives a generic "Request failed with code 403", which is useless for telling "out of
+ *  quota" apart from "wrong access level" apart from "bad credentials". X's actual error body
+ *  (title/detail/type, per api.x.com's documented error shape) says which. */
+function describeXApiError(e: unknown): string {
+  if (e instanceof ApiResponseError) {
+    const detail = e.data?.detail || e.data?.title || e.data?.error;
+    const errors = e.data?.errors?.map((err: any) => err.detail || err.message || err.title).filter(Boolean).join('; ');
+    return `HTTP ${e.code}${e.isAuthError ? ' (auth)' : ''}${e.rateLimitError ? ' (rate limit)' : ''}: ${detail || errors || e.message}`;
+  }
+  return String(e);
 }
 
 /** Bound on how many retweeters/likers/followers we'll page through for a single task —
@@ -206,23 +219,25 @@ export class XVerificationService {
 
     try {
       await this.consumeDailyCapOrThrow(`resolveXProfile:${cleanHandle}`);
-      // profile_image_url rides along on this same call — every entrant already triggers it for
-      // eligibility checks, so capturing their avatar here is zero extra API cost. X returns the
-      // "_normal" (48x48) crop; strip that suffix for a larger "_400x400" version to display.
-      const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics', 'profile_image_url'] });
+      // profile_image_url is deliberately NOT requested here anymore — Privy's own linked-account
+      // record already carries the entrant's profile picture (see GiveawayEntriesService.
+      // resolveLinkedXAccount) at zero API cost, so asking X for a second copy was pure downside:
+      // one more field that could need access this app's plan doesn't have (suspected cause of a
+      // 403 on 2026-08-15, right after a credit top-up ruled out a plain quota/payment issue).
+      const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics'] });
       if (!result.data) return null;
       const profile: XProfile = {
         id: result.data.id,
         username: result.data.username,
         createdAt: result.data.created_at ?? new Date(0).toISOString(),
         followersCount: result.data.public_metrics?.followers_count ?? 0,
-        profileImageUrl: result.data.profile_image_url?.replace('_normal.', '_400x400.') ?? null,
+        profileImageUrl: null,
       };
       this.profileCache.set(cacheKey, { profile, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
       await this.redis.set(redisKey, JSON.stringify(profile), PROFILE_CACHE_TTL_MS / 1000);
       return profile;
     } catch (e) {
-      this.logger.warn(`[XVerification] resolveXProfile(${cleanHandle}) failed: ${String(e)}`);
+      this.logger.warn(`[XVerification] resolveXProfile(${cleanHandle}) failed: ${describeXApiError(e)}`);
       return null;
     }
   }
@@ -369,8 +384,9 @@ export class XVerificationService {
           return; // not an X task
       }
     } catch (e) {
-      this.logger.warn(`[XVerification] ${giveaway.id} task ${task.id} (${task.task_type}): fetch failed, marking all pending as api_error: ${String(e)}`);
-      await this.markAll(pending.map((p) => p.completion.id), GiveawayTaskCompletionStatus.API_ERROR, { error: String(e) });
+      const reason = describeXApiError(e);
+      this.logger.warn(`[XVerification] ${giveaway.id} task ${task.id} (${task.task_type}): fetch failed, marking all pending as api_error: ${reason}`);
+      await this.markAll(pending.map((p) => p.completion.id), GiveawayTaskCompletionStatus.API_ERROR, { error: reason });
       return;
     }
 

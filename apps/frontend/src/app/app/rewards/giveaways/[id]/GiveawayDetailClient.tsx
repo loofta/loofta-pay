@@ -6,7 +6,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Check, Loader2, Trash2, Download, Pencil, ShieldCheck, ExternalLink, ChevronDown,
-  Repeat2, Heart, MessageCircle, Bookmark, Send, MessageSquare, Link2, Sparkles, Twitter,
+  Repeat2, Heart, MessageCircle, Bookmark, Send, MessageSquare, Link2, Sparkles, Twitter, ImagePlus,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePrivy, useLinkAccount } from "@privy-io/react-auth";
@@ -1038,7 +1038,6 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                       const key = `engage-${group.target}`;
                       const instructions = group.tasks.find((t) => t.config?.comment_requirement || t.config?.instructions);
                       const groupTaskIds = group.tasks.map((t) => t.id);
-                      const subtitle = group.tasks.map((t) => ENGAGE_ACTION_LABELS[t.task_type] ?? t.task_type).join(" + ");
                       const isOpen = expandedTaskKey === key;
                       const isVerifying = verifyingKey === key;
                       // The plain "hasn't been attempted yet" state — not verified, not rejected/
@@ -1064,7 +1063,6 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                             </span>
                             <span className="flex-1 min-w-0">
                               <span className="block text-base font-medium text-white truncate">Engage with the post</span>
-                              <span className="block text-sm text-slate-400 truncate">{subtitle}</span>
                             </span>
                             {meta && <span className={`shrink-0 text-sm font-semibold ${meta.textColor}`}>{meta.label}</span>}
                             <ChevronDown className={`w-4 h-4 shrink-0 text-slate-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
@@ -1167,6 +1165,10 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                     // state gets the unified Open/Verify button pair.
                     const showUnifiedActions =
                       !!myEntry && status !== "verified" && !giveawayEnded && !requiresProof && status !== "rejected" && status !== "api_error" && status !== "pending_review";
+                    // Proof-required tasks (e.g. Telegram join) get their own "Open the link" button
+                    // right above the upload UI, instead of the plain text link above — same reason
+                    // as showUnifiedActions: don't show the target link twice.
+                    const showProofFlow = !!myEntry && status !== "verified" && !giveawayEnded && status !== "pending_review" && requiresProof;
                     return (
                       <div
                         key={task.id}
@@ -1185,18 +1187,13 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                           </span>
                           <span className="flex-1 min-w-0">
                             <span className="block text-base font-medium text-white truncate">{title}</span>
-                            {(showTargetAsLink || showTargetAsText) && (
-                              <span className="block text-sm text-slate-400 truncate">
-                                {taskTargetDisplay(task.config.target as string, task.task_type)}
-                              </span>
-                            )}
                           </span>
                           {meta && <span className={`shrink-0 text-sm font-semibold ${meta.textColor}`}>{meta.label}</span>}
                           <ChevronDown className={`w-4 h-4 shrink-0 text-slate-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
                         </button>
                         {isOpen && (
                           <div className="px-3 pb-3 pt-3 border-t border-white/[0.06] space-y-2.5 animate-in fade-in slide-in-from-top-1 duration-200">
-                            {showTargetAsLink && !showUnifiedActions && (
+                            {showTargetAsLink && !showUnifiedActions && !showProofFlow && (
                               <a href={taskTargetHref(task.config.target as string, task.task_type)} target="_blank" rel="noopener noreferrer" className={taskLinkClass} style={{ color: ACCENT }}>
                                 {taskTargetDisplay(task.config.target as string, task.task_type)}
                               </a>
@@ -1216,33 +1213,56 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                               ) : giveawayEnded ? (
                                 <span className="block text-base font-medium text-slate-500">Giveaway ended, can no longer be verified</span>
                               ) : requiresProof ? (
-                                <div className="space-y-2">
+                                <div className="space-y-4">
                                   {status === "rejected" && <p className="text-base font-medium text-red-400">Rejected — submit new proof to try again</p>}
-                                  <input
-                                    type="text"
-                                    value={proofText}
-                                    onChange={(e) => setTaskProofText((prev) => ({ ...prev, [task.id]: e.target.value }))}
-                                    placeholder="Link to your proof (optional if you upload a screenshot)"
-                                    className="w-full text-base rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-white placeholder:text-slate-500 focus:outline-none focus:border-[#FF7A2A]/40"
-                                  />
-                                  <div className="flex items-center gap-3">
-                                    <label className="cursor-pointer text-base font-medium border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all rounded-lg px-3 py-2">
-                                      {uploadingProof ? "Uploading…" : proofImageUrl ? "Change screenshot" : "Upload screenshot"}
+                                  {showTargetAsLink && (
+                                    <div>
+                                      <p className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-1.5">1. Do the task</p>
+                                      <a
+                                        href={taskTargetHref(task.config.target as string, task.task_type)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className={`w-full flex items-center justify-center gap-1.5 px-4 py-2.5 ${taskActionButtonClass}`}
+                                      >
+                                        Open the link <ExternalLink className="w-4 h-4" />
+                                      </a>
+                                    </div>
+                                  )}
+                                  <div>
+                                    <p className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-1.5">
+                                      {showTargetAsLink ? "2. " : ""}Submit proof you did it
+                                    </p>
+                                    <div className="space-y-2">
+                                      <label className="flex items-center justify-center gap-2 cursor-pointer text-base font-medium border border-white/10 bg-white/[0.03] text-slate-200 hover:bg-white/[0.06] transition-all rounded-lg px-4 py-2.5">
+                                        {proofImageUrl ? (
+                                          <Image src={proofImageUrl} alt="" width={20} height={20} className="rounded object-cover shrink-0" />
+                                        ) : (
+                                          <ImagePlus className="w-4 h-4 shrink-0" />
+                                        )}
+                                        {uploadingProof ? "Uploading…" : proofImageUrl ? "Screenshot added — change it" : "Upload a screenshot"}
+                                        <input
+                                          type="file"
+                                          accept="image/*"
+                                          className="hidden"
+                                          disabled={uploadingProof}
+                                          onChange={(e) => {
+                                            const file = e.target.files?.[0];
+                                            if (file) uploadTaskProof(task.id, file);
+                                            e.target.value = "";
+                                          }}
+                                        />
+                                      </label>
+                                      <div className="flex items-center gap-2 text-sm text-slate-500">
+                                        <div className="h-px flex-1 bg-white/10" /> or <div className="h-px flex-1 bg-white/10" />
+                                      </div>
                                       <input
-                                        type="file"
-                                        accept="image/*"
-                                        className="hidden"
-                                        disabled={uploadingProof}
-                                        onChange={(e) => {
-                                          const file = e.target.files?.[0];
-                                          if (file) uploadTaskProof(task.id, file);
-                                          e.target.value = "";
-                                        }}
+                                        type="text"
+                                        value={proofText}
+                                        onChange={(e) => setTaskProofText((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                                        placeholder="Paste a link to your proof instead"
+                                        className="w-full text-base rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-white placeholder:text-slate-500 focus:outline-none focus:border-[#FF7A2A]/40"
                                       />
-                                    </label>
-                                    {proofImageUrl && (
-                                      <Image src={proofImageUrl} alt="" width={36} height={36} className="rounded-lg object-cover border border-white/10 shrink-0" />
-                                    )}
+                                    </div>
                                   </div>
                                   <button
                                     type="button"

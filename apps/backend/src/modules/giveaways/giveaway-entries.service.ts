@@ -100,7 +100,8 @@ export class GiveawayEntriesService {
       }
       xUserId = profile.id;
       xHandle = profile.username;
-      avatarUrl = profile.profileImageUrl;
+      // avatarUrl stays whatever resolveLinkedXAccount (Privy) already gave us — resolveXProfile
+      // no longer fetches profile_image_url from X at all, see its doc comment.
       eligibilitySnapshot = { followers_count: profile.followersCount, account_created_at: profile.createdAt };
 
       const failReason =
