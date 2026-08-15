@@ -227,7 +227,7 @@ export class GachaOnchainStateService {
   }
 
   /** Lazily creates + delegates a room's state account the first time anything needs it, instead
-   *  of requiring a dedicated hook into room creation (gacha.service.ts's findOrCreateWaitingRoom)
+   *  of requiring a dedicated hook into room creation
    *  — keeps Phase 1's diff contained to the gateway. A no-op if the account is already delegated,
    *  or already exists on base layer (e.g. a concurrent caller's init raced this one — Anchor's
    *  own `init` constraint would reject a second create, so this check-then-create has a narrow

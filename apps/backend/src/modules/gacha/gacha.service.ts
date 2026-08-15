@@ -108,6 +108,18 @@ export interface RoomSummary {
   createdAt: string;
 }
 
+export interface WaitingRoomSummary {
+  id: string;
+  name: string;
+  configKey: string;
+  seats: number;
+  entryUsdc: number;
+  seatsFilled: number;
+  isPrivate: boolean;
+  createdAt: string;
+  participants: Array<{ seatNumber: number; mascotKey: string | null }>;
+}
+
 @Injectable()
 export class GachaService {
   private readonly logger = new Logger(GachaService.name);
@@ -265,6 +277,103 @@ export class GachaService {
       bidWindowEndsAt: r.bid_window_ends_at,
       createdAt: r.created_at,
     }));
+  }
+
+  /** Public lobby data for one room size/config. Private rooms are deliberately absent until
+   *  LOO-7 adds invite-token authorization; this endpoint is safe to call before authentication. */
+  async listPublicWaitingRooms(configKey: string): Promise<WaitingRoomSummary[]> {
+    await this.getConfig(configKey);
+    const db = this.supabase.getClient();
+    const { data: rooms, error } = await db
+      .from('gacha_rooms')
+      .select('id, name, config_key, seats, entry_usdc, is_private, created_at')
+      .eq('config_key', configKey)
+      .eq('status', 'waiting')
+      .eq('is_private', false)
+      .order('created_at', { ascending: true });
+    if (error) throw new Error(`Failed to list waiting gacha rooms: ${error.message}`);
+
+    const summaries = await this.hydrateWaitingRoomSummaries(rooms ?? []);
+    return summaries
+      .filter((room) => room.seatsFilled < room.seats)
+      .sort((a, b) => b.seatsFilled - a.seatsFilled || a.createdAt.localeCompare(b.createdAt));
+  }
+
+  /** Creates a distinct room even when another room of the same config has open seats. Stable
+   *  numbering and the insert happen in one database function under a per-config lock. */
+  async createWaitingRoom(
+    configKey: string,
+    userId: string,
+    name: string | undefined,
+    isPrivate: boolean,
+  ): Promise<WaitingRoomSummary> {
+    await this.getConfig(configKey);
+    const normalizedName = name?.trim();
+    if (normalizedName !== undefined && !normalizedName) throw new BadRequestException('Room name cannot be empty');
+    if (normalizedName && normalizedName.length > 24) throw new BadRequestException('Room name must be 24 characters or fewer');
+
+    const existing = await this.findExistingWaitingRoomForUser(configKey, userId);
+    if (existing) throw new BadRequestException('You already have a seat in a waiting room for this size');
+
+    const db = this.supabase.getClient();
+    const { data: roomId, error } = await db.rpc('gacha_create_waiting_room', {
+      p_config_key: configKey,
+      p_created_by_user_id: userId,
+      p_room_name: normalizedName || null,
+      p_is_private: isPrivate,
+    });
+    if (error || !roomId) throw new Error(`Failed to create gacha room: ${error?.message ?? 'No room returned'}`);
+
+    return this.getWaitingRoomSummary(String(roomId), userId);
+  }
+
+  private async getWaitingRoomSummary(roomId: string, viewerUserId?: string): Promise<WaitingRoomSummary> {
+    const db = this.supabase.getClient();
+    const { data: room, error } = await db
+      .from('gacha_rooms')
+      .select('id, name, config_key, seats, entry_usdc, is_private, created_by_user_id, created_at, status')
+      .eq('id', roomId)
+      .maybeSingle();
+    if (error || !room || room.status !== 'waiting') throw new NotFoundException('Waiting room not found');
+    if (room.is_private && room.created_by_user_id !== viewerUserId) throw new NotFoundException('Waiting room not found');
+    const [summary] = await this.hydrateWaitingRoomSummaries([room]);
+    if (!summary || summary.seatsFilled >= summary.seats) throw new BadRequestException('This room is full');
+    return summary;
+  }
+
+  private async hydrateWaitingRoomSummaries(rooms: any[]): Promise<WaitingRoomSummary[]> {
+    if (!rooms.length) return [];
+    const db = this.supabase.getClient();
+    const roomIds = rooms.map((room) => room.id);
+    const { data: participantRows, error } = await db
+      .from('gacha_room_participants')
+      .select('room_id, seat_number, mascot_key')
+      .in('room_id', roomIds)
+      .order('seat_number', { ascending: true });
+    if (error) throw new Error(`Failed to load waiting room participants: ${error.message}`);
+
+    const participantsByRoom: Record<string, Array<{ seatNumber: number; mascotKey: string | null }>> = {};
+    for (const participant of participantRows ?? []) {
+      (participantsByRoom[participant.room_id] ??= []).push({
+        seatNumber: participant.seat_number,
+        mascotKey: participant.mascot_key ?? null,
+      });
+    }
+
+    return rooms.map((room) => {
+      const participants = participantsByRoom[room.id] ?? [];
+      return {
+        id: room.id,
+        name: room.name,
+        configKey: room.config_key,
+        seats: room.seats,
+        entryUsdc: Number(room.entry_usdc),
+        seatsFilled: participants.length,
+        isPrivate: !!room.is_private,
+        createdAt: room.created_at,
+        participants,
+      };
+    });
   }
 
   /**
@@ -453,44 +562,71 @@ export class GachaService {
 
   // ── Join flow ──────────────────────────────────────────────────────────────────────
 
-  /**
-   * Finds an existing `waiting` room for this config with an open seat, or creates a new one.
-   * Then builds the entry-payment transfer (treasury sponsors gas + destination ATA, same as
-   * PackService.buildPaymentTx) with an SPL Memo instruction encoding the room id — required
-   * because, unlike Mystery Pack, many rooms share this one treasury address at once, so a
-   * payment must be attributable to a specific room, not just "≥$X arrived" (see confirmJoin).
-   */
-  async buildJoinTx(configKey: string, userId: string): Promise<{ txBase64: string | null; roomId: string; entryUsdc: number; alreadyJoined?: boolean }> {
-    const cfg = await this.getConfig(configKey);
+  /** Explicit room path used by the LOO-6 lobby. The client chooses the room id; the backend
+   *  verifies its config/status/visibility/capacity before constructing a memo-bound payment. */
+  async buildJoinTxForRoom(roomId: string, userId: string): Promise<{ txBase64: string | null; roomId: string; entryUsdc: number; alreadyJoined?: boolean }> {
+    const requestedRoom = await this.getJoinableRoom(roomId, userId);
+    const existing = await this.findExistingWaitingRoomForUser(requestedRoom.configKey, userId);
+    if (existing) return { txBase64: null, roomId: existing.id, entryUsdc: existing.entryUsdc, alreadyJoined: true };
 
-    // Without this, a user re-clicking Join for the same config (e.g. after navigating away and
-    // back, before their room has filled) gets routed by findOrCreateWaitingRoom straight back
-    // into the SAME room they already paid into — building and signing a genuinely NEW, real
-    // payment for a seat they already hold. The second payment lands on-chain (real money moved)
-    // but confirmJoin's insert then fails on the (room_id, user_id) unique constraint, so it's
-    // never recorded — a real, silently-lost payment. Block it before any transaction exists.
+    await this.assertRoomHasOpenSeat(requestedRoom);
+    return this.buildEntryPaymentTx(requestedRoom, userId);
+  }
+
+  private async findExistingWaitingRoomForUser(
+    configKey: string,
+    userId: string,
+  ): Promise<{ id: string; entryUsdc: number } | null> {
     const db = this.supabase.getClient();
-    const { data: myRoomIds } = await db.from('gacha_room_participants').select('room_id').eq('user_id', userId);
-    if (myRoomIds?.length) {
-      const { data: existingSeat } = await db
-        .from('gacha_rooms')
-        .select('id')
-        .in('id', myRoomIds.map((r: any) => r.room_id))
-        .eq('config_key', configKey)
-        .eq('status', 'waiting')
-        .limit(1)
-        .maybeSingle();
-      // No transaction to sign — the caller already has a seat here. Send them straight back to
-      // it (alreadyJoined: true, txBase64 omitted) instead of erroring into a dead end.
-      if (existingSeat) return { txBase64: null, roomId: existingSeat.id, entryUsdc: cfg.entryUsdc, alreadyJoined: true };
-    }
+    const { data: myRoomIds, error: participantError } = await db.from('gacha_room_participants').select('room_id').eq('user_id', userId);
+    if (participantError) throw new Error(`Failed to load existing Gacha seats: ${participantError.message}`);
+    if (!myRoomIds?.length) return null;
+
+    const { data: existingSeat, error } = await db
+      .from('gacha_rooms')
+      .select('id, entry_usdc')
+      .in('id', myRoomIds.map((row: any) => row.room_id))
+      .eq('config_key', configKey)
+      .eq('status', 'waiting')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(`Failed to load existing Gacha room: ${error.message}`);
+    return existingSeat ? { id: existingSeat.id, entryUsdc: Number(existingSeat.entry_usdc) } : null;
+  }
+
+  private async getJoinableRoom(
+    roomId: string,
+    userId: string,
+  ): Promise<{ id: string; configKey: string; seats: number; entryUsdc: number }> {
+    const db = this.supabase.getClient();
+    const { data: room, error } = await db
+      .from('gacha_rooms')
+      .select('id, config_key, seats, entry_usdc, status, is_private, created_by_user_id')
+      .eq('id', roomId)
+      .maybeSingle();
+    if (error || !room) throw new NotFoundException('Room not found');
+    if (room.status !== 'waiting') throw new BadRequestException(`Room is no longer accepting joins (status: ${room.status})`);
+    if (room.is_private && room.created_by_user_id !== userId) throw new BadRequestException('Private room invites are not available yet');
+
+    return { id: room.id, configKey: room.config_key, seats: room.seats, entryUsdc: Number(room.entry_usdc) };
+  }
+
+  private async assertRoomHasOpenSeat(room: { id: string; seats: number }): Promise<void> {
+    const seatsFilled = await this.getParticipantCount(room.id);
+    if (seatsFilled >= room.seats) throw new BadRequestException('This room just filled up — choose another room');
+  }
+
+  private async buildEntryPaymentTx(
+    room: { id: string; entryUsdc: number },
+    userId: string,
+  ): Promise<{ txBase64: string; roomId: string; entryUsdc: number }> {
 
     // Never trust a client-supplied wallet for a treasury-funded transaction. The authenticated
     // Privy identity is the source of truth for both optional devnet funding and payment
     // verification, so a caller cannot use this endpoint as an arbitrary-wallet faucet.
     const userSolanaAddress = await this.usersService.getSolanaWalletAddress(userId);
-    await this.ensureDevnetTestFunds(userSolanaAddress, cfg.entryUsdc);
-    const room = await this.findOrCreateWaitingRoom(cfg);
+    await this.ensureDevnetTestFunds(userSolanaAddress, room.entryUsdc);
 
     const treasuryKeypair = await this.getTreasuryKeypair();
     const conn = await this.getSolanaConnection();
@@ -501,7 +637,7 @@ export class GachaService {
     const instructions: TransactionInstruction[] = [
       new TransactionInstruction({ programId: MEMO_PROGRAM_ID, keys: [], data: Buffer.from(`${ROOM_MEMO_PREFIX}${room.id}`, 'utf8') }),
       createAssociatedTokenAccountIdempotentInstruction(treasuryKeypair.publicKey, toAta, treasuryKeypair.publicKey, this.usdcMint),
-      createTransferInstruction(fromAta, toAta, fromPubkey, Math.round(cfg.entryUsdc * 1_000_000)),
+      createTransferInstruction(fromAta, toAta, fromPubkey, Math.round(room.entryUsdc * 1_000_000)),
     ];
 
     const { blockhash } = await conn.getLatestBlockhash();
@@ -509,32 +645,7 @@ export class GachaService {
     const tx = new VersionedTransaction(message);
     tx.sign([treasuryKeypair]);
 
-    return { txBase64: Buffer.from(tx.serialize()).toString('base64'), roomId: room.id, entryUsdc: cfg.entryUsdc };
-  }
-
-  private async findOrCreateWaitingRoom(cfg: RoomConfigPublic): Promise<{ id: string }> {
-    const db = this.supabase.getClient();
-    const { data: candidates, error } = await db
-      .from('gacha_rooms')
-      .select('id')
-      .eq('config_key', cfg.configKey)
-      .eq('status', 'waiting')
-      .order('created_at', { ascending: true });
-    if (error) throw new Error(`Failed to list waiting gacha rooms: ${error.message}`);
-
-    if (candidates?.length) {
-      const counts = await this.countParticipantsByRoom(candidates.map((c: any) => c.id));
-      const open = candidates.find((c: any) => (counts[c.id] ?? 0) < cfg.seats);
-      if (open) return { id: open.id };
-    }
-
-    const { data: created, error: insertError } = await db
-      .from('gacha_rooms')
-      .insert({ config_key: cfg.configKey, pack_type: cfg.packType, seats: cfg.seats, entry_usdc: cfg.entryUsdc, exclusion_count: cfg.exclusionCount, status: 'waiting' })
-      .select('id')
-      .single();
-    if (insertError || !created) throw new Error(`Failed to create gacha room: ${insertError?.message}`);
-    return { id: created.id };
+    return { txBase64: Buffer.from(tx.serialize()).toString('base64'), roomId: room.id, entryUsdc: room.entryUsdc };
   }
 
   /**

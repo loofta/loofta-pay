@@ -7,6 +7,9 @@ proceeds.
 
 The frontend entry route is `/app/gacha`; the guided join flow is `/app/gacha/play`; a room is
 `/app/gacha/:roomId`. The frontend proxies REST calls through `/api/gacha/*` to the Nest backend.
+The play route lists public waiting rooms for the selected size, defaults to the fullest one, and
+builds the entry transaction for the exact room the player selected. There is no Quick Play or
+automatic room-placement endpoint: every new entry starts in the explicit room browser.
 When the ER subscription flag is enabled, ready/vote reads come directly from the delegated room
 PDA; Socket.IO remains the fallback and carries database-only lifecycle/mascot/exclusion events.
 
@@ -112,14 +115,16 @@ should be entered directly into the ignored backend env file or the team's secre
 
 ## Database
 
-Apply all migrations through `20260809120000_harden_gacha_invariants.sql`. The hardening
-migration adds:
+Apply all migrations through `20260815130000_remove_gacha_quick_play.sql`. The Gacha
+hardening and room-browser migrations add:
 
 - atomic payout-claim locks;
 - idempotent failed-join refund records;
 - room/config bounds required by the exclusion game and u16 on-chain masks;
 - unique room seat numbers and bid payment hashes;
-- immutable locked mascots.
+- immutable locked mascots;
+- stable room names, visibility, and creator metadata;
+- advisory-lock-protected room numbering and explicit room creation.
 
 All Gacha tables use RLS and are accessible only through the service-role backend.
 
@@ -140,9 +145,11 @@ npm test --workspace=@loofta/backend -- --runInBand src/modules/gacha/gacha-payo
 cargo test -p gacha-room-state
 ```
 
-The backend cron advances VRF/voting/settlement only when `NODE_ENV=production`, preventing a
-local process from racing the shared deployment. Local dev tools expose authenticated,
-non-production-only force-advance endpoints.
+The backend cron advances the MagicBlock VRF exclusion and voting lifecycle in every environment,
+because a VRF request must be polled to receive its asynchronous fulfillment. The legacy
+bidding/settlement sweep remains `NODE_ENV=production`-only, preventing a local process from
+racing the shared production deployment. Local dev tools still expose authenticated,
+non-production-only force-advance endpoints as recovery/debugging fallbacks.
 
 ## Security and correctness invariants
 
@@ -152,6 +159,9 @@ non-production-only force-advance endpoints.
   success, and replay protection.
 - The waiting-to-purchasing update is a conditional atomic claim, so the last-seat race cannot
   buy two packs.
+- Explicit joins bind the payment memo to the selected room id. The database seat trigger
+  serializes final participant inserts, and room creation serializes per-config room-number
+  allocation, so concurrent requests cannot oversell capacity or race duplicate room numbers.
 - A valid payment that loses the final-seat race is refunded exactly once using its transaction
   hash as the idempotency key.
 - VRF never silently falls back to `Math.random`; stalled oracle requests remain visible and

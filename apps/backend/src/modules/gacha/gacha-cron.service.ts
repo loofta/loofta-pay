@@ -4,11 +4,15 @@ import { Cron } from '@nestjs/schedule';
 import { GachaService } from './gacha.service';
 
 /**
- * Same NODE_ENV=production gate as LotteryCronService (modules/lottery/lottery-cron.service.ts)
- * and the same reasoning: settlement touches shared, money-moving state (bid grace windows,
- * treasury buyback/NFT-transfer transactions) keyed only by DB row with no per-instance
- * ownership — running this locally against the same Supabase project as Railway would mean two
- * independent instances racing to settle the same room.
+ * VRF exclusion and voting are lifecycle progress, not production settlement. They must run in
+ * development too: requesting randomness is only the first half of MagicBlock VRF; the result is
+ * delivered asynchronously and has to be polled before the room can leave `excluding`. Keeping
+ * those sweeps behind NODE_ENV=production made every real local-devnet game depend on the manual
+ * force endpoints.
+ *
+ * The legacy bidding/settlement sweep remains production-only. It touches shared money-moving
+ * state (bid grace windows and treasury transfers), so a local process must not race Railway for
+ * ownership of that work.
  */
 @Injectable()
 export class GachaCronService {
@@ -19,7 +23,7 @@ export class GachaCronService {
     private readonly config: ConfigService,
   ) {
     if (!this.isProd) {
-      this.logger.warn('GachaCronService: NODE_ENV != production — settlement sweep disabled on this instance');
+      this.logger.warn('GachaCronService: NODE_ENV != production — VRF/voting lifecycle enabled; legacy settlement sweep disabled');
     }
   }
 
@@ -33,9 +37,10 @@ export class GachaCronService {
    *  'bidding' anymore — but left running rather than removed, same as the bid code itself). */
   @Cron('*/15 * * * * *')
   async sweep(): Promise<void> {
-    if (!this.isProd) return;
     await this.gacha.advanceExcludingRooms().catch((e) => this.logger.error(`advanceExcludingRooms: ${e.message}`));
     await this.gacha.advanceVotingRooms().catch((e) => this.logger.error(`advanceVotingRooms: ${e.message}`));
-    await this.gacha.settleDueRooms().catch((e) => this.logger.error(`settleDueRooms: ${e.message}`));
+    if (this.isProd) {
+      await this.gacha.settleDueRooms().catch((e) => this.logger.error(`settleDueRooms: ${e.message}`));
+    }
   }
 }
