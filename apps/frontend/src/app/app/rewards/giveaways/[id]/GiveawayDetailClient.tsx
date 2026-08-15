@@ -200,6 +200,13 @@ function taskTargetHref(target: string, taskType: string): string {
   return /^https?:\/\//i.test(t) ? t : `https://${t}`;
 }
 
+/** x_follow stores a bare handle ("loofta") — display it with the leading "@" entrants expect,
+ *  without double-prefixing if it was ever stored with one. Everything else displays as-is. */
+function taskTargetDisplay(target: string, taskType: string): string {
+  if (taskType === "x_follow") return `@${target.trim().replace(/^@/, "")}`;
+  return target;
+}
+
 /** On its own line (not squeezed inline with the action list above) so it doesn't blend into
  *  body text, colored with the app's accent instead of a bordered pill. */
 const taskLinkClass = "block text-base font-normal mt-2 truncate hover:underline underline-offset-2 transition-opacity hover:opacity-80";
@@ -689,26 +696,25 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
       <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
         <div className="max-w-lg mx-auto px-4 py-6 pb-24">
           <div className="flex items-center justify-between gap-2 mb-3">
-            <div className="flex items-center gap-1.5 min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
               {/* An official ("create as Loofta") giveaway always shows just the Loofta brand —
                   never alongside or replaced by a project logo/name, regardless of what's set. */}
               {giveaway.is_official ? (
                 <>
-                  <Image src="/loofta_icon_magic.png" alt="" width={24} height={24} className="rounded-full shrink-0" />
+                  <Image src="/loofta_icon_magic.png" alt="" width={36} height={36} className="rounded-full shrink-0" />
                   <span className="text-lg font-semibold text-white truncate">Loofta</span>
                 </>
               ) : (giveaway.logo_url || giveaway.project_name) ? (
                 <>
                   {giveaway.logo_url && (
-                    <Image src={giveaway.logo_url} alt="" width={16} height={16} className="rounded-full object-cover shrink-0" />
+                    <Image src={giveaway.logo_url} alt="" width={36} height={36} className="rounded-full object-cover shrink-0" />
                   )}
                   {giveaway.project_name && <span className="text-sm font-medium text-slate-400 truncate">{giveaway.project_name}</span>}
                 </>
               ) : null}
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-base font-semibold border ${statusColor(giveaway.status)}`}>
-                {isEscrowSecured && <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" aria-hidden="true" />}
+              <span className={`inline-flex items-center px-3 py-1 rounded-full text-base font-semibold border ${statusColor(giveaway.status)}`}>
                 {STATUS_LABELS[giveaway.status] ?? giveaway.status.replace(/_/g, " ")}
               </span>
               {giveaway.is_devnet && (
@@ -996,43 +1002,37 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             );
           })()}
 
-          {authenticated && hasXLinked && (() => {
+          {authenticated && hasXLinked && myEntry && myEntry.status !== "disqualified" && (() => {
             const displayGroups = groupTasksForDisplay(giveaway.tasks);
-            const groupStatuses: RowStatus[] = myEntry
-              ? displayGroups.map((group) => {
-                  if (group.kind === "engage") {
-                    const subStatuses = group.tasks.map((t) => myEntry.completions.find((c) => c.giveaway_task_id === t.id)?.verification_status ?? "pending");
-                    return resolveEngageStatus(subStatuses);
-                  }
-                  const completion = myEntry.completions.find((c) => c.giveaway_task_id === group.task.id);
-                  return resolveSingleStatus(completion?.verification_status, !!completion?.submission_data);
-                })
-              : [];
+            const groupStatuses: RowStatus[] = displayGroups.map((group) => {
+              if (group.kind === "engage") {
+                const subStatuses = group.tasks.map((t) => myEntry.completions.find((c) => c.giveaway_task_id === t.id)?.verification_status ?? "pending");
+                return resolveEngageStatus(subStatuses);
+              }
+              const completion = myEntry.completions.find((c) => c.giveaway_task_id === group.task.id);
+              return resolveSingleStatus(completion?.verification_status, !!completion?.submission_data);
+            });
             const doneGroupCount = groupStatuses.filter((s) => s === "verified").length;
             const taskPct = displayGroups.length ? Math.round((doneGroupCount / displayGroups.length) * 100) : 0;
 
             return (
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-5">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-base font-medium text-slate-400 uppercase tracking-widest">Tasks</p>
-                  {myEntry && (
-                    <span className="text-sm text-slate-400">
-                      <span className="font-semibold text-emerald-400">{doneGroupCount}</span> of {displayGroups.length} verified
-                    </span>
-                  )}
+                  <p className="text-base font-medium text-slate-400 uppercase tracking-widest">Your tasks</p>
+                  <span className="text-sm text-slate-400">
+                    <span className="font-semibold text-emerald-400">{doneGroupCount}</span> of {displayGroups.length} verified
+                  </span>
                 </div>
-                {myEntry && (
-                  <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden mb-3">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] transition-all duration-500 ease-out"
-                      style={{ width: `${taskPct}%` }}
-                    />
-                  </div>
-                )}
+                <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden mb-3">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] transition-all duration-500 ease-out"
+                    style={{ width: `${taskPct}%` }}
+                  />
+                </div>
                 <div className="space-y-2">
                   {displayGroups.map((group, groupIndex) => {
-                    const status: RowStatus | null = myEntry ? groupStatuses[groupIndex] : null;
-                    const meta = status ? ROW_STATUS_META[status] : null;
+                    const status: RowStatus = groupStatuses[groupIndex];
+                    const meta = ROW_STATUS_META[status];
 
                     if (group.kind === "engage") {
                       const key = `engage-${group.target}`;
@@ -1041,8 +1041,18 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                       const subtitle = group.tasks.map((t) => ENGAGE_ACTION_LABELS[t.task_type] ?? t.task_type).join(" + ");
                       const isOpen = expandedTaskKey === key;
                       const isVerifying = verifyingKey === key;
+                      // The plain "hasn't been attempted yet" state — not verified, not rejected/
+                      // erroring, not pending manual review, giveaway still open. This is the only
+                      // state that gets the unified "Open the post / Verify" button pair; every
+                      // other state (rejected, pending, ended) keeps its own dedicated messaging.
+                      const showUnifiedActions = !!myEntry && status !== "verified" && status !== "rejected" && status !== "api_error" && !giveawayEnded;
                       return (
-                        <div key={key} className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden transition-colors">
+                        <div
+                          key={key}
+                          className={`rounded-xl border overflow-hidden transition-colors ${
+                            status === "verified" ? "border-emerald-500/30 bg-emerald-500/[0.06]" : "border-white/10 bg-white/[0.03]"
+                          }`}
+                        >
                           <button
                             type="button"
                             onClick={() => setExpandedTaskKey((cur) => (cur === key ? null : key))}
@@ -1056,7 +1066,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                               <span className="block text-base font-medium text-white truncate">Engage with the post</span>
                               <span className="block text-sm text-slate-400 truncate">{subtitle}</span>
                             </span>
-                            {meta && <span className={`shrink-0 text-sm font-medium ${meta.textColor}`}>{meta.label}</span>}
+                            {meta && <span className={`shrink-0 text-sm font-semibold ${meta.textColor}`}>{meta.label}</span>}
                             <ChevronDown className={`w-4 h-4 shrink-0 text-slate-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
                           </button>
                           {isOpen && (
@@ -1076,7 +1086,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                                   );
                                 })}
                               </p>
-                              {group.target && (
+                              {group.target && !showUnifiedActions && (
                                 <a href={taskTargetHref(group.target, "x_retweet")} target="_blank" rel="noopener noreferrer" className={taskLinkClass} style={{ color: ACCENT }}>
                                   {group.target}
                                 </a>
@@ -1104,15 +1114,27 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                                     </button>
                                   </div>
                                 ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => verifyEngageGroup(groupTaskIds, key)}
-                                    disabled={isVerifying}
-                                    className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 ${taskActionButtonClass}`}
-                                  >
-                                    {isVerifying && <Loader2 className="w-4 h-4 animate-spin" />}
-                                    {isVerifying ? "Verifying…" : "Verify"}
-                                  </button>
+                                  <div className="flex items-center gap-2">
+                                    {group.target && (
+                                      <a
+                                        href={taskTargetHref(group.target, "x_retweet")}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 ${taskActionButtonClass}`}
+                                      >
+                                        Open the post <ExternalLink className="w-4 h-4" />
+                                      </a>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => verifyEngageGroup(groupTaskIds, key)}
+                                      disabled={isVerifying}
+                                      className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 ${taskActionButtonClass}`}
+                                    >
+                                      {isVerifying && <Loader2 className="w-4 h-4 animate-spin" />}
+                                      {isVerifying ? "Verifying…" : "Verify"}
+                                    </button>
+                                  </div>
                                 )
                               )}
                             </div>
@@ -1141,8 +1163,17 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                     const canSubmitProof = !!(proofText.trim() || proofImageUrl);
                     const isOpen = expandedTaskKey === key;
                     const isVerifying = verifyingKey === key;
+                    // Same "hasn't been attempted yet" gate as the engage group above — only this
+                    // state gets the unified Open/Verify button pair.
+                    const showUnifiedActions =
+                      !!myEntry && status !== "verified" && !giveawayEnded && !requiresProof && status !== "rejected" && status !== "api_error" && status !== "pending_review";
                     return (
-                      <div key={task.id} className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden transition-colors">
+                      <div
+                        key={task.id}
+                        className={`rounded-xl border overflow-hidden transition-colors ${
+                          status === "verified" ? "border-emerald-500/30 bg-emerald-500/[0.06]" : "border-white/10 bg-white/[0.03]"
+                        }`}
+                      >
                         <button
                           type="button"
                           onClick={() => setExpandedTaskKey((cur) => (cur === key ? null : key))}
@@ -1155,17 +1186,19 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                           <span className="flex-1 min-w-0">
                             <span className="block text-base font-medium text-white truncate">{title}</span>
                             {(showTargetAsLink || showTargetAsText) && (
-                              <span className="block text-sm text-slate-400 truncate">{task.config.target}</span>
+                              <span className="block text-sm text-slate-400 truncate">
+                                {taskTargetDisplay(task.config.target as string, task.task_type)}
+                              </span>
                             )}
                           </span>
-                          {meta && <span className={`shrink-0 text-sm font-medium ${meta.textColor}`}>{meta.label}</span>}
+                          {meta && <span className={`shrink-0 text-sm font-semibold ${meta.textColor}`}>{meta.label}</span>}
                           <ChevronDown className={`w-4 h-4 shrink-0 text-slate-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
                         </button>
                         {isOpen && (
                           <div className="px-3 pb-3 pt-3 border-t border-white/[0.06] space-y-2.5 animate-in fade-in slide-in-from-top-1 duration-200">
-                            {showTargetAsLink && (
+                            {showTargetAsLink && !showUnifiedActions && (
                               <a href={taskTargetHref(task.config.target as string, task.task_type)} target="_blank" rel="noopener noreferrer" className={taskLinkClass} style={{ color: ACCENT }}>
-                                {task.config.target}
+                                {taskTargetDisplay(task.config.target as string, task.task_type)}
                               </a>
                             )}
                             {showTargetAsText && (
@@ -1234,15 +1267,27 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                                   </button>
                                 </div>
                               ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => markTaskDone(task.id)}
-                                  disabled={isVerifying}
-                                  className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 ${taskActionButtonClass}`}
-                                >
-                                  {isVerifying && <Loader2 className="w-4 h-4 animate-spin" />}
-                                  {isVerifying ? "Verifying…" : task.verification_mode === "auto_api" ? "Verify" : "Mark done"}
-                                </button>
+                                <div className="flex items-center gap-2">
+                                  {showTargetAsLink && (
+                                    <a
+                                      href={taskTargetHref(task.config.target as string, task.task_type)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 ${taskActionButtonClass}`}
+                                    >
+                                      {task.task_type === "x_follow" ? "Open profile" : "Open the link"} <ExternalLink className="w-4 h-4" />
+                                    </a>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => markTaskDone(task.id)}
+                                    disabled={isVerifying}
+                                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 ${taskActionButtonClass}`}
+                                  >
+                                    {isVerifying && <Loader2 className="w-4 h-4 animate-spin" />}
+                                    {isVerifying ? "Verifying…" : task.verification_mode === "auto_api" ? "Verify" : "Mark done"}
+                                  </button>
+                                </div>
                               )
                             )}
                           </div>
@@ -1301,6 +1346,11 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
           ) : myEntry?.status === "winner" ? (
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
               <p className="font-semibold text-lg text-emerald-400">You won! Your claim link is being prepared — check back shortly.</p>
+            </div>
+          ) : myEntry?.status === "disqualified" ? (
+            <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4 text-center">
+              <p className="text-base font-medium text-red-400">You&apos;re not eligible for this giveaway</p>
+              <p className="text-base text-slate-400 mt-0.5">Your X account didn&apos;t meet the entry requirements above.</p>
             </div>
           ) : myEntry ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-center">

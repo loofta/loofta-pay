@@ -35,17 +35,22 @@ export class GiveawayEntriesService {
     private readonly giveawaysService: GiveawaysService,
   ) {}
 
-  /** Resolves the caller's linked X handle via Privy, same lookup twitter-payments.service.ts uses. */
-  private async resolveLinkedXHandle(userId: string): Promise<string> {
+  /** Resolves the caller's linked X account via Privy, same lookup twitter-payments.service.ts
+   *  uses — and, critically, entirely without a real X API call. Privy's own Twitter OAuth record
+   *  already carries the numeric id (the `subject`/`sub` claim from Twitter's JWT), username, and
+   *  profile picture; only followers_count and account age genuinely require a live X API lookup
+   *  (see resolveXProfile), so callers that don't need those should use this directly instead. */
+  private async resolveLinkedXAccount(userId: string): Promise<{ id: string; username: string; profileImageUrl: string | null }> {
     const privyUser = await this.privy.getPrivyUser(userId);
     const twitterAccount = privyUser?.linked_accounts?.find(
       (a: any) => TWITTER_ACCOUNT_TYPES.includes((a.type ?? '').toLowerCase()),
     );
-    const handle = (twitterAccount?.username || twitterAccount?.name || twitterAccount?.address || '').trim();
-    if (!handle) {
+    const username = (twitterAccount?.username || twitterAccount?.name || twitterAccount?.address || '').trim();
+    const id = (twitterAccount?.subject || '').trim();
+    if (!username || !id) {
       throw new BadRequestException('No X (Twitter) account linked. Connect X in settings before entering a giveaway.');
     }
-    return handle;
+    return { id, username, profileImageUrl: twitterAccount?.profilePictureUrl || null };
   }
 
   async enter(giveawayId: string, userId: string): Promise<GiveawayEntry> {
@@ -61,33 +66,76 @@ export class GiveawayEntriesService {
     }
 
     const { data: existing } = await this.supabaseService.giveawayEntries
-      .select('id')
+      .select('id, status')
       .eq('giveaway_id', giveawayId)
       .eq('user_id', userId)
       .maybeSingle();
+    if (existing?.status === GiveawayEntryStatus.DISQUALIFIED) {
+      // Checked once, remembered from here on — no re-check, no further X API call, ever, for
+      // this account on this giveaway. Previously a failed eligibility check persisted nothing at
+      // all, so nothing stopped (or even slowed down) an immediate retry from re-triggering a real
+      // X API lookup — with enough repeat attempts across enough entrants that's a real cost driver
+      // on its own, on top of the caching bugs fixed above.
+      throw new ForbiddenException("You don't meet this giveaway's eligibility requirements.");
+    }
     if (existing) throw new ConflictException('Already entered this giveaway');
 
-    const handle = await this.resolveLinkedXHandle(userId);
-    const profile = await this.xVerification.resolveXProfile(handle);
-    if (!profile) {
-      throw new BadRequestException('Could not verify your X account right now. Please try again shortly.');
-    }
+    const account = await this.resolveLinkedXAccount(userId);
 
+    // followers_count/account age aren't in Privy's linked-account data — only pay for a real X
+    // API lookup when a giveaway actually gates on one of them. This is the common case's entire
+    // X API cost for entering: previously every single entry paid for one regardless of whether
+    // the giveaway had any eligibility rules at all.
     const minFollowers = giveaway.eligibility?.min_followers;
-    if (typeof minFollowers === 'number' && profile.followersCount < minFollowers) {
-      throw new ForbiddenException(`This giveaway requires at least ${minFollowers} X followers`);
-    }
     const minAgeDays = giveaway.eligibility?.min_account_age_days;
-    if (typeof minAgeDays === 'number') {
-      const ageDays = (Date.now() - new Date(profile.createdAt).getTime()) / 86_400_000;
-      if (ageDays < minAgeDays) {
-        throw new ForbiddenException(`This giveaway requires an X account at least ${minAgeDays} days old`);
+    let xUserId = account.id;
+    let xHandle = account.username;
+    let avatarUrl = account.profileImageUrl;
+    let eligibilitySnapshot: Record<string, unknown> = {};
+
+    if (typeof minFollowers === 'number' || typeof minAgeDays === 'number') {
+      const profile = await this.xVerification.resolveXProfile(account.username);
+      if (!profile) {
+        throw new BadRequestException('Could not verify your X account right now. Please try again shortly.');
+      }
+      xUserId = profile.id;
+      xHandle = profile.username;
+      avatarUrl = profile.profileImageUrl;
+      eligibilitySnapshot = { followers_count: profile.followersCount, account_created_at: profile.createdAt };
+
+      const failReason =
+        typeof minFollowers === 'number' && profile.followersCount < minFollowers
+          ? `This giveaway requires at least ${minFollowers} X followers`
+          : typeof minAgeDays === 'number' && (Date.now() - new Date(profile.createdAt).getTime()) / 86_400_000 < minAgeDays
+            ? `This giveaway requires an X account at least ${minAgeDays} days old`
+            : null;
+      if (failReason) {
+        await this.insertEntryRow(giveawayId, userId, GiveawayEntryStatus.DISQUALIFIED, { xUserId, xHandle, avatarUrl, eligibilitySnapshot });
+        throw new ForbiddenException(failReason);
       }
     }
 
-    // entry_index: simple read-then-insert with one retry on the unique-index conflict — entry
-    // volume for a single giveaway doesn't warrant a DB sequence, and the unique index is the
-    // actual source of truth either way (this just avoids wasting most retries on a cold start).
+    const entry = await this.insertEntryRow(giveawayId, userId, GiveawayEntryStatus.ENTERED, { xUserId, xHandle, avatarUrl, eligibilitySnapshot });
+    if (entry) {
+      await this.createTaskCompletionStubs(entry.id, giveawayId);
+      return entry;
+    }
+    throw new BadRequestException('Failed to enter giveaway after retries — please try again');
+  }
+
+  /** entry_index: simple read-then-insert with one retry on the unique-index conflict — entry
+   *  volume for a single giveaway doesn't warrant a DB sequence, and the unique index is the
+   *  actual source of truth either way (this just avoids wasting most retries on a cold start).
+   *  Shared by both a real entry and a disqualified (ineligible) record — the row itself is what
+   *  makes "checked once, remembered forever" possible, so a disqualified attempt needs a durable
+   *  row exactly as much as a real one does. Returns null only if every retry hit a genuine
+   *  index collision (vanishingly rare); any other DB error throws directly. */
+  private async insertEntryRow(
+    giveawayId: string,
+    userId: string,
+    status: GiveawayEntryStatus,
+    data: { xUserId: string; xHandle: string; avatarUrl: string | null; eligibilitySnapshot: Record<string, unknown> },
+  ): Promise<GiveawayEntry | null> {
     for (let attempt = 0; attempt < 3; attempt++) {
       const { count } = await this.supabaseService.giveawayEntries
         .select('id', { count: 'exact', head: true })
@@ -97,23 +145,21 @@ export class GiveawayEntriesService {
           giveaway_id: giveawayId,
           user_id: userId,
           entry_index: (count ?? 0) + 1,
-          x_user_id: profile.id,
-          x_handle: profile.username,
-          eligibility_snapshot: { followers_count: profile.followersCount, account_created_at: profile.createdAt },
-          status: GiveawayEntryStatus.ENTERED,
+          x_user_id: data.xUserId,
+          x_handle: data.xHandle,
+          avatar_url: data.avatarUrl,
+          eligibility_snapshot: data.eligibilitySnapshot,
+          status,
         })
         .select()
         .single();
-      if (!error && entry) {
-        await this.createTaskCompletionStubs(entry.id, giveawayId);
-        return entry as GiveawayEntry;
-      }
+      if (!error && entry) return entry as GiveawayEntry;
       if (error && !error.message.includes('duplicate key')) {
         throw new BadRequestException(`Failed to enter giveaway: ${error.message}`);
       }
       // entry_index collision — retry with a freshly-read count
     }
-    throw new BadRequestException('Failed to enter giveaway after retries — please try again');
+    return null;
   }
 
   private async createTaskCompletionStubs(entryId: string, giveawayId: string): Promise<void> {

@@ -138,6 +138,7 @@ export interface GiveawayEntry {
   entry_index: number;
   x_user_id: string;
   x_handle: string;
+  avatar_url: string | null;
   eligibility_snapshot: GiveawayEntryEligibilitySnapshot;
   status: GiveawayEntryStatus;
   payout_choice: 'public' | 'private' | null;

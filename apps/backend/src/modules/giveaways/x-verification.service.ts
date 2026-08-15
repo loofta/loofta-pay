@@ -17,6 +17,7 @@ export interface XProfile {
   username: string;
   createdAt: string;
   followersCount: number;
+  profileImageUrl: string | null;
 }
 
 /** Bound on how many retweeters/likers/followers we'll page through for a single task —
@@ -24,18 +25,18 @@ export interface XProfile {
  *  when hit, since a truncated list means some real completions could be missed. */
 const MAX_PAGINATED_USERS = 5_000;
 
-/** X API calls are metered/expensive (confirmed real cost, ~$3/67 entries on 2026-08-06, and a
+/** X API calls are metered/expensive (confirmed real cost, ~$3/67 entries on 2026-08-06, a
  *  separate $19.60/day spike on 2026-08-11 traced to a giveaway stuck in ENTRIES_CLOSED re-running
- *  the final sweep on every cron tick — see the run-once guard in
- *  GiveawayDrawService.freezeSnapshotAndStartDrawing/hasSweptAlready).
- *  verifyPendingCompletions is invoked from two independent paths — GiveawayEntriesService's
- *  runFinalXVerificationSweep (now guarded to run exactly once per giveaway by the caller) AND
- *  every entrant's inline "Verify"/"Try again" click (rate-limited per-entrant by
- *  MAX_VERIFY_ATTEMPTS_PER_WINDOW in giveaway-entries.service.ts). This TTL is the last line of
- *  defense against either path re-fetching the FULL retweeter/quote/liker/follower list from
- *  scratch when nothing plausibly changed; the design is already "batched, not real-time" (see
- *  class doc below), so a few extra minutes of staleness costs nothing functionally. */
-const FETCH_CACHE_TTL_MS = 3 * 60 * 1000;
+ *  the final sweep on every cron tick, and a third incident on 2026-08-15 where a 3-minute TTL
+ *  combined with an in-memory-only cache — wiped on every backend redeploy, which happens many
+ *  times a day during active work — meant this "cache" barely ever hit in practice: ~120 real
+ *  entrants somehow produced 10.68k raw X API calls in a day, because nearly every retweeter/liker/
+ *  follower-list fetch (each up to MAX_PAGINATED_USERS-worth of paginated requests) started from
+ *  scratch. Raised substantially and moved to Redis (see fetchIdSetCacheKey/getCachedIds below) so
+ *  it actually survives process restarts — a stale follower/engagement list for up to an hour costs
+ *  nothing functionally (the design is already "batched, not real-time", see class doc below), a
+ *  cache that doesn't survive a redeploy costs real money. */
+const FETCH_CACHE_TTL_MS = 60 * 60 * 1000;
 
 // resolveXProfile is called on every enter() attempt, including ones that fail eligibility (no DB
 // row gets created for those, so nothing else stops a rejected user from immediately retrying).
@@ -89,10 +90,33 @@ export class XVerificationService {
   private async getCachedIds(key: string, fetch: () => Promise<Set<string>>): Promise<Set<string>> {
     const cached = this.fetchCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.promise;
+
+    // Redis layer underneath the in-memory one — the in-memory Map alone is wiped on every backend
+    // restart (frequent during active dev), which was silently defeating this cache almost entirely
+    // (see FETCH_CACHE_TTL_MS's doc comment, 2026-08-15 incident). A hit here still counts as a
+    // cache hit, not a fresh fetch — it does NOT consume the daily cap.
+    const redisKey = `xverify:idset:${key}`;
+    const redisCached = await this.redis.get(redisKey);
+    if (redisCached) {
+      try {
+        const ids = new Set<string>(JSON.parse(redisCached));
+        const promise = Promise.resolve(ids);
+        this.fetchCache.set(key, { promise, expiresAt: Date.now() + FETCH_CACHE_TTL_MS });
+        return promise;
+      } catch {
+        // corrupt cache entry — fall through to a live fetch
+      }
+    }
+
     await this.consumeDailyCapOrThrow(key);
     const promise = fetch();
     this.fetchCache.set(key, { promise, expiresAt: Date.now() + FETCH_CACHE_TTL_MS });
     promise.catch(() => this.fetchCache.delete(key));
+    promise.then((ids) => {
+      this.redis.set(redisKey, JSON.stringify([...ids]), FETCH_CACHE_TTL_MS / 1000).catch(() => {});
+    }).catch(() => {
+      // fetch failed — nothing to persist, already evicted from the in-memory cache above
+    });
     return promise;
   }
 
@@ -182,13 +206,17 @@ export class XVerificationService {
 
     try {
       await this.consumeDailyCapOrThrow(`resolveXProfile:${cleanHandle}`);
-      const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics'] });
+      // profile_image_url rides along on this same call — every entrant already triggers it for
+      // eligibility checks, so capturing their avatar here is zero extra API cost. X returns the
+      // "_normal" (48x48) crop; strip that suffix for a larger "_400x400" version to display.
+      const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics', 'profile_image_url'] });
       if (!result.data) return null;
       const profile: XProfile = {
         id: result.data.id,
         username: result.data.username,
         createdAt: result.data.created_at ?? new Date(0).toISOString(),
         followersCount: result.data.public_metrics?.followers_count ?? 0,
+        profileImageUrl: result.data.profile_image_url?.replace('_normal.', '_400x400.') ?? null,
       };
       this.profileCache.set(cacheKey, { profile, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
       await this.redis.set(redisKey, JSON.stringify(profile), PROFILE_CACHE_TTL_MS / 1000);

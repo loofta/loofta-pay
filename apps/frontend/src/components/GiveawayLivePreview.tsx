@@ -107,15 +107,15 @@ export function GiveawayLivePreview({
         }}
       >
         <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-1.5 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
             {isOfficial ? (
               <>
-                <Image src="/loofta_icon_magic.png" alt="" width={20} height={20} className="rounded-full shrink-0" />
+                <Image src="/loofta_icon_magic.png" alt="" width={36} height={36} className="rounded-full shrink-0" />
                 <span className="text-base font-semibold text-white truncate">Loofta</span>
               </>
             ) : logoUrl || projectName ? (
               <>
-                {logoUrl && <Image src={logoUrl} alt="" width={16} height={16} className="rounded-full object-cover shrink-0" />}
+                {logoUrl && <Image src={logoUrl} alt="" width={36} height={36} className="rounded-full object-cover shrink-0" />}
                 {projectName && <span className="text-sm font-medium text-slate-400 truncate">{projectName}</span>}
               </>
             ) : (
@@ -150,10 +150,12 @@ export function GiveawayLivePreview({
           </p>
           <div className="flex flex-wrap gap-1.5 mb-2.5">
             <span className={CHIP_CLS}>
-              <CountUp value={prizeAmount} prefix="$" /> each
+              <CountUp value={prizeAmount} prefix="$" />
+              {" each"}
             </span>
             <span className={CHIP_CLS}>
-              <CountUp value={winnerCount} /> winner{winnerCount === 1 ? "" : "s"}
+              <CountUp value={winnerCount} />
+              {` winner${winnerCount === 1 ? "" : "s"}`}
             </span>
             <span className={CHIP_CLS}>
               {selectionMode === "random" ? "Random draw" : selectionMode === "first_come" ? "First come, first serve" : "Picked by creator"}

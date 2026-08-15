@@ -52,13 +52,78 @@ export class GiveawaysPublicController {
   @ApiOperation({ summary: 'Browse open giveaways. No auth required.' })
   async findOpen() {
     const { data, error } = await this.supabaseService.giveawaysSafe
-      .select('id, title, description, logo_url, project_name, short_id, winner_count, selection_mode, prize_amount_usd, entries_close_at, status, is_official')
+      .select(
+        'id, title, description, logo_url, project_name, short_id, winner_count, selection_mode, prize_amount_usd, entries_close_at, status, is_official, admin_reviewed_at',
+      )
       // Official Loofta giveaways pin to the top, then soonest-closing first within each group.
       .eq('status', 'OPEN')
       .order('is_official', { ascending: false })
       .order('entries_close_at', { ascending: true });
     if (error) throw new NotFoundException(error.message);
-    return { giveaways: data ?? [] };
+    const giveaways = await Promise.all((data ?? []).map((g) => this.attachEntryStats(g)));
+    return { giveaways };
+  }
+
+  /** Entry count, last-hour delta, and a handful of the most recent entrants' avatars — real
+   *  aggregate numbers, not the entry list itself (no handles/identities), so this doesn't run
+   *  into the "entries stay hidden while a giveaway is still open" rule above; per-giveaway
+   *  entrant volume is small enough that a few queries per row (not batched into one) is fine. */
+  private async attachEntryStats<T extends { id: string }>(
+    g: T,
+  ): Promise<T & { entries_count: number; entries_last_hour: number; entry_avatars: string[] }> {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const [{ count: entriesCount }, { count: lastHourCount }, { data: avatarRows }] = await Promise.all([
+      this.supabaseService.giveawayEntries.select('id', { count: 'exact', head: true }).eq('giveaway_id', g.id),
+      this.supabaseService.giveawayEntries
+        .select('id', { count: 'exact', head: true })
+        .eq('giveaway_id', g.id)
+        .gte('entered_at', oneHourAgo),
+      this.supabaseService.giveawayEntries
+        .select('avatar_url')
+        .eq('giveaway_id', g.id)
+        .not('avatar_url', 'is', null)
+        .order('entered_at', { ascending: false })
+        .limit(4),
+    ]);
+    return {
+      ...g,
+      entries_count: entriesCount ?? 0,
+      entries_last_hour: lastHourCount ?? 0,
+      entry_avatars: (avatarRows ?? []).map((r: { avatar_url: string }) => r.avatar_url),
+    };
+  }
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Aggregate stats for the giveaways list page header (winners this month, avg approval time). No auth required.' })
+  async stats() {
+    const startOfMonth = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
+
+    const { data: winnerEvents } = await this.supabaseService.giveawayEvents
+      .select('payload')
+      .eq('type', 'winners_selected')
+      .gte('created_at', startOfMonth);
+    const winnersThisMonth = (winnerEvents ?? []).reduce((sum, e: { payload: { winner_entry_ids?: unknown[] } | null }) => {
+      const ids = e.payload?.winner_entry_ids;
+      return sum + (Array.isArray(ids) ? ids.length : 0);
+    }, 0);
+
+    // Excludes is_official rows — those get admin_reviewed_at auto-stamped at creation (see
+    // giveaways.service.ts's create()), which would report a fake ~0h approval time and skew the
+    // average down. Excludes rejected ones too — this stat is specifically "how long until your
+    // giveaway went live," not "how long until we responded."
+    const { data: reviewed } = await this.supabaseService.giveawaysSafe
+      .select('created_at, admin_reviewed_at')
+      .not('admin_reviewed_at', 'is', null)
+      .is('rejection_reason', null)
+      .eq('is_official', false)
+      .order('admin_reviewed_at', { ascending: false })
+      .limit(200);
+    const approvalHours = (reviewed ?? [])
+      .map((g: { created_at: string; admin_reviewed_at: string }) => (new Date(g.admin_reviewed_at).getTime() - new Date(g.created_at).getTime()) / 3_600_000)
+      .filter((h) => Number.isFinite(h) && h >= 0);
+    const avgApprovalHours = approvalHours.length ? approvalHours.reduce((a, b) => a + b, 0) / approvalHours.length : null;
+
+    return { winners_this_month: winnersThisMonth, avg_approval_hours: avgApprovalHours };
   }
 
   @Get('ended')
@@ -74,7 +139,8 @@ export class GiveawaysPublicController {
       .gt('funding_confirmed_usd', 0)
       .order('entries_close_at', { ascending: false });
     if (error) throw new NotFoundException(error.message);
-    return { giveaways: data ?? [] };
+    const giveaways = await Promise.all((data ?? []).map((g) => this.attachEntryStats(g)));
+    return { giveaways };
   }
 
   /** Accepts either the giveaway's UUID or its 8-char short_id — same dual-lookup convention as
