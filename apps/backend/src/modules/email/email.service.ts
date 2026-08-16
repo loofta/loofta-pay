@@ -600,6 +600,49 @@ export class EmailService {
   }
 
   /**
+   * Operational alert (to the team, not a user) — fires when someone taps "Request access" on
+   * the Twitter bot's coming-soon section (see TwitterAutopayController's request-access route).
+   * Throws on failure (unlike the fire-and-forget alerts below) — this is a direct response to a
+   * user action, so the frontend needs to know if it didn't actually send.
+   */
+  async sendTwitterBotAccessRequestEmail(data: {
+    privyUserId: string;
+    email: string | null;
+    twitterHandle: string | null;
+    username: string | null;
+  }): Promise<void> {
+    if (!this.resend) {
+      throw new Error('Email sending is not configured (RESEND_API_KEY unset)');
+    }
+    const subject = `🐦 Twitter bot access request${data.twitterHandle ? ` — @${data.twitterHandle}` : ''}`;
+    const html = `
+      <div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+        <h2 style="color:#0f172a;margin:0 0 4px;">Twitter bot access requested</h2>
+        <p style="color:#64748b;margin:0 0 16px;font-size:14px;">
+          Someone tapped "Request access" on the Twitter bot section of the AI bot page.
+        </p>
+        <table style="border-collapse:collapse;width:100%;background:#f8fafc;border-radius:8px;font-size:14px;">
+          <tr><td style="padding:6px 12px;color:#475569;">Loofta username</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.username ?? 'none'}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">X handle</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.twitterHandle ? '@' + data.twitterHandle : 'not linked'}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Email</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.email ?? 'none on file'}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Privy user id</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;font-family:monospace;font-size:12px;">${data.privyUserId}</td></tr>
+        </table>
+      </div>`;
+    try {
+      await this.resend.emails.send({
+        from: `Loofta <${this.fromEmail}>`,
+        to: 'hello@loofta.xyz',
+        subject,
+        html,
+      });
+      this.logger.log(`Twitter bot access request email sent for user ${data.privyUserId}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send Twitter bot access request email for user ${data.privyUserId}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
+  /**
    * Operational alert (to the team, not a user) — fires when `guardAtaSponsorship`
    * (@/common/ata-sponsorship-guard) BLOCKS a repeat sponsored-ATA-creation request. Before this,
    * the guard only logged a warning — real incident, 2026-07-29: the guard was doing its job

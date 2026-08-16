@@ -4,6 +4,7 @@ import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
 import { ClaimsService } from '../claims/claims.service';
 import { AutopaySignerService } from './autopay-signer.service';
+import { EmailService } from '../email/email.service';
 import { isPrivyUserAdmin } from '@/common/admin-check';
 
 export interface TwitterAutopayStatus {
@@ -35,6 +36,7 @@ export class TwitterAutopayService {
     private readonly usersService: UsersService,
     private readonly claimsService: ClaimsService,
     private readonly autopaySigner: AutopaySignerService,
+    private readonly emailService: EmailService,
   ) {}
 
   async getStatus(userId: string): Promise<TwitterAutopayStatus> {
@@ -50,6 +52,25 @@ export class TwitterAutopayService {
       enrolled: !!enrollment.data?.enabled,
       signerGranted: !!enrollment.data?.signer_granted,
     };
+  }
+
+  /** "Request access" button on the coming-soon Twitter bot section — emails hello@loofta.xyz
+   *  with whatever identity the requester has on file, so it's actionable without them needing
+   *  to separately DM/email their handle themselves. */
+  async requestAccess(userId: string): Promise<{ ok: true }> {
+    const { data: appUser } = await this.supabaseService.appUsers
+      .select('email, twitter_username, username')
+      .eq('privy_user_id', userId)
+      .maybeSingle();
+
+    await this.emailService.sendTwitterBotAccessRequestEmail({
+      privyUserId: userId,
+      email: appUser?.email ?? null,
+      twitterHandle: appUser?.twitter_username ?? null,
+      username: appUser?.username ?? null,
+    });
+
+    return { ok: true };
   }
 
   /** Called after the client successfully completes useSigners().addSigners() on their wallet. */

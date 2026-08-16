@@ -54,7 +54,7 @@ function MobileMenu({
     { href: "/", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/megapot", label: "Lottery", description: "Play the daily jackpot privately" },
-    { href: "/twitter-bot", label: "Twitter bot", description: "Pay or gift tickets by tagging @looftapay" },
+    { href: "/twitter-bot", label: "AI bot", description: "Send payments by chat — no wallet steps, just tell it who to pay" },
   ];
 
   return (
@@ -303,7 +303,7 @@ export function MinimalHeader() {
                   <span>Lottery</span>
                 </Link>
 
-                {/* Desktop: Twitter bot link */}
+                {/* Desktop: AI bot link */}
                 <Link
                   href="/twitter-bot"
                   className={[
@@ -313,7 +313,7 @@ export function MinimalHeader() {
                       : "text-slate-300 hover:text-white hover:bg-white/10",
                   ].join(" ")}
                 >
-                  <span>Twitter bot</span>
+                  <span>AI bot</span>
                 </Link>
 
                 {/* Desktop: Balance button */}
