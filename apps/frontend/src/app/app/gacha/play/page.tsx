@@ -86,11 +86,13 @@ export default function GachaPlayPage() {
       (a.walletClientType === "privy" || a.walletClientType === "privy-v2")) as any)?.address ?? "";
   const embeddedWallet = wallets.find((w) => w.address === embeddedSolAddress) ?? wallets[0];
 
-  const [stage, setStage] = useState<Stage>("pick");
+  // Run It Back carries the player's mascot in the URL. Start directly on the room/payment
+  // stage so the rematch does not flash or require the mascot picker again.
+  const [stage, setStage] = useState<Stage>(rematchRoomId && rematchMascotKey ? "size" : "pick");
   const [configs, setConfigs] = useState<RoomConfig[]>([]);
   const [configsLoading, setConfigsLoading] = useState(true);
   const [configsError, setConfigsError] = useState<string | null>(null);
-  const [mascotKey, setMascotKey] = useState<string | null>(null);
+  const [mascotKey, setMascotKey] = useState<string | null>(rematchMascotKey);
   const [pickedSeats, setPickedSeats] = useState<number | null>(null);
   const [joiningSeats, setJoiningSeats] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -217,7 +219,9 @@ export default function GachaPlayPage() {
         if (cancelled) return;
         setRematchRoom(nextRoom);
         setPickedSeats(nextRoom.seats);
-        setMascotKey(rematchMascotKey || payload.myParticipant?.mascotKey || null);
+        const carriedMascotKey = rematchMascotKey || payload.myParticipant?.mascotKey || null;
+        setMascotKey(carriedMascotKey);
+        setStage(carriedMascotKey ? "size" : "pick");
         setRoomMode("browse");
         setSelectedRoomId(nextRoom.id);
       } catch (err: any) {

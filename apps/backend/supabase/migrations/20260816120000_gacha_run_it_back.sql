@@ -97,8 +97,9 @@ BEGIN
 
   IF FOUND THEN
     IF NOT EXISTS (
-      SELECT 1 FROM gacha_rematch_members
-      WHERE group_id = existing_group.id AND user_id = p_requesting_user_id
+      SELECT 1 FROM gacha_rematch_members AS existing_member
+      WHERE existing_member.group_id = existing_group.id
+        AND existing_member.user_id = p_requesting_user_id
     ) THEN
       RAISE EXCEPTION 'You were not part of this rematch group';
     END IF;
@@ -127,9 +128,9 @@ BEGIN
   END IF;
 
   PERFORM pg_advisory_xact_lock(hashtextextended('gacha-room-number:' || source_room.config_key, 0));
-  SELECT COALESCE(max(room_number), 0) + 1 INTO next_room_number
-  FROM gacha_rooms
-  WHERE config_key = source_room.config_key;
+  SELECT COALESCE(max(numbered_room.room_number), 0) + 1 INTO next_room_number
+  FROM gacha_rooms AS numbered_room
+  WHERE numbered_room.config_key = source_room.config_key;
 
   normalized_name := left(COALESCE(NULLIF(btrim(source_room.name), ''), 'Run it back') || ' · again', 24);
   INSERT INTO gacha_rooms (
