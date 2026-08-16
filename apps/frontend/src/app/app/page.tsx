@@ -151,19 +151,27 @@ export default function Home() {
   };
   const { toast } = useToast();
 
-  // Nudge toward the AI terminal once per session on the Send tab — dismissed/shown state is
-  // deliberately per-session (not "forever"), so returning visitors keep seeing it until the
-  // new entry point actually sticks, without re-nagging on every single page load.
+  // Nudge toward the AI terminal every time the Send tab is activated — not just once ever —
+  // until the user explicitly closes it, which is remembered for the rest of this session
+  // (not "forever") so it keeps coming back for anyone who hasn't dismissed it, without
+  // re-nagging someone who already said "not now" by closing it.
   useEffect(() => {
     if (!authenticated || activeTab !== "send") return;
     if (typeof window === "undefined") return;
     if (sessionStorage.getItem(TERMINAL_PROMO_KEY)) return;
-    sessionStorage.setItem(TERMINAL_PROMO_KEY, "1");
+    const dismiss = () => {
+      if (typeof window !== "undefined") sessionStorage.setItem(TERMINAL_PROMO_KEY, "1");
+    };
     toast({
       title: "Try the AI terminal",
       description: 'Just type who to pay — "send $5 to @alice on X" — for faster payments, no form-filling.',
+      // Stays open until the user closes it (rather than the default ~5s auto-dismiss) — both
+      // so it's actually readable, and so onOpenChange(false) below only ever fires from a real
+      // close, never a timeout racing ahead of someone reading it.
+      duration: Infinity,
+      onOpenChange: (open) => { if (!open) dismiss(); },
       action: (
-        <ToastAction altText="Open the AI terminal" asChild>
+        <ToastAction altText="Open the AI terminal" asChild onClick={dismiss}>
           <Link
             href="/terminal"
             className="!bg-gradient-to-r !from-[#FF1301] !to-[#EAB308] !text-white !border-0 !font-semibold hover:!opacity-90"
