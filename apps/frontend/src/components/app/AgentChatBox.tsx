@@ -159,6 +159,7 @@ export function AgentChatBox() {
     },
   ])
   const [input, setInput] = useState('')
+  const [examplesVisible, setExamplesVisible] = useState(true)
   const [multiSendOpen, setMultiSendOpen] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -470,6 +471,7 @@ export function AgentChatBox() {
     const text = input.trim()
     if (!text) return
     setInput('')
+    setExamplesVisible(false)
     setMessages((m) => [...m, { id: nextId(), role: 'user', text }])
 
     if (!authenticated) {
@@ -877,7 +879,7 @@ export function AgentChatBox() {
 
       {!multiSendOpen && (
         <div className="shrink-0 border-t border-white/[0.06] px-4 py-3 space-y-2.5">
-          <div className="flex flex-wrap gap-1.5">
+          <div className={`${examplesVisible ? 'flex' : 'hidden'} flex-wrap gap-1.5`}>
             {EXAMPLE_PROMPTS.map((p) => (
               <button
                 key={p}
@@ -889,6 +891,13 @@ export function AgentChatBox() {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            onClick={() => setExamplesVisible(true)}
+            className={`${examplesVisible ? 'hidden' : 'flex'} rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors`}
+          >
+            Show examples
+          </button>
           <div className="relative flex items-center gap-2">
             {mention && mentionMatches.length > 0 && (
               <div className="absolute bottom-full left-0 mb-2 w-full max-h-64 overflow-y-auto rounded-xl border border-white/10 bg-[#18181c] shadow-xl z-10">
