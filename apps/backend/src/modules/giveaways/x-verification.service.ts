@@ -32,12 +32,29 @@ export class SorsaApiError extends Error {
   }
 }
 
+/** Thrown by either cap guard (per-minute or daily) — a distinct type so callers can tell "we
+ *  deliberately refused to call Sorsa" apart from Sorsa itself erroring, without fragile string
+ *  matching on the message. */
+export class XVerificationCapError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'XVerificationCapError';
+  }
+}
+
 /** Unwraps the real reason a Sorsa call failed — Sorsa's error body is just `{"message": "..."}`,
  *  so the HTTP status carries the rest of the signal (401 = bad key, 429 = rate limit, etc). */
 function describeXApiError(e: unknown): string {
   if (e instanceof SorsaApiError) return `HTTP ${e.status}: ${e.message}`;
   return String(e);
 }
+
+/** Hard circuit breaker, independent of the daily cap — confirmed live 2026-08-16 that a single
+ *  bug (unbounded pagination) can blow through more requests in a couple minutes than the daily
+ *  cap would even notice until it's already too late. This trips fast and locally: >100 Sorsa
+ *  requests in any rolling 60s window kills every further call until the next window, regardless
+ *  of which giveaway/task/entrant they're for. Override via GIVEAWAY_X_API_PER_MINUTE_CAP. */
+const DEFAULT_PER_MINUTE_CAP = 100;
 
 // resolveXProfile is called on every enter() attempt, including ones that fail eligibility (no DB
 // row gets created for those, so nothing else stops a rejected user from immediately retrying).
@@ -78,6 +95,9 @@ export class XVerificationService {
   private dailyCallCount = 0;
   private dailyCallCountDate = '';
   private readonly dailyCallCap: number;
+  private perMinuteCount = 0;
+  private perMinuteBucket = -1;
+  private readonly perMinuteCap: number;
 
   /** Increments today's fetch-unit count and throws once DAILY_CALL_CAP is hit, resetting at UTC
    *  midnight. See DEFAULT_DAILY_CALL_CAP's doc comment for why this exists.
@@ -97,7 +117,7 @@ export class XVerificationService {
       if (count === 1) await client.expire(key, 26 * 60 * 60);
       if (count > this.dailyCallCap) {
         this.logger.error(`[XVerification] daily X API call cap (${this.dailyCallCap}) reached — refusing further calls today (blocked: ${context})`);
-        throw new Error(`X API daily call cap (${this.dailyCallCap}) reached`);
+        throw new XVerificationCapError(`X API daily call cap (${this.dailyCallCap}) reached`);
       }
       return;
     }
@@ -107,9 +127,38 @@ export class XVerificationService {
     }
     if (this.dailyCallCount >= this.dailyCallCap) {
       this.logger.error(`[XVerification] daily X API call cap (${this.dailyCallCap}) reached — refusing further calls today (blocked: ${context})`);
-      throw new Error(`X API daily call cap (${this.dailyCallCap}) reached`);
+      throw new XVerificationCapError(`X API daily call cap (${this.dailyCallCap}) reached`);
     }
     this.dailyCallCount++;
+  }
+
+  /** Circuit breaker checked on EVERY Sorsa HTTP call, inside sorsaRequest itself — not at each
+   *  call site — so no future check-* method can accidentally skip it. Fixed 60s buckets (not a
+   *  true sliding window): simple, and precise enough for "stop before this spirals," which is the
+   *  actual job here. Same Redis-with-in-memory-fallback shape as consumeDailyCapOrThrow, for the
+   *  same reason (2026-08-15: an in-memory-only counter resets on every redeploy). */
+  private async checkPerMinuteGuardOrThrow(): Promise<void> {
+    const bucket = Math.floor(Date.now() / 60_000);
+    const client = this.redis.getClient();
+    if (client) {
+      const key = `xverify:ratelimit:sorsa:${bucket}`;
+      const count = await client.incr(key);
+      if (count === 1) await client.expire(key, 120);
+      if (count > this.perMinuteCap) {
+        this.logger.error(`[XVerification] per-minute request guard tripped (${count} > ${this.perMinuteCap} Sorsa requests in the last 60s) — refusing further calls until the next minute`);
+        throw new XVerificationCapError(`Sorsa per-minute request guard tripped (>${this.perMinuteCap}/min)`);
+      }
+      return;
+    }
+    if (bucket !== this.perMinuteBucket) {
+      this.perMinuteBucket = bucket;
+      this.perMinuteCount = 0;
+    }
+    if (this.perMinuteCount >= this.perMinuteCap) {
+      this.logger.error(`[XVerification] per-minute request guard tripped (${this.perMinuteCount} >= ${this.perMinuteCap} Sorsa requests in the last 60s, in-memory fallback) — refusing further calls until the next minute`);
+      throw new XVerificationCapError(`Sorsa per-minute request guard tripped (>${this.perMinuteCap}/min)`);
+    }
+    this.perMinuteCount++;
   }
 
   constructor(
@@ -124,6 +173,7 @@ export class XVerificationService {
       this.logger.warn('SORSA_API_KEY not configured — giveaway X verification disabled.');
     }
     this.dailyCallCap = Number(this.configService.get<string>('GIVEAWAY_X_API_DAILY_CALL_CAP')) || DEFAULT_DAILY_CALL_CAP;
+    this.perMinuteCap = Number(this.configService.get<string>('GIVEAWAY_X_API_PER_MINUTE_CAP')) || DEFAULT_PER_MINUTE_CAP;
   }
 
   isAvailable(): boolean {
@@ -139,6 +189,7 @@ export class XVerificationService {
     params: Record<string, string | undefined> = {},
   ): Promise<T> {
     if (!this.sorsaApiKey) throw new Error('SORSA_API_KEY not configured');
+    await this.checkPerMinuteGuardOrThrow();
     const entries = Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][];
     const query = method === 'GET' && entries.length ? `?${new URLSearchParams(entries).toString()}` : '';
     const res = await fetch(`${SORSA_BASE_URL}${path}${query}`, {
@@ -316,7 +367,7 @@ export class XVerificationService {
         }
       } catch (e) {
         const reason = describeXApiError(e);
-        const capReached = reason.includes('daily call cap');
+        const capReached = e instanceof XVerificationCapError;
         await this.markAll([completion.id], GiveawayTaskCompletionStatus.API_ERROR, { error: reason });
         if (capReached) {
           // No point burning further attempts once capped — mark the rest of this batch the same
