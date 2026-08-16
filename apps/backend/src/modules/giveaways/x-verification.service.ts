@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { TwitterApi, ApiResponseError } from 'twitter-api-v2';
 import { SupabaseService } from '@/database/supabase.service';
 import { RedisService } from '@/redis/redis.service';
 import {
@@ -23,16 +22,20 @@ export interface XProfile {
   verified: boolean;
 }
 
-/** Unwraps the real reason X rejected a request — `String(e)` on a twitter-api-v2 ApiResponseError
- *  just gives a generic "Request failed with code 403", which is useless for telling "out of
- *  quota" apart from "wrong access level" apart from "bad credentials". X's actual error body
- *  (title/detail/type, per api.x.com's documented error shape) says which. */
-function describeXApiError(e: unknown): string {
-  if (e instanceof ApiResponseError) {
-    const detail = e.data?.detail || e.data?.title || e.data?.error;
-    const errors = e.data?.errors?.map((err: any) => err.detail || err.message || err.title).filter(Boolean).join('; ');
-    return `HTTP ${e.code}${e.isAuthError ? ' (auth)' : ''}${e.rateLimitError ? ' (rate limit)' : ''}: ${detail || errors || e.message}`;
+const SORSA_BASE_URL = 'https://api.sorsa.io/v3';
+const SORSA_REQUEST_TIMEOUT_MS = 15_000;
+
+export class SorsaApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = 'SorsaApiError';
   }
+}
+
+/** Unwraps the real reason a Sorsa call failed — Sorsa's error body is just `{"message": "..."}`,
+ *  so the HTTP status carries the rest of the signal (401 = bad key, 429 = rate limit, etc). */
+function describeXApiError(e: unknown): string {
+  if (e instanceof SorsaApiError) return `HTTP ${e.status}: ${e.message}`;
   return String(e);
 }
 
@@ -72,19 +75,20 @@ const PROFILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_DAILY_CALL_CAP = 300;
 
 /**
- * Real X API v2 verification for X-based giveaway tasks, reusing the same OAuth1 user-context
- * credentials apps/twitter-bot already runs on (TWITTER_API_KEY/SECRET/ACCESS_TOKEN/ACCESS_SECRET)
- * — Lisa confirmed the X API is already on a pay-as-you-go tier, so this is a second consumer of
- * the same app, not a new provisioning decision.
+ * X/Twitter data for giveaway task verification, via Sorsa (api.sorsa.io) — switched from the
+ * direct X API v2 on 2026-08-16 after repeated cost incidents (X's own metering made a handful of
+ * logic bugs disproportionately expensive; see giveaway-draw.service.ts's comment history).
  *
- * Fetches a tweet's retweeter/liker list (or an account's follower list) ONCE per giveaway and
+ * Fetches a tweet's retweeter/quoter list (or an account's follower list) ONCE per giveaway and
  * checks every pending entrant against it locally — never one live call per participant, which
- * would multiply cost/rate-limit exposure with entrant count for no benefit.
+ * would multiply cost/rate-limit exposure with entrant count for no benefit. Sorsa has no "who
+ * liked this tweet" endpoint at all, which is moot here: X_LIKE/X_BOOKMARK are already permanent
+ * self-report (see GIVEAWAY_TASK_VERIFICATION_MODE), so no code path needs one.
  */
 @Injectable()
 export class XVerificationService {
   private readonly logger = new Logger(XVerificationService.name);
-  private client: TwitterApi | null = null;
+  private sorsaApiKey: string | null = null;
   private readonly fetchCache = new Map<string, { promise: Promise<Set<string>>; expiresAt: number }>();
   private readonly profileCache = new Map<string, { profile: XProfile; expiresAt: number }>();
   private dailyCallCount = 0;
@@ -174,20 +178,78 @@ export class XVerificationService {
     private readonly supabaseService: SupabaseService,
     private readonly redis: RedisService,
   ) {
-    const apiKey = this.configService.get<string>('TWITTER_API_KEY');
-    const apiSecret = this.configService.get<string>('TWITTER_API_SECRET');
-    const accessToken = this.configService.get<string>('TWITTER_ACCESS_TOKEN');
-    const accessSecret = this.configService.get<string>('TWITTER_ACCESS_SECRET');
-    if (apiKey && apiSecret && accessToken && accessSecret) {
-      this.client = new TwitterApi({ appKey: apiKey, appSecret: apiSecret, accessToken, accessSecret });
+    const sorsaApiKey = this.configService.get<string>('SORSA_API_KEY');
+    if (sorsaApiKey) {
+      this.sorsaApiKey = sorsaApiKey;
     } else {
-      this.logger.warn('X API credentials not configured (TWITTER_API_KEY/SECRET/ACCESS_TOKEN/ACCESS_SECRET) — giveaway X verification disabled.');
+      this.logger.warn('SORSA_API_KEY not configured — giveaway X verification disabled.');
     }
     this.dailyCallCap = Number(this.configService.get<string>('GIVEAWAY_X_API_DAILY_CALL_CAP')) || DEFAULT_DAILY_CALL_CAP;
   }
 
   isAvailable(): boolean {
-    return this.client !== null;
+    return this.sorsaApiKey !== null;
+  }
+
+  /** Thin wrapper over Sorsa's REST API — ApiKey header auth, GET params as query string, POST
+   *  params as a JSON body (matches sorsa_api_v3_documentation_en.txt). Mirrors the fetch+timeout+
+   *  {message} error-shape pattern already used for PajCashService. */
+  private async sorsaRequest<T>(
+    method: 'GET' | 'POST',
+    path: string,
+    params: Record<string, string | undefined> = {},
+  ): Promise<T> {
+    if (!this.sorsaApiKey) throw new Error('SORSA_API_KEY not configured');
+    const entries = Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][];
+    const query = method === 'GET' && entries.length ? `?${new URLSearchParams(entries).toString()}` : '';
+    const res = await fetch(`${SORSA_BASE_URL}${path}${query}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ApiKey: this.sorsaApiKey },
+      body: method === 'POST' ? JSON.stringify(Object.fromEntries(entries)) : undefined,
+      signal: AbortSignal.timeout(SORSA_REQUEST_TIMEOUT_MS),
+    });
+    const text = await res.text();
+    let json: unknown;
+    if (text) {
+      try { json = JSON.parse(text); } catch { json = text; }
+    }
+    if (!res.ok) {
+      const message = (json && typeof json === 'object' && 'message' in json)
+        ? String((json as { message: unknown }).message)
+        : `Sorsa request failed (${res.status})`;
+      throw new SorsaApiError(message, res.status);
+    }
+    return json as T;
+  }
+
+  /** Cursor-paginates a Sorsa list endpoint (/retweeters, /quotes, /comments, /followers — all
+   *  share the same `{ <arrayKey>: [...], next_cursor }` envelope) and collects ids, stopping at
+   *  MAX_PAGINATED_USERS. `idOf` returning undefined for an item (e.g. a reply that doesn't match
+   *  comment_requirement) skips it without ending pagination. */
+  private async paginateSorsaIds(
+    method: 'GET' | 'POST',
+    path: string,
+    baseParams: Record<string, string>,
+    arrayKey: 'users' | 'tweets',
+    idOf: (item: any) => string | undefined,
+    context: string,
+  ): Promise<Set<string>> {
+    const ids = new Set<string>();
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await this.sorsaRequest<Record<string, any>>(method, path, { ...baseParams, next_cursor: cursor });
+      const items: any[] = page?.[arrayKey] ?? [];
+      for (const item of items) {
+        const id = idOf(item);
+        if (id) ids.add(id);
+        if (ids.size >= MAX_PAGINATED_USERS) {
+          this.logger.warn(`[XVerification] ${context}: hit MAX_PAGINATED_USERS (${MAX_PAGINATED_USERS}) cap — list may be truncated`);
+          return ids;
+        }
+      }
+      cursor = page?.next_cursor ?? undefined;
+      if (!cursor) return ids;
+    }
   }
 
   /** Lookup used at entry time for eligibility (follower count + account age), not part of the
@@ -202,7 +264,7 @@ export class XVerificationService {
    *  this just makes sure we only ever pay for it once per handle per PROFILE_CACHE_TTL_MS window,
    *  no matter how many times the backend restarts in between. */
   async resolveXProfile(handle: string): Promise<XProfile | null> {
-    if (!this.client) return null;
+    if (!this.sorsaApiKey) return null;
     const cleanHandle = handle.replace(/^@/, '').trim();
     const cacheKey = cleanHandle.toLowerCase();
     const memCached = this.profileCache.get(cacheKey);
@@ -222,20 +284,18 @@ export class XVerificationService {
 
     try {
       await this.consumeDailyCapOrThrow(`resolveXProfile:${cleanHandle}`);
-      // profile_image_url is deliberately NOT requested here anymore — Privy's own linked-account
-      // record already carries the entrant's profile picture (see GiveawayEntriesService.
-      // resolveLinkedXAccount) at zero API cost, so asking X for a second copy was pure downside:
-      // one more field that could need access this app's plan doesn't have (suspected cause of a
-      // 403 on 2026-08-15, right after a credit top-up ruled out a plain quota/payment issue).
-      const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics', 'verified'] });
-      if (!result.data) return null;
+      // profileImageUrl is deliberately not requested — Privy's own linked-account record already
+      // carries the entrant's profile picture (see GiveawayEntriesService.resolveLinkedXAccount)
+      // at zero API cost, so asking Sorsa for a second copy would be pure downside.
+      const result = await this.sorsaRequest<Record<string, any>>('GET', '/info', { username: cleanHandle });
+      if (!result?.id) return null;
       const profile: XProfile = {
-        id: result.data.id,
-        username: result.data.username,
-        createdAt: result.data.created_at ?? new Date(0).toISOString(),
-        followersCount: result.data.public_metrics?.followers_count ?? 0,
+        id: String(result.id),
+        username: result.username,
+        createdAt: result.created_at ?? new Date(0).toISOString(),
+        followersCount: result.followers_count ?? 0,
         profileImageUrl: null,
-        verified: !!result.data.verified,
+        verified: !!result.verified,
       };
       this.profileCache.set(cacheKey, { profile, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
       await this.redis.set(redisKey, JSON.stringify(profile), PROFILE_CACHE_TTL_MS / 1000);
@@ -258,33 +318,16 @@ export class XVerificationService {
     return (match ? match[1] : target).replace(/^@/, '').trim();
   }
 
-  private async collectUserIds(
-    paginator: AsyncIterable<{ id: string }>,
-    context: string,
-  ): Promise<Set<string>> {
-    const ids = new Set<string>();
-    for await (const user of paginator) {
-      ids.add(user.id);
-      if (ids.size >= MAX_PAGINATED_USERS) {
-        this.logger.warn(`[XVerification] ${context}: hit MAX_PAGINATED_USERS (${MAX_PAGINATED_USERS}) cap — list may be truncated`);
-        break;
-      }
-    }
-    return ids;
-  }
-
-  /** A quote tweet is a distinct relationship from a plain retweet in X's own data model (it shows
-   *  up under "Quote Tweets Lookup", never in "Retweet Lookup"), but counts the same for our
-   *  purposes — confirmed live 2026-08-05: a genuine entrant quote-tweeted exactly as instructed
-   *  and was still rejected, since only plain retweets were being checked. Union both. */
+  /** A quote tweet is a distinct relationship from a plain retweet (Sorsa exposes them via
+   *  separate /retweeters and /quotes endpoints, same as X's own "Retweet Lookup" vs "Quote Tweets
+   *  Lookup"), but counts the same for our purposes — confirmed live 2026-08-05: a genuine entrant
+   *  quote-tweeted exactly as instructed and was still rejected, since only plain retweets were
+   *  being checked. Union both. */
   private async fetchRetweeterIds(tweetId: string): Promise<Set<string>> {
-    if (!this.client) return new Set();
+    if (!this.sorsaApiKey) return new Set();
     return this.getCachedIds(`retweet:${tweetId}`, async () => {
       const [retweeterIds, quoteAuthorIds] = await Promise.all([
-        (async () => {
-          const paginator = await this.client!.v2.tweetRetweetedBy(tweetId, { asPaginator: true, max_results: 100 });
-          return this.collectUserIds(paginator, `retweetedBy(${tweetId})`);
-        })(),
+        this.paginateSorsaIds('POST', '/retweeters', { tweet_link: tweetId }, 'users', (u) => u?.id && String(u.id), `retweeters(${tweetId})`),
         this.fetchQuoteTweetAuthorIds(tweetId),
       ]);
       return new Set([...retweeterIds, ...quoteAuthorIds]);
@@ -292,56 +335,28 @@ export class XVerificationService {
   }
 
   private async fetchQuoteTweetAuthorIds(tweetId: string): Promise<Set<string>> {
-    if (!this.client) return new Set();
-    const paginator = await this.client.v2.quotes(tweetId, { max_results: 100, 'tweet.fields': ['author_id'] });
-    const ids = new Set<string>();
-    for await (const tweet of paginator) {
-      if (tweet.author_id) ids.add(tweet.author_id);
-      if (ids.size >= MAX_PAGINATED_USERS) {
-        this.logger.warn(`[XVerification] quotes(${tweetId}): hit MAX_PAGINATED_USERS (${MAX_PAGINATED_USERS}) cap — list may be truncated`);
-        break;
-      }
-    }
-    return ids;
-  }
-
-  private async fetchLikerIds(tweetId: string): Promise<Set<string>> {
-    if (!this.client) return new Set();
-    return this.getCachedIds(`like:${tweetId}`, async () => {
-      const paginator = await this.client!.v2.tweetLikedBy(tweetId, { asPaginator: true, max_results: 100 });
-      return this.collectUserIds(paginator, `likedBy(${tweetId})`);
-    });
+    if (!this.sorsaApiKey) return new Set();
+    return this.paginateSorsaIds('POST', '/quotes', { tweet_link: tweetId }, 'tweets', (t) => t?.user?.id && String(t.user.id), `quotes(${tweetId})`);
   }
 
   private async fetchFollowerIds(targetHandle: string): Promise<Set<string>> {
-    if (!this.client) return new Set();
-    return this.getCachedIds(`follow:${targetHandle.toLowerCase()}`, async () => {
-      const target = await this.client!.v2.userByUsername(targetHandle);
-      if (!target.data) return new Set();
-      const paginator = await this.client!.v2.followers(target.data.id, { asPaginator: true, max_results: 1000 });
-      return this.collectUserIds(paginator, `followers(${targetHandle})`);
-    });
+    if (!this.sorsaApiKey) return new Set();
+    return this.getCachedIds(`follow:${targetHandle.toLowerCase()}`, () =>
+      this.paginateSorsaIds('GET', '/followers', { username: targetHandle }, 'users', (u) => u?.id && String(u.id), `followers(${targetHandle})`),
+    );
   }
 
-  /** Replies (conversation_id search) whose author is in `entrantIds` — used for x_comment. Text
-   *  match against `comment_requirement` is a substring check, deliberately loose (real-world
-   *  phrasing varies); a false-positive here just means one more entry falls into the review
-   *  queue on `rejected`, not a silent security hole. */
+  /** Replies to the tweet whose text matches `comment_requirement` — used for x_comment. The text
+   *  match is a loose substring check (real-world phrasing varies); a false-positive here just
+   *  means one more entry falls into the review queue on `rejected`, not a silent security hole. */
   private async fetchReplyAuthors(tweetId: string, commentRequirement?: string): Promise<Set<string>> {
-    if (!this.client) return new Set();
-    return this.getCachedIds(`comment:${tweetId}:${commentRequirement ?? ''}`, async () => {
-      const paginator = await this.client!.v2.search(`conversation_id:${tweetId} is:reply`, {
-        max_results: 100,
-        'tweet.fields': ['author_id', 'text'],
-      });
-      const authorIds = new Set<string>();
-      for await (const tweet of paginator) {
-        if (commentRequirement && !tweet.text?.toLowerCase().includes(commentRequirement.toLowerCase())) continue;
-        if (tweet.author_id) authorIds.add(tweet.author_id);
-        if (authorIds.size >= MAX_PAGINATED_USERS) break;
-      }
-      return authorIds;
-    });
+    if (!this.sorsaApiKey) return new Set();
+    return this.getCachedIds(`comment:${tweetId}:${commentRequirement ?? ''}`, () =>
+      this.paginateSorsaIds('POST', '/comments', { tweet_link: tweetId }, 'tweets', (t) => {
+        if (commentRequirement && !String(t?.full_text ?? '').toLowerCase().includes(commentRequirement.toLowerCase())) return undefined;
+        return t?.user?.id && String(t.user.id);
+      }, `comments(${tweetId})`),
+    );
   }
 
   /**
@@ -355,7 +370,7 @@ export class XVerificationService {
     task: GiveawayTask,
     pending: Array<{ completion: GiveawayTaskCompletion; entry: GiveawayEntry }>,
   ): Promise<void> {
-    if (!this.client || pending.length === 0) return;
+    if (!this.sorsaApiKey || pending.length === 0) return;
     const config = task.config as { target?: string; comment_requirement?: string };
     if (!config.target) return;
 
