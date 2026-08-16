@@ -101,6 +101,12 @@ export class GachaController {
     return this.gacha.getRoomDetail(id, req.user.id, inviteCode);
   }
 
+  @Post('rooms/:id/run-it-back')
+  @ApiOperation({ summary: 'Create or recover the shared next waiting room for a settled room' })
+  async runItBack(@Param('id') id: string, @Request() req: any) {
+    return this.gacha.runItBack(id, req.user.id);
+  }
+
   @Post('rooms/:id/fill-with-bots')
   @ApiOperation({ summary: 'Devnet testing only — fills every open seat with fake, treasury-funded participants. Blocked in production.' })
   async fillWithBots(@Param('id') id: string) {

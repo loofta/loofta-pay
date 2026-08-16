@@ -53,6 +53,7 @@ const GachaPack3D = dynamic(() => import("@/components/GachaPack3D"), { ssr: fal
 interface RoomDetail {
   room: {
     id: string;
+    name?: string;
     configKey: string;
     packType: string;
     seats: number;
@@ -365,11 +366,33 @@ export default function GachaRoomPage() {
     });
   }, []);
 
-  // Starting another game always returns to the explicit room browser. It deliberately does not
-  // carry this group forward or silently place the player in an arbitrary waiting room.
-  const handlePlayAgain = useCallback(() => {
-    router.push("/app/gacha/play");
-  }, [router]);
+  // A settled room owns one idempotent rematch destination. The endpoint only creates/retrieves
+  // that waiting room; the player still signs a fresh entry payment in the normal play flow.
+  const handlePlayAgain = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const token = await getAccessToken();
+      const response = await fetch(`/api/gacha/rooms/${roomId}/run-it-back`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message ?? "Couldn't start the rematch");
+      const nextRoomId = payload?.room?.id;
+      if (!nextRoomId) throw new Error("The rematch room could not be loaded");
+      const query = new URLSearchParams({ rematchRoomId: nextRoomId });
+      if (payload.inviteCode) query.set("inviteCode", payload.inviteCode);
+      if (payload.mascotKey) query.set("mascotKey", payload.mascotKey);
+      if (payload.claimDeadline) query.set("claimDeadline", payload.claimDeadline);
+      router.push(`/app/gacha/play?${query.toString()}`);
+    } catch (err: any) {
+      setError(err?.message?.length < 200 ? err.message : "Couldn't start the rematch. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, getAccessToken, roomId, router]);
 
   const handleFillWithBots = useCallback(async () => {
     setFillingBots(true);
@@ -889,8 +912,13 @@ export default function GachaRoomPage() {
         sub="buyback settled. instantly. obviously."
         footer={
           <div className="pp-votebtns">
-            <button type="button" className="pp-btn gold" onClick={handlePlayAgain}>
-              PLAY AGAIN →
+            <button
+              type="button"
+              className="pp-btn gold"
+              onClick={() => { void handlePlayAgain(); }}
+              disabled={busy || room.status !== "settled"}
+            >
+              {busy ? "LOADING ROOM…" : room.status === "settling" ? "SETTLING…" : "RUN IT BACK →"}
             </button>
             <Link href="/app/gacha" className="pp-btn ghost">
               LEAVE
