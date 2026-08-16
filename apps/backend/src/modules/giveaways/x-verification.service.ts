@@ -18,6 +18,9 @@ export interface XProfile {
   createdAt: string;
   followersCount: number;
   profileImageUrl: string | null;
+  /** X's own "verified" flag (blue check / legacy verification) — not to be confused with
+   *  is_identity_verified or verified_type, which this app doesn't need. */
+  verified: boolean;
 }
 
 /** Unwraps the real reason X rejected a request — `String(e)` on a twitter-api-v2 ApiResponseError
@@ -224,7 +227,7 @@ export class XVerificationService {
       // resolveLinkedXAccount) at zero API cost, so asking X for a second copy was pure downside:
       // one more field that could need access this app's plan doesn't have (suspected cause of a
       // 403 on 2026-08-15, right after a credit top-up ruled out a plain quota/payment issue).
-      const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics'] });
+      const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics', 'verified'] });
       if (!result.data) return null;
       const profile: XProfile = {
         id: result.data.id,
@@ -232,6 +235,7 @@ export class XVerificationService {
         createdAt: result.data.created_at ?? new Date(0).toISOString(),
         followersCount: result.data.public_metrics?.followers_count ?? 0,
         profileImageUrl: null,
+        verified: !!result.data.verified,
       };
       this.profileCache.set(cacheKey, { profile, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
       await this.redis.set(redisKey, JSON.stringify(profile), PROFILE_CACHE_TTL_MS / 1000);

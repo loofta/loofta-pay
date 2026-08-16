@@ -429,6 +429,7 @@ interface GiveawayDraft {
   entriesCloseAt: string;
   minFollowers: string;
   minAccountAgeDays: string;
+  verifiedOnly: boolean;
   tasks: TaskRow[];
 }
 
@@ -445,6 +446,7 @@ function defaultDraft(): GiveawayDraft {
     entriesCloseAt: "",
     minFollowers: "",
     minAccountAgeDays: "",
+    verifiedOnly: false,
     tasks: [newRow()],
   };
 }
@@ -459,7 +461,7 @@ interface RemoteGiveaway {
   selection_mode: "random" | "first_come" | "manual";
   prize_amount_usd: string;
   entries_close_at: string;
-  eligibility: { min_followers?: number; min_account_age_days?: number };
+  eligibility: { min_followers?: number; min_account_age_days?: number; verified_only?: boolean };
   status: string;
   tasks: Array<{ task_type: string; config: Record<string, any> }>;
 }
@@ -478,6 +480,7 @@ function draftFromRemote(g: RemoteGiveaway): GiveawayDraft {
     entriesCloseAt: g.entries_close_at ? toLocalInputValue(new Date(g.entries_close_at)) : "",
     minFollowers: g.eligibility?.min_followers != null ? String(g.eligibility.min_followers) : "",
     minAccountAgeDays: g.eligibility?.min_account_age_days != null ? String(g.eligibility.min_account_age_days) : "",
+    verifiedOnly: g.eligibility?.verified_only === true,
     tasks: collapseTasksToRows(g.tasks ?? []),
   };
 }
@@ -560,7 +563,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     gcTime: Infinity,
     retry: false,
   });
-  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, entriesCloseAt, minFollowers, minAccountAgeDays, tasks } = draft;
+  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks } = draft;
   const prizeAmount = winnerCount > 0 ? totalPool / winnerCount : 0;
   const validWinnerCounts = useMemo(() => divisorsUpTo(totalPool, MAX_WINNERS), [totalPool]);
 
@@ -620,6 +623,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   const setEntriesCloseAt = useCallback((v: string) => updateDraft({ entriesCloseAt: v }), [updateDraft]);
   const setMinFollowers = useCallback((v: string) => updateDraft({ minFollowers: v }), [updateDraft]);
   const setMinAccountAgeDays = useCallback((v: string) => updateDraft({ minAccountAgeDays: v }), [updateDraft]);
+  const setVerifiedOnly = useCallback((v: boolean) => updateDraft({ verifiedOnly: v }), [updateDraft]);
 
   const effectiveMinPool = createAsAdmin ? ADMIN_MIN_TOTAL_POOL : MIN_TOTAL_POOL;
   // Split in two so dragging the slider doesn't re-snap winnerCount on every intermediate tick
@@ -782,6 +786,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
           eligibility: {
             ...(minFollowers ? { min_followers: Number(minFollowers) } : {}),
             ...(minAccountAgeDays ? { min_account_age_days: Number(minAccountAgeDays) } : {}),
+            ...(verifiedOnly ? { verified_only: true } : {}),
           },
           tasks: tasks.flatMap(expandTaskRow),
           ...(mode === "create" ? { is_official: createAsAdmin } : {}),
@@ -809,7 +814,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     } finally {
       setSubmitting(false);
     }
-  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
+  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
 
   const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
@@ -1191,6 +1196,24 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                               <Input type="number" min="0" value={minAccountAgeDays} onChange={(e) => setMinAccountAgeDays(e.target.value)} className={inputClass} placeholder="e.g. 30 days" />
                             </div>
                           </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setVerifiedOnly(!verifiedOnly)}
+                            className={`w-full flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
+                              verifiedOnly ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/[0.03]"
+                            }`}
+                          >
+                            <span className="text-left">
+                              <span className={`text-base font-medium ${verifiedOnly ? "text-white" : "text-slate-300"}`}>Require verified X account</span>
+                              <span className="block text-sm font-normal text-slate-500">Only entrants with X's verified badge can enter</span>
+                            </span>
+                            <span className={`shrink-0 w-10 h-6 rounded-full border transition-colors relative ${
+                              verifiedOnly ? "bg-[#FF7A2A] border-[#FF7A2A]" : "bg-white/10 border-white/15"
+                            }`}>
+                              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${verifiedOnly ? "left-[18px]" : "left-0.5"}`} />
+                            </span>
+                          </button>
                         </>
                       )}
 
@@ -1271,6 +1294,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                   selectionMode={selectionMode}
                   entriesCloseAt={entriesCloseAt}
                   minFollowers={minFollowers}
+                  verifiedOnly={verifiedOnly}
                   isOfficial={mode === "create" && createAsAdmin}
                   tasks={previewTasks}
                   pulse={previewPulse}

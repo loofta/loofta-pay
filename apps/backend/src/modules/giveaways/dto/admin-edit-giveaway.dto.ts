@@ -1,4 +1,4 @@
-import { IsArray, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUrl, Min, MaxLength, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUrl, Min, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { CreateGiveawayTaskDto } from './create-giveaway.dto';
@@ -60,6 +60,11 @@ export class AdminEditGiveawayDto {
   @IsInt()
   @Min(0)
   min_account_age_days?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  verified_only?: boolean;
 
   @ApiPropertyOptional({ type: [AdminEditGiveawayTaskDto], description: 'Per-task config updates by task id — target/instructions/comment_requirement only.' })
   @IsOptional()

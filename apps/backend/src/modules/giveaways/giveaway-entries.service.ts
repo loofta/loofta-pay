@@ -88,12 +88,13 @@ export class GiveawayEntriesService {
     // the giveaway had any eligibility rules at all.
     const minFollowers = giveaway.eligibility?.min_followers;
     const minAgeDays = giveaway.eligibility?.min_account_age_days;
+    const verifiedOnly = giveaway.eligibility?.verified_only === true;
     let xUserId = account.id;
     let xHandle = account.username;
     let avatarUrl = account.profileImageUrl;
     let eligibilitySnapshot: Record<string, unknown> = {};
 
-    if (typeof minFollowers === 'number' || typeof minAgeDays === 'number') {
+    if (typeof minFollowers === 'number' || typeof minAgeDays === 'number' || verifiedOnly) {
       const profile = await this.xVerification.resolveXProfile(account.username);
       if (!profile) {
         throw new BadRequestException('Could not verify your X account right now. Please try again shortly.');
@@ -102,14 +103,16 @@ export class GiveawayEntriesService {
       xHandle = profile.username;
       // avatarUrl stays whatever resolveLinkedXAccount (Privy) already gave us — resolveXProfile
       // no longer fetches profile_image_url from X at all, see its doc comment.
-      eligibilitySnapshot = { followers_count: profile.followersCount, account_created_at: profile.createdAt };
+      eligibilitySnapshot = { followers_count: profile.followersCount, account_created_at: profile.createdAt, verified: profile.verified };
 
       const failReason =
         typeof minFollowers === 'number' && profile.followersCount < minFollowers
           ? `This giveaway requires at least ${minFollowers} X followers`
           : typeof minAgeDays === 'number' && (Date.now() - new Date(profile.createdAt).getTime()) / 86_400_000 < minAgeDays
             ? `This giveaway requires an X account at least ${minAgeDays} days old`
-            : null;
+            : verifiedOnly && !profile.verified
+              ? 'This giveaway requires a verified X account'
+              : null;
       if (failReason) {
         await this.insertEntryRow(giveawayId, userId, GiveawayEntryStatus.DISQUALIFIED, { xUserId, xHandle, avatarUrl, eligibilitySnapshot });
         throw new ForbiddenException(failReason);

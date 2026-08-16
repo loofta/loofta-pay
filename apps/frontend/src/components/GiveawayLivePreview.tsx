@@ -69,6 +69,7 @@ export interface GiveawayLivePreviewProps {
   selectionMode: "random" | "first_come" | "manual";
   entriesCloseAt: string;
   minFollowers: string;
+  verifiedOnly: boolean;
   isOfficial: boolean;
   tasks: PreviewTask[];
   pulse?: boolean;
@@ -84,6 +85,7 @@ export function GiveawayLivePreview({
   selectionMode,
   entriesCloseAt,
   minFollowers,
+  verifiedOnly,
   isOfficial,
   tasks,
   pulse,
@@ -187,8 +189,9 @@ export function GiveawayLivePreview({
         </div>
 
         <div className="flex flex-wrap gap-1.5 mt-4">
-          <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-slate-500">Linked X account</span>
-          {minFollowers && <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-slate-500">{minFollowers}+ followers</span>}
+          <span className="rounded-full border border-white/10 px-2.5 py-1 text-sm text-slate-500">Linked X account</span>
+          {minFollowers && <span className="rounded-full border border-white/10 px-2.5 py-1 text-sm text-slate-500">{minFollowers}+ followers</span>}
+          {verifiedOnly && <span className="rounded-full border border-white/10 px-2.5 py-1 text-sm text-slate-500">Verified X account</span>}
         </div>
       </div>
     </div>

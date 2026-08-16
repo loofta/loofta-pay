@@ -68,6 +68,7 @@ export const GIVEAWAY_TASK_VERIFICATION_MODE: Record<GiveawayTaskType, GiveawayT
 export interface GiveawayEligibility {
   min_followers?: number;
   min_account_age_days?: number;
+  verified_only?: boolean;
 }
 
 export interface Giveaway {

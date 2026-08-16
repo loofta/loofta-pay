@@ -457,11 +457,12 @@ export class GiveawaysService {
       if (Number.isNaN(closeAt.getTime())) throw new BadRequestException('entries_close_at must be a valid date');
       update.entries_close_at = closeAt.toISOString();
     }
-    if (dto.min_followers !== undefined || dto.min_account_age_days !== undefined) {
+    if (dto.min_followers !== undefined || dto.min_account_age_days !== undefined || dto.verified_only !== undefined) {
       update.eligibility = {
         ...giveaway.eligibility,
         ...(dto.min_followers !== undefined ? { min_followers: dto.min_followers } : {}),
         ...(dto.min_account_age_days !== undefined ? { min_account_age_days: dto.min_account_age_days } : {}),
+        ...(dto.verified_only !== undefined ? { verified_only: dto.verified_only } : {}),
       };
     }
     if (Object.keys(update).length === 0 && !dto.tasks?.length && !dto.delete_task_ids?.length && !dto.new_tasks?.length) {
