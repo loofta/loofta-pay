@@ -286,7 +286,11 @@ export class XVerificationService {
   private async checkRetweetedOrQuoted(tweetId: string, userId: string): Promise<boolean> {
     await this.consumeDailyCapOrThrow(`check-quoted:${tweetId}:${userId}`);
     const res = await this.sorsaRequest<{ status?: string }>('POST', '/check-quoted', { tweet_link: tweetId, user_id: userId });
-    return res?.status === 'quoted' || res?.status === 'retweet';
+    // Confirmed live 2026-08-16: Sorsa actually returns "retweeted" for a plain retweet, not
+    // "retweet" as their own doc's enum claims (verified via a real request/response pair in the
+    // Sorsa dashboard — a genuine retweet came back status="retweeted" and was wrongly rejected).
+    // Checking both in case they're inconsistent between endpoints/response paths.
+    return res?.status === 'quoted' || res?.status === 'retweet' || res?.status === 'retweeted';
   }
 
   private async checkFollows(targetHandle: string, userId: string): Promise<boolean> {
