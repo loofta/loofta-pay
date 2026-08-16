@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import confetti from 'canvas-confetti'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { usePrivy } from '@privy-io/react-auth'
 import { useWallets as useSolanaWallets, useSignTransaction as usePrivySolanaSignTransaction } from '@privy-io/react-auth/solana'
@@ -28,6 +29,17 @@ import { SocialPlatformIcon, type SocialIconPlatform } from '@/components/Social
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Send, Loader2, Copy, Check, ExternalLink, AlertCircle, Clock } from 'lucide-react'
+
+function fireConfetti() {
+  confetti({
+    particleCount: 40,
+    spread: 55,
+    startVelocity: 28,
+    scalar: 0.7,
+    origin: { x: 0.5, y: 0.5 },
+    colors: ['#FF1301', '#EAB308', '#22c55e'],
+  })
+}
 
 const MIN_SEND_USD = 5
 const MULTI_MAX_RECIPIENTS = 10
@@ -306,8 +318,9 @@ export function AgentChatBox() {
         console.error(`[AgentChatBox] status sync failed for claim ${claimId} (payment already sent, safe to ignore):`, e)
       })
 
-      const link = `${window.location.origin}/c/${shortId ?? claimId}`
+      const link = `${window.location.origin}/share/${shortId ?? claimId}`
       updateCard(id, { state: 'sent', link })
+      fireConfetti()
     } catch (e: unknown) {
       updateCard(id, { state: 'failed', errorMessage: e instanceof Error ? e.message : 'Something went wrong.' })
     }
@@ -445,7 +458,8 @@ export function AgentChatBox() {
         console.error('[AgentChatBox] multiConfirm failed (payment already sent, safe to ignore):', e)
       })
 
-      updateMultiCard(id, { state: 'sent', links: result.links })
+      updateMultiCard(id, { state: 'sent', links: result.links.map((l) => ({ ...l, link: l.link.replace(/\/c\/([^/?#]+)/, '/share/$1') })) })
+      fireConfetti()
     } catch (e: unknown) {
       updateMultiCard(id, { state: 'failed', errorMessage: e instanceof Error ? e.message : 'Something went wrong.' })
     }
@@ -698,7 +712,12 @@ export function AgentChatBox() {
 
                     {card.state === 'sent' && (
                       <div className="space-y-2">
-                        <p className="text-lg font-medium text-green-400">Confirmed</p>
+                        <p className="flex items-center gap-1.5 text-lg font-medium text-green-400">
+                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-green-400/15">
+                            <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                          </span>
+                          Confirmed
+                        </p>
                         {card.link && (
                           <div className="flex gap-2">
                             <Input readOnly value={card.link} className="font-mono text-base md:text-base flex-1 min-w-0 h-9 bg-white/5 border-white/10 text-white" />
@@ -816,7 +835,12 @@ export function AgentChatBox() {
 
                     {multiCard.state === 'sent' && (
                       <div className="space-y-2">
-                        <p className="text-lg font-medium text-green-400">Confirmed</p>
+                        <p className="flex items-center gap-1.5 text-lg font-medium text-green-400">
+                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-green-400/15">
+                            <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                          </span>
+                          Confirmed
+                        </p>
                         {multiCard.links?.map((link) => (
                           <div key={link.id} className="flex gap-2">
                             <Input readOnly value={link.link} className="font-mono text-base md:text-base flex-1 min-w-0 h-9 bg-white/5 border-white/10 text-white" />
