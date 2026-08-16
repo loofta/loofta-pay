@@ -22,7 +22,8 @@ export default function TerminalPage() {
       <div className="w-full max-w-3xl">
         <div className="flex items-center gap-3 mb-5">
           <img src={LOOFTA_ICON} alt="" className="h-6 w-6" />
-          <span className="font-display font-semibold text-lg tracking-[0.16em] text-white">loofta terminal</span>
+          <span className="font-display font-semibold text-lg tracking-[0.16em] text-white">
+            terminal</span>
           <div className="h-px flex-1 bg-white/[0.08]" />
         </div>
 
