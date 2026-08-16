@@ -136,6 +136,10 @@ export default function GachaRoomPage() {
   const [iAmReady, setIAmReady] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false);
   const showGachaDevTools = process.env.NEXT_PUBLIC_SHOW_GACHA_DEV_TOOLS === "true";
+  // Bot filling is an explicit solo-testing opt-in.  Dev tools may stay visible for ER
+  // diagnostics without silently occupying every open seat, which would block real friends
+  // from joining a room during local testing.
+  const autoFillGachaBots = process.env.NEXT_PUBLIC_GACHA_AUTO_FILL_BOTS === "true";
   const [fillingBots, setFillingBots] = useState(false);
   const [forceSettling, setForceSettling] = useState(false);
 
@@ -424,15 +428,16 @@ export default function GachaRoomPage() {
     }
   }, [roomId, getAccessToken, refresh]);
 
-  // Demo mode: rooms auto-fill with bots the instant you join a waiting one — no manual "fill"
-  // button. Fires once per room (autoFilledRef), only when dev tools are on (devnet only anyway).
+  // Solo bot filling is deliberately opt-in.  Keep this path available for devnet QA, but never
+  // turn it on merely because the regular Gacha dev tools are enabled; otherwise a real friend
+  // cannot join before the synthetic seats arrive.
   const autoFilledRef = useRef(false);
   useEffect(() => {
-    if (!showGachaDevTools || autoFilledRef.current) return;
+    if (!autoFillGachaBots || autoFilledRef.current) return;
     if (room?.status !== "waiting" || !detail?.myParticipant) return;
     autoFilledRef.current = true;
     handleFillWithBots();
-  }, [showGachaDevTools, room?.status, detail?.myParticipant, handleFillWithBots]);
+  }, [autoFillGachaBots, room?.status, detail?.myParticipant, handleFillWithBots]);
 
   const handleMarkReady = useCallback(() => {
     setIAmReady(true);
@@ -620,7 +625,8 @@ export default function GachaRoomPage() {
   const toChipPlayer = (p: RoomDetail["participants"][number]): ChipPlayer => ({
     seatNumber: p.seatNumber,
     mascotKey: p.mascotKey,
-    name: getMascot(p.mascotKey)?.name ?? p.username ?? `Seat ${p.seatNumber}`,
+    name: p.username?.trim() || `Seat ${p.seatNumber}`,
+    mascotName: getMascot(p.mascotKey)?.name,
     isMe: p.isMe,
     excluded: p.excluded,
   });

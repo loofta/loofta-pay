@@ -57,7 +57,10 @@ export function Shell({
 export interface ChipPlayer {
   seatNumber: number;
   mascotKey: string | null;
+  /** Permanent nameplate shown below the mascot. Real rooms pass the player's Loofta username. */
   name: string;
+  /** Mascot label remains available for the image tooltip/accessibility description. */
+  mascotName?: string | null;
   isMe: boolean;
   excluded?: boolean;
 }
@@ -80,9 +83,9 @@ export function Chip({
   return (
     <div className={"pp-chip" + (dim ? " dim" : "")} style={ring ? ({ "--ring": ring } as React.CSSProperties) : undefined}>
       <div className="pp-chip-av">
-        {p.mascotKey && <Mascot name={p.mascotKey} mood={mood ?? (p.excluded ? "sad" : "idle")} size={size} title={p.name} />}
+        {p.mascotKey && <Mascot name={p.mascotKey} mood={mood ?? (p.excluded ? "sad" : "idle")} size={size} title={p.mascotName ?? p.name} />}
       </div>
-      <div className="pp-chip-name">
+      <div className="pp-chip-name" title={p.name}>
         {p.name}
         {p.isMe && <span className="pp-you">YOU</span>}
       </div>
