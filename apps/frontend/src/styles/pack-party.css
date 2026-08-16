@@ -182,6 +182,29 @@
 .pp-roomempty { margin: 0; }
 .pp-roomempty p, .pp-roomcreated strong { margin: 0; font-family: 'Clash Display'; font-weight: 600; }
 .pp-roomempty span, .pp-roomcreated span { font-size: 12px; letter-spacing: 0.06em; opacity: 0.65; }
+.pp-roomcreated small { margin-top: 6px; max-width: 390px; color: rgba(255,253,247,0.48); font-size: 11px; line-height: 1.45; letter-spacing: 0.03em; }
+.pp-flowalert { display: flex; align-items: center; gap: 10px; width: min(520px,100%); margin: 0 0 18px; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(251,113,133,0.42); background: rgba(251,113,133,0.1); color: #FECDD3; font-size: 13px; line-height: 1.45; }
+.pp-flowalert span { flex: 1; }
+.pp-flowalert button { display: grid; place-items: center; width: 40px; height: 40px; margin: -7px -8px -7px 0; border: 0; background: transparent; color: currentColor; font-size: 22px; cursor: pointer; opacity: 0.72; }
+.pp-flowalert button:hover { opacity: 1; }
+.pp-flowalert button:focus-visible { outline: 2px solid #FFE9A8; outline-offset: 2px; border-radius: 8px; }
+.pp-existingroom { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: min(520px,100%); margin: 24px 0 22px; padding: 16px 18px; border-radius: 16px; border: 1px solid rgba(234,179,8,0.45); background: linear-gradient(105deg,rgba(234,179,8,0.12),rgba(255,253,247,0.04)); }
+.pp-existingroom-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; text-align: left; }
+.pp-existingroom-copy span { color: rgba(255,253,247,0.58); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+.pp-existingroom-copy strong { overflow: hidden; width: 100%; font-family: 'Clash Display'; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.pp-existingroom-copy p { margin: 0; color: rgba(255,253,247,0.65); font-size: 12px; }
+.pp-existingroom-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
+.pp-existingroom-open, .pp-existingroom-leave { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 9px 12px; border-radius: 999px; font-size: 11px; letter-spacing: 0.05em; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.pp-existingroom-open { border: 1px solid rgba(234,179,8,0.55); background: rgba(234,179,8,0.12); color: #FFE9A8; }
+.pp-existingroom-leave { border: 1px solid rgba(251,113,133,0.42); background: rgba(251,113,133,0.08); color: #FECDD3; }
+.pp-existingroom-open:hover, .pp-existingroom-leave:hover { background: rgba(255,253,247,0.12); }
+.pp-existingroom-open:focus-visible, .pp-existingroom-leave:focus-visible { outline: 2px solid #FFE9A8; outline-offset: 3px; }
+.pp-existingroom-open:disabled, .pp-existingroom-leave:disabled { cursor: default; opacity: 0.45; }
+@media (max-width: 560px) {
+  .pp-existingroom { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .pp-existingroom-actions { width: 100%; }
+  .pp-existingroom-open, .pp-existingroom-leave { flex: 1; }
+}
 .pp-roomerror { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(251,113,133,0.45); background: rgba(251,113,133,0.1); color: #FECDD3; font-size: 13px; }
 .pp-roomerror span { flex: 1; }
 .pp-roomerror button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,253,247,0.25); background: transparent; color: #FFFDF7; cursor: pointer; }
@@ -189,11 +212,14 @@
 .pp-roomrow-skeleton { min-height: 62px; border-radius: 16px; background: linear-gradient(90deg, rgba(255,253,247,0.04), rgba(255,253,247,0.1), rgba(255,253,247,0.04)); background-size: 200% 100%; animation: pp-room-skeleton 1.2s ease-in-out infinite; }
 @keyframes pp-room-skeleton { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .pp-roomrow, .pp-switch, .pp-switch-knob { transition: none; }
+  .pp-roomrow, .pp-switch, .pp-switch-knob, .pp-existingroom-open, .pp-existingroom-leave { transition: none; }
   .pp-roomrow-skeleton { animation: none; }
 }
 
 .pp-slot.filled { border-style: solid; border-color: rgba(234,179,8,0.5); opacity: 0.9; color: #EAB308; }
 
 .pp-sharewrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.pp-copyinvite { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 9px 15px; border-radius: 999px; border: 1px solid rgba(255,253,247,0.28); background: rgba(255,253,247,0.06); color: #FFFDF7; font-size: 12px; letter-spacing: 0.08em; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.pp-copyinvite:hover { background: rgba(255,253,247,0.12); border-color: rgba(234,179,8,0.7); }
+.pp-copyinvite:focus-visible { outline: 2px solid #FFE9A8; outline-offset: 3px; }
 .pp-btn-icon { display: inline-flex; align-items: center; gap: 6px; }

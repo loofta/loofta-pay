@@ -68,7 +68,7 @@ export interface GachaVoteCutEvent {
  * fires (surfaced here as an incrementing counter, not a boolean, so an effect keyed on it fires
  * reliably even though in practice it only ever happens once per room).
  */
-export function useGachaRoomSocket(roomId: string | null, accessToken: string | null | undefined) {
+export function useGachaRoomSocket(roomId: string | null, accessToken: string | null | undefined, inviteCode?: string | null) {
   const [connected, setConnected] = useState(false);
   const [snapshot, setSnapshot] = useState<unknown>(null);
   const [lastUpdate, setLastUpdate] = useState<GachaRoomUpdateEvent | null>(null);
@@ -91,12 +91,12 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
   useEffect(() => {
     if (!roomId || !accessToken) return;
 
-    const socket = io(`${BACKEND_URL}/gacha`, { auth: { token: accessToken }, transports: ["websocket"] });
+    const socket = io(`${BACKEND_URL}/gacha`, { auth: { token: accessToken, ...(inviteCode ? { inviteCode } : {}) }, transports: ["websocket"] });
     socketRef.current = socket;
 
     socket.on("connect", () => {
       setConnected(true);
-      socket.emit("join_room", { roomId });
+      socket.emit("join_room", { roomId, ...(inviteCode ? { inviteCode } : {}) });
     });
     socket.on("disconnect", () => setConnected(false));
     socket.on("room:state", (data) => setSnapshot(data));
@@ -125,7 +125,7 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [roomId, accessToken]);
+  }, [roomId, accessToken, inviteCode]);
 
   const markReady = useCallback(() => {
     if (!roomIdRef.current) return;

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { AuthGuard, Public } from '@/common/guards';
@@ -76,8 +76,15 @@ export class GachaController {
     return this.gacha.getNextRoomNumber(configKey);
   }
 
+  @Get('rooms/invite/:inviteCode')
+  @Public()
+  @ApiOperation({ summary: 'Safe preview for a private waiting room addressed by its bearer invite code' })
+  async inviteRoom(@Param('inviteCode') inviteCode: string) {
+    return this.gacha.getWaitingRoomByInviteCode(inviteCode);
+  }
+
   @Post('rooms')
-  @ApiOperation({ summary: 'Create a distinct waiting room; visibility is stored for private-room follow-up support' })
+  @ApiOperation({ summary: 'Create a distinct public or private waiting room' })
   async createRoom(@Body() dto: CreateRoomDto, @Request() req: any) {
     return this.gacha.createWaitingRoom(dto.configKey, req.user.id, dto.name, dto.isPrivate);
   }
@@ -90,8 +97,8 @@ export class GachaController {
 
   @Get('rooms/:id')
   @ApiOperation({ summary: "Full room detail plus the caller's own participation/payout/bid state" })
-  async room(@Param('id') id: string, @Request() req: any) {
-    return this.gacha.getRoomDetail(id, req.user.id);
+  async room(@Param('id') id: string, @Query('inviteCode') inviteCode: string | undefined, @Request() req: any) {
+    return this.gacha.getRoomDetail(id, req.user.id, inviteCode);
   }
 
   @Post('rooms/:id/fill-with-bots')
@@ -120,14 +127,20 @@ export class GachaController {
 
   @Post('rooms/:id/join-tx')
   @ApiOperation({ summary: 'Build the entry payment transaction for this exact waiting room' })
-  async roomJoinTx(@Param('id') id: string, @Request() req: any) {
-    return this.gacha.buildJoinTxForRoom(id, req.user.id);
+  async roomJoinTx(@Param('id') id: string, @Query('inviteCode') inviteCode: string | undefined, @Request() req: any) {
+    return this.gacha.buildJoinTxForRoom(id, req.user.id, inviteCode);
   }
 
   @Post('rooms/:id/join')
   @ApiOperation({ summary: 'Confirm entry payment and take a seat — requires a confirmed on-chain payment tx hash' })
-  async join(@Param('id') id: string, @Body() dto: ConfirmJoinDto, @Request() req: any) {
-    return this.gacha.confirmJoin(id, req.user.id, dto.paymentTxHash, dto.mascotKey);
+  async join(@Param('id') id: string, @Query('inviteCode') inviteCode: string | undefined, @Body() dto: ConfirmJoinDto, @Request() req: any) {
+    return this.gacha.confirmJoin(id, req.user.id, dto.paymentTxHash, dto.mascotKey, inviteCode);
+  }
+
+  @Delete('rooms/:id/leave')
+  @ApiOperation({ summary: 'Release the caller\'s seat while the room is still waiting' })
+  async leaveRoom(@Param('id') id: string, @Request() req: any) {
+    return this.gacha.leaveWaitingRoom(id, req.user.id);
   }
 
   @Post('rooms/:id/bid')

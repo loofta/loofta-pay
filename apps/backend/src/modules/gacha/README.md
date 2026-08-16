@@ -6,7 +6,8 @@ players, survivors vote on further cuts, and the final survivors split the verif
 proceeds.
 
 The frontend entry route is `/app/gacha`; the guided join flow is `/app/gacha/play`; a room is
-`/app/gacha/:roomId`. The frontend proxies REST calls through `/api/gacha/*` to the Nest backend.
+`/app/gacha/:roomId`. Private share links use `/app/gacha/invite/:inviteCode` and hand off to the
+same explicit browser/join flow. The frontend proxies REST calls through `/api/gacha/*` to the Nest backend.
 The play route lists public waiting rooms for the selected size, defaults to the fullest one, and
 builds the entry transaction for the exact room the player selected. There is no Quick Play or
 automatic room-placement endpoint: every new entry starts in the explicit room browser.
@@ -124,6 +125,7 @@ hardening and room-browser migrations add:
 - unique room seat numbers and bid payment hashes;
 - immutable locked mascots;
 - stable room names, visibility, and creator metadata;
+- private-room invite codes with a unique index;
 - advisory-lock-protected room numbering and explicit room creation.
 - an atomic user/config create guard so duplicate create retries cannot make parallel waiting
   rooms for the same player and size.
@@ -168,6 +170,19 @@ non-production-only force-advance endpoints as recovery/debugging fallbacks.
 - Explicit joins bind the payment memo to the selected room id. The database seat trigger
   serializes final participant inserts, and room creation serializes per-config room-number
   allocation, so concurrent requests cannot oversell capacity or race duplicate room numbers.
+- Selecting a different room never silently redirects to an existing private/public seat. A
+  participant may release that seat only while the room is non-full and still waiting; the
+  atomic leave function archives its payment audit row, fills future seat-number gaps safely,
+  and cancels the room when its final participant leaves. Waiting-room leaves do not refund the
+  Devnet test entry.
+- Private rooms are excluded from public room lists. Their random invite code is the bearer
+  capability: room detail, payment preparation, and payment confirmation accept it (or an
+  existing participant/creator) and otherwise return the same not-found response as an unknown
+  room. Public room links remain directly joinable by authenticated users; private links are the
+  only discovery path for private rooms.
+- A public room detail link carries that exact room id and size into the play flow; it never falls
+  back to a different public room. If the linked room is no longer waiting, the browser keeps the
+  other rooms visible and asks the player to choose again.
 - A valid payment that loses the final-seat race is refunded exactly once using its transaction
   hash as the idempotency key.
 - VRF never silently falls back to `Math.random`; stalled oracle requests remain visible and

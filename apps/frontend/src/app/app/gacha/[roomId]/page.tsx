@@ -18,12 +18,12 @@
 // dormant rather than deleted.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { motion } from "framer-motion";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, LogIn, LogOut } from "lucide-react";
 import MascotPicker from "@/components/MascotPicker";
 import GachaRoulette from "@/components/GachaRoulette";
 import VoteRound from "@/components/VoteRound";
@@ -36,6 +36,16 @@ import type { GachaOpenResult, GachaRarity, GachaNftAttribute } from "@/componen
 import { useGachaRoomSocket } from "@/hooks/useGachaRoomSocket";
 import { useGachaRoomStateSubscription } from "@/hooks/useGachaRoomStateSubscription";
 import { GACHA_ROOM_PHASE, maskToSeatNumbers } from "@/lib/gachaRoomState";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Client-only (touches window/WebGL) — same ssr:false convention as MegapotPack's own usage.
 const GachaPack3D = dynamic(() => import("@/components/GachaPack3D"), { ssr: false });
@@ -56,6 +66,7 @@ interface RoomDetail {
     buybackAmountUsdc: number | null;
     bidWindowEndsAt: string | null;
     createdAt: string;
+    isPrivate: boolean;
   };
   myParticipant: {
     seatNumber: number;
@@ -78,8 +89,10 @@ const CARD_REVEAL_SECONDS = 30;
 export default function GachaRoomPage() {
   const params = useParams<{ roomId: string }>();
   const roomId = params.roomId;
+  const searchParams = useSearchParams();
+  const inviteCode = searchParams.get("inviteCode");
   const router = useRouter();
-  const { getAccessToken } = usePrivy();
+  const { ready: authReady, authenticated, login, getAccessToken } = usePrivy();
 
   const [accessToken, setAccessToken] = useState<string | null>(null);
   useEffect(() => { getAccessToken().then(setAccessToken).catch(() => setAccessToken(null)); }, [getAccessToken]);
@@ -87,6 +100,8 @@ export default function GachaRoomPage() {
   const [detail, setDetail] = useState<RoomDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [leavingRoom, setLeavingRoom] = useState(false);
   // Auto-claim (see below) always pays out publicly, straight to the wallet — the private/
   // shielded claim route goes through a MagicBlock ephemeral-rollup path that isn't fully wired
   // up yet (claimPayout's sendPrivatePayout can reject with "temporarily unavailable"), which
@@ -133,15 +148,48 @@ export default function GachaRoomPage() {
   // `accessToken` state snapshot from mount (that state is still used for the initial websocket
   // handshake below, which is a separate, much shorter-lived concern than 5s-interval polling).
   const refresh = useCallback(async () => {
+    if (!authReady) return;
+    if (!authenticated) {
+      setError("Sign in to open this room.");
+      return;
+    }
+
+    setError(null);
     const token = await getAccessToken().catch(() => null);
-    if (!token) return;
-    const res = await fetch(`/api/gacha/rooms/${roomId}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { setError("Lost sync with the room — refresh the page if this doesn't clear up."); return; }
-    const data: RoomDetail = await res.json();
-    if (arrivedAlreadyRevealedRef.current === null) arrivedAlreadyRevealedRef.current = !!data.room.nftMetadata;
-    setDetail(data);
-    setError((e) => (e === "Lost sync with the room — refresh the page if this doesn't clear up." ? null : e));
-  }, [roomId, getAccessToken]);
+    if (!token) {
+      setError("Your session could not be verified. Go back to rooms and sign in again.");
+      return;
+    }
+
+    const query = inviteCode ? `?inviteCode=${encodeURIComponent(inviteCode)}` : "";
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
+    try {
+      const res = await fetch(`/api/gacha/rooms/${roomId}${query}`, {
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        const message = res.status === 404
+          ? "This private-room link is missing or no longer valid. Open the original invite link again."
+          : payload?.message ?? "Lost sync with the room — please try again.";
+        setError(message);
+        return;
+      }
+      const data: RoomDetail = await res.json();
+      if (arrivedAlreadyRevealedRef.current === null) arrivedAlreadyRevealedRef.current = !!data.room.nftMetadata;
+      setDetail(data);
+      setError(null);
+    } catch (err: any) {
+      setError(err?.name === "AbortError"
+        ? "The room took too long to load. Check that the backend is running, then try again."
+        : "Couldn't load this room. Please try again.");
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }, [roomId, inviteCode, authReady, authenticated, getAccessToken]);
 
   useEffect(() => {
     refresh();
@@ -152,7 +200,7 @@ export default function GachaRoomPage() {
   const {
     lastUpdate, lastOpened, lastSettled, lastExcluded, lastReadyUpdate, allReadyTick, readySeats: socketReadySeats, markReady, lockMascot,
     lastVoteRoundStarted, lastVoteResult, lastVoteCut, castVote,
-  } = useGachaRoomSocket(roomId, accessToken);
+  } = useGachaRoomSocket(roomId, accessToken, inviteCode);
   const {
     state: erRoomState,
     status: erSubscriptionStatus,
@@ -449,6 +497,28 @@ export default function GachaRoomPage() {
     }
   }, [roomId, isPrivate, getAccessToken, refresh]);
 
+  const handleLeaveRoom = useCallback(async () => {
+    if (leavingRoom) return;
+    setLeavingRoom(true);
+    setError(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`/api/gacha/rooms/${roomId}/leave`, {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.message ?? "Couldn't leave this room");
+      setShowLeaveConfirm(false);
+      router.replace("/app/gacha/play");
+    } catch (err: any) {
+      setShowLeaveConfirm(false);
+      setError(err?.message?.length < 200 ? err.message : "Couldn't leave this room — please try again.");
+    } finally {
+      setLeavingRoom(false);
+    }
+  }, [leavingRoom, getAccessToken, roomId, router]);
+
   // Auto-claim — the WINNERS screen just shows the split and PLAY AGAIN / LEAVE, no manual
   // private/public choice or claim button (see isPrivate above for why it's always public).
   const autoClaimedRef = useRef(false);
@@ -475,6 +545,60 @@ export default function GachaRoomPage() {
     }
   }, [room]);
 
+  if (!authReady) {
+    return (
+      <div
+        className="min-h-screen bg-[#0B0B0F] text-slate-100 flex items-center justify-center px-6 text-center font-display"
+        aria-busy="true"
+      >
+        Checking your session…
+      </div>
+    );
+  }
+
+  if (!authenticated) {
+    return (
+      <main className="min-h-screen bg-[#0B0B0F] text-slate-100 flex items-center justify-center px-6 py-12 font-display">
+        <section className="w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 px-6 py-8 text-center sm:px-10">
+          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-white/10" aria-hidden="true">
+            <LogIn className="h-5 w-5" />
+          </div>
+          <h1 className="text-2xl font-semibold text-white">Sign in to open this room</h1>
+          <p className="mx-auto mt-3 max-w-md text-base leading-7 text-slate-300">
+            Sign in or create an account to continue. You&apos;ll stay on this page and the room will load automatically.
+          </p>
+          <button
+            type="button"
+            onClick={() => login({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })}
+            className="mt-7 min-h-11 w-full rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-5 py-3 text-base font-semibold text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0B0F] sm:w-auto sm:min-w-56"
+          >
+            Sign in to continue
+          </button>
+          <p className="mt-5 text-sm leading-6 text-slate-400">
+            Invited to a private room? Open the original invite link so its access code stays attached.
+          </p>
+          <Link
+            href="/app/gacha/play"
+            className="mt-4 inline-flex min-h-10 items-center justify-center rounded-md px-3 text-sm text-slate-300 underline underline-offset-4 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0B0F]"
+          >
+            Back to rooms
+          </Link>
+        </section>
+      </main>
+    );
+  }
+
+  if ((!detail || !room) && error) {
+    return (
+      <div className="min-h-screen bg-[#0B0B0F] text-slate-100 flex flex-col items-center justify-center gap-5 px-6 text-center font-display">
+        <p role="alert" className="max-w-xl text-base text-red-300">{error}</p>
+        <Link href="/app/gacha/play" className="text-slate-300 underline underline-offset-4 hover:text-white">
+          Back to rooms
+        </Link>
+      </div>
+    );
+  }
+
   if (!detail || !room) {
     return <div className="min-h-screen bg-[#0B0B0F] text-slate-100 flex items-center justify-center text-base font-display">Loading room…</div>;
   }
@@ -489,6 +613,9 @@ export default function GachaRoomPage() {
   // joining (see /app/gacha/play), so this is dormant except for legacy/edge-case seats.
   const isPicking = room.status === "waiting" && !!detail.myParticipant && !detail.myParticipant.mascotLocked;
   const myMascot = getMascot(detail.myParticipant?.mascotKey);
+  const directJoinHref = room.isPrivate && inviteCode
+    ? `/app/gacha/play?inviteCode=${encodeURIComponent(inviteCode)}`
+    : `/app/gacha/play?roomId=${encodeURIComponent(room.id)}&seats=${room.seats}`;
 
   const toChipPlayer = (p: RoomDetail["participants"][number]): ChipPlayer => ({
     seatNumber: p.seatNumber,
@@ -691,19 +818,26 @@ export default function GachaRoomPage() {
     const full = room.seatsFilled >= room.seats;
     screen = (
       <Shell
-        kicker="2 / 6 · LOBBY"
+        kicker={`2 / 6 · ${room.isPrivate ? "PRIVATE ROOM" : "PUBLIC ROOM"}`}
         title="THE"
         titleGrad="ROOM"
         sub={statusCaption}
         footer={
           !detail.myParticipant ? (
-            <Link href="/app/gacha" className="pp-btn gold">
+            <Link href={directJoinHref} className="pp-btn gold">
               JOIN FOR ${room.entryUsdc.toFixed(2)} →
             </Link>
           ) : (
-            <button type="button" className={"pp-btn gold" + (full ? " waitpulse" : "")} disabled>
-              {full ? "RIP THE PACK →" : `waiting ${room.seatsFilled}/${room.seats}`}
-            </button>
+            <div className="pp-votebtns">
+              <button type="button" className={"pp-btn gold" + (full ? " waitpulse" : "")} disabled>
+                {full ? "RIP THE PACK →" : `waiting ${room.seatsFilled}/${room.seats}`}
+              </button>
+              {!full && (
+                <button type="button" className="pp-btn ghost pp-btn-icon" onClick={() => setShowLeaveConfirm(true)} disabled={leavingRoom}>
+                  <LogOut className="h-4 w-4" aria-hidden="true" /> Leave room
+                </button>
+              )}
+            </div>
           )
         }
       >
@@ -787,6 +921,28 @@ export default function GachaRoomPage() {
     <div className="relative min-h-screen">
       {chrome}
       {screen}
+      <AlertDialog open={showLeaveConfirm} onOpenChange={(open) => { if (!leavingRoom) setShowLeaveConfirm(open); }}>
+        <AlertDialogContent className="border-white/10 bg-[#0f0f12] text-white sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leave this {room.isPrivate ? "private" : "public"} room?</AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-300">
+              Your waiting seat will be released and you can choose another room. Your Devnet test entry is not refunded.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={leavingRoom} className="border-white/20 bg-white/5 text-white hover:bg-white/10 hover:text-white">
+              Keep my seat
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={leavingRoom}
+              onClick={(event) => { event.preventDefault(); void handleLeaveRoom(); }}
+              className="bg-red-600 text-white hover:bg-red-500 focus-visible:ring-red-300"
+            >
+              {leavingRoom ? "Leaving…" : "Leave room"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
