@@ -359,6 +359,20 @@ export class XVerificationService {
     const config = task.config as { target?: string; comment_requirement?: string };
     if (!config.target) return;
 
+    // X_LIKE/X_BOOKMARK are SELF_REPORT (see GIVEAWAY_TASK_VERIFICATION_MODE) — there is no live X
+    // API call that can resolve them (Like Lookup always returns empty on this app's tier; bookmarks
+    // have no public endpoint at all), so submitTaskCompletion trusts them on click. This sweep must
+    // do the same instead of hitting a real (paginated, billed) endpoint that can never return a
+    // useful result — that was silently burning API calls AND wrongly rejecting genuine likes.
+    if (task.task_type === GiveawayTaskType.X_LIKE || task.task_type === GiveawayTaskType.X_BOOKMARK) {
+      const note =
+        task.task_type === GiveawayTaskType.X_LIKE
+          ? 'Auto-approved by final sweep — X Like Lookup unavailable on current API tier'
+          : 'Auto-approved by final sweep — X has no public API for who bookmarked a post, so this is trusted';
+      await this.markAll(pending.map((p) => p.completion.id), GiveawayTaskCompletionStatus.VERIFIED, { note });
+      return;
+    }
+
     let matchedIds: Set<string>;
     try {
       switch (task.task_type) {
@@ -366,12 +380,6 @@ export class XVerificationService {
           const tweetId = this.extractTweetId(config.target);
           if (!tweetId) throw new Error(`Could not parse tweet id from target "${config.target}"`);
           matchedIds = await this.fetchRetweeterIds(tweetId);
-          break;
-        }
-        case GiveawayTaskType.X_LIKE: {
-          const tweetId = this.extractTweetId(config.target);
-          if (!tweetId) throw new Error(`Could not parse tweet id from target "${config.target}"`);
-          matchedIds = await this.fetchLikerIds(tweetId);
           break;
         }
         case GiveawayTaskType.X_FOLLOW: {

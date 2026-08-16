@@ -139,9 +139,13 @@ export class GiveawayDrawService {
     let pendingCount = await this.entriesService.countPendingCompletions(giveaway.id);
 
     // Only pay for a real X API sweep if there's something to sweep AND it hasn't already run for
-    // this giveaway (the creator forcing a draw now is the one exception — a rare, human-paced
-    // action, not a cost driver, so it always gets a fresh attempt).
-    if (pendingCount > 0 && (opts.throwIfPending || !(await this.hasSweptAlready(giveaway.id)))) {
+    // this giveaway. Previously forceRunDrawNow (opts.throwIfPending) was exempted from this guard
+    // on the assumption a creator forcing a draw is "rare, human-paced, not a cost driver" — false
+    // in practice during active testing/iteration, where the same giveaway gets force-closed
+    // repeatedly and each call re-paid for a full live X sweep (confirmed cost driver, 2026-08-16).
+    // The guard now applies unconditionally; a giveaway that still has pending completions after its
+    // one sweep just surfaces to the creator via the throwIfPending error path below, same as ever.
+    if (pendingCount > 0 && !(await this.hasSweptAlready(giveaway.id))) {
       await this.entriesService.runFinalXVerificationSweep(giveaway);
       await this.logEvent(giveaway.id, 'final_sweep_ran');
       pendingCount = await this.entriesService.countPendingCompletions(giveaway.id);
