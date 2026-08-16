@@ -7,6 +7,7 @@ import { UsersModule } from '../users/users.module';
 import { GiveawaysController } from './giveaways.controller';
 import { GiveawaysAdminController } from './giveaways-admin.controller';
 import { GiveawaysPublicController } from './giveaways-public.controller';
+import { GiveawaysReviewLinkController } from './giveaways-review-link.controller';
 import { GiveawaysService } from './giveaways.service';
 import { GiveawayBurnerSweepService } from './giveaway-burner-sweep.service';
 import { GiveawayFundingService } from './giveaway-funding.service';
@@ -20,16 +21,16 @@ import { GiveawayCronService } from './giveaway-cron.service';
 
 @Module({
   imports: [ClaimsModule, SendPaymentModule, EmailModule, IntentsModule, UsersModule],
-  // GiveawaysPublicController and GiveawaysAdminController MUST both be registered before
-  // GiveawaysController. GiveawaysController's `:id`-based routes (`GET /giveaways/:id`,
-  // `GET /giveaways/:id/review-queue`, etc.) happily match "public" or "admin" as the literal
-  // `:id` segment — e.g. `/giveaways/admin/review-queue` matched `:id/review-queue` with
-  // id="admin" and hit AuthGuard/findOneForCreator instead of GiveawaysAdminController,
-  // producing "invalid input syntax for type uuid: admin". Same class of bug
-  // organizations.controller.ts's `mine`-before-`:id` comment warns about, just across
+  // GiveawaysPublicController, GiveawaysAdminController, and GiveawaysReviewLinkController MUST
+  // all be registered before GiveawaysController. GiveawaysController's `:id`-based routes
+  // (`GET /giveaways/:id`, `GET /giveaways/:id/review-queue`, etc.) happily match "public",
+  // "admin", or "review-link" as the literal `:id` segment — e.g. `/giveaways/admin/review-queue`
+  // matched `:id/review-queue` with id="admin" and hit AuthGuard/findOneForCreator instead of
+  // GiveawaysAdminController, producing "invalid input syntax for type uuid: admin". Same class of
+  // bug organizations.controller.ts's `mine`-before-`:id` comment warns about, just across
   // controllers instead of within one — always register the more specific literal-prefixed
   // controller first.
-  controllers: [GiveawaysPublicController, GiveawaysAdminController, GiveawaysController],
+  controllers: [GiveawaysPublicController, GiveawaysAdminController, GiveawaysReviewLinkController, GiveawaysController],
   providers: [
     GiveawaysService,
     GiveawayBurnerSweepService,

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiSecurity } from '@nestjs/swagger';
 import { AuthGuard } from '@/common/guards';
 import { GiveawaysService } from './giveaways.service';
@@ -134,11 +134,24 @@ export class GiveawaysController {
   }
 
   @Get(':id/review-queue')
-  @ApiOperation({ summary: 'Task completions awaiting a human decision (self-report + api_error) for a giveaway you created' })
-  async reviewQueue(@Req() req: { user?: { id: string } }, @Param('id') id: string) {
+  @ApiOperation({ summary: 'Paginated self-report task completions awaiting a human decision, for a giveaway you created — AUTO_API tasks resolve programmatically and never appear here' })
+  async reviewQueue(
+    @Req() req: { user?: { id: string } },
+    @Param('id') id: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
     await this.giveawaysService.findOneForCreator(id, req.user!.id);
-    const items = await this.entriesService.listReviewQueue(id);
-    return { items };
+    return this.entriesService.listReviewQueue(id, {
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  }
+
+  @Post(':id/review-link')
+  @ApiOperation({ summary: 'Generate (or regenerate) a password-protected public review link for this giveaway — invalidates any previous link/password' })
+  async generateReviewLink(@Req() req: { user?: { id: string } }, @Param('id') id: string) {
+    return this.giveawaysService.generateReviewLink(id, req.user!.id);
   }
 
   @Put(':id/completions/:completionId/review')

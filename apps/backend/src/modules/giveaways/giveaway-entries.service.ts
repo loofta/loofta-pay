@@ -334,22 +334,34 @@ export class GiveawayEntriesService {
     });
   }
 
-  /** Completions awaiting a human decision — self-report submissions plus anything the X-API
-   *  checker couldn't resolve. Permanent fallback per plan §Task verification. */
-  async listReviewQueue(giveawayId: string): Promise<Array<GiveawayTaskCompletion & { entry: GiveawayEntry; task: GiveawayTask }>> {
+  /** Completions awaiting a human decision — self-report tasks only. AUTO_API tasks (X follow/
+   *  retweet/comment) resolve programmatically via XVerificationService and never need a human
+   *  here; a genuine API failure for one of those lands in listApiErrorEscalations instead, not
+   *  this queue. A self-report completion is only ever PENDING or already reviewed — it can never
+   *  reach api_error (that status only comes from XVerificationService), so filtering to PENDING
+   *  is exactly "still needs a decision," not an approximation of it. */
+  async listReviewQueue(
+    giveawayId: string,
+    opts: { page?: number; pageSize?: number } = {},
+  ): Promise<{ items: Array<GiveawayTaskCompletion & { entry: GiveawayEntry; task: GiveawayTask }>; total: number }> {
     const entries = await this.listEntries(giveawayId);
     const entryIds = entries.map((e) => e.id);
-    if (!entryIds.length) return [];
+    if (!entryIds.length) return { items: [], total: 0 };
     const tasks = await this.giveawaysService.getTasks(giveawayId);
+    const selfReportTaskIds = new Set(tasks.filter((t) => t.verification_mode === GiveawayTaskVerificationMode.SELF_REPORT).map((t) => t.id));
     const tasksById = new Map(tasks.map((t) => [t.id, t]));
     const entriesById = new Map(entries.map((e) => [e.id, e]));
+    if (!selfReportTaskIds.size) return { items: [], total: 0 };
 
     const { data, error } = await this.supabaseService.giveawayTaskCompletions
       .select('*')
       .in('giveaway_entry_id', entryIds)
-      .in('verification_status', [GiveawayTaskCompletionStatus.PENDING, GiveawayTaskCompletionStatus.API_ERROR]);
+      .in('giveaway_task_id', Array.from(selfReportTaskIds))
+      .eq('verification_status', GiveawayTaskCompletionStatus.PENDING)
+      .order('created_at', { ascending: true });
     if (error) throw new BadRequestException(error.message);
-    return (data ?? [])
+
+    const all = (data ?? [])
       .map((c) => {
         const completion = c as GiveawayTaskCompletion;
         const task = tasksById.get(completion.giveaway_task_id);
@@ -358,6 +370,11 @@ export class GiveawayEntriesService {
         return { ...completion, entry, task };
       })
       .filter((x): x is GiveawayTaskCompletion & { entry: GiveawayEntry; task: GiveawayTask } => x !== null);
+
+    const pageSize = Math.min(Math.max(opts.pageSize ?? 20, 1), 100);
+    const page = Math.max(opts.page ?? 1, 1);
+    const items = all.slice((page - 1) * pageSize, page * pageSize);
+    return { items, total: all.length };
   }
 
   /** Cross-giveaway escalation queue — completions the X-API checker itself couldn't resolve
@@ -386,6 +403,50 @@ export class GiveawayEntriesService {
       .single();
     if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to review task completion');
     return data as GiveawayTaskCompletion;
+  }
+
+  /** Same action as reviewCompletion, but for the password-protected public review link path,
+   *  which has no real user identity to authorize with — a valid session only proves "allowed to
+   *  act on giveawayId," not "allowed to touch this specific completionId." This closes that gap:
+   *  confirms the completion's entry actually belongs to giveawayId, and that its task is
+   *  self-report (a reviewer with a valid link for one giveaway must not be able to decide
+   *  completions on another giveaway, or override an AUTO_API task Sorsa already resolved, just by
+   *  guessing/enumerating a completion id). reviewed_by stays null — there is no account behind a
+   *  public-link decision, only the fact that it happened (reviewed_at). */
+  async reviewCompletionScoped(
+    giveawayId: string,
+    completionId: string,
+    decision: 'verified' | 'rejected',
+  ): Promise<GiveawayTaskCompletion> {
+    const { data: completion, error: fetchError } = await this.supabaseService.giveawayTaskCompletions
+      .select('*')
+      .eq('id', completionId)
+      .maybeSingle();
+    if (fetchError) throw new BadRequestException(fetchError.message);
+    if (!completion) throw new NotFoundException('Task completion not found');
+
+    const { data: entry, error: entryError } = await this.supabaseService.giveawayEntries
+      .select('giveaway_id')
+      .eq('id', (completion as GiveawayTaskCompletion).giveaway_entry_id)
+      .maybeSingle();
+    if (entryError) throw new BadRequestException(entryError.message);
+    if (!entry || (entry as { giveaway_id: string }).giveaway_id !== giveawayId) {
+      throw new ForbiddenException('This task does not belong to that giveaway');
+    }
+
+    const tasks = await this.giveawaysService.getTasks(giveawayId);
+    const task = tasks.find((t) => t.id === (completion as GiveawayTaskCompletion).giveaway_task_id);
+    if (!task || task.verification_mode !== GiveawayTaskVerificationMode.SELF_REPORT) {
+      throw new ForbiddenException('This task is not eligible for manual review');
+    }
+
+    const { data: updated, error: updateError } = await this.supabaseService.giveawayTaskCompletions
+      .update({ verification_status: decision, reviewed_by: null, reviewed_at: new Date().toISOString() })
+      .eq('id', completionId)
+      .select()
+      .single();
+    if (updateError || !updated) throw new BadRequestException(updateError?.message ?? 'Failed to review task completion');
+    return updated as GiveawayTaskCompletion;
   }
 
   /** Every completion still `pending`, grouped by task — used by the cron to drive XVerificationService in one batch per task instead of one call per entry. */

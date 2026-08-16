@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
+import { RedisService } from '@/redis/redis.service';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { GiveawayBurnerSweepService } from './giveaway-burner-sweep.service';
@@ -17,7 +18,7 @@ import {
   GiveawayTaskCompletionStatus,
   GIVEAWAY_TASK_VERIFICATION_MODE,
 } from './entities/giveaway.entity';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 
 // Same generator as ClaimsService/SendPaymentService/GiveawayPayoutService — duplicated rather
 // than shared per this codebase's existing convention.
@@ -46,12 +47,17 @@ const GIVEAWAY_REVIEW_ALERT_EMAIL = 'lisa.bechina@gmail.com';
 // the rest of the burner's leftover. Waived for an official ("create as Loofta") giveaway.
 const GIVEAWAY_PLATFORM_FEE_USD = 5;
 
+// Review-link session tokens are short-lived — long enough for one sitting of task review, short
+// enough that a link pasted somewhere and forgotten doesn't stay a live credential indefinitely.
+const REVIEW_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+
 @Injectable()
 export class GiveawaysService {
   private readonly logger = new Logger(GiveawaysService.name);
   private readonly usdcMint: string;
   private readonly isDevnet: boolean;
   private readonly baseUrl: string;
+  private readonly reviewLinkSecret: string | null;
 
   constructor(
     private readonly supabaseService: SupabaseService,
@@ -60,6 +66,7 @@ export class GiveawaysService {
     private readonly fundingService: GiveawayFundingService,
     private readonly emailService: EmailService,
     private readonly privy: PrivyVerificationService,
+    private readonly redis: RedisService,
   ) {
     this.isDevnet = isSolanaDevnetFromConfig(this.configService);
     const defaultUsdcMint = this.isDevnet
@@ -70,6 +77,94 @@ export class GiveawaysService {
       this.configService.get<string>('NEXT_PUBLIC_SOLANA_USDC_MINT') ||
       defaultUsdcMint;
     this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
+    // Reuses LOOFTA_INTERNAL_SECRET (already required in Railway for claims.controller.ts's
+    // internal-BFF gate) instead of provisioning a new env var — Lisa: no more secrets that need
+    // adding to Railway before a feature actually works there, after tonight's SORSA_API_KEY gap.
+    // Every HMAC input below is prefixed to keep this domain-separated from that unrelated use —
+    // same root secret, but a review-link HMAC can never collide with or be mistaken for an
+    // internal-caller check.
+    this.reviewLinkSecret = this.configService.get<string>('LOOFTA_INTERNAL_SECRET') || null;
+    if (!this.reviewLinkSecret) this.logger.warn('LOOFTA_INTERNAL_SECRET not configured — public review links disabled.');
+  }
+
+  private hmac(value: string): string {
+    if (!this.reviewLinkSecret) throw new BadRequestException('Review links are not configured on this server');
+    return createHmac('sha256', this.reviewLinkSecret).update(`giveaway-review-link:${value}`).digest('base64url');
+  }
+
+  /** Creator-only: (re)generates the public, password-protected review link for this giveaway.
+   *  Regenerating overwrites the previous token/password hash, so the old link/password stop
+   *  working immediately — deliberately only one live link per giveaway at a time. The plaintext
+   *  password is returned exactly once here and never stored or retrievable again; only its HMAC
+   *  is persisted. */
+  async generateReviewLink(giveawayId: string, creatorId: string): Promise<{ url: string; password: string }> {
+    await this.findOneForCreator(giveawayId, creatorId); // ownership check — throws if not the creator
+    if (!this.reviewLinkSecret) throw new BadRequestException('Review links are not configured on this server');
+
+    const token = randomBytes(24).toString('base64url');
+    const password = randomBytes(9).toString('base64url');
+    const passwordHash = this.hmac(password);
+
+    const { error } = await this.supabaseService.giveaways
+      .update({ review_link_token: token, review_link_password_hash: passwordHash, review_link_created_at: new Date().toISOString() })
+      .eq('id', giveawayId);
+    if (error) throw new BadRequestException(error.message);
+
+    return { url: `${this.baseUrl}/rewards/giveaways/review/${token}`, password };
+  }
+
+  /** Public: exchanges the review link's password for a short-lived session token scoped to this
+   *  one giveaway. Rate-limited per token to blunt password guessing (the token itself is already
+   *  unguessable, but defense in depth costs nothing here). */
+  async authenticateReviewLink(token: string, password: string): Promise<{ sessionToken: string; giveawayTitle: string }> {
+    const rate = await this.redis.slideWindow(`review-link-auth:${token}`, 5, 15 * 60);
+    if (!rate.allowed) throw new ForbiddenException('Too many attempts — try again later');
+
+    const { data, error } = await this.supabaseService.giveaways
+      .select('id, title, review_link_password_hash')
+      .eq('review_link_token', token)
+      .maybeSingle();
+    if (error) throw new BadRequestException(error.message);
+    if (!data?.review_link_password_hash) throw new NotFoundException('Review link not found');
+
+    const expected = Buffer.from(data.review_link_password_hash as string);
+    const actual = Buffer.from(this.hmac(password));
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+      throw new ForbiddenException('Incorrect password');
+    }
+
+    const giveawayId = data.id as string;
+    const expiresAt = Date.now() + REVIEW_SESSION_TTL_MS;
+    const payload = `${giveawayId}.${expiresAt}`;
+    const sessionToken = `${Buffer.from(payload).toString('base64url')}.${this.hmac(payload)}`;
+    return { sessionToken, giveawayTitle: data.title as string };
+  }
+
+  /** Verifies a review-link session token was issued for exactly this giveaway and hasn't expired.
+   *  Returns the giveawayId on success — callers must still scope every subsequent query to it,
+   *  this only proves "this session is allowed to act on this one giveaway," not authorization for
+   *  any particular completion (see GiveawayEntriesService.reviewCompletionScoped). */
+  verifyReviewSessionToken(token: string, sessionToken: string): string {
+    const [encodedPayload, signature] = (sessionToken || '').split('.');
+    if (!encodedPayload || !signature) throw new ForbiddenException('Invalid session');
+    const payload = Buffer.from(encodedPayload, 'base64url').toString('utf8');
+    const expectedSig = Buffer.from(this.hmac(payload));
+    const actualSig = Buffer.from(signature);
+    if (expectedSig.length !== actualSig.length || !timingSafeEqual(expectedSig, actualSig)) {
+      throw new ForbiddenException('Invalid session');
+    }
+    const [giveawayId, expiresAtStr] = payload.split('.');
+    if (!giveawayId || Date.now() > Number(expiresAtStr)) throw new ForbiddenException('Session expired — re-enter the password');
+    return giveawayId;
+  }
+
+  /** Resolves a review link token to its giveaway id, without exposing the giveaway itself —
+   *  used by the guard/controller before a session exists yet. */
+  async findGiveawayIdByReviewToken(token: string): Promise<string> {
+    const { data, error } = await this.supabaseService.giveaways.select('id').eq('review_link_token', token).maybeSingle();
+    if (error) throw new BadRequestException(error.message);
+    if (!data) throw new NotFoundException('Review link not found');
+    return data.id as string;
   }
 
   /** Historically included a per-winner buffer (10bps USDC + 0.002 SOL-equivalent) sized to cover

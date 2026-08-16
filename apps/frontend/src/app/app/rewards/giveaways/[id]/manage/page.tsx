@@ -2,7 +2,7 @@
 
 import { use, useCallback, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, X, Search, ChevronLeft, ChevronRight, Copy, Download } from "lucide-react";
+import { ArrowLeft, Search, ChevronLeft, ChevronRight, Copy, Download, Share2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useToast } from "@/components/ui/use-toast";
@@ -19,9 +19,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { ReviewQueueItem, ReviewQueueItemData } from "@/components/giveaways/ReviewQueueItem";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 const ENTRIES_PER_PAGE = 20;
+const REVIEW_PAGE_SIZE = 10;
 const searchInputClass = "pl-9 bg-white/[0.06] border-white/15 text-white placeholder:text-slate-500";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -70,11 +72,6 @@ function claimStatus(entry: Entry): { label: string; className: string } {
   return { label: "Sent, awaiting claim", className: "text-amber-400" };
 }
 
-interface ReviewItem {
-  id: string; submission_data: Record<string, unknown> | null; verification_status: string;
-  entry: { x_handle: string }; task: { task_type: string };
-}
-
 async function authHeaders(getAccessToken: () => Promise<string | null>): Promise<Record<string, string>> {
   const token = await getAccessToken().catch(() => null);
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -90,6 +87,10 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   const [entriesDialogOpen, setEntriesDialogOpen] = useState(false);
   const [entrySearch, setEntrySearch] = useState("");
   const [entryPage, setEntryPage] = useState(1);
+  const [reviewPage, setReviewPage] = useState(1);
+  const [reviewLink, setReviewLink] = useState<{ url: string; password: string } | null>(null);
+  const [reviewLinkDialogOpen, setReviewLinkDialogOpen] = useState(false);
+  const [generatingLink, setGeneratingLink] = useState(false);
 
   const { data: giveaway, refetch: refetchGiveaway } = useQuery({
     queryKey: ["giveaway-manage", id],
@@ -110,11 +111,12 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   });
 
   const { data: reviewQueue, refetch: refetchReviewQueue } = useQuery({
-    queryKey: ["giveaway-manage-review-queue", id],
-    queryFn: async (): Promise<ReviewItem[]> => {
-      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/review-queue`, { headers: await authHeaders(getAccessToken) });
+    queryKey: ["giveaway-manage-review-queue", id, reviewPage],
+    queryFn: async (): Promise<{ items: ReviewQueueItemData[]; total: number }> => {
+      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/review-queue?page=${reviewPage}&pageSize=${REVIEW_PAGE_SIZE}`, { headers: await authHeaders(getAccessToken) });
       if (!res.ok) throw new Error("Failed to load review queue");
-      return (await res.json()).items ?? [];
+      const body = await res.json();
+      return { items: body.items ?? [], total: body.total ?? 0 };
     },
   });
 
@@ -132,6 +134,24 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
       toast({ variant: "destructive", title: "Failed to review", description: err.message });
     }
   }, [id, getAccessToken, toast, refetchReviewQueue]);
+
+  const generateReviewLink = useCallback(async () => {
+    setGeneratingLink(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/review-link`, {
+        method: "POST",
+        headers: await authHeaders(getAccessToken),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const body = await res.json();
+      setReviewLink({ url: body.url, password: body.password });
+      setReviewLinkDialogOpen(true);
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Failed to generate review link", description: err.message });
+    } finally {
+      setGeneratingLink(false);
+    }
+  }, [id, getAccessToken, toast]);
 
   const toggleWinner = useCallback((entryId: string) => {
     setSelectedWinners((prev) => {
@@ -188,7 +208,8 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   }
 
   const canPickManually = giveaway.status === "DRAWING" && giveaway.selection_mode === "manual";
-  const pendingReviewCount = reviewQueue?.length ?? 0;
+  const pendingReviewCount = reviewQueue?.total ?? 0;
+  const totalReviewPages = Math.max(1, Math.ceil((reviewQueue?.total ?? 0) / REVIEW_PAGE_SIZE));
   const winners = (entries ?? []).filter((e) => e.status === "winner");
   const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://pay.loofta.xyz";
 
@@ -241,26 +262,28 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
       <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
         <div className="max-w-lg mx-auto px-4 py-6 pb-24 space-y-6">
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <h1 className="text-2xl font-medium text-white mb-2">{giveaway.title}</h1>
-            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${statusColor(giveaway.status)}`}>
-              {STATUS_LABELS[giveaway.status] ?? giveaway.status.replace(/_/g, " ")}
-            </span>
-            {giveaway.status === "OPEN" && (
-              <div className="mt-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h1 className="text-2xl font-medium text-white mb-2">{giveaway.title}</h1>
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${statusColor(giveaway.status)}`}>
+                  {STATUS_LABELS[giveaway.status] ?? giveaway.status.replace(/_/g, " ")}
+                </span>
+              </div>
+              {giveaway.status === "OPEN" && (
                 <button
                   type="button"
                   onClick={() => setShowRunDrawConfirm(true)}
                   disabled={runningDraw || pendingReviewCount > 0}
-                  className="inline-flex items-center rounded-lg px-3 py-1.5 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="shrink-0 inline-flex items-center rounded-lg px-3 py-1.5 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {runningDraw ? "Running draw…" : "Run draw now"}
                 </button>
-                {pendingReviewCount > 0 && (
-                  <p className="text-base text-slate-500 mt-1.5">
-                    Review the {pendingReviewCount} pending submission{pendingReviewCount === 1 ? "" : "s"} below first — the draw can&apos;t run until the queue is clear.
-                  </p>
-                )}
-              </div>
+              )}
+            </div>
+            {giveaway.status === "OPEN" && pendingReviewCount > 0 && (
+              <p className="text-base text-slate-500 mt-3">
+                Review the {pendingReviewCount} pending submission{pendingReviewCount === 1 ? "" : "s"} below first — the draw can&apos;t run until the queue is clear.
+              </p>
             )}
           </div>
 
@@ -440,43 +463,108 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
           </Dialog>
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <p className="text-base font-medium text-slate-400 uppercase tracking-widest mb-2">
-              Task review queue {reviewQueue ? `(${reviewQueue.length})` : ""}
-            </p>
-            <div className="space-y-2">
-              {(reviewQueue ?? []).map((item) => {
-                const proofImageUrl = typeof item.submission_data?.proof_image_url === "string" ? item.submission_data.proof_image_url : null;
-                const proofText = typeof item.submission_data?.proof === "string" ? item.submission_data.proof : null;
-                return (
-                <div key={item.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0 flex items-start gap-3">
-                      {proofImageUrl && (
-                        // eslint-disable-next-line @next/next/no-img-element -- admin review-only thumbnail, not worth the next/image plumbing here
-                        <img src={proofImageUrl} alt="Submitted proof" className="w-14 h-14 rounded-lg object-cover border border-white/10 shrink-0" />
-                      )}
-                      <div className="min-w-0">
-                        <p className="text-base font-medium text-white">@{item.entry.x_handle} — {item.task.task_type.replace(/_/g, " ")}</p>
-                        {proofText && <p className="text-base text-slate-500 truncate">{proofText}</p>}
-                      </div>
-                    </div>
-                    <div className="flex gap-1.5 shrink-0">
-                      <button type="button" onClick={() => review(item.id, "verified")} className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors" aria-label="Approve">
-                        <Check className="w-4 h-4" />
-                      </button>
-                      <button type="button" onClick={() => review(item.id, "rejected")} className="p-1.5 rounded-lg bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors" aria-label="Reject">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                );
-              })}
-              {reviewQueue && reviewQueue.length === 0 && <p className="text-base text-slate-500">Nothing to review right now</p>}
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-base font-medium text-slate-400 uppercase tracking-widest">
+                Task review queue {reviewQueue ? `(${reviewQueue.total})` : ""}
+              </p>
+              <button
+                type="button"
+                onClick={generateReviewLink}
+                disabled={generatingLink}
+                title="Generate a password-protected link to share task review with someone else"
+                className="shrink-0 inline-flex items-center gap-1.5 text-base font-medium border border-white/15 text-slate-300 hover:bg-white/[0.06] transition-all rounded-lg px-3 py-1.5 disabled:opacity-50"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                {generatingLink ? "Generating…" : "Share for review"}
+              </button>
             </div>
+            <div className="space-y-2">
+              {(reviewQueue?.items ?? []).map((item) => (
+                <ReviewQueueItem
+                  key={item.id}
+                  item={item}
+                  onApprove={(itemId) => review(itemId, "verified")}
+                  onReject={(itemId) => review(itemId, "rejected")}
+                />
+              ))}
+              {reviewQueue && reviewQueue.items.length === 0 && <p className="text-base text-slate-500">Nothing to review right now</p>}
+            </div>
+            {totalReviewPages > 1 && (
+              <div className="flex items-center justify-between pt-3 mt-1 border-t border-white/10">
+                <button
+                  type="button"
+                  disabled={reviewPage <= 1}
+                  onClick={() => setReviewPage((p) => Math.max(1, p - 1))}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-base text-slate-400">Page {reviewPage} of {totalReviewPages}</span>
+                <button
+                  type="button"
+                  disabled={reviewPage >= totalReviewPages}
+                  onClick={() => setReviewPage((p) => Math.min(totalReviewPages, p + 1))}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      <Dialog open={reviewLinkDialogOpen} onOpenChange={setReviewLinkDialogOpen}>
+        <DialogContent className="max-w-md bg-[#0f0f12] border-white/10">
+          <DialogHeader>
+            <DialogTitle className="text-white">Share for review</DialogTitle>
+          </DialogHeader>
+          <p className="text-base text-slate-400">
+            Anyone with this link and password can approve or decline this giveaway&apos;s self-report tasks — no Loofta account needed. Generating a new link replaces this one; the old link and password stop working immediately.
+          </p>
+          {reviewLink && (
+            <div className="space-y-3">
+              <div>
+                <p className="text-base text-slate-500 mb-1">Link</p>
+                <div className="flex items-center gap-2">
+                  <Input readOnly value={reviewLink.url} className={searchInputClass} />
+                  <button
+                    type="button"
+                    onClick={() => { navigator.clipboard.writeText(reviewLink.url); toast({ title: "Link copied" }); }}
+                    className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+                    aria-label="Copy link"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              <div>
+                <p className="text-base text-slate-500 mb-1">Password — shown only once, save it now</p>
+                <div className="flex items-center gap-2">
+                  <Input readOnly value={reviewLink.password} className={`${searchInputClass} font-mono`} />
+                  <button
+                    type="button"
+                    onClick={() => { navigator.clipboard.writeText(reviewLink.password); toast({ title: "Password copied" }); }}
+                    className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+                    aria-label="Copy password"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setReviewLinkDialogOpen(false)}
+            className="w-full text-base font-medium border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all rounded-lg px-3 py-2.5"
+          >
+            Done
+          </button>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={showRunDrawConfirm} onOpenChange={setShowRunDrawConfirm}>
         <AlertDialogContent>

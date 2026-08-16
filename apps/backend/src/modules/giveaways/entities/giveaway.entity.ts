@@ -115,6 +115,11 @@ export interface Giveaway {
   is_official: boolean;
 
   status: GiveawayStatus;
+
+  /** Password-protected public review link — see GiveawaysService.generateReviewLink. Null until a creator generates one; regenerating overwrites all three. */
+  review_link_token: string | null;
+  review_link_password_hash: string | null;
+  review_link_created_at: string | null;
 }
 
 export enum GiveawayEntryStatus {
