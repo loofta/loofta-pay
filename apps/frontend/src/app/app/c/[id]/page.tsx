@@ -4631,7 +4631,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 recipientType="email"
                 recipientValue={claim?.recipient_pending_email_value}
                 claimLocked={!!claim?.recipient_claim_in_progress}
-                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
+                onRecipientUpdated={() => {
+                  queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] });
+                  queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+                }}
               />
             ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
@@ -4644,7 +4647,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 recipientType="username"
                 recipientValue={claim?.recipient_pending_username_value}
                 claimLocked={!!claim?.recipient_claim_in_progress}
-                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
+                onRecipientUpdated={() => {
+                  queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] });
+                  queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+                }}
               />
             ) : claim?.recipient_pending_social && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
@@ -4658,7 +4664,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 recipientValue={claim?.recipient_pending_social_value ?? undefined}
                 recipientPlatform={claim?.recipient_pending_social_platform}
                 claimLocked={!!claim?.recipient_claim_in_progress}
-                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
+                onRecipientUpdated={() => {
+                  queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] });
+                  queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+                }}
               />
             ) : (claim as { recipient_is_registered?: boolean })?.recipient_is_registered &&
               user?.id && claim?.created_by === user.id &&
@@ -4679,7 +4688,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 recipientType="username"
                 recipientValue={claim?.recipient_username ?? undefined}
                 claimLocked={!!claim?.recipient_claim_in_progress || String(status || claim?.status || "").toUpperCase() === "SUCCESS"}
-                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
+                onRecipientUpdated={() => {
+                  queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] });
+                  queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+                }}
               />
             ) : isRecipient && claim?.recipient_pending_social ? (
               <div className="mt-6 text-center pt-12 pb-6 px-4">
