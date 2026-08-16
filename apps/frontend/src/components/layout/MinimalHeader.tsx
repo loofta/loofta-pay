@@ -54,7 +54,7 @@ function MobileMenu({
     { href: "/", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/megapot", label: "Lottery", description: "Play the daily jackpot privately" },
-    { href: "/twitter-bot", label: "Terminal", description: "Send payments by chat — no wallet steps, just tell it who to pay" },
+    { href: "/terminal", label: "Terminal", description: "Send payments by chat — no wallet steps, just tell it who to pay" },
   ];
 
   return (
@@ -246,7 +246,7 @@ export function MinimalHeader() {
 
   const isRewardsActive = pathname?.startsWith("/rewards");
   const isWinActive = pathname?.includes("/megapot");
-  const isTwitterBotActive = pathname?.startsWith("/twitter-bot");
+  const isTerminalActive = pathname?.startsWith("/terminal");
 
   return (
     <>
@@ -305,10 +305,10 @@ export function MinimalHeader() {
 
                 {/* Desktop: Terminal link */}
                 <Link
-                  href="/twitter-bot"
+                  href="/terminal"
                   className={[
                     "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isTwitterBotActive
+                    isTerminalActive
                       ? "text-sky-300 bg-sky-500/10"
                       : "text-slate-300 hover:text-white hover:bg-white/10",
                   ].join(" ")}

@@ -76,6 +76,10 @@ interface MultiPlatformChoice {
 interface MultiPaymentCard {
   recipients: ParsedRecipient[]
   state: CardState
+  /** One shared message applied to every recipient — matches the compact card's "one
+   *  confirmation, multisend behind" framing rather than a message box per row. */
+  message: string
+  gifUrl: string | null
   links?: MultiSendLinkItem[]
   errorMessage?: string
 }
@@ -352,7 +356,7 @@ export function AgentChatBox() {
         id: nextId(),
         role: 'assistant',
         text: `Here's your payment to ${recipients.length} recipients — confirm to send.`,
-        multiCard: { recipients, state: 'pending' },
+        multiCard: { recipients, state: 'pending', message: '', gifUrl: null },
       },
     ])
   }
@@ -397,10 +401,12 @@ export function AgentChatBox() {
       const wallet = solanaWallets.find((w) => w.address === senderAddress) ?? solanaWallets[0]
       if (!wallet) throw new Error('Loofta wallet not found. Try logging out and back in.')
 
+      const message = [card.message.trim(), card.gifUrl].filter(Boolean).join(' ').trim() || undefined
       const multiRecipients: MultiSendRecipient[] = card.recipients.map((r) => ({
         amount: r.amount,
         recipient_type: r.platform,
         recipient_identifier: r.platform === 'username' ? looUsername(r.identifier) : r.identifier,
+        message,
       }))
 
       const cluster = networkMode === 'mainnet' ? 'mainnet' : 'devnet'
@@ -770,22 +776,33 @@ export function AgentChatBox() {
                     </div>
 
                     {multiCard.state === 'pending' && (
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          onClick={() => handleConfirmMulti(msg.id, multiCard)}
-                          className="flex-1 h-11 rounded-xl text-lg md:text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-                        >
-                          Confirm
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => handleCancelMulti(msg.id)}
-                          className="flex-1 h-11 rounded-xl text-lg md:text-lg font-medium bg-transparent border-white/15 text-slate-400 hover:bg-white/5 hover:text-white"
-                        >
-                          Cancel
-                        </Button>
+                      <div className="space-y-2.5">
+                        <MessageInput
+                          value={multiCard.message}
+                          onChange={(v) => updateMultiCard(msg.id, { message: v })}
+                          gifUrl={multiCard.gifUrl}
+                          onGifChange={(url) => updateMultiCard(msg.id, { gifUrl: url })}
+                          placeholder="Add a message or GIF for everyone (optional)"
+                          maxLength={500}
+                          className="[&_input]:h-10 [&_input]:bg-white/5 [&_input]:border-white/10 [&_input]:text-white [&_input]:placeholder:text-slate-500 [&_input]:text-base [&_input]:md:text-base"
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            onClick={() => handleConfirmMulti(msg.id, multiCard)}
+                            className="flex-1 h-11 rounded-xl text-lg md:text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                          >
+                            Confirm
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => handleCancelMulti(msg.id)}
+                            className="flex-1 h-11 rounded-xl text-lg md:text-lg font-medium bg-transparent border-white/15 text-slate-400 hover:bg-white/5 hover:text-white"
+                          >
+                            Cancel
+                          </Button>
+                        </div>
                       </div>
                     )}
 

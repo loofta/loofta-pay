@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, type ReactNode, useMemo } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
@@ -24,6 +25,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, AtSign, ChevronDown, LinkIcon, Lock, Mail, User, PlusIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useToast } from "@/components/ui/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 
 const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
   () => import("@/app/app/claim/ClaimPageContent").then((mod) => ({ default: mod.ClaimPageContent })),
@@ -38,6 +40,7 @@ const SOCIAL_PICKS: { id: SocialSendPlatform; name: string }[] = [
 ];
 
 const HOME_TAB_KEY = "loofta.home.tab";
+const TERMINAL_PROMO_KEY = "loofta.terminalPromoShown";
 
 /**
  * Twitter/Discord/GitHub logins triggered from privyLogin() can fall back to a full top-level
@@ -147,6 +150,31 @@ export default function Home() {
     if (typeof window !== "undefined") localStorage.setItem(HOME_TAB_KEY, tab);
   };
   const { toast } = useToast();
+
+  // Nudge toward the AI terminal once per session on the Send tab — dismissed/shown state is
+  // deliberately per-session (not "forever"), so returning visitors keep seeing it until the
+  // new entry point actually sticks, without re-nagging on every single page load.
+  useEffect(() => {
+    if (!authenticated || activeTab !== "send") return;
+    if (typeof window === "undefined") return;
+    if (sessionStorage.getItem(TERMINAL_PROMO_KEY)) return;
+    sessionStorage.setItem(TERMINAL_PROMO_KEY, "1");
+    toast({
+      title: "Try the AI terminal",
+      description: 'Just type who to pay — "send $5 to @alice on X" — for faster payments, no form-filling.',
+      action: (
+        <ToastAction altText="Open the AI terminal" asChild>
+          <Link
+            href="/terminal"
+            className="!bg-gradient-to-r !from-[#FF1301] !to-[#EAB308] !text-white !border-0 !font-semibold hover:!opacity-90"
+          >
+            Try it
+          </Link>
+        </ToastAction>
+      ),
+    });
+  }, [authenticated, activeTab, toast]);
+
   const [recipient, setRecipient] = useState(() => readSendDraft()?.recipient ?? "");
   /** Set from a /me/[@username] personal link — locks the recipient to that exact account and
    *  hides the email/social/username picker, since a personal link only ever has one target. */
