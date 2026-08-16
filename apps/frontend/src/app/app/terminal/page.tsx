@@ -6,7 +6,7 @@ import { AgentChatBox } from '@/components/app/AgentChatBox'
 
 const LOOFTA_ICON = '/images/icons/loofta-icon.svg'
 
-export default function TwitterBotPage() {
+export default function TerminalPage() {
   const { ready } = usePrivy()
 
   if (!ready) {
