@@ -671,6 +671,7 @@ export default function GachaRoomPage() {
 
   const survivors = detail.participants.filter((p) => !p.excluded);
   const survivorShare = survivors.length && room.buybackAmountUsdc !== null ? room.buybackAmountUsdc / survivors.length : 0;
+  const openSeatCount = Math.max(room.seats - detail.participants.length, 0);
 
   const devTools = showGachaDevTools && !isSpectator && (
     <div className="absolute right-4 bottom-4 z-20 flex flex-col gap-2 items-end">
@@ -691,19 +692,26 @@ export default function GachaRoomPage() {
           {forceSettling ? "Running…" : "Cheat: force this vote round"}
         </button>
       )}
+      {room.status === "waiting" && openSeatCount > 0 && (
+        <button type="button" onClick={handleFillWithBots} disabled={fillingBots} className="pp-seg" style={{ borderColor: "#34D399", color: "#34D399" }}>
+          {fillingBots ? "Filling…" : `Devnet: fill ${openSeatCount} seat${openSeatCount === 1 ? "" : "s"} with bots`}
+        </button>
+      )}
     </div>
   );
 
   const chrome = (
     <>
-      <Link href="/app/gacha" className="absolute left-4 top-4 z-20 flex items-center gap-1 text-slate-400 hover:text-white transition-colors text-sm">
-        <ChevronLeft className="w-4 h-4" /> Rooms
-      </Link>
-      {isSpectator && (
-        <div className="absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full border border-emerald-300/35 bg-emerald-300/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-200" role="status">
-          Spectating live{viewerCount > 0 ? ` · ${viewerCount} watching` : ""}
-        </div>
-      )}
+      <div className="absolute left-4 top-4 z-20 flex items-center gap-3">
+        <Link href="/app/gacha" className="flex min-h-10 items-center gap-1 text-sm text-slate-400 transition-colors hover:text-white focus-visible:ring-2 focus-visible:ring-emerald-300/70">
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" /> Rooms
+        </Link>
+        {isSpectator && (
+          <div className="rounded-full border border-emerald-300/35 bg-emerald-300/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-200" role="status">
+            Spectating live{viewerCount > 0 ? ` · ${viewerCount} watching` : ""}
+          </div>
+        )}
+      </div>
       {error && (
         <div className="absolute left-1/2 top-16 z-20 -translate-x-1/2 w-full max-w-md px-5">
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-base text-red-300">{error}</div>
