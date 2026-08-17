@@ -143,8 +143,15 @@ export class GiveawaysService {
   /** Verifies a review-link session token was issued for exactly this giveaway and hasn't expired.
    *  Returns the giveawayId on success — callers must still scope every subsequent query to it,
    *  this only proves "this session is allowed to act on this one giveaway," not authorization for
-   *  any particular completion (see GiveawayEntriesService.reviewCompletionScoped). */
-  verifyReviewSessionToken(token: string, sessionToken: string): string {
+   *  any particular completion (see GiveawayEntriesService.reviewCompletionScoped).
+   *
+   *  Also confirms `token` (the review-link URL this request came in on) is still the giveaway's
+   *  ACTIVE link. Regenerating overwrites review_link_token/password_hash, which already stops any
+   *  *new* login with the old password — but without this check, a session issued minutes before
+   *  regeneration (still within its up-to-2h TTL) would keep working regardless, since the session
+   *  token itself doesn't otherwise know the link was rotated. Deliberately only one live link+
+   *  session lineage per giveaway at a time. */
+  async verifyReviewSessionToken(token: string, sessionToken: string): Promise<string> {
     const [encodedPayload, signature] = (sessionToken || '').split('.');
     if (!encodedPayload || !signature) throw new ForbiddenException('Invalid session');
     const payload = Buffer.from(encodedPayload, 'base64url').toString('utf8');
@@ -155,6 +162,11 @@ export class GiveawaysService {
     }
     const [giveawayId, expiresAtStr] = payload.split('.');
     if (!giveawayId || Date.now() > Number(expiresAtStr)) throw new ForbiddenException('Session expired — re-enter the password');
+
+    const { data } = await this.supabaseService.giveaways.select('review_link_token').eq('id', giveawayId).maybeSingle();
+    if (!data || data.review_link_token !== token) {
+      throw new ForbiddenException('This review link was regenerated — ask for the new link');
+    }
     return giveawayId;
   }
 

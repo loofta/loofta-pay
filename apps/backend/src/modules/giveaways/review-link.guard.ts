@@ -11,14 +11,14 @@ import { GiveawaysService } from './giveaways.service';
 export class ReviewLinkGuard implements CanActivate {
   constructor(private readonly giveawaysService: GiveawaysService) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const token = request.params?.token as string | undefined;
     const authHeader = (request.headers['authorization'] as string | undefined)?.trim();
     if (!token || !authHeader?.startsWith('Bearer ')) throw new UnauthorizedException('Review session required');
 
     const sessionToken = authHeader.slice(7).trim();
-    const giveawayId = this.giveawaysService.verifyReviewSessionToken(token, sessionToken);
+    const giveawayId = await this.giveawaysService.verifyReviewSessionToken(token, sessionToken);
     request.reviewGiveawayId = giveawayId;
     return true;
   }
