@@ -669,6 +669,7 @@ export default function GachaRoomPage() {
 
   const survivors = detail.participants.filter((p) => !p.excluded);
   const survivorShare = survivors.length && room.buybackAmountUsdc !== null ? room.buybackAmountUsdc / survivors.length : 0;
+  const openSeatCount = Math.max(room.seats - detail.participants.length, 0);
 
   const devTools = showGachaDevTools && (
     <div className="absolute right-4 bottom-4 z-20 flex flex-col gap-2 items-end">
@@ -687,6 +688,11 @@ export default function GachaRoomPage() {
       {room.status === "voting" && (
         <button type="button" onClick={handleForceVote} disabled={forceSettling} className="pp-seg" style={{ borderColor: "#34D399", color: "#34D399" }}>
           {forceSettling ? "Running…" : "Cheat: force this vote round"}
+        </button>
+      )}
+      {room.status === "waiting" && openSeatCount > 0 && (
+        <button type="button" onClick={handleFillWithBots} disabled={fillingBots} className="pp-seg" style={{ borderColor: "#34D399", color: "#34D399" }}>
+          {fillingBots ? "Filling…" : `Devnet: fill ${openSeatCount} seat${openSeatCount === 1 ? "" : "s"} with bots`}
         </button>
       )}
     </div>

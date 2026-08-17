@@ -54,10 +54,22 @@ interface WaitingRoom {
 }
 
 function roomHref(room: Pick<WaitingRoom, "id" | "inviteCode">): string {
+  if (typeof room.id !== "string" || room.id.length === 0) return "/app/gacha/play";
   const inviteQuery = room.inviteCode
     ? `?inviteCode=${encodeURIComponent(room.inviteCode)}`
     : "";
   return `/app/gacha/${room.id}${inviteQuery}`;
+}
+
+function isWaitingRoom(value: unknown): value is WaitingRoom {
+  if (!value || typeof value !== "object") return false;
+  const room = value as Partial<WaitingRoom>;
+  return typeof room.id === "string" && room.id.length > 0
+    && typeof room.name === "string"
+    && typeof room.configKey === "string"
+    && typeof room.seats === "number"
+    && typeof room.seatsFilled === "number"
+    && Array.isArray(room.participants);
 }
 
 function friendlyJoinError(rawMessage: string | undefined): string {
@@ -165,10 +177,11 @@ export default function GachaPlayPage() {
     fetch(`/api/gacha/rooms/invite/${encodeURIComponent(inviteCode)}`, { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error((await response.json().catch(() => null))?.message ?? "This invite is no longer valid");
-        return response.json() as Promise<WaitingRoom>;
+        return response.json() as Promise<unknown>;
       })
       .then((room) => {
         if (cancelled) return;
+        if (!isWaitingRoom(room)) throw new Error("This invite returned an invalid room");
         setInvitedRoom({ ...room, inviteCode });
         setPickedSeats(room.seats);
         setRoomMode("browse");
@@ -221,6 +234,7 @@ export default function GachaPlayPage() {
             mascotKey: participant.mascotKey ?? null,
           })),
         };
+        if (!isWaitingRoom(nextRoom)) throw new Error("This rematch returned an invalid destination room");
         if (cancelled) return;
         setRematchRoom(nextRoom);
         setPickedSeats(nextRoom.seats);
@@ -247,7 +261,9 @@ export default function GachaPlayPage() {
     try {
       const response = await fetch(`/api/gacha/rooms/waiting?configKey=${encodeURIComponent(activeConfig.configKey)}`, { cache: "no-store" });
       if (!response.ok) throw new Error("Couldn't load open rooms");
-      const nextRooms: WaitingRoom[] = await response.json();
+      const payload: unknown = await response.json();
+      if (!Array.isArray(payload)) throw new Error("Invalid open-room response");
+      const nextRooms = payload.filter(isWaitingRoom);
       if (requestId !== roomsRequestIdRef.current) return;
       setRooms(nextRooms);
       const directRoom = directRoomId ? nextRooms.find((room) => room.id === directRoomId) : null;
@@ -282,7 +298,11 @@ export default function GachaPlayPage() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.message ?? "Couldn't recover your current room");
-      if (requestId === currentRoomRequestIdRef.current) setExistingRoom(payload as WaitingRoom | null);
+      if (requestId === currentRoomRequestIdRef.current) {
+        // The backend legitimately returns no body when there is no waiting room. Treat empty or
+        // malformed data as "none" so an expired room can never become /app/gacha/undefined.
+        setExistingRoom(isWaitingRoom(payload) ? payload : null);
+      }
     } catch (err: any) {
       if (requestId !== currentRoomRequestIdRef.current) return;
       setError(err?.message?.length < 200 ? err.message : "Couldn't recover your current room — please retry.");
@@ -382,8 +402,8 @@ export default function GachaPlayPage() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        if (payload?.code === "ALREADY_IN_WAITING_ROOM" && payload.room) {
-          setExistingRoom(payload.room as WaitingRoom);
+        if (payload?.code === "ALREADY_IN_WAITING_ROOM" && isWaitingRoom(payload.room)) {
+          setExistingRoom(payload.room);
           setCreatedRoom(null);
           setInvitedRoom(null);
           setRoomMode("browse");
@@ -395,7 +415,8 @@ export default function GachaPlayPage() {
         }
         throw new Error(payload?.message ?? "Failed to create room");
       }
-      const room: WaitingRoom = payload as WaitingRoom;
+      if (!isWaitingRoom(payload)) throw new Error("The server returned an invalid room");
+      const room = payload;
       setExistingRoom(null);
       setCreatedRoom(room);
       setSelectedRoomId(room.id);
@@ -452,14 +473,17 @@ export default function GachaPlayPage() {
         });
         const joinTxPayload = await joinTxRes.json().catch(() => null);
         if (!joinTxRes.ok) {
-          if (joinTxPayload?.code === "ALREADY_IN_DIFFERENT_WAITING_ROOM" && joinTxPayload.room) {
-            setExistingRoom(joinTxPayload.room as WaitingRoom);
+          if (joinTxPayload?.code === "ALREADY_IN_DIFFERENT_WAITING_ROOM" && isWaitingRoom(joinTxPayload.room)) {
+            setExistingRoom(joinTxPayload.room);
             setError(null);
             return;
           }
           throw new Error(joinTxPayload?.message ?? "Failed to prepare entry payment");
         }
-        const { txBase64, roomId, alreadyJoined } = joinTxPayload;
+        const { txBase64, roomId, alreadyJoined } = joinTxPayload ?? {};
+        if (typeof roomId !== "string" || roomId.length === 0) {
+          throw new Error("The server did not return a valid destination room");
+        }
 
         // Already have a seat in a waiting room for this config — nothing to sign, just go there.
         // A private-room invite code is bearer access until this user has a confirmed seat.

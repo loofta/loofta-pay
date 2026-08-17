@@ -21,7 +21,15 @@ async function proxyToBackend(req: NextRequest, params: { path: string[] }) {
 
   try {
     const res = await fetch(url.toString(), init);
-    const data = await res.json().catch(() => ({}));
+    if (res.status === 204) {
+      return new NextResponse(null, { status: 204 });
+    }
+    // Nest may intentionally answer a successful lookup with an empty body when its result is
+    // null (for example, "no current waiting room"). Preserve that as null. Turning it into an
+    // empty object makes consumers mistake `{}` for a real resource and can produce routes such
+    // as /app/gacha/undefined.
+    const body = await res.text();
+    const data = body ? JSON.parse(body) : null;
     return NextResponse.json(data, { status: res.status });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 502 });
