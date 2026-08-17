@@ -69,6 +69,13 @@ export class GachaController {
     return this.gacha.listPublicWaitingRooms(configKey);
   }
 
+  @Get('rooms/active')
+  @Public()
+  @ApiOperation({ summary: 'Active public rooms available to watch for one config' })
+  async activeRooms(@Query('configKey') configKey: string) {
+    return this.gacha.listActivePublicRooms(configKey);
+  }
+
   @Get('rooms/next-number')
   @Public()
   @ApiOperation({ summary: 'Display hint for the next room number in one config' })

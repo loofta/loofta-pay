@@ -28,6 +28,7 @@ export default function VoteRound({
   potUsdc,
   myVote,
   onVote,
+  spectating = false,
 }: {
   round: number;
   survivors: VoteParticipant[];
@@ -35,6 +36,8 @@ export default function VoteRound({
   /** undefined = haven't voted yet this round (resets to undefined whenever `round` changes). */
   myVote: boolean | undefined;
   onVote: (vote: boolean) => void;
+  /** Spectators see the live round without participant voting controls. */
+  spectating?: boolean;
 }) {
   const [voting, setVoting] = useState(true);
   useEffect(() => { setVoting(true); }, [round]);
@@ -51,7 +54,9 @@ export default function VoteRound({
     isMe: p.isMe,
   }));
 
-  const footer = iAmSurvivor ? (
+  const footer = spectating ? (
+    <p className="pp-small" style={{ marginTop: 0 }}>watching the survivors decide live</p>
+  ) : iAmSurvivor ? (
     myVote === undefined ? (
       <div className="pp-votebtns">
         <button type="button" className="pp-btn" onClick={() => { onVote(true); setVoting(false); }}>

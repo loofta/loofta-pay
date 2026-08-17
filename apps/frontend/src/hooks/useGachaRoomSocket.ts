@@ -84,11 +84,13 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
   const [lastVoteRoundStarted, setLastVoteRoundStarted] = useState<GachaVoteRoundStartedEvent | null>(null);
   const [lastVoteResult, setLastVoteResult] = useState<GachaVoteResultEvent | null>(null);
   const [lastVoteCut, setLastVoteCut] = useState<GachaVoteCutEvent | null>(null);
+  const [viewerCount, setViewerCount] = useState(0);
   const socketRef = useRef<Socket | null>(null);
   const roomIdRef = useRef(roomId);
   useEffect(() => { roomIdRef.current = roomId; }, [roomId]);
 
   useEffect(() => {
+    setViewerCount(0);
     if (!roomId || !accessToken) return;
 
     const socket = io(`${BACKEND_URL}/gacha`, { auth: { token: accessToken, ...(inviteCode ? { inviteCode } : {}) }, transports: ["websocket"] });
@@ -119,11 +121,13 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
     socket.on("room:vote_round_started", (data: GachaVoteRoundStartedEvent) => { setLastVoteRoundStarted(data); setLastVoteResult(null); });
     socket.on("room:vote_result", (data: GachaVoteResultEvent) => setLastVoteResult(data));
     socket.on("room:vote_cut", (data: GachaVoteCutEvent) => setLastVoteCut(data));
+    socket.on("room:viewer_count", (data: { viewerCount?: number }) => setViewerCount(Math.max(0, Number(data.viewerCount ?? 0))));
 
     return () => {
       socket.emit("leave_room", { roomId });
       socket.disconnect();
       socketRef.current = null;
+      setViewerCount(0);
     };
   }, [roomId, accessToken, inviteCode]);
 
@@ -168,5 +172,6 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
     connected, snapshot, lastUpdate, lastOpened, lastBid, lastSettled, lastReadyUpdate, allReadyTick,
     emojiBySeat, readySeats, markReady, pickEmoji, lastMascotLocked, lastExcluded, lockMascot,
     lastVoteRoundStarted, lastVoteResult, lastVoteCut, castVote,
+    viewerCount,
   };
 }

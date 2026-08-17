@@ -152,6 +152,15 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
 
   handleDisconnect(client: Socket): void {
     this.logger.debug(`Client disconnected: ${client.data?.userId ?? client.id}`);
+    const roomIds = Array.from((client.data?.gachaRoomIds as Set<string> | undefined) ?? []);
+    // Socket.IO removes membership as part of disconnect. Emit on the next turn so the adapter's
+    // count no longer includes this socket.
+    setTimeout(() => roomIds.forEach((roomId) => this.emitViewerCount(roomId)), 0);
+  }
+
+  private emitViewerCount(roomId: string): void {
+    const viewerCount = this.server?.sockets.adapter.rooms.get(roomId)?.size ?? 0;
+    this.server?.to(roomId).emit('room:viewer_count', { viewerCount });
   }
 
   @SubscribeMessage('join_room')
@@ -163,12 +172,17 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
       // could subscribe to private-room broadcasts even though the REST detail endpoint rejects it.
       const detail = await this.gacha.getRoomDetail(body.roomId, client.data.userId, inviteCode);
       await client.join(body.roomId);
+      const roomIds = (client.data.gachaRoomIds as Set<string> | undefined) ?? new Set<string>();
+      roomIds.add(body.roomId);
+      client.data.gachaRoomIds = roomIds;
       // Send the caller an immediate snapshot so the UI doesn't sit blank until the next state
       // change from someone else triggers a broadcast.
       client.emit('room:state', detail);
     } catch (e: any) {
       this.logger.warn(`join_room ${body.roomId}: failed to send initial snapshot: ${e.message}`);
+      return;
     }
+    this.emitViewerCount(body.roomId);
     const emojiMap = this.emojiByRoom.get(body.roomId);
     if (emojiMap?.size) client.emit('room:emoji_snapshot', Object.fromEntries(emojiMap));
 
@@ -191,6 +205,8 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
   async onLeaveRoom(@ConnectedSocket() client: Socket, @MessageBody() body: { roomId: string }): Promise<void> {
     if (!body?.roomId) return;
     await client.leave(body.roomId);
+    (client.data?.gachaRoomIds as Set<string> | undefined)?.delete(body.roomId);
+    this.emitViewerCount(body.roomId);
   }
 
   /**

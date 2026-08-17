@@ -205,6 +205,7 @@ export default function GachaRoomPage() {
   const {
     lastUpdate, lastOpened, lastSettled, lastExcluded, lastReadyUpdate, allReadyTick, readySeats: socketReadySeats, markReady, lockMascot,
     lastVoteRoundStarted, lastVoteResult, lastVoteCut, castVote,
+    viewerCount,
   } = useGachaRoomSocket(roomId, accessToken, inviteCode);
   const {
     state: erRoomState,
@@ -309,6 +310,7 @@ export default function GachaRoomPage() {
   }, [castVote, refresh]);
 
   const room = detail?.room;
+  const isSpectator = !!detail && !detail.myParticipant;
   const hasPendingHumanVote =
     room?.status === "voting"
     && !!detail?.myParticipant
@@ -670,7 +672,7 @@ export default function GachaRoomPage() {
   const survivors = detail.participants.filter((p) => !p.excluded);
   const survivorShare = survivors.length && room.buybackAmountUsdc !== null ? room.buybackAmountUsdc / survivors.length : 0;
 
-  const devTools = showGachaDevTools && (
+  const devTools = showGachaDevTools && !isSpectator && (
     <div className="absolute right-4 bottom-4 z-20 flex flex-col gap-2 items-end">
       <span
         className="pp-seg"
@@ -697,6 +699,11 @@ export default function GachaRoomPage() {
       <Link href="/app/gacha" className="absolute left-4 top-4 z-20 flex items-center gap-1 text-slate-400 hover:text-white transition-colors text-sm">
         <ChevronLeft className="w-4 h-4" /> Rooms
       </Link>
+      {isSpectator && (
+        <div className="absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full border border-emerald-300/35 bg-emerald-300/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-200" role="status">
+          Spectating live{viewerCount > 0 ? ` · ${viewerCount} watching` : ""}
+        </div>
+      )}
       {error && (
         <div className="absolute left-1/2 top-16 z-20 -translate-x-1/2 w-full max-w-md px-5">
           <div className="rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-base text-red-300">{error}</div>
@@ -724,6 +731,7 @@ export default function GachaRoomPage() {
         potUsdc={room.buybackAmountUsdc ?? 0}
         myVote={myVote}
         onVote={handleVote}
+        spectating={isSpectator}
       />
     );
   } else if (showRipScreen) {
@@ -897,6 +905,7 @@ export default function GachaRoomPage() {
         potUsdc={room.buybackAmountUsdc ?? 0}
         myVote={myVote}
         onVote={handleVote}
+        spectating={isSpectator}
       />
     );
   } else if (room.status === "settled" || room.status === "settling") {
@@ -910,7 +919,11 @@ export default function GachaRoomPage() {
         title="WINNERS"
         titleGrad="EAT"
         sub="buyback settled. instantly. obviously."
-        footer={
+        footer={isSpectator ? (
+          <Link href="/app/gacha/play" className="pp-btn ghost">
+            BACK TO ROOMS
+          </Link>
+        ) : (
           <div className="pp-votebtns">
             <button
               type="button"
@@ -924,7 +937,7 @@ export default function GachaRoomPage() {
               LEAVE
             </Link>
           </div>
-        }
+        )}
       >
         {detail.myParticipant?.excluded && (
           <div className="flex flex-col items-center gap-2 mb-6">

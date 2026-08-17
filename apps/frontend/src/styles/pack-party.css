@@ -148,7 +148,11 @@
    being just another row that can scroll out of view. margin-top separates the whole thing from
    the seat grid above — it read as visually stuck directly under the seats with no breathing
    room before this. */
-.pp-roomlistwrap { display: flex; flex-direction: column; gap: 10px; width: min(520px,100%); margin: 24px 0 22px; }
+.pp-browserlists { display: flex; flex-direction: column; gap: 22px; width: min(520px,100%); margin: 24px 0 22px; }
+.pp-roomlistwrap { display: flex; flex-direction: column; gap: 10px; width: 100%; margin: 0; }
+.pp-roomsectionhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 4px; font-family: 'Clash Display'; text-transform: uppercase; }
+.pp-roomsectionhead span { font-size: 13px; font-weight: 600; letter-spacing: 0.12em; }
+.pp-roomsectionhead small { color: rgba(255,253,247,0.58); font-size: 11px; letter-spacing: 0.1em; }
 .pp-roomlist { display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; padding: 4px 4px 4px 2px; }
 .pp-roomrow { display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 14px 16px; border-radius: 16px; border: 1px solid rgba(255,253,247,0.14); background: rgba(255,253,247,0.04); color: #FFFDF7; cursor: pointer; text-align: left; transition: background 0.15s, border-color 0.15s, box-shadow 0.15s; flex-shrink: 0; }
 .pp-roomrow:hover:not(:disabled) { background: rgba(255,253,247,0.08); border-color: rgba(234,179,8,0.5); }
@@ -163,6 +167,16 @@
 .pp-roomrow-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .pp-roomrow-name { overflow: hidden; font-family: 'Clash Display'; font-weight: 600; font-size: 14px; letter-spacing: 0.05em; text-overflow: ellipsis; white-space: nowrap; }
 .pp-roomrow-fill { font-size: 11px; letter-spacing: 0.08em; opacity: 0.6; }
+.pp-livewrap { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.pp-liveroomrow { display: flex; align-items: center; gap: 14px; min-height: 56px; padding: 13px 14px; border-radius: 16px; border: 1px solid rgba(52,211,153,0.3); background: rgba(52,211,153,0.06); color: #FFFDF7; text-align: left; transition: background 0.15s, border-color 0.15s; }
+.pp-liveroomrow:hover { border-color: rgba(52,211,153,0.7); background: rgba(52,211,153,0.11); }
+.pp-liveroomrow:focus-visible { outline: 2px solid #A7F3D0; outline-offset: 3px; }
+.pp-watchaction { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 8px 11px; border-radius: 999px; border: 1px solid rgba(52,211,153,0.45); color: #A7F3D0; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.pp-liveempty { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 56px; padding: 13px 16px; border-radius: 16px; border: 1px dashed rgba(255,253,247,0.16); color: rgba(255,253,247,0.62); font-size: 12px; line-height: 1.45; text-align: center; }
+@media (max-width: 480px) {
+  .pp-watchaction { width: 40px; padding: 8px; font-size: 0; }
+  .pp-watchaction svg { width: 17px; height: 17px; }
+}
 .pp-createcard { display: flex; flex-direction: column; gap: 14px; width: min(420px,100%); padding: 20px; border-radius: 18px; border: 1px solid rgba(255,253,247,0.14); background: rgba(255,253,247,0.04); margin: 24px 0 22px; }
 .pp-namelabel { margin-bottom: -8px; font-family: 'Clash Display'; font-weight: 600; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; }
 .pp-nameinput { font-family: 'Clash Display'; font-weight: 600; font-size: 16px; letter-spacing: 0.04em; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,253,247,0.2); background: rgba(0,0,0,0.3); color: #FFFDF7; }
@@ -212,7 +226,7 @@
 .pp-roomrow-skeleton { min-height: 62px; border-radius: 16px; background: linear-gradient(90deg, rgba(255,253,247,0.04), rgba(255,253,247,0.1), rgba(255,253,247,0.04)); background-size: 200% 100%; animation: pp-room-skeleton 1.2s ease-in-out infinite; }
 @keyframes pp-room-skeleton { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .pp-roomrow, .pp-switch, .pp-switch-knob, .pp-existingroom-open, .pp-existingroom-leave { transition: none; }
+  .pp-roomrow, .pp-liveroomrow, .pp-switch, .pp-switch-knob, .pp-existingroom-open, .pp-existingroom-leave { transition: none; }
   .pp-roomrow-skeleton { animation: none; }
 }
 
