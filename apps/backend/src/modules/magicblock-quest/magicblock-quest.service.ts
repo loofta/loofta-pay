@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Injectable, Logger, ConflictException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
@@ -250,6 +251,62 @@ export class MagicblockQuestService {
     }
   }
 
+  /**
+   * User-triggered: re-pushes a quest completion to MagicBlock right now, regardless of whether
+   * we already have a successful push on record. Needed because MagicBlock's own quest reset
+   * cadence doesn't line up with our weekly (Friday 10:00 CET) tracking — a push we recorded as
+   * successful days ago can go stale on their end with nothing on our side to notice, since
+   * maybePush*Quest only fires for a *new* qualifying ticket/payment, never re-fires for an
+   * already-successful one (confirmed 2026-08-17: same wallet/quest showed alreadyCompleted:true
+   * on push, then alreadyCompleted:false two days later with no new purchase in between).
+   */
+  async revalidateQuest(userId: string, questType: MagicblockQuestType): Promise<{ pushed: boolean; response: unknown }> {
+    if (questType !== 'lottery_ticket' && questType !== 'private_payment') {
+      throw new BadRequestException('Invalid questType');
+    }
+
+    const wallet = await this.getWallet(userId);
+    if (!wallet) throw new BadRequestException('Connect a MagicBlock wallet first');
+
+    const db = this.supabase.getClient();
+
+    // Soft cooldown so repeated clicks can't hammer MagicBlock's push endpoint.
+    const cutoff = new Date(Date.now() - RETRY_COOLDOWN_MS).toISOString();
+    const { data: recent } = await db
+      .from('magicblock_quest_pushes')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('quest_type', questType)
+      .gte('pushed_at', cutoff)
+      .limit(1);
+    if (recent?.length) {
+      throw new ConflictException('Already refreshed recently — try again in a few seconds');
+    }
+
+    const questId = this.questId(questType);
+    const sourceId = `manual-revalidate-${randomUUID()}`;
+    const { error: insertError } = await db.from('magicblock_quest_pushes').insert({
+      user_id: userId,
+      quest_type: questType,
+      quest_id: questId,
+      source_id: sourceId,
+      wallet,
+      success: false,
+    });
+    if (insertError) throw new Error(`Failed to record manual revalidation: ${insertError.message}`);
+
+    try {
+      const response = await this.pushToMagicBlock(questId, wallet);
+      await db.from('magicblock_quest_pushes').update({ success: true, response }).eq('quest_type', questType).eq('source_id', sourceId);
+      this.logger.log(`Manual MagicBlock revalidate succeeded for ${userId}/${questType}`);
+      return { pushed: true, response };
+    } catch (e) {
+      const message = (e as Error)?.message ?? String(e);
+      await db.from('magicblock_quest_pushes').update({ response: { error: message } }).eq('quest_type', questType).eq('source_id', sourceId);
+      throw new Error(message);
+    }
+  }
+
   private extractError(response: unknown): string | null {
     if (!response) return null;
     if (typeof response === 'string') return response;
@@ -359,6 +416,14 @@ export class MagicblockQuestService {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(`MagicBlock push failed (${res.status}): ${JSON.stringify(body)}`);
+    }
+    // A 200 here only means MagicBlock accepted the API call — it still returns completed:false
+    // when the user hasn't started this quest on their end. Treating that as success meant we'd
+    // write success:true, retryFailedPushes would never touch it again (it only looks at
+    // success:false rows), and the user's later "I actually started it now" never got a re-push —
+    // the recorded push just silently stayed wrong forever (real incident, 2026-08-17).
+    if ((body as { completed?: boolean })?.completed !== true) {
+      throw new Error(`MagicBlock quest not completed — user likely hasn't started it there yet: ${JSON.stringify(body)}`);
     }
     return body;
   }

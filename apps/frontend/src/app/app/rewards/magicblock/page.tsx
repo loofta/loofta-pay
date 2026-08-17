@@ -90,6 +90,22 @@ async function connectMagicblockWallet(token: string | null, wallet: string): Pr
   return data;
 }
 
+async function revalidateQuest(token: string | null, questType: MagicblockQuestType): Promise<{ pushed: boolean }> {
+  const res = await fetch(`${BACKEND_URL}/rewards/magicblock/revalidate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ questType }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.message ?? "Failed to refresh validation");
+  }
+  return data;
+}
+
 function truncateWallet(wallet: string): string {
   return wallet.length > 12 ? `${wallet.slice(0, 6)}…${wallet.slice(-6)}` : wallet;
 }
@@ -254,10 +270,33 @@ function ConnectWalletForm({ onConnected }: { onConnected: (wallet: string) => v
   );
 }
 
-function QuestCard({ quest }: { quest: MagicblockQuestStatusItem }) {
+function QuestCard({ quest, getAccessToken, onRevalidated }: {
+  quest: MagicblockQuestStatusItem;
+  getAccessToken: () => Promise<string | null>;
+  onRevalidated: () => void;
+}) {
   const copy = QUEST_COPY[quest.questType];
   const completed = quest.completions > 0;
   const lastPushed = formatLastPushed(quest.lastPushedAt);
+  const [revalidating, setRevalidating] = useState(false);
+  const [revalidateError, setRevalidateError] = useState<string | null>(null);
+  const [revalidateOk, setRevalidateOk] = useState(false);
+
+  async function handleRevalidate() {
+    setRevalidateError(null);
+    setRevalidateOk(false);
+    setRevalidating(true);
+    try {
+      const token = await getAccessToken().catch(() => null);
+      await revalidateQuest(token, quest.questType);
+      setRevalidateOk(true);
+      onRevalidated();
+    } catch (e) {
+      setRevalidateError((e as Error)?.message ?? "Failed to refresh validation");
+    } finally {
+      setRevalidating(false);
+    }
+  }
 
   return (
     <div
@@ -298,9 +337,28 @@ function QuestCard({ quest }: { quest: MagicblockQuestStatusItem }) {
         </div>
       </div>
 
+      <p className="text-sm text-slate-500 mt-3 leading-snug">
+        Quest not showing as validated on MagicBlock? Make sure you&apos;ve started it there first —{" "}
+        <a href={MAGICBLOCK_PROJECT_URL} target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-300">
+          start it on the Questline
+        </a>
+        , then refresh below.
+      </p>
+
+      <button
+        type="button"
+        onClick={handleRevalidate}
+        disabled={revalidating}
+        className="mt-2 w-full rounded-xl px-4 py-2.5 text-sm font-semibold border border-white/15 text-white hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {revalidating ? "Refreshing…" : "Refresh validation on MagicBlock"}
+      </button>
+      {revalidateError && <p className="text-sm text-red-400 mt-1.5">{revalidateError}</p>}
+      {revalidateOk && !revalidateError && <p className="text-sm mt-1.5" style={{ color: ACCENT }}>Refreshed — check MagicBlock again.</p>}
+
       <Link
         href={copy.ctaHref}
-        className="mt-4 block text-center rounded-xl px-5 py-3 font-semibold text-black hover:opacity-90 transition-opacity"
+        className="mt-3 block text-center rounded-xl px-5 py-3 font-semibold text-black hover:opacity-90 transition-opacity"
         style={{ backgroundColor: ACCENT }}
       >
         {copy.ctaLabel}
@@ -413,7 +471,12 @@ export default function RewardsMagicblockPage() {
                   <p className="text-sm text-slate-500">Resets {formatResetsAt(data.resetsAt)} · 10:00 CET</p>
                 </div>
                 {data.quests.map((quest) => (
-                  <QuestCard key={quest.questType} quest={quest} />
+                  <QuestCard
+                    key={quest.questType}
+                    quest={quest}
+                    getAccessToken={getAccessToken}
+                    onRevalidated={() => refetch()}
+                  />
                 ))}
               </div>
             </>

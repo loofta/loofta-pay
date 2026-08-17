@@ -35,8 +35,13 @@ export class EmailService {
     return this.resend !== null;
   }
 
-  async sendPaymentReceivedEmail(data: ClaimEmailData): Promise<void> {
-    if (!this.resend) return;
+  /**
+   * Returns the Resend email id when the send is actually scheduled for the future (data.scheduledAt
+   * set) — callers use it to cancel this specific send later (e.g. claims.service.ts notifyRecipientAfterPayment
+   * cancels a still-pending scheduled email before re-scheduling one for a corrected recipient).
+   */
+  async sendPaymentReceivedEmail(data: ClaimEmailData): Promise<string | null> {
+    if (!this.resend) return null;
     const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
     const claimUrl = data.claimUrl
       ? `https://pay.loofta.xyz${new URL(data.claimUrl, 'https://pay.loofta.xyz').pathname}`
@@ -45,7 +50,7 @@ export class EmailService {
     const html = this.buildPaymentReceivedHtml({ ...data, amountStr, claimUrl });
 
     try {
-      await this.resend.emails.send({
+      const { data: sent } = await this.resend.emails.send({
         from: `Loofta <${this.fromEmail}>`,
         to: data.recipientEmail,
         subject,
@@ -53,13 +58,15 @@ export class EmailService {
         ...(data.scheduledAt ? { scheduledAt: data.scheduledAt } : {}),
       });
       this.logger.log(`Payment received email scheduled for ${data.recipientEmail} (claim ${data.id}, at ${data.scheduledAt ?? 'now'})`);
+      return data.scheduledAt ? (sent?.id ?? null) : null;
     } catch (err: any) {
       this.logger.error(`Failed to send payment received email for claim ${data.id}: ${err?.message ?? err}`);
+      return null;
     }
   }
 
-  async sendClaimReadyEmail(data: ClaimEmailData): Promise<void> {
-    if (!this.resend) return;
+  async sendClaimReadyEmail(data: ClaimEmailData): Promise<string | null> {
+    if (!this.resend) return null;
     const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
     const claimUrl = data.claimUrl
       ? `https://pay.loofta.xyz${new URL(data.claimUrl, 'https://pay.loofta.xyz').pathname}`
@@ -68,7 +75,7 @@ export class EmailService {
     const html = this.buildClaimReadyHtml({ ...data, amountStr, claimUrl });
 
     try {
-      await this.resend.emails.send({
+      const { data: sent } = await this.resend.emails.send({
         from: `Loofta <${this.fromEmail}>`,
         to: data.recipientEmail,
         subject,
@@ -76,8 +83,21 @@ export class EmailService {
         ...(data.scheduledAt ? { scheduledAt: data.scheduledAt } : {}),
       });
       this.logger.log(`Claim ready email scheduled for ${data.recipientEmail} (claim ${data.id}, at ${data.scheduledAt ?? 'now'})`);
+      return data.scheduledAt ? (sent?.id ?? null) : null;
     } catch (err: any) {
       this.logger.error(`Failed to send claim ready email for claim ${data.id}: ${err?.message ?? err}`);
+      return null;
+    }
+  }
+
+  /** Best-effort cancel of a still-pending scheduled send (no-op once Resend has already sent it). */
+  async cancelScheduledEmail(emailId: string): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.cancel(emailId);
+      this.logger.log(`Cancelled scheduled email ${emailId}`);
+    } catch (err: any) {
+      this.logger.warn(`Failed to cancel scheduled email ${emailId} (likely already sent): ${err?.message ?? err}`);
     }
   }
 

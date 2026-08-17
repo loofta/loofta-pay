@@ -89,6 +89,10 @@ export class ClaimsService {
   private readonly usdcMint: PublicKey;
   private readonly perProgramId: PublicKey;
   private readonly emailSentAt = new Map<string, number>();
+  // Resend id of the still-pending scheduled notify email per claim (sendPaymentEmail's 15-min
+  // delayed send) — lets a recipient edit that lands before the delay elapses cancel the email
+  // already addressed to the OLD recipient instead of leaving it to fire regardless.
+  private readonly scheduledEmailId = new Map<string, string>();
 
   constructor(
     private readonly supabaseService: SupabaseService,
@@ -1552,7 +1556,12 @@ export class ClaimsService {
     }
 
     let recipientAddress: string;
-    const extraFields: Record<string, unknown> = {};
+    // Always cleared: recipient_user_id is a stable identity stamp from when the OLD identifier
+    // resolved to a registered account. Leaving it in place after reassigning to a new identifier
+    // left the old recipient's history query (recipient_user_id = userId, apps/frontend/src/app/api/payments/history/route.ts)
+    // and the claim page's isKnownRecipient bypass (apps/frontend/src/app/api/claims/[id]/route.ts)
+    // still matching them, even though recipient_address/email/username now point at someone else.
+    const extraFields: Record<string, unknown> = { recipient_user_id: null };
     if (opts.recipientType === 'email') {
       const cleanEmail = opts.recipientIdentifier.trim().toLowerCase();
       if (!cleanEmail || !cleanEmail.includes('@')) throw new BadRequestException('A valid email is required.');
@@ -3144,11 +3153,23 @@ export class ClaimsService {
       ...(shortId ? { claimUrl: `/c/${shortId}` } : {}),
     };
 
-    if (isUnregistered) {
-      await this.emailService.sendClaimReadyEmail(emailData);
-    } else {
-      await this.emailService.sendPaymentReceivedEmail(emailData);
+    // A prior call for this claim (e.g. the original payment success) may still have a scheduled
+    // send sitting in Resend's queue, addressed to whichever recipient was current back then.
+    // Cancel it before scheduling this one — otherwise a recipient edit made after payment but
+    // before the delay elapses still results in the OLD recipient getting notified.
+    const priorEmailId = this.scheduledEmailId.get(claimId);
+    if (priorEmailId) {
+      this.scheduledEmailId.delete(claimId);
+      await this.emailService.cancelScheduledEmail(priorEmailId);
     }
+
+    let sentEmailId: string | null = null;
+    if (isUnregistered) {
+      sentEmailId = await this.emailService.sendClaimReadyEmail(emailData);
+    } else {
+      sentEmailId = await this.emailService.sendPaymentReceivedEmail(emailData);
+    }
+    if (sentEmailId) this.scheduledEmailId.set(claimId, sentEmailId);
   }
 
   /**
