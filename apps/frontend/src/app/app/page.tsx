@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, type ReactNode, useMemo } from "react";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
@@ -25,7 +24,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, AtSign, ChevronDown, LinkIcon, Lock, Mail, User, PlusIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useToast } from "@/components/ui/use-toast";
-import { ToastAction } from "@/components/ui/toast";
 
 const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
   () => import("@/app/app/claim/ClaimPageContent").then((mod) => ({ default: mod.ClaimPageContent })),
@@ -40,7 +38,6 @@ const SOCIAL_PICKS: { id: SocialSendPlatform; name: string }[] = [
 ];
 
 const HOME_TAB_KEY = "loofta.home.tab";
-const TERMINAL_PROMO_KEY = "loofta.terminalPromoShown";
 
 /**
  * Twitter/Discord/GitHub logins triggered from privyLogin() can fall back to a full top-level
@@ -151,37 +148,15 @@ export default function Home() {
   };
   const { toast } = useToast();
 
-  // Nudge toward the AI terminal every time the Send tab is activated — not just once ever —
-  // until the user explicitly closes it, which is remembered for the rest of this session
-  // (not "forever") so it keeps coming back for anyone who hasn't dismissed it, without
-  // re-nagging someone who already said "not now" by closing it.
+  // AppShell's useTerminalPromoToast nudges toward the AI terminal whenever this is "send" — it
+  // lives in the shared toast stack (alongside the unclaimed-payment/add-email nudges) rather
+  // than a one-off toast() call here, so it stacks with them instead of fighting over the
+  // single-toast slot. Resets to null on unmount so the promo can't linger after navigating away.
+  const setHomeActiveTab = useAuthStore((s) => s.setHomeActiveTab);
   useEffect(() => {
-    if (!authenticated || activeTab !== "send") return;
-    if (typeof window === "undefined") return;
-    if (sessionStorage.getItem(TERMINAL_PROMO_KEY)) return;
-    const dismiss = () => {
-      if (typeof window !== "undefined") sessionStorage.setItem(TERMINAL_PROMO_KEY, "1");
-    };
-    toast({
-      title: "Try the AI terminal",
-      description: 'Just type who to pay — "send $5 to @alice on X" — for faster payments, no form-filling.',
-      // Stays open until the user closes it (rather than the default ~5s auto-dismiss) — both
-      // so it's actually readable, and so onOpenChange(false) below only ever fires from a real
-      // close, never a timeout racing ahead of someone reading it.
-      duration: Infinity,
-      onOpenChange: (open) => { if (!open) dismiss(); },
-      action: (
-        <ToastAction altText="Open the AI terminal" asChild onClick={dismiss}>
-          <Link
-            href="/terminal"
-            className="!bg-gradient-to-r !from-[#FF1301] !to-[#EAB308] !text-white !border-0 !font-semibold hover:!opacity-90"
-          >
-            Try it
-          </Link>
-        </ToastAction>
-      ),
-    });
-  }, [authenticated, activeTab, toast]);
+    setHomeActiveTab(activeTab);
+    return () => setHomeActiveTab(null);
+  }, [activeTab, setHomeActiveTab]);
 
   const [recipient, setRecipient] = useState(() => readSendDraft()?.recipient ?? "");
   /** Set from a /me/[@username] personal link — locks the recipient to that exact account and

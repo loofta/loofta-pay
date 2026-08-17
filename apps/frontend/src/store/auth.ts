@@ -24,6 +24,10 @@ type AuthState = {
 	openShareModal: boolean;
 	openSettingsModal: boolean;
 	isOnboardingOpen: boolean;
+	/** Which Send&Receive home tab is currently active, or null when not on that page — lets
+	 *  AppShell's global toast stack (useTerminalPromoToast) react to tab switches without page.tsx
+	 *  needing to know anything about the toast stack itself. Not persisted (see partialize below). */
+	homeActiveTab: "send" | "receive" | null;
 	tier: string;
 	totalVolumeUsd: number;
 	ataMigratedMainnet: boolean | null; // null = not yet loaded from DB
@@ -38,6 +42,7 @@ type AuthState = {
 	setOpenShareModal: (open: boolean) => void;
 	setOpenSettingsModal: (open: boolean) => void;
 	setIsOnboardingOpen: (open: boolean) => void;
+	setHomeActiveTab: (tab: "send" | "receive" | null) => void;
 	setTier: (tier: string, totalVolumeUsd: number) => void;
 };
 
@@ -68,6 +73,7 @@ export const useAuthStore = create<AuthState>()(
 			openShareModal: false,
 			openSettingsModal: false,
 			isOnboardingOpen: false,
+			homeActiveTab: null,
 			tier: 'noob',
 			totalVolumeUsd: 0,
 			ataMigratedMainnet: null,
@@ -122,6 +128,7 @@ export const useAuthStore = create<AuthState>()(
 			setOpenShareModal: (open) => set({ openShareModal: open }),
 			setOpenSettingsModal: (open) => set({ openSettingsModal: open }),
 			setIsOnboardingOpen: (open) => set({ isOnboardingOpen: open }),
+			setHomeActiveTab: (tab) => set({ homeActiveTab: tab }),
 		}),
 		{
 			name: "loofta.auth.v1",

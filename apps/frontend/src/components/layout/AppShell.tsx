@@ -17,6 +17,8 @@ import { useUnclaimedPaymentToast } from "@/hooks/useUnclaimedPaymentToast";
 import { UnclaimedPaymentToast } from "@/components/UnclaimedPaymentToast";
 import { useAddEmailToast } from "@/hooks/useAddEmailToast";
 import { AddEmailToast } from "@/components/AddEmailToast";
+import { useTerminalPromoToast } from "@/hooks/useTerminalPromoToast";
+import { TerminalPromoToast } from "@/components/TerminalPromoToast";
 
 function ShellContent({ children }: { children: ReactNode }) {
   const t = useTranslations('AppShell');
@@ -25,6 +27,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   const { show: updateShow, resolved: updateResolved } = useUpdateJun26();
   const { unclaimed, dismiss: dismissUnclaimed } = useUnclaimedPaymentToast();
   const { showAddEmail, addEmail, linking: addingEmail, error: addEmailError, dismiss: dismissAddEmail } = useAddEmailToast();
+  const { showTerminalPromo, dismiss: dismissTerminalPromo } = useTerminalPromoToast();
   const [bannerDismissed, setBannerDismissed] = useState(false);
   useEffect(() => {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
@@ -66,7 +69,7 @@ function ShellContent({ children }: { children: ReactNode }) {
       <UserSync />
       <UpdateJun26Modal show={updateShow} />
       <MainnetLaunchCelebration blockedByUpdate={!updateResolved || updateShow} />
-      {(unclaimed || showAddEmail) && (
+      {(unclaimed || showAddEmail || showTerminalPromo) && (
         <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:bottom-4 z-[100] sm:max-w-sm flex flex-col-reverse gap-3">
           {unclaimed && <UnclaimedPaymentToast payments={unclaimed} onDismiss={dismissUnclaimed} />}
           {showAddEmail && (
@@ -77,6 +80,7 @@ function ShellContent({ children }: { children: ReactNode }) {
               alreadyLinked={addEmailError === "already_linked"}
             />
           )}
+          {showTerminalPromo && <TerminalPromoToast onDismiss={dismissTerminalPromo} />}
         </div>
       )}
       {showBanner && (
