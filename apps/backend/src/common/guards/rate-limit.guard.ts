@@ -7,6 +7,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { RATE_LIMIT_KEY, RateLimitOptions } from '@/common/decorators/rate-limit.decorator';
 import { RedisService } from '@/redis/redis.service';
+import { getClientIp } from '@/common/get-client-ip';
 
 @Injectable()
 export class RateLimitGuard implements CanActivate {
@@ -27,10 +28,7 @@ export class RateLimitGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const response = context.switchToHttp().getResponse();
 
-    const ip: string =
-      (request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-      request.ip ||
-      'unknown';
+    const ip: string = getClientIp(request);
 
     // 'integrator': keyed on the integrator IntegratorGuard attached to the request (which must
     // run first), using that integrator's own DB-configured limit rather than the decorator's

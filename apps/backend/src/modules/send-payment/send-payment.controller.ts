@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Body,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -15,8 +16,9 @@ import {
 import { AuthGuard, RateLimitGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
+import { getClientIp } from '@/common/get-client-ip';
 import { SendPaymentService } from './send-payment.service';
-import { BuildMultiSendDto, BuildMultiSendHubDto, ConfirmMultiSendHubDto } from './dto';
+import { BuildMultiSendDto, BuildMultiSendHubDto, ConfirmMultiSendHubDto, ConfirmMultiSendDto } from './dto';
 
 @ApiTags('send-payment')
 @Controller('send-payment')
@@ -79,15 +81,17 @@ export class SendPaymentController {
   }
 
   @Post('multi-confirm')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'sendpay:confirm')
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Mark multi-send payments as transferred after tx confirmation (public combined-tx path)' })
   async confirmMulti(
     @PrivyUser() user: { id: string },
-    @Body() body: { payment_ids: string[]; tx_hash?: string; fee_usdc?: number },
+    @Body() body: ConfirmMultiSendDto,
+    @Req() req: any,
   ) {
-    await this.sendPaymentService.confirmMultiSend(user.id, body.payment_ids ?? [], body.tx_hash, body.fee_usdc);
+    await this.sendPaymentService.confirmMultiSend(user.id, body.payment_ids, body.tx_hash, body.fee_usdc, getClientIp(req));
     return { ok: true };
   }
 }
