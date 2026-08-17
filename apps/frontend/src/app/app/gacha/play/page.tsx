@@ -73,6 +73,9 @@ export default function GachaPlayPage() {
   const searchParams = useSearchParams();
   const inviteCode = searchParams.get("inviteCode");
   const directRoomId = searchParams.get("roomId");
+  const rematchRoomId = searchParams.get("rematchRoomId");
+  const rematchMascotKey = searchParams.get("mascotKey");
+  const rematchClaimDeadline = searchParams.get("claimDeadline");
   const directRoomSeatsParam = searchParams.get("seats");
   const { user, authenticated, login, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
@@ -83,11 +86,13 @@ export default function GachaPlayPage() {
       (a.walletClientType === "privy" || a.walletClientType === "privy-v2")) as any)?.address ?? "";
   const embeddedWallet = wallets.find((w) => w.address === embeddedSolAddress) ?? wallets[0];
 
-  const [stage, setStage] = useState<Stage>("pick");
+  // Run It Back carries the player's mascot in the URL. Start directly on the room/payment
+  // stage so the rematch does not flash or require the mascot picker again.
+  const [stage, setStage] = useState<Stage>(rematchRoomId && rematchMascotKey ? "size" : "pick");
   const [configs, setConfigs] = useState<RoomConfig[]>([]);
   const [configsLoading, setConfigsLoading] = useState(true);
   const [configsError, setConfigsError] = useState<string | null>(null);
-  const [mascotKey, setMascotKey] = useState<string | null>(null);
+  const [mascotKey, setMascotKey] = useState<string | null>(rematchMascotKey);
   const [pickedSeats, setPickedSeats] = useState<number | null>(null);
   const [joiningSeats, setJoiningSeats] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +109,8 @@ export default function GachaPlayPage() {
   const [createdRoom, setCreatedRoom] = useState<WaitingRoom | null>(null);
   const [existingRoom, setExistingRoom] = useState<WaitingRoom | null>(null);
   const [invitedRoom, setInvitedRoom] = useState<WaitingRoom | null>(null);
+  const [rematchRoom, setRematchRoom] = useState<WaitingRoom | null>(null);
+  const [rematchLoading, setRematchLoading] = useState(false);
   const [inviteLoading, setInviteLoading] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
@@ -141,6 +148,7 @@ export default function GachaPlayPage() {
   // A shared private link enters the same explicit flow as a public room, but the private room
   // is fetched by its bearer code and is never injected into the public waiting-room list.
   useEffect(() => {
+    if (rematchRoomId) return;
     if (!inviteCode) {
       setInvitedRoom(null);
       setInviteLoading(false);
@@ -165,9 +173,68 @@ export default function GachaPlayPage() {
       })
       .finally(() => { if (!cancelled) setInviteLoading(false); });
     return () => { cancelled = true; };
-  }, [inviteCode]);
+  }, [inviteCode, rematchRoomId]);
+
+  // Run-it-back navigates here with the exact destination room. Fetch its detail instead of
+  // relying on the public browser list: a rematch room may be temporarily absent while its
+  // original players are rejoining, and private rematches are never listed publicly.
+  useEffect(() => {
+    if (!rematchRoomId || !authenticated) {
+      if (!rematchRoomId) {
+        setRematchRoom(null);
+        setRematchLoading(false);
+      }
+      return;
+    }
+    let cancelled = false;
+    setRematchLoading(true);
+    setError(null);
+    void (async () => {
+      try {
+        const token = await getAccessToken();
+        const inviteQuery = inviteCode ? `?inviteCode=${encodeURIComponent(inviteCode)}` : "";
+        const response = await fetch(`/api/gacha/rooms/${encodeURIComponent(rematchRoomId)}${inviteQuery}`, {
+          cache: "no-store",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(payload?.message ?? "This rematch room is no longer available");
+        const room = payload?.room;
+        if (!room || room.status !== "waiting") throw new Error("This rematch room is no longer accepting joins");
+        const nextRoom: WaitingRoom = {
+          id: room.id,
+          name: room.name ?? "Run it back",
+          configKey: room.configKey,
+          seats: room.seats,
+          entryUsdc: Number(room.entryUsdc),
+          seatsFilled: Number(room.seatsFilled ?? payload.participants?.length ?? 0),
+          isPrivate: !!room.isPrivate,
+          inviteCode: room.isPrivate ? (inviteCode ?? null) : null,
+          createdAt: room.createdAt,
+          participants: (payload.participants ?? []).map((participant: any) => ({
+            seatNumber: participant.seatNumber,
+            mascotKey: participant.mascotKey ?? null,
+          })),
+        };
+        if (cancelled) return;
+        setRematchRoom(nextRoom);
+        setPickedSeats(nextRoom.seats);
+        const carriedMascotKey = rematchMascotKey || payload.myParticipant?.mascotKey || null;
+        setMascotKey(carriedMascotKey);
+        setStage(carriedMascotKey ? "size" : "pick");
+        setRoomMode("browse");
+        setSelectedRoomId(nextRoom.id);
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message?.length < 200 ? err.message : "This rematch room is no longer available.");
+      } finally {
+        if (!cancelled) setRematchLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [rematchRoomId, rematchMascotKey, inviteCode, authenticated, getAccessToken]);
 
   const loadRooms = useCallback(async (showLoading = false) => {
+    if (rematchRoomId) return;
     if (!activeConfig) return;
     const requestId = ++roomsRequestIdRef.current;
     if (showLoading) setRoomsLoading(true);
@@ -192,9 +259,10 @@ export default function GachaPlayPage() {
     } finally {
       if (requestId === roomsRequestIdRef.current) setRoomsLoading(false);
     }
-  }, [activeConfig, directRoomId]);
+  }, [activeConfig, directRoomId, rematchRoomId]);
 
   useEffect(() => {
+    if (rematchRoomId) return;
     if (!activeConfig) return;
     roomsRequestIdRef.current += 1;
     void loadRooms(true);
@@ -203,11 +271,12 @@ export default function GachaPlayPage() {
       window.clearInterval(interval);
       roomsRequestIdRef.current += 1;
     };
-  }, [activeConfig, loadRooms]);
+  }, [activeConfig, loadRooms, rematchRoomId]);
 
   // Changing size invalidates a picked/created room. loadRooms selects the first result, and the
   // backend returns rooms fullest-first so the room closest to starting becomes the default.
   useEffect(() => {
+    if (rematchRoomId) return;
     setRoomMode("browse");
     setCreatedRoom(null);
     setExistingRoom(null);
@@ -215,13 +284,13 @@ export default function GachaPlayPage() {
     // The invite preview sets the size from the shared room after it has loaded. Keep that
     // preview through the resulting size update; a manual size toggle clears it explicitly.
     if (!inviteCode) setInvitedRoom(null);
-  }, [pickedSeats, inviteCode]);
+  }, [pickedSeats, inviteCode, rematchRoomId]);
 
   // The room the user deliberately picked stays selected even when the backend reports a
   // different active seat. The active room is rendered as a separate blocker, never substituted
   // into the public/private selection as though it were the room they clicked.
-  const selectedRoom = createdRoom ?? invitedRoom ?? rooms.find((room) => room.id === selectedRoomId) ?? null;
-  const shareableRoom = createdRoom?.isPrivate ? createdRoom : null;
+  const selectedRoom = rematchRoom ?? createdRoom ?? invitedRoom ?? rooms.find((room) => room.id === selectedRoomId) ?? null;
+  const shareableRoom = (rematchRoom?.isPrivate ? rematchRoom : null) ?? (createdRoom?.isPrivate ? createdRoom : null);
   // Filled seat previews show only confirmed participants. Creating a room does not take a seat
   // or charge the entry yet; the creator appears here only after the explicit paid join succeeds.
   const previewMascots: (string | null)[] = Array.from({ length: activeConfig?.seats ?? 0 }, (_, i) => {
@@ -417,7 +486,9 @@ export default function GachaPlayPage() {
 
   const pickedMascot = getMascot(mascotKey);
 
-  const ctaLabel = createdRoom
+  const ctaLabel = rematchRoom
+    ? `RUN IT BACK FOR $${rematchRoom.entryUsdc.toFixed(2)} →`
+    : createdRoom
     ? `JOIN ${createdRoom.name.toUpperCase()} FOR $${createdRoom.entryUsdc.toFixed(2)} →`
     : existingRoom
       ? "LEAVE CURRENT ROOM TO SWITCH"
@@ -427,11 +498,12 @@ export default function GachaPlayPage() {
         ? activeConfig && `JOIN ${selectedRoom.name.toUpperCase()} FOR $${activeConfig.entryUsdc.toFixed(2)} →`
         : "SELECT A ROOM";
   const ctaDisabled =
-    configsLoading || roomsLoading || creatingRoom || joiningSeats !== null || leavingRoom || !!existingRoom
+    configsLoading || roomsLoading || rematchLoading || creatingRoom || joiningSeats !== null || leavingRoom || !!existingRoom
     || (roomMode === "create" && !createdRoom && !roomName.trim())
     || (roomMode === "browse" && !selectedRoom && !createdRoom);
   const handleCtaClick = () => {
     if (!activeConfig) return;
+    if (rematchRoom) { void handleJoin(rematchRoom); return; }
     if (createdRoom) { void handleJoin(createdRoom); return; }
     if (roomMode === "create") { void handleCreateRoom(); return; }
     if (selectedRoom) void handleJoin(selectedRoom);
@@ -513,7 +585,7 @@ export default function GachaPlayPage() {
             </div>
           )}
 
-          {seatSizes.length > 1 && !inviteCode && (
+          {seatSizes.length > 1 && !inviteCode && !rematchRoomId && (
             <div className="pp-sizetoggle">
               {seatSizes.map((s) => (
                 <button
@@ -548,6 +620,19 @@ export default function GachaPlayPage() {
             <div className="pp-roomstatus" role="status">Loading private room…</div>
           )}
 
+          {activeConfig && rematchLoading && (
+            <div className="pp-roomstatus" role="status">Loading your rematch room…</div>
+          )}
+
+          {activeConfig && rematchRoom && !rematchLoading && (
+            <div className="pp-roomcreated" role="status">
+              <span>{rematchRoom.isPrivate ? "Private rematch" : "Group rematch"}</span>
+              <strong>{rematchRoom.name}</strong>
+              <p>{rematchRoom.seatsFilled}/{rematchRoom.seats} original players joined · new players can fill any seats left open</p>
+              {rematchClaimDeadline && <small>Original players have a short head start; you still approve a fresh payment below.</small>}
+            </div>
+          )}
+
           {activeConfig && invitedRoom && !createdRoom && !inviteLoading && (
             <div className="pp-roomcreated" role="status">
               <span>Private room invite</span>
@@ -580,7 +665,7 @@ export default function GachaPlayPage() {
             </section>
           )}
 
-          {activeConfig && roomMode === "browse" && !inviteCode && (
+          {activeConfig && roomMode === "browse" && !inviteCode && !rematchRoomId && (
             <div className="pp-roomlistwrap">
               <div className="pp-roomlist" aria-busy={roomsLoading}>
                 {roomsLoading && Array.from({ length: 2 }, (_, index) => (
@@ -645,7 +730,7 @@ export default function GachaPlayPage() {
             </div>
           )}
 
-          {activeConfig && roomMode === "create" && !createdRoom && (
+          {activeConfig && roomMode === "create" && !createdRoom && !rematchRoomId && (
             <form
               id="gacha-create-room-form"
               className="pp-createcard"

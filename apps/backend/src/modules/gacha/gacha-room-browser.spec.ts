@@ -13,6 +13,53 @@ function makeService(db: any = {}) {
 }
 
 describe("GachaService explicit room browser", () => {
+  it("creates one shared rematch destination and carries the caller's mascot hint", async () => {
+    const roomQuery: any = {
+      select: jest.fn(() => roomQuery),
+      eq: jest.fn(() => roomQuery),
+      maybeSingle: jest.fn()
+        .mockResolvedValueOnce({ data: { id: "settled-room", is_private: false, status: "settled" }, error: null })
+        .mockResolvedValueOnce({
+          data: {
+            id: "next-room",
+            name: "Friday · again",
+            config_key: "small-5",
+            seats: 5,
+            entry_usdc: 10,
+            is_private: false,
+            created_at: "2026-08-16T00:00:00.000Z",
+            status: "waiting",
+            invite_code: null,
+          },
+          error: null,
+        }),
+    };
+    const participantQuery: any = {
+      select: jest.fn(() => participantQuery),
+      eq: jest.fn(() => participantQuery),
+      in: jest.fn(() => participantQuery),
+      order: jest.fn().mockResolvedValue({ data: [], error: null }),
+      maybeSingle: jest.fn().mockResolvedValue({ data: { mascot_key: "fox" }, error: null }),
+    };
+    const service = makeService({
+      from: jest.fn((table: string) => table === "gacha_rooms" ? roomQuery : participantQuery),
+      rpc: jest.fn().mockResolvedValue({
+        data: [{
+          group_id: "group-1",
+          next_room_id: "next-room",
+          claim_deadline: "2026-08-16T00:01:00.000Z",
+        }],
+        error: null,
+      }),
+    });
+
+    await expect(service.runItBack("settled-room", "user-1")).resolves.toMatchObject({
+      groupId: "group-1",
+      mascotKey: "fox",
+      room: { id: "next-room", name: "Friday · again", seats: 5 },
+    });
+  });
+
   it("requires the exact invite code for a private room join", async () => {
     const roomQuery: any = {
       select: jest.fn(() => roomQuery),

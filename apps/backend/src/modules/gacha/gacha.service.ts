@@ -93,6 +93,7 @@ export interface RoomConfigPublic {
 
 export interface RoomSummary {
   id: string;
+  name?: string;
   configKey: string;
   packType: string;
   seats: number;
@@ -121,6 +122,14 @@ export interface WaitingRoomSummary {
   inviteCode?: string | null;
   createdAt: string;
   participants: Array<{ seatNumber: number; mascotKey: string | null }>;
+}
+
+export interface RunItBackResult {
+  groupId: string;
+  claimDeadline: string;
+  inviteCode: string | null;
+  mascotKey: string | null;
+  room: WaitingRoomSummary;
 }
 
 @Injectable()
@@ -454,6 +463,67 @@ export class GachaService {
   }
 
   /**
+   * Idempotently create (or recover) the one next waiting room owned by a settled source room.
+   * This endpoint only allocates the shared destination; each player still explicitly pays a
+   * fresh entry through the normal room join flow. The database RPC serializes concurrent clicks
+   * and excludes synthetic bot seats from the rematch membership list.
+   */
+  async runItBack(sourceRoomId: string, userId: string): Promise<RunItBackResult> {
+    const db = this.supabase.getClient();
+    const { data: source, error: sourceError } = await db
+      .from('gacha_rooms')
+      .select('id, is_private, status')
+      .eq('id', sourceRoomId)
+      .maybeSingle();
+    if (sourceError || !source) throw new NotFoundException('Room not found');
+
+    const inviteCode = source.is_private ? randomBytes(24).toString('base64url') : null;
+    const { data, error } = await db.rpc('gacha_create_rematch_group', {
+      p_source_room_id: sourceRoomId,
+      p_requesting_user_id: userId,
+      p_invite_code: inviteCode,
+      p_claim_window_seconds: 60,
+    });
+    if (error) {
+      const message = error.message ?? '';
+      if (message.includes('not settled')) throw new BadRequestException('This room is not settled yet');
+      if (message.includes('Only a room participant') || message.includes('not part of this rematch')) {
+        throw new NotFoundException('Room not found');
+      }
+      throw new Error(`Failed to create rematch room: ${message}`);
+    }
+
+    const row = (Array.isArray(data) ? data[0] : data) as any;
+    if (!row?.next_room_id || !row?.group_id) throw new Error('Failed to create rematch room: no room returned');
+
+    const { data: nextRoom, error: nextRoomError } = await db
+      .from('gacha_rooms')
+      .select('id, name, config_key, seats, entry_usdc, is_private, created_at, status, invite_code')
+      .eq('id', row.next_room_id)
+      .maybeSingle();
+    if (nextRoomError || !nextRoom || nextRoom.status !== 'waiting') {
+      throw new Error('Failed to load rematch room');
+    }
+    const [room] = await this.hydrateWaitingRoomSummaries([nextRoom], !!nextRoom.is_private);
+    if (!room) throw new Error('Failed to load rematch room participants');
+
+    const { data: sourceParticipant } = await db
+      .from('gacha_room_participants')
+      .select('mascot_key')
+      .eq('room_id', sourceRoomId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    return {
+      groupId: String(row.group_id),
+      claimDeadline: String(row.claim_deadline),
+      inviteCode: nextRoom.is_private ? (nextRoom.invite_code ?? null) : null,
+      mascotKey: sourceParticipant?.mascot_key ?? null,
+      room,
+    };
+  }
+
+  /**
    * Every room this caller has ever actually joined, regardless of status — listOpenRooms
    * deliberately excludes settled/cancelled/failed rooms (that's a lobby list, not a history),
    * which meant a settled room — precisely the moment there's a payout to claim — became
@@ -577,7 +647,7 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data: room, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, pending_bid_id, created_at, is_private, created_by_user_id, invite_code')
+      .select('id, name, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, pending_bid_id, created_at, is_private, created_by_user_id, invite_code')
       .eq('id', roomId)
       .maybeSingle();
     if (error || !room) throw new NotFoundException('Room not found');
@@ -618,7 +688,7 @@ export class GachaService {
 
     return {
       room: {
-        id: room.id, configKey: room.config_key, packType: room.pack_type, seats: room.seats, entryUsdc: Number(room.entry_usdc),
+        id: room.id, name: room.name ?? undefined, configKey: room.config_key, packType: room.pack_type, seats: room.seats, entryUsdc: Number(room.entry_usdc),
         exclusionCount: room.exclusion_count, voteRound: room.vote_round,
         status: room.status, seatsFilled: counts[roomId] ?? 0, nftMetadata: room.nft_metadata, rarity: room.rarity,
         buybackAmountUsdc: room.buyback_amount_usdc !== null ? Number(room.buyback_amount_usdc) : null,
@@ -662,7 +732,7 @@ export class GachaService {
       });
     }
 
-    await this.assertRoomHasOpenSeat(requestedRoom);
+    await this.assertRoomHasOpenSeat(requestedRoom, userId);
     return this.buildEntryPaymentTx(requestedRoom, userId);
   }
 
@@ -730,7 +800,7 @@ export class GachaService {
     roomId: string,
     userId: string,
     inviteCode?: string,
-  ): Promise<{ id: string; configKey: string; seats: number; entryUsdc: number }> {
+  ): Promise<{ id: string; configKey: string; seats: number; entryUsdc: number; isPrivate: boolean }> {
     const db = this.supabase.getClient();
     const { data: room, error } = await db
       .from('gacha_rooms')
@@ -749,12 +819,47 @@ export class GachaService {
       if (participantError || !participant) throw new NotFoundException('Room not found');
     }
 
-    return { id: room.id, configKey: room.config_key, seats: room.seats, entryUsdc: Number(room.entry_usdc) };
+    return { id: room.id, configKey: room.config_key, seats: room.seats, entryUsdc: Number(room.entry_usdc), isPrivate: !!room.is_private };
   }
 
-  private async assertRoomHasOpenSeat(room: { id: string; seats: number }): Promise<void> {
+  private async assertRoomHasOpenSeat(room: { id: string; seats: number; isPrivate?: boolean }, userId?: string): Promise<void> {
     const seatsFilled = await this.getParticipantCount(room.id);
     if (seatsFilled >= room.seats) throw new BadRequestException('This room just filled up — choose another room');
+
+    // The database trigger remains authoritative for races. This read-only check keeps a public
+    // newcomer from signing a payment that will immediately be refunded while the original
+    // rematch members' short reservation window is still open.
+    if (!room.isPrivate && userId) {
+      const db = this.supabase.getClient();
+      const { data: group } = await db
+        .from('gacha_rematch_groups')
+        .select('id, claim_deadline')
+        .eq('next_room_id', room.id)
+        .maybeSingle();
+      if (group && new Date(group.claim_deadline).getTime() > Date.now()) {
+        const { data: member } = await db
+          .from('gacha_rematch_members')
+          .select('user_id')
+          .eq('group_id', group.id)
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (!member) {
+          const { data: members } = await db
+            .from('gacha_rematch_members')
+            .select('user_id')
+            .eq('group_id', group.id);
+          const { data: joined } = await db
+            .from('gacha_room_participants')
+            .select('user_id')
+            .eq('room_id', room.id);
+          const joinedUsers = new Set((joined ?? []).map((row: any) => row.user_id));
+          const pending = (members ?? []).filter((row: any) => !joinedUsers.has(row.user_id)).length;
+          if (seatsFilled + pending >= room.seats) {
+            throw new BadRequestException('This rematch room is holding seats for the original group — try again shortly');
+          }
+        }
+      }
+    }
   }
 
   private async buildEntryPaymentTx(

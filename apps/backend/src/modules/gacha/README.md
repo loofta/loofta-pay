@@ -116,7 +116,7 @@ should be entered directly into the ignored backend env file or the team's secre
 
 ## Database
 
-Apply all migrations through `20260815170000_gacha_atomic_create_guard.sql`. The Gacha
+Apply all migrations through `20260816120000_gacha_run_it_back.sql`. The Gacha
 hardening and room-browser migrations add:
 
 - atomic payout-claim locks;
@@ -129,6 +129,8 @@ hardening and room-browser migrations add:
 - advisory-lock-protected room numbering and explicit room creation.
 - an atomic user/config create guard so duplicate create retries cannot make parallel waiting
   rooms for the same player and size.
+- an idempotent rematch group linking one settled room to one shared next waiting room, with the
+  real (non-bot) source participants recorded for authorization.
 
 All Gacha tables use RLS and are accessible only through the service-role backend.
 
@@ -180,6 +182,10 @@ non-production-only force-advance endpoints as recovery/debugging fallbacks.
   existing participant/creator) and otherwise return the same not-found response as an unknown
   room. Public room links remain directly joinable by authenticated users; private links are the
   only discovery path for private rooms.
+- `POST /gacha/rooms/:id/run-it-back` is participant-only and idempotently creates one next room
+  for the settled source room. It never charges automatically: every returning player signs a
+  fresh entry payment in the normal explicit join flow. Public rematch seats remain available to
+  ordinary browser joiners; private rematches stay invite-only and receive a new invite code.
 - A public room detail link carries that exact room id and size into the play flow; it never falls
   back to a different public room. If the linked room is no longer waiting, the browser keeps the
   other rooms visible and asks the player to choose again.

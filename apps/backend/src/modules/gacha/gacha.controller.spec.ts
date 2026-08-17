@@ -7,6 +7,7 @@ describe("GachaController room browser", () => {
     getWaitingRoomByInviteCode: jest.fn(),
     getNextRoomNumber: jest.fn(),
     createWaitingRoom: jest.fn(),
+    runItBack: jest.fn(),
     buildJoinTxForRoom: jest.fn(),
     leaveWaitingRoom: jest.fn(),
   };
@@ -74,6 +75,15 @@ describe("GachaController room browser", () => {
       "privy-user-2",
       undefined,
     );
+  });
+
+  it("creates or recovers the shared rematch room for the authenticated participant", async () => {
+    gacha.runItBack.mockResolvedValue({ groupId: "group-1", room: { id: "room-4" } });
+
+    await expect(
+      controller.runItBack("settled-room", { user: { id: "privy-user-2" } }),
+    ).resolves.toEqual({ groupId: "group-1", room: { id: "room-4" } });
+    expect(gacha.runItBack).toHaveBeenCalledWith("settled-room", "privy-user-2");
   });
 
   it("lets the authenticated participant leave a waiting room", async () => {
