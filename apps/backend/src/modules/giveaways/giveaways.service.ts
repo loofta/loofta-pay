@@ -8,6 +8,8 @@ import { GiveawayBurnerSweepService } from './giveaway-burner-sweep.service';
 import { isPrivyUserAdmin } from '@/common/admin-check';
 import { GiveawayFundingService } from './giveaway-funding.service';
 import { EmailService } from '../email/email.service';
+import { SolanaSponsorService } from '../claims/solana-sponsor.service';
+import { UsersService } from '../users/users.service';
 import { CreateGiveawayDto } from './dto/create-giveaway.dto';
 import { AdminReviewGiveawayDto } from './dto/admin-review-giveaway.dto';
 import { AdminEditGiveawayDto } from './dto/admin-edit-giveaway.dto';
@@ -19,6 +21,7 @@ import {
   GIVEAWAY_TASK_VERIFICATION_MODE,
 } from './entities/giveaway.entity';
 import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
+import { PublicKey } from '@solana/web3.js';
 
 // Same generator as ClaimsService/SendPaymentService/GiveawayPayoutService — duplicated rather
 // than shared per this codebase's existing convention.
@@ -67,6 +70,8 @@ export class GiveawaysService {
     private readonly emailService: EmailService,
     private readonly privy: PrivyVerificationService,
     private readonly redis: RedisService,
+    private readonly solanaSponsor: SolanaSponsorService,
+    private readonly usersService: UsersService,
   ) {
     this.isDevnet = isSolanaDevnetFromConfig(this.configService);
     const defaultUsdcMint = this.isDevnet
@@ -85,6 +90,10 @@ export class GiveawaysService {
     // internal-caller check.
     this.reviewLinkSecret = this.configService.get<string>('LOOFTA_INTERNAL_SECRET') || null;
     if (!this.reviewLinkSecret) this.logger.warn('LOOFTA_INTERNAL_SECRET not configured — public review links disabled.');
+  }
+
+  private cluster(giveaway: Giveaway): 'devnet' | 'mainnet' {
+    return giveaway.is_devnet ? 'devnet' : 'mainnet';
   }
 
   private hmac(value: string): string {
@@ -756,6 +765,72 @@ export class GiveawaysService {
       this.emailService
         .sendGiveawayExpiredEmail({ recipientEmail, title: data.title, reason: expireReason })
         .catch((e) => this.logger.warn(`[Giveaway] ${id}: failed to send expiry email (non-fatal): ${e?.message ?? e}`));
+    });
+
+    return data as Giveaway;
+  }
+
+  /**
+   * Admin cancel — for a giveaway that's already past approval (PENDING_FUNDING, FUNDED, OPEN, or
+   * ENTRIES_CLOSED) and needs to be pulled, e.g. a policy issue found after the fact. Not for
+   * DRAFT/PENDING_APPROVAL — reject (adminReview) or the creator's own cancelOrDelete already
+   * cover those, and not for DRAWING/WINNERS_SELECTED/PAYOUT_IN_PROGRESS or a terminal status —
+   * once a draw has started, winners may already be selected or paid, which needs a human, not a
+   * status flip. Refunds whatever's sitting in the burner back to the creator in full (no platform
+   * fee withheld — the giveaway never actually ran) before flipping to CANCELLED; a failed refund
+   * doesn't block the cancellation itself (mirrors GiveawayPayoutService.finalizeIfComplete's
+   * non-fatal refund — the terminal-burner GC cron will still reclaim the dust eventually, just to
+   * the fee payer instead of the creator, so a failure here is logged for manual follow-up).
+   */
+  async adminCancel(id: string, adminUserId: string, reason?: string): Promise<Giveaway> {
+    const giveaway = await this.findOneOrThrow(id);
+    const CANCELLABLE = [
+      GiveawayStatus.PENDING_FUNDING,
+      GiveawayStatus.FUNDED,
+      GiveawayStatus.OPEN,
+      GiveawayStatus.ENTRIES_CLOSED,
+    ];
+    if (!CANCELLABLE.includes(giveaway.status)) {
+      throw new BadRequestException(
+        `Cannot cancel — giveaway is ${giveaway.status}. Reject it instead if it's still pending approval, or contact support once a draw is in progress or it has already finished.`,
+      );
+    }
+
+    const cancelReason = reason?.trim() || 'Cancelled by admin';
+
+    if (giveaway.burner_address && giveaway.burner_encrypted_secret && giveaway.mint) {
+      try {
+        const conn = this.solanaSponsor.getConnectionForCluster(this.cluster(giveaway));
+        const mint = new PublicKey(giveaway.mint);
+        const burnerKeypair = this.burnerSweep.decryptBurner(giveaway.burner_address, giveaway.burner_encrypted_secret);
+        const creatorWallet = await this.usersService.getSolanaWalletAddress(giveaway.created_by, { skipCache: true });
+        const refund = await this.burnerSweep.refundRemainingToCreator({
+          conn,
+          burnerKeypair,
+          creatorWallet,
+          mint,
+          context: `giveaway:${id}:admin-cancel-refund`,
+          callerUserId: giveaway.created_by,
+        });
+        if (refund) await this.logEvent(id, 'refund_issued', { tx_hash: refund.sweepTxHash, by: 'admin' });
+      } catch (e) {
+        this.logger.warn(`[Giveaway] ${id}: admin-cancel refund failed (non-fatal, GC cron will catch remaining dust): ${String(e)}`);
+      }
+    }
+
+    const { data, error } = await this.supabaseService.giveaways
+      .update({ status: GiveawayStatus.CANCELLED, cancel_reason: cancelReason })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to cancel giveaway');
+    await this.logEvent(id, 'cancelled', { by: 'admin', admin: adminUserId, reason: cancelReason });
+
+    this.resolveLinkedEmail(data.created_by).then((recipientEmail) => {
+      if (!recipientEmail) return;
+      this.emailService
+        .sendGiveawayCancelledEmail({ recipientEmail, title: data.title, reason: cancelReason })
+        .catch((e) => this.logger.warn(`[Giveaway] ${id}: failed to send cancellation email (non-fatal): ${e?.message ?? e}`));
     });
 
     return data as Giveaway;

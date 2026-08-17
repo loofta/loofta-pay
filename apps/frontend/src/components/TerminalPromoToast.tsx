@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { X, Sparkles } from "lucide-react";
+import { X } from "lucide-react";
+
+const LOOFTA_ICON_WHITE = "/images/icons/loofta-icon-white.svg";
 
 export function TerminalPromoToast({ onDismiss }: { onDismiss: () => void }) {
   return (
@@ -17,7 +19,7 @@ export function TerminalPromoToast({ onDismiss }: { onDismiss: () => void }) {
         </button>
         <div className="flex items-start gap-3 pr-5">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#FF7A2A] to-[#EAB308] shadow-lg shadow-orange-500/40">
-            <Sparkles size={20} className="text-white" />
+            <img src={LOOFTA_ICON_WHITE} alt="" className="h-5 w-5" />
           </span>
           <div className="flex-1 min-w-0">
             <p className="text-white font-semibold font-sans text-base">Try the AI terminal</p>

@@ -19,16 +19,18 @@ const ENTRIES_VISIBLE_STATUSES: readonly string[] = [
 
 // Giveaways that have gone past OPEN but never made it public in the first place
 // (DRAFT/PENDING_APPROVAL/PENDING_FUNDING/REJECTED) are excluded — there was never anything for a
-// visitor to have seen or entered, so there's nothing to show as "ended." Everything else that was
-// once live gets listed, even CANCELLED/REFUNDED/UNDERFUNDED_EXPIRED — someone who saw it open
-// should still be able to find out what happened to it.
+// visitor to have seen or entered, so there's nothing to show as "ended." CANCELLED is excluded
+// too — a cancelled giveaway (whether pulled by the creator before funding, or by an admin after
+// it went live) should disappear from every user-facing list, not linger as a "Cancelled" card;
+// its direct /rewards/giveaways/[id] page still works for anyone who already had the link.
+// Everything else that was once live still gets listed, e.g. UNDERFUNDED_EXPIRED/REFUNDED —
+// someone who saw it open should still be able to find out what happened to it.
 const ENDED_STATUSES: readonly string[] = [
   GiveawayStatus.ENTRIES_CLOSED,
   GiveawayStatus.DRAWING,
   GiveawayStatus.WINNERS_SELECTED,
   GiveawayStatus.PAYOUT_IN_PROGRESS,
   GiveawayStatus.COMPLETED,
-  GiveawayStatus.CANCELLED,
   GiveawayStatus.UNDERFUNDED_EXPIRED,
   GiveawayStatus.REFUNDED,
 ];

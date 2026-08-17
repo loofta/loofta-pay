@@ -7,7 +7,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { Loader2, Gift, Check, X, AlertTriangle, ChevronDown, ChevronRight, Ban, Search, Pencil, Trash2, Plus } from "lucide-react";
+import { Loader2, Gift, Check, X, AlertTriangle, ChevronDown, ChevronRight, Ban, CircleSlash, Search, Pencil, Trash2, Plus } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,6 +15,10 @@ import { RichTextEditor } from "@/components/RichTextEditor";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 const TERMINAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "REJECTED", "REFUNDED", "UNDERFUNDED_EXPIRED"]);
+// Mirrors GiveawaysService.adminCancel's CANCELLABLE list — only a giveaway that's already past
+// approval and hasn't started drawing yet. PENDING_APPROVAL uses reject instead; DRAWING/
+// WINNERS_SELECTED/PAYOUT_IN_PROGRESS/terminal statuses need support, not a status flip.
+const CANCELLABLE_STATUSES = new Set(["PENDING_FUNDING", "FUNDED", "OPEN", "ENTRIES_CLOSED"]);
 
 // Mirrors GiveawayDetailClient.tsx's own ENGAGE_TASK_TYPES/ENGAGE_ACTION_LABELS — x_retweet/
 // x_like/x_comment/x_bookmark tied to the same tweet render as one grouped card there, so the
@@ -392,9 +396,36 @@ export function GiveawaysTab() {
     }
   }, [authHeaders, toast, searchAll, searchInput]);
 
-  // Shared reason-entry dialog for both reject (rejection_reason required) and expire (reason
-  // optional, defaults server-side) — replaces window.prompt/window.confirm with an in-app modal.
-  const [reasonDialog, setReasonDialog] = useState<{ type: "reject" | "expire"; id: string; title: string } | null>(null);
+  // Admin cancel for a giveaway already past approval (PENDING_FUNDING/FUNDED/OPEN/ENTRIES_CLOSED) —
+  // backend refunds any burner balance to the creator before flipping to CANCELLED, so this covers
+  // the case expireGiveaway doesn't (funds already landed) and the case cancelOrDelete (creator
+  // self-service) refuses (past PENDING_FUNDING).
+  const cancelGiveaway = useCallback(async (id: string, reason: string) => {
+    setBusyId(id);
+    try {
+      const res = await fetch(`${BACKEND_URL}/giveaways/admin/${id}/cancel`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({ reason: reason.trim() || undefined }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null);
+        throw new Error(errBody?.message || "Failed to cancel giveaway");
+      }
+      toast({ title: "Giveaway cancelled — creator notified and refunded" });
+      searchAll(searchInput);
+      fetchAll();
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Failed to cancel giveaway", description: err.message });
+    } finally {
+      setBusyId(null);
+    }
+  }, [authHeaders, toast, searchAll, searchInput, fetchAll]);
+
+  // Shared reason-entry dialog for reject (rejection_reason required), expire (reason optional,
+  // defaults server-side), and cancel (reason optional, defaults server-side) — replaces
+  // window.prompt/window.confirm with an in-app modal.
+  const [reasonDialog, setReasonDialog] = useState<{ type: "reject" | "expire" | "cancel"; id: string; title: string } | null>(null);
   const [reasonInput, setReasonInput] = useState("");
 
   const openReject = useCallback((g: AdminGiveaway) => {
@@ -405,13 +436,18 @@ export function GiveawaysTab() {
     setReasonDialog({ type: "expire", id: g.id, title: g.title });
     setReasonInput("Approved but never funded");
   }, []);
+  const openCancel = useCallback((g: AdminGiveaway) => {
+    setReasonDialog({ type: "cancel", id: g.id, title: g.title });
+    setReasonInput("");
+  }, []);
   const confirmReasonDialog = useCallback(() => {
     if (!reasonDialog) return;
     const { type, id } = reasonDialog;
     setReasonDialog(null);
     if (type === "reject") review(id, "reject", reasonInput.trim());
-    else expireGiveaway(id, reasonInput);
-  }, [reasonDialog, reasonInput, review, expireGiveaway]);
+    else if (type === "expire") expireGiveaway(id, reasonInput);
+    else cancelGiveaway(id, reasonInput);
+  }, [reasonDialog, reasonInput, review, expireGiveaway, cancelGiveaway]);
 
   const reviewCompletion = useCallback(async (completionId: string, decision: "verified" | "rejected") => {
     setBusyId(completionId);
@@ -620,7 +656,19 @@ export function GiveawaysTab() {
                               <Ban className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          {!editable && g.status !== "PENDING_FUNDING" && <span className="text-gray-700">—</span>}
+                          {CANCELLABLE_STATUSES.has(g.status) && (
+                            <button
+                              type="button"
+                              disabled={busyId === g.id}
+                              onClick={() => openCancel(g)}
+                              className="p-1.5 rounded bg-red-900/40 text-red-400 hover:bg-red-900/70 disabled:opacity-50"
+                              aria-label="Cancel"
+                              title="Cancel — refunds any burner balance to the creator"
+                            >
+                              <CircleSlash className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {!editable && <span className="text-gray-700">—</span>}
                         </div>
                       </td>
                     </tr>
@@ -994,12 +1042,17 @@ export function GiveawaysTab() {
         <DialogContent className="bg-gray-900 border-gray-700 text-gray-100 max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              {reasonDialog?.type === "reject" ? `Reject "${reasonDialog.title}"?` : `Expire "${reasonDialog?.title}"?`}
+              {reasonDialog?.type === "reject" && `Reject "${reasonDialog.title}"?`}
+              {reasonDialog?.type === "expire" && `Expire "${reasonDialog?.title}"?`}
+              {reasonDialog?.type === "cancel" && `Cancel "${reasonDialog?.title}"?`}
             </DialogTitle>
             <DialogDescription className="text-gray-400">
-              {reasonDialog?.type === "reject"
-                ? "The creator will be emailed this reason, with a note to contact support if they think this is a mistake."
-                : "Approved but never funded — the creator will be emailed this reason. Refused if the burner already has funds."}
+              {reasonDialog?.type === "reject" &&
+                "The creator will be emailed this reason, with a note to contact support if they think this is a mistake."}
+              {reasonDialog?.type === "expire" &&
+                "Approved but never funded — the creator will be emailed this reason. Refused if the burner already has funds."}
+              {reasonDialog?.type === "cancel" &&
+                "Any funds already in the burner are refunded in full to the creator's wallet, then the giveaway moves to Cancelled and stops showing anywhere in the app. The creator is emailed this reason."}
             </DialogDescription>
           </DialogHeader>
           <Textarea
@@ -1022,12 +1075,14 @@ export function GiveawaysTab() {
               onClick={confirmReasonDialog}
               disabled={reasonDialog?.type === "reject" && !reasonInput.trim()}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50 ${
-                reasonDialog?.type === "reject"
-                  ? "bg-red-900/40 text-red-400 hover:bg-red-900/70"
-                  : "bg-orange-900/40 text-orange-400 hover:bg-orange-900/70"
+                reasonDialog?.type === "expire"
+                  ? "bg-orange-900/40 text-orange-400 hover:bg-orange-900/70"
+                  : "bg-red-900/40 text-red-400 hover:bg-red-900/70"
               }`}
             >
-              {reasonDialog?.type === "reject" ? "Reject giveaway" : "Expire giveaway"}
+              {reasonDialog?.type === "reject" && "Reject giveaway"}
+              {reasonDialog?.type === "expire" && "Expire giveaway"}
+              {reasonDialog?.type === "cancel" && "Cancel giveaway"}
             </button>
           </DialogFooter>
         </DialogContent>
