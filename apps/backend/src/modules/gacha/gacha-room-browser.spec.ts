@@ -167,6 +167,9 @@ describe("GachaService explicit room browser", () => {
       .mockResolvedValue({
         id: "selected-room",
         entryUsdc: 10,
+        hasSeat: true,
+        isCreator: false,
+        createdAt: "2026-01-01",
       });
     const build = jest.spyOn(service as any, "buildEntryPaymentTx");
 
@@ -203,8 +206,16 @@ describe("GachaService explicit room browser", () => {
     jest.spyOn(service as any, "findExistingWaitingRoomForUser").mockResolvedValue({
       id: existingRoom.id,
       entryUsdc: existingRoom.entryUsdc,
+      hasSeat: true,
+      isCreator: false,
+      createdAt: existingRoom.createdAt,
     });
-    jest.spyOn(service as any, "getWaitingRoomSummary").mockResolvedValue(existingRoom);
+    jest.spyOn(service, "getCurrentWaitingRoom").mockResolvedValue({
+      ...existingRoom,
+      isCreator: false,
+      hasSeat: true,
+      canCancel: false,
+    });
     const build = jest.spyOn(service as any, "buildEntryPaymentTx");
 
     await expect(service.buildJoinTxForRoom("selected-public-room", "user-1"))
@@ -301,6 +312,9 @@ describe("GachaService explicit room browser", () => {
     jest.spyOn(service as any, "findExistingWaitingRoomForUser").mockResolvedValue({
       id: existingRoom.id,
       entryUsdc: existingRoom.entryUsdc,
+      hasSeat: true,
+      isCreator: true,
+      createdAt: existingRoom.createdAt,
     });
     jest.spyOn(service as any, "getWaitingRoomSummary").mockResolvedValue(existingRoom);
 
@@ -309,9 +323,63 @@ describe("GachaService explicit room browser", () => {
         response: {
           code: "ALREADY_IN_WAITING_ROOM",
           message: "You already have a seat in a waiting room for this size",
-          room: existingRoom,
+          room: expect.objectContaining(existingRoom),
         },
       });
+  });
+
+  it("lets an unseated creator pay to join their own recovered room", async () => {
+    const service = makeService();
+    const requested = { id: "owned-room", configKey: "small-5", seats: 5, entryUsdc: 10 };
+    jest.spyOn(service as any, "getJoinableRoom").mockResolvedValue(requested);
+    jest.spyOn(service as any, "findExistingWaitingRoomForUser").mockResolvedValue({
+      id: requested.id,
+      entryUsdc: requested.entryUsdc,
+      hasSeat: false,
+      isCreator: true,
+      createdAt: "2026-01-01",
+    });
+    jest.spyOn(service as any, "assertRoomHasOpenSeat").mockResolvedValue(undefined);
+    const build = jest.spyOn(service as any, "buildEntryPaymentTx").mockResolvedValue({
+      txBase64: "signed-tx",
+      roomId: requested.id,
+      entryUsdc: requested.entryUsdc,
+    });
+
+    await expect(service.buildJoinTxForRoom(requested.id, "owner"))
+      .resolves.toMatchObject({ txBase64: "signed-tx", roomId: requested.id });
+    expect(build).toHaveBeenCalledWith(requested, "owner");
+  });
+
+  it("returns cancellation capability only for an empty unseated creator-owned room", async () => {
+    const service = makeService();
+    jest.spyOn(service as any, "getConfig").mockResolvedValue({ configKey: "small-5" });
+    jest.spyOn(service as any, "findExistingWaitingRoomForUser").mockResolvedValue({
+      id: "owned-room",
+      entryUsdc: 10,
+      hasSeat: false,
+      isCreator: true,
+      createdAt: "2026-01-01",
+    });
+    jest.spyOn(service as any, "getWaitingRoomSummary").mockResolvedValue({
+      id: "owned-room",
+      name: "Friends",
+      configKey: "small-5",
+      seats: 5,
+      entryUsdc: 10,
+      seatsFilled: 0,
+      isPrivate: true,
+      inviteCode: "invite-secret",
+      createdAt: "2026-01-01",
+      participants: [],
+    });
+
+    await expect(service.getCurrentWaitingRoom("small-5", "owner")).resolves.toMatchObject({
+      id: "owned-room",
+      isCreator: true,
+      hasSeat: false,
+      canCancel: true,
+    });
   });
 
   it("returns only joinable rooms and ranks the fullest room first", async () => {

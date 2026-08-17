@@ -5,6 +5,7 @@ describe("GachaController room browser", () => {
   const gacha = {
     listPublicWaitingRooms: jest.fn(),
     getWaitingRoomByInviteCode: jest.fn(),
+    getCurrentWaitingRoom: jest.fn(),
     getNextRoomNumber: jest.fn(),
     createWaitingRoom: jest.fn(),
     runItBack: jest.fn(),
@@ -36,6 +37,15 @@ describe("GachaController room browser", () => {
 
     await expect(controller.nextRoomNumber("small-5")).resolves.toEqual({ roomNumber: 7 });
     expect(gacha.getNextRoomNumber).toHaveBeenCalledWith("small-5");
+  });
+
+  it("recovers the authenticated user's current waiting room", async () => {
+    gacha.getCurrentWaitingRoom.mockResolvedValue({ id: "private-room", hasSeat: false, isCreator: true });
+
+    await expect(
+      controller.currentWaitingRoom("small-5", { user: { id: "privy-user-1" } }),
+    ).resolves.toEqual({ id: "private-room", hasSeat: false, isCreator: true });
+    expect(gacha.getCurrentWaitingRoom).toHaveBeenCalledWith("small-5", "privy-user-1");
   });
 
   it("creates a named room for the authenticated user", async () => {
