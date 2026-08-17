@@ -138,7 +138,7 @@ const PLATFORM_CHOICES: { id: SocialIconPlatform; label: string }[] = [
   { id: 'twitter', label: 'X' },
 ]
 
-const EXAMPLE_PROMPTS = ['send $5 to @alice on X', 'send $10 to @bob on Telegram', 'send $5 to @alice on X and $10 to @bob on telegram', 'gift 5 tickets to @alice']
+const EXAMPLE_PROMPTS = ['send $5 to @alice on X', 'send $10 to @bob on Telegram', 'send $5 to @alice on X and $10 to @bob on telegram', 'gift 5 lottery tickets to @alice']
 
 function platformLabel(p: ParsedRecipient['platform'] | ParsedGiftRecipient['platform']) {
   switch (p) {
@@ -191,7 +191,7 @@ export function AgentChatBox() {
     {
       id: nextId(),
       role: 'assistant',
-      text: 'Hey! Tell me who to pay — like "send $5 to @alice on X". Works with X, Telegram, Discord, Github, loofta username and email. You can also gift Megapot tickets — "gift 5 tickets to @alice".',
+      text: 'Hey! Try "send $5 to @alice on X" or "gift 5 lottery tickets to @alice". Works with X, Telegram, Discord, Github, loofta username and email.',
     },
   ])
   const [input, setInput] = useState('')
