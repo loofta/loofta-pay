@@ -78,6 +78,15 @@
     "claimMany": "Claim them",
     "dismiss": "Dismiss"
   },
+  "UnclaimedGiftToast": {
+    "titleOne": "You have an unclaimed gift",
+    "titleMany": "You have {count} unclaimed gifts",
+    "ticketWaitingOne": "1 lottery ticket waiting for you.",
+    "ticketWaitingMany": "{numTickets} lottery tickets waiting for you.",
+    "claimOne": "Claim it",
+    "claimMany": "Claim them",
+    "dismiss": "Dismiss"
+  },
   "AddEmailToast": {
     "title": "Never miss a payment",
     "body": "Add your email to get notified about new payments and gifts.",

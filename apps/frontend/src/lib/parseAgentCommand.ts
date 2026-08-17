@@ -41,7 +41,7 @@ const PLATFORM_KEYWORDS: Record<string, AgentRecipientPlatform> = {
   username: "username",
 };
 
-const FILLER_TOKENS = new Set([
+export const FILLER_TOKENS = new Set([
   "them", "everyone", "all", "these", "this", "each", "someone", "somebody",
   "users", "user", "people", "folks", "handles", "accounts",
   "something", "anything", "money", "funds", "cash",
@@ -55,7 +55,7 @@ const AMOUNT_RE = /\$\s?(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s?\$|\b(\d+(?:\.
 // distinct from a bare number that could be part of a handle like "alice2".
 const AMOUNT_BEFORE_TO_RE_G = /\d+(?:\.\d{1,2})?\s?\$?\s*(?:usdc|usd|dollars?)?\s*(?:to|tp)\b/gi;
 
-function detectPlatformKeyword(text: string): AgentRecipientPlatform | null {
+export function detectPlatformKeyword(text: string): AgentRecipientPlatform | null {
   const onMatch = text.match(ON_PLATFORM_RE);
   if (onMatch) return PLATFORM_KEYWORDS[onMatch[1].toLowerCase()] ?? null;
   // "these telegram users", "my discord users" — platform named without "on", common in casual phrasing.
@@ -63,13 +63,13 @@ function detectPlatformKeyword(text: string): AgentRecipientPlatform | null {
   return usersMatch ? PLATFORM_KEYWORDS[usersMatch[1].toLowerCase()] ?? null : null;
 }
 
-function looksLikeEmail(s: string): boolean {
+export function looksLikeEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }
 
 /** A clean handle/username/email — no internal whitespace, so stray phrases like
  *  "telegram users something" never get treated as a real recipient. */
-function looksLikeHandle(s: string): boolean {
+export function looksLikeHandle(s: string): boolean {
   return /^@?[a-z0-9_.+-]+$/i.test(s) || looksLikeEmail(s);
 }
 
@@ -83,7 +83,7 @@ function extractAmount(text: string): number | null {
 /** Strips the send/pay verb, "private(ly)", and leading "to"/"all" filler from one clause,
  *  leaving just the recipient token(s) — the same cleanup the old single-clause parser did,
  *  factored out so it can run once over the whole command or once per split-out clause. */
-function stripToRecipientPart(text: string): string {
+export function stripToRecipientPart(text: string): string {
   return text
     .replace(ON_PLATFORM_RE, "")
     .replace(/\b(x|twitter|telegram|tg|discord|github)\s+users?\b/i, "")

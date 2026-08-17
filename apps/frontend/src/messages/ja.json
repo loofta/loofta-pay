@@ -78,6 +78,15 @@
     "claimMany": "すべて受け取る",
     "dismiss": "閉じる"
   },
+  "UnclaimedGiftToast": {
+    "titleOne": "未受け取りのギフトが1件あります",
+    "titleMany": "未受け取りのギフトが{count}件あります",
+    "ticketWaitingOne": "宝くじチケット1枚が受け取り待ちです。",
+    "ticketWaitingMany": "宝くじチケット{numTickets}枚が受け取り待ちです。",
+    "claimOne": "受け取る",
+    "claimMany": "すべて受け取る",
+    "dismiss": "閉じる"
+  },
   "AddEmailToast": {
     "title": "支払いを見逃さない",
     "body": "新しい支払いやギフトの通知を受け取るには、メールアドレスを追加してください。",

@@ -78,6 +78,15 @@
     "claimMany": "Talep et",
     "dismiss": "Kapat"
   },
+  "UnclaimedGiftToast": {
+    "titleOne": "Talep edilmemiş bir hediyeniz var",
+    "titleMany": "{count} talep edilmemiş hediyeniz var",
+    "ticketWaitingOne": "1 piyango bileti sizi bekliyor.",
+    "ticketWaitingMany": "{numTickets} piyango bileti sizi bekliyor.",
+    "claimOne": "Talep et",
+    "claimMany": "Talep et",
+    "dismiss": "Kapat"
+  },
   "AddEmailToast": {
     "title": "Hiçbir ödemeyi kaçırma",
     "body": "Yeni ödemeler ve hediyeler hakkında bildirim almak için e-posta adresini ekle.",

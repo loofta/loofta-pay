@@ -751,11 +751,14 @@ export class LotteryService {
     recipientIdentifier: string | null;
     isSender: boolean; isClaimant: boolean; isRecipient: boolean;
     senderUsername: string | null; recipientHandle: string | null;
+    createdAt: string; claimedAt: string | null;
+    resultingTicketId: string | null;
+    costUsdc: number;
   }> {
     const db = this.supabase.getClient();
     const { data: gift } = await db
       .from('lottery_gifts')
-      .select('id, num_tickets, note, status, recipient_type, recipient_identifier, created_by_user_id, claimed_by_user_id')
+      .select('id, num_tickets, note, status, recipient_type, recipient_identifier, created_by_user_id, claimed_by_user_id, created_at, claimed_at, resulting_ticket_id')
       .or(`short_id.eq.${token},claim_token.eq.${token}`)
       .maybeSingle();
     if (!gift) throw new NotFoundException('Gift not found');
@@ -800,6 +803,16 @@ export class LotteryService {
       isRecipient,
       senderUsername: (senderAppUser as { username?: string } | null)?.username ?? null,
       recipientHandle: gift.recipient_type === 'handle' ? gift.recipient_identifier : null,
+      createdAt: gift.created_at,
+      claimedAt: gift.claimed_at,
+      // Lets the claim page resume polling for numbers after a reload — otherwise a claimant who
+      // reloads mid-poll has no ticket id to check status against ever again (claimLotteryGift's
+      // response is the only other source, and that's a one-shot value from the moment they clicked).
+      resultingTicketId: isClaimant ? (gift.resulting_ticket_id ?? null) : null,
+      // Only meaningful to display to the sender — the recipient/claimant genuinely paid nothing
+      // (purchaseGiftTickets funds their ticket from the burner the sender already funded), so
+      // this is real money for the sender's own "You paid" line, not $0 like the claimant's side.
+      costUsdc: gift.num_tickets * TICKET_PRICE_USDC,
     };
   }
 
@@ -850,6 +863,49 @@ export class LotteryService {
       })),
       total: count ?? 0,
     };
+  }
+
+  /**
+   * Gifts sent TO this user that they haven't claimed yet — powers the "you have an unclaimed
+   * gift" toast, same idea as the unclaimed-payment nudge. Reuses isGiftRecipient (the exact
+   * identity check getGiftPublic/claimGift already use) rather than re-deriving matching rules,
+   * so this list can never disagree with what claiming that same gift would actually accept.
+   * Bounded to a recent batch — a real backlog of unclaimed gifts for one recipient should never
+   * be large, this cap is just a sane ceiling, not an expected volume.
+   */
+  async getMyUnclaimedGifts(userId: string): Promise<{
+    shortId: string;
+    numTickets: number;
+    senderUsername: string | null;
+    createdAt: string;
+  }[]> {
+    const db = this.supabase.getClient();
+    const { data: gifts } = await db
+      .from('lottery_gifts')
+      .select('short_id, claim_token, num_tickets, recipient_type, recipient_identifier, created_by_user_id, created_at')
+      .eq('status', 'unclaimed')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (!gifts?.length) return [];
+
+    const mine = [];
+    for (const gift of gifts) {
+      if (await this.isGiftRecipient(gift, userId)) mine.push(gift);
+    }
+    if (!mine.length) return [];
+
+    const senderIds = [...new Set(mine.map((g) => g.created_by_user_id).filter(Boolean))];
+    const { data: senders } = senderIds.length
+      ? await db.from('app_users').select('privy_user_id, username').in('privy_user_id', senderIds)
+      : { data: [] as { privy_user_id: string; username: string | null }[] };
+    const usernameByUserId = new Map((senders ?? []).map((s) => [s.privy_user_id, s.username]));
+
+    return mine.map((g) => ({
+      shortId: g.short_id || g.claim_token,
+      numTickets: g.num_tickets,
+      senderUsername: usernameByUserId.get(g.created_by_user_id) ?? null,
+      createdAt: g.created_at,
+    }));
   }
 
   /**

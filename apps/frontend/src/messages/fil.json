@@ -78,6 +78,15 @@
     "claimMany": "Kunin ang mga ito",
     "dismiss": "Isara"
   },
+  "UnclaimedGiftToast": {
+    "titleOne": "May hindi mo pa nakuhang regalo",
+    "titleMany": "May {count} hindi mo pa nakuhang regalo",
+    "ticketWaitingOne": "1 tiket ng lottery ang naghihintay sa'yo.",
+    "ticketWaitingMany": "{numTickets} tiket ng lottery ang naghihintay sa'yo.",
+    "claimOne": "Kunin ito",
+    "claimMany": "Kunin ang mga ito",
+    "dismiss": "Isara"
+  },
   "AddEmailToast": {
     "title": "Huwag palampasin ang anumang bayad",
     "body": "Idagdag ang iyong email para maabisuhan sa mga bagong bayad at regalo.",

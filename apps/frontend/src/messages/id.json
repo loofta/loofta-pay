@@ -78,6 +78,15 @@
     "claimMany": "Klaim semua",
     "dismiss": "Tutup"
   },
+  "UnclaimedGiftToast": {
+    "titleOne": "Anda memiliki hadiah belum diklaim",
+    "titleMany": "Anda memiliki {count} hadiah belum diklaim",
+    "ticketWaitingOne": "1 tiket lotere menunggu Anda.",
+    "ticketWaitingMany": "{numTickets} tiket lotere menunggu Anda.",
+    "claimOne": "Klaim",
+    "claimMany": "Klaim semua",
+    "dismiss": "Tutup"
+  },
   "AddEmailToast": {
     "title": "Jangan lewatkan pembayaran",
     "body": "Tambahkan email kamu untuk mendapat notifikasi pembayaran dan hadiah baru.",

@@ -78,6 +78,15 @@
     "claimMany": "Riscuoti",
     "dismiss": "Chiudi"
   },
+  "UnclaimedGiftToast": {
+    "titleOne": "Hai un regalo non riscosso",
+    "titleMany": "Hai {count} regali non riscossi",
+    "ticketWaitingOne": "1 biglietto della lotteria ti sta aspettando.",
+    "ticketWaitingMany": "{numTickets} biglietti della lotteria ti stanno aspettando.",
+    "claimOne": "Riscuoti",
+    "claimMany": "Riscuoti",
+    "dismiss": "Chiudi"
+  },
   "AddEmailToast": {
     "title": "Non perdere nessun pagamento",
     "body": "Aggiungi la tua email per ricevere notifiche su nuovi pagamenti e regali.",

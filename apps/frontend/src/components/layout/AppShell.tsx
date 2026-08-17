@@ -19,6 +19,8 @@ import { useAddEmailToast } from "@/hooks/useAddEmailToast";
 import { AddEmailToast } from "@/components/AddEmailToast";
 import { useTerminalPromoToast } from "@/hooks/useTerminalPromoToast";
 import { TerminalPromoToast } from "@/components/TerminalPromoToast";
+import { useUnclaimedGiftToast } from "@/hooks/useUnclaimedGiftToast";
+import { UnclaimedGiftToast } from "@/components/UnclaimedGiftToast";
 
 function ShellContent({ children }: { children: ReactNode }) {
   const t = useTranslations('AppShell');
@@ -28,6 +30,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   const { unclaimed, dismiss: dismissUnclaimed } = useUnclaimedPaymentToast();
   const { showAddEmail, addEmail, linking: addingEmail, error: addEmailError, dismiss: dismissAddEmail } = useAddEmailToast();
   const { showTerminalPromo, dismiss: dismissTerminalPromo } = useTerminalPromoToast();
+  const { unclaimed: unclaimedGifts, dismiss: dismissUnclaimedGifts } = useUnclaimedGiftToast();
   const [bannerDismissed, setBannerDismissed] = useState(false);
   useEffect(() => {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
@@ -69,9 +72,10 @@ function ShellContent({ children }: { children: ReactNode }) {
       <UserSync />
       <UpdateJun26Modal show={updateShow} />
       <MainnetLaunchCelebration blockedByUpdate={!updateResolved || updateShow} />
-      {(unclaimed || showAddEmail || showTerminalPromo) && (
+      {(unclaimed || unclaimedGifts || showAddEmail || showTerminalPromo) && (
         <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:bottom-4 z-[100] sm:max-w-sm flex flex-col-reverse gap-3">
           {unclaimed && <UnclaimedPaymentToast payments={unclaimed} onDismiss={dismissUnclaimed} />}
+          {unclaimedGifts && <UnclaimedGiftToast gifts={unclaimedGifts} onDismiss={dismissUnclaimedGifts} />}
           {showAddEmail && (
             <AddEmailToast
               onAddEmail={addEmail}
