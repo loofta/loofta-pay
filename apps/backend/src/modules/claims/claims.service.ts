@@ -475,6 +475,23 @@ export class ClaimsService {
   }
 
   /**
+   * Strip the encrypted burner secret before a claim (or list of claims) goes out over HTTP.
+   * normalizeFromPayments (above) deliberately keeps it — internal decrypt/sweep code paths
+   * (claimAsRecipient, reclaim, cron sweeps) read it off exactly this shape via findOneRaw — so
+   * the redaction has to happen at each client-facing response boundary instead. findOne() has
+   * always done this inline; findAll/findByUser (admin claim list, and a future "my claims" list)
+   * didn't, which meant an admin list response carried every listed claim's ciphertext even
+   * though single-claim GETs never did. Ciphertext alone isn't decryptable without
+   * SEND_PAYMENT_ENC_KEY, but a client-facing response should never carry it regardless.
+   */
+  private redactBurnerSecret<T extends Record<string, unknown>>(claim: T): T {
+    const copy = { ...claim } as Record<string, unknown>;
+    delete copy['claim_burner_encrypted_secret'];
+    delete copy['burner_encrypted_secret'];
+    return copy as T;
+  }
+
+  /**
    * Fetch raw row by ID. Also accepts an 8-char short_id in place of the UUID (no format
    * collision risk — short_ids and UUIDs don't overlap in length/charset), so every caller of
    * this method transparently supports either form without a separate resolve step.
@@ -3288,7 +3305,7 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    return (data || []).map((r) => this.normalizeFromPayments(r as Record<string, unknown>) as unknown as Claim);
+    return (data || []).map((r) => this.redactBurnerSecret(this.normalizeFromPayments(r as Record<string, unknown>)) as unknown as Claim);
   }
 
   /**
@@ -3305,7 +3322,7 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    return (data || []).map((r) => this.normalizeFromPayments(r as Record<string, unknown>) as unknown as Claim);
+    return (data || []).map((r) => this.redactBurnerSecret(this.normalizeFromPayments(r as Record<string, unknown>)) as unknown as Claim);
   }
 
   /**
@@ -3530,7 +3547,7 @@ export class ClaimsService {
     }
 
     return {
-      claims: (data || []).map((r) => this.normalizeFromPayments(r as Record<string, unknown>) as unknown as Claim),
+      claims: (data || []).map((r) => this.redactBurnerSecret(this.normalizeFromPayments(r as Record<string, unknown>)) as unknown as Claim),
       total: count || 0,
     };
   }
