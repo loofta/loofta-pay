@@ -1,9 +1,10 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createPublicClient, http, type Address } from 'viem';
 import { base } from 'viem/chains';
 import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
+import { UsersService } from '@/modules/users/users.service';
 import { CreateOfframpDto } from './dto/create-offramp.dto';
 
 const BASE_USDC: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -17,6 +18,7 @@ export class OfframpService {
     private readonly config: ConfigService,
     private readonly supabase: SupabaseService,
     private readonly nearIntents: NearIntentsService,
+    private readonly usersService: UsersService,
   ) {}
 
   private getPublicClient() {
@@ -62,12 +64,24 @@ export class OfframpService {
   async fundGas(offrampId: string, userId: string, baseWalletAddress: string): Promise<{ funded: boolean }> {
     await this.getRecord(offrampId, userId); // ownership check
     if (!baseWalletAddress) throw new BadRequestException('baseWalletAddress required');
+    // baseWalletAddress is client-supplied and gets real ETH from BASE_FUNDER_PRIVATE_KEY — must
+    // be the caller's own wallet, or any authenticated user could drain the funder by looping this
+    // with fresh throwaway addresses.
+    const isOwnWallet = await this.usersService.isEvmAddressInLinkedAccounts(userId, baseWalletAddress);
+    if (!isOwnWallet) {
+      throw new ForbiddenException('baseWalletAddress must be one of your own linked wallets');
+    }
     await this.ensureBaseGas(baseWalletAddress);
     return { funded: true };
   }
 
   // Non-custodial: bridge goes to the user's own Base wallet (dto.baseWalletAddress).
   async prepareOfframp(userId: string, dto: CreateOfframpDto) {
+    // Same ownership requirement as fundGas — this also triggers a real ETH top-up below.
+    const isOwnWallet = await this.usersService.isEvmAddressInLinkedAccounts(userId, dto.baseWalletAddress);
+    if (!isOwnWallet) {
+      throw new ForbiddenException('baseWalletAddress must be one of your own linked wallets');
+    }
     const [solanaUsdcId, baseUsdcId] = await Promise.all([
       this.nearIntents.getDefuseAssetId('USDC', 'solana'),
       this.nearIntents.getDefuseAssetId('USDC', 'base'),

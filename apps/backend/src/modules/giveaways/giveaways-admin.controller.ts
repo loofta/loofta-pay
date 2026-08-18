@@ -119,7 +119,7 @@ export class GiveawaysAdminController {
     @Param('completionId') completionId: string,
     @Body() dto: ReviewTaskCompletionDto,
   ) {
-    const completion = await this.entriesService.reviewCompletion(completionId, req.user!.id, dto.decision);
+    const completion = await this.entriesService.reviewCompletionAdmin(completionId, req.user!.id, dto.decision);
     return { completion };
   }
 }

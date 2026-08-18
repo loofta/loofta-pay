@@ -482,6 +482,28 @@ export class UsersService {
   }
 
   /**
+   * Return true if the given EVM address (e.g. a Base wallet) is one of the Privy user's linked
+   * accounts. EVM addresses are case-insensitive (mixed-case checksum), unlike Solana's base58.
+   */
+  async isEvmAddressInLinkedAccounts(privyUserId: string, evmAddress: string): Promise<boolean> {
+    const user = await this.getPrivyUser(privyUserId);
+    if (!user?.linked_accounts?.length) return false;
+    const normalized = evmAddress.trim().toLowerCase();
+    for (const account of user.linked_accounts) {
+      const type = (account.type || '').toLowerCase();
+      const chainType = (account.chain_type || '').toLowerCase();
+      const chainId = (account.chain_id || '').toString().toLowerCase();
+      const isEvm =
+        type === 'wallet' || type === 'smart_wallet' || type === 'ethereum' ||
+        chainType === 'ethereum' || chainId.startsWith('eip155:');
+      if (!isEvm) continue;
+      const addr = (account.address || '').toString().trim().toLowerCase();
+      if (addr && addr === normalized) return true;
+    }
+    return false;
+  }
+
+  /**
    * Fetch full Privy user (linked_accounts etc.) with Redis caching.
    * Delegates to PrivyVerificationService when available; falls back to raw HTTP.
    */

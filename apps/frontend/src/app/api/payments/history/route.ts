@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { isNonMainnetCluster } from "@/lib/solanaCluster";
+import { getVerifiedSolanaWallets } from "@/lib/serverAuth";
 
 // recipient_address included only to detect PENDING_* prefixes — real wallet addresses are stripped in normalisePayment
 const PAYMENT_SELECT =
@@ -134,6 +135,15 @@ export async function GET(request: Request) {
       .split(",")
       .map((a) => a.trim())
       .filter(Boolean);
+
+    // walletAddresses is client-supplied — never trust it as-is, or any authenticated user could
+    // read another wallet's received-payment history (amounts, senders, descriptions) by passing
+    // an address they don't own. Only keep addresses that are actually this user's own live,
+    // Privy-verified Solana wallets.
+    if (walletAddresses.length > 0) {
+      const ownWallets = new Set(await getVerifiedSolanaWallets(userId));
+      walletAddresses = walletAddresses.filter((a) => ownWallets.has(a));
+    }
 
     if (walletAddresses.length === 0) {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";

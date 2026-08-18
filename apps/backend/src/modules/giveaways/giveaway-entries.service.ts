@@ -391,32 +391,14 @@ export class GiveawayEntriesService {
     return (data ?? []) as GiveawayTaskCompletion[];
   }
 
-  async reviewCompletion(
-    completionId: string,
-    reviewerId: string,
-    decision: 'verified' | 'rejected',
-  ): Promise<GiveawayTaskCompletion> {
-    const { data, error } = await this.supabaseService.giveawayTaskCompletions
-      .update({ verification_status: decision, reviewed_by: reviewerId, reviewed_at: new Date().toISOString() })
-      .eq('id', completionId)
-      .select()
-      .single();
-    if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to review task completion');
-    return data as GiveawayTaskCompletion;
-  }
-
-  /** Same action as reviewCompletion, but for the password-protected public review link path,
-   *  which has no real user identity to authorize with — a valid session only proves "allowed to
-   *  act on giveawayId," not "allowed to touch this specific completionId." This closes that gap:
-   *  confirms the completion's entry actually belongs to giveawayId, and that its task is
-   *  self-report (a reviewer with a valid link for one giveaway must not be able to decide
-   *  completions on another giveaway, or override an AUTO_API task Sorsa already resolved, just by
-   *  guessing/enumerating a completion id). reviewed_by stays null — there is no account behind a
-   *  public-link decision, only the fact that it happened (reviewed_at). */
-  async reviewCompletionScoped(
+  /** Confirms completionId actually belongs to giveawayId (via its entry) and that its task is
+   *  eligible for manual review — a caller authorized for giveawayId must not be able to touch a
+   *  completion under a DIFFERENT giveaway, or override an AUTO_API task Sorsa already resolved,
+   *  just by guessing/enumerating a completionId. Shared by both the authenticated
+   *  creator-dashboard path and the password-protected public review-link path. */
+  private async assertCompletionBelongsToGiveaway(
     giveawayId: string,
     completionId: string,
-    decision: 'verified' | 'rejected',
   ): Promise<GiveawayTaskCompletion> {
     const { data: completion, error: fetchError } = await this.supabaseService.giveawayTaskCompletions
       .select('*')
@@ -439,7 +421,58 @@ export class GiveawayEntriesService {
     if (!task || task.verification_mode !== GiveawayTaskVerificationMode.SELF_REPORT) {
       throw new ForbiddenException('This task is not eligible for manual review');
     }
+    return completion as GiveawayTaskCompletion;
+  }
 
+  /** Authenticated creator-dashboard path — caller must already be verified (by the controller)
+   *  as giveawayId's creator; this additionally confirms completionId actually belongs to
+   *  giveawayId, closing the IDOR a creator-scoped-only check would otherwise leave open (see
+   *  assertCompletionBelongsToGiveaway). */
+  async reviewCompletion(
+    giveawayId: string,
+    completionId: string,
+    reviewerId: string,
+    decision: 'verified' | 'rejected',
+  ): Promise<GiveawayTaskCompletion> {
+    await this.assertCompletionBelongsToGiveaway(giveawayId, completionId);
+    const { data, error } = await this.supabaseService.giveawayTaskCompletions
+      .update({ verification_status: decision, reviewed_by: reviewerId, reviewed_at: new Date().toISOString() })
+      .eq('id', completionId)
+      .select()
+      .single();
+    if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to review task completion');
+    return data as GiveawayTaskCompletion;
+  }
+
+  /** Admin override — the route this backs is AdminGuard-gated and deliberately "any completion,
+   *  any giveaway" (see GiveawaysAdminController), so there's no giveawayId to scope against and
+   *  none is needed: AdminGuard is already the full authorization here, unlike the
+   *  creator-dashboard path above. */
+  async reviewCompletionAdmin(
+    completionId: string,
+    reviewerId: string,
+    decision: 'verified' | 'rejected',
+  ): Promise<GiveawayTaskCompletion> {
+    const { data, error } = await this.supabaseService.giveawayTaskCompletions
+      .update({ verification_status: decision, reviewed_by: reviewerId, reviewed_at: new Date().toISOString() })
+      .eq('id', completionId)
+      .select()
+      .single();
+    if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to review task completion');
+    return data as GiveawayTaskCompletion;
+  }
+
+  /** Same action as reviewCompletion, but for the password-protected public review link path,
+   *  which has no real user identity to authorize with — a valid session only proves "allowed to
+   *  act on giveawayId," not "allowed to touch this specific completionId." reviewed_by stays
+   *  null — there is no account behind a public-link decision, only the fact that it happened
+   *  (reviewed_at). */
+  async reviewCompletionScoped(
+    giveawayId: string,
+    completionId: string,
+    decision: 'verified' | 'rejected',
+  ): Promise<GiveawayTaskCompletion> {
+    await this.assertCompletionBelongsToGiveaway(giveawayId, completionId);
     const { data: updated, error: updateError } = await this.supabaseService.giveawayTaskCompletions
       .update({ verification_status: decision, reviewed_by: null, reviewed_at: new Date().toISOString() })
       .eq('id', completionId)

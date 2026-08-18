@@ -45,6 +45,15 @@ const USDC_MINT_SET = new Set([
 const ATA_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 const TOKEN_PROGRAM_ID_STR = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
+// SPL Token instruction discriminators this flow actually needs — a plain USDC transfer (to a
+// recipient, or into our own fee-payer ATA for rent recovery). Everything else from the Token
+// program is denied by default (allowlist, not a denylist of only the dangerous ones): the
+// program-level whitelist above only checks *which program*, not *which instruction*, so without
+// this a client could smuggle in an Approve/SetAuthority/Burn/etc. targeting the fee payer's own
+// USDC ATA — a single fee-payer signature over the transaction message authorizes every
+// instruction that names it as a required signer, not just the ones we intended to allow.
+const TOKEN_INSTRUCTION_ALLOWLIST = new Set([3, 12]); // Transfer, TransferChecked
+
 /** Read env var from the active local env file on disk when ConfigService doesn't have it (e.g. run from monorepo root). */
 function getEnvFromFile(varName: string): string | null {
   // Match ConfigModule envFilePath: LOOFTA_ENV_FILE (same as SendPaymentService key source) — see app.module.ts
@@ -1036,10 +1045,12 @@ export class SolanaSponsorService {
         }
         if (prog === SystemProgram.programId.toBase58() && ix.data.length >= 4) {
           const discriminator = Buffer.from(ix.data).readUInt32LE(0);
-          // createAccount=0, createAccountWithSeed=3, transferWithSeed=11 — all fund new accounts FROM payer
-          if ((discriminator === 0 || discriminator === 3 || discriminator === 11) &&
+          // createAccount=0, createAccountWithSeed=3, transferWithSeed=11 — all fund new accounts FROM payer.
+          // assign=1, assignWithSeed=10 — reassign the fee payer's own account to another program (no
+          // lamports move, but hands it and its balance to whatever that program's logic allows).
+          if ((discriminator === 0 || discriminator === 1 || discriminator === 3 || discriminator === 10 || discriminator === 11) &&
               ix.keys[0]?.pubkey.toBase58() === this.feePayerAddress) {
-            throw new Error('Transaction attempts to create/fund an account from fee payer');
+            throw new Error('Transaction attempts to create/fund/reassign an account from fee payer');
           }
         }
         if (prog === ATA_PROGRAM_ID) {
@@ -1047,6 +1058,13 @@ export class SolanaSponsorService {
           if (!mint || !USDC_MINT_SET.has(mint)) {
             this.logger.warn(`SolanaSponsor[sign-and-broadcast]: blocked ATA creation for non-USDC mint ${mint ?? 'undefined'}`);
             throw new Error('ATA creation only allowed for USDC');
+          }
+        }
+        if (prog === TOKEN_PROGRAM_ID_STR) {
+          const discriminator = ix.data[0];
+          if (!TOKEN_INSTRUCTION_ALLOWLIST.has(discriminator)) {
+            this.logger.warn(`SolanaSponsor[sign-and-broadcast]: blocked disallowed Token instruction discriminator=${discriminator}`);
+            throw new Error('Transaction contains a disallowed token instruction');
           }
         }
       }
@@ -1120,9 +1138,9 @@ export class SolanaSponsorService {
       }
       if (prog === systemProgramId && ix.data.length >= 4) {
         const discriminator = Buffer.from(ix.data).readUInt32LE(0);
-        if ((discriminator === 0 || discriminator === 3 || discriminator === 11) &&
+        if ((discriminator === 0 || discriminator === 1 || discriminator === 3 || discriminator === 10 || discriminator === 11) &&
             accountKeys[ix.accountKeyIndexes[0]]?.toBase58() === this.feePayerAddress) {
-          throw new Error('Transaction attempts to create/fund an account from fee payer');
+          throw new Error('Transaction attempts to create/fund/reassign an account from fee payer');
         }
       }
       if (prog === ATA_PROGRAM_ID) {
@@ -1130,6 +1148,13 @@ export class SolanaSponsorService {
         if (!mint || !USDC_MINT_SET.has(mint)) {
           this.logger.warn(`SolanaSponsor[sign-and-broadcast]: blocked ATA creation for non-USDC mint (v0) ${mint ?? 'undefined'}`);
           throw new Error('ATA creation only allowed for USDC');
+        }
+      }
+      if (prog === TOKEN_PROGRAM_ID_STR) {
+        const discriminator = ix.data[0];
+        if (!TOKEN_INSTRUCTION_ALLOWLIST.has(discriminator)) {
+          this.logger.warn(`SolanaSponsor[sign-and-broadcast]: blocked disallowed Token instruction discriminator (v0)=${discriminator}`);
+          throw new Error('Transaction contains a disallowed token instruction');
         }
       }
     }
@@ -1286,6 +1311,23 @@ export class SolanaSponsorService {
             throw new Error('ATA creation only allowed for USDC');
           }
         }
+        if (prog === TOKEN_PROGRAM_ID_STR) {
+          const discriminator = ix.data[0];
+          if (!TOKEN_INSTRUCTION_ALLOWLIST.has(discriminator)) {
+            this.logger.warn(`SolanaSponsor[sign-and-broadcast-per]: blocked disallowed Token instruction discriminator=${discriminator}`);
+            throw new Error('PER transaction contains a disallowed token instruction');
+          }
+        }
+        // The lamport-cap loop below only inspects plain Transfer (discriminator 2) — without this,
+        // createAccount/assign/createAccountWithSeed/assignWithSeed/transferWithSeed from the fee
+        // payer would sail through uncapped, since none of them are discriminator 2.
+        if (prog === SystemProgram.programId.toBase58() && ix.data.length >= 4) {
+          const discriminator = Buffer.from(ix.data).readUInt32LE(0);
+          if ((discriminator === 0 || discriminator === 1 || discriminator === 3 || discriminator === 10 || discriminator === 11) &&
+              ix.keys[0]?.pubkey.toBase58() === this.feePayerAddress) {
+            throw new Error('PER transaction attempts to create/fund/reassign an account from fee payer');
+          }
+        }
       }
       let totalFeePayerLamports = 0;
       for (const ix of legacy.instructions) {
@@ -1331,12 +1373,27 @@ export class SolanaSponsorService {
             throw new Error('ATA creation only allowed for USDC');
           }
         }
-        // CloseAccount (SPL Token discriminator 0x09) — strip is not possible on a v0 message in
-        // place the way the legacy branch does (compiled instructions are positional/immutable),
-        // so reject outright instead of silently dropping it.
-        if (prog === TOKEN_PROGRAM_ID_STR && ix.data.length >= 1 && ix.data[0] === 0x09) {
-          this.logger.warn('SolanaSponsor[sign-and-broadcast-per]: blocked CloseAccount instruction (v0) — possible drain attempt');
-          throw new Error('PER v0 transaction attempts to close a token account');
+        // Token-instruction allowlist — v0 compiled instructions are positional/immutable so a
+        // CloseAccount (or Approve/SetAuthority/etc.) can't be stripped in place like the legacy
+        // branch does; reject the whole transaction outright instead.
+        if (prog === TOKEN_PROGRAM_ID_STR) {
+          const discriminator = ix.data[0];
+          if (!TOKEN_INSTRUCTION_ALLOWLIST.has(discriminator)) {
+            this.logger.warn(`SolanaSponsor[sign-and-broadcast-per]: blocked disallowed Token instruction (v0) discriminator=${discriminator} — possible drain attempt`);
+            throw new Error('PER v0 transaction contains a disallowed token instruction');
+          }
+        }
+        // Same reasoning as the legacy branch: the lamport-cap loop below only inspects plain
+        // Transfer (discriminator 2), so createAccount/assign/createAccountWithSeed/
+        // assignWithSeed/transferWithSeed from the fee payer must be blocked here explicitly.
+        if (prog === SystemProgram.programId.toBase58()) {
+          const discriminator = ix.data[0];
+          const senderIdx = ix.accountKeyIndexes[0];
+          const sender = staticKeys[senderIdx];
+          if ((discriminator === 0 || discriminator === 1 || discriminator === 3 || discriminator === 10 || discriminator === 11) &&
+              sender?.toBase58() === this.feePayerAddress) {
+            throw new Error('PER v0 transaction attempts to create/fund/reassign an account from fee payer');
+          }
         }
       }
       let totalFeePayerLamports = 0;

@@ -297,11 +297,15 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId: string = verifiedId;
-  console.log("[payments/PATCH] Updating payment:", paymentId, "verifiedUser:", userId);
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[payments/PATCH] Updating payment:", paymentId, "verifiedUser:", userId);
+  }
 
   try {
     const body = await request.json();
-    console.log("[payments/PATCH] Request body:", body);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[payments/PATCH] Request body:", body);
+    }
     const { status: inputStatus, txHash, paidWith, paidWithChain, paidWithToken, depositReceivedAt, originAsset, destinationAsset } = body || {};
 
     const statusMap: Record<string, string> = {

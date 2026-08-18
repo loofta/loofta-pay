@@ -82,6 +82,18 @@ const AUTO_RETRY_MAX_AGE_MS = 48 * 60 * 60_000;
 
 // Same alphabet/algorithm as claims.service.ts's generateShortId — public 8-char share code for
 // gift links (mirrors payments.short_id), kept as its own copy per this repo's existing convention.
+// short_id is alphanumeric (SHORT_ID_ALPHABET below); the legacy claim_token is a UUID (hex +
+// hyphens). Both fit this charset. Gift lookups splice the raw token straight into a PostgREST
+// `.or()` filter string (`short_id.eq.${token},claim_token.eq.${token}`) — an unvalidated token
+// containing a comma or `.`/`(` could inject additional filter clauses (e.g. `id.neq.<uuid>`,
+// which OR'd in matches almost every row) and return/act on a gift that isn't the caller's.
+const GIFT_TOKEN_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+function assertValidGiftToken(token: string): void {
+  if (!GIFT_TOKEN_PATTERN.test(token)) {
+    throw new NotFoundException('Gift not found');
+  }
+}
+
 const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const SHORT_ID_MAX_VALID = Math.floor(256 / SHORT_ID_ALPHABET.length) * SHORT_ID_ALPHABET.length;
 function generateShortId(length = 8): string {
@@ -755,6 +767,7 @@ export class LotteryService {
     resultingTicketId: string | null;
     costUsdc: number;
   }> {
+    assertValidGiftToken(token);
     const db = this.supabase.getClient();
     const { data: gift } = await db
       .from('lottery_gifts')
@@ -994,6 +1007,7 @@ export class LotteryService {
    * (not gift-creation time) means the ticket always enters whichever draw is live right now.
    */
   async claimGift(token: string, claimantPrivyUserId: string): Promise<{ ticketId: string; numTickets: number }> {
+    assertValidGiftToken(token);
     const db = this.supabase.getClient();
     const { data: gift } = await db
       .from('lottery_gifts')

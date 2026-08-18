@@ -163,7 +163,7 @@ export class GiveawaysController {
     @Body() dto: ReviewTaskCompletionDto,
   ) {
     await this.giveawaysService.findOneForCreator(id, req.user!.id);
-    const completion = await this.entriesService.reviewCompletion(completionId, req.user!.id, dto.decision);
+    const completion = await this.entriesService.reviewCompletion(id, completionId, req.user!.id, dto.decision);
     return { completion };
   }
 

@@ -990,11 +990,14 @@ export class ClaimsService {
     else if (claim.recipient_address?.trim()) {
       (claim as Claim & { recipient_is_registered?: boolean }).recipient_is_registered = true;
       const claimWithBurner = claim as unknown as { claim_burner_address?: string | null };
-      if (claimWithBurner.claim_burner_address?.trim()) {
-        // Burner exists: payment routes through it — hide the real recipient address
+      // Burner exists: payment routes through it — hide the real recipient address.
+      // No burner: recipient_address IS the payment destination for direct-wallet links, and would
+      // otherwise stay visible to any authenticated user for a SUCCESS claim (the isAlreadySettled
+      // carve-out above skips ownership verification for that state) — only the creator, who
+      // already knows where they sent it, gets to see it here.
+      if (claimWithBurner.claim_burner_address?.trim() || (!isCreator && isAlreadySettled)) {
         delete (claim as unknown as Record<string, unknown>)['recipient_address'];
       }
-      // No burner: recipient_address IS the payment destination for direct-wallet links — keep it
     }
 
     // Surface whether a recipient-edit is currently blocked (see recipient_claim_lock_at /
@@ -2987,11 +2990,30 @@ export class ClaimsService {
      * account it was swept to and the Loofta fee taken on that sweep. payments-only column. */
     nairaClaim?: { bankAccountId: string; feeAmountUsdc: number };
   }, createdByUserId?: string): Promise<Claim> {
-    // Ownership check for destructive transitions
-    if ((status as string).toUpperCase() === 'CANCELLED' && createdByUserId) {
+    // Ownership check. createdByUserId is only ever passed by an authenticated HTTP request (see
+    // ClaimsController.updateStatus) — internal/cron callers (solana-tx-verifier, claim-processor,
+    // offramp, admin routes) omit it entirely and skip this check, same as before.
+    //
+    // CANCELLED stays creator-only (destructive). Every other transition — most importantly
+    // SUCCESS — used to have NO check at all: any authenticated user who knew/guessed a claim ID
+    // could call this to stamp someone else's claim SUCCESS with a forged txHash/fee breakdown,
+    // triggering a "you got paid" email for a payment that never happened on-chain. Now the caller
+    // must be either the creator or the verified recipient (mirrors claimAsRecipient's own check —
+    // the legitimate recipient-initiated SUCCESS/PRIVATE_TRANSFER_PENDING calls above already stamp
+    // recipient_user_id before calling this, so checkIsRecipient passes for them as expected).
+    if (createdByUserId) {
       const result = await this.fetchRawRow(id);
-      if (result?.row.created_by && result.row.created_by !== createdByUserId) {
-        throw new ForbiddenException('Only the claim creator can cancel this payment');
+      if (!result) throw new NotFoundException(`Claim with ID ${id} not found`);
+      const isCreator = result.row.created_by === createdByUserId;
+      if ((status as string).toUpperCase() === 'CANCELLED') {
+        if (result.row.created_by && !isCreator) {
+          throw new ForbiddenException('Only the claim creator can cancel this payment');
+        }
+      } else if (!isCreator) {
+        const { isRecipient } = await this.checkIsRecipient(id, createdByUserId);
+        if (!isRecipient) {
+          throw new ForbiddenException('Not authorized to update this payment');
+        }
       }
     }
 

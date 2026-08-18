@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "redis";
+import { isAdmin } from "@/lib/admin";
 
 async function getRedis() {
   const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
@@ -18,18 +19,52 @@ async function getRedis() {
   return client;
 }
 
+// Debug-only view into internal swap state — same admin-only convention as the rest of
+// /api/organizations/* (see route.ts's checkAdminAccess), since this was previously reachable
+// by anyone who could guess/discover an organizationId (e.g. via /api/organizations/public).
+async function checkAdminAccess(request: NextRequest): Promise<{ authorized: boolean; error?: string }> {
+  const authHeader = request.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return { authorized: false, error: "Bearer token required" };
+  }
+
+  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  let userId: string | null = null;
+  try {
+    const res = await fetch(`${backendUrl}/users/me`, {
+      headers: { authorization: authHeader },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      userId = data.userId ?? null;
+    }
+  } catch {
+    return { authorized: false, error: "Auth service unavailable" };
+  }
+
+  if (!userId) return { authorized: false, error: "Invalid or expired token" };
+
+  const adminStatus = await isAdmin(userId);
+  return adminStatus ? { authorized: true } : { authorized: false, error: "Admin access required" };
+}
+
 const SWAP_COMPANION_PREFIX = "org_swap_companion:";
 const SWAP_PENDING_KEY = "org_swap_pending";
 
 export async function GET(request: NextRequest) {
   try {
+    const { authorized, error } = await checkAdminAccess(request);
+    if (!authorized) {
+      return NextResponse.json({ error: error || "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const organizationId = searchParams.get("organizationId");
-    
+
     if (!organizationId) {
       return NextResponse.json({ error: "organizationId is required" }, { status: 400 });
     }
-    
+
     const redis = await getRedis();
     
     // Get all pending keys
