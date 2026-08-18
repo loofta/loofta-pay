@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 import { redisDel } from "@/lib/redis-cache";
 
 function userPrefsKey(privyUserId: string) { return `user:prefs:${privyUserId}`; }
@@ -9,12 +10,16 @@ function userPrefsKey(privyUserId: string) { return `user:prefs:${privyUserId}`;
  * POST /api/users/set-onboarding-preference
  */
 export async function POST(request: NextRequest) {
+  const privyUserId = await getVerifiedUserId(request);
+  if (!privyUserId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
-    const { privyUserId, skipOnboarding } = await request.json();
+    const { skipOnboarding } = await request.json();
 
-    if (!privyUserId || typeof skipOnboarding !== "boolean") {
+    if (typeof skipOnboarding !== "boolean") {
       return NextResponse.json(
-        { error: "privyUserId and skipOnboarding (boolean) are required" },
+        { error: "skipOnboarding (boolean) is required" },
         { status: 400 }
       );
     }

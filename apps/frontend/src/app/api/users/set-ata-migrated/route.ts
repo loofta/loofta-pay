@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
+import { getVerifiedUserId } from "@/lib/serverAuth";
 
 export async function POST(request: NextRequest) {
+  const privyUserId = await getVerifiedUserId(request);
+  if (!privyUserId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
-    const { privyUserId, network, walletAddress, undelegated } = await request.json() as {
-      privyUserId?: string;
+    const { network, walletAddress, undelegated } = await request.json() as {
       network?: string;
       walletAddress?: string;
       undelegated?: boolean;
     };
 
-    if (!privyUserId || (network !== "mainnet" && network !== "devnet")) {
+    if (network !== "mainnet" && network !== "devnet") {
       return NextResponse.json(
-        { error: "privyUserId and network ('mainnet' | 'devnet') are required" },
+        { error: "network ('mainnet' | 'devnet') is required" },
         { status: 400 }
       );
     }

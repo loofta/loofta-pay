@@ -1014,6 +1014,14 @@ export class ClaimsService {
     // Never expose the encrypted burner private key to the frontend
     delete (claim as unknown as Record<string, unknown>)['claim_burner_encrypted_secret'];
 
+    // recipient_email is only for the creator's own view (history/claim pages show who they sent
+    // to) — the isAlreadySettled carve-out above intentionally skips the recipient-identity check
+    // for SUCCESS claims, so without this any authenticated user could read another user's
+    // recipient email off a settled claim ID.
+    if (!isCreatorViewer) {
+      delete (claim as unknown as Record<string, unknown>)['recipient_email'];
+    }
+
     // Attach fee data so the UI can show the payment breakdown on reload.
     // fee_paid_usdc column is set directly at payment time.
 
