@@ -133,6 +133,14 @@ export class GiveawaysController {
     return { entries };
   }
 
+  @Get(':id/entries/:entryId/completions')
+  @ApiOperation({ summary: 'Every task completion for one entry (any status), for a giveaway you created' })
+  async entryCompletions(@Req() req: { user?: { id: string } }, @Param('id') id: string, @Param('entryId') entryId: string) {
+    await this.giveawaysService.findOneForCreator(id, req.user!.id);
+    const completions = await this.entriesService.listEntryCompletions(id, entryId);
+    return { completions };
+  }
+
   @Get(':id/review-queue')
   @ApiOperation({ summary: 'Paginated self-report task completions awaiting a human decision, for a giveaway you created — AUTO_API tasks resolve programmatically and never appear here' })
   async reviewQueue(

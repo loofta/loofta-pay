@@ -371,10 +371,44 @@ export class GiveawayEntriesService {
       })
       .filter((x): x is GiveawayTaskCompletion & { entry: GiveawayEntry; task: GiveawayTask } => x !== null);
 
+    // Entering a giveaway creates a PENDING stub for every task up front (createTaskCompletionStubs),
+    // so this queue is full of stubs nobody has actually submitted proof for yet alongside real
+    // submissions awaiting a decision. Proof-having items first (oldest first within each group) so a
+    // reviewer isn't stuck paging past empty stubs to find the ones that actually need a decision.
+    const hasProof = (c: GiveawayTaskCompletion) => Boolean(c.submission_data?.proof || c.submission_data?.proof_image_url);
+    all.sort((a, b) => Number(hasProof(b)) - Number(hasProof(a)));
+
     const pageSize = Math.min(Math.max(opts.pageSize ?? 20, 1), 100);
     const page = Math.max(opts.page ?? 1, 1);
     const items = all.slice((page - 1) * pageSize, page * pageSize);
     return { items, total: all.length };
+  }
+
+  /** Every task completion for one entry, any status, joined with task info — what the creator's
+   *  entries-search dialog expands into when they click an entrant's name, so they can see what
+   *  that person actually submitted without hunting for it in the review queue (which only shows
+   *  still-pending self-report items). */
+  async listEntryCompletions(giveawayId: string, entryId: string): Promise<Array<GiveawayTaskCompletion & { task: GiveawayTask }>> {
+    const entries = await this.listEntries(giveawayId);
+    if (!entries.some((e) => e.id === entryId)) throw new NotFoundException('Entry not found on this giveaway');
+
+    const tasks = await this.giveawaysService.getTasks(giveawayId);
+    const tasksById = new Map(tasks.map((t) => [t.id, t]));
+
+    const { data, error } = await this.supabaseService.giveawayTaskCompletions
+      .select('*')
+      .eq('giveaway_entry_id', entryId)
+      .order('created_at', { ascending: true });
+    if (error) throw new BadRequestException(error.message);
+
+    return (data ?? [])
+      .map((c) => {
+        const completion = c as GiveawayTaskCompletion;
+        const task = tasksById.get(completion.giveaway_task_id);
+        if (!task) return null;
+        return { ...completion, task };
+      })
+      .filter((x): x is GiveawayTaskCompletion & { task: GiveawayTask } => x !== null);
   }
 
   /** Cross-giveaway escalation queue — completions the X-API checker itself couldn't resolve

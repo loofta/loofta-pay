@@ -2,7 +2,7 @@
 
 import { use, useCallback, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Search, ChevronLeft, ChevronRight, Copy, Download, Share2 } from "lucide-react";
+import { ArrowLeft, Search, ChevronLeft, ChevronRight, ChevronDown, Copy, Download, Share2, ExternalLink } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useToast } from "@/components/ui/use-toast";
@@ -62,6 +62,28 @@ interface Entry {
   payout_status: string | null; claim_payment_id: string | null; payment_status: string | null;
 }
 
+interface EntryCompletion {
+  id: string;
+  submission_data: Record<string, unknown> | null;
+  verification_status: string;
+  task: { task_type: string; config?: { target?: string } };
+}
+
+const COMPLETION_STATUS_LABELS: Record<string, string> = {
+  PENDING: "Not submitted yet",
+  AUTO_VERIFIED: "Verified",
+  VERIFIED: "Verified",
+  REJECTED: "Rejected",
+  API_ERROR: "Needs manual review",
+};
+
+function completionStatusColor(status: string): string {
+  if (status === "VERIFIED" || status === "AUTO_VERIFIED") return "text-emerald-400";
+  if (status === "REJECTED") return "text-red-400";
+  if (status === "API_ERROR") return "text-amber-400";
+  return "text-slate-500";
+}
+
 // payout_status "succeeded" only means a claim link was created — payment_status (the underlying
 // payments row's real status) is what tells us whether the winner actually claimed it.
 function claimStatus(entry: Entry): { label: string; className: string } {
@@ -91,6 +113,7 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   const [reviewLink, setReviewLink] = useState<{ url: string; password: string } | null>(null);
   const [reviewLinkDialogOpen, setReviewLinkDialogOpen] = useState(false);
   const [generatingLink, setGeneratingLink] = useState(false);
+  const [expandedEntryId, setExpandedEntryId] = useState<string | null>(null);
 
   const { data: giveaway, refetch: refetchGiveaway } = useQuery({
     queryKey: ["giveaway-manage", id],
@@ -108,6 +131,16 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
       if (!res.ok) throw new Error("Failed to load entries");
       return (await res.json()).entries ?? [];
     },
+  });
+
+  const { data: expandedEntryCompletions, isLoading: loadingEntryCompletions } = useQuery({
+    queryKey: ["giveaway-entry-completions", id, expandedEntryId],
+    queryFn: async (): Promise<EntryCompletion[]> => {
+      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/entries/${expandedEntryId}/completions`, { headers: await authHeaders(getAccessToken) });
+      if (!res.ok) throw new Error("Failed to load task details");
+      return (await res.json()).completions ?? [];
+    },
+    enabled: !!expandedEntryId,
   });
 
   const { data: reviewQueue, refetch: refetchReviewQueue } = useQuery({
@@ -358,7 +391,13 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
             )}
           </div>
 
-          <Dialog open={entriesDialogOpen} onOpenChange={setEntriesDialogOpen}>
+          <Dialog
+            open={entriesDialogOpen}
+            onOpenChange={(open) => {
+              setEntriesDialogOpen(open);
+              if (!open) setExpandedEntryId(null);
+            }}
+          >
             <DialogContent className="max-w-md max-h-[85vh] flex flex-col overflow-hidden bg-[#0f0f12] border-white/10">
               <DialogHeader>
                 <DialogTitle className="text-white">Entries ({entries?.length ?? 0})</DialogTitle>
@@ -378,38 +417,89 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
               </div>
 
               <div className="flex-1 min-h-0 overflow-y-auto space-y-2">
-                {pageEntries.map((entry) => (
-                  <div key={entry.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-base font-medium text-white truncate">@{entry.x_handle}</p>
-                      <p className="text-base text-slate-500">
-                        #{entry.entry_index} · {entry.status}
-                        {entry.status === "winner" ? ` · ${claimStatus(entry).label}` : ""}
-                      </p>
-                      {entry.status === "winner" && entry.claim_payment_id && (
-                        <Link
-                          href={`/c/${entry.claim_payment_id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-base text-[#FF7A2A] hover:underline underline-offset-2"
+                {pageEntries.map((entry) => {
+                  const isExpanded = expandedEntryId === entry.id;
+                  return (
+                    <div key={entry.id} className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden">
+                      <div className="p-3 flex items-center justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedEntryId(isExpanded ? null : entry.id)}
+                          className="min-w-0 flex-1 text-left flex items-center gap-1.5"
                         >
-                          View claim link
-                        </Link>
+                          <div className="min-w-0">
+                            <p className="text-base font-medium text-white truncate">@{entry.x_handle}</p>
+                            <p className="text-base text-slate-500">
+                              #{entry.entry_index} · {entry.status}
+                              {entry.status === "winner" ? ` · ${claimStatus(entry).label}` : ""}
+                            </p>
+                            {entry.status === "winner" && entry.claim_payment_id && (
+                              <Link
+                                href={`/c/${entry.claim_payment_id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-base text-[#FF7A2A] hover:underline underline-offset-2"
+                              >
+                                View claim link
+                              </Link>
+                            )}
+                          </div>
+                          <ChevronDown className={`w-4 h-4 shrink-0 text-slate-500 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                        </button>
+                        {canPickManually && (
+                          <button
+                            type="button"
+                            onClick={() => toggleWinner(entry.id)}
+                            className={`shrink-0 rounded-lg px-2.5 py-1 text-base font-medium border transition-colors ${
+                              selectedWinners.has(entry.id) ? "border-[#FF7A2A] text-white bg-[#FF7A2A]/10" : "border-white/10 text-slate-300 hover:bg-white/[0.06]"
+                            }`}
+                          >
+                            {selectedWinners.has(entry.id) ? "Selected" : "Pick as winner"}
+                          </button>
+                        )}
+                      </div>
+                      {isExpanded && (
+                        <div className="border-t border-white/10 bg-black/20 p-3 space-y-2">
+                          {loadingEntryCompletions && <p className="text-base text-slate-500">Loading tasks…</p>}
+                          {!loadingEntryCompletions && (expandedEntryCompletions ?? []).length === 0 && (
+                            <p className="text-base text-slate-500">No tasks found</p>
+                          )}
+                          {(expandedEntryCompletions ?? []).map((c) => {
+                            const proofImageUrl = typeof c.submission_data?.proof_image_url === "string" ? c.submission_data.proof_image_url : null;
+                            const proofText = typeof c.submission_data?.proof === "string" ? c.submission_data.proof : null;
+                            const statusLabel = c.verification_status === "PENDING" && !proofImageUrl && !proofText
+                              ? COMPLETION_STATUS_LABELS.PENDING
+                              : c.verification_status === "PENDING"
+                                ? "Awaiting review"
+                                : (COMPLETION_STATUS_LABELS[c.verification_status] ?? c.verification_status);
+                            return (
+                              <div key={c.id} className="flex items-start gap-2.5">
+                                {proofImageUrl && (
+                                  /* eslint-disable-next-line @next/next/no-img-element -- review-only thumbnail */
+                                  <img src={proofImageUrl} alt="Submitted proof" className="w-10 h-10 rounded-lg object-cover border border-white/10 shrink-0" />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-base text-white">{c.task.task_type.replace(/_/g, " ")}</p>
+                                  <p className={`text-base ${completionStatusColor(c.verification_status)}`}>{statusLabel}</p>
+                                  {proofText && (
+                                    /^https?:\/\//i.test(proofText) ? (
+                                      <a href={proofText} target="_blank" rel="noopener noreferrer" className="text-base text-[#FF7A2A] hover:underline underline-offset-2 inline-flex items-center gap-1 break-all">
+                                        {proofText} <ExternalLink className="w-3 h-3 shrink-0" />
+                                      </a>
+                                    ) : (
+                                      <p className="text-base text-slate-500 break-all">{proofText}</p>
+                                    )
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
-                    {canPickManually && (
-                      <button
-                        type="button"
-                        onClick={() => toggleWinner(entry.id)}
-                        className={`shrink-0 rounded-lg px-2.5 py-1 text-base font-medium border transition-colors ${
-                          selectedWinners.has(entry.id) ? "border-[#FF7A2A] text-white bg-[#FF7A2A]/10" : "border-white/10 text-slate-300 hover:bg-white/[0.06]"
-                        }`}
-                      >
-                        {selectedWinners.has(entry.id) ? "Selected" : "Pick as winner"}
-                      </button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
                 {pageEntries.length === 0 && (
                   <p className="text-base text-slate-500 text-center py-6">
                     {searchQuery ? "No matching entries" : "No entries yet"}
