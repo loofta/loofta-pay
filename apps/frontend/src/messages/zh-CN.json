@@ -78,6 +78,15 @@
     "claimMany": "全部领取",
     "dismiss": "关闭"
   },
+  "UnclaimedGiftToast": {
+    "titleOne": "您有一份未领取的礼物",
+    "titleMany": "您有{count}份未领取的礼物",
+    "ticketWaitingOne": "1张彩票等待您领取。",
+    "ticketWaitingMany": "{numTickets}张彩票等待您领取。",
+    "claimOne": "领取",
+    "claimMany": "全部领取",
+    "dismiss": "关闭"
+  },
   "AddEmailToast": {
     "title": "不错过任何一笔付款",
     "body": "添加你的邮箱，以便在收到新付款和礼物时收到通知。",

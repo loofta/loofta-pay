@@ -126,3 +126,28 @@ export class ConfirmMultiSendHubDto {
   @IsString()
   tx_hash?: string;
 }
+
+/** Public combined-tx path: mark payments transferred after the sender's own signature confirms.
+ *  tx_hash's actual signature shape is checked in confirmMultiSend (isValidSolanaSignature) —
+ *  kept out of this DTO so a malformed value fails inside the service, where it gets logged with
+ *  the caller's IP for abuse tracking rather than silently 400ing at the pipe. */
+export class ConfirmMultiSendDto {
+  @ApiProperty({ type: [String], description: 'payment.id values returned by multi-build' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  payment_ids: string[];
+
+  @ApiPropertyOptional({ description: 'Sender wallet transaction signature' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  tx_hash?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  fee_usdc?: number;
+}

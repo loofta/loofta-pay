@@ -12,7 +12,7 @@ import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { AlertCircle, Check, ChevronLeft, Copy, Lock, LogOut, Plus, RefreshCw } from "lucide-react";
+import { AlertCircle, Check, ChevronLeft, Copy, Eye, Lock, LogOut, Plus, RefreshCw } from "lucide-react";
 import MascotPicker from "@/components/MascotPicker";
 import { Shell } from "@/components/PackParty";
 import Mascot from "@/components/Mascot";
@@ -51,6 +51,29 @@ interface WaitingRoom {
   isCreator?: boolean;
   hasSeat?: boolean;
   canCancel?: boolean;
+}
+
+interface ActiveRoom {
+  id: string;
+  name: string;
+  configKey: string;
+  seats: number;
+  seatsFilled: number;
+  status: string;
+  createdAt: string;
+  participants: Array<{ seatNumber: number; mascotKey: string | null }>;
+}
+
+function liveStatusLabel(status: string): string {
+  switch (status) {
+    case "purchasing": return "buying the pack";
+    case "opening": return "ripping live";
+    case "excluding": return "exclusion draw";
+    case "voting": return "players voting";
+    case "bidding": return "bidding live";
+    case "settling": return "settling payouts";
+    default: return status;
+  }
 }
 
 function roomHref(room: Pick<WaitingRoom, "id" | "inviteCode">): string {
@@ -115,6 +138,9 @@ export default function GachaPlayPage() {
   const [rooms, setRooms] = useState<WaitingRoom[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(false);
   const [roomsError, setRoomsError] = useState<string | null>(null);
+  const [activeRooms, setActiveRooms] = useState<ActiveRoom[]>([]);
+  const [activeRoomsLoading, setActiveRoomsLoading] = useState(false);
+  const [activeRoomsError, setActiveRoomsError] = useState<string | null>(null);
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [roomMode, setRoomMode] = useState<RoomMode>("browse");
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
@@ -133,6 +159,7 @@ export default function GachaPlayPage() {
   const [leavingRoom, setLeavingRoom] = useState(false);
   const roomsRequestIdRef = useRef(0);
   const currentRoomRequestIdRef = useRef(0);
+  const activeRoomsRequestIdRef = useRef(0);
 
   const loadConfigs = useCallback(async () => {
     setConfigsLoading(true);
@@ -311,17 +338,42 @@ export default function GachaPlayPage() {
     }
   }, [activeConfig, authenticated, getAccessToken, rematchRoomId]);
 
+  const loadActiveRooms = useCallback(async (showLoading = false) => {
+    if (rematchRoomId || !activeConfig) return;
+    const requestId = ++activeRoomsRequestIdRef.current;
+    if (showLoading) setActiveRoomsLoading(true);
+    setActiveRoomsError(null);
+    try {
+      const response = await fetch(`/api/gacha/rooms/active?configKey=${encodeURIComponent(activeConfig.configKey)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error("Couldn't load live rooms");
+      const nextRooms: ActiveRoom[] = await response.json();
+      if (requestId === activeRoomsRequestIdRef.current) setActiveRooms(nextRooms);
+    } catch {
+      if (requestId === activeRoomsRequestIdRef.current) {
+        setActiveRoomsError("Couldn't load live rooms. Try again in a moment.");
+      }
+    } finally {
+      if (requestId === activeRoomsRequestIdRef.current) setActiveRoomsLoading(false);
+    }
+  }, [activeConfig, rematchRoomId]);
+
   useEffect(() => {
     if (rematchRoomId) return;
     if (!activeConfig) return;
     roomsRequestIdRef.current += 1;
     void loadRooms(true);
-    const interval = window.setInterval(() => { void loadRooms(false); }, 5_000);
+    activeRoomsRequestIdRef.current += 1;
+    void loadActiveRooms(true);
+    const interval = window.setInterval(() => {
+      void loadRooms(false);
+      void loadActiveRooms(false);
+    }, 5_000);
     return () => {
       window.clearInterval(interval);
       roomsRequestIdRef.current += 1;
+      activeRoomsRequestIdRef.current += 1;
     };
-  }, [activeConfig, loadRooms, rematchRoomId]);
+  }, [activeConfig, loadRooms, loadActiveRooms, rematchRoomId]);
 
   useEffect(() => {
     currentRoomRequestIdRef.current += 1;
@@ -746,7 +798,12 @@ export default function GachaPlayPage() {
           )}
 
           {activeConfig && roomMode === "browse" && !inviteCode && !rematchRoomId && (
+            <div className="pp-browserlists">
             <div className="pp-roomlistwrap">
+              <div className="pp-roomsectionhead">
+                <span>Open rooms</span>
+                <small>Pick a seat</small>
+              </div>
               <div className="pp-roomlist" aria-busy={roomsLoading}>
                 {roomsLoading && Array.from({ length: 2 }, (_, index) => (
                   <div key={index} className="pp-roomrow-skeleton" aria-hidden="true" />
@@ -807,6 +864,59 @@ export default function GachaPlayPage() {
               >
                 <Plus className="w-4 h-4" aria-hidden="true" /> Create room
               </button>
+            </div>
+
+            <section className="pp-livewrap" aria-labelledby="gacha-live-rooms-title">
+              <div className="pp-roomsectionhead">
+                <span id="gacha-live-rooms-title">Live now</span>
+                <small>Watch free</small>
+              </div>
+
+              {activeRoomsLoading && (
+                <div className="pp-roomrow-skeleton" role="status" aria-label="Loading live rooms" />
+              )}
+
+              {!activeRoomsLoading && activeRoomsError && (
+                <div className="pp-roomerror" role="alert">
+                  <AlertCircle className="h-4 w-4" aria-hidden="true" />
+                  <span>{activeRoomsError}</span>
+                  <button type="button" onClick={() => { void loadActiveRooms(true); }}>
+                    <RefreshCw className="h-4 w-4" aria-hidden="true" /> Retry
+                  </button>
+                </div>
+              )}
+
+              {!activeRoomsLoading && !activeRoomsError && activeRooms.length === 0 && (
+                <div className="pp-liveempty">
+                  <Eye className="h-4 w-4" aria-hidden="true" />
+                  <span>No games live right now. The next full room will appear here.</span>
+                </div>
+              )}
+
+              {!activeRoomsLoading && !activeRoomsError && activeRooms.map((liveRoom) => (
+                <Link
+                  key={liveRoom.id}
+                  href={`/app/gacha/${encodeURIComponent(liveRoom.id)}?spectate=1`}
+                  className="pp-liveroomrow"
+                  aria-label={`Watch ${liveRoom.name}, ${liveRoom.seatsFilled} of ${liveRoom.seats} players`}
+                >
+                  <span className="pp-roomrow-avatars" aria-hidden="true">
+                    {liveRoom.participants.map((participant) => (
+                      <span key={participant.seatNumber} className="pp-roomrow-avatar">
+                        {participant.mascotKey
+                          ? <Mascot name={participant.mascotKey} mood="none" size={28} />
+                          : <span>?</span>}
+                      </span>
+                    ))}
+                  </span>
+                  <span className="pp-roomrow-info">
+                    <span className="pp-roomrow-name">{liveRoom.name}</span>
+                    <span className="pp-roomrow-fill">{liveRoom.seatsFilled}/{liveRoom.seats} players · {liveStatusLabel(liveRoom.status)}</span>
+                  </span>
+                  <span className="pp-watchaction"><Eye className="h-4 w-4" aria-hidden="true" /> Watch</span>
+                </Link>
+              ))}
+            </section>
             </div>
           )}
 

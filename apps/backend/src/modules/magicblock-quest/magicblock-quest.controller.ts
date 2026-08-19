@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { MagicblockQuestService } from './magicblock-quest.service';
+import { MagicblockQuestService, MagicblockQuestType } from './magicblock-quest.service';
 import { PrivyAuthGuard } from '@/auth/privy-auth.guard';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 
@@ -25,6 +25,14 @@ export class MagicblockQuestController {
       if (wallet) return this.magicblockQuest.backfillQuestsForWallet(user.id);
     });
     return this.magicblockQuest.getQuestStatus(user.id);
+  }
+
+  @Post('revalidate')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Manually re-push a quest completion to MagicBlock right now (e.g. their own reset invalidated a prior successful push)' })
+  async revalidate(@PrivyUser() user: { id: string }, @Body('questType') questType: MagicblockQuestType) {
+    return this.magicblockQuest.revalidateQuest(user.id, questType);
   }
 
   @Post('wallet')

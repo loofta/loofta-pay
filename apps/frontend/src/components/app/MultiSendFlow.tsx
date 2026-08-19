@@ -43,6 +43,13 @@ import { useSolPrice } from "@/hooks/useSolPrice";
 import type { MultiSendRecipientType } from "@/store/multiSend";
 import posthog from "posthog-js";
 
+// Multi-recipient send is temporarily disabled — the shared-hub fan-out mechanism it relies on
+// has no per-sender isolation, which allowed both a fund-drain exploit and separate race-driven
+// double-payments to real recipients (both discovered and remediated 2026-08-19). Flip back to
+// false once the hub is reworked with proper per-sender/per-batch isolation. Backend endpoints
+// are blocked independently in send-payment.controller.ts — this is the UI-side counterpart.
+const MULTI_SEND_DISABLED = true;
+
 // MagicBlock's flat relay fee, in SOL — same figure as backend MAGICBLOCK_GAS_SOL
 // (apps/backend/src/common/magicblock-private-transfer.ts). Duplicated rather than shared
 // per this codebase's existing convention for small cross-app constants.
@@ -345,6 +352,35 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     if (file) handleCSVFile(file);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Multi-recipient send is temporarily disabled — the shared-hub fan-out it relies on has no
+  // per-sender isolation, which allowed both a fund-drain exploit and separate race-driven
+  // double-payments to real recipients (both discovered and remediated 2026-08-19). Every hook
+  // above still runs normally (React rules-of-hooks); only the interactive UI is swapped out.
+  if (MULTI_SEND_DISABLED) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-slate-400 hover:text-white transition-colors"
+            aria-label="Back"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <p className="text-slate-100 text-xl font-semibold flex-1">Multi Send</p>
+        </div>
+        <div className="rounded-xl border border-white/10 bg-white/5 px-6 py-10 text-center space-y-3">
+          <div className="text-4xl">🛠️</div>
+          <p className="text-slate-100 text-lg font-semibold">Making Multi Send even better</p>
+          <p className="text-slate-400 text-base max-w-xs mx-auto">
+            We're polishing up the experience — check back soon. For now, send to one recipient at a time.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   function addRow() {
     if (rows.length >= 10) return;

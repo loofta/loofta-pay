@@ -1,5 +1,11 @@
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
+// short_id is alphanumeric, the legacy claim_token is a UUID (hex + hyphens) — both fit this
+// charset. idOrToken is spliced straight into a PostgREST `.or()` filter string below; an
+// unvalidated value containing a comma or `.`/`(` could inject additional filter clauses instead
+// of just matching this one gift.
+const GIFT_TOKEN_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+
 export interface GiftSharePreview {
   numTickets: number;
   note: string | null;
@@ -18,6 +24,7 @@ export interface GiftSharePreview {
  * only public-safe usernames/handles are exposed, never email or wallet address.
  */
 export async function getGiftSharePreview(idOrToken: string): Promise<GiftSharePreview | null> {
+  if (!GIFT_TOKEN_PATTERN.test(idOrToken)) return null;
   const supabase = getSupabaseAdmin();
   const { data: gift } = await supabase
     .from("lottery_gifts")

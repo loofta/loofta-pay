@@ -78,6 +78,15 @@
     "claimMany": "المطالبة بالكل",
     "dismiss": "إغلاق"
   },
+  "UnclaimedGiftToast": {
+    "titleOne": "لديك هدية لم يُطالَب بها",
+    "titleMany": "لديك {count} هدايا لم يُطالَب بها",
+    "ticketWaitingOne": "تذكرة يانصيب واحدة في انتظارك.",
+    "ticketWaitingMany": "{numTickets} تذكرة يانصيب في انتظارك.",
+    "claimOne": "المطالبة",
+    "claimMany": "المطالبة بالكل",
+    "dismiss": "إغلاق"
+  },
   "AddEmailToast": {
     "title": "لا تفوت أي دفعة",
     "body": "أضف بريدك الإلكتروني لتصلك إشعارات بالمدفوعات والهدايا الجديدة.",

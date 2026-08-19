@@ -147,6 +147,17 @@ export default function Home() {
     if (typeof window !== "undefined") localStorage.setItem(HOME_TAB_KEY, tab);
   };
   const { toast } = useToast();
+
+  // AppShell's useTerminalPromoToast nudges toward the AI terminal whenever this is "send" — it
+  // lives in the shared toast stack (alongside the unclaimed-payment/add-email nudges) rather
+  // than a one-off toast() call here, so it stacks with them instead of fighting over the
+  // single-toast slot. Resets to null on unmount so the promo can't linger after navigating away.
+  const setHomeActiveTab = useAuthStore((s) => s.setHomeActiveTab);
+  useEffect(() => {
+    setHomeActiveTab(activeTab);
+    return () => setHomeActiveTab(null);
+  }, [activeTab, setHomeActiveTab]);
+
   const [recipient, setRecipient] = useState(() => readSendDraft()?.recipient ?? "");
   /** Set from a /me/[@username] personal link — locks the recipient to that exact account and
    *  hides the email/social/username picker, since a personal link only ever has one target. */

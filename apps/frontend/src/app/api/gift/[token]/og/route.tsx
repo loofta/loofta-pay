@@ -131,7 +131,7 @@ async function renderImage(preview: NonNullable<Awaited<ReturnType<typeof getGif
               fontFamily: "Clash Grotesk",
             }}
           >
-            Megapot ticket gift
+            Lottery ticket gift
           </span>
           <span
             style={{
@@ -171,7 +171,7 @@ async function renderImage(preview: NonNullable<Awaited<ReturnType<typeof getGif
                 fontFamily: "Clash Grotesk",
               }}
             >
-              Megapot {ticketWord}
+              Lottery {ticketWord}
             </span>
           </div>
         </div>

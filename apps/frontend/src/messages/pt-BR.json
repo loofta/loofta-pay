@@ -78,6 +78,15 @@
     "claimMany": "Resgatar",
     "dismiss": "Fechar"
   },
+  "UnclaimedGiftToast": {
+    "titleOne": "Você tem um presente não resgatado",
+    "titleMany": "Você tem {count} presentes não resgatados",
+    "ticketWaitingOne": "1 bilhete de loteria esperando por você.",
+    "ticketWaitingMany": "{numTickets} bilhetes de loteria esperando por você.",
+    "claimOne": "Resgatar",
+    "claimMany": "Resgatar",
+    "dismiss": "Fechar"
+  },
   "AddEmailToast": {
     "title": "Nunca perca um pagamento",
     "body": "Adicione seu e-mail para ser notificado sobre novos pagamentos e presentes.",

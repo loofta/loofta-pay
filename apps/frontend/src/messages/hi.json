@@ -77,6 +77,15 @@
     "claimMany": "सभी क्लेम करें",
     "dismiss": "बंद करें"
   },
+  "UnclaimedGiftToast": {
+    "titleOne": "आपके पास एक अनक्लेम्ड गिफ्ट है",
+    "titleMany": "आपके पास {count} अनक्लेम्ड गिफ्ट हैं",
+    "ticketWaitingOne": "1 लॉटरी टिकट आपका इंतज़ार कर रहा है।",
+    "ticketWaitingMany": "{numTickets} लॉटरी टिकट आपका इंतज़ार कर रहे हैं।",
+    "claimOne": "क्लेम करें",
+    "claimMany": "सभी क्लेम करें",
+    "dismiss": "बंद करें"
+  },
   "AddEmailToast": {
     "title": "कोई भुगतान न चूकें",
     "body": "नए भुगतान और गिफ्ट की सूचना पाने के लिए अपना ईमेल जोड़ें।",

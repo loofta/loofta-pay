@@ -17,6 +17,7 @@ import {
 } from '@/common/magicblock-private-transfer';
 import { quoteAtaRentRecoveryUsdc } from '@/common/ata-rent-recovery';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
+import { isValidSolanaSignature } from '@/common/solana-address';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService, type SocialPlatform } from '../users/users.service';
@@ -464,8 +465,19 @@ export class SendPaymentService {
     );
   }
 
-  async confirmMultiSend(senderUserId: string, paymentIds: string[], txHash?: string, feeUsdc?: number): Promise<void> {
+  async confirmMultiSend(senderUserId: string, paymentIds: string[], txHash?: string, feeUsdc?: number, clientIp?: string): Promise<void> {
     if (!paymentIds.length) return;
+
+    // Client-supplied txHash is never chain-verified before this point (SolanaTxVerifierService
+    // does that async, minutes later, for PRIVATE_TRANSFER_PENDING rows only). Reject anything
+    // that can't even be a real signature here so a caller can't plant garbage in
+    // sender_tx_hash and trigger a "you got paid" email off a transfer that never happened.
+    if (txHash && !isValidSolanaSignature(txHash)) {
+      this.logger.warn(
+        `[MultiSend] REJECTED malformed tx_hash — user=${senderUserId} ip=${clientIp ?? 'unknown'} paymentIds=${paymentIds.join(',')} txHash="${txHash.slice(0, 32)}"`,
+      );
+      throw new BadRequestException('tx_hash is not a valid Solana transaction signature');
+    }
 
     // Fetch rows first so we can split registered vs unregistered and compute per-row fees
     const { data: rows, error: fetchError } = await this.supabaseService.payments

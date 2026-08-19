@@ -89,6 +89,10 @@ export class ClaimsService {
   private readonly usdcMint: PublicKey;
   private readonly perProgramId: PublicKey;
   private readonly emailSentAt = new Map<string, number>();
+  // Resend id of the still-pending scheduled notify email per claim (sendPaymentEmail's 15-min
+  // delayed send) — lets a recipient edit that lands before the delay elapses cancel the email
+  // already addressed to the OLD recipient instead of leaving it to fire regardless.
+  private readonly scheduledEmailId = new Map<string, string>();
 
   constructor(
     private readonly supabaseService: SupabaseService,
@@ -468,6 +472,23 @@ export class ClaimsService {
       is_private: null,
       creator_email: null,
     };
+  }
+
+  /**
+   * Strip the encrypted burner secret before a claim (or list of claims) goes out over HTTP.
+   * normalizeFromPayments (above) deliberately keeps it — internal decrypt/sweep code paths
+   * (claimAsRecipient, reclaim, cron sweeps) read it off exactly this shape via findOneRaw — so
+   * the redaction has to happen at each client-facing response boundary instead. findOne() has
+   * always done this inline; findAll/findByUser (admin claim list, and a future "my claims" list)
+   * didn't, which meant an admin list response carried every listed claim's ciphertext even
+   * though single-claim GETs never did. Ciphertext alone isn't decryptable without
+   * SEND_PAYMENT_ENC_KEY, but a client-facing response should never carry it regardless.
+   */
+  private redactBurnerSecret<T extends Record<string, unknown>>(claim: T): T {
+    const copy = { ...claim } as Record<string, unknown>;
+    delete copy['claim_burner_encrypted_secret'];
+    delete copy['burner_encrypted_secret'];
+    return copy as T;
   }
 
   /**
@@ -986,11 +1007,14 @@ export class ClaimsService {
     else if (claim.recipient_address?.trim()) {
       (claim as Claim & { recipient_is_registered?: boolean }).recipient_is_registered = true;
       const claimWithBurner = claim as unknown as { claim_burner_address?: string | null };
-      if (claimWithBurner.claim_burner_address?.trim()) {
-        // Burner exists: payment routes through it — hide the real recipient address
+      // Burner exists: payment routes through it — hide the real recipient address.
+      // No burner: recipient_address IS the payment destination for direct-wallet links, and would
+      // otherwise stay visible to any authenticated user for a SUCCESS claim (the isAlreadySettled
+      // carve-out above skips ownership verification for that state) — only the creator, who
+      // already knows where they sent it, gets to see it here.
+      if (claimWithBurner.claim_burner_address?.trim() || (!isCreator && isAlreadySettled)) {
         delete (claim as unknown as Record<string, unknown>)['recipient_address'];
       }
-      // No burner: recipient_address IS the payment destination for direct-wallet links — keep it
     }
 
     // Surface whether a recipient-edit is currently blocked (see recipient_claim_lock_at /
@@ -1009,6 +1033,14 @@ export class ClaimsService {
 
     // Never expose the encrypted burner private key to the frontend
     delete (claim as unknown as Record<string, unknown>)['claim_burner_encrypted_secret'];
+
+    // recipient_email is only for the creator's own view (history/claim pages show who they sent
+    // to) — the isAlreadySettled carve-out above intentionally skips the recipient-identity check
+    // for SUCCESS claims, so without this any authenticated user could read another user's
+    // recipient email off a settled claim ID.
+    if (!isCreatorViewer) {
+      delete (claim as unknown as Record<string, unknown>)['recipient_email'];
+    }
 
     // Attach fee data so the UI can show the payment breakdown on reload.
     // fee_paid_usdc column is set directly at payment time.
@@ -1552,7 +1584,12 @@ export class ClaimsService {
     }
 
     let recipientAddress: string;
-    const extraFields: Record<string, unknown> = {};
+    // Always cleared: recipient_user_id is a stable identity stamp from when the OLD identifier
+    // resolved to a registered account. Leaving it in place after reassigning to a new identifier
+    // left the old recipient's history query (recipient_user_id = userId, apps/frontend/src/app/api/payments/history/route.ts)
+    // and the claim page's isKnownRecipient bypass (apps/frontend/src/app/api/claims/[id]/route.ts)
+    // still matching them, even though recipient_address/email/username now point at someone else.
+    const extraFields: Record<string, unknown> = { recipient_user_id: null };
     if (opts.recipientType === 'email') {
       const cleanEmail = opts.recipientIdentifier.trim().toLowerCase();
       if (!cleanEmail || !cleanEmail.includes('@')) throw new BadRequestException('A valid email is required.');
@@ -2970,11 +3007,30 @@ export class ClaimsService {
      * account it was swept to and the Loofta fee taken on that sweep. payments-only column. */
     nairaClaim?: { bankAccountId: string; feeAmountUsdc: number };
   }, createdByUserId?: string): Promise<Claim> {
-    // Ownership check for destructive transitions
-    if ((status as string).toUpperCase() === 'CANCELLED' && createdByUserId) {
+    // Ownership check. createdByUserId is only ever passed by an authenticated HTTP request (see
+    // ClaimsController.updateStatus) — internal/cron callers (solana-tx-verifier, claim-processor,
+    // offramp, admin routes) omit it entirely and skip this check, same as before.
+    //
+    // CANCELLED stays creator-only (destructive). Every other transition — most importantly
+    // SUCCESS — used to have NO check at all: any authenticated user who knew/guessed a claim ID
+    // could call this to stamp someone else's claim SUCCESS with a forged txHash/fee breakdown,
+    // triggering a "you got paid" email for a payment that never happened on-chain. Now the caller
+    // must be either the creator or the verified recipient (mirrors claimAsRecipient's own check —
+    // the legitimate recipient-initiated SUCCESS/PRIVATE_TRANSFER_PENDING calls above already stamp
+    // recipient_user_id before calling this, so checkIsRecipient passes for them as expected).
+    if (createdByUserId) {
       const result = await this.fetchRawRow(id);
-      if (result?.row.created_by && result.row.created_by !== createdByUserId) {
-        throw new ForbiddenException('Only the claim creator can cancel this payment');
+      if (!result) throw new NotFoundException(`Claim with ID ${id} not found`);
+      const isCreator = result.row.created_by === createdByUserId;
+      if ((status as string).toUpperCase() === 'CANCELLED') {
+        if (result.row.created_by && !isCreator) {
+          throw new ForbiddenException('Only the claim creator can cancel this payment');
+        }
+      } else if (!isCreator) {
+        const { isRecipient } = await this.checkIsRecipient(id, createdByUserId);
+        if (!isRecipient) {
+          throw new ForbiddenException('Not authorized to update this payment');
+        }
       }
     }
 
@@ -3144,11 +3200,23 @@ export class ClaimsService {
       ...(shortId ? { claimUrl: `/c/${shortId}` } : {}),
     };
 
-    if (isUnregistered) {
-      await this.emailService.sendClaimReadyEmail(emailData);
-    } else {
-      await this.emailService.sendPaymentReceivedEmail(emailData);
+    // A prior call for this claim (e.g. the original payment success) may still have a scheduled
+    // send sitting in Resend's queue, addressed to whichever recipient was current back then.
+    // Cancel it before scheduling this one — otherwise a recipient edit made after payment but
+    // before the delay elapses still results in the OLD recipient getting notified.
+    const priorEmailId = this.scheduledEmailId.get(claimId);
+    if (priorEmailId) {
+      this.scheduledEmailId.delete(claimId);
+      await this.emailService.cancelScheduledEmail(priorEmailId);
     }
+
+    let sentEmailId: string | null = null;
+    if (isUnregistered) {
+      sentEmailId = await this.emailService.sendClaimReadyEmail(emailData);
+    } else {
+      sentEmailId = await this.emailService.sendPaymentReceivedEmail(emailData);
+    }
+    if (sentEmailId) this.scheduledEmailId.set(claimId, sentEmailId);
   }
 
   /**
@@ -3237,7 +3305,7 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    return (data || []).map((r) => this.normalizeFromPayments(r as Record<string, unknown>) as unknown as Claim);
+    return (data || []).map((r) => this.redactBurnerSecret(this.normalizeFromPayments(r as Record<string, unknown>)) as unknown as Claim);
   }
 
   /**
@@ -3254,7 +3322,7 @@ export class ClaimsService {
       throw new Error(`Database error: ${error.message}`);
     }
 
-    return (data || []).map((r) => this.normalizeFromPayments(r as Record<string, unknown>) as unknown as Claim);
+    return (data || []).map((r) => this.redactBurnerSecret(this.normalizeFromPayments(r as Record<string, unknown>)) as unknown as Claim);
   }
 
   /**
@@ -3479,7 +3547,7 @@ export class ClaimsService {
     }
 
     return {
-      claims: (data || []).map((r) => this.normalizeFromPayments(r as Record<string, unknown>) as unknown as Claim),
+      claims: (data || []).map((r) => this.redactBurnerSecret(this.normalizeFromPayments(r as Record<string, unknown>)) as unknown as Claim),
       total: count || 0,
     };
   }

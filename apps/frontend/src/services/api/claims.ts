@@ -101,8 +101,8 @@ export async function createClaim(data: CreateClaimInput): Promise<{ claim: Clai
   });
 }
 
-export async function getClaimById(id: string): Promise<{ claim: Claim }> {
-  return fetchApi<{ claim: Claim }>(`/claims/${id}`);
+export async function getClaimById(id: string, userId?: string, accessToken?: string | null): Promise<{ claim: Claim }> {
+  return fetchApi<{ claim: Claim }>(`/claims/${id}`, { userId, accessToken });
 }
 
 export async function getClaimWithLatestIntent(
@@ -133,7 +133,7 @@ export async function updateClaimStatus(
   accessToken?: string | null,
 ): Promise<{ claim: Claim }> {
   return fetchApi<{ claim: Claim }>(`/claims/${id}/status`, {
-    method: 'PATCH',
+    method: 'POST',
     body: JSON.stringify({ status, ...extra }),
     userId,
     accessToken,

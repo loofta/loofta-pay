@@ -275,8 +275,8 @@ export default function RewardsPage() {
 
         {/* Page header */}
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-white">{t("title")}</h1>
-          <p className="text-base text-slate-400 mt-1">{t("subtitle")}</p>
+          <h1 className="text-5xl font-semibold text-white tracking-tight">{t("title")}</h1>
+          <p className="text-lg text-slate-400 mt-1">{t("subtitle")}</p>
         </div>
 
         {/* ── ACTIVE CAMPAIGNS ── */}

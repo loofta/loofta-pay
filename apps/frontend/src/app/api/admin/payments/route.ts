@@ -11,6 +11,13 @@ const VALID_STATUSES = new Set([
   "EXPIRED", "CANCELLED", "DELETED",
 ]);
 
+// `search` gets spliced into a PostgREST `.or()` filter string below — a raw comma or paren in
+// the value would inject additional filter clauses rather than just matching this search term.
+// Double-quoting is PostgREST's own escape mechanism for a value containing reserved characters.
+function escapePostgrestFilterValue(v: string): string {
+  return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
 export async function GET(request: NextRequest) {
   const privyUserId = await getVerifiedUserId(request);
   if (!privyUserId || !(await isAdmin(privyUserId))) {
@@ -29,10 +36,11 @@ export async function GET(request: NextRequest) {
   // Resolve sender IDs from app_users username/email search
   let extraSenderIds: string[] = [];
   if (search) {
+    const escaped = escapePostgrestFilterValue(`%${search}%`);
     const { data: matchedUsers } = await supabase
       .from("app_users")
       .select("privy_user_id")
-      .or(`username.ilike.%${search}%,email.ilike.%${search}%`)
+      .or(`username.ilike.${escaped},email.ilike.${escaped}`)
       .limit(50);
     extraSenderIds = (matchedUsers ?? [])
       .map((u: any) => u.privy_user_id)

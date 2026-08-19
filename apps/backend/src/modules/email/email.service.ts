@@ -35,8 +35,13 @@ export class EmailService {
     return this.resend !== null;
   }
 
-  async sendPaymentReceivedEmail(data: ClaimEmailData): Promise<void> {
-    if (!this.resend) return;
+  /**
+   * Returns the Resend email id when the send is actually scheduled for the future (data.scheduledAt
+   * set) — callers use it to cancel this specific send later (e.g. claims.service.ts notifyRecipientAfterPayment
+   * cancels a still-pending scheduled email before re-scheduling one for a corrected recipient).
+   */
+  async sendPaymentReceivedEmail(data: ClaimEmailData): Promise<string | null> {
+    if (!this.resend) return null;
     const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
     const claimUrl = data.claimUrl
       ? `https://pay.loofta.xyz${new URL(data.claimUrl, 'https://pay.loofta.xyz').pathname}`
@@ -45,7 +50,7 @@ export class EmailService {
     const html = this.buildPaymentReceivedHtml({ ...data, amountStr, claimUrl });
 
     try {
-      await this.resend.emails.send({
+      const { data: sent } = await this.resend.emails.send({
         from: `Loofta <${this.fromEmail}>`,
         to: data.recipientEmail,
         subject,
@@ -53,13 +58,15 @@ export class EmailService {
         ...(data.scheduledAt ? { scheduledAt: data.scheduledAt } : {}),
       });
       this.logger.log(`Payment received email scheduled for ${data.recipientEmail} (claim ${data.id}, at ${data.scheduledAt ?? 'now'})`);
+      return data.scheduledAt ? (sent?.id ?? null) : null;
     } catch (err: any) {
       this.logger.error(`Failed to send payment received email for claim ${data.id}: ${err?.message ?? err}`);
+      return null;
     }
   }
 
-  async sendClaimReadyEmail(data: ClaimEmailData): Promise<void> {
-    if (!this.resend) return;
+  async sendClaimReadyEmail(data: ClaimEmailData): Promise<string | null> {
+    if (!this.resend) return null;
     const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
     const claimUrl = data.claimUrl
       ? `https://pay.loofta.xyz${new URL(data.claimUrl, 'https://pay.loofta.xyz').pathname}`
@@ -68,7 +75,7 @@ export class EmailService {
     const html = this.buildClaimReadyHtml({ ...data, amountStr, claimUrl });
 
     try {
-      await this.resend.emails.send({
+      const { data: sent } = await this.resend.emails.send({
         from: `Loofta <${this.fromEmail}>`,
         to: data.recipientEmail,
         subject,
@@ -76,8 +83,21 @@ export class EmailService {
         ...(data.scheduledAt ? { scheduledAt: data.scheduledAt } : {}),
       });
       this.logger.log(`Claim ready email scheduled for ${data.recipientEmail} (claim ${data.id}, at ${data.scheduledAt ?? 'now'})`);
+      return data.scheduledAt ? (sent?.id ?? null) : null;
     } catch (err: any) {
       this.logger.error(`Failed to send claim ready email for claim ${data.id}: ${err?.message ?? err}`);
+      return null;
+    }
+  }
+
+  /** Best-effort cancel of a still-pending scheduled send (no-op once Resend has already sent it). */
+  async cancelScheduledEmail(emailId: string): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.cancel(emailId);
+      this.logger.log(`Cancelled scheduled email ${emailId}`);
+    } catch (err: any) {
+      this.logger.warn(`Failed to cancel scheduled email ${emailId} (likely already sent): ${err?.message ?? err}`);
     }
   }
 
@@ -243,6 +263,26 @@ export class EmailService {
       this.logger.log(`Giveaway expired email sent to ${data.recipientEmail}`);
     } catch (err: any) {
       this.logger.error(`Failed to send giveaway expired email to ${data.recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
+  /** Sent when an admin cancels a giveaway that was already past approval (funded/open/etc.) —
+   *  includes the reason and a support contact in case the creator thinks this was a mistake. Any
+   *  remaining burner balance is refunded to the creator separately, before this is sent (see
+   *  GiveawaysService.adminCancel). */
+  async sendGiveawayCancelledEmail(data: { recipientEmail: string; title: string; reason: string }): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `Your giveaway "${data.title}" was cancelled`,
+        html: this.buildGiveawayCancelledHtml(data),
+      });
+      this.logger.log(`Giveaway cancelled email sent to ${data.recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send giveaway cancelled email to ${data.recipientEmail}: ${err?.message ?? err}`);
       throw err;
     }
   }
@@ -596,6 +636,49 @@ export class EmailService {
       this.logger.log(`Fee-wallet low-balance alert sent to ${data.to} (low: ${data.low.join(',')})`);
     } catch (err: any) {
       this.logger.error(`Failed to send fee-wallet low-balance alert to ${data.to}: ${err?.message ?? err}`);
+    }
+  }
+
+  /**
+   * Operational alert (to the team, not a user) — fires when someone taps "Request access" on
+   * the Twitter bot's coming-soon section (see TwitterAutopayController's request-access route).
+   * Throws on failure (unlike the fire-and-forget alerts below) — this is a direct response to a
+   * user action, so the frontend needs to know if it didn't actually send.
+   */
+  async sendTwitterBotAccessRequestEmail(data: {
+    privyUserId: string;
+    email: string | null;
+    twitterHandle: string | null;
+    username: string | null;
+  }): Promise<void> {
+    if (!this.resend) {
+      throw new Error('Email sending is not configured (RESEND_API_KEY unset)');
+    }
+    const subject = `🐦 Twitter bot access request${data.twitterHandle ? ` — @${data.twitterHandle}` : ''}`;
+    const html = `
+      <div style="font-family:system-ui,-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+        <h2 style="color:#0f172a;margin:0 0 4px;">Twitter bot access requested</h2>
+        <p style="color:#64748b;margin:0 0 16px;font-size:14px;">
+          Someone tapped "Request access" on the Twitter bot section of the AI bot page.
+        </p>
+        <table style="border-collapse:collapse;width:100%;background:#f8fafc;border-radius:8px;font-size:14px;">
+          <tr><td style="padding:6px 12px;color:#475569;">Loofta username</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.username ?? 'none'}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">X handle</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.twitterHandle ? '@' + data.twitterHandle : 'not linked'}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Email</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;">${data.email ?? 'none on file'}</td></tr>
+          <tr><td style="padding:6px 12px;color:#475569;">Privy user id</td><td style="padding:6px 12px;font-weight:600;color:#0f172a;font-family:monospace;font-size:12px;">${data.privyUserId}</td></tr>
+        </table>
+      </div>`;
+    try {
+      await this.resend.emails.send({
+        from: `Loofta <${this.fromEmail}>`,
+        to: 'hello@loofta.xyz',
+        subject,
+        html,
+      });
+      this.logger.log(`Twitter bot access request email sent for user ${data.privyUserId}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send Twitter bot access request email for user ${data.privyUserId}: ${err?.message ?? err}`);
+      throw err;
     }
   }
 
@@ -1160,6 +1243,52 @@ export class EmailService {
                 <p style="margin:0;font-size:14px;line-height:1.6;color:#d1d5db;">${data.reason}</p>
               </div>
               <p style="margin:0;">If you think this shouldn&apos;t have expired (e.g. you already funded it), contact support: <a href="mailto:hello@loofta.xyz" style="color:#FF8C00;text-decoration:none;">hello@loofta.xyz</a> or <a href="https://t.me/looftapay" style="color:#FF8C00;text-decoration:none;">t.me/looftapay</a>.</p>
+              <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildGiveawayCancelledHtml(data: { title: string; reason: string }): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Giveaway cancelled</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">Your giveaway was cancelled</p>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:28px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 16px;">hey, this is Lisa from Loofta.</p>
+              <p style="margin:0 0 16px;">"${data.title}" has been cancelled. Reason:</p>
+              <div style="background:#1e1e23;border-radius:12px;padding:16px 18px;margin:0 0 24px;">
+                <p style="margin:0;font-size:14px;line-height:1.6;color:#d1d5db;">${data.reason}</p>
+              </div>
+              <p style="margin:0;">Any funds still in its burner have been refunded to your wallet. If you think this was a mistake, contact support: <a href="mailto:hello@loofta.xyz" style="color:#FF8C00;text-decoration:none;">hello@loofta.xyz</a> or <a href="https://t.me/looftapay" style="color:#FF8C00;text-decoration:none;">t.me/looftapay</a>.</p>
               <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
             </td>
           </tr>

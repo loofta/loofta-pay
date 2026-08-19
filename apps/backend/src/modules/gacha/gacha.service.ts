@@ -139,6 +139,17 @@ interface ExistingWaitingRoom {
   createdAt: string;
 }
 
+export interface ActiveRoomSummary {
+  id: string;
+  name: string;
+  configKey: string;
+  seats: number;
+  seatsFilled: number;
+  status: string;
+  createdAt: string;
+  participants: Array<{ seatNumber: number; mascotKey: string | null }>;
+}
+
 export interface RunItBackResult {
   groupId: string;
   claimDeadline: string;
@@ -325,6 +336,54 @@ export class GachaService {
     return summaries
       .filter((room) => room.seatsFilled < room.seats)
       .sort((a, b) => b.seatsFilled - a.seatsFilled || a.createdAt.localeCompare(b.createdAt));
+  }
+
+  /** Public games that have already started and can be watched. Waiting rooms belong to the
+   * join browser, while terminal rooms are history rather than a live spectator destination.
+   * Private rooms are excluded at the query boundary so their existence is never disclosed. */
+  async listActivePublicRooms(configKey: string): Promise<ActiveRoomSummary[]> {
+    await this.getConfig(configKey);
+    const db = this.supabase.getClient();
+    const activeStatuses = ['purchasing', 'opening', 'excluding', 'voting', 'bidding', 'settling'];
+    const { data: rooms, error } = await db
+      .from('gacha_rooms')
+      .select('id, name, config_key, seats, status, created_at')
+      .eq('config_key', configKey)
+      .eq('is_private', false)
+      .in('status', activeStatuses)
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(`Failed to list active gacha rooms: ${error.message}`);
+    if (!rooms?.length) return [];
+
+    const roomIds = rooms.map((room: any) => room.id);
+    const { data: participantRows, error: participantError } = await db
+      .from('gacha_room_participants')
+      .select('room_id, seat_number, mascot_key')
+      .in('room_id', roomIds)
+      .order('seat_number', { ascending: true });
+    if (participantError) throw new Error(`Failed to load active room participants: ${participantError.message}`);
+
+    const participantsByRoom: Record<string, Array<{ seatNumber: number; mascotKey: string | null }>> = {};
+    for (const participant of participantRows ?? []) {
+      (participantsByRoom[participant.room_id] ??= []).push({
+        seatNumber: participant.seat_number,
+        mascotKey: participant.mascot_key ?? null,
+      });
+    }
+
+    return rooms.map((room: any) => {
+      const participants = participantsByRoom[room.id] ?? [];
+      return {
+        id: room.id,
+        name: room.name,
+        configKey: room.config_key,
+        seats: room.seats,
+        seatsFilled: participants.length,
+        status: room.status,
+        createdAt: room.created_at,
+        participants,
+      };
+    });
   }
 
   /**
