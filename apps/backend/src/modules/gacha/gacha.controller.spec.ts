@@ -4,6 +4,7 @@ import { GachaService } from "./gacha.service";
 describe("GachaController room browser", () => {
   const gacha = {
     listPublicWaitingRooms: jest.fn(),
+    listActivePublicRooms: jest.fn(),
     getWaitingRoomByInviteCode: jest.fn(),
     getNextRoomNumber: jest.fn(),
     createWaitingRoom: jest.fn(),
@@ -22,6 +23,13 @@ describe("GachaController room browser", () => {
       { id: "room-1" },
     ]);
     expect(gacha.listPublicWaitingRooms).toHaveBeenCalledWith("small-5");
+  });
+
+  it("lists active public rooms available to watch", async () => {
+    gacha.listActivePublicRooms.mockResolvedValue([{ id: "live-room" }]);
+
+    await expect(controller.activeRooms("small-5")).resolves.toEqual([{ id: "live-room" }]);
+    expect(gacha.listActivePublicRooms).toHaveBeenCalledWith("small-5");
   });
 
   it("forwards a private invite code to the safe preview endpoint", async () => {

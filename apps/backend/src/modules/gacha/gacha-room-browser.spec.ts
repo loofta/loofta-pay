@@ -13,6 +13,50 @@ function makeService(db: any = {}) {
 }
 
 describe("GachaService explicit room browser", () => {
+  it("lists only active public rooms for spectators with seated mascot previews", async () => {
+    const roomQuery: any = {
+      select: jest.fn(() => roomQuery),
+      eq: jest.fn(() => roomQuery),
+      in: jest.fn(() => roomQuery),
+      order: jest.fn().mockResolvedValue({
+        data: [{
+          id: "live-room",
+          name: "Friday live",
+          config_key: "small-5",
+          seats: 5,
+          status: "voting",
+          created_at: "2026-08-17T00:00:00.000Z",
+        }],
+        error: null,
+      }),
+    };
+    const participantQuery: any = {
+      select: jest.fn(() => participantQuery),
+      in: jest.fn(() => participantQuery),
+      order: jest.fn().mockResolvedValue({
+        data: [{ room_id: "live-room", seat_number: 2, mascot_key: "owl" }],
+        error: null,
+      }),
+    };
+    const service = makeService({
+      from: jest.fn((table: string) => table === "gacha_rooms" ? roomQuery : participantQuery),
+    });
+    jest.spyOn(service as any, "getConfig").mockResolvedValue({ configKey: "small-5" });
+
+    await expect(service.listActivePublicRooms("small-5")).resolves.toEqual([{
+      id: "live-room",
+      name: "Friday live",
+      configKey: "small-5",
+      seats: 5,
+      seatsFilled: 1,
+      status: "voting",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      participants: [{ seatNumber: 2, mascotKey: "owl" }],
+    }]);
+    expect(roomQuery.eq).toHaveBeenCalledWith("is_private", false);
+    expect(roomQuery.in).toHaveBeenCalledWith("status", expect.not.arrayContaining(["waiting", "settled"]));
+  });
+
   it("creates one shared rematch destination and carries the caller's mascot hint", async () => {
     const roomQuery: any = {
       select: jest.fn(() => roomQuery),
