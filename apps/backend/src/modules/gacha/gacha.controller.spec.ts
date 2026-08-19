@@ -4,8 +4,12 @@ import { GachaService } from "./gacha.service";
 describe("GachaController room browser", () => {
   const gacha = {
     listPublicWaitingRooms: jest.fn(),
+    getWaitingRoomByInviteCode: jest.fn(),
+    getNextRoomNumber: jest.fn(),
     createWaitingRoom: jest.fn(),
+    runItBack: jest.fn(),
     buildJoinTxForRoom: jest.fn(),
+    leaveWaitingRoom: jest.fn(),
   };
   const controller = new GachaController(gacha as unknown as GachaService);
 
@@ -18,6 +22,20 @@ describe("GachaController room browser", () => {
       { id: "room-1" },
     ]);
     expect(gacha.listPublicWaitingRooms).toHaveBeenCalledWith("small-5");
+  });
+
+  it("forwards a private invite code to the safe preview endpoint", async () => {
+    gacha.getWaitingRoomByInviteCode.mockResolvedValue({ id: "private-room" });
+
+    await expect(controller.inviteRoom("invite-secret")).resolves.toEqual({ id: "private-room" });
+    expect(gacha.getWaitingRoomByInviteCode).toHaveBeenCalledWith("invite-secret");
+  });
+
+  it("returns the database-backed next room number hint", async () => {
+    gacha.getNextRoomNumber.mockResolvedValue({ roomNumber: 7 });
+
+    await expect(controller.nextRoomNumber("small-5")).resolves.toEqual({ roomNumber: 7 });
+    expect(gacha.getNextRoomNumber).toHaveBeenCalledWith("small-5");
   });
 
   it("creates a named room for the authenticated user", async () => {
@@ -47,7 +65,7 @@ describe("GachaController room browser", () => {
     });
 
     await expect(
-      controller.roomJoinTx("room-3", { user: { id: "privy-user-2" } }),
+      controller.roomJoinTx("room-3", undefined, { user: { id: "privy-user-2" } }),
     ).resolves.toEqual({
       roomId: "room-3",
       txBase64: "tx",
@@ -55,6 +73,25 @@ describe("GachaController room browser", () => {
     expect(gacha.buildJoinTxForRoom).toHaveBeenCalledWith(
       "room-3",
       "privy-user-2",
+      undefined,
     );
+  });
+
+  it("creates or recovers the shared rematch room for the authenticated participant", async () => {
+    gacha.runItBack.mockResolvedValue({ groupId: "group-1", room: { id: "room-4" } });
+
+    await expect(
+      controller.runItBack("settled-room", { user: { id: "privy-user-2" } }),
+    ).resolves.toEqual({ groupId: "group-1", room: { id: "room-4" } });
+    expect(gacha.runItBack).toHaveBeenCalledWith("settled-room", "privy-user-2");
+  });
+
+  it("lets the authenticated participant leave a waiting room", async () => {
+    gacha.leaveWaitingRoom.mockResolvedValue({ roomId: "room-3", seatsFilled: 1 });
+
+    await expect(
+      controller.leaveRoom("room-3", { user: { id: "privy-user-2" } }),
+    ).resolves.toEqual({ roomId: "room-3", seatsFilled: 1 });
+    expect(gacha.leaveWaitingRoom).toHaveBeenCalledWith("room-3", "privy-user-2");
   });
 });

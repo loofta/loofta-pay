@@ -155,13 +155,16 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('join_room')
-  async onJoinRoom(@ConnectedSocket() client: Socket, @MessageBody() body: { roomId: string }): Promise<void> {
+  async onJoinRoom(@ConnectedSocket() client: Socket, @MessageBody() body: { roomId: string; inviteCode?: string }): Promise<void> {
     if (!body?.roomId || !client.data?.userId) return;
-    await client.join(body.roomId);
-    // Send the caller an immediate snapshot so the UI doesn't sit blank until the next state
-    // change from someone else triggers a broadcast.
     try {
-      const detail = await this.gacha.getRoomDetail(body.roomId, client.data.userId);
+      const inviteCode = body.inviteCode || (client.handshake.auth?.inviteCode as string | undefined);
+      // Authorize before joining the socket room. Otherwise an unauthenticated-by-invite client
+      // could subscribe to private-room broadcasts even though the REST detail endpoint rejects it.
+      const detail = await this.gacha.getRoomDetail(body.roomId, client.data.userId, inviteCode);
+      await client.join(body.roomId);
+      // Send the caller an immediate snapshot so the UI doesn't sit blank until the next state
+      // change from someone else triggers a broadcast.
       client.emit('room:state', detail);
     } catch (e: any) {
       this.logger.warn(`join_room ${body.roomId}: failed to send initial snapshot: ${e.message}`);
