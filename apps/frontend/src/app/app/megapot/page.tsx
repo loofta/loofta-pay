@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, VenetianMask } from "lucide-react";
+import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, VenetianMask, Send } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { getMyGifts, updateGiftRecipient, type MyGiftItem } from "@/services/api/lotteryGift";
 import { MessageInput } from "@/components/MessageInput";
@@ -20,6 +20,7 @@ import { getSolanaCluster } from "@/lib/solanaCluster";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 import { PRIZE_TIERS, TicketNumberCard } from "@/components/megapot/TicketNumberCard";
+import { GradientActionButton } from "@/components/ui/GradientActionButton";
 
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
 const MAGICBLOCK_BPS = 10;
@@ -1830,7 +1831,7 @@ function GlowPlayAgainButton({ onClick, disabled, children }: {
         aria-hidden
         className="absolute -inset-[2.5px] rounded-2xl blur-[7px]"
         style={{
-          background: "linear-gradient(110deg,#34d399,#22d3ee,#fbbf24,#a78bfa,#34d399)",
+          background: "linear-gradient(110deg,#FF0F00,#FF7A2A,#EAB308,#FF7A2A,#FF0F00)",
           backgroundSize: "220% 100%",
           animation: reduceMotion ? undefined : "looftaGlowShift 2.4s linear infinite, looftaGlowPulse 2.4s ease-in-out infinite",
           opacity: reduceMotion ? 0.7 : undefined,
@@ -1839,9 +1840,9 @@ function GlowPlayAgainButton({ onClick, disabled, children }: {
       <button
         onClick={onClick}
         disabled={disabled}
-        className="relative w-full h-14 rounded-2xl font-bold text-lg bg-[#0d0d11] border border-white/10 text-white active:scale-[0.99] transition-transform disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300"
+        className="relative w-full h-14 rounded-2xl font-bold text-lg bg-[#0d0d11] border border-white/10 text-white active:scale-[0.99] transition-transform disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF7A2A]/60"
       >
-        <span className="bg-gradient-to-r from-emerald-300 via-teal-200 to-amber-200 bg-clip-text text-transparent">
+        <span className="bg-gradient-to-r from-[#FF7A2A] to-[#EAB308] bg-clip-text text-transparent">
           {children}
         </span>
       </button>
@@ -1895,36 +1896,43 @@ function MysteryPackBanner() {
 
 // ─── Withdraw tab ─────────────────────────────────────────────────────────────
 
-function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading, previewDone, withdrawMinUsdc }: {
+function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading, previewDone, previewArrived, withdrawMinUsdc }: {
   wonTickets: TicketSummary[]; accessToken: string | null;
   userSolanaAddress: string; solPriceUsd: number; onWithdrawn: () => void;
   dashboardLoading?: boolean;
-  previewDone?: boolean; // dev-only: render the post-redeem state directly
+  previewDone?: boolean; // dev-only: render the "on its way" post-redeem state directly
+  previewArrived?: boolean; // dev-only: render the fully-arrived post-redeem state directly
   withdrawMinUsdc?: number; // backend-reported withdrawal floor (fallback until dashboard loads)
 }) {
   const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(!!previewDone);
-  const [doneAmount, setDoneAmount] = useState(previewDone ? 272.39 : 0);
+  const [done, setDone] = useState(!!previewDone || !!previewArrived);
+  const [doneAmount, setDoneAmount] = useState(previewDone || previewArrived ? 272.39 : 0);
   const [error, setError] = useState("");
   const [bridgeFeeUsd, setBridgeFeeUsd] = useState<number | null>(null);
   const [bridgeReceiveUsdc, setBridgeReceiveUsdc] = useState<number | null>(null);
   const [bridgeFeeUnavailable, setBridgeFeeUnavailable] = useState(false);
   const [feeRetryToken, setFeeRetryToken] = useState(0);
   const [withdrawalIds, setWithdrawalIds] = useState<string[]>([]);
-  const [arrived, setArrived] = useState(false);
+  const [arrived, setArrived] = useState(!!previewArrived);
   const [transferFailed, setTransferFailed] = useState(false);
   const [playingAgain, setPlayingAgain] = useState(false);
   const [playAgainDone, setPlayAgainDone] = useState<{ numTickets: number } | null>(null);
   const [playAgainError, setPlayAgainError] = useState("");
   const [confirmingRedeem, setConfirmingRedeem] = useState(false);
   const reduceMotion = useReducedMotion();
-  // Default ON — matches today's only (private) behavior; public withdrawal is the new opt-in.
-  const [sendPrivately, setSendPrivately] = useState(true);
-  const [privacyBurstKey, setPrivacyBurstKey] = useState<number | null>(null);
-  const handleToggleSendPrivately = (checked: boolean) => {
-    setSendPrivately(checked);
-    if (checked) setPrivacyBurstKey(Date.now());
-  };
+  // Not a manual choice — winnings leave the same way the ticket was bought. A ticket funded
+  // through a MagicBlock private transfer withdraws privately; a normally-funded ticket withdraws
+  // as a standard on-chain transfer. Mixed batch (some private, some not) defaults to private —
+  // sending everything as one plain transfer would leak the association with the private buy.
+  const sendPrivately = wonTickets.some(t => t.fundedPrivately);
+
+  // Dev preview links navigate client-side (no remount), so the useState initializers above only
+  // fire once — clicking from one ?preview= link to another left this stuck on whichever state
+  // was current on first mount. Re-sync whenever the preview flags actually change.
+  useEffect(() => {
+    if (previewArrived) { setDone(true); setArrived(true); setDoneAmount(272.39); }
+    else if (previewDone) { setDone(true); setArrived(false); setDoneAmount(272.39); }
+  }, [previewDone, previewArrived]);
 
   // Resume an in-flight redeem across a page refresh — without this, a refresh mid-redeem drops
   // back to "ready to redeem" (the ticket's status stays 'won' until the very end of the
@@ -1937,7 +1945,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   // redeem screen for a ticket won after it.
   const WITHDRAWAL_STORAGE_TTL_MS = 60 * 60 * 1000;
   useEffect(() => {
-    if (previewDone) return;
+    if (previewDone || previewArrived) return;
     try {
       const saved = localStorage.getItem(WITHDRAWAL_STORAGE_KEY);
       if (!saved) return;
@@ -2120,34 +2128,40 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
     type StepState = "done" | "active" | "pending";
     const steps: { label: string; state: StepState }[] = [
       { label: "Redeemed", state: "done" },
-      { label: "Traveling privately", state: arrived ? "done" : "active" },
+      { label: sendPrivately ? "Traveling privately" : "On the way", state: arrived ? "done" : "active" },
       { label: "In your wallet", state: arrived ? "done" : "pending" },
     ];
     return (
-      <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.08] to-white/[0.02] p-8 text-center space-y-6">
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center space-y-6">
         <motion.div
-          className="text-5xl select-none"
+          className={arrived ? "text-6xl select-none" : "mx-auto w-16 h-16 rounded-full flex items-center justify-center border-2 border-[#FF7A2A]/40 text-[#FF7A2A]"}
           aria-hidden="true"
           initial={reduceMotion ? undefined : { scale: 0.5, opacity: 0 }}
           animate={reduceMotion ? undefined : { scale: 1, opacity: 1 }}
           transition={{ type: "spring", stiffness: 260, damping: 16 }}
         >
-          {arrived ? "🎉" : "🛡️✨"}
+          {arrived ? "✅" : <Send className="w-6 h-6" />}
         </motion.div>
         <div>
-          <p className="text-sm font-bold text-emerald-400 uppercase tracking-[0.2em] mb-2">
+          <p className="text-sm font-bold text-[#FF7A2A] uppercase tracking-[0.2em] mb-2">
             {arrived ? "Withdrawal complete" : "Withdrawal on its way"}
           </p>
-          <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight bg-gradient-to-b from-white via-slate-100 to-emerald-200 bg-clip-text text-transparent tabular-nums">
+          <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight text-white tabular-nums">
             {fmt(doneAmount)}
           </h2>
           <p className="text-lg text-slate-300 mt-3 font-medium">
-            {arrived ? "is in your wallet" : "is heading to your wallet"}
+            {arrived
+              ? (sendPrivately ? "is in your Loofta balance" : "is in your wallet")
+              : (sendPrivately ? "is heading to your Loofta balance" : "is heading to your wallet")}
           </p>
           <p className="text-base text-slate-400 mt-1">
-            {arrived
-              ? "Delivered privately to your Loofta balance — no on-chain link back to you."
-              : "Arrives in your Loofta balance in a few minutes. No on-chain link back to you."}
+            {sendPrivately
+              ? (arrived
+                  ? "Delivered privately to your Loofta balance — no on-chain link back to you."
+                  : "Arrives in your Loofta balance in a few minutes. No on-chain link back to you.")
+              : (arrived
+                  ? "Delivered directly to your wallet."
+                  : "Arrives directly in your wallet in a few minutes.")}
           </p>
           {transferFailed && (
             <p className="text-base text-red-400 mt-3">
@@ -2161,26 +2175,32 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           {steps.map((s, i) => (
             <div key={s.label} className="flex items-center">
               <div className="flex flex-col items-center gap-1.5 w-24">
-                <div className={[
-                  "w-8 h-8 rounded-full flex items-center justify-center border",
-                  s.state === "done" ? "bg-emerald-500 border-emerald-400" :
-                    s.state === "active" ? "bg-emerald-500/15 border-emerald-400/60" :
-                      "bg-white/[0.04] border-white/15",
-                ].join(" ")}>
+                <div
+                  className={[
+                    "w-8 h-8 rounded-full flex items-center justify-center border bg-transparent",
+                    s.state === "done" ? "border-transparent" :
+                      s.state === "active" ? "border-[#FF7A2A]/70" :
+                        "border-white/20",
+                  ].join(" ")}
+                  style={s.state === "done" ? { background: "linear-gradient(to right, #EAB308, #FF0F00)" } : undefined}
+                >
                   {s.state === "done" ? (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                   ) : s.state === "active" ? (
-                    <span className={`w-2.5 h-2.5 rounded-full bg-emerald-400 ${reduceMotion ? "" : "animate-pulse"}`} />
+                    <span className={`w-2.5 h-2.5 rounded-full bg-[#FF7A2A] ${reduceMotion ? "" : "animate-pulse"}`} />
                   ) : (
                     <span className="w-2.5 h-2.5 rounded-full bg-white/20" />
                   )}
                 </div>
-                <span className={["text-sm font-medium leading-tight", s.state === "pending" ? "text-slate-500" : "text-emerald-300"].join(" ")}>
+                <span className={[
+                  "text-sm font-medium leading-tight",
+                  s.state === "pending" ? "text-slate-500" : s.state === "active" ? "text-[#FF7A2A] font-semibold" : "text-white",
+                ].join(" ")}>
                   {s.label}
                 </span>
               </div>
               {i < steps.length - 1 && (
-                <div className={["h-px w-6 -mt-6 shrink-0", s.state === "done" ? "bg-emerald-400/60" : "bg-white/15"].join(" ")} />
+                <div className={["h-px w-6 -mt-6 shrink-0", s.state === "done" ? "bg-[#FF7A2A]/60" : "bg-white/15"].join(" ")} />
               )}
             </div>
           ))}
@@ -2196,7 +2216,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
               delivered. Only offer it once there's actually nothing left in flight to lose track of. */}
           {(arrived || transferFailed) && (
             <button onClick={() => { localStorage.removeItem(WITHDRAWAL_STORAGE_KEY); setDone(false); setDoneAmount(0); setArrived(false); setTransferFailed(false); onWithdrawn(); }}
-              className="text-base text-slate-400 hover:text-white underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 rounded">
+              className="text-base text-slate-400 hover:text-white underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF7A2A]/50 rounded">
               Back to redeem
             </button>
           )}
@@ -2214,7 +2234,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
   );
 
   return (
-    <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.07] via-white/[0.04] to-white/[0.02] p-6 space-y-6">
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-6">
       {/* Celebration header */}
       <motion.div
         className="flex flex-col items-center text-center gap-1 pt-1"
@@ -2223,21 +2243,20 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
         transition={{ duration: 0.4 }}
       >
         <motion.div
-          className="text-5xl sm:text-6xl select-none"
-          aria-hidden="true"
+          className="w-16 h-16 rounded-full border-2 border-[#FF7A2A]/40 flex items-center justify-center text-[#FF7A2A]"
           animate={reduceMotion ? {} : { rotate: [0, -8, 8, -4, 0] }}
           transition={{ duration: 1.2, delay: 0.15 }}
         >
-          🏆
+          <Trophy className="w-7 h-7" />
         </motion.div>
-        <p className="text-sm font-bold text-emerald-400 uppercase tracking-[0.2em] mt-2">
+        <p className="text-sm font-bold text-[#FF7A2A] uppercase tracking-[0.2em] mt-2">
           {isBatch ? `${wonTickets.length} winning draws` : "You won"}
         </p>
-        <h2 className="font-display text-5xl sm:text-6xl font-bold tracking-tight bg-gradient-to-b from-white via-emerald-50 to-emerald-300 bg-clip-text text-transparent tabular-nums">
+        <h2 className="font-display text-5xl sm:text-6xl font-bold tracking-tight text-white tabular-nums">
           {isFreeTicket ? "Free ticket" : fmt(totalAmount)}
         </h2>
         <p className="text-base text-slate-400 mt-1">
-          {isFreeTicket ? "play it again in the next draw" : "ready to redeem privately"}
+          {isFreeTicket ? "play it again in the next draw" : sendPrivately ? "ready to redeem privately" : "ready to redeem"}
         </p>
       </motion.div>
 
@@ -2247,14 +2266,14 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
         {wonTickets.map((t, i) => (
           <motion.div
             key={t.id}
-            className="flex items-center justify-between px-4 py-3.5 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] shadow-[0_0_20px_rgba(16,185,129,0.08)]"
+            className="flex items-center justify-between px-4 py-3.5 rounded-xl border border-white/10 bg-white/[0.03]"
             initial={reduceMotion ? undefined : { opacity: 0, y: 12, scale: 0.98 }}
             animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
             transition={{ duration: 0.3, delay: 0.15 + i * 0.07 }}
           >
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-9 h-9 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                <Trophy className="w-4 h-4 text-emerald-400" />
+              <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0 text-amber-400 text-sm font-bold">
+                {t.winTier ? `T${t.winTier}` : <Trophy className="w-4 h-4" />}
               </div>
               <div className="min-w-0">
                 <p className="text-white text-base font-medium truncate">Winning ticket{t.winTier ? ` · Tier ${t.winTier}` : ""}</p>
@@ -2264,7 +2283,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
                 </p>
               </div>
             </div>
-            <span className="text-emerald-400 font-bold text-lg tabular-nums shrink-0 ml-3">
+            <span className="text-[#FF7A2A] font-bold text-lg tabular-nums shrink-0 ml-3">
               {t.isFreeTicket ? "Free ticket" : `+${fmt(t.winAmountUsdc ?? 0)}`}
             </span>
           </motion.div>
@@ -2272,29 +2291,23 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
       </div>
 
       {!isFreeTicket && (
-        <>
-          {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
-          <IncognitoModeToggle
-            checked={sendPrivately}
-            onCheckedChange={handleToggleSendPrivately}
-            onLabel="Withdraw privately"
-            offLabel="Withdraw privately"
-            ariaLabel="Withdraw privately"
-          />
-          <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
-            <ShieldCheck className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-            <div>
-              <p className="text-base text-slate-300 font-medium">
-                {sendPrivately
-                  ? (isBatch ? "All your wins arrive as one private transfer" : "Arrives privately in your Loofta balance")
-                  : (isBatch ? "All your wins arrive as one plain transfer" : "Arrives directly in your wallet")}
-              </p>
-              <p className="text-sm text-slate-500 mt-0.5">
-                {sendPrivately ? "No on-chain link between your winnings and your wallet" : "Visible on-chain, same as a normal transfer"}
-              </p>
-            </div>
+        <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
+          {sendPrivately ? (
+            <ShieldCheck className="w-4 h-4 text-[#EAB308] mt-0.5 shrink-0" />
+          ) : (
+            <Send className="w-4 h-4 text-[#EAB308] mt-0.5 shrink-0" />
+          )}
+          <div>
+            <p className="text-base text-white font-semibold">
+              {sendPrivately ? "Private withdrawal, automatic" : "Standard withdrawal"}
+            </p>
+            <p className="text-sm text-slate-400 mt-1">
+              {sendPrivately
+                ? `You bought ${isBatch ? "these tickets" : "this ticket"} privately, so your winnings leave privately too. One shielded transfer, no on-chain link between your win${isBatch ? "s" : ""} and your wallet.`
+                : `You bought ${isBatch ? "these tickets" : "this ticket"} the normal way, so your winnings leave the same way — a standard transfer, straight to your wallet.`}
+            </p>
           </div>
-        </>
+        </div>
       )}
 
       {playAgainError && <p className="text-base text-red-400">{playAgainError}</p>}
@@ -2313,10 +2326,15 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
            nudging the user straight back into another draw. Play again stays one tap away. */
         <>
           {error && <p className="text-base text-red-400">{error}</p>}
-          <button onClick={handleWithdraw} disabled={loading || bridgeFeeUsd === null}
-            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
-            {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Withdraw ~${fmt(bridgeReceiveUsdc ?? totalAmount)}${sendPrivately ? " privately" : ""}`}
-          </button>
+          <GradientActionButton
+            onClick={handleWithdraw}
+            disabled={loading || bridgeFeeUsd === null}
+            loading={loading}
+            loadingText="Processing..."
+            className="!h-12 !text-lg"
+          >
+            {bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Withdraw ~${fmt(bridgeReceiveUsdc ?? totalAmount)}${sendPrivately ? " privately" : ""}`}
+          </GradientActionButton>
           <button onClick={handlePlayAgain} disabled={playingAgain}
             className="w-full text-center text-base font-medium text-slate-300 hover:text-white underline underline-offset-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             {playingAgain ? "Playing again…" : `or play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"} instead, free`}
@@ -2329,7 +2347,7 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
           <GlowPlayAgainButton onClick={handlePlayAgain} disabled={playingAgain}>
             {playingAgain ? "Playing again…" : `⚡ Play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"}`}
           </GlowPlayAgainButton>
-          <p className="text-center text-sm text-emerald-300/80 font-medium -mt-1">
+          <p className="text-center text-sm text-[#FF7A2A]/80 font-medium -mt-1">
             Best value — we round you up to {playAgainTicketCount} whole ticket{playAgainTicketCount === 1 ? "" : "s"}, no fees
           </p>
           {!confirmingRedeem ? (
@@ -2360,10 +2378,15 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
         /* Edge: a win too small to buy even one replay ticket (< $1) — withdrawal is the only path. */
         <>
           {error && <p className="text-base text-red-400">{error}</p>}
-          <button onClick={handleWithdraw} disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
-            className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-[0_8px_24px_rgba(16,185,129,0.25)] hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f12]">
-            {loading ? "Processing..." : bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Redeem ~${fmt(bridgeReceiveUsdc ?? totalAmount)}${sendPrivately ? " privately" : ""}`}
-          </button>
+          <GradientActionButton
+            onClick={handleWithdraw}
+            disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
+            loading={loading}
+            loadingText="Processing..."
+            className="!h-12 !text-lg"
+          >
+            {bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Redeem ~${fmt(bridgeReceiveUsdc ?? totalAmount)}${sendPrivately ? " privately" : ""}`}
+          </GradientActionButton>
         </>
       )}
     </div>
@@ -2411,14 +2434,14 @@ const PREVIEW_WON_TICKETS: TicketSummary[] = [
     drawTime: new Date(Date.now() - 12 * 3600_000).toISOString(), winAmountUsdc: 272.39, winTier: 2,
     createdAt: new Date(Date.now() - 36 * 3600_000).toISOString(), depositAddress: null,
     bridgeStatus: "DONE", bridgeExpiresAt: null, ticketNumbers: PREVIEW_TICKETS,
-    winningNumbers: PREVIEW_WINNING_NUMBERS_WON,
+    winningNumbers: PREVIEW_WINNING_NUMBERS_WON, fundedPrivately: true,
   },
   {
     id: "preview-won-2", status: "won", numTickets: 1, costUsdc: 1, roundId: "411",
     drawTime: new Date(Date.now() - 36 * 3600_000).toISOString(), winAmountUsdc: 12.5, winTier: 4,
     createdAt: new Date(Date.now() - 60 * 3600_000).toISOString(), depositAddress: null,
     bridgeStatus: "DONE", bridgeExpiresAt: null, ticketNumbers: PREVIEW_TICKETS.slice(0, 1),
-    winningNumbers: PREVIEW_WINNING_NUMBERS_WON,
+    winningNumbers: PREVIEW_WINNING_NUMBERS_WON, fundedPrivately: true,
   },
   {
     id: "preview-won-3", status: "won", numTickets: 10, costUsdc: 10, roundId: "410",
@@ -2426,6 +2449,17 @@ const PREVIEW_WON_TICKETS: TicketSummary[] = [
     createdAt: new Date(Date.now() - 84 * 3600_000).toISOString(), depositAddress: null,
     bridgeStatus: "DONE", bridgeExpiresAt: null, ticketNumbers: PREVIEW_TICKETS,
     winningNumbers: PREVIEW_WINNING_NUMBERS_WON,
+  },
+  // Small cash win ($1.30–$4.99) — routes to the featured "Play again" glow button instead of
+  // Withdraw (see preferWithdraw/canPlayAgain below). $4.95 is the practical max for this branch:
+  // playAgainTicketCount = ceil(amount - 0.1), and >= $5 flips to the Withdraw-featured branch —
+  // so 5 tickets is the highest this glow-button state can show, not 6.
+  {
+    id: "preview-won-4", status: "won", numTickets: 5, costUsdc: 5, roundId: "409",
+    drawTime: new Date(Date.now() - 20 * 3600_000).toISOString(), winAmountUsdc: 4.95, winTier: 5,
+    createdAt: new Date(Date.now() - 44 * 3600_000).toISOString(), depositAddress: null,
+    bridgeStatus: "DONE", bridgeExpiresAt: null, ticketNumbers: PREVIEW_TICKETS,
+    winningNumbers: PREVIEW_WINNING_NUMBERS_WON, fundedPrivately: false,
   },
 ];
 
@@ -3623,7 +3657,9 @@ const DEV_PREVIEW_LINKS = [
   { label: "Draw — Lost", href: "/app/megapot?tab=buy&preview=lost" },
   { label: "Redeem — 1 win", href: "/app/megapot?tab=redeem&preview=redeem" },
   { label: "Redeem — batch", href: "/app/megapot?tab=redeem&preview=redeem-batch" },
-  { label: "Redeem — done", href: "/app/megapot?tab=redeem&preview=redeem-done" },
+  { label: "Redeem — play again (glow)", href: "/app/megapot?tab=redeem&preview=redeem-playagain" },
+  { label: "Redeem — on its way", href: "/app/megapot?tab=redeem&preview=redeem-done" },
+  { label: "Redeem — arrived", href: "/app/megapot?tab=redeem&preview=redeem-arrived" },
 ] as const;
 
 function DevPreviewPanel() {
@@ -3808,13 +3844,15 @@ export default function MegapotPage() {
   const inFlightOrDoneWithdrawalTicketIds = new Set(
     (dashboard?.withdrawals ?? []).filter(w => w.status !== "failed").map(w => w.ticketId)
   );
-  const wonTickets = redeemPreview === "redeem" || redeemPreview === "redeem-done"
+  const wonTickets = redeemPreview === "redeem" || redeemPreview === "redeem-done" || redeemPreview === "redeem-arrived"
     ? PREVIEW_WON_TICKETS.slice(0, 1)
     : redeemPreview === "redeem-batch"
       ? PREVIEW_WON_TICKETS
-      : [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])]
-        .filter(t => t.status === "won" && !inFlightOrDoneWithdrawalTicketIds.has(t.id));
-  const isRedeemPreview = redeemPreview === "redeem" || redeemPreview === "redeem-batch" || redeemPreview === "redeem-done";
+      : redeemPreview === "redeem-playagain"
+        ? PREVIEW_WON_TICKETS.slice(3, 4)
+        : [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])]
+          .filter(t => t.status === "won" && !inFlightOrDoneWithdrawalTicketIds.has(t.id));
+  const isRedeemPreview = redeemPreview === "redeem" || redeemPreview === "redeem-batch" || redeemPreview === "redeem-playagain" || redeemPreview === "redeem-done" || redeemPreview === "redeem-arrived";
 
   return (
     <div className="bg-[#0f0f12] text-white mobile-first">
@@ -3838,7 +3876,7 @@ export default function MegapotPage() {
         )}
         {tab === "redeem" && (
           authenticated ? (
-            <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={isRedeemPreview ? false : dashboardLoading} previewDone={redeemPreview === "redeem-done"} withdrawMinUsdc={dashboard?.withdrawMinUsdc} />
+            <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={isRedeemPreview ? false : dashboardLoading} previewDone={redeemPreview === "redeem-done"} previewArrived={redeemPreview === "redeem-arrived"} withdrawMinUsdc={dashboard?.withdrawMinUsdc} />
           ) : (
             <SignInGate message="Sign in to see and redeem your winnings." login={login} />
           )

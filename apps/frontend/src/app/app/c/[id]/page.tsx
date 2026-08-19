@@ -140,12 +140,14 @@ const DEV_PREVIEW_STATES: Record<
     waitingForBurnerFunds?: boolean;
     isPrivateMode?: boolean;
     forcePrivatelyPaidNotice?: boolean;
+    forceClaimingScreen?: boolean;
   }
 > = {
   "recipient-paj": { showBankClaimOption: true, canClaimPrivately: true, walletNotReady: false, waitingForBurnerFunds: false },
   "recipient-no-paj": { showBankClaimOption: false, canClaimPrivately: true, walletNotReady: false, waitingForBurnerFunds: false },
   "recipient-wallet-setup": { showBankClaimOption: true, canClaimPrivately: true, walletNotReady: true, waitingForBurnerFunds: false },
   "recipient-funds-pending": { showBankClaimOption: true, canClaimPrivately: false, walletNotReady: false, waitingForBurnerFunds: true },
+  "recipient-claiming": { forceClaimingScreen: true },
   "recipient-paid-public": { showBankClaimOption: false, canClaimPrivately: false, walletNotReady: false, waitingForBurnerFunds: false },
   "recipient-paid-private": { showBankClaimOption: false, canClaimPrivately: false, walletNotReady: false, waitingForBurnerFunds: false, forcePrivatelyPaidNotice: true },
   "sender-public": { isPrivateMode: false },
@@ -157,6 +159,7 @@ const DEV_PREVIEW_LINKS: { key: keyof typeof DEV_PREVIEW_STATES; label: string }
   { key: "recipient-no-paj", label: "Recipient — no PAJ account" },
   { key: "recipient-wallet-setup", label: "Recipient — wallet setting up" },
   { key: "recipient-funds-pending", label: "Recipient — funds pending" },
+  { key: "recipient-claiming", label: "Recipient — payment on its way" },
   { key: "recipient-paid-public", label: "Recipient — sender paid publicly" },
   { key: "recipient-paid-private", label: "Recipient — sender paid privately" },
   { key: "sender-public", label: "Sender — public" },
@@ -4329,7 +4332,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   </div>
                 )}
               </div>
-            ) : user?.id && claimAsRecipientMutation.isPending && !claimCompleted ? (
+            ) : user?.id && (claimAsRecipientMutation.isPending || previewOverride?.forceClaimingScreen) && !claimCompleted ? (
               (() => {
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
                 return (
