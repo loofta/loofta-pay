@@ -404,11 +404,11 @@ export function AgentChatBox() {
    *  fees, same shape as the single-payment card. Private sends fall back to the full
    *  MultiSendFlow below the chat, since that's the only path with the hub-fee calculation and
    *  its own privacy toggle — cramming that into the compact card isn't worth the complexity. */
-  function finalizeMultiSend(recipients: ParsedRecipient[], _isPrivate: boolean) {
+  function finalizeMultiSend(_recipients: ParsedRecipient[], _isPrivate: boolean) {
     // Multi-recipient send is temporarily disabled everywhere (see MultiSendFlow.tsx) — the
     // shared-hub fan-out it relies on has no per-sender isolation, blocked until reworked.
     pushAssistant(
-      `Sending to ${recipients.length} recipients at once is temporarily unavailable — send to one recipient at a time for now.`,
+      `🛠️ We're working on making Multi Send even better — send to one recipient at a time for now.`,
       'error',
     )
   }

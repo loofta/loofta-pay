@@ -369,13 +369,13 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <p className="text-white text-xl font-semibold flex-1">Multi Send</p>
+          <p className="text-slate-100 text-xl font-semibold flex-1">Multi Send</p>
         </div>
-        <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-6 text-center space-y-2">
-          <AlertCircle className="w-6 h-6 text-amber-400 mx-auto" />
-          <p className="text-white font-medium">Multi Send is temporarily unavailable</p>
-          <p className="text-slate-400 text-base">
-            We're reworking how it funds payouts. Please send to one recipient at a time for now.
+        <div className="rounded-xl border border-white/10 bg-white/5 px-6 py-10 text-center space-y-3">
+          <div className="text-4xl">🛠️</div>
+          <p className="text-slate-100 text-lg font-semibold">Making Multi Send even better</p>
+          <p className="text-slate-400 text-base max-w-xs mx-auto">
+            We're polishing up the experience — check back soon. For now, send to one recipient at a time.
           </p>
         </div>
       </div>

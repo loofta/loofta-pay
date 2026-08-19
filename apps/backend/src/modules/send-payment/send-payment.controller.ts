@@ -31,7 +31,7 @@ export class SendPaymentController {
   // double-payments to real recipients (both discovered and remediated 2026-08-19). Blocked at
   // every entry point until the hub is reworked with proper isolation.
   private static readonly MULTI_SEND_DISABLED_MESSAGE =
-    'Multi-recipient send is temporarily unavailable while we rework how it funds payouts. Please send to one recipient at a time for now.';
+    "We're working on making Multi Send even better. Please send to one recipient at a time for now.";
 
   private assertMultiSendEnabled(): void {
     throw new ServiceUnavailableException(SendPaymentController.MULTI_SEND_DISABLED_MESSAGE);
