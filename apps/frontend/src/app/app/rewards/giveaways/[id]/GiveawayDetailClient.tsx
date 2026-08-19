@@ -478,14 +478,18 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     }
   }, [toast, getAccessToken]);
 
-  const markTaskDone = useCallback(async (taskId: string, submission: { text?: string; proofImageUrl?: string } = {}, key: string = taskId) => {
+  const markTaskDone = useCallback(async (taskId: string, submission: { text?: string; proofImageUrl?: string } = {}, key: string = taskId, requiresProof: boolean = false) => {
     setVerifyingKey(key);
     try {
       const status = await submitTask(taskId, submission);
       // X tasks (retweet/like/follow/comment) verify instantly against the live X API — give
       // accurate feedback right away instead of a generic "marked done" that implies it's still pending.
+      // Proof-upload tasks are always human-reviewed, so they never get X-specific copy.
       if (status === "auto_verified" || status === "verified") {
         toast({ title: "Verified! ✅", description: "Confirmed on X." });
+        setExpandedTaskKey((cur) => (cur === key ? null : cur));
+      } else if (requiresProof) {
+        toast({ title: "Submitted for review", description: "We'll review your proof and update this task shortly." });
         setExpandedTaskKey((cur) => (cur === key ? null : cur));
       } else if (status === "rejected") {
         toast({ variant: "destructive", title: "Not verified", description: "We couldn't confirm this on X yet — make sure you've actually done it, then try again." });
@@ -1267,7 +1271,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                                   <button
                                     type="button"
                                     disabled={!canSubmitProof || uploadingProof}
-                                    onClick={() => markTaskDone(task.id, { text: proofText.trim(), proofImageUrl })}
+                                    onClick={() => markTaskDone(task.id, { text: proofText.trim(), proofImageUrl }, task.id, true)}
                                     className={`w-full px-4 py-2.5 ${taskActionButtonClass}`}
                                   >
                                     Submit for review

@@ -254,8 +254,25 @@ export class GiveawayEntriesService {
       return trusted as GiveawayTaskCompletion;
     }
 
+    // A self-report resubmission after a rejection must clear the stale review, or it never
+    // re-enters listReviewQueue (which only surfaces PENDING) and the new proof silently vanishes.
+    const isSelfReportResubmit =
+      task?.verification_mode === GiveawayTaskVerificationMode.SELF_REPORT &&
+      (completion.verification_status === GiveawayTaskCompletionStatus.REJECTED ||
+        completion.verification_status === GiveawayTaskCompletionStatus.API_ERROR);
+
     const { data, error } = await this.supabaseService.giveawayTaskCompletions
-      .update({ submission_data: submissionData ?? null })
+      .update({
+        submission_data: submissionData ?? null,
+        ...(isSelfReportResubmit
+          ? {
+              verification_status: GiveawayTaskCompletionStatus.PENDING,
+              verification_detail: null,
+              reviewed_by: null,
+              reviewed_at: null,
+            }
+          : {}),
+      })
       .eq('id', completion.id)
       .select()
       .single();
