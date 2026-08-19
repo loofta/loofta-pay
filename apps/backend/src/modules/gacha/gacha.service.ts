@@ -124,6 +124,21 @@ export interface WaitingRoomSummary {
   participants: Array<{ seatNumber: number; mascotKey: string | null }>;
 }
 
+export interface CurrentWaitingRoomSummary extends WaitingRoomSummary {
+  isCreator: boolean;
+  hasSeat: boolean;
+  /** An unseated creator may cancel only while nobody has paid into the room. */
+  canCancel: boolean;
+}
+
+interface ExistingWaitingRoom {
+  id: string;
+  entryUsdc: number;
+  isCreator: boolean;
+  hasSeat: boolean;
+  createdAt: string;
+}
+
 export interface ActiveRoomSummary {
   id: string;
   name: string;
@@ -390,6 +405,21 @@ export class GachaService {
     return { roomNumber: Number(data?.room_number ?? 0) + 1 };
   }
 
+  /** The caller's current waiting-room relationship for one size. Unlike the public browser,
+   * this also recovers private rooms and rooms the caller created but has not paid to join yet. */
+  async getCurrentWaitingRoom(configKey: string, userId: string): Promise<CurrentWaitingRoomSummary | null> {
+    await this.getConfig(configKey);
+    const existing = await this.findExistingWaitingRoomForUser(configKey, userId);
+    if (!existing) return null;
+    const room = await this.getWaitingRoomSummary(existing.id, userId, true);
+    return {
+      ...room,
+      isCreator: existing.isCreator,
+      hasSeat: existing.hasSeat,
+      canCancel: existing.isCreator && !existing.hasSeat && room.seatsFilled === 0,
+    };
+  }
+
   /** Creates a distinct room even when another room of the same config has open seats. Stable
    *  numbering and the insert happen in one database function under a per-config lock. */
   async createWaitingRoom(
@@ -408,10 +438,12 @@ export class GachaService {
       // The public browser deliberately hides private rooms, but the duplicate-seat guard
       // still needs to give the owner a way back to their existing room. Return the same
       // owner-authorized summary used by the room UI; never expose this to another user.
-      const existingRoom = await this.getWaitingRoomSummary(existing.id, userId, true);
+      const existingRoom = await this.getCurrentWaitingRoom(configKey, userId);
       throw new BadRequestException({
         code: 'ALREADY_IN_WAITING_ROOM',
-        message: 'You already have a seat in a waiting room for this size',
+        message: existing.hasSeat
+          ? 'You already have a seat in a waiting room for this size'
+          : 'You already created a waiting room for this size',
         room: existingRoom,
       });
     }
@@ -429,6 +461,18 @@ export class GachaService {
     });
     if (error) {
       if (error.message?.includes('already have a waiting room')) {
+        // The database lock is the final race guard. If a concurrent request won after the
+        // preflight check, recover that room into the same structured response the UI expects.
+        const existingRoom = await this.getCurrentWaitingRoom(configKey, userId);
+        if (existingRoom) {
+          throw new BadRequestException({
+            code: 'ALREADY_IN_WAITING_ROOM',
+            message: existingRoom.hasSeat
+              ? 'You already have a seat in a waiting room for this size'
+              : 'You already created a waiting room for this size',
+            room: existingRoom,
+          });
+        }
         throw new BadRequestException('You already have a waiting room for this size');
       }
       throw new Error(`Failed to create gacha room: ${error.message}`);
@@ -779,11 +823,11 @@ export class GachaService {
   async buildJoinTxForRoom(roomId: string, userId: string, inviteCode?: string): Promise<{ txBase64: string | null; roomId: string; entryUsdc: number; alreadyJoined?: boolean }> {
     const requestedRoom = await this.getJoinableRoom(roomId, userId, inviteCode);
     const existing = await this.findExistingWaitingRoomForUser(requestedRoom.configKey, userId);
-    if (existing?.id === requestedRoom.id) {
+    if (existing?.id === requestedRoom.id && existing.hasSeat) {
       return { txBase64: null, roomId: existing.id, entryUsdc: existing.entryUsdc, alreadyJoined: true };
     }
-    if (existing) {
-      const existingRoom = await this.getWaitingRoomSummary(existing.id, userId, true);
+    if (existing && existing.id !== requestedRoom.id) {
+      const existingRoom = await this.getCurrentWaitingRoom(requestedRoom.configKey, userId);
       throw new BadRequestException({
         code: 'ALREADY_IN_DIFFERENT_WAITING_ROOM',
         message: 'Leave your current waiting room before joining another one',
@@ -811,6 +855,9 @@ export class GachaService {
       const message = error.message ?? '';
       if (message.includes('not found')) throw new NotFoundException('Room not found');
       if (message.includes('do not have a seat')) throw new BadRequestException('You do not have a seat in this room');
+      if (message.includes('has paid participants')) {
+        throw new BadRequestException('This room already has paid players and can no longer be cancelled');
+      }
       if (message.includes('already started') || message.includes('can no longer be left')) {
         throw new BadRequestException('This room has already started and can no longer be left');
       }
@@ -836,23 +883,50 @@ export class GachaService {
   private async findExistingWaitingRoomForUser(
     configKey: string,
     userId: string,
-  ): Promise<{ id: string; entryUsdc: number } | null> {
+  ): Promise<ExistingWaitingRoom | null> {
     const db = this.supabase.getClient();
     const { data: myRoomIds, error: participantError } = await db.from('gacha_room_participants').select('room_id').eq('user_id', userId);
     if (participantError) throw new Error(`Failed to load existing Gacha seats: ${participantError.message}`);
-    if (!myRoomIds?.length) return null;
 
-    const { data: existingSeat, error } = await db
+    const participantRoomIds = new Set((myRoomIds ?? []).map((row: any) => String(row.room_id)));
+    const { data: ownedRoom, error: ownedError } = await db
       .from('gacha_rooms')
-      .select('id, entry_usdc')
-      .in('id', myRoomIds.map((row: any) => row.room_id))
+      .select('id, entry_usdc, created_at')
       .eq('config_key', configKey)
       .eq('status', 'waiting')
+      .eq('created_by_user_id', userId)
       .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle();
-    if (error) throw new Error(`Failed to load existing Gacha room: ${error.message}`);
-    return existingSeat ? { id: existingSeat.id, entryUsdc: Number(existingSeat.entry_usdc) } : null;
+    if (ownedError) throw new Error(`Failed to load creator-owned Gacha room: ${ownedError.message}`);
+
+    let participantRoom: any = null;
+    if (participantRoomIds.size) {
+      const { data, error } = await db
+        .from('gacha_rooms')
+        .select('id, entry_usdc, created_at')
+        .in('id', Array.from(participantRoomIds))
+        .eq('config_key', configKey)
+        .eq('status', 'waiting')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error(`Failed to load existing Gacha seat: ${error.message}`);
+      participantRoom = data;
+    }
+
+    const candidates = [ownedRoom, participantRoom].filter(Boolean).sort((a, b) =>
+      String(a.created_at).localeCompare(String(b.created_at)),
+    );
+    const existing = candidates[0];
+    if (!existing) return null;
+    return {
+      id: existing.id,
+      entryUsdc: Number(existing.entry_usdc),
+      isCreator: ownedRoom?.id === existing.id,
+      hasSeat: participantRoomIds.has(String(existing.id)),
+      createdAt: existing.created_at,
+    };
   }
 
   private async getJoinableRoom(

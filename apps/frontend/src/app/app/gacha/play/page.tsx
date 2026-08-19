@@ -48,6 +48,9 @@ interface WaitingRoom {
   inviteCode?: string | null;
   createdAt: string;
   participants: Array<{ seatNumber: number; mascotKey: string | null }>;
+  isCreator?: boolean;
+  hasSeat?: boolean;
+  canCancel?: boolean;
 }
 
 interface ActiveRoom {
@@ -74,10 +77,22 @@ function liveStatusLabel(status: string): string {
 }
 
 function roomHref(room: Pick<WaitingRoom, "id" | "inviteCode">): string {
+  if (typeof room.id !== "string" || room.id.length === 0) return "/app/gacha/play";
   const inviteQuery = room.inviteCode
     ? `?inviteCode=${encodeURIComponent(room.inviteCode)}`
     : "";
   return `/app/gacha/${room.id}${inviteQuery}`;
+}
+
+function isWaitingRoom(value: unknown): value is WaitingRoom {
+  if (!value || typeof value !== "object") return false;
+  const room = value as Partial<WaitingRoom>;
+  return typeof room.id === "string" && room.id.length > 0
+    && typeof room.name === "string"
+    && typeof room.configKey === "string"
+    && typeof room.seats === "number"
+    && typeof room.seatsFilled === "number"
+    && Array.isArray(room.participants);
 }
 
 function friendlyJoinError(rawMessage: string | undefined): string {
@@ -134,6 +149,7 @@ export default function GachaPlayPage() {
   const [isPrivate, setIsPrivate] = useState(false);
   const [createdRoom, setCreatedRoom] = useState<WaitingRoom | null>(null);
   const [existingRoom, setExistingRoom] = useState<WaitingRoom | null>(null);
+  const [currentRoomLoading, setCurrentRoomLoading] = useState(false);
   const [invitedRoom, setInvitedRoom] = useState<WaitingRoom | null>(null);
   const [rematchRoom, setRematchRoom] = useState<WaitingRoom | null>(null);
   const [rematchLoading, setRematchLoading] = useState(false);
@@ -142,6 +158,7 @@ export default function GachaPlayPage() {
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [leavingRoom, setLeavingRoom] = useState(false);
   const roomsRequestIdRef = useRef(0);
+  const currentRoomRequestIdRef = useRef(0);
   const activeRoomsRequestIdRef = useRef(0);
 
   const loadConfigs = useCallback(async () => {
@@ -187,10 +204,11 @@ export default function GachaPlayPage() {
     fetch(`/api/gacha/rooms/invite/${encodeURIComponent(inviteCode)}`, { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error((await response.json().catch(() => null))?.message ?? "This invite is no longer valid");
-        return response.json() as Promise<WaitingRoom>;
+        return response.json() as Promise<unknown>;
       })
       .then((room) => {
         if (cancelled) return;
+        if (!isWaitingRoom(room)) throw new Error("This invite returned an invalid room");
         setInvitedRoom({ ...room, inviteCode });
         setPickedSeats(room.seats);
         setRoomMode("browse");
@@ -243,6 +261,7 @@ export default function GachaPlayPage() {
             mascotKey: participant.mascotKey ?? null,
           })),
         };
+        if (!isWaitingRoom(nextRoom)) throw new Error("This rematch returned an invalid destination room");
         if (cancelled) return;
         setRematchRoom(nextRoom);
         setPickedSeats(nextRoom.seats);
@@ -269,7 +288,9 @@ export default function GachaPlayPage() {
     try {
       const response = await fetch(`/api/gacha/rooms/waiting?configKey=${encodeURIComponent(activeConfig.configKey)}`, { cache: "no-store" });
       if (!response.ok) throw new Error("Couldn't load open rooms");
-      const nextRooms: WaitingRoom[] = await response.json();
+      const payload: unknown = await response.json();
+      if (!Array.isArray(payload)) throw new Error("Invalid open-room response");
+      const nextRooms = payload.filter(isWaitingRoom);
       if (requestId !== roomsRequestIdRef.current) return;
       setRooms(nextRooms);
       const directRoom = directRoomId ? nextRooms.find((room) => room.id === directRoomId) : null;
@@ -287,6 +308,35 @@ export default function GachaPlayPage() {
       if (requestId === roomsRequestIdRef.current) setRoomsLoading(false);
     }
   }, [activeConfig, directRoomId, rematchRoomId]);
+
+  const loadCurrentRoom = useCallback(async (showLoading = false) => {
+    if (rematchRoomId || !activeConfig || !authenticated) {
+      setExistingRoom(null);
+      setCurrentRoomLoading(false);
+      return;
+    }
+    const requestId = ++currentRoomRequestIdRef.current;
+    if (showLoading) setCurrentRoomLoading(true);
+    try {
+      const token = await getAccessToken();
+      const response = await fetch(`/api/gacha/rooms/current?configKey=${encodeURIComponent(activeConfig.configKey)}`, {
+        cache: "no-store",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message ?? "Couldn't recover your current room");
+      if (requestId === currentRoomRequestIdRef.current) {
+        // The backend legitimately returns no body when there is no waiting room. Treat empty or
+        // malformed data as "none" so an expired room can never become /app/gacha/undefined.
+        setExistingRoom(isWaitingRoom(payload) ? payload : null);
+      }
+    } catch (err: any) {
+      if (requestId !== currentRoomRequestIdRef.current) return;
+      setError(err?.message?.length < 200 ? err.message : "Couldn't recover your current room — please retry.");
+    } finally {
+      if (requestId === currentRoomRequestIdRef.current) setCurrentRoomLoading(false);
+    }
+  }, [activeConfig, authenticated, getAccessToken, rematchRoomId]);
 
   const loadActiveRooms = useCallback(async (showLoading = false) => {
     if (rematchRoomId || !activeConfig) return;
@@ -324,6 +374,17 @@ export default function GachaPlayPage() {
       activeRoomsRequestIdRef.current += 1;
     };
   }, [activeConfig, loadRooms, loadActiveRooms, rematchRoomId]);
+
+  useEffect(() => {
+    currentRoomRequestIdRef.current += 1;
+    void loadCurrentRoom(true);
+    if (rematchRoomId || !activeConfig || !authenticated) return;
+    const interval = window.setInterval(() => { void loadCurrentRoom(false); }, 5_000);
+    return () => {
+      window.clearInterval(interval);
+      currentRoomRequestIdRef.current += 1;
+    };
+  }, [activeConfig, authenticated, loadCurrentRoom, rematchRoomId]);
 
   // Changing size invalidates a picked/created room. loadRooms selects the first result, and the
   // backend returns rooms fullest-first so the room closest to starting becomes the default.
@@ -393,20 +454,21 @@ export default function GachaPlayPage() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        if (payload?.code === "ALREADY_IN_WAITING_ROOM" && payload.room) {
-          setExistingRoom(payload.room as WaitingRoom);
+        if (payload?.code === "ALREADY_IN_WAITING_ROOM" && isWaitingRoom(payload.room)) {
+          setExistingRoom(payload.room);
           setCreatedRoom(null);
           setInvitedRoom(null);
           setRoomMode("browse");
           setSelectedRoomId(payload.room.id);
-          // This is a recoverable state, not an error: the user has already paid for a seat and
-          // should be taken back to that room without another charge.
+          // This is a recoverable state, not an error. The caller may already have a paid seat,
+          // or may own the room without having paid yet; the recovery card supports both cases.
           setError(null);
           return;
         }
         throw new Error(payload?.message ?? "Failed to create room");
       }
-      const room: WaitingRoom = payload as WaitingRoom;
+      if (!isWaitingRoom(payload)) throw new Error("The server returned an invalid room");
+      const room = payload;
       setExistingRoom(null);
       setCreatedRoom(room);
       setSelectedRoomId(room.id);
@@ -463,14 +525,17 @@ export default function GachaPlayPage() {
         });
         const joinTxPayload = await joinTxRes.json().catch(() => null);
         if (!joinTxRes.ok) {
-          if (joinTxPayload?.code === "ALREADY_IN_DIFFERENT_WAITING_ROOM" && joinTxPayload.room) {
-            setExistingRoom(joinTxPayload.room as WaitingRoom);
+          if (joinTxPayload?.code === "ALREADY_IN_DIFFERENT_WAITING_ROOM" && isWaitingRoom(joinTxPayload.room)) {
+            setExistingRoom(joinTxPayload.room);
             setError(null);
             return;
           }
           throw new Error(joinTxPayload?.message ?? "Failed to prepare entry payment");
         }
-        const { txBase64, roomId, alreadyJoined } = joinTxPayload;
+        const { txBase64, roomId, alreadyJoined } = joinTxPayload ?? {};
+        if (typeof roomId !== "string" || roomId.length === 0) {
+          throw new Error("The server did not return a valid destination room");
+        }
 
         // Already have a seat in a waiting room for this config — nothing to sign, just go there.
         // A private-room invite code is bearer access until this user has a confirmed seat.
@@ -525,8 +590,8 @@ export default function GachaPlayPage() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.message ?? "Couldn't leave this room");
-      setExistingRoom(null);
       setShowLeaveConfirm(false);
+      await loadCurrentRoom(false);
       await loadRooms(true);
     } catch (err: any) {
       setShowLeaveConfirm(false);
@@ -534,7 +599,7 @@ export default function GachaPlayPage() {
     } finally {
       setLeavingRoom(false);
     }
-  }, [existingRoom, leavingRoom, getAccessToken, loadRooms]);
+  }, [existingRoom, leavingRoom, getAccessToken, loadCurrentRoom, loadRooms]);
 
   const pickedMascot = getMascot(mascotKey);
 
@@ -543,20 +608,24 @@ export default function GachaPlayPage() {
     : createdRoom
     ? `JOIN ${createdRoom.name.toUpperCase()} FOR $${createdRoom.entryUsdc.toFixed(2)} →`
     : existingRoom
-      ? "LEAVE CURRENT ROOM TO SWITCH"
+      ? existingRoom.hasSeat === false
+        ? `JOIN ${existingRoom.name.toUpperCase()} FOR $${existingRoom.entryUsdc.toFixed(2)} →`
+        : "OPEN YOUR CURRENT ROOM"
     : roomMode === "create"
       ? "CREATE ROOM →"
       : selectedRoom
         ? activeConfig && `JOIN ${selectedRoom.name.toUpperCase()} FOR $${activeConfig.entryUsdc.toFixed(2)} →`
         : "SELECT A ROOM";
   const ctaDisabled =
-    configsLoading || roomsLoading || rematchLoading || creatingRoom || joiningSeats !== null || leavingRoom || !!existingRoom
+    configsLoading || roomsLoading || currentRoomLoading || rematchLoading || creatingRoom || joiningSeats !== null || leavingRoom || existingRoom?.hasSeat === true
     || (roomMode === "create" && !createdRoom && !roomName.trim())
-    || (roomMode === "browse" && !selectedRoom && !createdRoom);
+    || (roomMode === "browse" && !selectedRoom && !createdRoom && !existingRoom);
   const handleCtaClick = () => {
     if (!activeConfig) return;
     if (rematchRoom) { void handleJoin(rematchRoom); return; }
     if (createdRoom) { void handleJoin(createdRoom); return; }
+    if (existingRoom?.hasSeat === false) { void handleJoin(existingRoom); return; }
+    if (existingRoom?.hasSeat) { router.push(roomHref(existingRoom)); return; }
     if (roomMode === "create") { void handleCreateRoom(); return; }
     if (selectedRoom) void handleJoin(selectedRoom);
   };
@@ -697,9 +766,18 @@ export default function GachaPlayPage() {
           {activeConfig && existingRoom && !createdRoom && (
             <section className="pp-existingroom" aria-label="Current waiting room">
               <div className="pp-existingroom-copy">
-                <span>{existingRoom.isPrivate ? "Private room · current seat" : "Public room · current seat"}</span>
+                <span>
+                  {existingRoom.isPrivate ? "Private room" : "Public room"}
+                  {existingRoom.hasSeat === false ? " · you created this" : " · current seat"}
+                </span>
                 <strong>{existingRoom.name}</strong>
-                <p>{existingRoom.seatsFilled}/{existingRoom.seats} joined · leave it before switching rooms</p>
+                <p>
+                  {existingRoom.seatsFilled}/{existingRoom.seats} joined · {existingRoom.hasSeat === false
+                    ? existingRoom.seatsFilled === 0
+                      ? "join it or cancel it before creating another"
+                      : "friends have joined; open it to take your seat"
+                    : "leave it before switching rooms"}
+                </p>
               </div>
               <div className="pp-existingroom-actions">
                 {existingRoom.isPrivate && existingRoom.inviteCode && (
@@ -710,9 +788,11 @@ export default function GachaPlayPage() {
                 <button type="button" className="pp-existingroom-open" onClick={() => router.push(roomHref(existingRoom))}>
                   Open room
                 </button>
-                <button type="button" className="pp-existingroom-leave" onClick={() => setShowLeaveConfirm(true)} disabled={leavingRoom}>
-                  <LogOut className="h-4 w-4" aria-hidden="true" /> Leave room
-                </button>
+                {(existingRoom.hasSeat || existingRoom.canCancel) && (
+                  <button type="button" className="pp-existingroom-leave" onClick={() => setShowLeaveConfirm(true)} disabled={leavingRoom}>
+                    <LogOut className="h-4 w-4" aria-hidden="true" /> {existingRoom.canCancel ? "Cancel room" : "Leave room"}
+                  </button>
+                )}
               </div>
             </section>
           )}
@@ -896,21 +976,23 @@ export default function GachaPlayPage() {
       <AlertDialog open={showLeaveConfirm} onOpenChange={(open) => { if (!leavingRoom) setShowLeaveConfirm(open); }}>
         <AlertDialogContent className="border-white/10 bg-[#0f0f12] text-white sm:max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle>Leave {existingRoom?.name ?? "this room"}?</AlertDialogTitle>
+            <AlertDialogTitle>{existingRoom?.canCancel ? "Cancel" : "Leave"} {existingRoom?.name ?? "this room"}?</AlertDialogTitle>
             <AlertDialogDescription className="text-slate-300">
-              Your waiting seat will be released so you can join another room. Your Devnet test entry is not refunded.
+              {existingRoom?.canCancel
+                ? "This empty room will be cancelled so you can create or join another room."
+                : "Your waiting seat will be released so you can join another room. Your Devnet test entry is not refunded."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={leavingRoom} className="border-white/20 bg-white/5 text-white hover:bg-white/10 hover:text-white">
-              Keep my seat
+              {existingRoom?.canCancel ? "Keep room" : "Keep my seat"}
             </AlertDialogCancel>
             <AlertDialogAction
               disabled={leavingRoom}
               onClick={(event) => { event.preventDefault(); void handleLeaveRoom(); }}
               className="bg-red-600 text-white hover:bg-red-500 focus-visible:ring-red-300"
             >
-              {leavingRoom ? "Leaving…" : "Leave room"}
+              {leavingRoom ? (existingRoom?.canCancel ? "Cancelling…" : "Leaving…") : (existingRoom?.canCancel ? "Cancel room" : "Leave room")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -90,6 +90,12 @@ export class GachaController {
     return this.gacha.getWaitingRoomByInviteCode(inviteCode);
   }
 
+  @Get('rooms/current')
+  @ApiOperation({ summary: 'Recover the caller\'s current waiting room for one config, including unseated creator-owned rooms' })
+  async currentWaitingRoom(@Query('configKey') configKey: string, @Request() req: any) {
+    return this.gacha.getCurrentWaitingRoom(configKey, req.user.id);
+  }
+
   @Post('rooms')
   @ApiOperation({ summary: 'Create a distinct public or private waiting room' })
   async createRoom(@Body() dto: CreateRoomDto, @Request() req: any) {
@@ -151,7 +157,7 @@ export class GachaController {
   }
 
   @Delete('rooms/:id/leave')
-  @ApiOperation({ summary: 'Release the caller\'s seat while the room is still waiting' })
+  @ApiOperation({ summary: 'Release a waiting seat, or cancel the caller-owned room while it is still empty' })
   async leaveRoom(@Param('id') id: string, @Request() req: any) {
     return this.gacha.leaveWaitingRoom(id, req.user.id);
   }
