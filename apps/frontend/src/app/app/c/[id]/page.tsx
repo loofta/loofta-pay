@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState, type SVGProps } from "reac
 import Link from "next/link";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
+import { invalidateAfterRecipientUpdate } from "@/lib/invalidateAfterRecipientUpdate";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import type { TokenSelection } from "@/app/utils/types";
@@ -2293,7 +2294,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
             disabled={claimActionDisabled}
             className={cn(
               "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
-              mobile ? "py-4 text-base" : "py-3 text-sm",
+              mobile ? "py-4 text-base" : "py-3",
               "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
               claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
             )}
@@ -2334,7 +2335,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 whileTap={claimActionDisabled ? undefined : { scale: 0.98 }}
                 className={cn(
                   "w-full flex items-center justify-center gap-2 rounded-xl bg-black/30 border border-white/15 font-semibold text-slate-200 transition-colors hover:bg-black/40 hover:border-white/25",
-                  mobile ? "py-4 text-base" : "py-3 text-sm",
+                  mobile ? "py-4 text-base" : "py-3",
                   claimActionDisabled && "opacity-50 cursor-not-allowed hover:bg-black/30",
                 )}
               >
@@ -2449,7 +2450,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           style={{ flex: "1 1 0", height: 0, overflowY: "auto", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
         >
           <DialogHeader className="pb-0 pt-2 sm:pt-0">
-            <DialogTitle className="flex items-center gap-2.5 text-3xl sm:text-4xl font-bold tracking-tight text-white">
+            <DialogTitle className="flex items-center gap-2.5 font-display text-3xl sm:text-4xl font-medium tracking-tight text-white">
               <PrivacyGlyph size={26} opacity={1} />
               Claim privately
             </DialogTitle>
@@ -2477,30 +2478,30 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           <p className="text-base md:text-sm text-slate-500 leading-relaxed">
             {privatePaymentFundsAppearCopy()}
           </p>
+        </div>
 
-          <div className="flex flex-col-reverse sm:flex-row gap-2 mt-2">
-            <button
-              type="button"
-              onClick={() => setPrivateClaimConfirm(null)}
-              disabled={claimActionDisabled}
-              className="flex-1 h-12 rounded-xl text-base font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-40"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (!privateClaimConfirm) return;
-                setClaimInitiated(true);
-                claimAsRecipientMutation.mutate({ claimPrivately: true, ...privateClaimConfirm });
-                setPrivateClaimConfirm(null);
-              }}
-              disabled={claimActionDisabled}
-              className="flex-1 h-12 rounded-xl text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
-            >
-              Confirm
-            </button>
-          </div>
+        <div className="shrink-0 flex flex-col-reverse sm:flex-row gap-2 px-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:px-0 sm:pb-0 sm:mt-2">
+          <button
+            type="button"
+            onClick={() => setPrivateClaimConfirm(null)}
+            disabled={claimActionDisabled}
+            className="flex-1 h-14 sm:h-12 rounded-xl text-lg sm:text-base font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!privateClaimConfirm) return;
+              setClaimInitiated(true);
+              claimAsRecipientMutation.mutate({ claimPrivately: true, ...privateClaimConfirm });
+              setPrivateClaimConfirm(null);
+            }}
+            disabled={claimActionDisabled}
+            className="flex-1 h-14 sm:h-12 rounded-xl text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
+          >
+            Confirm
+          </button>
         </div>
       </DialogContent>
     </Dialog>
@@ -4631,7 +4632,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 recipientType="email"
                 recipientValue={claim?.recipient_pending_email_value}
                 claimLocked={!!claim?.recipient_claim_in_progress}
-                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
+                onRecipientUpdated={() => invalidateAfterRecipientUpdate(queryClient, id, user?.id)}
               />
             ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
@@ -4644,7 +4645,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 recipientType="username"
                 recipientValue={claim?.recipient_pending_username_value}
                 claimLocked={!!claim?.recipient_claim_in_progress}
-                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
+                onRecipientUpdated={() => invalidateAfterRecipientUpdate(queryClient, id, user?.id)}
               />
             ) : claim?.recipient_pending_social && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
@@ -4658,7 +4659,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 recipientValue={claim?.recipient_pending_social_value ?? undefined}
                 recipientPlatform={claim?.recipient_pending_social_platform}
                 claimLocked={!!claim?.recipient_claim_in_progress}
-                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
+                onRecipientUpdated={() => invalidateAfterRecipientUpdate(queryClient, id, user?.id)}
               />
             ) : (claim as { recipient_is_registered?: boolean })?.recipient_is_registered &&
               user?.id && claim?.created_by === user.id &&
@@ -4679,7 +4680,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                 recipientType="username"
                 recipientValue={claim?.recipient_username ?? undefined}
                 claimLocked={!!claim?.recipient_claim_in_progress || String(status || claim?.status || "").toUpperCase() === "SUCCESS"}
-                onRecipientUpdated={() => queryClient.invalidateQueries({ queryKey: ["claim", id, user?.id] })}
+                onRecipientUpdated={() => invalidateAfterRecipientUpdate(queryClient, id, user?.id)}
               />
             ) : isRecipient && claim?.recipient_pending_social ? (
               <div className="mt-6 text-center pt-12 pb-6 px-4">

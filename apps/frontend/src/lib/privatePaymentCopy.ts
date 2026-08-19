@@ -23,6 +23,6 @@ export function privatePaymentWaitingAfterSenderCopy(): string {
  */
 export function waitingForFundsCopy(isPrivate: boolean | null | undefined): string {
   return isPrivate
-    ? privatePaymentWaitingAfterSenderCopy()
-    : "This is a private payment. Waiting for the payment to land, this can take up to 10 minutes.";
+    ? `This is a private payment. Waiting for the payment to land, this can take up to ${PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes.`
+    : "Waiting for the payment to land.";
 }

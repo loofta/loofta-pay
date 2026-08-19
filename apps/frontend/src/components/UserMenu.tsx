@@ -27,10 +27,9 @@ import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalan
 import { ChangeUsernameModal } from "@/components/ChangeUsernameModal";
 /** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
 const TWITTER_TYPES = ["twitter_oauth", "twitter", "x"] as const;
-/** Exact Privy type strings for Discord/GitHub/Instagram aren't publicly pinned down — check known variants defensively, same as Twitter above. */
+/** Exact Privy type strings for Discord/GitHub aren't publicly pinned down — check known variants defensively, same as Twitter above. */
 const DISCORD_TYPES = ["discord_oauth", "discord"] as const;
 const GITHUB_TYPES = ["github_oauth", "github"] as const;
-const INSTAGRAM_TYPES = ["instagram_oauth", "instagram"] as const;
 
 /** Twitter/X handle from Privy linked accounts (username || name || subject). */
 function getTwitterUsername(linkedAccounts: Array<{ type?: string; username?: string; name?: string; subject?: string }> | undefined): string | null {
@@ -214,16 +213,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [exportedPrivateKey, setExportedPrivateKey] = useState<string | null>(null);
   const [updatingToTwitter, setUpdatingToTwitter] = useState(false);
   const [twitterLinkedOptimistic, setTwitterLinkedOptimistic] = useState(false);
-  const [linkingMethod, setLinkingMethod] = useState<"twitter" | "email" | "discord" | "github" | "instagram" | null>(null);
+  const [linkingMethod, setLinkingMethod] = useState<"twitter" | "email" | "discord" | "github" | null>(null);
   const [unlinkingTwitter, setUnlinkingTwitter] = useState(false);
   const [confirmUnlinkTwitter, setConfirmUnlinkTwitter] = useState(false);
   const [unlinkingEmail, setUnlinkingEmail] = useState(false);
   const [discordLinkedOptimistic, setDiscordLinkedOptimistic] = useState(false);
   const [githubLinkedOptimistic, setGithubLinkedOptimistic] = useState(false);
-  const [instagramLinkedOptimistic, setInstagramLinkedOptimistic] = useState(false);
   const [unlinkingDiscord, setUnlinkingDiscord] = useState(false);
   const [unlinkingGithub, setUnlinkingGithub] = useState(false);
-  const [unlinkingInstagram, setUnlinkingInstagram] = useState(false);
   const [telegramHandle, setTelegramHandle] = useState<string | null>(null);
   const [connectingTelegram, setConnectingTelegram] = useState(false);
   const [switchingUsername, setSwitchingUsername] = useState(false);
@@ -232,7 +229,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
   const { refreshUser } = useUser();
   const queryClient = useQueryClient();
-  const { linkTwitter, linkEmail, linkDiscord, linkGithub, linkInstagram } = useLinkAccount({
+  const { linkTwitter, linkEmail, linkDiscord, linkGithub } = useLinkAccount({
     onSuccess: async (arg: any) => {
       const linkedType = arg?.linkedAccount?.type;
       const didLinkTwitter =
@@ -243,7 +240,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         linkingMethod === "twitter";
       const didLinkDiscord = DISCORD_TYPES.includes(linkedType) || linkingMethod === "discord";
       const didLinkGithub = GITHUB_TYPES.includes(linkedType) || linkingMethod === "github";
-      const didLinkInstagram = INSTAGRAM_TYPES.includes(linkedType) || linkingMethod === "instagram";
       if (didLinkTwitter) {
         setTwitterLinkedOptimistic(true);
         // Persist Twitter handle to DB so the username toggle works
@@ -261,11 +257,10 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
           } catch { /* non-critical */ }
         }
       }
-      if (didLinkDiscord || didLinkGithub || didLinkInstagram) {
-        const platform = didLinkDiscord ? "discord" : didLinkGithub ? "github" : "instagram";
+      if (didLinkDiscord || didLinkGithub) {
+        const platform = didLinkDiscord ? "discord" : "github";
         if (didLinkDiscord) setDiscordLinkedOptimistic(true);
-        else if (didLinkGithub) setGithubLinkedOptimistic(true);
-        else setInstagramLinkedOptimistic(true);
+        else setGithubLinkedOptimistic(true);
         const raw = arg?.linkedAccount?.username ?? arg?.linkedAccount?.name ?? "";
         const handle = String(raw).replace(/^@/, "").toLowerCase().trim();
         if (handle.length >= 1) {
@@ -292,8 +287,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       setLinkingMethod(null);
       if (/already been linked|already linked|linked to another user/i.test(msg)) {
         const isTwitterConflict = linkingMethod === "twitter" || /twitter|x|oauth/i.test(msg);
-        const isSocialConflict = linkingMethod === "discord" || linkingMethod === "github" || linkingMethod === "instagram";
-        const socialLabel = linkingMethod === "discord" ? "Discord" : linkingMethod === "github" ? "GitHub" : "Instagram";
+        const isSocialConflict = linkingMethod === "discord" || linkingMethod === "github";
+        const socialLabel = linkingMethod === "discord" ? "Discord" : "GitHub";
         toast({
           variant: "destructive",
           title: isTwitterConflict ? "X account already in use" : isSocialConflict ? "Account already in use" : "Email already in use",
@@ -345,12 +340,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   );
   const githubSubject = useMemo(() =>
     (linkedAccounts.find((a) => a.type && GITHUB_TYPES.includes(a.type as any)) as { subject?: string } | undefined)?.subject ?? null,
-    [linkedAccounts]
-  );
-  const hasInstagramLinked = linkedAccounts.some((a) => a.type && INSTAGRAM_TYPES.includes(a.type as any)) || instagramLinkedOptimistic;
-  const instagramHandle = useMemo(() => getSocialUsername(linkedAccounts, INSTAGRAM_TYPES), [linkedAccounts]);
-  const instagramSubject = useMemo(() =>
-    (linkedAccounts.find((a) => a.type && INSTAGRAM_TYPES.includes(a.type as any)) as { subject?: string } | undefined)?.subject ?? null,
     [linkedAccounts]
   );
 
@@ -720,30 +709,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       toast({ variant: "destructive", title: "Could not disconnect", description: msg || "Try again." });
     } finally {
       setUnlinkingGithub(false);
-    }
-  };
-
-  const handleUnlinkInstagram = async () => {
-    if (!instagramSubject) return;
-    setUnlinkingInstagram(true);
-    try {
-      await unlinkOAuth.unlink({ provider: "instagram", subject: instagramSubject });
-      setInstagramLinkedOptimistic(false);
-      try {
-        const token = await getAccessToken().catch(() => null);
-        await fetch("/api/users/save-social-handle", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-          body: JSON.stringify({ platform: "instagram", handle: null }),
-        });
-      } catch { /* non-critical — stale row just won't display anywhere important */ }
-      try { await refreshUser(); } catch { /* non-critical */ }
-      toast({ title: "Instagram disconnected", description: "Your Instagram account has been removed." });
-    } catch (e: unknown) {
-      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
-      toast({ variant: "destructive", title: "Could not disconnect", description: msg || "Try again." });
-    } finally {
-      setUnlinkingInstagram(false);
     }
   };
 
@@ -1644,7 +1609,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                         </div>
                       ) : null}
 
-                      {/* Connect accounts card — every platform people can pay you by handle on. X mirrors the Sign-in methods card above (read-only here, remove it there); Discord/GitHub/Instagram link+unlink directly; Telegram is connected via its own flow (see loofta.com relay). */}
+                      {/* Connect accounts card — every platform people can pay you by handle on. X mirrors the Sign-in methods card above (read-only here, remove it there); Discord/GitHub link+unlink directly; Telegram is connected via its own flow (see loofta.com relay). */}
                       <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
                         <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-3 border-b border-white/[0.06]">
                           <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
@@ -1745,40 +1710,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                     onClick={async () => {
                                       setLinkingMethod("github");
                                       try { await linkGithub(); } catch { /* surfaced via onError */ }
-                                    }}
-                                    className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors"
-                                  >
-                                    Connect
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-3 px-3 py-2.5">
-                              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#f9ce34] via-[#ee2a7b] to-[#6228d7] flex items-center justify-center shrink-0">
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" className="text-white">
-                                  <path d="M12 2.163c3.204 0 3.584.012 4.849.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.849.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" />
-                                </svg>
-                              </div>
-                              {hasInstagramLinked && instagramHandle ? (
-                                <>
-                                  <span className="flex-1 text-base text-white/90 truncate">@{instagramHandle}</span>
-                                  <button
-                                    type="button"
-                                    onClick={handleUnlinkInstagram}
-                                    disabled={unlinkingInstagram}
-                                    className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
-                                  >
-                                    {unlinkingInstagram ? <Loader2 className="w-3 h-3 animate-spin" /> : "Remove"}
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <span className="flex-1 text-base text-white/60">Instagram</span>
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      setLinkingMethod("instagram");
-                                      try { await linkInstagram(); } catch { /* surfaced via onError */ }
                                     }}
                                     className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors"
                                   >

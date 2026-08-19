@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { TwitterApi } from 'twitter-api-v2';
 import { SupabaseService } from '@/database/supabase.service';
 import { RedisService } from '@/redis/redis.service';
 import {
@@ -17,25 +16,45 @@ export interface XProfile {
   username: string;
   createdAt: string;
   followersCount: number;
+  profileImageUrl: string | null;
+  /** X's own "verified" flag (blue check / legacy verification) — not to be confused with
+   *  is_identity_verified or verified_type, which this app doesn't need. */
+  verified: boolean;
 }
 
-/** Bound on how many retweeters/likers/followers we'll page through for a single task —
- *  a "fetch once per giveaway, check locally" pass still has to end somewhere. Logged loudly
- *  when hit, since a truncated list means some real completions could be missed. */
-const MAX_PAGINATED_USERS = 5_000;
+const SORSA_BASE_URL = 'https://api.sorsa.io/v3';
+const SORSA_REQUEST_TIMEOUT_MS = 15_000;
 
-/** X API calls are metered/expensive (confirmed real cost, ~$3/67 entries on 2026-08-06, and a
- *  separate $19.60/day spike on 2026-08-11 traced to a giveaway stuck in ENTRIES_CLOSED re-running
- *  the final sweep on every cron tick — see the run-once guard in
- *  GiveawayDrawService.freezeSnapshotAndStartDrawing/hasSweptAlready).
- *  verifyPendingCompletions is invoked from two independent paths — GiveawayEntriesService's
- *  runFinalXVerificationSweep (now guarded to run exactly once per giveaway by the caller) AND
- *  every entrant's inline "Verify"/"Try again" click (rate-limited per-entrant by
- *  MAX_VERIFY_ATTEMPTS_PER_WINDOW in giveaway-entries.service.ts). This TTL is the last line of
- *  defense against either path re-fetching the FULL retweeter/quote/liker/follower list from
- *  scratch when nothing plausibly changed; the design is already "batched, not real-time" (see
- *  class doc below), so a few extra minutes of staleness costs nothing functionally. */
-const FETCH_CACHE_TTL_MS = 3 * 60 * 1000;
+export class SorsaApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = 'SorsaApiError';
+  }
+}
+
+/** Thrown by either cap guard (per-minute or daily) — a distinct type so callers can tell "we
+ *  deliberately refused to call Sorsa" apart from Sorsa itself erroring, without fragile string
+ *  matching on the message. */
+export class XVerificationCapError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'XVerificationCapError';
+  }
+}
+
+/** Unwraps the real reason a Sorsa call failed — Sorsa's error body is just `{"message": "..."}`,
+ *  so the HTTP status carries the rest of the signal (401 = bad key, 429 = rate limit, etc). */
+function describeXApiError(e: unknown): string {
+  if (e instanceof SorsaApiError) return `HTTP ${e.status}: ${e.message}`;
+  return String(e);
+}
+
+/** Hard circuit breaker, independent of the daily cap — confirmed live 2026-08-16 that a single
+ *  bug (unbounded pagination) can blow through more requests in a couple minutes than the daily
+ *  cap would even notice until it's already too late. This trips fast and locally: >100 Sorsa
+ *  requests in any rolling 60s window kills every further call until the next window, regardless
+ *  of which giveaway/task/entrant they're for. Override via GIVEAWAY_X_API_PER_MINUTE_CAP. */
+const DEFAULT_PER_MINUTE_CAP = 100;
 
 // resolveXProfile is called on every enter() attempt, including ones that fail eligibility (no DB
 // row gets created for those, so nothing else stops a rejected user from immediately retrying).
@@ -55,46 +74,30 @@ const PROFILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_DAILY_CALL_CAP = 300;
 
 /**
- * Real X API v2 verification for X-based giveaway tasks, reusing the same OAuth1 user-context
- * credentials apps/twitter-bot already runs on (TWITTER_API_KEY/SECRET/ACCESS_TOKEN/ACCESS_SECRET)
- * — Lisa confirmed the X API is already on a pay-as-you-go tier, so this is a second consumer of
- * the same app, not a new provisioning decision.
+ * X/Twitter data for giveaway task verification, via Sorsa (api.sorsa.io) — switched from the
+ * direct X API v2 on 2026-08-16 after repeated cost incidents.
  *
- * Fetches a tweet's retweeter/liker list (or an account's follower list) ONCE per giveaway and
- * checks every pending entrant against it locally — never one live call per participant, which
- * would multiply cost/rate-limit exposure with entrant count for no benefit.
+ * Checks each pending entrant individually against Sorsa's per-user verification endpoints
+ * (/check-retweet, /check-quoted, /check-follow, /check-comment) rather than paginating a tweet's
+ * full retweeter/follower list and checking membership locally. The list-pagination design (used
+ * here for about two hours on 2026-08-16) was replaced after it burned 87 raw requests checking a
+ * single retweet in one real test — Sorsa's next_cursor doesn't reliably signal "no more results,"
+ * so an unbounded pagination loop trusting it is unsafe. A single bounded check-per-user call has
+ * no list to page through, so it's structurally incapable of that failure mode. Sorsa has no "who
+ * liked this tweet" endpoint at all, which is moot here: X_LIKE/X_BOOKMARK are already permanent
+ * self-report (see GIVEAWAY_TASK_VERIFICATION_MODE), so no code path needs one.
  */
 @Injectable()
 export class XVerificationService {
   private readonly logger = new Logger(XVerificationService.name);
-  private client: TwitterApi | null = null;
-  private readonly fetchCache = new Map<string, { promise: Promise<Set<string>>; expiresAt: number }>();
+  private sorsaApiKey: string | null = null;
   private readonly profileCache = new Map<string, { profile: XProfile; expiresAt: number }>();
   private dailyCallCount = 0;
   private dailyCallCountDate = '';
   private readonly dailyCallCap: number;
-
-  /** Shared cache wrapper for every fetch*Ids helper below — see FETCH_CACHE_TTL_MS. Throws (into
-   *  verifyPendingCompletions' existing api_error path) rather than returning an empty set on cap
-   *  hit, so a capped-out fetch never gets misread as "nobody matched" and falsely rejects
-   *  genuine entrants.
-   *
-   *  Caches the in-flight PROMISE, not just the resolved ids: confirmed live 2026-08-13 that several
-   *  entrants clicking "Verify" within the same second all saw a cache miss and each fired their own
-   *  live X API call for the same tweet — a stampede that alone can burn through X's 75-req/15min
-   *  budget and 429 everyone, including genuine retweeters. Sharing one in-flight fetch across
-   *  concurrent callers fixes that at the source. A failed fetch is evicted immediately (not left
-   *  cached for the full TTL) so the next click can retry cleanly once the rate limit clears, instead
-   *  of replaying the same error to everyone for 3 more minutes. */
-  private async getCachedIds(key: string, fetch: () => Promise<Set<string>>): Promise<Set<string>> {
-    const cached = this.fetchCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.promise;
-    await this.consumeDailyCapOrThrow(key);
-    const promise = fetch();
-    this.fetchCache.set(key, { promise, expiresAt: Date.now() + FETCH_CACHE_TTL_MS });
-    promise.catch(() => this.fetchCache.delete(key));
-    return promise;
-  }
+  private perMinuteCount = 0;
+  private perMinuteBucket = -1;
+  private readonly perMinuteCap: number;
 
   /** Increments today's fetch-unit count and throws once DAILY_CALL_CAP is hit, resetting at UTC
    *  midnight. See DEFAULT_DAILY_CALL_CAP's doc comment for why this exists.
@@ -114,7 +117,7 @@ export class XVerificationService {
       if (count === 1) await client.expire(key, 26 * 60 * 60);
       if (count > this.dailyCallCap) {
         this.logger.error(`[XVerification] daily X API call cap (${this.dailyCallCap}) reached — refusing further calls today (blocked: ${context})`);
-        throw new Error(`X API daily call cap (${this.dailyCallCap}) reached`);
+        throw new XVerificationCapError(`X API daily call cap (${this.dailyCallCap}) reached`);
       }
       return;
     }
@@ -124,9 +127,38 @@ export class XVerificationService {
     }
     if (this.dailyCallCount >= this.dailyCallCap) {
       this.logger.error(`[XVerification] daily X API call cap (${this.dailyCallCap}) reached — refusing further calls today (blocked: ${context})`);
-      throw new Error(`X API daily call cap (${this.dailyCallCap}) reached`);
+      throw new XVerificationCapError(`X API daily call cap (${this.dailyCallCap}) reached`);
     }
     this.dailyCallCount++;
+  }
+
+  /** Circuit breaker checked on EVERY Sorsa HTTP call, inside sorsaRequest itself — not at each
+   *  call site — so no future check-* method can accidentally skip it. Fixed 60s buckets (not a
+   *  true sliding window): simple, and precise enough for "stop before this spirals," which is the
+   *  actual job here. Same Redis-with-in-memory-fallback shape as consumeDailyCapOrThrow, for the
+   *  same reason (2026-08-15: an in-memory-only counter resets on every redeploy). */
+  private async checkPerMinuteGuardOrThrow(): Promise<void> {
+    const bucket = Math.floor(Date.now() / 60_000);
+    const client = this.redis.getClient();
+    if (client) {
+      const key = `xverify:ratelimit:sorsa:${bucket}`;
+      const count = await client.incr(key);
+      if (count === 1) await client.expire(key, 120);
+      if (count > this.perMinuteCap) {
+        this.logger.error(`[XVerification] per-minute request guard tripped (${count} > ${this.perMinuteCap} Sorsa requests in the last 60s) — refusing further calls until the next minute`);
+        throw new XVerificationCapError(`Sorsa per-minute request guard tripped (>${this.perMinuteCap}/min)`);
+      }
+      return;
+    }
+    if (bucket !== this.perMinuteBucket) {
+      this.perMinuteBucket = bucket;
+      this.perMinuteCount = 0;
+    }
+    if (this.perMinuteCount >= this.perMinuteCap) {
+      this.logger.error(`[XVerification] per-minute request guard tripped (${this.perMinuteCount} >= ${this.perMinuteCap} Sorsa requests in the last 60s, in-memory fallback) — refusing further calls until the next minute`);
+      throw new XVerificationCapError(`Sorsa per-minute request guard tripped (>${this.perMinuteCap}/min)`);
+    }
+    this.perMinuteCount++;
   }
 
   constructor(
@@ -134,20 +166,50 @@ export class XVerificationService {
     private readonly supabaseService: SupabaseService,
     private readonly redis: RedisService,
   ) {
-    const apiKey = this.configService.get<string>('TWITTER_API_KEY');
-    const apiSecret = this.configService.get<string>('TWITTER_API_SECRET');
-    const accessToken = this.configService.get<string>('TWITTER_ACCESS_TOKEN');
-    const accessSecret = this.configService.get<string>('TWITTER_ACCESS_SECRET');
-    if (apiKey && apiSecret && accessToken && accessSecret) {
-      this.client = new TwitterApi({ appKey: apiKey, appSecret: apiSecret, accessToken, accessSecret });
+    const sorsaApiKey = this.configService.get<string>('SORSA_API_KEY');
+    if (sorsaApiKey) {
+      this.sorsaApiKey = sorsaApiKey;
     } else {
-      this.logger.warn('X API credentials not configured (TWITTER_API_KEY/SECRET/ACCESS_TOKEN/ACCESS_SECRET) — giveaway X verification disabled.');
+      this.logger.warn('SORSA_API_KEY not configured — giveaway X verification disabled.');
     }
     this.dailyCallCap = Number(this.configService.get<string>('GIVEAWAY_X_API_DAILY_CALL_CAP')) || DEFAULT_DAILY_CALL_CAP;
+    this.perMinuteCap = Number(this.configService.get<string>('GIVEAWAY_X_API_PER_MINUTE_CAP')) || DEFAULT_PER_MINUTE_CAP;
   }
 
   isAvailable(): boolean {
-    return this.client !== null;
+    return this.sorsaApiKey !== null;
+  }
+
+  /** Thin wrapper over Sorsa's REST API — ApiKey header auth, GET params as query string, POST
+   *  params as a JSON body (matches sorsa_api_v3_documentation_en.txt). Mirrors the fetch+timeout+
+   *  {message} error-shape pattern already used for PajCashService. */
+  private async sorsaRequest<T>(
+    method: 'GET' | 'POST',
+    path: string,
+    params: Record<string, string | undefined> = {},
+  ): Promise<T> {
+    if (!this.sorsaApiKey) throw new Error('SORSA_API_KEY not configured');
+    await this.checkPerMinuteGuardOrThrow();
+    const entries = Object.entries(params).filter(([, v]) => v !== undefined) as [string, string][];
+    const query = method === 'GET' && entries.length ? `?${new URLSearchParams(entries).toString()}` : '';
+    const res = await fetch(`${SORSA_BASE_URL}${path}${query}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ApiKey: this.sorsaApiKey },
+      body: method === 'POST' ? JSON.stringify(Object.fromEntries(entries)) : undefined,
+      signal: AbortSignal.timeout(SORSA_REQUEST_TIMEOUT_MS),
+    });
+    const text = await res.text();
+    let json: unknown;
+    if (text) {
+      try { json = JSON.parse(text); } catch { json = text; }
+    }
+    if (!res.ok) {
+      const message = (json && typeof json === 'object' && 'message' in json)
+        ? String((json as { message: unknown }).message)
+        : `Sorsa request failed (${res.status})`;
+      throw new SorsaApiError(message, res.status);
+    }
+    return json as T;
   }
 
   /** Lookup used at entry time for eligibility (follower count + account age), not part of the
@@ -162,7 +224,7 @@ export class XVerificationService {
    *  this just makes sure we only ever pay for it once per handle per PROFILE_CACHE_TTL_MS window,
    *  no matter how many times the backend restarts in between. */
   async resolveXProfile(handle: string): Promise<XProfile | null> {
-    if (!this.client) return null;
+    if (!this.sorsaApiKey) return null;
     const cleanHandle = handle.replace(/^@/, '').trim();
     const cacheKey = cleanHandle.toLowerCase();
     const memCached = this.profileCache.get(cacheKey);
@@ -182,19 +244,24 @@ export class XVerificationService {
 
     try {
       await this.consumeDailyCapOrThrow(`resolveXProfile:${cleanHandle}`);
-      const result = await this.client.v2.userByUsername(cleanHandle, { 'user.fields': ['created_at', 'public_metrics'] });
-      if (!result.data) return null;
+      // profileImageUrl is deliberately not requested — Privy's own linked-account record already
+      // carries the entrant's profile picture (see GiveawayEntriesService.resolveLinkedXAccount)
+      // at zero API cost, so asking Sorsa for a second copy would be pure downside.
+      const result = await this.sorsaRequest<Record<string, any>>('GET', '/info', { username: cleanHandle });
+      if (!result?.id) return null;
       const profile: XProfile = {
-        id: result.data.id,
-        username: result.data.username,
-        createdAt: result.data.created_at ?? new Date(0).toISOString(),
-        followersCount: result.data.public_metrics?.followers_count ?? 0,
+        id: String(result.id),
+        username: result.username,
+        createdAt: result.created_at ?? new Date(0).toISOString(),
+        followersCount: result.followers_count ?? 0,
+        profileImageUrl: null,
+        verified: !!result.verified,
       };
       this.profileCache.set(cacheKey, { profile, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
       await this.redis.set(redisKey, JSON.stringify(profile), PROFILE_CACHE_TTL_MS / 1000);
       return profile;
     } catch (e) {
-      this.logger.warn(`[XVerification] resolveXProfile(${cleanHandle}) failed: ${String(e)}`);
+      this.logger.warn(`[XVerification] resolveXProfile(${cleanHandle}) failed: ${describeXApiError(e)}`);
       return null;
     }
   }
@@ -211,150 +278,112 @@ export class XVerificationService {
     return (match ? match[1] : target).replace(/^@/, '').trim();
   }
 
-  private async collectUserIds(
-    paginator: AsyncIterable<{ id: string }>,
-    context: string,
-  ): Promise<Set<string>> {
-    const ids = new Set<string>();
-    for await (const user of paginator) {
-      ids.add(user.id);
-      if (ids.size >= MAX_PAGINATED_USERS) {
-        this.logger.warn(`[XVerification] ${context}: hit MAX_PAGINATED_USERS (${MAX_PAGINATED_USERS}) cap — list may be truncated`);
-        break;
-      }
-    }
-    return ids;
+  /** /check-quoted's own documented purpose is "did user quote OR retweet" (status includes both
+   *  "quoted" and "retweet"), so one call covers the same ground the old design needed two
+   *  paginated list-fetches for (plain retweet ∪ quote tweet) — confirmed real need for the union
+   *  live 2026-08-05, a genuine entrant quote-tweeted exactly as instructed and was rejected because
+   *  only plain retweets were checked at the time. No pagination here: single bounded call. */
+  private async checkRetweetedOrQuoted(tweetId: string, userId: string): Promise<boolean> {
+    await this.consumeDailyCapOrThrow(`check-quoted:${tweetId}:${userId}`);
+    const res = await this.sorsaRequest<{ status?: string }>('POST', '/check-quoted', { tweet_link: tweetId, user_id: userId });
+    // Confirmed live 2026-08-16: Sorsa actually returns "retweeted" for a plain retweet, not
+    // "retweet" as their own doc's enum claims (verified via a real request/response pair in the
+    // Sorsa dashboard — a genuine retweet came back status="retweeted" and was wrongly rejected).
+    // Checking both in case they're inconsistent between endpoints/response paths.
+    return res?.status === 'quoted' || res?.status === 'retweet' || res?.status === 'retweeted';
   }
 
-  /** A quote tweet is a distinct relationship from a plain retweet in X's own data model (it shows
-   *  up under "Quote Tweets Lookup", never in "Retweet Lookup"), but counts the same for our
-   *  purposes — confirmed live 2026-08-05: a genuine entrant quote-tweeted exactly as instructed
-   *  and was still rejected, since only plain retweets were being checked. Union both. */
-  private async fetchRetweeterIds(tweetId: string): Promise<Set<string>> {
-    if (!this.client) return new Set();
-    return this.getCachedIds(`retweet:${tweetId}`, async () => {
-      const [retweeterIds, quoteAuthorIds] = await Promise.all([
-        (async () => {
-          const paginator = await this.client!.v2.tweetRetweetedBy(tweetId, { asPaginator: true, max_results: 100 });
-          return this.collectUserIds(paginator, `retweetedBy(${tweetId})`);
-        })(),
-        this.fetchQuoteTweetAuthorIds(tweetId),
-      ]);
-      return new Set([...retweeterIds, ...quoteAuthorIds]);
-    });
+  private async checkFollows(targetHandle: string, userId: string): Promise<boolean> {
+    await this.consumeDailyCapOrThrow(`check-follow:${targetHandle}:${userId}`);
+    const res = await this.sorsaRequest<{ follow?: boolean }>('POST', '/check-follow', { username_1: targetHandle, user_id_2: userId });
+    return !!res?.follow;
   }
 
-  private async fetchQuoteTweetAuthorIds(tweetId: string): Promise<Set<string>> {
-    if (!this.client) return new Set();
-    const paginator = await this.client.v2.quotes(tweetId, { max_results: 100, 'tweet.fields': ['author_id'] });
-    const ids = new Set<string>();
-    for await (const tweet of paginator) {
-      if (tweet.author_id) ids.add(tweet.author_id);
-      if (ids.size >= MAX_PAGINATED_USERS) {
-        this.logger.warn(`[XVerification] quotes(${tweetId}): hit MAX_PAGINATED_USERS (${MAX_PAGINATED_USERS}) cap — list may be truncated`);
-        break;
-      }
-    }
-    return ids;
+  /** Returns the reply's text if the user commented, so the caller can still apply the
+   *  `comment_requirement` substring match — same semantics as before, just resolved server-side
+   *  by Sorsa instead of us scanning a reply list ourselves. */
+  private async checkCommented(tweetId: string, userId: string): Promise<{ commented: boolean; text: string | null }> {
+    await this.consumeDailyCapOrThrow(`check-comment:${tweetId}:${userId}`);
+    const res = await this.sorsaRequest<{ commented?: boolean; tweet?: { full_text?: string } }>('GET', '/check-comment', { tweet_link: tweetId, user_id: userId });
+    return { commented: !!res?.commented, text: res?.tweet?.full_text ?? null };
   }
 
-  private async fetchLikerIds(tweetId: string): Promise<Set<string>> {
-    if (!this.client) return new Set();
-    return this.getCachedIds(`like:${tweetId}`, async () => {
-      const paginator = await this.client!.v2.tweetLikedBy(tweetId, { asPaginator: true, max_results: 100 });
-      return this.collectUserIds(paginator, `likedBy(${tweetId})`);
-    });
-  }
-
-  private async fetchFollowerIds(targetHandle: string): Promise<Set<string>> {
-    if (!this.client) return new Set();
-    return this.getCachedIds(`follow:${targetHandle.toLowerCase()}`, async () => {
-      const target = await this.client!.v2.userByUsername(targetHandle);
-      if (!target.data) return new Set();
-      const paginator = await this.client!.v2.followers(target.data.id, { asPaginator: true, max_results: 1000 });
-      return this.collectUserIds(paginator, `followers(${targetHandle})`);
-    });
-  }
-
-  /** Replies (conversation_id search) whose author is in `entrantIds` — used for x_comment. Text
-   *  match against `comment_requirement` is a substring check, deliberately loose (real-world
-   *  phrasing varies); a false-positive here just means one more entry falls into the review
-   *  queue on `rejected`, not a silent security hole. */
-  private async fetchReplyAuthors(tweetId: string, commentRequirement?: string): Promise<Set<string>> {
-    if (!this.client) return new Set();
-    return this.getCachedIds(`comment:${tweetId}:${commentRequirement ?? ''}`, async () => {
-      const paginator = await this.client!.v2.search(`conversation_id:${tweetId} is:reply`, {
-        max_results: 100,
-        'tweet.fields': ['author_id', 'text'],
-      });
-      const authorIds = new Set<string>();
-      for await (const tweet of paginator) {
-        if (commentRequirement && !tweet.text?.toLowerCase().includes(commentRequirement.toLowerCase())) continue;
-        if (tweet.author_id) authorIds.add(tweet.author_id);
-        if (authorIds.size >= MAX_PAGINATED_USERS) break;
-      }
-      return authorIds;
-    });
-  }
-
-  /**
-   * Batched per-task verification: called once per open/entries-closed giveaway by the cron.
-   * For each x_* task on the giveaway, fetch the relevant id set once, then resolve every
-   * `pending` completion for that task against it. Never throws for an individual entry — marks
-   * that one `api_error` (falls into the review queue) and keeps going.
-   */
+  /** Called once per open/entries-closed giveaway by the cron (see runFinalXVerificationSweep) or
+   *  once per click (submitTaskCompletion, with a single-entry `pending`). Checks each entrant
+   *  individually against Sorsa — bounded, one (or two, for x_comment's text match) request per
+   *  entry, never a paginated list scan. A failure for one entrant only marks that one `api_error`
+   *  and keeps going; if the daily cap gets hit partway through a batch, every remaining
+   *  not-yet-checked entry in this call is marked `api_error` too rather than silently skipped. */
   async verifyPendingCompletions(
     giveaway: Giveaway,
     task: GiveawayTask,
     pending: Array<{ completion: GiveawayTaskCompletion; entry: GiveawayEntry }>,
   ): Promise<void> {
-    if (!this.client || pending.length === 0) return;
+    if (!this.sorsaApiKey || pending.length === 0) return;
     const config = task.config as { target?: string; comment_requirement?: string };
     if (!config.target) return;
 
-    let matchedIds: Set<string>;
-    try {
-      switch (task.task_type) {
-        case GiveawayTaskType.X_RETWEET: {
-          const tweetId = this.extractTweetId(config.target);
-          if (!tweetId) throw new Error(`Could not parse tweet id from target "${config.target}"`);
-          matchedIds = await this.fetchRetweeterIds(tweetId);
-          break;
-        }
-        case GiveawayTaskType.X_LIKE: {
-          const tweetId = this.extractTweetId(config.target);
-          if (!tweetId) throw new Error(`Could not parse tweet id from target "${config.target}"`);
-          matchedIds = await this.fetchLikerIds(tweetId);
-          break;
-        }
-        case GiveawayTaskType.X_FOLLOW: {
-          matchedIds = await this.fetchFollowerIds(this.extractHandle(config.target));
-          break;
-        }
-        case GiveawayTaskType.X_COMMENT: {
-          const tweetId = this.extractTweetId(config.target);
-          if (!tweetId) throw new Error(`Could not parse tweet id from target "${config.target}"`);
-          matchedIds = await this.fetchReplyAuthors(tweetId, config.comment_requirement);
-          break;
-        }
-        default:
-          return; // not an X task
-      }
-    } catch (e) {
-      this.logger.warn(`[XVerification] ${giveaway.id} task ${task.id} (${task.task_type}): fetch failed, marking all pending as api_error: ${String(e)}`);
-      await this.markAll(pending.map((p) => p.completion.id), GiveawayTaskCompletionStatus.API_ERROR, { error: String(e) });
+    // X_LIKE/X_BOOKMARK are SELF_REPORT (see GIVEAWAY_TASK_VERIFICATION_MODE) — there is no live X
+    // API call that can resolve them (Like Lookup always returns empty on this app's tier; bookmarks
+    // have no public endpoint at all), so submitTaskCompletion trusts them on click. This sweep must
+    // do the same instead of hitting a real (billed) endpoint that can never return a useful result.
+    if (task.task_type === GiveawayTaskType.X_LIKE || task.task_type === GiveawayTaskType.X_BOOKMARK) {
+      const note =
+        task.task_type === GiveawayTaskType.X_LIKE
+          ? 'Auto-approved by final sweep — X Like Lookup unavailable on current API tier'
+          : 'Auto-approved by final sweep — X has no public API for who bookmarked a post, so this is trusted';
+      await this.markAll(pending.map((p) => p.completion.id), GiveawayTaskCompletionStatus.VERIFIED, { note });
       return;
     }
 
-    const verifiedIds: string[] = [];
-    const rejectedIds: string[] = [];
-    for (const { completion, entry } of pending) {
-      if (matchedIds.has(entry.x_user_id)) verifiedIds.push(completion.id);
-      else rejectedIds.push(completion.id);
+    if (task.task_type !== GiveawayTaskType.X_RETWEET && task.task_type !== GiveawayTaskType.X_FOLLOW && task.task_type !== GiveawayTaskType.X_COMMENT) {
+      return; // not an X task
     }
-    if (verifiedIds.length) await this.markAll(verifiedIds, GiveawayTaskCompletionStatus.AUTO_VERIFIED);
-    if (rejectedIds.length) await this.markAll(rejectedIds, GiveawayTaskCompletionStatus.REJECTED, { reason: 'not found in X API result set' });
-    this.logger.log(`[XVerification] ${giveaway.id} task ${task.id} (${task.task_type}): ${verifiedIds.length} verified, ${rejectedIds.length} rejected`);
+
+    const tweetId = task.task_type !== GiveawayTaskType.X_FOLLOW ? this.extractTweetId(config.target) : null;
+    const targetHandle = task.task_type === GiveawayTaskType.X_FOLLOW ? this.extractHandle(config.target) : null;
+    if (task.task_type !== GiveawayTaskType.X_FOLLOW && !tweetId) {
+      const reason = `Could not parse tweet id from target "${config.target}"`;
+      this.logger.warn(`[XVerification] ${giveaway.id} task ${task.id} (${task.task_type}): ${reason}`);
+      await this.markAll(pending.map((p) => p.completion.id), GiveawayTaskCompletionStatus.API_ERROR, { error: reason });
+      return;
+    }
+
+    let verifiedCount = 0;
+    let rejectedCount = 0;
+    for (const { completion, entry } of pending) {
+      try {
+        let ok: boolean;
+        if (task.task_type === GiveawayTaskType.X_RETWEET) {
+          ok = await this.checkRetweetedOrQuoted(tweetId!, entry.x_user_id);
+        } else if (task.task_type === GiveawayTaskType.X_FOLLOW) {
+          ok = await this.checkFollows(targetHandle!, entry.x_user_id);
+        } else {
+          const { commented, text } = await this.checkCommented(tweetId!, entry.x_user_id);
+          ok = commented && (!config.comment_requirement || !!text?.toLowerCase().includes(config.comment_requirement.toLowerCase()));
+        }
+        if (ok) {
+          verifiedCount++;
+          await this.markAll([completion.id], GiveawayTaskCompletionStatus.AUTO_VERIFIED);
+        } else {
+          rejectedCount++;
+          await this.markAll([completion.id], GiveawayTaskCompletionStatus.REJECTED, { reason: 'not confirmed by Sorsa check' });
+        }
+      } catch (e) {
+        const reason = describeXApiError(e);
+        const capReached = e instanceof XVerificationCapError;
+        await this.markAll([completion.id], GiveawayTaskCompletionStatus.API_ERROR, { error: reason });
+        if (capReached) {
+          // No point burning further attempts once capped — mark the rest of this batch the same
+          // way instead of silently leaving them PENDING (which would look like nothing ran).
+          const remaining = pending.slice(pending.findIndex((p) => p.completion.id === completion.id) + 1);
+          if (remaining.length) await this.markAll(remaining.map((p) => p.completion.id), GiveawayTaskCompletionStatus.API_ERROR, { error: reason });
+          this.logger.warn(`[XVerification] ${giveaway.id} task ${task.id} (${task.task_type}): daily cap hit mid-batch, ${remaining.length} remaining marked api_error`);
+          break;
+        }
+      }
+    }
+    this.logger.log(`[XVerification] ${giveaway.id} task ${task.id} (${task.task_type}): ${verifiedCount} verified, ${rejectedCount} rejected`);
   }
 
   private async markAll(completionIds: string[], status: GiveawayTaskCompletionStatus, detail?: Record<string, unknown>): Promise<void> {

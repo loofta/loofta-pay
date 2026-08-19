@@ -77,6 +77,11 @@ export class GiveawayEligibilityDto {
   @IsInt()
   @Min(0)
   min_account_age_days?: number;
+
+  @ApiPropertyOptional({ description: "Require the entrant's X account to carry X's own verified badge." })
+  @IsOptional()
+  @IsBoolean()
+  verified_only?: boolean;
 }
 
 export class CreateGiveawayDto {

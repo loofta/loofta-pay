@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { isNonMainnetCluster } from "@/lib/solanaCluster";
+import { getVerifiedSolanaWallets } from "@/lib/serverAuth";
 
 // recipient_address included only to detect PENDING_* prefixes — real wallet addresses are stripped in normalisePayment
 const PAYMENT_SELECT =
@@ -42,6 +43,20 @@ export type PaymentHistoryClaim = {
 
 const TERMINAL_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CANCELLED", "REFUNDED", "EXPIRED", "DELETED"];
 const RECEIVED_VISIBLE_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING"];
+// Only columns the totals queries need — keeps the unpaginated fetch light regardless of how
+// many rows a sender/recipient has accumulated.
+const TOTAL_SELECT = "id, amount, status, paid_at";
+
+/** A row counts toward "amount sent"/"amount received" once funds have actually moved — SUCCESS,
+ *  or PRIVATE_TRANSFER_PENDING with paid_at set (sent but not yet claimed by the recipient).
+ *  Mirrors the frontend's countsTowardTotal so the summary card and the row list agree. */
+function sumCountedAmount(rows: { amount: unknown; status: unknown; paid_at: unknown }[]): number {
+  return rows.reduce((sum, r) => {
+    const status = String(r.status ?? "").toUpperCase();
+    const counts = status === "SUCCESS" || (status === "PRIVATE_TRANSFER_PENDING" && !!r.paid_at);
+    return counts ? sum + parseFloat(String(r.amount ?? "0")) : sum;
+  }, 0);
+}
 
 function isExpiredOpenPayment(p: { status: string; created_at: string }): boolean {
   const status = String(p.status || "").toUpperCase();
@@ -134,6 +149,15 @@ export async function GET(request: Request) {
       .split(",")
       .map((a) => a.trim())
       .filter(Boolean);
+
+    // walletAddresses is client-supplied — never trust it as-is, or any authenticated user could
+    // read another wallet's received-payment history (amounts, senders, descriptions) by passing
+    // an address they don't own. Only keep addresses that are actually this user's own live,
+    // Privy-verified Solana wallets.
+    if (walletAddresses.length > 0) {
+      const ownWallets = new Set(await getVerifiedSolanaWallets(userId));
+      walletAddresses = walletAddresses.filter((a) => ownWallets.has(a));
+    }
 
     if (walletAddresses.length === 0) {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -276,6 +300,73 @@ export async function GET(request: Request) {
       }
     }
 
+    // ── True totals for the summary cards (unpaginated) ─────────────────────
+    // The lists above are paginated (DEFAULT_PAGE_LIMIT rows) for display — summing only the
+    // fetched page silently understated "amount sent"/"amount received" for anyone with more
+    // than a page of history (e.g. a multi-send campaign creating 100+ individual rows). These
+    // run the same filters with no .range(), fetching only the columns sumCountedAmount needs.
+    let sentTotalQuery = supabase
+      .from("payments")
+      .select(TOTAL_SELECT)
+      .eq("sender_user_id", userId)
+      .eq("is_devnet", devnetOnly);
+    if (dateFilter) sentTotalQuery = sentTotalQuery.gte("created_at", dateFilter);
+    const { data: sentTotalRows } = await sentTotalQuery;
+
+    let legacySentTotalQuery = supabase
+      .from("payments")
+      .select(TOTAL_SELECT)
+      .eq("created_by", userId)
+      .is("sender_user_id", null)
+      .not("direction", "eq", "from_recipient")
+      .eq("is_devnet", devnetOnly);
+    if (dateFilter) legacySentTotalQuery = legacySentTotalQuery.gte("created_at", dateFilter);
+    const { data: legacySentTotalRows } = await legacySentTotalQuery;
+
+    let recTotalByIdQuery = supabase
+      .from("payments")
+      .select(TOTAL_SELECT)
+      .eq("recipient_user_id", userId)
+      .in("status", RECEIVED_VISIBLE_STATUSES)
+      .eq("is_devnet", devnetOnly);
+    if (dateFilter) recTotalByIdQuery = recTotalByIdQuery.gte("created_at", dateFilter);
+    const { data: recTotalByIdRows } = await recTotalByIdQuery;
+
+    const receivedTotalRows: { id: string; amount: unknown; status: unknown; paid_at: unknown }[] =
+      (recTotalByIdRows || []) as typeof receivedTotalRows;
+    const receivedTotalSeen = new Set(receivedTotalRows.map((r) => r.id));
+
+    if (walletAddresses.length > 0) {
+      let recTotalByWalletQuery = supabase
+        .from("payments")
+        .select(TOTAL_SELECT)
+        .in("recipient_address", walletAddresses)
+        .in("status", RECEIVED_VISIBLE_STATUSES)
+        .eq("is_devnet", devnetOnly);
+      if (dateFilter) recTotalByWalletQuery = recTotalByWalletQuery.gte("created_at", dateFilter);
+      const { data: recTotalByWallet } = await recTotalByWalletQuery;
+      for (const r of (recTotalByWallet || []) as typeof receivedTotalRows) {
+        if (!receivedTotalSeen.has(r.id)) { receivedTotalSeen.add(r.id); receivedTotalRows.push(r); }
+      }
+    }
+
+    if (pendingAddresses.length > 0) {
+      let recTotalByPendingQuery = supabase
+        .from("payments")
+        .select(TOTAL_SELECT)
+        .in("recipient_address", pendingAddresses)
+        .in("status", RECEIVED_VISIBLE_STATUSES)
+        .eq("is_devnet", devnetOnly);
+      if (dateFilter) recTotalByPendingQuery = recTotalByPendingQuery.gte("created_at", dateFilter);
+      const { data: recTotalByPending } = await recTotalByPendingQuery;
+      for (const r of (recTotalByPending || []) as typeof receivedTotalRows) {
+        if (!receivedTotalSeen.has(r.id)) { receivedTotalSeen.add(r.id); receivedTotalRows.push(r); }
+      }
+    }
+
+    const sentTotal = sumCountedAmount([...(sentTotalRows || []), ...(legacySentTotalRows || [])]);
+    const receivedTotal = sumCountedAmount(receivedTotalRows);
+
     // Normalise and merge; deduplicate by ID (payments table takes precedence)
     const normPaymentReceived = receivedPaymentRows.map((r) => normalisePayment(r));
     const sentIds = new Set((sentPaymentRows || []).map((r) => (r as Record<string, unknown>).id as string));
@@ -350,7 +441,7 @@ export async function GET(request: Request) {
       .map(enrich)
       .filter((c) => RECEIVED_VISIBLE_STATUSES.includes(String(c.status || "").toUpperCase()));
 
-    const res = NextResponse.json({ sent, received, page, limit });
+    const res = NextResponse.json({ sent, received, page, limit, sentTotal, receivedTotal });
     res.headers.set("Cache-Control", "private, no-store");
     return res;
   } catch (e: unknown) {

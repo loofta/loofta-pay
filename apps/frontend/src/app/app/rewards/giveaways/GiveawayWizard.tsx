@@ -33,7 +33,10 @@ const MIN_TOTAL_POOL = 50;
 // creators still see the normal $50 floor above.
 const ADMIN_MIN_TOTAL_POOL = 10;
 const MAX_TOTAL_POOL = 10_000;
-const MAX_WINNERS = 50;
+// Frontend-only UI ceiling for the winners slider/divisor search — the backend has no upper
+// bound on winner_count (only winner_count > 0), so this is purely about keeping
+// divisorsUpTo's search bounded and the "Winners" picker usable, not a real business limit.
+const MAX_WINNERS = 1000;
 
 /** Every whole-number winner count from 1..max that divides `total` evenly — the pool of
  *  selectable positions for the winners slider. Always non-empty (1 always divides everything). */
@@ -239,8 +242,26 @@ const helperClass = "text-base md:text-base text-slate-400";
  *  chrome even with `accent-color`, so the visible track/fill is a separate absolutely
  *  positioned bar underneath a transparent-track native input (thumb still native, but
  *  restyled via ::-webkit-slider-thumb / ::-moz-range-thumb). */
-function RangeSlider({ min, max, step, value, onChange }: { min: number; max: number; step: number; value: number; onChange: (v: number) => void }) {
+function RangeSlider({
+  min,
+  max,
+  step,
+  value,
+  onChange,
+  onCommit,
+}: {
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (v: number) => void;
+  /** Fires once the drag/keypress that changed the value has actually ended (mouseup/touchend/
+   *  keyup) — for side effects that shouldn't re-run on every intermediate tick while dragging
+   *  (e.g. re-snapping a derived value), pass a handler here instead of doing it in onChange. */
+  onCommit?: (v: number) => void;
+}) {
   const pct = max > min ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100)) : 0;
+  const commit = (e: React.SyntheticEvent<HTMLInputElement>) => onCommit?.(Number(e.currentTarget.value));
   return (
     <div className="relative h-6 flex items-center">
       <div className="absolute inset-x-0 h-2 rounded-full bg-white/10" />
@@ -252,6 +273,9 @@ function RangeSlider({ min, max, step, value, onChange }: { min: number; max: nu
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
+        onMouseUp={commit}
+        onTouchEnd={commit}
+        onKeyUp={commit}
         className={[
           "relative w-full h-6 appearance-none bg-transparent cursor-pointer m-0",
           "[&::-webkit-slider-runnable-track]:h-2 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-runnable-track]:rounded-full",
@@ -287,7 +311,7 @@ function StepDots({ step, justCompleted }: { step: number; justCompleted: number
                 }`}
                 style={{
                   background: idx < step ? GRADIENT : idx === step ? "rgba(255,255,255,.08)" : "rgba(255,255,255,.03)",
-                  border: idx === step ? "1.5px solid #FF6A00" : "1.5px solid transparent",
+                  border: idx === step ? "1.5px solid #FF6A00" : "none",
                   boxShadow: idx === step ? "0 0 20px rgba(255,106,0,.3)" : "none",
                   color: idx <= step ? "#fff" : "#64748b",
                 }}
@@ -356,16 +380,6 @@ function DateTimePicker({ value, onChange }: { value: string; onChange: (v: stri
           selected={selectedDate}
           onSelect={setDatePart}
           disabled={(date) => date < today}
-          classNames={{
-            caption_label: "text-white text-base font-medium",
-            head_cell: "text-slate-500 w-9 font-normal text-sm",
-            day: "text-white hover:bg-white/10 rounded-lg",
-            day_selected: "bg-[#FF7A2A] text-white hover:bg-[#FF7A2A] focus:bg-[#FF7A2A]",
-            day_today: "border border-[#FF7A2A]/60",
-            day_outside: "text-slate-600",
-            day_disabled: "text-slate-700 opacity-50",
-            nav_button: "text-white hover:bg-white/10 border border-white/15",
-          }}
         />
         <div className="flex items-center gap-2 mt-1 px-1 pb-1">
           <span className="text-sm text-slate-400">Time</span>
@@ -415,6 +429,7 @@ interface GiveawayDraft {
   entriesCloseAt: string;
   minFollowers: string;
   minAccountAgeDays: string;
+  verifiedOnly: boolean;
   tasks: TaskRow[];
 }
 
@@ -431,6 +446,7 @@ function defaultDraft(): GiveawayDraft {
     entriesCloseAt: "",
     minFollowers: "",
     minAccountAgeDays: "",
+    verifiedOnly: false,
     tasks: [newRow()],
   };
 }
@@ -445,7 +461,7 @@ interface RemoteGiveaway {
   selection_mode: "random" | "first_come" | "manual";
   prize_amount_usd: string;
   entries_close_at: string;
-  eligibility: { min_followers?: number; min_account_age_days?: number };
+  eligibility: { min_followers?: number; min_account_age_days?: number; verified_only?: boolean };
   status: string;
   tasks: Array<{ task_type: string; config: Record<string, any> }>;
 }
@@ -464,6 +480,7 @@ function draftFromRemote(g: RemoteGiveaway): GiveawayDraft {
     entriesCloseAt: g.entries_close_at ? toLocalInputValue(new Date(g.entries_close_at)) : "",
     minFollowers: g.eligibility?.min_followers != null ? String(g.eligibility.min_followers) : "",
     minAccountAgeDays: g.eligibility?.min_account_age_days != null ? String(g.eligibility.min_account_age_days) : "",
+    verifiedOnly: g.eligibility?.verified_only === true,
     tasks: collapseTasksToRows(g.tasks ?? []),
   };
 }
@@ -546,7 +563,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     gcTime: Infinity,
     retry: false,
   });
-  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, entriesCloseAt, minFollowers, minAccountAgeDays, tasks } = draft;
+  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks } = draft;
   const prizeAmount = winnerCount > 0 ? totalPool / winnerCount : 0;
   const validWinnerCounts = useMemo(() => divisorsUpTo(totalPool, MAX_WINNERS), [totalPool]);
 
@@ -606,9 +623,18 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   const setEntriesCloseAt = useCallback((v: string) => updateDraft({ entriesCloseAt: v }), [updateDraft]);
   const setMinFollowers = useCallback((v: string) => updateDraft({ minFollowers: v }), [updateDraft]);
   const setMinAccountAgeDays = useCallback((v: string) => updateDraft({ minAccountAgeDays: v }), [updateDraft]);
+  const setVerifiedOnly = useCallback((v: boolean) => updateDraft({ verifiedOnly: v }), [updateDraft]);
 
   const effectiveMinPool = createAsAdmin ? ADMIN_MIN_TOTAL_POOL : MIN_TOTAL_POOL;
+  // Split in two so dragging the slider doesn't re-snap winnerCount on every intermediate tick
+  // (visibly janky — the winners count would flicker through several values mid-drag). setTotalPool
+  // just moves the pool value live; commitTotalPool does the winnerCount re-snap exactly once,
+  // when the drag/keypress actually ends (see RangeSlider's onCommit).
   const setTotalPool = useCallback((next: number) => {
+    const clamped = Math.min(MAX_TOTAL_POOL, Math.max(effectiveMinPool, Math.round(next) || effectiveMinPool));
+    updateDraft({ totalPool: clamped });
+  }, [updateDraft, effectiveMinPool]);
+  const commitTotalPool = useCallback((next: number) => {
     const clamped = Math.min(MAX_TOTAL_POOL, Math.max(effectiveMinPool, Math.round(next) || effectiveMinPool));
     updateDraft((prev) => {
       const valid = divisorsUpTo(clamped, MAX_WINNERS);
@@ -760,6 +786,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
           eligibility: {
             ...(minFollowers ? { min_followers: Number(minFollowers) } : {}),
             ...(minAccountAgeDays ? { min_account_age_days: Number(minAccountAgeDays) } : {}),
+            ...(verifiedOnly ? { verified_only: true } : {}),
           },
           tasks: tasks.flatMap(expandTaskRow),
           ...(mode === "create" ? { is_official: createAsAdmin } : {}),
@@ -787,7 +814,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     } finally {
       setSubmitting(false);
     }
-  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
+  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
 
   const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
@@ -956,14 +983,14 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                         <>
                           <div>
                             <Label className={labelClass}>Total prize pool</Label>
-                            <RangeSlider min={effectiveMinPool} max={MAX_TOTAL_POOL} step={1} value={totalPool} onChange={setTotalPool} />
+                            <RangeSlider min={effectiveMinPool} max={MAX_TOTAL_POOL} step={10} value={totalPool} onChange={setTotalPool} onCommit={commitTotalPool} />
                             <div className="relative mt-2">
                               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">$</span>
                               <Input
                                 type="number"
                                 value={totalPoolInput}
                                 onChange={(e) => setTotalPoolInput(e.target.value)}
-                                onBlur={() => setTotalPool(Number(totalPoolInput))}
+                                onBlur={() => commitTotalPool(Number(totalPoolInput))}
                                 className={`${inputClass} pl-7`}
                               />
                             </div>
@@ -1169,6 +1196,24 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                               <Input type="number" min="0" value={minAccountAgeDays} onChange={(e) => setMinAccountAgeDays(e.target.value)} className={inputClass} placeholder="e.g. 30 days" />
                             </div>
                           </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setVerifiedOnly(!verifiedOnly)}
+                            className={`w-full flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
+                              verifiedOnly ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/[0.03]"
+                            }`}
+                          >
+                            <span className="text-left">
+                              <span className={`text-base font-medium ${verifiedOnly ? "text-white" : "text-slate-300"}`}>Require verified X account</span>
+                              <span className="block text-sm font-normal text-slate-500">Only entrants with X's verified badge can enter</span>
+                            </span>
+                            <span className={`shrink-0 w-10 h-6 rounded-full border transition-colors relative ${
+                              verifiedOnly ? "bg-[#FF7A2A] border-[#FF7A2A]" : "bg-white/10 border-white/15"
+                            }`}>
+                              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${verifiedOnly ? "left-[18px]" : "left-0.5"}`} />
+                            </span>
+                          </button>
                         </>
                       )}
 
@@ -1195,10 +1240,10 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                               <button
                                 type="button"
                                 onClick={() => linkEmail()}
-                                className="w-full flex items-center gap-2 rounded-xl bg-white/[0.04] border border-white/10 px-3 py-2.5 hover:bg-white/[0.07] transition-colors text-left"
+                                className="w-full flex items-center gap-2 rounded-xl bg-[#FF7A2A]/10 border border-[#FF7A2A]/40 px-3 py-2.5 hover:bg-[#FF7A2A]/15 transition-colors text-left"
                               >
-                                <Mail className="w-4 h-4 text-slate-400 shrink-0" />
-                                <p className="text-base text-slate-400">
+                                <Mail className="w-4 h-4 text-[#FF7A2A] shrink-0" />
+                                <p className="text-base font-medium text-white">
                                   {mode === "create" ? "Add your email to submit — we need it to notify you" : "Add your email to be notified about updates"}
                                 </p>
                               </button>
@@ -1220,7 +1265,12 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                         <span className="text-base">Continue</span>
                       </GradientActionButton>
                     ) : (
-                      <GradientActionButton onClick={handleSubmit} loading={submitting} loadingText={mode === "edit" ? "Saving…" : "Submitting…"}>
+                      <GradientActionButton
+                        onClick={handleSubmit}
+                        disabled={mode === "create" && !notifyEmail}
+                        loading={submitting}
+                        loadingText={mode === "edit" ? "Saving…" : "Submitting…"}
+                      >
                         <span className="text-base">{mode === "edit" ? "Save changes" : "Submit for approval"}</span>
                       </GradientActionButton>
                     )}
@@ -1244,6 +1294,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                   selectionMode={selectionMode}
                   entriesCloseAt={entriesCloseAt}
                   minFollowers={minFollowers}
+                  verifiedOnly={verifiedOnly}
                   isOfficial={mode === "create" && createAsAdmin}
                   tasks={previewTasks}
                   pulse={previewPulse}

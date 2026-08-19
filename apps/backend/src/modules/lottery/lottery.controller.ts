@@ -418,6 +418,12 @@ export class LotteryController {
     return this.lottery.getMyGifts(req.user.id, offset, limit);
   }
 
+  @Get('my-unclaimed-gifts')
+  @ApiOperation({ summary: 'Gifts sent to the current user that they have not claimed yet — powers the unclaimed-gift toast' })
+  async myUnclaimedGifts(@Request() req: any) {
+    return this.lottery.getMyUnclaimedGifts(req.user.id);
+  }
+
   @Post('my-gifts/:giftId/recipient')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Edit the recipient of an unclaimed gift you sent (fixes a typo without cancelling)' })

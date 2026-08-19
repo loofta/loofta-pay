@@ -35,17 +35,22 @@ export class GiveawayEntriesService {
     private readonly giveawaysService: GiveawaysService,
   ) {}
 
-  /** Resolves the caller's linked X handle via Privy, same lookup twitter-payments.service.ts uses. */
-  private async resolveLinkedXHandle(userId: string): Promise<string> {
+  /** Resolves the caller's linked X account via Privy, same lookup twitter-payments.service.ts
+   *  uses — and, critically, entirely without a real X API call. Privy's own Twitter OAuth record
+   *  already carries the numeric id (the `subject`/`sub` claim from Twitter's JWT), username, and
+   *  profile picture; only followers_count and account age genuinely require a live X API lookup
+   *  (see resolveXProfile), so callers that don't need those should use this directly instead. */
+  private async resolveLinkedXAccount(userId: string): Promise<{ id: string; username: string; profileImageUrl: string | null }> {
     const privyUser = await this.privy.getPrivyUser(userId);
     const twitterAccount = privyUser?.linked_accounts?.find(
       (a: any) => TWITTER_ACCOUNT_TYPES.includes((a.type ?? '').toLowerCase()),
     );
-    const handle = (twitterAccount?.username || twitterAccount?.name || twitterAccount?.address || '').trim();
-    if (!handle) {
+    const username = (twitterAccount?.username || twitterAccount?.name || twitterAccount?.address || '').trim();
+    const id = (twitterAccount?.subject || '').trim();
+    if (!username || !id) {
       throw new BadRequestException('No X (Twitter) account linked. Connect X in settings before entering a giveaway.');
     }
-    return handle;
+    return { id, username, profileImageUrl: twitterAccount?.profilePictureUrl || null };
   }
 
   async enter(giveawayId: string, userId: string): Promise<GiveawayEntry> {
@@ -61,33 +66,80 @@ export class GiveawayEntriesService {
     }
 
     const { data: existing } = await this.supabaseService.giveawayEntries
-      .select('id')
+      .select('id, status')
       .eq('giveaway_id', giveawayId)
       .eq('user_id', userId)
       .maybeSingle();
+    if (existing?.status === GiveawayEntryStatus.DISQUALIFIED) {
+      // Checked once, remembered from here on — no re-check, no further X API call, ever, for
+      // this account on this giveaway. Previously a failed eligibility check persisted nothing at
+      // all, so nothing stopped (or even slowed down) an immediate retry from re-triggering a real
+      // X API lookup — with enough repeat attempts across enough entrants that's a real cost driver
+      // on its own, on top of the caching bugs fixed above.
+      throw new ForbiddenException("You don't meet this giveaway's eligibility requirements.");
+    }
     if (existing) throw new ConflictException('Already entered this giveaway');
 
-    const handle = await this.resolveLinkedXHandle(userId);
-    const profile = await this.xVerification.resolveXProfile(handle);
-    if (!profile) {
-      throw new BadRequestException('Could not verify your X account right now. Please try again shortly.');
-    }
+    const account = await this.resolveLinkedXAccount(userId);
 
+    // followers_count/account age aren't in Privy's linked-account data — only pay for a real X
+    // API lookup when a giveaway actually gates on one of them. This is the common case's entire
+    // X API cost for entering: previously every single entry paid for one regardless of whether
+    // the giveaway had any eligibility rules at all.
     const minFollowers = giveaway.eligibility?.min_followers;
-    if (typeof minFollowers === 'number' && profile.followersCount < minFollowers) {
-      throw new ForbiddenException(`This giveaway requires at least ${minFollowers} X followers`);
-    }
     const minAgeDays = giveaway.eligibility?.min_account_age_days;
-    if (typeof minAgeDays === 'number') {
-      const ageDays = (Date.now() - new Date(profile.createdAt).getTime()) / 86_400_000;
-      if (ageDays < minAgeDays) {
-        throw new ForbiddenException(`This giveaway requires an X account at least ${minAgeDays} days old`);
+    const verifiedOnly = giveaway.eligibility?.verified_only === true;
+    let xUserId = account.id;
+    let xHandle = account.username;
+    let avatarUrl = account.profileImageUrl;
+    let eligibilitySnapshot: Record<string, unknown> = {};
+
+    if (typeof minFollowers === 'number' || typeof minAgeDays === 'number' || verifiedOnly) {
+      const profile = await this.xVerification.resolveXProfile(account.username);
+      if (!profile) {
+        throw new BadRequestException('Could not verify your X account right now. Please try again shortly.');
+      }
+      xUserId = profile.id;
+      xHandle = profile.username;
+      // avatarUrl stays whatever resolveLinkedXAccount (Privy) already gave us — resolveXProfile
+      // no longer fetches profile_image_url from X at all, see its doc comment.
+      eligibilitySnapshot = { followers_count: profile.followersCount, account_created_at: profile.createdAt, verified: profile.verified };
+
+      const failReason =
+        typeof minFollowers === 'number' && profile.followersCount < minFollowers
+          ? `This giveaway requires at least ${minFollowers} X followers`
+          : typeof minAgeDays === 'number' && (Date.now() - new Date(profile.createdAt).getTime()) / 86_400_000 < minAgeDays
+            ? `This giveaway requires an X account at least ${minAgeDays} days old`
+            : verifiedOnly && !profile.verified
+              ? 'This giveaway requires a verified X account'
+              : null;
+      if (failReason) {
+        await this.insertEntryRow(giveawayId, userId, GiveawayEntryStatus.DISQUALIFIED, { xUserId, xHandle, avatarUrl, eligibilitySnapshot });
+        throw new ForbiddenException(failReason);
       }
     }
 
-    // entry_index: simple read-then-insert with one retry on the unique-index conflict — entry
-    // volume for a single giveaway doesn't warrant a DB sequence, and the unique index is the
-    // actual source of truth either way (this just avoids wasting most retries on a cold start).
+    const entry = await this.insertEntryRow(giveawayId, userId, GiveawayEntryStatus.ENTERED, { xUserId, xHandle, avatarUrl, eligibilitySnapshot });
+    if (entry) {
+      await this.createTaskCompletionStubs(entry.id, giveawayId);
+      return entry;
+    }
+    throw new BadRequestException('Failed to enter giveaway after retries — please try again');
+  }
+
+  /** entry_index: simple read-then-insert with one retry on the unique-index conflict — entry
+   *  volume for a single giveaway doesn't warrant a DB sequence, and the unique index is the
+   *  actual source of truth either way (this just avoids wasting most retries on a cold start).
+   *  Shared by both a real entry and a disqualified (ineligible) record — the row itself is what
+   *  makes "checked once, remembered forever" possible, so a disqualified attempt needs a durable
+   *  row exactly as much as a real one does. Returns null only if every retry hit a genuine
+   *  index collision (vanishingly rare); any other DB error throws directly. */
+  private async insertEntryRow(
+    giveawayId: string,
+    userId: string,
+    status: GiveawayEntryStatus,
+    data: { xUserId: string; xHandle: string; avatarUrl: string | null; eligibilitySnapshot: Record<string, unknown> },
+  ): Promise<GiveawayEntry | null> {
     for (let attempt = 0; attempt < 3; attempt++) {
       const { count } = await this.supabaseService.giveawayEntries
         .select('id', { count: 'exact', head: true })
@@ -97,23 +149,21 @@ export class GiveawayEntriesService {
           giveaway_id: giveawayId,
           user_id: userId,
           entry_index: (count ?? 0) + 1,
-          x_user_id: profile.id,
-          x_handle: profile.username,
-          eligibility_snapshot: { followers_count: profile.followersCount, account_created_at: profile.createdAt },
-          status: GiveawayEntryStatus.ENTERED,
+          x_user_id: data.xUserId,
+          x_handle: data.xHandle,
+          avatar_url: data.avatarUrl,
+          eligibility_snapshot: data.eligibilitySnapshot,
+          status,
         })
         .select()
         .single();
-      if (!error && entry) {
-        await this.createTaskCompletionStubs(entry.id, giveawayId);
-        return entry as GiveawayEntry;
-      }
+      if (!error && entry) return entry as GiveawayEntry;
       if (error && !error.message.includes('duplicate key')) {
         throw new BadRequestException(`Failed to enter giveaway: ${error.message}`);
       }
       // entry_index collision — retry with a freshly-read count
     }
-    throw new BadRequestException('Failed to enter giveaway after retries — please try again');
+    return null;
   }
 
   private async createTaskCompletionStubs(entryId: string, giveawayId: string): Promise<void> {
@@ -284,22 +334,34 @@ export class GiveawayEntriesService {
     });
   }
 
-  /** Completions awaiting a human decision — self-report submissions plus anything the X-API
-   *  checker couldn't resolve. Permanent fallback per plan §Task verification. */
-  async listReviewQueue(giveawayId: string): Promise<Array<GiveawayTaskCompletion & { entry: GiveawayEntry; task: GiveawayTask }>> {
+  /** Completions awaiting a human decision — self-report tasks only. AUTO_API tasks (X follow/
+   *  retweet/comment) resolve programmatically via XVerificationService and never need a human
+   *  here; a genuine API failure for one of those lands in listApiErrorEscalations instead, not
+   *  this queue. A self-report completion is only ever PENDING or already reviewed — it can never
+   *  reach api_error (that status only comes from XVerificationService), so filtering to PENDING
+   *  is exactly "still needs a decision," not an approximation of it. */
+  async listReviewQueue(
+    giveawayId: string,
+    opts: { page?: number; pageSize?: number } = {},
+  ): Promise<{ items: Array<GiveawayTaskCompletion & { entry: GiveawayEntry; task: GiveawayTask }>; total: number }> {
     const entries = await this.listEntries(giveawayId);
     const entryIds = entries.map((e) => e.id);
-    if (!entryIds.length) return [];
+    if (!entryIds.length) return { items: [], total: 0 };
     const tasks = await this.giveawaysService.getTasks(giveawayId);
+    const selfReportTaskIds = new Set(tasks.filter((t) => t.verification_mode === GiveawayTaskVerificationMode.SELF_REPORT).map((t) => t.id));
     const tasksById = new Map(tasks.map((t) => [t.id, t]));
     const entriesById = new Map(entries.map((e) => [e.id, e]));
+    if (!selfReportTaskIds.size) return { items: [], total: 0 };
 
     const { data, error } = await this.supabaseService.giveawayTaskCompletions
       .select('*')
       .in('giveaway_entry_id', entryIds)
-      .in('verification_status', [GiveawayTaskCompletionStatus.PENDING, GiveawayTaskCompletionStatus.API_ERROR]);
+      .in('giveaway_task_id', Array.from(selfReportTaskIds))
+      .eq('verification_status', GiveawayTaskCompletionStatus.PENDING)
+      .order('created_at', { ascending: true });
     if (error) throw new BadRequestException(error.message);
-    return (data ?? [])
+
+    const all = (data ?? [])
       .map((c) => {
         const completion = c as GiveawayTaskCompletion;
         const task = tasksById.get(completion.giveaway_task_id);
@@ -308,6 +370,45 @@ export class GiveawayEntriesService {
         return { ...completion, entry, task };
       })
       .filter((x): x is GiveawayTaskCompletion & { entry: GiveawayEntry; task: GiveawayTask } => x !== null);
+
+    // Entering a giveaway creates a PENDING stub for every task up front (createTaskCompletionStubs),
+    // so this queue is full of stubs nobody has actually submitted proof for yet alongside real
+    // submissions awaiting a decision. Proof-having items first (oldest first within each group) so a
+    // reviewer isn't stuck paging past empty stubs to find the ones that actually need a decision.
+    const hasProof = (c: GiveawayTaskCompletion) => Boolean(c.submission_data?.proof || c.submission_data?.proof_image_url);
+    all.sort((a, b) => Number(hasProof(b)) - Number(hasProof(a)));
+
+    const pageSize = Math.min(Math.max(opts.pageSize ?? 20, 1), 100);
+    const page = Math.max(opts.page ?? 1, 1);
+    const items = all.slice((page - 1) * pageSize, page * pageSize);
+    return { items, total: all.length };
+  }
+
+  /** Every task completion for one entry, any status, joined with task info — what the creator's
+   *  entries-search dialog expands into when they click an entrant's name, so they can see what
+   *  that person actually submitted without hunting for it in the review queue (which only shows
+   *  still-pending self-report items). */
+  async listEntryCompletions(giveawayId: string, entryId: string): Promise<Array<GiveawayTaskCompletion & { task: GiveawayTask }>> {
+    const entries = await this.listEntries(giveawayId);
+    if (!entries.some((e) => e.id === entryId)) throw new NotFoundException('Entry not found on this giveaway');
+
+    const tasks = await this.giveawaysService.getTasks(giveawayId);
+    const tasksById = new Map(tasks.map((t) => [t.id, t]));
+
+    const { data, error } = await this.supabaseService.giveawayTaskCompletions
+      .select('*')
+      .eq('giveaway_entry_id', entryId)
+      .order('created_at', { ascending: true });
+    if (error) throw new BadRequestException(error.message);
+
+    return (data ?? [])
+      .map((c) => {
+        const completion = c as GiveawayTaskCompletion;
+        const task = tasksById.get(completion.giveaway_task_id);
+        if (!task) return null;
+        return { ...completion, task };
+      })
+      .filter((x): x is GiveawayTaskCompletion & { task: GiveawayTask } => x !== null);
   }
 
   /** Cross-giveaway escalation queue — completions the X-API checker itself couldn't resolve
@@ -324,7 +425,64 @@ export class GiveawayEntriesService {
     return (data ?? []) as GiveawayTaskCompletion[];
   }
 
+  /** Confirms completionId actually belongs to giveawayId (via its entry) and that its task is
+   *  eligible for manual review — a caller authorized for giveawayId must not be able to touch a
+   *  completion under a DIFFERENT giveaway, or override an AUTO_API task Sorsa already resolved,
+   *  just by guessing/enumerating a completionId. Shared by both the authenticated
+   *  creator-dashboard path and the password-protected public review-link path. */
+  private async assertCompletionBelongsToGiveaway(
+    giveawayId: string,
+    completionId: string,
+  ): Promise<GiveawayTaskCompletion> {
+    const { data: completion, error: fetchError } = await this.supabaseService.giveawayTaskCompletions
+      .select('*')
+      .eq('id', completionId)
+      .maybeSingle();
+    if (fetchError) throw new BadRequestException(fetchError.message);
+    if (!completion) throw new NotFoundException('Task completion not found');
+
+    const { data: entry, error: entryError } = await this.supabaseService.giveawayEntries
+      .select('giveaway_id')
+      .eq('id', (completion as GiveawayTaskCompletion).giveaway_entry_id)
+      .maybeSingle();
+    if (entryError) throw new BadRequestException(entryError.message);
+    if (!entry || (entry as { giveaway_id: string }).giveaway_id !== giveawayId) {
+      throw new ForbiddenException('This task does not belong to that giveaway');
+    }
+
+    const tasks = await this.giveawaysService.getTasks(giveawayId);
+    const task = tasks.find((t) => t.id === (completion as GiveawayTaskCompletion).giveaway_task_id);
+    if (!task || task.verification_mode !== GiveawayTaskVerificationMode.SELF_REPORT) {
+      throw new ForbiddenException('This task is not eligible for manual review');
+    }
+    return completion as GiveawayTaskCompletion;
+  }
+
+  /** Authenticated creator-dashboard path — caller must already be verified (by the controller)
+   *  as giveawayId's creator; this additionally confirms completionId actually belongs to
+   *  giveawayId, closing the IDOR a creator-scoped-only check would otherwise leave open (see
+   *  assertCompletionBelongsToGiveaway). */
   async reviewCompletion(
+    giveawayId: string,
+    completionId: string,
+    reviewerId: string,
+    decision: 'verified' | 'rejected',
+  ): Promise<GiveawayTaskCompletion> {
+    await this.assertCompletionBelongsToGiveaway(giveawayId, completionId);
+    const { data, error } = await this.supabaseService.giveawayTaskCompletions
+      .update({ verification_status: decision, reviewed_by: reviewerId, reviewed_at: new Date().toISOString() })
+      .eq('id', completionId)
+      .select()
+      .single();
+    if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to review task completion');
+    return data as GiveawayTaskCompletion;
+  }
+
+  /** Admin override — the route this backs is AdminGuard-gated and deliberately "any completion,
+   *  any giveaway" (see GiveawaysAdminController), so there's no giveawayId to scope against and
+   *  none is needed: AdminGuard is already the full authorization here, unlike the
+   *  creator-dashboard path above. */
+  async reviewCompletionAdmin(
     completionId: string,
     reviewerId: string,
     decision: 'verified' | 'rejected',
@@ -336,6 +494,26 @@ export class GiveawayEntriesService {
       .single();
     if (error || !data) throw new BadRequestException(error?.message ?? 'Failed to review task completion');
     return data as GiveawayTaskCompletion;
+  }
+
+  /** Same action as reviewCompletion, but for the password-protected public review link path,
+   *  which has no real user identity to authorize with — a valid session only proves "allowed to
+   *  act on giveawayId," not "allowed to touch this specific completionId." reviewed_by stays
+   *  null — there is no account behind a public-link decision, only the fact that it happened
+   *  (reviewed_at). */
+  async reviewCompletionScoped(
+    giveawayId: string,
+    completionId: string,
+    decision: 'verified' | 'rejected',
+  ): Promise<GiveawayTaskCompletion> {
+    await this.assertCompletionBelongsToGiveaway(giveawayId, completionId);
+    const { data: updated, error: updateError } = await this.supabaseService.giveawayTaskCompletions
+      .update({ verification_status: decision, reviewed_by: null, reviewed_at: new Date().toISOString() })
+      .eq('id', completionId)
+      .select()
+      .single();
+    if (updateError || !updated) throw new BadRequestException(updateError?.message ?? 'Failed to review task completion');
+    return updated as GiveawayTaskCompletion;
   }
 
   /** Every completion still `pending`, grouped by task — used by the cron to drive XVerificationService in one batch per task instead of one call per entry. */

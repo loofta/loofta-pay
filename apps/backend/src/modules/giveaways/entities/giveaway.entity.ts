@@ -68,6 +68,7 @@ export const GIVEAWAY_TASK_VERIFICATION_MODE: Record<GiveawayTaskType, GiveawayT
 export interface GiveawayEligibility {
   min_followers?: number;
   min_account_age_days?: number;
+  verified_only?: boolean;
 }
 
 export interface Giveaway {
@@ -114,6 +115,11 @@ export interface Giveaway {
   is_official: boolean;
 
   status: GiveawayStatus;
+
+  /** Password-protected public review link — see GiveawaysService.generateReviewLink. Null until a creator generates one; regenerating overwrites all three. */
+  review_link_token: string | null;
+  review_link_password_hash: string | null;
+  review_link_created_at: string | null;
 }
 
 export enum GiveawayEntryStatus {
@@ -138,6 +144,7 @@ export interface GiveawayEntry {
   entry_index: number;
   x_user_id: string;
   x_handle: string;
+  avatar_url: string | null;
   eligibility_snapshot: GiveawayEntryEligibilitySnapshot;
   status: GiveawayEntryStatus;
   payout_choice: 'public' | 'private' | null;

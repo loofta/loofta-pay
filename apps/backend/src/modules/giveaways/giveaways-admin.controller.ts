@@ -7,6 +7,7 @@ import { GiveawayDrawService } from './giveaway-draw.service';
 import { AdminReviewGiveawayDto } from './dto/admin-review-giveaway.dto';
 import { AdminEditGiveawayDto } from './dto/admin-edit-giveaway.dto';
 import { ExpireGiveawayDto } from './dto/expire-giveaway.dto';
+import { CancelGiveawayDto } from './dto/cancel-giveaway.dto';
 import { ReviewTaskCompletionDto } from './dto/review-task-completion.dto';
 import { VrfManualFallbackDto } from './dto/vrf-manual-fallback.dto';
 import { Giveaway } from './entities/giveaway.entity';
@@ -76,6 +77,20 @@ export class GiveawaysAdminController {
     return { giveaway };
   }
 
+  @Put(':id/cancel')
+  @ApiOperation({
+    summary:
+      'Cancel a giveaway that\'s already past approval (PENDING_FUNDING/FUNDED/OPEN/ENTRIES_CLOSED) — refunds any burner balance to the creator, moves it to CANCELLED, and emails the creator. Not for a still-pending giveaway (use reject) or one already mid-draw/finished (contact support).',
+  })
+  async cancel(
+    @Req() req: { user?: { id: string } },
+    @Param('id') id: string,
+    @Body() dto: CancelGiveawayDto,
+  ): Promise<{ giveaway: Giveaway }> {
+    const giveaway = await this.giveawaysService.adminCancel(id, req.user!.id, dto.reason);
+    return { giveaway };
+  }
+
   @Get('review-queue')
   @ApiOperation({ summary: 'Cross-giveaway escalation queue — X-API verification failures (api_error) any admin can unblock' })
   async reviewQueue() {
@@ -104,7 +119,7 @@ export class GiveawaysAdminController {
     @Param('completionId') completionId: string,
     @Body() dto: ReviewTaskCompletionDto,
   ) {
-    const completion = await this.entriesService.reviewCompletion(completionId, req.user!.id, dto.decision);
+    const completion = await this.entriesService.reviewCompletionAdmin(completionId, req.user!.id, dto.decision);
     return { completion };
   }
 }

@@ -39,6 +39,15 @@ export class TwitterAutopayController {
     return this.autopay.unenroll(user.id);
   }
 
+  @Post('request-access')
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(3, 3600, 'twitter-autopay:request-access')
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Email hello@loofta.xyz an access request with the caller\'s identity on file' })
+  async requestAccess(@PrivyUser() user: { id: string }) {
+    return this.autopay.requestAccess(user.id);
+  }
+
   /**
    * Bot-facing: lets the bot pre-filter mentions to enrolled senders only, before it even tries
    * to parse a tweet's text, instead of parsing every mention and only finding out a sender

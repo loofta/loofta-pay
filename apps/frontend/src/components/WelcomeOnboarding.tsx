@@ -338,11 +338,14 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onUser
     const savedUsername = username || newUsername.trim();
     if (privyUserId && savedUsername) {
       try {
+        const token = await getAccessToken().catch(() => null);
         await fetch("/api/users/set-onboarding-preference", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({
-            privyUserId,
             skipOnboarding: true,
           }),
         });
@@ -351,7 +354,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onUser
       }
     }
     onClose();
-  }, [privyUserId, onClose, username, newUsername]);
+  }, [privyUserId, onClose, username, newUsername, getAccessToken]);
 
   const handleNext = async () => {
     // If on step 1, save username first before proceeding

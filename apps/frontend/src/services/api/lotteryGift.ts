@@ -27,6 +27,15 @@ export interface LotteryGiftPublic {
   senderUsername: string | null;
   /** Recipient's X/Loofta handle — only set when the gift targeted a handle, never an email. */
   recipientHandle: string | null;
+  createdAt: string;
+  claimedAt: string | null;
+  /** Only populated when the viewer is the claimant — lets the claim page resume polling for
+   *  numbers after a page reload, instead of only knowing the ticket id from the one-shot
+   *  claimLotteryGift() response at the moment of claiming. */
+  resultingTicketId: string | null;
+  /** What the sender actually paid for this gift (numTickets × ticket price) — the recipient
+   *  never pays anything, but the sender's own "You paid" line needs the real figure, not $0. */
+  costUsdc: number;
 }
 
 export interface ClaimLotteryGiftResult {
@@ -79,6 +88,62 @@ export async function getMyGifts(
     `/lottery/my-gifts?offset=${offset}&limit=${limit}`,
     { userId, accessToken },
   );
+}
+
+export interface BuyGiftResult {
+  giftId: string;
+  txBase64: string;
+  requiredSigners: string[];
+}
+
+/** POST /lottery/buy-gift — returns the unsigned MagicBlock tx (one signature, no separate fee
+ *  tx) that funds the gift's holding burner. The Megapot purchase itself only happens later, when
+ *  the recipient claims (see claimLotteryGift). */
+export async function buyGift(
+  dto: {
+    numTickets: number;
+    userSolanaAddress: string;
+    recipientType: 'email' | 'handle';
+    recipientIdentifier: string;
+    note?: string;
+    route?: 'solana_private' | 'solana_public';
+  },
+  userId: string,
+  accessToken?: string | null,
+): Promise<BuyGiftResult> {
+  return fetchApi<BuyGiftResult>('/lottery/buy-gift', {
+    method: 'POST',
+    body: JSON.stringify(dto),
+    userId,
+    accessToken,
+  });
+}
+
+/** POST /lottery/buy-gift-confirm — confirms the signed tx and returns the claim link. */
+export async function confirmGiftSend(
+  giftId: string,
+  senderTxHash: string,
+  userId: string,
+  accessToken?: string | null,
+): Promise<{ claimUrl: string }> {
+  return fetchApi<{ claimUrl: string }>('/lottery/buy-gift-confirm', {
+    method: 'POST',
+    body: JSON.stringify({ giftId, senderTxHash }),
+    userId,
+    accessToken,
+  });
+}
+
+export interface UnclaimedGift {
+  shortId: string;
+  numTickets: number;
+  senderUsername: string | null;
+  createdAt: string;
+}
+
+/** Gifts sent to the current user that they haven't claimed yet — powers the unclaimed-gift toast. */
+export async function getMyUnclaimedGifts(userId: string, accessToken?: string | null): Promise<UnclaimedGift[]> {
+  return fetchApi<UnclaimedGift[]>('/lottery/my-unclaimed-gifts', { userId, accessToken });
 }
 
 /** Fix a typo'd recipient on a gift you sent — only works while it's still unclaimed. */

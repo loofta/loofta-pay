@@ -159,6 +159,9 @@ function toast({ ...props }: Toast) {
       id,
       open: true,
       onOpenChange: (open) => {
+        // Forward to a caller-supplied onOpenChange first — otherwise it'd be silently
+        // overwritten here with no way for a caller to observe its own toast closing.
+        props.onOpenChange?.(open)
         if (!open) dismiss()
       },
     },

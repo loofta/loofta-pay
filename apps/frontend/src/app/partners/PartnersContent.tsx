@@ -24,10 +24,10 @@ const TELEGRAM_HREF = "https://t.me/looftaxyz";
 
 const PRODUCTS = [
   {
-    icon: "🐦",
-    title: "Twitter bot",
-    body: "Tag @looftapay on X to send USDC or gift lottery tickets — no app switch, no wallet address. Enrolled accounts can even skip the confirm step entirely.",
-    cta: { label: "Get started", href: "https://pay.loofta.xyz/twitter-bot" },
+    icon: "💬",
+    title: "AI terminal",
+    body: "Tell it who to pay in plain English — \"send $5 to @alice on X\" — and it handles the rest. No wallet address, no app switch, works for one recipient or many at once.",
+    cta: { label: "Get started", href: "https://pay.loofta.xyz/terminal" },
   },
   {
     icon: "🎟️",

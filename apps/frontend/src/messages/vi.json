@@ -78,6 +78,15 @@
     "claimMany": "Nhận tất cả",
     "dismiss": "Đóng"
   },
+  "UnclaimedGiftToast": {
+    "titleOne": "Bạn có một món quà chưa nhận",
+    "titleMany": "Bạn có {count} món quà chưa nhận",
+    "ticketWaitingOne": "1 vé số đang chờ bạn.",
+    "ticketWaitingMany": "{numTickets} vé số đang chờ bạn.",
+    "claimOne": "Nhận ngay",
+    "claimMany": "Nhận tất cả",
+    "dismiss": "Đóng"
+  },
   "AddEmailToast": {
     "title": "Không bỏ lỡ khoản thanh toán nào",
     "body": "Thêm email của bạn để nhận thông báo về các khoản thanh toán và quà tặng mới.",

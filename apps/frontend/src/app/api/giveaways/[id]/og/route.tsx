@@ -10,7 +10,8 @@ export const runtime = "nodejs";
 const BUCKET = "giveaway-og";
 // Bumped when the card design changes so old cached images (at earlier version paths) don't
 // keep being served for links generated before the redesign — each version gets its own prefix.
-const DESIGN_VERSION = "v1";
+// v2: total prize pool is now the big headline number instead of the per-winner amount.
+const DESIGN_VERSION = "v2";
 // satori (which next/og renders through) doesn't support WOFF2 — the format the site's own
 // Fontshare CDN links use — so these are static TTF weights pulled from Fontshare's public
 // family-download endpoint. Same pair used by the sibling /api/share/:id/og route.
@@ -202,7 +203,7 @@ async function renderImage(preview: NonNullable<Awaited<ReturnType<typeof getGiv
                 fontFamily: "Clash Display",
               }}
             >
-              {perWinner}
+              {totalLabel}
             </span>
             <span
               style={{
@@ -214,15 +215,15 @@ async function renderImage(preview: NonNullable<Awaited<ReturnType<typeof getGiv
                 fontFamily: "Clash Grotesk",
               }}
             >
-              per winner × {preview.winner_count}
+              total prize pool
             </span>
           </div>
         </div>
 
-        {/* Bottom row: total pool + CTA */}
+        {/* Bottom row: per-winner breakdown + CTA */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span style={{ display: "flex", fontSize: 28, fontWeight: 500, color: "#a89a94", fontFamily: "Clash Grotesk" }}>
-            {totalLabel} total prize pool
+            {perWinner} per winner × {preview.winner_count}
           </span>
           <span style={{ display: "flex", fontSize: 28, fontWeight: 600, color: "#ffffff", fontFamily: "Clash Grotesk" }}>
             Enter on Loofta &#8594;
