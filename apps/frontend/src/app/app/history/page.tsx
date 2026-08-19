@@ -186,7 +186,7 @@ async function fetchPaymentHistory(
   userId: string,
   accessToken?: string | null,
   networkMode?: string,
-): Promise<{ sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[] }> {
+): Promise<{ sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[]; sentTotal: number; receivedTotal: number }> {
   const headers: Record<string, string> = accessToken
     ? { authorization: `Bearer ${accessToken}` }
     : {};
@@ -266,12 +266,11 @@ export default function HistoryPage() {
 
   const anonymous = t('anonymous');
 
-  const totalSent = sent
-    .filter((c) => String(c.status).toUpperCase() === "SUCCESS")
-    .reduce((sum, c) => sum + parseFloat(c.amount || "0"), 0);
-  const totalReceived = received
-    .filter((c) => String(c.status).toUpperCase() === "SUCCESS")
-    .reduce((sum, c) => sum + parseFloat(c.amount || "0"), 0);
+  // True lifetime totals, computed server-side over every matching row (not just the current
+  // page) — summing only the fetched page here previously understated these for anyone with
+  // more than a page of history (e.g. a multi-send campaign creating 100+ individual rows).
+  const totalSent = data?.sentTotal ?? 0;
+  const totalReceived = data?.receivedTotal ?? 0;
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
