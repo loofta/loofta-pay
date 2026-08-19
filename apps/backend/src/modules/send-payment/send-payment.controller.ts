@@ -6,6 +6,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -25,6 +26,17 @@ import { BuildMultiSendDto, BuildMultiSendHubDto, ConfirmMultiSendHubDto, Confir
 export class SendPaymentController {
   constructor(private readonly sendPaymentService: SendPaymentService) {}
 
+  // Multi-recipient send is temporarily disabled — the shared-hub fan-out mechanism it relies on
+  // has no per-sender isolation, which allowed both a fund-drain exploit and separate race-driven
+  // double-payments to real recipients (both discovered and remediated 2026-08-19). Blocked at
+  // every entry point until the hub is reworked with proper isolation.
+  private static readonly MULTI_SEND_DISABLED_MESSAGE =
+    'Multi-recipient send is temporarily unavailable while we rework how it funds payouts. Please send to one recipient at a time for now.';
+
+  private assertMultiSendEnabled(): void {
+    throw new ServiceUnavailableException(SendPaymentController.MULTI_SEND_DISABLED_MESSAGE);
+  }
+
   @Post('multi-create')
   @UseGuards(AuthGuard, RateLimitGuard)
   @RateLimit(10, 60, 'sendpay:create')
@@ -35,6 +47,7 @@ export class SendPaymentController {
     @PrivyUser() user: { id: string },
     @Body() dto: BuildMultiSendDto,
   ) {
+    this.assertMultiSendEnabled();
     return this.sendPaymentService.createMultiPayments(user.id, dto);
   }
 
@@ -49,6 +62,7 @@ export class SendPaymentController {
     @PrivyUser() user: { id: string },
     @Body() dto: BuildMultiSendDto,
   ) {
+    this.assertMultiSendEnabled();
     return this.sendPaymentService.buildMultiPrivateTransfer(user.id, dto);
   }
 
@@ -63,6 +77,7 @@ export class SendPaymentController {
     @PrivyUser() user: { id: string },
     @Body() dto: BuildMultiSendHubDto,
   ) {
+    this.assertMultiSendEnabled();
     return this.sendPaymentService.buildMultiSendHubTransfer(user.id, dto.multi_send_batch_id, dto.sender_wallet, dto.cluster);
   }
 
@@ -76,6 +91,7 @@ export class SendPaymentController {
     @PrivyUser() user: { id: string },
     @Body() body: ConfirmMultiSendHubDto,
   ) {
+    this.assertMultiSendEnabled();
     this.sendPaymentService.confirmMultiSendHub(user.id, body.multi_send_batch_id, body.tx_hash);
     return { ok: true };
   }
@@ -91,6 +107,7 @@ export class SendPaymentController {
     @Body() body: ConfirmMultiSendDto,
     @Req() req: any,
   ) {
+    this.assertMultiSendEnabled();
     await this.sendPaymentService.confirmMultiSend(user.id, body.payment_ids, body.tx_hash, body.fee_usdc, getClientIp(req));
     return { ok: true };
   }

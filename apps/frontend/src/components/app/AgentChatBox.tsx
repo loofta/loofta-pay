@@ -404,29 +404,12 @@ export function AgentChatBox() {
    *  fees, same shape as the single-payment card. Private sends fall back to the full
    *  MultiSendFlow below the chat, since that's the only path with the hub-fee calculation and
    *  its own privacy toggle — cramming that into the compact card isn't worth the complexity. */
-  function finalizeMultiSend(recipients: ParsedRecipient[], isPrivate: boolean) {
-    const total = recipients.reduce((s, r) => s + r.amount, 0)
-    if (!solanaPayment.hasEnoughBalance(total)) {
-      pushInsufficientFunds(total)
-      return
-    }
-    if (!isPrivate) {
-      pushMultiPaymentCard(recipients)
-      return
-    }
-    setRows(
-      recipients.map((r, i) => ({
-        id: `agent-ms-${Date.now()}-${i}`,
-        recipient: r.identifier,
-        amount: String(r.amount),
-        message: '',
-        recipientType: r.platform,
-      })),
-    )
-    setReviewPending(true)
-    setMultiSendOpen(true)
+  function finalizeMultiSend(recipients: ParsedRecipient[], _isPrivate: boolean) {
+    // Multi-recipient send is temporarily disabled everywhere (see MultiSendFlow.tsx) — the
+    // shared-hub fan-out it relies on has no per-sender isolation, blocked until reworked.
     pushAssistant(
-      `Got it — private multi-send needs the fee breakdown below. $${total.toFixed(2)} total to ${recipients.length} recipients. Review and pay below.`,
+      `Sending to ${recipients.length} recipients at once is temporarily unavailable — send to one recipient at a time for now.`,
+      'error',
     )
   }
 
