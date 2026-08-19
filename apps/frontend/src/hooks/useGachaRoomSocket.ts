@@ -155,6 +155,20 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
     });
   }, []);
 
+  // Phase-gate acks (see migration 20260819120000 / GachaGateway.onWatchedCard): the client
+  // reports it FINISHED a cinematic, and the server holds the matching phase transition until
+  // every real participant has acked or the deadline passes. Fire-and-forget like markReady —
+  // acks are idempotent server-side, so a slow/duplicate send is harmless.
+  const watchedCard = useCallback(() => {
+    if (!roomIdRef.current) return;
+    socketRef.current?.emit("watched_card", { roomId: roomIdRef.current });
+  }, []);
+
+  const watchedRoulette = useCallback(() => {
+    if (!roomIdRef.current) return;
+    socketRef.current?.emit("watched_roulette", { roomId: roomIdRef.current });
+  }, []);
+
   // Same one-shot/ack-based reasoning as lockMascot — a vote is a real, meaningful action, not
   // fire-and-forget presence.
   const castVote = useCallback((vote: boolean): Promise<{ ok: boolean; error?: string }> => {
@@ -171,7 +185,7 @@ export function useGachaRoomSocket(roomId: string | null, accessToken: string | 
   return {
     connected, snapshot, lastUpdate, lastOpened, lastBid, lastSettled, lastReadyUpdate, allReadyTick,
     emojiBySeat, readySeats, markReady, pickEmoji, lastMascotLocked, lastExcluded, lockMascot,
-    lastVoteRoundStarted, lastVoteResult, lastVoteCut, castVote,
+    lastVoteRoundStarted, lastVoteResult, lastVoteCut, castVote, watchedCard, watchedRoulette,
     viewerCount,
   };
 }

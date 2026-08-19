@@ -39,6 +39,9 @@ export class GachaCronService {
   async sweep(): Promise<void> {
     await this.gacha.advanceExcludingRooms().catch((e) => this.logger.error(`advanceExcludingRooms: ${e.message}`));
     await this.gacha.advanceVotingRooms().catch((e) => this.logger.error(`advanceVotingRooms: ${e.message}`));
+    // Phase-gate deadlines — runs in every environment for the same reason as the VRF/voting
+    // sweeps: an AFK or disconnected player must never stall a gated room past its deadline.
+    await this.gacha.advancePhaseGates().catch((e) => this.logger.error(`advancePhaseGates: ${e.message}`));
     if (this.isProd) {
       await this.gacha.settleDueRooms().catch((e) => this.logger.error(`settleDueRooms: ${e.message}`));
     }

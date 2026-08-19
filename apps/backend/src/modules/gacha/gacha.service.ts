@@ -746,11 +746,12 @@ export class GachaService {
     bestBid: { amountUsdc: number } | null;
     pendingBid: { bidId: string; userId: string; amountUsdc: number; deadline: string } | null;
     participants: Array<{ seatNumber: number; username: string | null; isMe: boolean; mascotKey: string | null; mascotLocked: boolean; excluded: boolean }>;
+    gate: { type: 'card' | 'roulette'; epoch: number; deadline: string | null; ackedSeats: number[]; requiredCount: number } | null;
   }> {
     const db = this.supabase.getClient();
     const { data: room, error } = await db
       .from('gacha_rooms')
-      .select('id, name, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, pending_bid_id, created_at, is_private, created_by_user_id, invite_code')
+      .select('id, name, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, pending_bid_id, created_at, is_private, created_by_user_id, invite_code, pending_gate, gate_epoch, phase_deadline')
       .eq('id', roomId)
       .maybeSingle();
     if (error || !room) throw new NotFoundException('Room not found');
@@ -813,6 +814,7 @@ export class GachaService {
       bestBid: bestBid ? { amountUsdc: Number(bestBid.amount_usdc) } : null,
       pendingBid,
       participants,
+      gate: await this.getPhaseGateState(roomId, room),
     };
   }
 
@@ -1530,8 +1532,17 @@ export class GachaService {
    *  make every branch idempotent. */
   async advanceExcludingRooms(): Promise<void> {
     const db = this.supabase.getClient();
-    const { data: rooms } = await db.from('gacha_rooms').select('id').eq('status', 'excluding');
+    // Two shapes: rooms mid-draw ('excluding'), and rooms still behind the card gate ('opening'
+    // + pending_gate='card') whose VRF request already fired at pack-open — keep polling those
+    // so the fulfilled randomness is ready to COMMIT the instant the card gate opens (but never
+    // commit or flip before it does: nobody's card screen may be cut short by this draw).
+    const { data: rooms } = await db.from('gacha_rooms').select('id, status, pending_gate')
+      .or("status.eq.excluding,and(status.eq.opening,pending_gate.eq.card)");
     for (const room of rooms ?? []) {
+      if (room.status === 'opening') {
+        await this.pollOrRequestVrf(room.id, room.id).catch((e) => this.logger.error(`Room ${room.id}: pre-gate VRF poll failed: ${e.message}`));
+        continue;
+      }
       await this.advanceExclusionDraw(room.id).catch((e) => this.logger.error(`Room ${room.id}: exclusion draw advance failed: ${e.message}`));
     }
   }
@@ -1542,15 +1553,35 @@ export class GachaService {
    *  this draw even started (see purchaseAndOpenRoom). */
   private async advanceExclusionDraw(roomId: string): Promise<void> {
     const db = this.supabase.getClient();
-    const { data: room } = await db.from('gacha_rooms').select('id, status, seats, exclusion_count').eq('id', roomId).single();
-    if (!room || room.status !== 'excluding') return;
+    const { data: room } = await db.from('gacha_rooms').select('id, status, pending_gate').eq('id', roomId).single();
+    // pending_gate guard: once victims are committed the room waits behind the roulette gate
+    // (still status 'excluding') — polling again here would fire a DUPLICATE VRF request, since
+    // the draw's columns are cleared at commit time.
+    if (!room || room.status !== 'excluding' || room.pending_gate) return;
 
     const randomnessHex = await this.pollOrRequestVrf(roomId, roomId);
     if (!randomnessHex) return;
 
+    await this.commitExclusionDraw(roomId, randomnessHex);
+  }
+
+  /** Commits a fulfilled exclusion draw: marks the victims, clears the consumed VRF record, and
+   *  opens the ROULETTE gate instead of jumping straight to voting — every client gets to watch
+   *  the full exclusion roulette + reveal cinematic before round 1's 30s clock starts. Shared by
+   *  the cron path above (VRF fulfilled while already in 'excluding') and the card-gate release
+   *  path (VRF fulfilled during the card phase, held until the gate opened). The conditional
+   *  update is the commit claim: if a racing caller already committed, this no-ops before the
+   *  broadcast, so room:excluded can never double-fire. */
+  private async commitExclusionDraw(roomId: string, randomnessHex: string): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: room } = await db.from('gacha_rooms').select('id, status, seats, exclusion_count').eq('id', roomId).single();
+    if (!room || room.status !== 'excluding') return;
+
     const { data: participants } = await db.from('gacha_room_participants').select('id, user_id, seat_number').eq('room_id', roomId).order('seat_number', { ascending: true });
     const rows = participants ?? [];
     // user_id is unique per room (UNIQUE(room_id, user_id)), so keying the selection by it is safe.
+    // Marking is idempotent (same randomness -> same victims), so do it BEFORE the claim: a crash
+    // between mark and claim is recovered by the next cron tick re-committing the same victims.
     const excludedUserIds = new Set(selectRandomWinners(rows.map((p: any) => p.user_id), randomnessHex, room.exclusion_count));
     const excludedSeatNumbers: number[] = [];
     for (const p of rows) {
@@ -1566,16 +1597,183 @@ export class GachaService {
     // throw 'already locked in'` guard rejects EVERY round-1 vote unconditionally, before ever
     // touching on-chain state: confirmed live — a room's first vote round always failed this way,
     // independent of timing/deadlines/bot behavior, since this column was simply never reset.
-    await db.from('gacha_rooms').update({
-      status: 'voting', vote_round: 1,
+    const { data: claimed } = await db.from('gacha_rooms').update({
+      pending_gate: 'roulette', gate_epoch: 0,
+      phase_deadline: new Date(Date.now() + this.ROULETTE_GATE_MS).toISOString(),
       vrf_requested_at: null, vrf_randomness: null, vrf_request_slot: null, vrf_fulfilled_at: null,
       updated_at: new Date().toISOString(),
-    }).eq('id', roomId);
+    }).eq('id', roomId).eq('status', 'excluding').is('pending_gate', null).select('id');
+    if (!claimed?.length) return;
+
     await this.syncOnchainInitialExclusion(roomId, room.seats, excludedSeatNumbers);
-    this.logger.log(`Room ${roomId}: exclusion draw resolved — ${excludedSeatNumbers.length}/${rows.length} excluded (seats ${excludedSeatNumbers.join(', ')})`);
+    this.logger.log(`Room ${roomId}: exclusion draw resolved — ${excludedSeatNumbers.length}/${rows.length} excluded (seats ${excludedSeatNumbers.join(', ')}) — roulette gate open`);
     this.events.emit(GACHA_EVENTS.ROOM_EXCLUDED, { roomId, excludedSeatNumbers });
 
-    await this.startVoteRound(roomId, 1);
+    // Pure-bot rooms (required acks = 0) skip the wait; real rooms release on watched_roulette
+    // acks or the deadline — see maybeReleasePhaseGate.
+    await this.maybeReleasePhaseGate(roomId);
+  }
+
+  // ── Phase gates: client-aware state transitions (migration 20260819120000) ────────────
+  // Gates are how the server respects client cinematic time without ever letting an AFK or
+  // disconnected player stall the room: a gated phase completes when
+  //   ack_count >= required_count  OR  now >= phase_deadline
+  // where required_count = the room's REAL (non-'bot-%') seated participants — spectators never
+  // gate a room, bots have nothing to watch and simply aren't counted, and the participant set
+  // is naturally frozen for the whole lifecycle (joins/leaves are only possible in 'waiting').
+
+  private async getRequiredGateAcks(roomId: string): Promise<number> {
+    const db = this.supabase.getClient();
+    const { count } = await db.from('gacha_room_participants')
+      .select('id', { count: 'exact', head: true })
+      .eq('room_id', roomId)
+      .not('user_id', 'like', 'bot-%');
+    return count ?? 0;
+  }
+
+  /** Socket entrypoint (GachaGateway.watched_card / watched_roulette). The seat is derived from
+   *  the authenticated user — never client-supplied — and the ack row's PK makes repeats
+   *  idempotent. Acks for a gate that already released are a deliberate no-op (a client that
+   *  finished a cinematic late shouldn't error). */
+  async ackPhaseGate(roomId: string, userId: string, gate: 'card' | 'roulette'): Promise<{ ok: boolean; error?: string }> {
+    const db = this.supabase.getClient();
+    const { data: me } = await db.from('gacha_room_participants').select('seat_number').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
+    if (!me) return { ok: false, error: 'Only room participants can ack a phase gate' };
+    const { data: room } = await db.from('gacha_rooms').select('pending_gate, gate_epoch').eq('id', roomId).maybeSingle();
+    if (!room) return { ok: false, error: 'Room not found' };
+    if (room.pending_gate !== gate) return { ok: true };
+
+    await db.from('gacha_phase_acks').upsert(
+      { room_id: roomId, gate, gate_epoch: room.gate_epoch ?? 0, seat_number: me.seat_number },
+      { onConflict: 'room_id,gate,gate_epoch,seat_number', ignoreDuplicates: true },
+    );
+    await this.maybeReleasePhaseGate(roomId);
+    return { ok: true };
+  }
+
+  /** Hydration state for reconnecting clients (surfaced via getRoomDetail -> room:state): which
+   *  gate is pending, who has acked, and the absolute deadline so the UI can count down. */
+  private async getPhaseGateState(roomId: string, room: { pending_gate: string | null; gate_epoch: number | null; phase_deadline: string | null }): Promise<{
+    type: 'card' | 'roulette';
+    epoch: number;
+    deadline: string | null;
+    ackedSeats: number[];
+    requiredCount: number;
+  } | null> {
+    if (!room.pending_gate) return null;
+    const db = this.supabase.getClient();
+    const { data: acks } = await db.from('gacha_phase_acks').select('seat_number')
+      .eq('room_id', roomId).eq('gate', room.pending_gate).eq('gate_epoch', room.gate_epoch ?? 0);
+    const requiredCount = await this.getRequiredGateAcks(roomId);
+    return {
+      type: room.pending_gate as 'card' | 'roulette',
+      epoch: room.gate_epoch ?? 0,
+      deadline: room.phase_deadline,
+      ackedSeats: (acks ?? []).map((a: any) => a.seat_number),
+      requiredCount,
+    };
+  }
+
+  /** Release check, called from three places: every ack write (the fast path — active players
+   *  never wait for the deadline), the cron sweep (the AFK path), and right after a gate opens
+   *  (pure-bot rooms have required_count 0 and release immediately). The conditional UPDATE in
+   *  the release methods is the atomic claim — a last-ack racing the deadline cron can never
+   *  release twice. */
+  private async maybeReleasePhaseGate(roomId: string): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: room } = await db.from('gacha_rooms').select('id, pending_gate, gate_epoch, phase_deadline').eq('id', roomId).maybeSingle();
+    if (!room?.pending_gate) return;
+
+    const deadlinePassed = !!room.phase_deadline && new Date(room.phase_deadline).getTime() <= Date.now();
+    if (!deadlinePassed) {
+      const required = await this.getRequiredGateAcks(roomId);
+      if (required > 0) {
+        const { count: acked } = await db.from('gacha_phase_acks')
+          .select('seat_number', { count: 'exact', head: true })
+          .eq('room_id', roomId).eq('gate', room.pending_gate).eq('gate_epoch', room.gate_epoch ?? 0);
+        if ((acked ?? 0) < required) return;
+      }
+    }
+
+    if (room.pending_gate === 'card') await this.releaseCardGate(roomId, room.gate_epoch ?? 0);
+    else await this.releaseRouletteGate(roomId, room.gate_epoch ?? 0);
+  }
+
+  /** Card gate opens -> the room flips 'opening' -> 'excluding' (every client's roulette mounts
+   *  from the same flip) and, if the exclusion VRF already fulfilled during the card phase, its
+   *  result commits immediately. If the oracle is still in flight, the roulette's suspense spin
+   *  covers the wait and the cron's advanceExclusionDraw commits on fulfillment. */
+  private async releaseCardGate(roomId: string, epoch: number): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: claimed } = await db.from('gacha_rooms')
+      .update({ pending_gate: null, phase_deadline: null, updated_at: new Date().toISOString() })
+      .eq('id', roomId).eq('pending_gate', 'card').eq('gate_epoch', epoch)
+      .select('id, status, seats');
+    if (!claimed?.length) return;
+    const room = claimed[0];
+    if (room.status !== 'opening') return; // a terminal transition (failed/cancelled) beat the gate
+
+    await db.from('gacha_rooms').update({ status: 'excluding', updated_at: new Date().toISOString() }).eq('id', roomId);
+    await this.syncOnchainPhase(roomId, room.seats, GACHA_ROOM_PHASE.EXCLUDING);
+    const counts = await this.countParticipantsByRoom([roomId]);
+    this.events.emit(GACHA_EVENTS.ROOM_UPDATE, { roomId, seatsFilled: counts[roomId] ?? 0, seats: room.seats, status: 'excluding' });
+    this.logger.log(`Room ${roomId}: card gate released (epoch ${epoch}) — exclusion roulette begins`);
+
+    const { data: vr } = await db.from('gacha_rooms').select('vrf_randomness').eq('id', roomId).single();
+    if (vr?.vrf_randomness) {
+      await this.commitExclusionDraw(roomId, vr.vrf_randomness);
+    } else {
+      this.logger.log(`Room ${roomId}: card gate opened with VRF still in flight — roulette suspense covers the oracle wait`);
+    }
+  }
+
+  /** Roulette gate opens -> the post-reveal transition that used to fire the instant the draw
+   *  resolved: initial exclusion starts vote round 1 (its 30s clock starts only now), a vote-cut
+   *  reveal starts the next round, and a room cut down to a lone survivor settles. */
+  private async releaseRouletteGate(roomId: string, epoch: number): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: claimed } = await db.from('gacha_rooms')
+      .update({ pending_gate: null, phase_deadline: null, updated_at: new Date().toISOString() })
+      .eq('id', roomId).eq('pending_gate', 'roulette').eq('gate_epoch', epoch)
+      .select('id, status, vote_round');
+    if (!claimed?.length) return;
+    const room = claimed[0];
+
+    const survivors = await this.getSurvivors(roomId);
+    if (survivors.length <= 1) {
+      await this.finalizeBuybackSettlement(roomId);
+      return;
+    }
+
+    if (room.status === 'excluding') {
+      this.logger.log(`Room ${roomId}: roulette gate released — vote round 1 starts`);
+      await db.from('gacha_rooms').update({ status: 'voting', vote_round: 1, updated_at: new Date().toISOString() }).eq('id', roomId);
+      await this.startVoteRound(roomId, 1);
+    } else if (room.status === 'voting') {
+      const nextRound = (room.vote_round ?? 1) + 1;
+      this.logger.log(`Room ${roomId}: vote-cut roulette gate released — vote round ${nextRound} starts`);
+      await db.from('gacha_rooms').update({ vote_round: nextRound, updated_at: new Date().toISOString() }).eq('id', roomId);
+      await this.startVoteRound(roomId, nextRound);
+    }
+  }
+
+  /** Cron entrypoint — the deadline path. Runs in every environment for the same reason the
+   *  VRF/voting sweeps do: a gated room must never depend on a human still watching. */
+  async advancePhaseGates(): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: rooms } = await db.from('gacha_rooms').select('id, phase_deadline').not('pending_gate', 'is', null);
+    for (const room of rooms ?? []) {
+      if (!room.phase_deadline || new Date(room.phase_deadline).getTime() > Date.now()) continue;
+      await this.maybeReleasePhaseGate(room.id).catch((e) => this.logger.error(`Room ${room.id}: phase gate release failed: ${e.message}`));
+    }
+  }
+
+  /** Dev-only force path (devForceAdvance*): move the deadline to the past so the normal release
+   *  check opens the gate — same end state as players acking, without special-casing the flip. */
+  private async forceReleasePhaseGate(roomId: string): Promise<void> {
+    const db = this.supabase.getClient();
+    await db.from('gacha_rooms').update({ phase_deadline: new Date(0).toISOString() }).eq('id', roomId).not('pending_gate', 'is', null);
+    await this.maybeReleasePhaseGate(roomId);
   }
 
   // ── Voting: "CUT ONE MORE?" (survivors vote after the initial exclusion) ──────────────
@@ -1587,6 +1785,17 @@ export class GachaService {
   private readonly voteByRoom = new Map<string, Map<string, boolean>>();
   private readonly voteRoundStartedAt = new Map<string, number>();
   private readonly VOTE_ROUND_MS = 30_000;
+
+  // ── Phase gates (see migration 20260819120000) ─────────────────────────────────────
+  // The room pauses at two gates until every REAL seated participant acks (they finished
+  // watching the cinematic) or the server-anchored deadline passes — whichever first. Deadlines
+  // are sized from the synced all-ready moment: CARD covers ready(30s client cap) + rip(~13s) +
+  // card reveal(30s cap) + buffer; ROULETTE covers the exclusion roulette + ExclusionReveal
+  // cinematic (~14s for 2 victims) + buffer. Deadlines are the AFK/disconnect safety net, not
+  // the expected path — active players release gates in seconds via watched_card/
+  // watched_roulette acks.
+  private readonly CARD_GATE_MS = 90_000;
+  private readonly ROULETTE_GATE_MS = 25_000;
 
   // castVote and maybeTimeoutVoteRound both read the room/survivors via awaited Supabase calls
   // BEFORE touching voteByRoom — without serializing them per room, the 15s cron sweep's timeout
@@ -1672,10 +1881,13 @@ export class GachaService {
   async castVote(roomId: string, userId: string, vote: boolean): Promise<{ round: number }> {
     return this.withVoteLock(roomId, async () => {
       const db = this.supabase.getClient();
-      const { data: room } = await db.from('gacha_rooms').select('id, status, vote_round, vrf_requested_at').eq('id', roomId).maybeSingle();
+      const { data: room } = await db.from('gacha_rooms').select('id, status, vote_round, vrf_requested_at, pending_gate').eq('id', roomId).maybeSingle();
       if (!room) throw new NotFoundException('Room not found');
       if (room.status !== 'voting') throw new BadRequestException('This room is not currently voting');
       if (room.vrf_requested_at) throw new BadRequestException('This round has already locked in — wait for the next one');
+      // A pending roulette gate means the vote-cut reveal is still playing and the next round
+      // hasn't started — a vote cast now would land in an orphaned tally nothing reads.
+      if (room.pending_gate) throw new BadRequestException('The next vote round hasn\'t started yet — watch the reveal first');
 
       const survivors = await this.getSurvivors(roomId);
       const me = survivors.find((p) => p.user_id === userId);
@@ -1773,8 +1985,11 @@ export class GachaService {
    *  the separate maybeTimeoutVoteRound check). */
   async advanceVotingRooms(): Promise<void> {
     const db = this.supabase.getClient();
-    const { data: rooms } = await db.from('gacha_rooms').select('id, vote_round, vrf_requested_at').eq('status', 'voting');
+    const { data: rooms } = await db.from('gacha_rooms').select('id, vote_round, vrf_requested_at, pending_gate').eq('status', 'voting');
     for (const room of rooms ?? []) {
+      // A pending roulette gate means the vote-cut reveal is still playing on clients — the next
+      // round's 30s clock must not tick (or time out) underneath it.
+      if (room.pending_gate) continue;
       if (room.vrf_requested_at) {
         await this.resolveVoteCutDraw(room.id, room.vote_round).catch((e) => this.logger.error(`Room ${room.id}: vote-cut draw advance failed: ${e.message}`));
       } else if (this.onchainVoteStateEnabled) {
@@ -1830,19 +2045,16 @@ export class GachaService {
 
     this.voteByRoom.delete(roomId);
     this.voteRoundStartedAt.delete(roomId);
+    // The cut victim is committed above, but the next round (or settlement) waits behind the
+    // roulette gate: every client first watches the vote-cut roulette + reveal cinematic. The
+    // settle-vs-next-round decision moves to releaseRouletteGate, which re-counts survivors then.
     await db.from('gacha_rooms').update({
+      pending_gate: 'roulette', gate_epoch: round,
+      phase_deadline: new Date(Date.now() + this.ROULETTE_GATE_MS).toISOString(),
       vrf_requested_at: null, vrf_randomness: null, vrf_request_slot: null, vrf_fulfilled_at: null,
       updated_at: new Date().toISOString(),
     }).eq('id', roomId);
-
-    const remaining = survivors.length - 1;
-    if (remaining <= 1) {
-      await this.finalizeBuybackSettlement(roomId);
-    } else {
-      const nextRound = round + 1;
-      await db.from('gacha_rooms').update({ vote_round: nextRound, updated_at: new Date().toISOString() }).eq('id', roomId);
-      await this.startVoteRound(roomId, nextRound);
-    }
+    await this.maybeReleasePhaseGate(roomId);
   }
 
   // ── Pack purchase + open (treasury is the sole Collectorcrypt "player" — see plan doc) ──
@@ -1937,23 +2149,29 @@ export class GachaService {
       }
     }
 
-    // Pack Party flow: the rip happens BEFORE exclusion now (not after, like the previous
-    // session's version) — the room goes straight into the exclusion draw once opened, running
-    // concurrently with whatever ready-gate/reveal-animation time clients spend watching the rip
-    // client-side, so the draw is usually already resolved by the time players click through.
+    // Pack Party flow: the rip happens BEFORE exclusion — and with phase gates the room now
+    // STAYS in 'opening' behind the card gate until every real participant has finished the
+    // ready-gate + 3D rip + card reveal (or the deadline passes). The exclusion VRF request
+    // still fires immediately below so its fulfillment latency overlaps the card phase, but the
+    // result is only committed (and revealed) when the gate opens — clients' roulettes all mount
+    // from the same status flip, so nobody's card screen is ever force-closed by a vote again.
     await db.from('gacha_rooms').update({
       nft_metadata: nftMetadata,
       rarity,
       open_tx_sig: opened.transactionSignature ?? null,
       buyback_amount_usdc: buybackAmountUsdc,
-      status: 'excluding',
       opened_at: new Date().toISOString(),
+      pending_gate: 'card',
+      gate_epoch: 0,
+      phase_deadline: new Date(Date.now() + this.CARD_GATE_MS).toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('id', roomId);
-    await this.syncOnchainPhase(roomId, room.seats, GACHA_ROOM_PHASE.EXCLUDING);
 
-    this.logger.log(`Room ${roomId}: opened rarity=${rarity} buyback=$${buybackAmountUsdc} — exclusion draw starting`);
+    this.logger.log(`Room ${roomId}: opened rarity=${rarity} buyback=$${buybackAmountUsdc} — card gate open, exclusion VRF requested`);
     this.events.emit(GACHA_EVENTS.ROOM_OPENED, { roomId, nftMetadata, rarity, buybackAmountUsdc, bidWindowEndsAt: null });
+    // A pure-bot room has a required ack count of 0 — release immediately rather than waiting
+    // out the deadline (nobody is watching anything).
+    await this.maybeReleasePhaseGate(roomId);
 
     // Fire-and-forget — same posture as every other multi-second on-chain step in this flow.
     // advanceExcludingRooms's cron sweep carries the poll-to-fulfillment step forward regardless.
@@ -2046,18 +2264,27 @@ export class GachaService {
       throw new BadRequestException('Force-advance is not available in production');
     }
     const db = this.supabase.getClient();
-    const { data: room } = await db.from('gacha_rooms').select('id, status').eq('id', roomId).maybeSingle();
+    const { data: room } = await db.from('gacha_rooms').select('id, status, pending_gate').eq('id', roomId).maybeSingle();
     if (!room) throw new NotFoundException('Room not found');
-    if (room.status !== 'excluding') throw new BadRequestException(`Room isn't mid-exclusion-draw (status: ${room.status})`);
+    // Phase gates make the room wait in 'opening' (card) and 'excluding' (roulette) — a forced
+    // run opens them the same way the deadline would, never a special-cased flip.
+    if (room.status === 'opening' && room.pending_gate === 'card') {
+      await this.forceReleasePhaseGate(roomId);
+    }
+    const { data: current } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
+    if (current?.status !== 'excluding') throw new BadRequestException(`Room isn't mid-exclusion-draw (status: ${current?.status})`);
 
     // 40 * 1.5s = 60s — same reasoning as devForceAdvanceVoting's identical widening below: real
     // oracle fulfillment latency observed this session could run close to a minute, well past the
     // old 15s window, which made this look like a no-op rather than a still-pending request.
-    let status = room.status;
+    let status = current.status;
     for (let i = 0; i < 40 && status === 'excluding'; i++) {
       await this.advanceExclusionDraw(roomId);
-      const { data: after } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
-      status = after?.status ?? status;
+      const { data: after } = await db.from('gacha_rooms').select('status, pending_gate').eq('id', roomId).single();
+      // Victims committed -> the reveal gate is now the only thing between this room and voting.
+      if (after?.pending_gate) await this.forceReleasePhaseGate(roomId);
+      const { data: afterGate } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
+      status = afterGate?.status ?? after?.status ?? status;
       if (status === 'excluding') await new Promise((r) => setTimeout(r, 1500));
     }
     return { status };
@@ -2072,9 +2299,13 @@ export class GachaService {
       throw new BadRequestException('Force-advance is not available in production');
     }
     const db = this.supabase.getClient();
-    const { data: room } = await db.from('gacha_rooms').select('id, status, vote_round, vrf_requested_at').eq('id', roomId).maybeSingle();
+    const { data: room } = await db.from('gacha_rooms').select('id, status, vote_round, vrf_requested_at, pending_gate').eq('id', roomId).maybeSingle();
     if (!room) throw new NotFoundException('Room not found');
     if (room.status !== 'voting') throw new BadRequestException(`Room isn't mid-voting (status: ${room.status})`);
+
+    // A pending roulette gate (vote-cut reveal still playing) blocks the round clock — force it
+    // open first so the timeout/draw logic below has something to act on.
+    if (room.pending_gate) await this.forceReleasePhaseGate(roomId);
 
     if (!room.vrf_requested_at) {
       if (this.onchainVoteStateEnabled) {
@@ -2094,8 +2325,9 @@ export class GachaService {
     // like the button just did nothing (it hadn't failed, it just stopped checking too early).
     let status = room.status;
     for (let i = 0; i < 40 && status === 'voting'; i++) {
-      const { data: current } = await db.from('gacha_rooms').select('status, vote_round, vrf_requested_at').eq('id', roomId).single();
-      if (current?.vrf_requested_at) await this.resolveVoteCutDraw(roomId, current.vote_round);
+      const { data: current } = await db.from('gacha_rooms').select('status, vote_round, vrf_requested_at, pending_gate').eq('id', roomId).single();
+      if (current?.pending_gate) await this.forceReleasePhaseGate(roomId);
+      else if (current?.vrf_requested_at) await this.resolveVoteCutDraw(roomId, current.vote_round);
       const { data: after } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
       status = after?.status ?? status;
       if (status === 'voting') await new Promise((r) => setTimeout(r, 1500));
@@ -2218,7 +2450,7 @@ export class GachaService {
     // proceeds with the real buyback tx — same "claim before doing the expensive work" posture
     // the seat-cap trigger uses at join time. Reuses 'settling' for its original meaning too (a
     // brief holding status while the buyback tx confirms).
-    const { data: claimed } = await db.from('gacha_rooms').update({ status: 'settling', updated_at: new Date().toISOString() }).eq('id', roomId).in('status', ['excluding', 'voting']).select('id');
+    const { data: claimed } = await db.from('gacha_rooms').update({ status: 'settling', pending_gate: null, phase_deadline: null, updated_at: new Date().toISOString() }).eq('id', roomId).in('status', ['excluding', 'voting']).select('id');
     if (!claimed?.length) return;
 
     const { data: room } = await db.from('gacha_rooms').select('id, seats, nft_metadata').eq('id', roomId).single();
