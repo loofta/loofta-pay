@@ -2177,12 +2177,11 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
               <div className="flex flex-col items-center gap-1.5 w-24">
                 <div
                   className={[
-                    "w-8 h-8 rounded-full flex items-center justify-center border bg-transparent",
-                    s.state === "done" ? "border-transparent" :
-                      s.state === "active" ? "border-[#FF7A2A]/70" :
-                        "border-white/20",
+                    "w-8 h-8 rounded-full overflow-hidden flex items-center justify-center",
+                    s.state === "done" ? "bg-gradient-to-r from-[#EAB308] to-[#FF0F00] border-0" :
+                      s.state === "active" ? "bg-transparent border border-[#FF7A2A]/70" :
+                        "bg-transparent border border-white/20",
                   ].join(" ")}
-                  style={s.state === "done" ? { background: "linear-gradient(to right, #EAB308, #FF0F00)" } : undefined}
                 >
                   {s.state === "done" ? (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
