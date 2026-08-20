@@ -81,8 +81,8 @@
   "UnclaimedGiftToast": {
     "titleOne": "May hindi mo pa nakuhang regalo",
     "titleMany": "May {count} hindi mo pa nakuhang regalo",
-    "ticketWaitingOne": "1 tiket ng lottery ang naghihintay sa'yo.",
-    "ticketWaitingMany": "{numTickets} tiket ng lottery ang naghihintay sa'yo.",
+    "ticketWaitingOne": "1 tiket ng Megapot ang naghihintay sa'yo.",
+    "ticketWaitingMany": "{numTickets} tiket ng Megapot ang naghihintay sa'yo.",
     "claimOne": "Kunin ito",
     "claimMany": "Kunin ang mga ito",
     "dismiss": "Isara"

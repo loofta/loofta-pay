@@ -23,14 +23,14 @@ The mechanics look similar on paper, but three things change in practice:
 - **The prize pool and draw results are checkable.** Instead of trusting a press release, the contract holding the funds and the draw outcome are both on a public blockchain.
 - **Draws can run more often.** Because there's no physical infrastructure to reset between draws, some crypto lotteries run daily instead of once or twice a week.
 
-## Loofta's daily lottery, as a concrete example
+## Megapot on Loofta, as a concrete example
 
-Loofta's Rewards section runs a USDC lottery where tickets cost $1 each and draws happen daily. Prizes are tiered by how many numbers you match plus a bonus number, and the exact jackpot for the current round is pulled live rather than fixed in advance.
+Loofta's Rewards section integrates with Megapot, a licensed third-party lottery protocol, so you can buy a $1 USDC ticket without leaving Loofta. Draws happen daily, prizes are tiered by how many numbers you match plus a bonus number, and the exact jackpot for the current round is pulled live rather than fixed in advance.
 
-One detail worth knowing if you're a Loofta user on Solana: the lottery's contracts live on Base, not Solana. Loofta bridges your entry behind the scenes (Solana to Base) so you can buy tickets without touching a second chain or paying a separate bridging fee yourself.
+One detail worth knowing if you're a Loofta user on Solana: Megapot's contracts live on Base, not Solana. Loofta bridges your entry behind the scenes (Solana to Base) so you can buy a Megapot ticket without touching a second chain or paying a separate bridging fee yourself.
 
 ## Before you play
 
 Crypto lotteries are still lotteries: the odds favor the house over any individual ticket, and rules on age and eligible countries apply just like a regular platform's terms of service. Treat it as entertainment you're paying for, not an investment, and check what's allowed where you live before you buy in.
 
-Want to see how it works in practice? [Try the lottery on Loofta](https://loofta.xyz/megapot).
+Want to see how it works in practice? [Try Megapot on Loofta](https://loofta.xyz/megapot).

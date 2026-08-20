@@ -53,7 +53,7 @@ function MobileMenu({
   const navLinks = [
     { href: "/", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
-    { href: "/megapot", label: "Lottery", description: "Play the daily jackpot privately" },
+    { href: "/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
     { href: "/terminal", label: "Terminal", description: "Send payments by chat — no wallet steps, just tell it who to pay" },
   ];
 
@@ -300,7 +300,7 @@ export function MinimalHeader() {
                       : "text-slate-300 hover:text-white hover:bg-white/10",
                   ].join(" ")}
                 >
-                  <span>Lottery</span>
+                  <span>Megapot</span>
                 </Link>
 
                 {/* Desktop: Terminal link */}

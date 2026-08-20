@@ -45,7 +45,7 @@ const TOC = [
   { id: "non-custodial", label: "5. Non-Custodial Nature" },
   { id: "fees", label: "6. Fees" },
   { id: "transactions", label: "7. Transactions & Payments" },
-  { id: "lottery", label: "8. Lottery & Prize-Based Features" },
+  { id: "megapot", label: "8. Megapot & Prize-Based Features" },
   { id: "mystery-pack", label: "9. Mystery Pack" },
   { id: "giveaways", label: "10. Giveaways" },
   { id: "fiat-offramp", label: "11. Fiat Off-Ramp Services" },
@@ -124,8 +124,8 @@ export default function TermsPage() {
               "Deposit supported tokens from other chains into your Loofta balance via third-party cross-chain protocols.",
               "Withdraw USDC to external Solana wallets or to other supported chains via third-party bridge protocols.",
               "Withdraw USDC as Nigerian Naira (NGN) to a linked bank account via a third-party fiat off-ramp partner, where available.",
-              "Purchase tickets in a third-party, blockchain-based lottery for a chance to win a prize pool.",
-              "Purchase Mystery Packs, a chance-based feature that allocates a randomized number of lottery tickets.",
+              "Purchase tickets in Megapot, a third-party, blockchain-based lottery, for a chance to win a prize pool.",
+              "Purchase Mystery Packs, a chance-based feature that allocates a randomized number of Megapot tickets.",
               "Create, fund, or enter giveaways distributed through the Service.",
               "View complete transaction history.",
               "Earn rewards through our loyalty and referral program.",
@@ -148,7 +148,7 @@ export default function TermsPage() {
               By using the Service, you represent and warrant that you meet all eligibility requirements. We reserve the right to restrict access to the Service in any jurisdiction at our sole discretion.
             </P>
             <P>
-              Certain features — including our lottery, Mystery Pack, and giveaway features described in Sections 8 through 10 — may be classified as games of chance and may be restricted, illegal, or separately regulated in your jurisdiction. It is solely your responsibility to determine whether your access to and use of these features is lawful where you are located, and we accept no liability for your use of these features in violation of local law.
+              Certain features — including Megapot, Mystery Pack, and giveaway features described in Sections 8 through 10 — may be classified as games of chance and may be restricted, illegal, or separately regulated in your jurisdiction. It is solely your responsibility to determine whether your access to and use of these features is lawful where you are located, and we accept no liability for your use of these features in violation of local law.
             </P>
           </Section>
 
@@ -219,26 +219,26 @@ export default function TermsPage() {
             </P>
           </Section>
 
-          <Section id="lottery" title="8. Lottery & Prize-Based Features">
+          <Section id="megapot" title="8. Megapot & Prize-Based Features">
             <P>
-              The Service provides access to a blockchain-based lottery operated by an independent third-party protocol. You may use USDC held in your Loofta balance to purchase tickets for a chance to win a prize pool. By purchasing a ticket, you acknowledge and agree that:
+              The Service provides access to Megapot, a blockchain-based lottery operated by an independent third-party protocol. You may use USDC held in your Loofta balance to purchase Megapot tickets for a chance to win a prize pool. By purchasing a ticket, you acknowledge and agree that:
             </P>
             <UL items={[
               "Ticket purchases are final once submitted on-chain and are non-refundable, including if you do not win.",
-              "Winners are selected through a drawing mechanism operated and controlled by the underlying third-party protocol, not by Loofta. We do not control, operate, guarantee, or take responsibility for the outcome, timing, fairness, or integrity of any drawing.",
+              "Winners are selected through a drawing mechanism operated and controlled by Megapot, not by Loofta. We do not control, operate, guarantee, or take responsibility for the outcome, timing, fairness, or integrity of any drawing.",
               "Purchasing one or more tickets does not guarantee that you will win any prize. Your odds of winning depend on the total number of tickets sold in a given round and other factors outside our control.",
               "Any promotional mechanics described in the application (such as bonus tickets, multipliers, or free entries) are subject to change or removal at any time and are not a contractual entitlement.",
-              "Prize payouts, if any, are distributed by the underlying third-party protocol according to its own rules and timelines. Delays or failures in that protocol are not attributable to Loofta.",
-              "We reserve the right to modify, suspend, restrict, or discontinue access to lottery features at any time, including on a jurisdiction-by-jurisdiction basis, without liability to you.",
+              "Prize payouts, if any, are distributed by Megapot according to its own rules and timelines. Delays or failures in that protocol are not attributable to Loofta.",
+              "We reserve the right to modify, suspend, restrict, or discontinue access to Megapot features at any time, including on a jurisdiction-by-jurisdiction basis, without liability to you.",
             ]} />
             <P>
-              Lottery and prize-based features may be considered games of chance and may be illegal, restricted, or separately licensed or taxed in certain jurisdictions. You represent that your participation is lawful in your jurisdiction and you assume all legal and financial risk associated with your participation.
+              Megapot and other prize-based features may be considered games of chance and may be illegal, restricted, or separately licensed or taxed in certain jurisdictions. You represent that your participation is lawful in your jurisdiction and you assume all legal and financial risk associated with your participation.
             </P>
           </Section>
 
           <Section id="mystery-pack" title="9. Mystery Pack">
             <P>
-              Mystery Pack is a chance-based feature that, in exchange for a fixed USDC payment, allocates you a randomized number of lottery tickets (as described in Section 8) within a disclosed range. The specific number of tickets you receive is determined at random at the time of purchase and is not known to you in advance.
+              Mystery Pack is a chance-based feature that, in exchange for a fixed USDC payment, allocates you a randomized number of Megapot tickets (as described in Section 8) within a disclosed range. The specific number of tickets you receive is determined at random at the time of purchase and is not known to you in advance.
             </P>
             <UL items={[
               "Mystery Pack purchases are final and non-refundable once submitted.",
@@ -346,7 +346,7 @@ export default function TermsPage() {
               <strong className="text-white font-medium">No financial advice.</strong> Nothing on the Service constitutes financial, investment, legal, or tax advice. Cryptocurrency values are volatile and you may lose money. You are solely responsible for your own financial decisions.
             </P>
             <P>
-              <strong className="text-white font-medium">Assumption of risk for chance-based features.</strong> Participation in the lottery, Mystery Pack, and giveaway features described in Sections 8 through 10 is entirely at your own risk. We make no representation or warranty, express or implied, that you will win any prize, that any drawing will occur on a particular schedule, or that any third-party protocol, sponsor, or data source involved in those features will perform as expected. You assume full responsibility for any financial loss arising from your decision to participate.
+              <strong className="text-white font-medium">Assumption of risk for chance-based features.</strong> Participation in Megapot, Mystery Pack, and giveaway features described in Sections 8 through 10 is entirely at your own risk. We make no representation or warranty, express or implied, that you will win any prize, that any drawing will occur on a particular schedule, or that any third-party protocol, sponsor, or data source involved in those features will perform as expected. You assume full responsibility for any financial loss arising from your decision to participate.
             </P>
             <P>
               <strong className="text-white font-medium">As-is basis.</strong> The Service is provided "as is" and "as available" without warranty of any kind, whether express, implied, or statutory. We disclaim all warranties, including implied warranties of merchantability, fitness for a particular purpose, title, and non-infringement.
@@ -364,7 +364,7 @@ export default function TermsPage() {
               To the maximum extent permitted by applicable law, Loofta and its officers, directors, employees, agents, and licensors shall not be liable for any indirect, incidental, special, consequential, exemplary, or punitive damages, including loss of profits, data, goodwill, funds, or other intangible losses, arising from or relating to your use of or inability to use the Service.
             </P>
             <P>
-              Without limiting the foregoing, and to the maximum extent permitted by applicable law, we shall not be liable for any losses arising from or relating to: (a) your participation in, or failure to win a prize through, the lottery, Mystery Pack, or giveaway features; (b) the acts, omissions, insolvency, or unavailability of any third-party protocol, sponsor, or fiat off-ramp partner referenced in these Terms; or (c) delays, failures, or errors in any third-party service we integrate with but do not control.
+              Without limiting the foregoing, and to the maximum extent permitted by applicable law, we shall not be liable for any losses arising from or relating to: (a) your participation in, or failure to win a prize through, Megapot, Mystery Pack, or giveaway features; (b) the acts, omissions, insolvency, or unavailability of any third-party protocol, sponsor, or fiat off-ramp partner referenced in these Terms; or (c) delays, failures, or errors in any third-party service we integrate with but do not control.
             </P>
             <P>
               Our total cumulative liability to you for any claims arising out of or relating to the Service shall not exceed the greater of (a) the total platform fees paid by you to Loofta in the twelve (12) months preceding the claim, or (b) USD $100.

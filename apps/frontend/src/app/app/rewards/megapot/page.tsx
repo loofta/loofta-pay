@@ -115,7 +115,7 @@ function CampaignHeader({ daysLeft }: { daysLeft: number | null }) {
         </div>
         <h1 className="text-2xl font-bold text-white mb-1">Megapot Campaign</h1>
         <p className="text-base text-slate-300 mb-4 leading-relaxed">
-          Buy at least {REQUIRED_TICKETS} lottery tickets privately on Loofta to enter the draw.
+          Buy at least {REQUIRED_TICKETS} Megapot tickets privately on Loofta to enter the draw.
           The prize pool is split among eligible participants in a lucky draw after the campaign ends.
         </p>
         <div>
@@ -250,7 +250,7 @@ export default function RewardsMegapotPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className={`text-lg font-semibold leading-tight ${data.qualified ? "text-white" : "text-slate-200"}`}>
-                      Buy {REQUIRED_TICKETS} lottery tickets privately
+                      Buy {REQUIRED_TICKETS} Megapot tickets privately
                     </p>
                     <p className="text-base text-slate-400 mt-0.5 leading-snug">
                       Purchase Megapot tickets using a private payment on Loofta — spread across as many purchases as you like.

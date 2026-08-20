@@ -173,7 +173,7 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
                 <Ticket className="h-10 w-10 text-emerald-400" />
                 <span className="text-5xl font-bold tracking-tight text-emerald-400">{ticketGift.num_tickets}</span>
                 <span className="text-sm text-white/30 font-medium tracking-widest uppercase">
-                  {ticketGift.num_tickets === 1 ? 'lottery ticket' : 'lottery tickets'}
+                  {ticketGift.num_tickets === 1 ? 'Megapot ticket' : 'Megapot tickets'}
                 </span>
                 <ArrowDown className="h-4 w-4 text-emerald-500/40" />
               </div>

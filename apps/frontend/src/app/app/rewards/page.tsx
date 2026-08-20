@@ -551,7 +551,7 @@ export default function RewardsPage() {
                 </h2>
 
                 <p className="text-base text-slate-300 mb-5 leading-relaxed">
-                  Buy 5 lottery tickets privately on Loofta to enter the draw — the prize pool is shared across eligible participants.
+                  Buy 5 Megapot tickets privately on Loofta to enter the draw — the prize pool is shared across eligible participants.
                 </p>
 
                 <div className="flex items-end justify-between">

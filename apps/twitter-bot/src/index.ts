@@ -308,7 +308,7 @@ function composeTicketGiftReply(sender: string, recipient: string, numTickets: n
   const ticketWord = numTickets === 1 ? 'ticket' : 'tickets'
   if (deliveredInstantly) {
     const openers = [
-      (s: string, r: string, n: number) => `sent @${r} ${n} lottery ${ticketWord} on @${s}'s behalf.`,
+      (s: string, r: string, n: number) => `sent @${r} ${n} Megapot ${ticketWord} on @${s}'s behalf.`,
       (s: string, r: string, n: number) => `@${r}, @${s} just gifted you ${n} ${ticketWord}.`,
       (s: string, r: string, n: number) => `gifted ${n} ${ticketWord} to @${r}, from @${s}.`,
       (s: string, r: string, n: number) => `done, @${r} just got ${n} ${ticketWord} courtesy of @${s}.`,
@@ -321,7 +321,7 @@ function composeTicketGiftReply(sender: string, recipient: string, numTickets: n
     return pick(openers)(sender, recipient, numTickets) + pick(closers)(link)
   }
   const openers = [
-    (s: string, r: string, n: number) => `@${s} gifted @${r} ${n} lottery ${ticketWord}.`,
+    (s: string, r: string, n: number) => `@${s} gifted @${r} ${n} Megapot ${ticketWord}.`,
     (s: string, r: string, n: number) => `${n} ${ticketWord} waiting for @${r}, from @${s}.`,
     (s: string, r: string, n: number) => `@${r}, @${s} sent you ${n} ${ticketWord} to claim.`,
   ]

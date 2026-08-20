@@ -724,7 +724,7 @@ function RewardsSection() {
             </div>
 
             <p className="mx-auto mt-10 max-w-[760px] font-grotesk text-[clamp(22px,2.6vw,32px)] font-medium leading-[1.4] text-white">
-              Sending payments earns you lottery tickets. Pay your friends,
+              Sending payments earns you Megapot tickets. Pay your friends,
               get paid, and stack entries into the jackpot, automatically.
             </p>
 
@@ -770,7 +770,7 @@ function FinalCTA() {
           })}
         </h2>
         <p className={`mx-auto mt-[26px] max-w-[600px] font-grotesk text-[22px] ${INK_2}`}>
-          Free to start. Your recipient claims in seconds. You collect lottery tickets along the way.
+          Free to start. Your recipient claims in seconds. You collect Megapot tickets along the way.
         </p>
         <div className="mt-9 flex justify-center">
           <Link

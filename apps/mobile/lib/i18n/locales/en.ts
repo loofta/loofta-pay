@@ -26,7 +26,7 @@ const en = {
   authGateButton: 'Go to login',
 
   // ── Splash screen ──────────────────────────────────────────────────────
-  splashTagline: 'Your private daily lottery',
+  splashTagline: 'Your private daily Megapot',
   splashPrizePoolCaption: 'prize pool, every day',
   splashBadge: '🔒 Shielded & private',
 

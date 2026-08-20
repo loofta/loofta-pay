@@ -2679,7 +2679,7 @@ export function BalanceModal({
               </span>
             ),
             action: (
-              <ToastAction altText="View your lottery tickets" asChild>
+              <ToastAction altText="View your Megapot tickets" asChild>
                 <Link
                   href="/app/megapot?tab=history"
                   className="!bg-gradient-to-r !from-[#FF1301] !to-[#EAB308] !text-white !border-0 !font-semibold hover:!opacity-90"
@@ -2935,7 +2935,7 @@ export function BalanceModal({
               </span>
             ),
             action: (
-              <ToastAction altText="View your lottery tickets" asChild>
+              <ToastAction altText="View your Megapot tickets" asChild>
                 <Link
                   href="/app/megapot?tab=history"
                   className="!bg-gradient-to-r !from-[#FF1301] !to-[#EAB308] !text-white !border-0 !font-semibold hover:!opacity-90"
@@ -4139,10 +4139,10 @@ export function BalanceModal({
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
-                          Multiply your win — add a lottery ticket
+                          Multiply your win — add a Megapot ticket
                         </p>
                         <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                          The Loofta lottery draws every day. $1 = 1 ticket, a shot at {lotteryPrizePoolDisplay} prize pool.
+                          The Loofta Megapot draws every day. $1 = 1 ticket, a shot at {lotteryPrizePoolDisplay} prize pool.
                         </p>
                       </div>
                       <Switch
@@ -4163,7 +4163,7 @@ export function BalanceModal({
                         "mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-base font-semibold",
                         dark ? "bg-white/10 text-white" : "bg-orange-50 text-gray-900"
                       )}>
-                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 lottery ticket added</span>
+                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 Megapot ticket added</span>
                         <span>+${LOTTERY_TICKET_PRICE_USDC.toFixed(2)}</span>
                       </div>
                     )}
@@ -4789,10 +4789,10 @@ export function BalanceModal({
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
-                          Multiply your win — add a lottery ticket
+                          Multiply your win — add a Megapot ticket
                         </p>
                         <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                          The Loofta lottery draws every day. $1 = 1 ticket, a shot at {lotteryPrizePoolDisplay} prize pool.
+                          The Loofta Megapot draws every day. $1 = 1 ticket, a shot at {lotteryPrizePoolDisplay} prize pool.
                         </p>
                       </div>
                       <Switch
@@ -4812,7 +4812,7 @@ export function BalanceModal({
                         "mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-base font-semibold",
                         dark ? "bg-white/10 text-white" : "bg-orange-50 text-gray-900"
                       )}>
-                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 lottery ticket added to your withdrawal</span>
+                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 Megapot ticket added to your withdrawal</span>
                         <span>+${LOTTERY_TICKET_PRICE_USDC.toFixed(2)}</span>
                       </div>
                     )}

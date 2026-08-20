@@ -38,7 +38,7 @@ export default function BlogIndexContent({ posts }: { posts: BlogPostMeta[] }) {
             </h1>
 
             <p className="font-grotesk text-[17px] md:text-[19px] leading-[1.65] text-slate-400 max-w-xl">
-              Sending money without a wallet, private crypto payments, and how the Loofta lottery works.
+              Sending money without a wallet, private crypto payments, and how Megapot works through Loofta.
             </p>
           </div>
 

@@ -16,11 +16,11 @@ With a state lottery, you're trusting an operator's reporting on prize pools and
 
 ## Draw frequency
 
-Most state lotteries draw once or twice a week. Loofta's version, as an example, draws daily. More frequent draws mean more chances over time, but also mean smaller individual jackpots than the biggest traditional jackpots (a Powerball-sized prize is still rare in crypto lotteries today).
+Most state lotteries draw once or twice a week. Megapot, the licensed lottery protocol Loofta integrates with, draws daily, as an example. More frequent draws mean more chances over time, but also mean smaller individual jackpots than the biggest traditional jackpots (a Powerball-sized prize is still rare in crypto lotteries today).
 
 ## Fees and payout speed
 
-State lotteries route winnings through a claims process that can take days for verification, and larger prizes often involve taxes withheld at source depending on jurisdiction. On-chain, a payout can settle as soon as the draw resolves, no claims office, no waiting in line. Ticket pricing is also simpler: Loofta's tickets are a flat $1 in USDC, no state-specific pricing tiers.
+State lotteries route winnings through a claims process that can take days for verification, and larger prizes often involve taxes withheld at source depending on jurisdiction. On-chain, a payout can settle as soon as the draw resolves, no claims office, no waiting in line. Ticket pricing is also simpler: Megapot tickets, available through Loofta, are a flat $1 in USDC, no state-specific pricing tiers.
 
 ## What hasn't changed
 
@@ -28,4 +28,4 @@ The odds still favor the house over any individual ticket, that's true of every 
 
 ## Bottom line
 
-Crypto lotteries trade the biggest possible jackpots for more access, more transparency, and faster payouts. Which one's "better" depends on what you're optimizing for. If you want to see the daily-draw version in action, [try Loofta's lottery](https://loofta.xyz/megapot).
+Crypto lotteries trade the biggest possible jackpots for more access, more transparency, and faster payouts. Which one's "better" depends on what you're optimizing for. If you want to see the daily-draw version in action, [try Megapot through Loofta](https://loofta.xyz/megapot).

@@ -15,12 +15,12 @@ Lottery and gambling regulation is set locally, not globally. A jurisdiction mig
 Across platforms in this space, a few factors usually apply:
 
 - **Age.** Age-of-majority requirements (commonly 18, sometimes higher) are standard, the same as any lottery or gambling product.
-- **Sanctioned or restricted countries.** Platforms commonly exclude countries under sanctions programs like OFAC's, regardless of the product being offered. Loofta's own terms include this kind of eligibility restriction as a baseline requirement for using the platform at all, not something specific to the lottery feature.
+- **Sanctioned or restricted countries.** Platforms commonly exclude countries under sanctions programs like OFAC's, regardless of the product being offered. Loofta's own terms include this kind of eligibility restriction as a baseline requirement for using the platform at all, not something specific to Megapot, the third-party lottery Loofta integrates with.
 - **Local gambling law.** Some places specifically regulate lotteries and sweepstakes as their own legal category, separate from general gambling law, with their own rules on things like "no purchase necessary" alternatives.
 
 ## What to actually check
 
-Before playing any crypto lottery, including Loofta's:
+Before playing any crypto lottery, including Megapot, the blockchain-based lottery Loofta integrates with:
 
 1. Confirm your country and, if relevant, your state or province doesn't restrict online lotteries or gambling-adjacent products.
 2. Check the platform's own terms of service for age and geographic eligibility requirements.

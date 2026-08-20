@@ -81,8 +81,8 @@
   "UnclaimedGiftToast": {
     "titleOne": "You have an unclaimed gift",
     "titleMany": "You have {count} unclaimed gifts",
-    "ticketWaitingOne": "1 lottery ticket waiting for you.",
-    "ticketWaitingMany": "{numTickets} lottery tickets waiting for you.",
+    "ticketWaitingOne": "1 Megapot ticket waiting for you.",
+    "ticketWaitingMany": "{numTickets} Megapot tickets waiting for you.",
     "claimOne": "Claim it",
     "claimMany": "Claim them",
     "dismiss": "Dismiss"

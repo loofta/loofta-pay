@@ -408,7 +408,7 @@ export default function LotteryGiftClaimPage() {
               {/* ── Recipient, pre-claim ─────────────────────────────────────── */}
               {canClaim && !viewerIsSenderOnly && (
                 <>
-                  <Headline line1={`${senderLabel} sent you`} line2={`${data.numTickets} lottery ${ticketWord}.`} />
+                  <Headline line1={`${senderLabel} sent you`} line2={`${data.numTickets} Megapot ${ticketWord}.`} />
                   <p className="text-center text-base leading-relaxed text-slate-400">
                     {senderLabel} already paid — claiming buys it on-chain for the next draw.
                   </p>
@@ -532,7 +532,7 @@ export default function LotteryGiftClaimPage() {
                     </button>
                     <button
                       onClick={() => {
-                        const tweetText = `Thanks for the lottery ticket, ${senderLabel}! 🎟️`;
+                        const tweetText = `Thanks for the Megapot ticket, ${senderLabel}! 🎟️`;
                         window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`, '_blank', 'noopener,noreferrer');
                       }}
                       className="w-full h-14 rounded-2xl border border-white/10 bg-transparent font-display text-[16.5px] font-semibold text-white transition-all hover:bg-white/[0.06] flex items-center justify-center gap-2"
@@ -549,7 +549,7 @@ export default function LotteryGiftClaimPage() {
               {/* ── Sender, still unclaimed ──────────────────────────────────────── */}
               {canClaim && viewerIsSenderOnly && (
                 <>
-                  <Headline line1="You gifted" line2={`${data.numTickets} lottery ${ticketWord}.`} />
+                  <Headline line1="You gifted" line2={`${data.numTickets} Megapot ${ticketWord}.`} />
                   <p className="text-center text-base leading-relaxed text-slate-400">
                     {recipientLabel} hasn&apos;t claimed it yet.
                   </p>
@@ -665,7 +665,7 @@ export default function LotteryGiftClaimPage() {
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1 px-5 py-5">
                       <div>
                         <div className="text-base font-semibold uppercase tracking-[0.18em] text-slate-500">Gift</div>
-                        <div className="mt-1 font-display text-base font-medium text-white">{data.numTickets} lottery {ticketWord}</div>
+                        <div className="mt-1 font-display text-base font-medium text-white">{data.numTickets} Megapot {ticketWord}</div>
                       </div>
                       <div>
                         <div className="text-base font-semibold uppercase tracking-[0.18em] text-slate-500">You paid</div>

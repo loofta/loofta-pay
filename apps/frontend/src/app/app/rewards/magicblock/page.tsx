@@ -30,7 +30,7 @@ interface MagicblockQuestStatus {
 
 const QUEST_COPY: Record<MagicblockQuestType, { title: string; description: string; icon: string; ctaLabel: string; ctaHref: string }> = {
   lottery_ticket: {
-    title: "Purchase 1 lottery ticket privately",
+    title: "Purchase 1 Megapot ticket privately",
     description: "Buy a Megapot ticket using a private payment on Loofta.",
     icon: "🎟️",
     ctaLabel: "Buy a ticket",

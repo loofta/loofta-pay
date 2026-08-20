@@ -7,7 +7,7 @@ export const revalidate = 3600;
 export const metadata: Metadata = {
   title: "Blog | Loofta",
   description:
-    "Guides and explainers on sending money without a wallet, private crypto payments, and the Loofta lottery.",
+    "Guides and explainers on sending money without a wallet, private crypto payments, and Megapot.",
   alternates: {
     canonical: "/blog",
   },
