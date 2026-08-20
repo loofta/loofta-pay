@@ -353,6 +353,35 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
    * fully-bot-filled room with no human to click), not just from a live socket event, so unlike
    * readyByRoom/emojiByRoom the tally itself is service-owned, not gateway-owned.
    */
+  /**
+   * Phase-gate acks (migration 20260819120000): a participant's client reports it finished the
+   *  card reveal (`watched_card`) or the exclusion/vote-cut roulette (`watched_roulette`). The
+   *  gate opens once every real seated participant has acked, or the server-anchored deadline
+   *  passes — whichever first — so the room's phase transitions run on the players' pace, while
+   *  an AFK/disconnected seat can never stall the game. Fire-and-forget like mark_ready: acks
+   *  are idempotent (PK per room/gate/epoch/seat) and a late ack against an already-open gate is
+   *  a deliberate server-side no-op, so there's nothing actionable to ack back to the caller.
+   */
+  @SubscribeMessage('watched_card')
+  async onWatchedCard(@ConnectedSocket() client: Socket, @MessageBody() body: { roomId: string }): Promise<void> {
+    await this.forwardPhaseGateAck(client, body, 'card');
+  }
+
+  @SubscribeMessage('watched_roulette')
+  async onWatchedRoulette(@ConnectedSocket() client: Socket, @MessageBody() body: { roomId: string }): Promise<void> {
+    await this.forwardPhaseGateAck(client, body, 'roulette');
+  }
+
+  private async forwardPhaseGateAck(client: Socket, body: { roomId: string }, gate: 'card' | 'roulette'): Promise<void> {
+    const roomId = body?.roomId;
+    const userId = client.data?.userId;
+    if (!roomId || !userId) return;
+    const res = await this.gacha.ackPhaseGate(roomId, userId, gate)
+      .catch((e) => ({ ok: false, error: e?.message ?? 'ack failed' }));
+    // Non-participants (spectators) get a soft no-op in the logs only — they never gate a room.
+    if (!res.ok) this.logger.debug(`phase gate ack (${gate}) room ${roomId} user ${userId}: ${res.error}`);
+  }
+
   @SubscribeMessage('cast_vote')
   async onCastVote(
     @ConnectedSocket() client: Socket,

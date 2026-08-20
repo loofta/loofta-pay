@@ -69,6 +69,7 @@ interface RoomDetail {
     createdAt: string;
     isPrivate: boolean;
   };
+  gate: { type: "card" | "roulette"; epoch: number; deadline: string | null; ackedSeats: number[]; requiredCount: number } | null;
   myParticipant: {
     seatNumber: number;
     payoutUsdc: number | null;
@@ -204,7 +205,7 @@ export default function GachaRoomPage() {
 
   const {
     lastUpdate, lastOpened, lastSettled, lastExcluded, lastReadyUpdate, allReadyTick, readySeats: socketReadySeats, markReady, lockMascot,
-    lastVoteRoundStarted, lastVoteResult, lastVoteCut, castVote,
+    lastVoteRoundStarted, lastVoteResult, lastVoteCut, castVote, watchedCard, watchedRoulette,
     viewerCount,
   } = useGachaRoomSocket(roomId, accessToken, inviteCode);
   const {
@@ -313,6 +314,7 @@ export default function GachaRoomPage() {
   const isSpectator = !!detail && !detail.myParticipant;
   const hasPendingHumanVote =
     room?.status === "voting"
+    && !detail?.gate // a pending reveal gate means the cut reveal is still playing — no live round to vote in yet
     && !!detail?.myParticipant
     && !detail.myParticipant.excluded
     && myVote === undefined;
@@ -468,6 +470,22 @@ export default function GachaRoomPage() {
     setIAmReady(true);
     markReady();
   }, [markReady]);
+
+  // Phase-gate acks (migration 20260819120000): the server holds the exclusion draw behind the
+  // card gate until every real participant's client reports it finished watching (or the
+  // deadline passes). Ack when this client is DONE with the card phase — either it watched the
+  // rip + card reveal and dismissed it (manual click or the 30s auto-dismiss above), or it
+  // arrived after the reveal and never had anything to watch. Idempotent server-side, and a
+  // no-op once the gate has opened, so the late-arrival path can ack freely on first detail load.
+  const cardAckedRef = useRef(false);
+  useEffect(() => {
+    if (cardAckedRef.current) return;
+    if (!detail?.room.nftMetadata || !detail.myParticipant) return;
+    const doneWatchingCard = cardRevealDismissed || arrivedAlreadyRevealedRef.current === true;
+    if (!doneWatchingCard) return;
+    cardAckedRef.current = true;
+    watchedCard();
+  }, [detail?.room.nftMetadata, detail?.myParticipant, cardRevealDismissed, watchedCard]);
 
   // Same "don't let one distracted player stall the room" pattern as MascotPicker's own 30s
   // timer — the ready-gate used to wait indefinitely for a manual click with no fallback.
@@ -843,7 +861,7 @@ export default function GachaRoomPage() {
         potUsdc={room.buybackAmountUsdc ?? 0}
         exclusionCount={room.exclusionCount}
         finalVictims={finalVictims}
-        onContinue={() => setRouletteActive(false)}
+        onContinue={() => { setRouletteActive(false); watchedRoulette(); }}
       />
     );
   } else if (voteCutRouletteActive) {
@@ -856,7 +874,7 @@ export default function GachaRoomPage() {
         potUsdc={room.buybackAmountUsdc ?? 0}
         exclusionCount={1}
         finalVictims={voteCutFinalVictim}
-        onContinue={() => setVoteCutRouletteActive(false)}
+        onContinue={() => { setVoteCutRouletteActive(false); watchedRoulette(); }}
       />
     );
   } else if (room.status === "waiting") {
