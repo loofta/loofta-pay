@@ -87,6 +87,12 @@
     "claimMany": "Talep et",
     "dismiss": "Kapat"
   },
+  "FreeSpinToast": {
+    "title": "Ücretsiz bir Mystery Pack hakkınız var",
+    "body": "Ödeme gerekmez — istediğiniz zaman açabilirsiniz.",
+    "open": "Aç",
+    "dismiss": "Kapat"
+  },
   "AddEmailToast": {
     "title": "Hiçbir ödemeyi kaçırma",
     "body": "Yeni ödemeler ve hediyeler hakkında bildirim almak için e-posta adresini ekle.",

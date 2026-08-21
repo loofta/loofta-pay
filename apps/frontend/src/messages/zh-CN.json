@@ -87,6 +87,12 @@
     "claimMany": "全部领取",
     "dismiss": "关闭"
   },
+  "FreeSpinToast": {
+    "title": "您有一次免费的神秘包机会",
+    "body": "无需付款，随时可以打开。",
+    "open": "打开",
+    "dismiss": "关闭"
+  },
   "AddEmailToast": {
     "title": "不错过任何一笔付款",
     "body": "添加你的邮箱，以便在收到新付款和礼物时收到通知。",

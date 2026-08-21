@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle, AtSign, Mail } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 
 interface AdminPackTier {
@@ -44,10 +44,23 @@ interface AdminPackOpening {
   cost_usdc: number;
   is_test: boolean;
   payment_tx_hash: string | null;
+  free_spin_id: string | null;
   lottery_ticket_id: string | null;
   status: string;
   purchase_failure_reason: string | null;
   retry_count: number;
+}
+
+interface AdminFreeSpin {
+  id: string;
+  created_at: string;
+  user_id: string;
+  username: string | null;
+  granted_by_admin_id: string;
+  note: string | null;
+  status: "unclaimed" | "consumed" | "cancelled";
+  consumed_at: string | null;
+  pack_opening_id: string | null;
 }
 
 function oddsLabel(weight: number): string {
@@ -80,6 +93,19 @@ export function PacksTab() {
   const [openingsRealTotal, setOpeningsRealTotal] = useState(0);
   const [openingsPage, setOpeningsPage] = useState(1);
   const [openingsLoading, setOpeningsLoading] = useState(false);
+
+  // Grant a free spin — recipient must already have a Loofta account (a free spin is redeemed
+  // in-app, unlike a ticket gift there's no claim-link fallback for an unregistered identifier).
+  const [grantIdentifier, setGrantIdentifier] = useState("");
+  const [grantNote, setGrantNote] = useState("");
+  const [granting, setGranting] = useState(false);
+  const [grantError, setGrantError] = useState<string | null>(null);
+  const [grantSuccess, setGrantSuccess] = useState<string | null>(null);
+
+  const [freeSpins, setFreeSpins] = useState<AdminFreeSpin[] | null>(null);
+  const [freeSpinsTotal, setFreeSpinsTotal] = useState(0);
+  const [freeSpinsPage, setFreeSpinsPage] = useState(1);
+  const [freeSpinsLoading, setFreeSpinsLoading] = useState(false);
 
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const token = await getAccessToken().catch(() => null);
@@ -143,7 +169,51 @@ export function PacksTab() {
     }
   }, [authHeaders]);
 
-  useEffect(() => { fetchTiers(); fetchTreasury(); fetchRevenue(); fetchSettings(); fetchOpenings(1); }, [fetchTiers, fetchTreasury, fetchRevenue, fetchSettings, fetchOpenings]);
+  const fetchFreeSpins = useCallback(async (page: number) => {
+    setFreeSpinsLoading(true);
+    try {
+      const res = await fetch(`/api/admin/lottery/packs/free-spins?page=${page}`, { headers: await authHeaders() });
+      if (!res.ok) throw new Error("Failed to load free spins");
+      const data = await res.json();
+      setFreeSpins(data.data ?? []);
+      setFreeSpinsTotal(data.total ?? 0);
+      setFreeSpinsPage(page);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load free spins");
+    } finally {
+      setFreeSpinsLoading(false);
+    }
+  }, [authHeaders]);
+
+  useEffect(() => { fetchTiers(); fetchTreasury(); fetchRevenue(); fetchSettings(); fetchOpenings(1); fetchFreeSpins(1); }, [fetchTiers, fetchTreasury, fetchRevenue, fetchSettings, fetchOpenings, fetchFreeSpins]);
+
+  // recipientType is auto-detected the same way the Megapot ticket gift form does — an "@" +
+  // "." reads as an email, anything else as an X handle or Loofta username.
+  const grantFreeSpin = useCallback(async () => {
+    const identifier = grantIdentifier.trim();
+    if (!identifier) return;
+    setGranting(true);
+    setGrantError(null);
+    setGrantSuccess(null);
+    try {
+      const recipientType = identifier.includes("@") && identifier.includes(".") ? "email" : "handle";
+      const res = await fetch("/api/admin/lottery/packs/grant-free-spin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({ recipientType, recipientIdentifier: identifier, note: grantNote.trim() || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message ?? "Failed to grant free spin");
+      setGrantSuccess(`Free spin granted to ${identifier}`);
+      setGrantIdentifier("");
+      setGrantNote("");
+      fetchFreeSpins(1);
+    } catch (e: any) {
+      setGrantError(e?.message ?? "Failed to grant free spin");
+    } finally {
+      setGranting(false);
+    }
+  }, [grantIdentifier, grantNote, authHeaders, fetchFreeSpins]);
 
   // Empty input clears the limit (unlimited) — anything else must be a positive integer, matching
   // PackService.setDailyOpenLimit's own validation (this is just the earlier, friendlier check).
@@ -315,6 +385,102 @@ export function PacksTab() {
         </div>
       </div>
 
+      {/* Grant a free spin — a distinct entitlement from a demo open: it still rolls the real
+          tier ladder and buys a real Megapot ticket, funded from the same treasury as a paid
+          pack. Recipient must already have a Loofta account (redeemed in-app, no claim link). */}
+      <div className="rounded-xl border border-gray-800 p-4 space-y-3">
+        <div className="text-base font-semibold text-gray-200">Grant a free Mystery Pack spin</div>
+        <div className="text-sm text-gray-500">
+          Costs the recipient nothing, but still awards a real ticket funded from the treasury — not a demo open.
+          Recipient must already have a Loofta account.
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <div className="relative flex-1 min-w-[220px]">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
+              {grantIdentifier.includes("@") && grantIdentifier.includes(".")
+                ? <Mail className="w-4 h-4" /> : <AtSign className="w-4 h-4" />}
+            </span>
+            <input
+              placeholder="Email, X handle, or Loofta username"
+              value={grantIdentifier}
+              onChange={(e) => setGrantIdentifier(e.target.value.replace(/^@+/, ""))}
+              className="w-full rounded-lg bg-gray-900 border border-gray-700 pl-9 pr-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-gray-500"
+            />
+          </div>
+        </div>
+        <textarea
+          placeholder="Optional note to include in the email…"
+          value={grantNote}
+          onChange={(e) => setGrantNote(e.target.value)}
+          className="w-full rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 min-h-[60px] focus:outline-none focus:border-gray-500"
+        />
+        <button
+          onClick={grantFreeSpin}
+          disabled={granting || !grantIdentifier.trim()}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-teal-700 hover:bg-teal-600 text-sm font-medium text-white disabled:opacity-60 transition-colors"
+        >
+          {granting && <Loader2 className="w-4 h-4 animate-spin" />}
+          Grant free spin
+        </button>
+        {grantError && <div className="text-sm text-red-400">{grantError}</div>}
+        {grantSuccess && <div className="text-sm text-emerald-400">{grantSuccess}</div>}
+      </div>
+
+      {/* Recent free-spin grants, newest first — mirrors the ticket-gift list on the Lottery tab. */}
+      <div className="rounded-xl border border-gray-800 p-4 space-y-1">
+        <div className="text-base font-semibold text-gray-200">Recent free-spin grants</div>
+        <div className="text-sm text-gray-500">{freeSpinsTotal} total</div>
+      </div>
+      <div className="rounded-xl border border-gray-800 divide-y divide-gray-800">
+        {freeSpinsLoading && !freeSpins && (
+          <div className="p-4 flex items-center gap-2 text-gray-500 text-sm">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+          </div>
+        )}
+        {freeSpins?.length === 0 && (
+          <div className="p-4 text-sm text-gray-500">No free spins granted yet.</div>
+        )}
+        {freeSpins?.map(s => (
+          <div key={s.id} className="flex items-center justify-between p-4 gap-3">
+            <div className="min-w-0">
+              <div className="text-base font-medium text-gray-200 flex items-center gap-2 flex-wrap">
+                {s.username ? <span className="font-medium text-gray-400">@{s.username}</span> : <span className="font-mono">{shortUserId(s.user_id)}</span>}
+                <span className={`text-xs uppercase tracking-wide rounded-full px-1.5 py-0.5 border ${
+                  s.status === "unclaimed" ? "text-sky-400 border-sky-400/30 bg-sky-400/10"
+                  : s.status === "consumed" ? "text-emerald-400 border-emerald-400/30 bg-emerald-400/10"
+                  : "text-gray-500 border-gray-500/30 bg-gray-500/10"
+                }`}>
+                  {s.status}
+                </span>
+              </div>
+              {s.note && <div className="text-sm text-gray-500 truncate">{s.note}</div>}
+            </div>
+            <div className="text-right shrink-0">
+              <div className="text-sm text-gray-600 tabular-nums">{new Date(s.created_at).toLocaleString()}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {freeSpinsTotal > 50 && (
+        <div className="flex items-center justify-center gap-3 pt-1">
+          <button
+            onClick={() => fetchFreeSpins(freeSpinsPage - 1)}
+            disabled={freeSpinsPage <= 1 || freeSpinsLoading}
+            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-sm text-gray-300 disabled:opacity-40 transition-colors"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-gray-500">Page {freeSpinsPage}</span>
+          <button
+            onClick={() => fetchFreeSpins(freeSpinsPage + 1)}
+            disabled={freeSpinsPage * 50 >= freeSpinsTotal || freeSpinsLoading}
+            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-sm text-gray-300 disabled:opacity-40 transition-colors"
+          >
+            Next
+          </button>
+        </div>
+      )}
+
       {/* Recent openings — real + demo, newest first. is_test rows are opens with no charge and
           no real ticket purchase (see PackService.openPackDemo), kept visually distinct here. */}
       <div className="rounded-xl border border-gray-800 p-4 space-y-1">
@@ -338,6 +504,9 @@ export function PacksTab() {
                 <span className="text-xs uppercase tracking-wide text-gray-500">{o.rarity}</span>
                 {o.is_test && (
                   <span className="text-xs uppercase tracking-wide text-sky-400 border border-sky-400/30 bg-sky-400/10 rounded-full px-1.5 py-0.5">demo</span>
+                )}
+                {o.free_spin_id && (
+                  <span className="text-xs uppercase tracking-wide text-violet-400 border border-violet-400/30 bg-violet-400/10 rounded-full px-1.5 py-0.5">free spin</span>
                 )}
                 {o.status === "failed" && (
                   <span className="text-xs uppercase tracking-wide text-red-400 border border-red-400/30 bg-red-400/10 rounded-full px-1.5 py-0.5">purchase failed</span>

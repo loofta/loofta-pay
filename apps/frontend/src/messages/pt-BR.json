@@ -87,6 +87,12 @@
     "claimMany": "Resgatar",
     "dismiss": "Fechar"
   },
+  "FreeSpinToast": {
+    "title": "Você tem um giro grátis do Mystery Pack",
+    "body": "Sem pagamento necessário — abra quando quiser.",
+    "open": "Abrir",
+    "dismiss": "Fechar"
+  },
   "AddEmailToast": {
     "title": "Nunca perca um pagamento",
     "body": "Adicione seu e-mail para ser notificado sobre novos pagamentos e presentes.",

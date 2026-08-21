@@ -48,6 +48,12 @@ export class PackController {
     return this.packs.openPackDemo(req.user.id);
   }
 
+  @Post('open-free-spin')
+  @ApiOperation({ summary: "Open a Mystery Pack using an admin-granted free spin — no payment required, but still a real tier roll and a real ticket purchase. Fails if the caller has no unclaimed free spin (see GET /packs/my-status)." })
+  async openFreeSpin(@Request() req: any): Promise<PackOpenResult> {
+    return this.packs.openPackWithFreeSpin(req.user.id);
+  }
+
   @Get('pending-payment')
   @ApiOperation({ summary: 'Look for a real, confirmed pack payment the caller already sent but never got to redeem (e.g. the client dropped the request after a successful on-chain send) — lets the frontend recover it instead of charging a second time' })
   async pendingPayment(@Request() req: any): Promise<{ paymentTxHash: string | null }> {
@@ -56,8 +62,8 @@ export class PackController {
   }
 
   @Get('my-status')
-  @ApiOperation({ summary: "Caller's own daily pack-open usage — lets the frontend show a 'you've hit today's limit' message before ever offering payment" })
-  async myStatus(@Request() req: any): Promise<{ opensToday: number; dailyLimit: number | null; limitReached: boolean }> {
+  @ApiOperation({ summary: "Caller's own daily pack-open usage + whether they have an admin-granted free spin waiting — lets the frontend show a 'you've hit today's limit' message before ever offering payment, or skip the payment gate entirely for a free spin" })
+  async myStatus(@Request() req: any): Promise<{ opensToday: number; dailyLimit: number | null; limitReached: boolean; hasFreeSpin: boolean }> {
     return this.packs.getMyPackStatus(req.user.id);
   }
 }

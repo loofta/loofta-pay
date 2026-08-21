@@ -87,6 +87,12 @@
     "claimMany": "Klaim semua",
     "dismiss": "Tutup"
   },
+  "FreeSpinToast": {
+    "title": "Anda memiliki putaran Mystery Pack gratis",
+    "body": "Tidak perlu membayar — buka kapan saja.",
+    "open": "Buka",
+    "dismiss": "Tutup"
+  },
   "AddEmailToast": {
     "title": "Jangan lewatkan pembayaran",
     "body": "Tambahkan email kamu untuk mendapat notifikasi pembayaran dan hadiah baru.",

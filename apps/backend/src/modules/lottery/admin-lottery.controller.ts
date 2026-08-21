@@ -38,6 +38,18 @@ class SetPackDailyLimitDto {
   dailyOpenLimit: number | null;
 }
 
+class GrantFreeSpinDto {
+  @IsIn(['email', 'handle'])
+  recipientType: 'email' | 'handle';
+
+  @IsString()
+  recipientIdentifier: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
 @ApiTags('admin/lottery')
 @Controller('admin/lottery')
 @UseGuards(AdminGuard)
@@ -154,5 +166,25 @@ export class AdminLotteryController {
   @ApiOperation({ summary: "Refund a 'failed' pack opening's cost to the user's wallet and email them (only when its treasury ticket purchase never landed)" })
   async refundPackOpening(@Param('id') id: string) {
     return this.packs.refundFailedPackOpening(id);
+  }
+
+  @Post('packs/grant-free-spin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Grant a free Mystery Pack spin to a registered recipient by email or X handle — no payment required, still a real tier roll and real ticket purchase' })
+  async grantFreeSpin(@Body() dto: GrantFreeSpinDto, @Request() req: any) {
+    return this.packs.grantFreeSpin({
+      adminUserId: req.user.id,
+      recipientType: dto.recipientType,
+      recipientIdentifier: dto.recipientIdentifier,
+      note: dto.note,
+    });
+  }
+
+  @Get('packs/free-spins')
+  @ApiOperation({ summary: 'List granted Mystery Pack free spins (paginated, newest first)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  async listFreeSpins(@Query('page') pageRaw?: string) {
+    const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
+    return this.packs.getAdminFreeSpins(page, 50);
   }
 }

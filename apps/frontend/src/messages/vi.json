@@ -87,6 +87,12 @@
     "claimMany": "Nhận tất cả",
     "dismiss": "Đóng"
   },
+  "FreeSpinToast": {
+    "title": "Bạn có một lượt quay Mystery Pack miễn phí",
+    "body": "Không cần thanh toán — mở bất cứ lúc nào bạn muốn.",
+    "open": "Mở ngay",
+    "dismiss": "Đóng"
+  },
   "AddEmailToast": {
     "title": "Không bỏ lỡ khoản thanh toán nào",
     "body": "Thêm email của bạn để nhận thông báo về các khoản thanh toán và quà tặng mới.",

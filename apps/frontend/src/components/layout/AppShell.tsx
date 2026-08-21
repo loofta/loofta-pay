@@ -21,6 +21,8 @@ import { useTerminalPromoToast } from "@/hooks/useTerminalPromoToast";
 import { TerminalPromoToast } from "@/components/TerminalPromoToast";
 import { useUnclaimedGiftToast } from "@/hooks/useUnclaimedGiftToast";
 import { UnclaimedGiftToast } from "@/components/UnclaimedGiftToast";
+import { useFreeSpinToast } from "@/hooks/useFreeSpinToast";
+import { FreeSpinToast } from "@/components/FreeSpinToast";
 
 function ShellContent({ children }: { children: ReactNode }) {
   const t = useTranslations('AppShell');
@@ -31,6 +33,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   const { showAddEmail, addEmail, linking: addingEmail, error: addEmailError, dismiss: dismissAddEmail } = useAddEmailToast();
   const { showTerminalPromo, dismiss: dismissTerminalPromo } = useTerminalPromoToast();
   const { unclaimed: unclaimedGifts, dismiss: dismissUnclaimedGifts } = useUnclaimedGiftToast();
+  const { hasFreeSpin, dismiss: dismissFreeSpin } = useFreeSpinToast();
   const [bannerDismissed, setBannerDismissed] = useState(false);
   useEffect(() => {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
@@ -72,10 +75,14 @@ function ShellContent({ children }: { children: ReactNode }) {
       <UserSync />
       <UpdateJun26Modal show={updateShow} />
       <MainnetLaunchCelebration blockedByUpdate={!updateResolved || updateShow} />
-      {(unclaimed || unclaimedGifts || showAddEmail || showTerminalPromo) && (
+      {(unclaimed || unclaimedGifts || (hasFreeSpin && !isImmersivePage) || showAddEmail || showTerminalPromo) && (
         <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:bottom-4 z-[100] sm:max-w-sm flex flex-col-reverse gap-3">
           {unclaimed && <UnclaimedPaymentToast payments={unclaimed} onDismiss={dismissUnclaimed} />}
           {unclaimedGifts && <UnclaimedGiftToast gifts={unclaimedGifts} onDismiss={dismissUnclaimedGifts} />}
+          {/* Suppressed on the Mystery Pack page itself (isImmersivePage) — nudging someone to go
+              open a free spin while they're already there is redundant, and the page's own
+              SlideToPay gate already surfaces it (see packs/page.tsx). */}
+          {hasFreeSpin && !isImmersivePage && <FreeSpinToast onDismiss={dismissFreeSpin} />}
           {showAddEmail && (
             <AddEmailToast
               onAddEmail={addEmail}

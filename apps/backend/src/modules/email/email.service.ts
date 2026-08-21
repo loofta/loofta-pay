@@ -244,6 +244,25 @@ export class EmailService {
     }
   }
 
+  /** Sent when an admin grants a free Mystery Pack spin — a notification, not a claim link (the
+   *  spin already shows up in-app the next time the recipient opens the Mystery Pack page, see
+   *  PackService.hasFreeSpin), so the CTA just points straight at the pack page itself. */
+  async sendPackFreeSpinGrantedEmail(data: { recipientEmail: string; note?: string | null }): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `You've got a free Mystery Pack spin 🎁`,
+        html: this.buildPackFreeSpinGrantedHtml(data),
+      });
+      this.logger.log(`Pack free-spin granted email sent to ${data.recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send pack free-spin granted email to ${data.recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
   async sendGiveawayApprovedEmail(data: { recipientEmail: string; title: string; giveawayUrl: string }): Promise<void> {
     if (!this.resend) return;
     try {
@@ -1415,6 +1434,61 @@ export class EmailService {
                 </a>
               </div>
               <p style="margin:0;">Sorry for the trouble, and reply here if you run into anything else.</p>
+              <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildPackFreeSpinGrantedHtml(data: { note?: string | null }): string {
+    const noteBlock = data.note
+      ? `<div style="background:#1e1e23;border-radius:12px;padding:16px 18px;margin:0 0 28px;">
+           <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#9ca3af;">Message</p>
+           <p style="margin:0;font-size:14px;line-height:1.5;color:#d1d5db;">${data.note}</p>
+         </div>`
+      : '';
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Free Mystery Pack spin</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">🎁 You've got a free Mystery Pack spin</p>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:28px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 16px;">hey, this is Lisa from Loofta.</p>
+              <p style="margin:0 0 28px;">We just added a free Mystery Pack spin to your account — no payment needed, open it whenever you like. You always win at least 1 Megapot ticket.</p>
+              ${noteBlock}
+              <div style="text-align:center;margin-bottom:24px;">
+                <a href="https://pay.loofta.xyz/app/megapot/packs" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Open your free pack
+                </a>
+              </div>
+              <p style="margin:0;">Enjoy!</p>
               <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
             </td>
           </tr>

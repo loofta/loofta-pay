@@ -87,6 +87,12 @@
     "claimMany": "Claim them",
     "dismiss": "Dismiss"
   },
+  "FreeSpinToast": {
+    "title": "You have a free Mystery Pack spin",
+    "body": "No payment needed — open it whenever you like.",
+    "open": "Open it",
+    "dismiss": "Dismiss"
+  },
   "AddEmailToast": {
     "title": "Never miss a payment",
     "body": "Add your email to get notified about new payments and gifts.",

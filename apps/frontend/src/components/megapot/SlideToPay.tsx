@@ -26,12 +26,16 @@ const SLIDE_COMPLETE_THRESHOLD = 0.72;
 export default function SlideToPay({
   amountLabel,
   label = "Slide to pay",
+  confirmLabel,
   onConfirm,
   busy = false,
   error = null,
 }: {
   amountLabel: string;
   label?: string;
+  /** Overrides the default `Confirm ${amountLabel} payment` text on the post-slide button —
+   *  needed for non-payment confirmations (e.g. a free spin) where "payment" doesn't apply. */
+  confirmLabel?: string;
   onConfirm: () => void | Promise<void>;
   busy?: boolean;
   error?: string | null;
@@ -186,7 +190,7 @@ export default function SlideToPay({
                   className="relative h-16 w-full rounded-full text-base font-semibold text-white flex items-center justify-center gap-2 bg-gradient-to-r from-[#FF1301] to-[#EAB308] active:scale-[0.99] transition-transform disabled:opacity-70 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
                 >
                   {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-                  {busy ? "Confirming…" : `Confirm ${amountLabel} payment`}
+                  {busy ? "Confirming…" : confirmLabel ?? `Confirm ${amountLabel} payment`}
                 </button>
               </div>
             </motion.div>

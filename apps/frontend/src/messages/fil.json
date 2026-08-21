@@ -87,6 +87,12 @@
     "claimMany": "Kunin ang mga ito",
     "dismiss": "Isara"
   },
+  "FreeSpinToast": {
+    "title": "May libreng Mystery Pack spin ka",
+    "body": "Walang bayad na kailangan — buksan anumang oras.",
+    "open": "Buksan",
+    "dismiss": "Isara"
+  },
   "AddEmailToast": {
     "title": "Huwag palampasin ang anumang bayad",
     "body": "Idagdag ang iyong email para maabisuhan sa mga bagong bayad at regalo.",

@@ -120,6 +120,15 @@ export default function MegapotPacksPage() {
   // Whether the caller has hit their own daily open cap (admin-configurable, see PacksTab) —
   // null = not checked yet.
   const [dailyLimitReached, setDailyLimitReached] = useState<boolean | null>(null);
+  // Whether the caller has an admin-granted free spin waiting (see PacksTab's "Grant a free
+  // spin" panel) — null = not checked yet. When true (and no real payment is already pending),
+  // the SlideToPay control switches to a "Slide to open · Free spin" variant instead of the
+  // real payment one — see the gate render below.
+  const [freeSpinAvailable, setFreeSpinAvailable] = useState<boolean | null>(null);
+  // Guards the very first render of the payment gate against a flash of the real "$2" slider
+  // before the my-status check (which reports freeSpinAvailable) has actually come back — without
+  // this, a user with a free spin would briefly see the wrong control before it swaps out.
+  const [statusLoaded, setStatusLoaded] = useState(false);
   const [result, setResult] = useState<PackOpenResult | null>(null);
   const [openCount, setOpenCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -142,6 +151,14 @@ export default function MegapotPacksPage() {
   // — same real tier roll, no money involved in either direction (no charge, no treasury-funded
   // ticket purchase). Never shown/usable off localhost; the backend enforces this independently.
   const [demoMode, setDemoMode] = useState(false);
+
+  // Dev-only: previews the free-spin gate/copy (the "Slide to open · Free spin" control, the
+  // on-canvas subtitle) without needing a real admin-granted spin. When no real free spin exists
+  // (freeSpinAvailable is false), the actual open still routes through the same no-money
+  // demo-open path as demoMode — this only ever changes what's SHOWN, never what a real free
+  // spin grant does (a genuine grant, if one also exists, still takes priority and gets
+  // consumed for real — see resolveOpen).
+  const [previewFreeSpin, setPreviewFreeSpin] = useState(false);
 
   // Dev-only: manually preview MegapotPack's reduced-quality render path (no shadows/clearcoat/
   // AA, 1x pixel ratio) regardless of the actual device — otherwise there's no way to see it on
@@ -217,21 +234,28 @@ export default function MegapotPacksPage() {
     } catch { /* best-effort — worst case the user just sees the normal pay gate */ }
   }, [paid, getAccessToken]);
 
-  // Own daily-limit status — checked up front, same "tell the user why before they try to pay"
-  // approach as the treasury-availability check, instead of only discovering it after a failed
-  // buildPaymentTx call. Demo mode never checks this (demo opens don't count toward the limit
-  // server-side either, see PackService.getOpensToday).
+  // Own daily-limit + free-spin status — checked up front, same "tell the user why before they
+  // try to pay" approach as the treasury-availability check, instead of only discovering it
+  // after a failed buildPaymentTx call. Demo mode never checks this (demo opens don't count
+  // toward the limit server-side either, see PackService.getOpensToday, and a free spin is
+  // irrelevant once demo mode is on) — statusLoaded is set regardless so the gate below never
+  // gets stuck waiting on a check that will never run.
   const checkDailyLimit = useCallback(async () => {
-    if (demoMode) return;
+    if (demoMode) { setStatusLoaded(true); return; }
     try {
       const token = await getAccessToken();
       const res = await fetch("/api/lottery/packs/my-status", {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) return;
-      const data = await res.json();
-      setDailyLimitReached(!!data.limitReached);
+      if (res.ok) {
+        const data = await res.json();
+        setDailyLimitReached(!!data.limitReached);
+        setFreeSpinAvailable(!!data.hasFreeSpin);
+      }
     } catch { /* best-effort — worst case the backend still enforces it at payment time */ }
+    finally {
+      setStatusLoaded(true);
+    }
   }, [demoMode, getAccessToken]);
 
   useEffect(() => {
@@ -257,16 +281,45 @@ export default function MegapotPacksPage() {
       return { ticketsAwarded: data.ticketsAwarded, rarity: data.rarity };
     }
 
-    if (!paymentTxHash) throw new Error("Payment not completed");
-    const res = await fetch("/api/lottery/packs/open", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeader },
-      body: JSON.stringify({ paymentTxHash }),
-    });
-    if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Failed to open pack");
-    const data = await res.json();
-    return { ticketsAwarded: data.ticketsAwarded, rarity: data.rarity };
-  }, [getAccessToken, paymentTxHash, demoMode]);
+    // A real, already-paid payment always takes priority over a free spin — never strand real
+    // money in favor of consuming a free spin instead (see the gate render below for why the
+    // free-spin control never even shows while a real payment is pending).
+    if (paymentTxHash) {
+      const res = await fetch("/api/lottery/packs/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ paymentTxHash }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Failed to open pack");
+      const data = await res.json();
+      return { ticketsAwarded: data.ticketsAwarded, rarity: data.rarity };
+    }
+
+    if (freeSpinAvailable) {
+      const res = await fetch("/api/lottery/packs/open-free-spin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Failed to open free spin");
+      const data = await res.json();
+      return { ticketsAwarded: data.ticketsAwarded, rarity: data.rarity };
+    }
+
+    // Dev-only style preview with no real free spin granted — same no-money path as demoMode
+    // (never consumes anything, never touches the treasury), just reached via the free-spin
+    // toggle instead of the demo one so the slide control's copy can be previewed honestly.
+    if (previewFreeSpin) {
+      const res = await fetch("/api/lottery/packs/demo-open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Failed to open preview pack");
+      const data = await res.json();
+      return { ticketsAwarded: data.ticketsAwarded, rarity: data.rarity };
+    }
+
+    throw new Error("Payment not completed");
+  }, [getAccessToken, paymentTxHash, demoMode, freeSpinAvailable, previewFreeSpin]);
 
   // Real on-chain payment: build the transfer server-side (treasury sponsors gas + its own ATA),
   // sign+send it with the user's embedded wallet, then hand the signature to resolveOpen above —
@@ -344,6 +397,23 @@ export default function MegapotPacksPage() {
     }
   }, [embeddedWallet, getAccessToken, signAndSendTransaction, demoMode, priceLabel]);
 
+  // Free-spin confirm: same two-step slide-then-confirm gesture as a real payment (see
+  // SlideToPay), but no wallet signature and no on-chain transfer — resolveOpen routes to
+  // POST /packs/open-free-spin instead of /packs/open whenever paymentTxHash is unset and
+  // freeSpinAvailable is true (see resolveOpen below). Tiny artificial delay for the same reason
+  // demo mode has one: so "Confirming…" doesn't just flash.
+  const handleConfirmFreeSpin = useCallback(async () => {
+    setPaying(true);
+    setPayError(null);
+    warmUpAudio();
+    await new Promise(r => setTimeout(r, 350));
+    if (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN && process.env.NEXT_PUBLIC_POSTHOG_HOST) {
+      posthog.capture("mystery_pack_free_spin_confirmed");
+    }
+    setPaid(true);
+    setPaying(false);
+  }, []);
+
   // A pack actually opening is the only thing that should ever consume the stored payment —
   // an /open error must NOT clear paid/paymentTxHash, so the user can just tap the pack again
   // and retry with the same already-verified payment instead of being asked to pay twice.
@@ -373,6 +443,11 @@ export default function MegapotPacksPage() {
     setPayError(null);
     setOpenCount(n => n + 1);
   }, []);
+
+  // Whether the pack the user is currently looking at was unlocked by a free spin (real or
+  // dev-only preview) rather than a real payment or demo mode — drives the on-canvas subtitle
+  // text once opened.
+  const usingFreeSpin = paid && !demoMode && !paymentTxHash && (!!freeSpinAvailable || previewFreeSpin);
 
   // Grouped for display only — tickets/rarity, never the underlying odds. A tier that's
   // currently disabled server-side (weight untouched) still shows here exactly like an enabled
@@ -420,6 +495,18 @@ export default function MegapotPacksPage() {
               DEMO
             </button>
           )}
+          {/* Dev-only: previews the free-spin gate/copy without needing a real admin-granted
+              spin — see previewFreeSpin's declaration for how it stays safely no-money. */}
+          {(IS_LOCALHOST || user?.id === DEMO_MODE_ALLOWED_USER_ID) && (
+            <button
+              onClick={() => setPreviewFreeSpin(p => !p)}
+              className={`flex items-center justify-center h-9 px-3 rounded-full text-xs font-bold tracking-wide transition-colors ${
+                previewFreeSpin ? "bg-violet-500/20 text-violet-300 border border-violet-400/40" : "bg-white/10 text-slate-400 hover:bg-white/15"
+              }`}
+            >
+              FREE
+            </button>
+          )}
           {IS_LOCALHOST && (
             <button
               onClick={() => setLowPowerPreview(p => !p)}
@@ -457,7 +544,7 @@ export default function MegapotPacksPage() {
             assets={{ logo: "/loofta.svg", logoWhite: "/loofta_white.svg", megapotDark: "/images/megapot/logo.svg" }}
             canOpen={paid}
             idleLabel={paid ? "Tap the pack to open" : ""}
-            idleSubtitle={paid ? (demoMode ? "Demo mode — $0, no real ticket" : "You always win at least 1 ticket") : ""}
+            idleSubtitle={paid ? (demoMode ? "Demo mode — $0, no real ticket" : usingFreeSpin ? "Free spin — no payment needed" : "You always win at least 1 ticket") : ""}
             muted={muted}
             showOpenAnotherButton={false}
             forceLowPower={lowPowerPreview || undefined}
@@ -473,18 +560,36 @@ export default function MegapotPacksPage() {
       </div>
 
       {/* Payment gate — persistent until paid; the pack stays visible/draggable behind it but
-          cannot be opened (see canOpen above) until this is completed. Three independent reasons
-          can replace the slide-to-pay control with a message instead of a dead-end payment
-          attempt: the caller's own USDC balance can't cover it (checked first — the only one of
-          the three that's actually actionable by the user themselves, via the top-up button),
-          the caller already hit today's open limit, or the treasury can't cover a payout
-          (available === false) — the backend refuses to build the charge in the last two cases
-          regardless. Already-paid users are unaffected: this only ever replaces the pre-payment
-          control. Demo mode always shows the real slide-to-pay control (so the flow itself is
-          actually testable) since it costs $0 and never touches the treasury or daily limit. */}
-      {authenticated && !paid && !result && (
+          cannot be opened (see canOpen above) until this is completed. Gated on statusLoaded so
+          this never flashes the real "$2" slider for a split second before the my-status check
+          (which reports both freeSpinAvailable and dailyLimitReached) has come back. A free spin
+          takes priority over everything else below it — none of the other reasons (balance,
+          daily limit, treasury availability) apply to a free spin, since it needs no payment and
+          the backend doesn't gate it on any of them either (see PackService.openPackWithFreeSpin).
+          Failing that, three independent reasons can replace the slide-to-pay control with a
+          message instead of a dead-end payment attempt: the caller's own USDC balance can't
+          cover it (the only one of the three that's actually actionable by the user themselves,
+          via the top-up button), the caller already hit today's open limit, or the treasury
+          can't cover a payout (available === false) — the backend refuses to build the charge in
+          the last two cases regardless. Already-paid users are unaffected: this only ever
+          replaces the pre-payment control. Demo mode always shows the real slide-to-pay control
+          (so the flow itself is actually testable) since it costs $0 and never touches the
+          treasury or daily limit. */}
+      {authenticated && statusLoaded && !paid && !result && (
         <div className="absolute inset-x-4 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-80 z-30" style={{ bottom: "calc(env(safe-area-inset-bottom) + 20px)" }}>
-          {insufficientBalance ? (
+          {!demoMode && (freeSpinAvailable || previewFreeSpin) ? (
+            <>
+              <SlideToPay
+                label="Slide to open"
+                amountLabel="Free spin"
+                confirmLabel="Confirm free spin"
+                onConfirm={handleConfirmFreeSpin}
+                busy={paying}
+                error={payError}
+              />
+              {payError && <p className="mt-2 text-center text-sm text-red-400">{payError}</p>}
+            </>
+          ) : insufficientBalance ? (
             <div className="rounded-2xl border border-white/10 bg-[#111114]/95 backdrop-blur px-5 py-4 text-center space-y-3">
               <div>
                 <p className="text-base font-semibold text-slate-200">Not enough USDC</p>

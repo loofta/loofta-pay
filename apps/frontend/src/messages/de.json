@@ -87,6 +87,12 @@
     "claimMany": "Beanspruchen",
     "dismiss": "Schließen"
   },
+  "FreeSpinToast": {
+    "title": "Sie haben einen kostenlosen Mystery-Pack-Dreh",
+    "body": "Keine Zahlung nötig — öffnen Sie ihn, wann Sie möchten.",
+    "open": "Öffnen",
+    "dismiss": "Schließen"
+  },
   "AddEmailToast": {
     "title": "Verpasse keine Zahlung mehr",
     "body": "Füge deine E-Mail-Adresse hinzu, um über neue Zahlungen und Geschenke benachrichtigt zu werden.",

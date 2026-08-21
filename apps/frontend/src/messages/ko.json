@@ -87,6 +87,12 @@
     "claimMany": "모두 받기",
     "dismiss": "닫기"
   },
+  "FreeSpinToast": {
+    "title": "무료 미스터리 팩 스핀이 있습니다",
+    "body": "결제가 필요 없습니다 — 언제든지 열어보세요.",
+    "open": "열기",
+    "dismiss": "닫기"
+  },
   "AddEmailToast": {
     "title": "결제를 놓치지 마세요",
     "body": "새로운 결제와 선물 알림을 받으려면 이메일을 추가하세요.",

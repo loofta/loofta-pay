@@ -87,6 +87,12 @@
     "claimMany": "Réclamer",
     "dismiss": "Fermer"
   },
+  "FreeSpinToast": {
+    "title": "Vous avez un tirage gratuit du Mystery Pack",
+    "body": "Aucun paiement nécessaire — ouvrez-le quand vous voulez.",
+    "open": "Ouvrir",
+    "dismiss": "Fermer"
+  },
   "AddEmailToast": {
     "title": "Ne manquez plus aucun paiement",
     "body": "Ajoutez votre e-mail pour être averti des nouveaux paiements et cadeaux.",

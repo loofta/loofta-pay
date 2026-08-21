@@ -87,6 +87,12 @@
     "claimMany": "Riscuoti",
     "dismiss": "Chiudi"
   },
+  "FreeSpinToast": {
+    "title": "Hai un giro gratuito del Mystery Pack",
+    "body": "Nessun pagamento richiesto — aprilo quando vuoi.",
+    "open": "Apri",
+    "dismiss": "Chiudi"
+  },
   "AddEmailToast": {
     "title": "Non perdere nessun pagamento",
     "body": "Aggiungi la tua email per ricevere notifiche su nuovi pagamenti e regali.",

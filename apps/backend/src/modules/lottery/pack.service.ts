@@ -213,10 +213,24 @@ export class PackService {
 
   /** Authenticated per-user status the frontend uses to show/hide the "you've hit today's limit"
    *  message before ever offering payment — mirrors isTreasuryFunded's "tell the user why up
-   *  front" approach rather than letting them tap pay into a guaranteed rejection. */
-  async getMyPackStatus(userId: string): Promise<{ opensToday: number; dailyLimit: number | null; limitReached: boolean }> {
-    const [opensToday, dailyLimit] = await Promise.all([this.getOpensToday(userId), this.getDailyOpenLimit()]);
-    return { opensToday, dailyLimit, limitReached: dailyLimit !== null && opensToday >= dailyLimit };
+   *  front" approach rather than letting them tap pay into a guaranteed rejection. Also surfaces
+   *  whether an admin-granted free spin is waiting — the frontend uses this to skip the whole
+   *  payment gate entirely (see openPackWithFreeSpin). */
+  async getMyPackStatus(userId: string): Promise<{ opensToday: number; dailyLimit: number | null; limitReached: boolean; hasFreeSpin: boolean }> {
+    const [opensToday, dailyLimit, hasFreeSpin] = await Promise.all([this.getOpensToday(userId), this.getDailyOpenLimit(), this.hasFreeSpin(userId)]);
+    return { opensToday, dailyLimit, limitReached: dailyLimit !== null && opensToday >= dailyLimit, hasFreeSpin };
+  }
+
+  /** Whether this user currently has at least one unclaimed admin-granted free spin. */
+  async hasFreeSpin(userId: string): Promise<boolean> {
+    const db = this.supabase.getClient();
+    const { count, error } = await db
+      .from('pack_free_spins')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('status', 'unclaimed');
+    if (error) throw new Error(`Failed to check free spins: ${error.message}`);
+    return (count ?? 0) > 0;
   }
 
   /** Admin: recent pack openings (real + demo), newest first — paginated the same way
@@ -230,7 +244,7 @@ export class PackService {
     const [{ data, count, error }, { count: realTotal, error: realCountError }] = await Promise.all([
       db
         .from('pack_openings')
-        .select('id, created_at, user_id, tier_key, tickets_awarded, rarity, cost_usdc, is_test, payment_tx_hash, lottery_ticket_id, status, purchase_failure_reason, retry_count', { count: 'exact' })
+        .select('id, created_at, user_id, tier_key, tickets_awarded, rarity, cost_usdc, is_test, payment_tx_hash, free_spin_id, lottery_ticket_id, status, purchase_failure_reason, retry_count', { count: 'exact' })
         .order('created_at', { ascending: false })
         .range((page - 1) * pageSize, page * pageSize - 1),
       db.from('pack_openings').select('id', { count: 'exact', head: true }).eq('is_test', false),
@@ -622,6 +636,151 @@ export class PackService {
       tierKey: tier.tierKey,
       ticketsAwarded: tier.ticketsAwarded,
       rarity: tier.rarity,
+    };
+  }
+
+  /**
+   * Opens a pack by consuming one of this user's admin-granted free spins instead of a payment —
+   * same real tier roll and same real treasury-funded ticket purchase as a paid open (unlike
+   * openPackDemo, this is a genuine prize and genuinely costs the treasury). Deliberately skips
+   * both the daily-open-limit check and the treasury-funded-availability check: an admin already
+   * decided to grant this specific spin, so it shouldn't get silently blocked by an unrelated
+   * per-user counter or a temporary treasury dip (if the ticket purchase does fail, it's simply
+   * marked 'failed' and picked up by retryFailedPackPurchases like any other pack win).
+   *
+   * Consumption is guarded against a double-open race the same way as a payment tx hash: claim
+   * the oldest unclaimed row with an UPDATE ... WHERE status = 'unclaimed', and treat "0 rows
+   * updated" (a concurrent request already claimed it) as "no free spin available" rather than
+   * trusting the earlier SELECT.
+   */
+  async openPackWithFreeSpin(userId: string): Promise<PackOpenResult> {
+    const db = this.supabase.getClient();
+
+    const { data: spin } = await db
+      .from('pack_free_spins')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('status', 'unclaimed')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (!spin) throw new BadRequestException('No free spin available');
+
+    const { data: claimed, error: claimError } = await db
+      .from('pack_free_spins')
+      .update({ status: 'consumed', consumed_at: new Date().toISOString() })
+      .eq('id', spin.id)
+      .eq('status', 'unclaimed')
+      .select('id')
+      .maybeSingle();
+    if (claimError) throw new Error(`Failed to claim free spin: ${claimError.message}`);
+    if (!claimed) throw new BadRequestException('This free spin was already used');
+
+    const tier = await this.rollTier();
+    const { data, error } = await db
+      .from('pack_openings')
+      .insert({
+        user_id: userId,
+        tier_key: tier.tierKey,
+        tickets_awarded: tier.ticketsAwarded,
+        rarity: tier.rarity,
+        cost_usdc: 0,
+        is_test: false,
+        payment_tx_hash: null,
+        free_spin_id: claimed.id,
+        status: 'opened',
+      })
+      .select('id')
+      .single();
+    if (error || !data) throw new Error(`Failed to record free-spin pack opening: ${error?.message}`);
+
+    await db.from('pack_free_spins').update({ pack_opening_id: data.id }).eq('id', claimed.id);
+
+    this.logger.log(`Free-spin pack opened for user ${userId}: spin=${claimed.id} tier=${tier.tierKey} tickets=${tier.ticketsAwarded}`);
+
+    // Same "never let a fulfillment failure take the win down with it" contract as openPack.
+    await this.fulfillPackOpening(data.id, userId, tier.ticketsAwarded);
+
+    return {
+      id: data.id,
+      tierKey: tier.tierKey,
+      ticketsAwarded: tier.ticketsAwarded,
+      rarity: tier.rarity,
+    };
+  }
+
+  /**
+   * Admin: grants a free Mystery Pack spin to a registered Loofta user, resolved by email or
+   * handle — same recipient-resolution helper as LotteryService.createGift. Unlike a ticket gift,
+   * there's no claim-link fallback for an unresolved identifier: opening a pack happens inside
+   * the app itself, so a free spin is only meaningful for someone who already has an account (and
+   * therefore a wallet to award the resulting ticket to).
+   */
+  async grantFreeSpin(opts: {
+    adminUserId: string;
+    recipientType: 'email' | 'handle';
+    recipientIdentifier: string;
+    note?: string;
+  }): Promise<{ id: string; recipientUserId: string }> {
+    const { adminUserId, recipientType, note } = opts;
+    if (!['email', 'handle'].includes(recipientType)) {
+      throw new BadRequestException('recipientType must be "email" or "handle"');
+    }
+    const recipientIdentifier = (opts.recipientIdentifier ?? '').trim();
+    if (!recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
+
+    const resolved = await this.usersService.resolveGiftRecipient(recipientType, recipientIdentifier);
+    if (!resolved) {
+      throw new BadRequestException('No Loofta account found for that recipient — they need an account to receive a free spin');
+    }
+
+    const db = this.supabase.getClient();
+    const { data, error } = await db
+      .from('pack_free_spins')
+      .insert({
+        user_id: resolved.privyUserId,
+        granted_by_admin_id: adminUserId,
+        note: note ?? null,
+        status: 'unclaimed',
+      })
+      .select('id')
+      .single();
+    if (error || !data) throw new Error(`Failed to grant free spin: ${error?.message}`);
+
+    this.logger.log(`Free spin ${data.id} granted to user ${resolved.privyUserId} by admin ${adminUserId}`);
+
+    if (resolved.email) {
+      this.emailService.sendPackFreeSpinGrantedEmail({ recipientEmail: resolved.email, note: note ?? null }).catch((e: any) =>
+        this.logger.warn(`grantFreeSpin ${data.id}: notification email failed: ${e?.message ?? e}`),
+      );
+    }
+
+    return { id: data.id, recipientUserId: resolved.privyUserId };
+  }
+
+  /** Admin: recent free-spin grants, newest first — mirrors AdminLotteryController.listGifts. */
+  async getAdminFreeSpins(page: number, pageSize: number): Promise<{ data: any[]; total: number; page: number; limit: number }> {
+    const db = this.supabase.getClient();
+    const { data, count, error } = await db
+      .from('pack_free_spins')
+      .select('id, created_at, user_id, granted_by_admin_id, note, status, consumed_at, pack_opening_id', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range((page - 1) * pageSize, page * pageSize - 1);
+    if (error) throw new Error(`Failed to load free spins: ${error.message}`);
+
+    const rows = data ?? [];
+    const uniqueUserIds = Array.from(new Set(rows.map(r => r.user_id)));
+    let usernameByUserId: Record<string, string | null> = {};
+    if (uniqueUserIds.length) {
+      const { data: users } = await db.from('app_users').select('privy_user_id, username').in('privy_user_id', uniqueUserIds);
+      usernameByUserId = Object.fromEntries((users ?? []).map((u: any) => [u.privy_user_id, u.username ?? null]));
+    }
+
+    return {
+      data: rows.map(r => ({ ...r, username: usernameByUserId[r.user_id] ?? null })),
+      total: count ?? 0,
+      page,
+      limit: pageSize,
     };
   }
 
