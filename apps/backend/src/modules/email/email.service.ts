@@ -90,6 +90,36 @@ export class EmailService {
     }
   }
 
+  /** Sent to the sender once the recipient actually claims (sweeps funds to their own wallet) —
+   *  distinct from sendPaymentReceivedEmail/sendClaimReadyEmail, which tell the recipient money is
+   *  waiting. Fire-and-forget, matching those two: a failed notification must never fail the claim. */
+  async sendPaymentClaimedEmail(data: {
+    id: string;
+    amount: string | number;
+    claimerInfo?: string | null;
+    recipientEmail: string;
+    claimUrl?: string;
+  }): Promise<void> {
+    if (!this.resend) return;
+    const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
+    const claimUrl = data.claimUrl
+      ? `https://pay.loofta.xyz${new URL(data.claimUrl, 'https://pay.loofta.xyz').pathname}`
+      : `https://pay.loofta.xyz/c/${data.id}`;
+    const subject = `Your ${amountStr} payment was claimed`;
+    const html = this.buildPaymentClaimedHtml({ ...data, amountStr, claimUrl });
+    try {
+      await this.resend.emails.send({
+        from: `Loofta <${this.fromEmail}>`,
+        to: data.recipientEmail,
+        subject,
+        html,
+      });
+      this.logger.log(`Payment claimed email sent to ${data.recipientEmail} (claim ${data.id}, ${amountStr})`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send payment claimed email for claim ${data.id}: ${err?.message ?? err}`);
+    }
+  }
+
   /** Best-effort cancel of a still-pending scheduled send (no-op once Resend has already sent it). */
   async cancelScheduledEmail(emailId: string): Promise<void> {
     if (!this.resend) return;
@@ -1740,6 +1770,69 @@ export class EmailService {
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
               <p style="margin:0;font-size:12px;color:#4b5563;">
                 You're receiving this because someone sent you a payment via Loofta.<br>
+                <a href="https://pay.loofta.xyz" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildPaymentClaimedHtml(data: { amountStr: string; claimUrl: string; claimerInfo?: string | null }): string {
+    const claimerLine = data.claimerInfo
+      ? `<p style="margin:0 0 6px;font-size:14px;color:#6b7280;">Claimed by <strong style="color:#e5e7eb;font-weight:500;">${data.claimerInfo}</strong></p>`
+      : '<p style="margin:0 0 6px;font-size:14px;color:#6b7280;">Your recipient just claimed it</p>';
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Payment claimed</title>
+  <style>
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/O462VY6O6FTQCS72XVMTQHXAM4NN5CY3/TWF57ITZORMJ3MEWLQQIVO6BMXIB6FUR/MJQFMMOTEGNXDVM7HBBDTQHTVB2M7Y6G.woff2') format('woff2'); font-weight:400; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/2SAK53YLUN7RMYJU4MYLSBV6SSSJEJZB/RXS4DPGJRKOUFZMF5X5BVUGNNKJT65XZ/DJS4RYGIUYUXJQOHY5VCZPKSTXUSHTSP.woff2') format('woff2'); font-weight:500; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/MKEEQN57GWBZOSYWCRODNJOOZNPLMAKN/5SPTSZGHEACWWLF34DQ4WAA4OGU6PQIF/KN7DX4F6PXB74R6L2K2Y4NH3CB7FC53Q.woff2') format('woff2'); font-weight:600; font-display:swap; }
+    @font-face { font-family:'Clash Grotesk'; src:url('https://cdn.fontshare.com/wf/P6VJ47S3OYMUC7HYSJLTK7PEIK5O2NPQ/TK62VLUWA76PMTK2XWBNDZB7QVXJGYE3/I5W5NEJGYVFUC5I4XOXVET63OE5PSVHJ.woff2') format('woff2'); font-weight:700; font-display:swap; }
+  </style>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:'Clash Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px 32px;">
+              <p style="margin:0 0 8px;font-size:32px;text-align:center;line-height:1;">✅</p>
+              <p style="margin:0 0 24px;font-size:18px;color:#ffffff;font-weight:500;text-align:center;">Your payment was claimed</p>
+              <div style="background:#0f0f12;border:1px solid #3a1a10;border-radius:12px;padding:24px;text-align:center;margin-bottom:20px;">
+                <p style="margin:0 0 4px;font-size:12px;color:#6b7280;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;">Amount claimed</p>
+                <p style="margin:0;font-size:40px;font-weight:500;color:#FF4A26;letter-spacing:-1px;">${data.amountStr}</p>
+              </div>
+              ${claimerLine}
+              <div style="margin-top:28px;text-align:center;">
+                <a href="${data.claimUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  View payment
+                </a>
+              </div>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">
+                You're receiving this because a payment you sent via Loofta was just claimed.<br>
                 <a href="https://pay.loofta.xyz" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz</a>
               </p>
             </td>

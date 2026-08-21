@@ -93,6 +93,9 @@ export class ClaimsService {
   // delayed send) — lets a recipient edit that lands before the delay elapses cancel the email
   // already addressed to the OLD recipient instead of leaving it to fire regardless.
   private readonly scheduledEmailId = new Map<string, string>();
+  // Dedupe map for the sender-side "your payment was claimed" email — separate from emailSentAt
+  // (that one dedupes the recipient-side "money waiting/arrived" email).
+  private readonly senderClaimEmailSentAt = new Map<string, number>();
 
   constructor(
     private readonly supabaseService: SupabaseService,
@@ -1480,6 +1483,7 @@ export class ClaimsService {
           nairaClaim: nairaBankAccountId ? { bankAccountId: nairaBankAccountId, feeAmountUsdc: feeAmountUsdc ?? 0 } : undefined,
         }, privyUserId);
         this.notifyRecipientAfterPayment(claimId);
+        this.notifySenderAfterClaim(claimId);
         if (nairaBankAccountId) {
           // Best-effort — this only powers the recipient's withdrawal-history visibility, never
           // block/fail an already-succeeded on-chain claim on it.
@@ -1696,6 +1700,7 @@ export class ClaimsService {
           }
           await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true, deliveredPrivately, nairaClaim }, privyUserId);
           this.notifyRecipientAfterPayment(claimId);
+          this.notifySenderAfterClaim(claimId);
           this.logger.log(`Claim ${claimId}: background poll sweep succeeded, marked SUCCESS`);
           return;
         }
@@ -3219,6 +3224,51 @@ export class ClaimsService {
     if (sentEmailId) this.scheduledEmailId.set(claimId, sentEmailId);
   }
 
+  /** Fire-and-forget email to the SENDER once the recipient actually claims (funds swept to their
+   *  wallet) — distinct from notifyRecipientAfterPayment, which tells the recipient money arrived. */
+  notifySenderAfterClaim(claimId: string): void {
+    const lastSent = this.senderClaimEmailSentAt.get(claimId);
+    if (lastSent && Date.now() - lastSent < 60 * 60 * 1000) {
+      this.logger.log(`[email] sender-claim ${claimId}: duplicate suppressed (already sent ${Math.round((Date.now() - lastSent) / 1000)}s ago)`);
+      return;
+    }
+    this.senderClaimEmailSentAt.set(claimId, Date.now());
+    if (!this.emailService.isAvailable()) return;
+    this.sendSenderClaimedEmail(claimId).catch((err: any) => {
+      this.logger.error(`Sender-claim email notification failed for claim ${claimId}: ${err?.message ?? err}`);
+    });
+  }
+
+  private async sendSenderClaimedEmail(claimId: string): Promise<void> {
+    const result = await this.fetchRawRow(claimId);
+    if (!result) return;
+    const row = result.row;
+
+    const createdBy = (row.created_by as string | null) || null;
+    if (!createdBy) return; // anonymous-created payment — no sender to notify
+
+    const senderEmail = await this.usersService.getEmailByPrivyId(createdBy);
+    if (!senderEmail) return;
+
+    let claimerUsername = (row.recipient_username as string | null)?.trim() || null;
+    const recipientUserId = (row.recipient_user_id as string | null) || null;
+    if (!claimerUsername && recipientUserId) {
+      try {
+        const recipientUser = await this.usersService.findByPrivyId(recipientUserId);
+        claimerUsername = recipientUser?.username || null;
+      } catch { /* ignore */ }
+    }
+
+    const shortId = (row.short_id as string | null) || null;
+    await this.emailService.sendPaymentClaimedEmail({
+      id: claimId,
+      amount: row.amount as string | number,
+      claimerInfo: claimerUsername ? `@${claimerUsername}` : null,
+      recipientEmail: senderEmail,
+      ...(shortId ? { claimUrl: `/c/${shortId}` } : {}),
+    });
+  }
+
   /**
    * Returns claims that are PRIVATE_TRANSFER_PENDING with a saved sender_tx_hash, EXCLUDING any
    * claim that has a burner (burner_address set) — those are burner-mediated (private) claims
@@ -3411,6 +3461,7 @@ export class ClaimsService {
           }
           await this.updateStatus(claim.id, 'SUCCESS', { recipientSwept: true, deliveredPrivately, nairaClaim });
           this.notifyRecipientAfterPayment(claim.id);
+          this.notifySenderAfterClaim(claim.id);
           this.logger.log(`[cronSweep] Claim ${claim.id}: sweep succeeded → SUCCESS`);
         } else {
           this.logger.debug(`[cronSweep] Claim ${claim.id}: burner still empty, will retry next tick`);
