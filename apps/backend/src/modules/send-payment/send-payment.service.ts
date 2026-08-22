@@ -28,7 +28,6 @@ import {
   getAssociatedTokenAddress,
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
-  getAccount,
 } from '@solana/spl-token';
 import { TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig, getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
@@ -624,13 +623,15 @@ export class SendPaymentService {
   }
 
   /**
-   * Build the sender's ONE private MagicBlock transfer for a multi-send batch — sender wallet →
-   * a fresh, single-use burner generated just for this batch (never the shared fee-payer wallet:
-   * a reused, discoverable custodial address is what let the old hub design be drained — see
-   * .claude/skills/solana-sponsor-safety). This is the sender's only signature for the whole
-   * batch; the burner then fans out to each recipient with its own individual MagicBlock private
-   * transfer (runMultiSendFanOut, triggered from confirmMultiSendBatchFunding once this tx is
-   * broadcast). The funding amount covers every recipient's amount PLUS that recipient's own
+   * Build the sender's ONE funding transfer for a multi-send batch — a plain SPL transfer, sender
+   * wallet → a fresh, single-use burner generated just for this batch (never the shared fee-payer
+   * wallet: a reused, discoverable custodial address is what let the old hub design be drained —
+   * see .claude/skills/solana-sponsor-safety). Deliberately NOT a MagicBlock private transfer:
+   * this leg confirms instantly with no delivery-delay wait for the sender, and the sender's own
+   * outbound transfer to an anonymous single-use burner is by itself not very revealing. Privacy
+   * is preserved where it matters — each individual recipient payout (runMultiSendFanOut,
+   * triggered from confirmMultiSendBatchFunding once this tx confirms) is still its own MagicBlock
+   * private transfer. The funding amount covers every recipient's amount PLUS that recipient's own
    * single-payment fee, computed per row — not a batch-blended discount — so the burner always
    * holds enough for every individual fan-out leg's own relay + platform fee.
    */
@@ -641,8 +642,8 @@ export class SendPaymentService {
     requestCluster?: 'devnet' | 'mainnet',
   ): Promise<{
     transactionBase64: string;
-    version: string;
-    sendTo: string;
+    version: 'v0';
+    sendTo: 'base';
     feeAmountUsdc: number;
     paymentIds: string[];
     totalAmountUsdc: number;
@@ -650,7 +651,6 @@ export class SendPaymentService {
     if (!this.feePayerKeypair) {
       throw new BadRequestException('Gas sponsorship not configured (SOLANA_FEE_PAYER_PRIVATE_KEY). Cannot build batch funding transfer.');
     }
-    const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
 
     const { data: batch, error: batchErr } = await this.supabaseService.multiSendBatches
       .select('id, status')
@@ -673,9 +673,9 @@ export class SendPaymentService {
       throw new BadRequestException('Multi-send batch not found for this sender.');
     }
 
-    const cluster: 'devnet' | 'mainnet' | 'localhost' = isSolanaLocalhostFromConfig(this.configService)
-      ? 'localhost'
-      : (requestCluster ?? (isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet'));
+    const cluster: 'devnet' | 'mainnet' = isSolanaDevnetFromConfig(this.configService)
+      ? 'devnet'
+      : (requestCluster ?? 'mainnet');
     const effectiveMint = cluster === 'mainnet'
       ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
       : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
@@ -704,27 +704,45 @@ export class SendPaymentService {
       throw new BadRequestException(`Failed to prepare batch funding: ${updateErr.message}`);
     }
 
-    // No platformFeeBps on this leg — Loofta's cut is fully accounted for per-recipient on the
-    // fan-out leg below, so this leg doesn't double-charge. exactOut ensures the burner receives
-    // exactly totalFundingBaseUnits regardless of MagicBlock's own gross-up on this hop.
-    const txResponse = await requestMagicblockPrivateTransfer({
-      from: senderWallet.trim(),
-      to: burner.publicKey.toBase58(),
-      mint: effectiveMint.toBase58(),
-      amount: totalFundingBaseUnits,
-      cluster: cluster === 'localhost' ? 'devnet' : cluster,
-      exactOut: true,
-      gasless: true,
-    });
+    const senderPubkey = new PublicKey(senderWallet.trim());
+    const senderAta = await getAssociatedTokenAddress(effectiveMint, senderPubkey);
+    const burnerAta = await getAssociatedTokenAddress(effectiveMint, burner.publicKey);
+
+    const senderAtaInfo = await this.connection.getAccountInfo(senderAta);
+    if (!senderAtaInfo) {
+      throw new BadRequestException('Your USDC token account does not exist. Please deposit USDC to your wallet first.');
+    }
+
+    // Plain SPL transfer, not a MagicBlock private transfer — this leg's only job is getting funds
+    // into the batch's own throwaway burner fast, with an instant on-chain confirmation for the
+    // sender (no MagicBlock delivery delay). Privacy is preserved on the recipient-facing side
+    // instead: each fan-out leg (runMultiSendFanOut, burner → recipient) is still an individual
+    // MagicBlock private transfer. The burner's own ATA is guaranteed not to exist yet (freshly
+    // generated key, can't have prior on-chain history), so creating it here is unconditional — the
+    // fee payer fronts that rent and gets it back via reclaimBurnerFunds when the batch completes,
+    // same as every other burner in this codebase.
+    const instructions = [
+      createAssociatedTokenAccountInstruction(this.feePayerKeypair.publicKey, burnerAta, burner.publicKey, effectiveMint),
+      createTransferInstruction(senderAta, burnerAta, senderPubkey, totalFundingBaseUnits),
+    ];
+
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+    const message = new TransactionMessage({
+      payerKey: this.feePayerKeypair.publicKey,
+      recentBlockhash: blockhash,
+      instructions,
+    }).compileToV0Message();
+    const tx = new VersionedTransaction(message);
+    tx.sign([this.feePayerKeypair]);
 
     this.logger.log(
-      `[MultiSendFunding] batch=${multiSendBatchId} rows=${rows.length} totalFundingBaseUnits=${totalFundingBaseUnits} burner=${burner.publicKey.toBase58().slice(0, 8)}… sendTo=${txResponse.sendTo} feeUsdc=${totalFeeUsdc.toFixed(4)}`,
+      `[MultiSendFunding] batch=${multiSendBatchId} rows=${rows.length} totalFundingBaseUnits=${totalFundingBaseUnits} burner=${burner.publicKey.toBase58().slice(0, 8)}… feeUsdc=${totalFeeUsdc.toFixed(4)}`,
     );
 
     return {
-      transactionBase64: txResponse.transactionBase64,
-      version: txResponse.version,
-      sendTo: txResponse.sendTo,
+      transactionBase64: Buffer.from(tx.serialize()).toString('base64'),
+      version: 'v0',
+      sendTo: 'base',
       feeAmountUsdc: totalFeeUsdc,
       paymentIds: rows.map((r) => r.id as string),
       totalAmountUsdc: rows.reduce((sum, r) => sum + parseFloat(String(r.amount || '0')), 0),
@@ -837,32 +855,11 @@ export class SendPaymentService {
     const feePayerUsdcAta = await getAssociatedTokenAddress(this.usdcMint, this.feePayerKeypair!.publicKey);
     const relayFeeUnits = await this.resolveRelayFeeUnits();
 
-    // The sender's funding transaction confirming on-chain is NOT the same as the burner actually
-    // having the money — MagicBlock's private transfers settle via a delayed relay/crank (1-10min
-    // randomized on mainnet, by design, to decorrelate send/receive timing), so the burner's own
-    // token balance can lag its funding transaction's confirmation by up to that whole window. The
-    // deleted hub design polled the hub's balance for exactly this reason; a per-batch burner needs
-    // the same wait, just scoped to its own account instead of the shared hub's.
-    const totalFundedUnits = batch.total_funded_base_units ?? 0;
-    if (totalFundedUnits > 0) {
-      const burnerAta = await getAssociatedTokenAddress(this.usdcMint, burnerKeypair.publicKey);
-      const fundingDeadline = Date.now() + 11 * 60_000;
-      let burnerBalance = BigInt(0);
-      while (Date.now() < fundingDeadline) {
-        try {
-          burnerBalance = (await getAccount(this.connection, burnerAta)).amount;
-        } catch { /* burner ATA may not exist on-chain yet — MagicBlock creates it on delivery */ }
-        if (burnerBalance >= BigInt(totalFundedUnits)) break;
-        await new Promise((r) => setTimeout(r, 5_000));
-      }
-      if (burnerBalance < BigInt(totalFundedUnits)) {
-        this.logger.warn(
-          `[MultiSendFanOut] batch=${batchId}: burner balance ${burnerBalance} never reached ${totalFundedUnits} within timeout — leaving FANNING_OUT for the next retry`,
-        );
-        return;
-      }
-      this.logger.log(`[MultiSendFanOut] batch=${batchId}: burner funded (${burnerBalance} units) — starting fan-out`);
-    }
+    // No burner-balance wait needed here (unlike an earlier version of this function): the funding
+    // leg is now a plain SPL transfer (see buildMultiSendBatchFunding), not a MagicBlock private
+    // transfer — its on-chain confirmation IS the delivery, atomically, in the same transaction.
+    // confirmMultiSendBatchFunding only flips rows to IN_FLIGHT and calls this function after that
+    // confirmation already happened, so the burner is guaranteed funded by the time we get here.
 
     const { data: rows, error: rowsErr } = await this.supabaseService.payments
       .select('id, amount, burner_address, sender_tx_hash')

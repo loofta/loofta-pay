@@ -968,12 +968,12 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                       "Setting up transactions. Please keep this window open."}
                     {phase.kind === "building" && (
                       sendPrivately
-                        ? "Building your private funding transfer. Please keep this window open."
+                        ? "Building your funding transfer. Please keep this window open."
                         : "Building your combined transfer. Please keep this window open."
                     )}
                     {phase.kind === "awaiting_signature" && (
                       <>
-                        One transaction {sendPrivately ? "privately funding" : "sending to"}{" "}
+                        One transaction {sendPrivately ? "funding a private payout to" : "sending to"}{" "}
                         <span className="font-medium text-orange-600">
                           {filledRows.length} recipient{filledRows.length === 1 ? "" : "s"}
                         </span>
@@ -983,8 +983,8 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                     {phase.kind === "broadcasting" && (
                       sendPrivately ? (
                         <>
-                          Your private transfer is broadcasting. Recipients are funded privately in the
-                          background afterward — funds can take up to 15 minutes to land.
+                          Your funding transfer is broadcasting — this confirms right away. Recipients are then
+                          paid out privately in the background — funds can take up to 15 minutes to land.
                         </>
                       ) : (
                         "Broadcasting your combined payment. This can take a moment."
