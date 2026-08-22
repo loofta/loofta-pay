@@ -198,13 +198,16 @@ function DevPreviewPanel() {
  *  hover for what it means. An earlier version with a floating ghost mascot, then a labeled
  *  pill, both read as more of a privacy red flag than a reassurance in user feedback. */
 function IncognitoCardBadge() {
+  // x: "-50%" lives in the animate props (not a `-translate-x-1/2` class) because framer-motion
+  // writes its own inline `transform` for y/scale every frame, which was clobbering the
+  // Tailwind class's translateX and left the badge visibly off-center.
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8, scale: 0.92 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 8, scale: 0.92 }}
+      initial={{ opacity: 0, y: 8, scale: 0.92, x: "-50%" }}
+      animate={{ opacity: 1, y: 0, scale: 1, x: "-50%" }}
+      exit={{ opacity: 0, y: 8, scale: 0.92, x: "-50%" }}
       transition={{ type: "spring", stiffness: 300, damping: 24 }}
-      className="absolute -top-5 left-1/2 -translate-x-1/2 z-10 select-none"
+      className="absolute -top-5 left-1/2 z-10 select-none"
     >
       <TooltipProvider delayDuration={150}>
         <Tooltip>
