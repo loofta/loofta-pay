@@ -7,6 +7,7 @@ describe('GachaCronService', () => {
     const gacha = {
       advanceExcludingRooms: jest.fn().mockResolvedValue(undefined),
       advanceVotingRooms: jest.fn().mockResolvedValue(undefined),
+      advanceStalledBuybackSettlements: jest.fn().mockResolvedValue(undefined),
       advancePhaseGates: jest.fn().mockResolvedValue(undefined),
       settleDueRooms: jest.fn().mockResolvedValue(undefined),
     };
@@ -27,6 +28,7 @@ describe('GachaCronService', () => {
 
     expect(gacha.advanceExcludingRooms).toHaveBeenCalledTimes(1);
     expect(gacha.advanceVotingRooms).toHaveBeenCalledTimes(1);
+    expect(gacha.advanceStalledBuybackSettlements).toHaveBeenCalledTimes(1);
     expect(gacha.advancePhaseGates).toHaveBeenCalledTimes(1);
     expect(gacha.settleDueRooms).not.toHaveBeenCalled();
   });
@@ -38,6 +40,7 @@ describe('GachaCronService', () => {
 
     expect(gacha.advanceExcludingRooms).toHaveBeenCalledTimes(1);
     expect(gacha.advanceVotingRooms).toHaveBeenCalledTimes(1);
+    expect(gacha.advanceStalledBuybackSettlements).toHaveBeenCalledTimes(1);
     expect(gacha.advancePhaseGates).toHaveBeenCalledTimes(1);
     expect(gacha.settleDueRooms).toHaveBeenCalledTimes(1);
   });

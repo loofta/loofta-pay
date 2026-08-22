@@ -68,6 +68,9 @@ const MASCOT_KEYS = [
 ] as const;
 
 const EXCLUSION_VRF_STALL_MS = 15 * 60_000; // same threshold as GIVEAWAY_VRF_STALL_MINUTES default
+// Longer than a devnet recent blockhash lifetime: if a signed submission is still absent after
+// this window, that exact transaction can no longer land and a rebuild cannot double-submit it.
+const BUYBACK_SETTLEMENT_STALL_MS = 5 * 60_000;
 
 // See ensureDevnetTestFunds — devnet-only test-wallet funding, covers several room joins/bids.
 const DEVNET_TEST_TOPUP_USDC = 100;
@@ -100,6 +103,8 @@ export interface RoomSummary {
   entryUsdc: number;
   exclusionCount: number;
   voteRound: number | null;
+  /** True after a voting round has closed while its VRF cut draw is still in flight. */
+  voteLocked: boolean;
   status: string;
   seatsFilled: number;
   nftMetadata: NftMetadata | null;
@@ -291,7 +296,7 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data: rooms, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, vrf_requested_at, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
       .in('status', ['waiting', 'purchasing', 'opening', 'excluding', 'voting', 'bidding', 'settling'])
       .eq('is_private', false)
       .order('created_at', { ascending: true });
@@ -308,6 +313,7 @@ export class GachaService {
       entryUsdc: Number(r.entry_usdc),
       exclusionCount: r.exclusion_count,
       voteRound: r.vote_round,
+      voteLocked: r.status === 'voting' && !!r.vrf_requested_at,
       status: r.status,
       seatsFilled: countByRoom[r.id] ?? 0,
       nftMetadata: r.nft_metadata,
@@ -640,7 +646,7 @@ export class GachaService {
 
     const { data: rooms, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, vrf_requested_at, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
       .in('id', roomIds)
       .order('created_at', { ascending: false });
     if (error) throw new Error(`Failed to load your gacha rooms: ${error.message}`);
@@ -654,6 +660,7 @@ export class GachaService {
       entryUsdc: Number(r.entry_usdc),
       exclusionCount: r.exclusion_count,
       voteRound: r.vote_round,
+      voteLocked: r.status === 'voting' && !!r.vrf_requested_at,
       status: r.status,
       seatsFilled: countByRoom[r.id] ?? 0,
       nftMetadata: r.nft_metadata,
@@ -751,7 +758,7 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data: room, error } = await db
       .from('gacha_rooms')
-      .select('id, name, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, pending_bid_id, created_at, is_private, created_by_user_id, invite_code, pending_gate, gate_epoch, phase_deadline')
+      .select('id, name, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, vrf_requested_at, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, pending_bid_id, created_at, is_private, created_by_user_id, invite_code, pending_gate, gate_epoch, phase_deadline')
       .eq('id', roomId)
       .maybeSingle();
     if (error || !room) throw new NotFoundException('Room not found');
@@ -794,6 +801,7 @@ export class GachaService {
       room: {
         id: room.id, name: room.name ?? undefined, configKey: room.config_key, packType: room.pack_type, seats: room.seats, entryUsdc: Number(room.entry_usdc),
         exclusionCount: room.exclusion_count, voteRound: room.vote_round,
+        voteLocked: room.status === 'voting' && !!room.vrf_requested_at,
         status: room.status, seatsFilled: counts[roomId] ?? 0, nftMetadata: room.nft_metadata, rarity: room.rarity,
         buybackAmountUsdc: room.buyback_amount_usdc !== null ? Number(room.buyback_amount_usdc) : null,
         bidWindowEndsAt: room.bid_window_ends_at, createdAt: room.created_at,
@@ -1518,7 +1526,40 @@ export class GachaService {
     if (!randomnessHex) {
       const requestedAgeMs = Date.now() - new Date(room.vrf_requested_at).getTime();
       if (requestedAgeMs >= EXCLUSION_VRF_STALL_MS) {
-        this.logger.error(`Room ${roomId}: VRF request for "${seed}" has been pending longer than the stall threshold — needs manual attention`);
+        // Claim the retry in Postgres before touching the shared on-chain PDA. Production can
+        // have multiple cron workers; the conditional timestamp match makes exactly one worker
+        // refresh this request. requestRandomness is deliberately re-callable for the same
+        // deterministic seed/PDA and replaces an unfulfilled request with fresh real VRF.
+        const retryClaimedAt = new Date().toISOString();
+        const { data: retryClaim, error: claimError } = await db
+          .from('gacha_rooms')
+          .update({ vrf_requested_at: retryClaimedAt, vrf_request_slot: null, updated_at: retryClaimedAt })
+          .eq('id', roomId)
+          .eq('vrf_requested_at', room.vrf_requested_at)
+          .is('vrf_randomness', null)
+          .select('id');
+        if (claimError) throw new Error(`Failed to claim stalled VRF retry: ${claimError.message}`);
+        if ((retryClaim ?? []).length === 0) return null;
+
+        try {
+          const { slot } = await this.vrf.requestRandomness(seed);
+          const { error: recordError } = await db
+            .from('gacha_rooms')
+            .update({ vrf_request_slot: slot, updated_at: new Date().toISOString() })
+            .eq('id', roomId)
+            .eq('vrf_requested_at', retryClaimedAt);
+          if (recordError) throw new Error(`Failed to record retried VRF request: ${recordError.message}`);
+          this.logger.warn(`Room ${roomId}: stalled VRF request for "${seed}" retried (slot=${slot})`);
+        } catch (e: any) {
+          // Release the claim immediately so the next 15-second sweep can retry instead of
+          // leaving the room locked for another complete stall window after an RPC failure.
+          await db
+            .from('gacha_rooms')
+            .update({ vrf_requested_at: null, vrf_request_slot: null, updated_at: new Date().toISOString() })
+            .eq('id', roomId)
+            .eq('vrf_requested_at', retryClaimedAt);
+          this.logger.error(`Room ${roomId}: stalled VRF retry failed for "${seed}": ${e?.message ?? e} (will retry next tick)`);
+        }
       }
       return null;
     }
@@ -2181,8 +2222,9 @@ export class GachaService {
       .catch((e: any) => this.logger.error(`Room ${roomId}: VRF request failed (will retry via cron): ${e.message}`));
   }
 
-  private async signAndSubmit(unsignedTxBase64: string, signer: Keypair, conn: Connection): Promise<string> {
+  private async signAndSubmit(unsignedTxBase64: string, signer: Keypair, conn: Connection, onSigned?: (signature: string) => Promise<void>): Promise<string> {
     const bytes = Buffer.from(unsignedTxBase64, 'base64');
+    const bs58Mod = await import('bs58');
     let versioned: VersionedTransaction | null = null;
     try {
       versioned = VersionedTransaction.deserialize(bytes);
@@ -2192,12 +2234,19 @@ export class GachaService {
     }
     if (versioned) {
       versioned.sign([signer]);
+      const localSignature = bs58Mod.default.encode(versioned.signatures[0]);
+      await onSigned?.(localSignature);
       const submitted = await this.collectorCrypt.submitTransaction(Buffer.from(versioned.serialize()).toString('base64'));
+      if (submitted.signature !== localSignature) throw new Error('Collectorcrypt returned a different transaction signature than the signed buyback transaction');
       return submitted.signature;
     }
     const tx = Transaction.from(bytes);
     tx.partialSign(signer);
+    if (!tx.signature) throw new Error('Signed transaction is missing its fee-payer signature');
+    const localSignature = bs58Mod.default.encode(tx.signature);
+    await onSigned?.(localSignature);
     const submitted = await this.collectorCrypt.submitTransaction(tx.serialize({ requireAllSignatures: false }).toString('base64'));
+    if (submitted.signature !== localSignature) throw new Error('Collectorcrypt returned a different transaction signature than the signed buyback transaction');
     return submitted.signature;
   }
 
@@ -2453,6 +2502,16 @@ export class GachaService {
     const { data: claimed } = await db.from('gacha_rooms').update({ status: 'settling', pending_gate: null, phase_deadline: null, updated_at: new Date().toISOString() }).eq('id', roomId).in('status', ['excluding', 'voting']).select('id');
     if (!claimed?.length) return;
 
+    await this.executeBuybackSettlement(roomId);
+  }
+
+  /** Executes the claimed buyback. The signed signature is persisted BEFORE submission, closing
+   *  the process-crash gap where Collectorcrypt accepted the transaction but Postgres still had
+   *  no proof. Payout uses that transaction's own token-balance delta, so it is recoverable after
+   *  a restart without relying on a process-local pre-balance snapshot. */
+  private async executeBuybackSettlement(roomId: string): Promise<void> {
+    const db = this.supabase.getClient();
+
     const { data: room } = await db.from('gacha_rooms').select('id, seats, nft_metadata').eq('id', roomId).single();
     if (!room?.nft_metadata?.mint) throw new Error(`Room ${roomId}: cannot buyback — no NFT mint recorded`);
     await this.syncOnchainPhase(roomId, room.seats, GACHA_ROOM_PHASE.SETTLING);
@@ -2462,11 +2521,12 @@ export class GachaService {
     const treasuryAddress = treasuryKeypair.publicKey.toBase58();
 
     const built = await this.collectorCrypt.buyback(room.nft_metadata.mint, treasuryAddress);
-    const preBalance = await this.getTreasuryUsdcUnits(conn, treasuryKeypair.publicKey);
-    const buybackTxSig = await this.signAndSubmit(built.serializedTransaction, treasuryKeypair, conn);
+    const buybackTxSig = await this.signAndSubmit(built.serializedTransaction, treasuryKeypair, conn, async (signature) => {
+      const { error } = await db.from('gacha_rooms').update({ buyback_tx_sig: signature, updated_at: new Date().toISOString() }).eq('id', roomId).eq('status', 'settling');
+      if (error) throw new Error(`Room ${roomId}: failed to persist signed buyback transaction: ${error.message}`);
+    });
     await this.pollConfirmed(conn, buybackTxSig);
-    const postBalance = await this.getTreasuryUsdcUnits(conn, treasuryKeypair.publicKey);
-    const receivedUnits = postBalance - preBalance;
+    const receivedUnits = await this.getTreasuryUsdcCreditFromTransaction(conn, buybackTxSig, treasuryAddress);
 
     if (receivedUnits <= 0n) {
       await db.from('gacha_rooms').update({ status: 'failed', failure_reason: 'Buyback settled but no USDC credit detected on-chain', updated_at: new Date().toISOString() }).eq('id', roomId);
@@ -2475,6 +2535,54 @@ export class GachaService {
     }
 
     await this.splitPayoutAndMarkSettled(roomId, receivedUnits, { buybackTxSig });
+  }
+
+  /** Resumes a buyback settlement abandoned by a process restart. With a persisted signature we
+   *  only inspect/finalize that exact transaction; without one, submission never began and it is
+   *  safe to rebuild. The updated_at compare is the cross-worker claim. */
+  async advanceStalledBuybackSettlements(): Promise<void> {
+    const db = this.supabase.getClient();
+    const cutoff = new Date(Date.now() - BUYBACK_SETTLEMENT_STALL_MS).toISOString();
+    const { data: rooms } = await db
+      .from('gacha_rooms')
+      .select('id, seats, buyback_tx_sig, updated_at')
+      .eq('status', 'settling')
+      .is('pending_bid_id', null)
+      .lt('updated_at', cutoff);
+
+    for (const room of rooms ?? []) {
+      const claimedAt = new Date().toISOString();
+      const { data: claimed } = await db.from('gacha_rooms').update({ updated_at: claimedAt }).eq('id', room.id).eq('status', 'settling').eq('updated_at', room.updated_at).select('id');
+      if (!claimed?.length) continue;
+
+      try {
+        if (!room.buyback_tx_sig) {
+          this.logger.warn(`Room ${room.id}: resuming buyback settlement before transaction submission`);
+          await this.executeBuybackSettlement(room.id);
+          continue;
+        }
+
+        const conn = await this.getSolanaConnection();
+        const treasuryAddress = await this.getTreasuryAddress();
+        const tx = await conn.getTransaction(room.buyback_tx_sig, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
+        if (!tx) {
+          await db.from('gacha_rooms').update({ buyback_tx_sig: null, updated_at: new Date(0).toISOString() }).eq('id', room.id).eq('buyback_tx_sig', room.buyback_tx_sig);
+          this.logger.warn(`Room ${room.id}: signed buyback ${room.buyback_tx_sig} never landed before blockhash expiry; cleared it for a safe rebuild`);
+          continue;
+        }
+        if (tx.meta?.err) {
+          await db.from('gacha_rooms').update({ buyback_tx_sig: null, updated_at: new Date(0).toISOString() }).eq('id', room.id).eq('buyback_tx_sig', room.buyback_tx_sig);
+          this.logger.warn(`Room ${room.id}: signed buyback failed on-chain; cleared it for a safe rebuild`);
+          continue;
+        }
+
+        const receivedUnits = this.getTreasuryUsdcCredit(tx, treasuryAddress);
+        if (receivedUnits <= 0n) throw new Error(`confirmed buyback ${room.buyback_tx_sig} has no treasury USDC credit`);
+        await this.splitPayoutAndMarkSettled(room.id, receivedUnits, { buybackTxSig: room.buyback_tx_sig });
+      } catch (e: any) {
+        this.logger.error(`Room ${room.id}: stalled buyback recovery failed: ${e?.message ?? e}`);
+      }
+    }
   }
 
   /** A room participant won the auction outright — treasury transfers the actual NFT to their
@@ -2517,12 +2625,17 @@ export class GachaService {
     return sig;
   }
 
-  private async getTreasuryUsdcUnits(conn: Connection, treasury: PublicKey): Promise<bigint> {
-    const ata = await getAssociatedTokenAddress(this.usdcMint, treasury);
-    try {
-      const bal = await conn.getTokenAccountBalance(ata);
-      return BigInt(bal.value.amount);
-    } catch { return 0n; }
+  private getTreasuryUsdcCredit(tx: NonNullable<Awaited<ReturnType<Connection['getTransaction']>>>, treasuryAddress: string): bigint {
+    const mint = this.usdcMint.toBase58();
+    const pre = tx.meta?.preTokenBalances?.find((b) => b.owner === treasuryAddress && b.mint === mint);
+    const post = tx.meta?.postTokenBalances?.find((b) => b.owner === treasuryAddress && b.mint === mint);
+    return BigInt(post?.uiTokenAmount.amount ?? '0') - BigInt(pre?.uiTokenAmount.amount ?? '0');
+  }
+
+  private async getTreasuryUsdcCreditFromTransaction(conn: Connection, signature: string, treasuryAddress: string): Promise<bigint> {
+    const tx = await conn.getTransaction(signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
+    if (!tx || tx.meta?.err) throw new Error(`Buyback transaction ${signature} is not confirmed successfully`);
+    return this.getTreasuryUsdcCredit(tx, treasuryAddress);
   }
 
   private async pollConfirmed(conn: Connection, sig: string, attempts = 20): Promise<void> {
@@ -2727,7 +2840,7 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data, count, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at', { count: 'exact' })
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, vrf_requested_at, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range((page - 1) * pageSize, page * pageSize - 1);
     if (error) throw new Error(`Failed to load gacha rooms: ${error.message}`);
@@ -2737,6 +2850,7 @@ export class GachaService {
       data: (data ?? []).map((r: any) => ({
         id: r.id, configKey: r.config_key, packType: r.pack_type, seats: r.seats, entryUsdc: Number(r.entry_usdc),
         exclusionCount: r.exclusion_count, voteRound: r.vote_round,
+        voteLocked: r.status === 'voting' && !!r.vrf_requested_at,
         status: r.status, seatsFilled: counts[r.id] ?? 0, nftMetadata: r.nft_metadata, rarity: r.rarity,
         buybackAmountUsdc: r.buyback_amount_usdc !== null ? Number(r.buyback_amount_usdc) : null,
         bidWindowEndsAt: r.bid_window_ends_at, createdAt: r.created_at,
