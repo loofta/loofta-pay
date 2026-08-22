@@ -756,17 +756,26 @@ export class SendPaymentService {
     }
   }
 
-  /** Polls a broadcast signature for confirmation without assuming we have its original
-   *  blockhash/lastValidBlockHeight on hand (a resumed leg from a prior crashed run won't). */
-  private async waitForConfirmation(signature: string, timeoutMs = 60_000): Promise<boolean> {
+  /**
+   * Polls a broadcast signature for confirmation without assuming we have its original
+   * blockhash/lastValidBlockHeight on hand (a resumed leg from a prior crashed run won't).
+   *
+   * Three distinct outcomes, not two — collapsing 'errored' into 'pending' was a real bug: a
+   * signature that failed on-chain (e.g. a destination ATA that didn't exist yet at the moment
+   * this specific transaction landed) returns the exact same finalized `err` forever. Treating
+   * that as "not confirmed yet, check again later" meant a retry just re-polled a permanently
+   * dead signature on every future pass, never actually trying again — the row was stuck for
+   * good even though the underlying cause (e.g. the destination account) may since have resolved.
+   */
+  private async waitForConfirmation(signature: string, timeoutMs = 60_000): Promise<'confirmed' | 'errored' | 'pending'> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const { value } = await this.connection.getSignatureStatus(signature, { searchTransactionHistory: true });
-      if (value?.err) return false;
-      if (value?.confirmationStatus === 'confirmed' || value?.confirmationStatus === 'finalized') return true;
+      if (value?.err) return 'errored';
+      if (value?.confirmationStatus === 'confirmed' || value?.confirmationStatus === 'finalized') return 'confirmed';
       await new Promise((r) => setTimeout(r, 1500));
     }
-    return false;
+    return 'pending';
   }
 
   /**
@@ -914,9 +923,20 @@ export class SendPaymentService {
           this.logger.log(`[MultiSendFanOut] payment=${row.id} leg broadcast burner=${burnerAddress.slice(0, 8)}… sig=${sig.slice(0, 12)}…`);
         }
 
-        const confirmed = await this.waitForConfirmation(sig);
-        if (!confirmed) {
+        const outcome = await this.waitForConfirmation(sig);
+        if (outcome === 'pending') {
           this.logger.warn(`[MultiSendFanOut] payment=${row.id}: leg ${sig.slice(0, 12)}… not confirmed yet — will retry on next fan-out pass`);
+          continue;
+        }
+        if (outcome === 'errored') {
+          // A definitively failed signature never changes outcome on re-poll — clearing the claim
+          // here (not just on a pre-broadcast failure) is what lets the NEXT pass build and send
+          // an actual new transaction instead of re-checking a permanently dead one forever. Seen
+          // for real: a fan-out leg attempted before the destination's token account existed yet
+          // failed with InvalidAccountData on-chain — retrying with a fresh transaction after the
+          // account exists succeeds normally.
+          this.logger.warn(`[MultiSendFanOut] payment=${row.id}: leg ${sig.slice(0, 12)}… failed on-chain — releasing claim for a fresh attempt next pass`);
+          await this.supabaseService.payments.update({ sender_tx_hash: null }).eq('id', row.id).eq('sender_tx_hash', sig);
           continue;
         }
         const amountUnits = Math.round(parseFloat(String(row.amount || '0')) * 1_000_000);
