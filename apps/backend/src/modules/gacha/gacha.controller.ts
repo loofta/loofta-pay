@@ -157,7 +157,7 @@ export class GachaController {
   }
 
   @Delete('rooms/:id/leave')
-  @ApiOperation({ summary: 'Release a waiting seat, or cancel the caller-owned room while it is still empty' })
+  @ApiOperation({ summary: 'Release a waiting seat, refund a sole paid creator, or cancel an empty caller-owned room' })
   async leaveRoom(@Param('id') id: string, @Request() req: any) {
     return this.gacha.leaveWaitingRoom(id, req.user.id);
   }

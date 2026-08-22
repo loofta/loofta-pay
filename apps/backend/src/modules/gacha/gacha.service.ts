@@ -106,6 +106,10 @@ export interface RoomSummary {
   rarity: PackRarityTier | null;
   buybackAmountUsdc: number | null;
   bidWindowEndsAt: string | null;
+  purchaseTxSig: string | null;
+  openTxSig: string | null;
+  buybackTxSig: string | null;
+  nftTransferTxSig: string | null;
   createdAt: string;
   isPrivate?: boolean;
 }
@@ -291,7 +295,7 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data: rooms, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, purchase_tx_sig, open_tx_sig, buyback_tx_sig, nft_transfer_tx_sig, created_at')
       .in('status', ['waiting', 'purchasing', 'opening', 'excluding', 'voting', 'bidding', 'settling'])
       .eq('is_private', false)
       .order('created_at', { ascending: true });
@@ -314,6 +318,10 @@ export class GachaService {
       rarity: r.rarity,
       buybackAmountUsdc: r.buyback_amount_usdc !== null ? Number(r.buyback_amount_usdc) : null,
       bidWindowEndsAt: r.bid_window_ends_at,
+      purchaseTxSig: r.purchase_tx_sig ?? null,
+      openTxSig: r.open_tx_sig ?? null,
+      buybackTxSig: r.buyback_tx_sig ?? null,
+      nftTransferTxSig: r.nft_transfer_tx_sig ?? null,
       createdAt: r.created_at,
     }));
   }
@@ -640,7 +648,7 @@ export class GachaService {
 
     const { data: rooms, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at')
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, purchase_tx_sig, open_tx_sig, buyback_tx_sig, nft_transfer_tx_sig, created_at')
       .in('id', roomIds)
       .order('created_at', { ascending: false });
     if (error) throw new Error(`Failed to load your gacha rooms: ${error.message}`);
@@ -660,6 +668,10 @@ export class GachaService {
       rarity: r.rarity,
       buybackAmountUsdc: r.buyback_amount_usdc !== null ? Number(r.buyback_amount_usdc) : null,
       bidWindowEndsAt: r.bid_window_ends_at,
+      purchaseTxSig: r.purchase_tx_sig ?? null,
+      openTxSig: r.open_tx_sig ?? null,
+      buybackTxSig: r.buyback_tx_sig ?? null,
+      nftTransferTxSig: r.nft_transfer_tx_sig ?? null,
       createdAt: r.created_at,
     }));
   }
@@ -742,7 +754,8 @@ export class GachaService {
    *  room screen can poll one endpoint through the whole lobby -> bidding -> settled flow. */
   async getRoomDetail(roomId: string, userId: string, inviteCode?: string): Promise<{
     room: RoomSummary;
-    myParticipant: { seatNumber: number; payoutUsdc: number | null; payoutIsPrivate: boolean | null; claimed: boolean; claimPending: boolean; mascotKey: string | null; mascotLocked: boolean; excluded: boolean } | null;
+    leaveRefundEligible: boolean;
+    myParticipant: { seatNumber: number; payoutUsdc: number | null; payoutIsPrivate: boolean | null; entryPaymentTxSig: string | null; winningBidPaymentTxSig: string | null; payoutTxSig: string | null; claimed: boolean; claimPending: boolean; mascotKey: string | null; mascotLocked: boolean; excluded: boolean } | null;
     bestBid: { amountUsdc: number } | null;
     pendingBid: { bidId: string; userId: string; amountUsdc: number; deadline: string } | null;
     participants: Array<{ seatNumber: number; username: string | null; isMe: boolean; mascotKey: string | null; mascotLocked: boolean; excluded: boolean }>;
@@ -751,19 +764,20 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data: room, error } = await db
       .from('gacha_rooms')
-      .select('id, name, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, pending_bid_id, created_at, is_private, created_by_user_id, invite_code, pending_gate, gate_epoch, phase_deadline')
+      .select('id, name, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, purchase_tx_sig, open_tx_sig, buyback_tx_sig, nft_transfer_tx_sig, pending_bid_id, created_at, is_private, created_by_user_id, invite_code, pending_gate, gate_epoch, phase_deadline')
       .eq('id', roomId)
       .maybeSingle();
     if (error || !room) throw new NotFoundException('Room not found');
 
     const counts = await this.countParticipantsByRoom([roomId]);
-    const { data: mine } = await db.from('gacha_room_participants').select('seat_number, payout_usdc, payout_is_private, payout_tx_sig, payout_claim_token, mascot_key, mascot_locked_at, excluded').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
+    const { data: mine } = await db.from('gacha_room_participants').select('seat_number, payment_tx_hash, payout_usdc, payout_is_private, payout_tx_sig, payout_claim_token, mascot_key, mascot_locked_at, excluded').eq('room_id', roomId).eq('user_id', userId).maybeSingle();
     if (room.is_private && room.created_by_user_id !== userId && room.invite_code !== inviteCode && !mine) {
       // Do not reveal whether a private room exists to an authenticated user without the
       // creator identity, an existing seat, or the exact bearer invite code.
       throw new NotFoundException('Room not found');
     }
     const { data: bestBid } = await db.from('gacha_bids').select('amount_usdc').eq('room_id', roomId).order('amount_usdc', { ascending: false }).limit(1).maybeSingle();
+    const { data: myWinningBid } = await db.from('gacha_bids').select('payment_tx_hash').eq('room_id', roomId).eq('user_id', userId).eq('status', 'won').maybeSingle();
 
     // Seat + username only, for the round-table UI — never the wallet or full user id, same
     // "don't leak more than the UI needs" posture as bid amounts already being anonymous.
@@ -790,20 +804,35 @@ export class GachaService {
       if (pb) pendingBid = { bidId: pb.id, userId: pb.user_id, amountUsdc: Number(pb.amount_usdc), deadline: roomRow?.pending_bid_deadline };
     }
 
+    const seatsFilled = counts[roomId] ?? 0;
     return {
       room: {
         id: room.id, name: room.name ?? undefined, configKey: room.config_key, packType: room.pack_type, seats: room.seats, entryUsdc: Number(room.entry_usdc),
         exclusionCount: room.exclusion_count, voteRound: room.vote_round,
-        status: room.status, seatsFilled: counts[roomId] ?? 0, nftMetadata: room.nft_metadata, rarity: room.rarity,
+        status: room.status, seatsFilled, nftMetadata: room.nft_metadata, rarity: room.rarity,
         buybackAmountUsdc: room.buyback_amount_usdc !== null ? Number(room.buyback_amount_usdc) : null,
-        bidWindowEndsAt: room.bid_window_ends_at, createdAt: room.created_at,
+        bidWindowEndsAt: room.bid_window_ends_at,
+        purchaseTxSig: room.purchase_tx_sig ?? null,
+        openTxSig: room.open_tx_sig ?? null,
+        buybackTxSig: room.buyback_tx_sig ?? null,
+        nftTransferTxSig: room.nft_transfer_tx_sig ?? null,
+        createdAt: room.created_at,
         isPrivate: !!room.is_private,
       },
+      // Drives the waiting-room leave confirmation. Keep this decision server-side so the room
+      // screen cannot drift from the RPC's sole-paid-creator refund rule.
+      leaveRefundEligible: room.status === 'waiting'
+        && room.created_by_user_id === userId
+        && !!mine
+        && seatsFilled === 1,
       myParticipant: mine
         ? {
             seatNumber: mine.seat_number,
             payoutUsdc: mine.payout_usdc !== null ? Number(mine.payout_usdc) : null,
             payoutIsPrivate: mine.payout_is_private,
+            entryPaymentTxSig: mine.payment_tx_hash ?? null,
+            winningBidPaymentTxSig: myWinningBid?.payment_tx_hash ?? null,
+            payoutTxSig: mine.payout_tx_sig ?? null,
             claimed: !!mine.payout_tx_sig,
             claimPending: !!mine.payout_claim_token && !mine.payout_tx_sig,
             mascotKey: mine.mascot_key ?? null,
@@ -846,7 +875,10 @@ export class GachaService {
     seatsFilled: number;
     seats: number;
     roomCancelled: boolean;
-    entryRefunded: false;
+    entryRefunded: boolean;
+    entryPaymentTxSig: string | null;
+    refundTxSig: string | null;
+    refundAmountUsdc: number | null;
   }> {
     const db = this.supabase.getClient();
     const { data, error } = await db.rpc('gacha_leave_waiting_room', {
@@ -871,7 +903,10 @@ export class GachaService {
       seatsFilled: number;
       seats: number;
       roomCancelled: boolean;
-      entryRefunded: false;
+      entryRefunded: boolean;
+      entryRefundRequired?: boolean;
+      refundPaymentTxHash?: string | null;
+      refundAmountUsdc?: number | string | null;
     };
     this.events.emit(GACHA_EVENTS.ROOM_UPDATE, {
       roomId,
@@ -879,7 +914,36 @@ export class GachaService {
       seats: result.seats,
       status: result.roomCancelled ? 'cancelled' : 'waiting',
     });
-    return result;
+
+    let entryRefunded = !!result.entryRefunded;
+    let refundTxSig: string | null = null;
+    let refundAmountUsdc: number | null = null;
+    if (result.entryRefundRequired) {
+      if (!result.refundPaymentTxHash || result.refundAmountUsdc === null || result.refundAmountUsdc === undefined) {
+        throw new Error('Gacha leave requires an entry refund but the database returned incomplete refund details');
+      }
+      const destination = await this.usersService.getSolanaWalletAddress(userId);
+      refundAmountUsdc = Number(result.refundAmountUsdc);
+      refundTxSig = await this.refundFailedJoin(
+        roomId,
+        userId,
+        result.refundPaymentTxHash,
+        refundAmountUsdc,
+        destination,
+      );
+      entryRefunded = true;
+    }
+
+    return {
+      roomId: result.roomId,
+      seatsFilled: result.seatsFilled,
+      seats: result.seats,
+      roomCancelled: result.roomCancelled,
+      entryRefunded,
+      entryPaymentTxSig: result.entryRefundRequired ? (result.refundPaymentTxHash ?? null) : null,
+      refundTxSig,
+      refundAmountUsdc,
+    };
   }
 
   private async findExistingWaitingRoomForUser(
@@ -1325,7 +1389,12 @@ export class GachaService {
       // room filled in the build->sign->confirm window, or a second distinct payment raced for
       // the same user's one seat). Return it through an idempotent refund ledger.
       const refundTxSig = await this.refundFailedJoin(roomId, userId, paymentTxHash, room.entryUsdc, userSolanaAddress);
-      throw new BadRequestException(`This room just filled up. Your entry payment was automatically refunded (${refundTxSig})`);
+      throw new BadRequestException({
+        code: 'ROOM_FILLED_ENTRY_REFUNDED',
+        message: 'This room just filled up. Your entry payment was automatically refunded.',
+        refundTxSig,
+        refundAmountUsdc: room.entryUsdc,
+      });
     }
     const seatNumber = inserted.seat_number;
 
@@ -2727,7 +2796,7 @@ export class GachaService {
     const db = this.supabase.getClient();
     const { data, count, error } = await db
       .from('gacha_rooms')
-      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, created_at', { count: 'exact' })
+      .select('id, config_key, pack_type, seats, entry_usdc, exclusion_count, vote_round, status, nft_metadata, rarity, buyback_amount_usdc, bid_window_ends_at, purchase_tx_sig, open_tx_sig, buyback_tx_sig, nft_transfer_tx_sig, created_at', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range((page - 1) * pageSize, page * pageSize - 1);
     if (error) throw new Error(`Failed to load gacha rooms: ${error.message}`);
@@ -2739,7 +2808,10 @@ export class GachaService {
         exclusionCount: r.exclusion_count, voteRound: r.vote_round,
         status: r.status, seatsFilled: counts[r.id] ?? 0, nftMetadata: r.nft_metadata, rarity: r.rarity,
         buybackAmountUsdc: r.buyback_amount_usdc !== null ? Number(r.buyback_amount_usdc) : null,
-        bidWindowEndsAt: r.bid_window_ends_at, createdAt: r.created_at,
+        bidWindowEndsAt: r.bid_window_ends_at,
+        purchaseTxSig: r.purchase_tx_sig ?? null, openTxSig: r.open_tx_sig ?? null,
+        buybackTxSig: r.buyback_tx_sig ?? null, nftTransferTxSig: r.nft_transfer_tx_sig ?? null,
+        createdAt: r.created_at,
       })),
       total: count ?? 0, page, limit: pageSize,
     };
