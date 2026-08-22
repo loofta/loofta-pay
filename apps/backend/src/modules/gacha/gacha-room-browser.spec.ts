@@ -338,6 +338,50 @@ describe("GachaService explicit room browser", () => {
     expect(emit).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ roomId: "room-1" }));
   });
 
+  it("blocks room creation with a structured cooldown response", async () => {
+    const query: any = {
+      select: jest.fn(() => query),
+      eq: jest.fn(() => query),
+      maybeSingle: jest.fn().mockResolvedValue({
+        data: { blocked_until: new Date(Date.now() + 60 * 60_000).toISOString() },
+        error: null,
+      }),
+    };
+    const service = makeService({ from: jest.fn(() => query) });
+
+    await expect((service as any).assertRoomCreationAllowed("repeat-canceller"))
+      .rejects.toMatchObject({
+        status: 429,
+        response: expect.objectContaining({
+          code: "GACHA_ROOM_CREATION_COOLDOWN",
+          retryAfterSeconds: expect.any(Number),
+          retryAt: expect.any(String),
+        }),
+      });
+  });
+
+  it("maps the database creation guard to the same structured cooldown response", async () => {
+    const blockedUntil = Date.now() + 30 * 60_000;
+    const service = makeService({
+      rpc: jest.fn().mockResolvedValue({
+        data: null,
+        error: { message: `GACHA_ROOM_CREATION_COOLDOWN:${blockedUntil}` },
+      }),
+    });
+    jest.spyOn(service as any, "getConfig").mockResolvedValue({ configKey: "small-5" });
+    jest.spyOn(service as any, "findExistingWaitingRoomForUser").mockResolvedValue(null);
+    jest.spyOn(service as any, "assertRoomCreationAllowed").mockResolvedValue(undefined);
+
+    await expect(service.createWaitingRoom("small-5", "repeat-canceller", "Again", false))
+      .rejects.toMatchObject({
+        status: 429,
+        response: expect.objectContaining({
+          code: "GACHA_ROOM_CREATION_COOLDOWN",
+          retryAt: new Date(blockedUntil).toISOString(),
+        }),
+      });
+  });
+
   it("returns the existing room so the owner can recover from a duplicate create", async () => {
     const service = makeService();
     const existingRoom = {

@@ -177,6 +177,9 @@ non-production-only force-advance endpoints as recovery/debugging fallbacks.
   atomic leave function archives its payment audit row, fills future seat-number gaps safely,
   and cancels the room when its final participant leaves. Waiting-room leaves do not refund the
   Devnet test entry.
+- Three paid creator create/cancel cycles within a rolling ten-minute window block that user from
+  creating another room for one hour. Empty, unpaid room cancellation does not count. Durable
+  database events and an insert guard enforce the cooldown even when Redis is unavailable.
 - Private rooms are excluded from public room lists. Their random invite code is the bearer
   capability: room detail, payment preparation, and payment confirmation accept it (or an
   existing participant/creator) and otherwise return the same not-found response as an unknown

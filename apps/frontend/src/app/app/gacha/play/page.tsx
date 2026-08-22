@@ -454,6 +454,14 @@ export default function GachaPlayPage() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
+        if (payload?.code === "GACHA_ROOM_CREATION_COOLDOWN") {
+          const retryAt = typeof payload.retryAt === "string" ? new Date(payload.retryAt) : null;
+          const retryLabel = retryAt && !Number.isNaN(retryAt.getTime())
+            ? ` Try again after ${retryAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+            : " Please wait before trying again.";
+          setError(`${payload.message ?? "Room creation is temporarily blocked."}${retryLabel}`);
+          return;
+        }
         if (payload?.code === "ALREADY_IN_WAITING_ROOM" && isWaitingRoom(payload.room)) {
           setExistingRoom(payload.room);
           setCreatedRoom(null);

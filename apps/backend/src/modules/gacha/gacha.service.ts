@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'crypto';
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException, HttpException, HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
@@ -54,6 +54,7 @@ const ROOM_MEMO_PREFIX = 'gacha-room:';
 const BID_MEMO_PREFIX = 'gacha-bid:';
 
 const BID_PAYMENT_GRACE_MS = 5 * 60_000;
+const ROOM_CREATION_COOLDOWN_CODE = 'GACHA_ROOM_CREATION_COOLDOWN';
 
 const OPEN_POLL_INTERVAL_MS = 3_000;
 const OPEN_POLL_MAX_ATTEMPTS = 20; // ~1 minute total — openPack's "waiting_for_webhook" state
@@ -448,6 +449,8 @@ export class GachaService {
       });
     }
 
+    await this.assertRoomCreationAllowed(userId);
+
     // The token is generated server-side and is only returned to the creator. It is a bearer
     // capability, so it must never be derived from a room id or exposed in the public lobby.
     const inviteCode = isPrivate ? randomBytes(24).toString('base64url') : null;
@@ -460,6 +463,8 @@ export class GachaService {
       p_invite_code: inviteCode,
     });
     if (error) {
+      const cooldownUntil = this.parseRoomCreationCooldown(error.message);
+      if (cooldownUntil) throw this.roomCreationCooldownError(cooldownUntil);
       if (error.message?.includes('already have a waiting room')) {
         // The database lock is the final race guard. If a concurrent request won after the
         // preflight check, recover that room into the same structured response the UI expects.
@@ -480,6 +485,39 @@ export class GachaService {
     if (!roomId) throw new Error('Failed to create gacha room: No room returned');
 
     return this.getWaitingRoomSummary(String(roomId), userId);
+  }
+
+  private async assertRoomCreationAllowed(userId: string): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data, error } = await db
+      .from('gacha_room_creation_cooldowns')
+      .select('blocked_until')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error) throw new Error(`Failed to check Gacha room creation cooldown: ${error.message}`);
+
+    if (!data?.blocked_until) return;
+    const blockedUntil = new Date(data.blocked_until);
+    if (blockedUntil.getTime() > Date.now()) throw this.roomCreationCooldownError(blockedUntil);
+  }
+
+  private parseRoomCreationCooldown(message?: string | null): Date | null {
+    const match = message?.match(/GACHA_ROOM_CREATION_COOLDOWN:(\d{10,})/);
+    if (!match) return null;
+    const blockedUntil = new Date(Number(match[1]));
+    return Number.isNaN(blockedUntil.getTime()) ? null : blockedUntil;
+  }
+
+  private roomCreationCooldownError(blockedUntil: Date): HttpException {
+    const retryAfterSeconds = Math.max(1, Math.ceil((blockedUntil.getTime() - Date.now()) / 1000));
+    const retryMinutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+    return new HttpException({
+      statusCode: HttpStatus.TOO_MANY_REQUESTS,
+      code: ROOM_CREATION_COOLDOWN_CODE,
+      message: `Too many paid room cancellations. You can create another room in ${retryMinutes} minute${retryMinutes === 1 ? '' : 's'}.`,
+      retryAt: blockedUntil.toISOString(),
+      retryAfterSeconds,
+    }, HttpStatus.TOO_MANY_REQUESTS);
   }
 
   private async getWaitingRoomSummary(roomId: string, viewerUserId?: string, allowFull = false): Promise<WaitingRoomSummary> {
