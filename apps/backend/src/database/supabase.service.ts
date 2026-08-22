@@ -47,6 +47,10 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('payments');
   }
 
+  get multiSendBatches() {
+    return this.client.from('multi_send_batches');
+  }
+
   get paymentIntents() {
     return this.client.from('payment_intents');
   }

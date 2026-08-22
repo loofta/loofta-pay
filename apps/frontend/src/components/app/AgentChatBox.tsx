@@ -12,21 +12,29 @@ import {
 } from '@privy-io/react-auth/solana'
 import { Connection } from '@solana/web3.js'
 import { useAuthStore } from '@/store/auth'
-import { useMultiSendStore } from '@/store/multiSend'
 import { useSolanaPayment } from '@/hooks/useSolanaPayment'
-import { MultiSendFlow } from '@/components/app/MultiSendFlow'
+import { useSolPriceOrNull } from '@/hooks/useSolPrice'
 import { createClaimFromEmail } from '@/lib/createClaimFromEmail'
 import { createClaimFromUsername } from '@/lib/createClaimFromUsername'
 import { createClaimFromSocial } from '@/lib/createClaimFromSocial'
 import { getClaimById, updateClaimStatus } from '@/services/api/claims'
 import { checkUsernameExists } from '@/services/api/users'
 import { fetchRecentRecipients, type RecentRecipient } from '@/services/api/recentRecipients'
-import { buildMultiSend, multiConfirm, type MultiSendRecipient, type MultiSendLinkItem } from '@/services/api/sendPayment'
+import {
+  buildMultiSend,
+  multiConfirm,
+  createMultiPayments,
+  buildMultiSendFunding,
+  confirmMultiSendFunding,
+  type MultiSendRecipient,
+  type MultiSendLinkItem,
+} from '@/services/api/sendPayment'
 import { buyGift, confirmGiftSend } from '@/services/api/lotteryGift'
 import { parseAgentCommand, type ParsedRecipient } from '@/lib/parseAgentCommand'
 import { parseGiftCommand, type ParsedGiftRecipient } from '@/lib/parseGiftCommand'
 import { TELEGRAM_SEND_ENABLED } from '@/lib/socialPlatforms'
 import { getRpcForMode, getRpcFallbackForMode, getPrivySolanaChainForMode } from '@/lib/solanaRpc'
+import { getEphemeralRpcForMode } from '@/lib/per/constants'
 import { waitForSignatureConfirmation } from '@/lib/per/confirmSignature'
 import { deriveSolanaEmbeddedAddress } from '@/lib/privySolanaEmbeddedAddress'
 import { ShareLinkMenu } from '@/components/ShareLinkMenu'
@@ -51,6 +59,31 @@ function fireConfetti() {
 const MIN_SEND_USD = 5
 const MULTI_MAX_RECIPIENTS = 10
 const LOOFTA_ICON = '/images/icons/loofta-icon.svg'
+
+// MagicBlock's flat relay fee, in SOL — same figure as backend MAGICBLOCK_GAS_SOL and
+// MultiSendFlow.tsx's own copy (apps/backend/src/common/magicblock-private-transfer.ts).
+// Duplicated rather than shared per this codebase's existing convention for small cross-app
+// constants.
+const MAGICBLOCK_GAS_SOL = 0.002
+// MagicBlock's own volume fee + Loofta's cut on a private multi-send recipient's own fan-out leg
+// — same figure as backend MAGICBLOCK_VOLUME_FEE_BPS + SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS.
+// Each recipient is charged this exactly (no batch discount), same as MultiSendFlow.tsx's copy.
+const MULTI_SEND_TOTAL_BPS = 20
+
+/** Live per-recipient fee total for a private multi-send, computed client-side with the same
+ *  formula the backend actually charges (send-payment.service.ts's singlePaymentFeeUnits) —
+ *  needs a real SOL/USD price, so returns null (not an estimate) until one is available. */
+function multiSendPrivateFeeUsdc(recipients: ParsedRecipient[], solPriceUsd: number | null): number | null {
+  if (solPriceUsd == null) return null
+  const flatFeeUnits = Math.round(MAGICBLOCK_GAS_SOL * solPriceUsd * 1_000_000)
+  const totalFeeUnits = recipients.reduce((s, r) => {
+    const net = Math.round(r.amount * 1_000_000)
+    if (net <= 0) return s
+    const gross = Math.ceil((net * 10_000) / (10_000 - MULTI_SEND_TOTAL_BPS))
+    return s + (gross - net) + flatFeeUnits
+  }, 0)
+  return totalFeeUnits / 1_000_000
+}
 
 type CardState = 'pending' | 'sending' | 'sent' | 'cancelled' | 'failed'
 
@@ -116,6 +149,11 @@ interface MultiPaymentCard {
   gifUrl: string | null
   links?: MultiSendLinkItem[]
   errorMessage?: string
+  /** Toggleable in the card itself, not just settable by typing "private" up front — flipping it
+   *  on triggers a live fee calc (multiSendPrivateFeeUsdc) right in this same card, and Confirm
+   *  routes to handleConfirmMultiPrivate instead of the public combined-tx path. Everything stays
+   *  in this one card; there's no handoff to a separate form. */
+  isPrivate?: boolean
 }
 
 interface ChatMessage {
@@ -181,11 +219,11 @@ export function AgentChatBox() {
   const { authenticated, login, user, getAccessToken } = usePrivy()
   const networkMode = useAuthStore((s) => s.networkMode)
   const apiCluster = networkMode === 'mainnet' ? 'mainnet' : 'devnet'
-  const { setRows, setReviewPending, clear } = useMultiSendStore()
   const solanaPayment = useSolanaPayment()
   const { wallets: solanaWallets } = useSolanaWallets()
   const { signTransaction: privySolanaSignTransaction } = usePrivySolanaSignTransaction()
   const { signAndSendTransaction } = useSignAndSendTransaction()
+  const solPriceUsd = useSolPriceOrNull()
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -196,7 +234,6 @@ export function AgentChatBox() {
   ])
   const [input, setInput] = useState('')
   const [examplesVisible, setExamplesVisible] = useState(true)
-  const [multiSendOpen, setMultiSendOpen] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -206,7 +243,7 @@ export function AgentChatBox() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages, multiSendOpen])
+  }, [messages])
 
   useEffect(() => {
     if (!authenticated) return
@@ -387,30 +424,29 @@ export function AgentChatBox() {
     ])
   }
 
-  function pushMultiPaymentCard(recipients: ParsedRecipient[]) {
+  function pushMultiPaymentCard(recipients: ParsedRecipient[], isPrivate: boolean) {
     setMessages((m) => [
       ...m,
       {
         id: nextId(),
         role: 'assistant',
         text: `Here's your payment to ${recipients.length} recipients — confirm to send.`,
-        multiCard: { recipients, state: 'pending', message: '', gifUrl: null },
+        multiCard: { recipients, state: 'pending', message: '', gifUrl: null, isPrivate },
       },
     ])
   }
 
-  /** Final step of building a multi-send, once every recipient's platform is resolved. Public
-   *  (non-private) sends get the compact in-chat confirm card — one combined transaction, no
-   *  fees, same shape as the single-payment card. Private sends fall back to the full
-   *  MultiSendFlow below the chat, since that's the only path with the hub-fee calculation and
-   *  its own privacy toggle — cramming that into the compact card isn't worth the complexity. */
-  function finalizeMultiSend(_recipients: ParsedRecipient[], _isPrivate: boolean) {
-    // Multi-recipient send is temporarily disabled everywhere (see MultiSendFlow.tsx) — the
-    // shared-hub fan-out it relies on has no per-sender isolation, blocked until reworked.
-    pushAssistant(
-      `🛠️ We're working on making Multi Send even better — send to one recipient at a time for now.`,
-      'error',
-    )
+  /** Final step of building a multi-send, once every recipient's platform is resolved. Always the
+   *  same compact in-chat card, public or private — private just adds a live fee calc and routes
+   *  Confirm through handleConfirmMultiPrivate instead of the public combined-tx path (see the
+   *  multiCard isPrivate toggle in the render below, and multiSendPrivateFeeUsdc). */
+  function finalizeMultiSend(recipients: ParsedRecipient[], isPrivate: boolean) {
+    const total = recipients.reduce((s, r) => s + r.amount, 0)
+    if (!solanaPayment.hasEnoughBalance(total)) {
+      pushInsufficientFunds(total)
+      return
+    }
+    pushMultiPaymentCard(recipients, isPrivate)
   }
 
   async function handleConfirmMulti(id: string, card: MultiPaymentCard) {
@@ -466,6 +502,75 @@ export function AgentChatBox() {
       })
 
       updateMultiCard(id, { state: 'sent', links: result.links.map((l) => ({ ...l, link: l.link.replace(/\/c\/([^/?#]+)/, '/share/$1') })) })
+      fireConfetti()
+    } catch (e: unknown) {
+      updateMultiCard(id, { state: 'failed', errorMessage: e instanceof Error ? e.message : 'Something went wrong.' })
+    }
+  }
+
+  /** Private multi-send, right here in the compact card — one funding transfer into a fresh
+   *  per-batch burner (sender's only signature), same redesigned backend path MultiSendFlow uses
+   *  (multiCreate → buildMultiSendFunding → sign+broadcast → confirmMultiSendFunding fire-and-
+   *  forget). Recipients aren't funded yet when this resolves — the backend fans out from the
+   *  burner in the background, same "funded in background" model the done state implies. */
+  async function handleConfirmMultiPrivate(id: string, card: MultiPaymentCard) {
+    updateMultiCard(id, { state: 'sending', errorMessage: undefined })
+    try {
+      const accessToken = await getAccessToken()
+      if (!user?.id) throw new Error('Not authenticated')
+      const senderAddress = deriveSolanaEmbeddedAddress(user)
+      const wallet = solanaWallets.find((w) => w.address === senderAddress) ?? solanaWallets[0]
+      if (!wallet) throw new Error('Loofta wallet not found. Try logging out and back in.')
+
+      const message = [card.message.trim(), card.gifUrl].filter(Boolean).join(' ').trim() || undefined
+      const multiRecipients: MultiSendRecipient[] = card.recipients.map((r) => ({
+        amount: r.amount,
+        recipient_type: r.platform,
+        recipient_identifier: r.platform === 'username' ? looUsername(r.identifier) : r.identifier,
+        message,
+      }))
+
+      const cluster = networkMode === 'mainnet' ? 'mainnet' : 'devnet'
+      const chain = getPrivySolanaChainForMode(networkMode)
+
+      const created = await createMultiPayments({ recipients: multiRecipients, sender_wallet: wallet.address, cluster }, user.id, accessToken)
+      const fundingTx = await buildMultiSendFunding(
+        { multi_send_batch_id: created.multi_send_batch_id, sender_wallet: wallet.address, cluster },
+        user.id,
+        accessToken,
+      )
+
+      // showWalletUIs: false — the fee payer covers gas, not the user's wallet.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const signedOutput = await (privySolanaSignTransaction as any)({
+        transaction: Buffer.from(fundingTx.transactionBase64, 'base64') as Uint8Array,
+        wallet,
+        chain,
+        options: { uiOptions: { showWalletUIs: false } },
+      })
+      const signedBytes: Uint8Array = signedOutput.signedTransaction
+
+      const broadcastRpc = fundingTx.sendTo === 'ephemeral' ? getEphemeralRpcForMode(cluster) : getRpcForMode(cluster)
+      const broadcastConn = new Connection(broadcastRpc, 'confirmed')
+      const sig = await broadcastConn.sendRawTransaction(signedBytes, { skipPreflight: true, maxRetries: 3 })
+      const fallbackRpcUrl = fundingTx.sendTo === 'ephemeral' ? getRpcForMode(cluster) : getRpcFallbackForMode(cluster)
+      const fallbackConn = fallbackRpcUrl ? new Connection(fallbackRpcUrl, 'confirmed') : undefined
+      try {
+        await waitForSignatureConfirmation(broadcastConn, sig, 120_000, 1500, 'multiSendPrivate', fallbackConn)
+      } catch (e: unknown) {
+        // MagicBlock/fee-payer co-signed txs can land with a non-fatal Custom instruction error
+        // even though the transfer succeeded — same tolerance MultiSendFlow applies.
+        const msg = e instanceof Error ? e.message : ''
+        if (!(msg.includes('InstructionError') && msg.includes('"Custom":'))) throw e
+      }
+
+      // Fire-and-forget — the backend flips this batch's rows to IN_FLIGHT and fans out to each
+      // recipient from the batch burner in the background, resolving well after this call returns.
+      confirmMultiSendFunding(created.multi_send_batch_id, user.id, accessToken, sig).catch((e: unknown) => {
+        console.error('[AgentChatBox] confirmMultiSendFunding failed (funding already sent, safe to ignore):', e)
+      })
+
+      updateMultiCard(id, { state: 'sent', links: created.links.map((l) => ({ ...l, link: l.link.replace(/\/c\/([^/?#]+)/, '/share/$1') })) })
       fireConfetti()
     } catch (e: unknown) {
       updateMultiCard(id, { state: 'failed', errorMessage: e instanceof Error ? e.message : 'Something went wrong.' })
@@ -687,7 +792,7 @@ export function AgentChatBox() {
 
   return (
     <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] overflow-hidden shadow-[0_0_80px_rgba(255,19,1,0.07),0_0_160px_rgba(234,179,8,0.05)]">
-      <div ref={scrollRef} className="min-h-[340px] max-h-[480px] overflow-y-auto px-4 py-4 space-y-3.5">
+      <div ref={scrollRef} className="min-h-[480px] max-h-[75vh] overflow-y-auto px-4 py-4 space-y-3.5">
         {messages.map((msg) => {
           if (msg.role === 'user') {
             return (
@@ -1008,12 +1113,17 @@ export function AgentChatBox() {
                   </div>
                 )}
 
-                {multiCard && (
+                {multiCard && (() => {
+                  const recipientsTotal = multiCard.recipients.reduce((s, r) => s + r.amount, 0)
+                  const feeUsdc = multiCard.isPrivate ? multiSendPrivateFeeUsdc(multiCard.recipients, solPriceUsd) : 0
+                  const calculatingFees = !!multiCard.isPrivate && feeUsdc == null
+                  const grandTotal = recipientsTotal + (feeUsdc ?? 0)
+                  return (
                   <div className="rounded-2xl border border-white/[0.12] bg-white/[0.04] p-4 min-w-[280px]">
                     <div className="flex items-baseline justify-between mb-3">
                       <span className="text-base uppercase tracking-wide text-slate-500">Payment</span>
                       <span className="font-display font-semibold text-3xl text-white">
-                        ${multiCard.recipients.reduce((s, r) => s + r.amount, 0).toFixed(2)}
+                        ${recipientsTotal.toFixed(2)}
                       </span>
                     </div>
 
@@ -1031,11 +1141,14 @@ export function AgentChatBox() {
 
                     <div className="flex items-center justify-between mb-3.5">
                       <span className="text-lg font-semibold text-white">{multiCard.recipients.length} recipients</span>
-                      <span className="text-base text-slate-400">no fees</span>
+                      <span className="text-base text-slate-400">
+                        {!multiCard.isPrivate ? "no fees" : calculatingFees ? "calculating fees…" : `+$${feeUsdc!.toFixed(2)} fees`}
+                      </span>
                     </div>
 
                     {multiCard.state === 'pending' && (
                       <div className="space-y-2.5">
+                        <IncognitoModeToggle checked={!!multiCard.isPrivate} onCheckedChange={(v) => updateMultiCard(msg.id, { isPrivate: v })} />
                         <MessageInput
                           value={multiCard.message}
                           onChange={(v) => updateMultiCard(msg.id, { message: v })}
@@ -1048,10 +1161,17 @@ export function AgentChatBox() {
                         <div className="flex gap-2">
                           <Button
                             type="button"
-                            onClick={() => handleConfirmMulti(msg.id, multiCard)}
-                            className="flex-1 h-11 rounded-xl text-lg md:text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                            disabled={calculatingFees}
+                            onClick={() => (multiCard.isPrivate ? handleConfirmMultiPrivate(msg.id, multiCard) : handleConfirmMulti(msg.id, multiCard))}
+                            className="flex-1 h-11 rounded-xl text-lg md:text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-50"
                           >
-                            Confirm
+                            {calculatingFees ? (
+                              <span className="flex items-center justify-center gap-1.5"><Loader2 className="h-4 w-4 animate-spin" /> Calculating fees…</span>
+                            ) : multiCard.isPrivate ? (
+                              `Confirm $${grandTotal.toFixed(2)} total`
+                            ) : (
+                              'Confirm'
+                            )}
                           </Button>
                           <Button
                             type="button"
@@ -1121,113 +1241,101 @@ export function AgentChatBox() {
                       </div>
                     )}
                   </div>
-                )}
+                  )
+                })()}
               </div>
             </div>
           )
         })}
       </div>
 
-      {multiSendOpen && (
-        <div className="shrink-0 px-4 pb-4 overflow-y-auto">
-          <MultiSendFlow
-            onBack={() => {
-              setMultiSendOpen(false)
-              clear()
-            }}
-          />
-        </div>
-      )}
-
-      {!multiSendOpen && (
-        <div className="shrink-0 border-t border-white/[0.06] px-4 py-3 space-y-2.5">
-          <div className="flex flex-wrap items-center gap-1.5">
+      <div className="shrink-0 border-t border-white/[0.06] px-4 py-3 space-y-2.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setExamplesVisible((v) => !v)}
+            className="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+          >
+            {examplesVisible ? 'Hide examples' : 'Show examples'}
+          </button>
+          {examplesVisible && EXAMPLE_PROMPTS.map((p) => (
             <button
+              key={p}
               type="button"
-              onClick={() => setExamplesVisible((v) => !v)}
-              className="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+              onClick={() => setInput(p)}
+              className="rounded-full border text-left border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-lg text-slate-200 hover:text-white hover:bg-white/[0.08] transition-colors"
             >
-              {examplesVisible ? 'Hide examples' : 'Show examples'}
+              {p}
             </button>
-            {examplesVisible && EXAMPLE_PROMPTS.map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => setInput(p)}
-                className="rounded-full border text-left border-white/10 bg-white/[0.03] px-3.5 py-1.5 text-lg text-slate-200 hover:text-white hover:bg-white/[0.08] transition-colors"
-              >
-                {p}
-              </button>
-            ))}
-          </div>
-          <div className="relative flex items-center gap-2">
-            {mention && mentionMatches.length > 0 && (
-              <div className="absolute bottom-full left-0 mb-2 w-full max-h-64 overflow-y-auto rounded-xl border border-white/10 bg-[#18181c] shadow-xl z-10">
-                {mentionMatches.map((r, i) => (
-                  <button
-                    key={r.key}
-                    type="button"
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      selectMention(r)
-                    }}
-                    className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors ${i === mentionActiveIndex ? 'bg-white/[0.08]' : 'hover:bg-white/[0.05]'
-                      }`}
-                  >
-                    {r.platform !== 'email' && r.platform !== 'username' && (
-                      <SocialPlatformIcon platform={r.platform} className="h-4 w-4 shrink-0 text-slate-400" />
-                    )}
-                    <span className="flex-1 min-w-0 truncate text-lg text-white">{r.platform === 'email' ? r.identifier : `@${r.identifier}`}</span>
-                    <span className="shrink-0 text-base text-slate-500">${r.lastAmount.toFixed(2)} &middot; {formatDistanceToNowStrict(new Date(r.lastAt), { addSuffix: true })}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-            <Input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => handleInputChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
-              onKeyDown={(e) => {
-                if (mention && mentionMatches.length > 0) {
-                  if (e.key === 'ArrowDown') {
-                    e.preventDefault()
-                    setMention((m) => (m ? { ...m, index: Math.min(m.index + 1, mentionMatches.length - 1) } : m))
-                    return
-                  }
-                  if (e.key === 'ArrowUp') {
-                    e.preventDefault()
-                    setMention((m) => (m ? { ...m, index: Math.max(m.index - 1, 0) } : m))
-                    return
-                  }
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    selectMention(mentionMatches[mentionActiveIndex])
-                    return
-                  }
-                  if (e.key === 'Escape') {
-                    setMention(null)
-                    return
-                  }
-                }
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSubmit()
-                }
-              }}
-              placeholder='"send $5 to @alice on X"'
-              className="h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-lg md:text-lg"
-            />
-            <Button
-              type="button"
-              onClick={handleSubmit}
-              disabled={!input.trim()}
-              className="h-12 w-12 shrink-0 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-40"
-            >
-              <Send className="h-5 w-5" />
-            </Button>
-          </div>
+          ))}
         </div>
-      )}
+        <div className="relative flex items-center gap-2">
+          {mention && mentionMatches.length > 0 && (
+            <div className="absolute bottom-full left-0 mb-2 w-full max-h-64 overflow-y-auto rounded-xl border border-white/10 bg-[#18181c] shadow-xl z-10">
+              {mentionMatches.map((r, i) => (
+                <button
+                  key={r.key}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    selectMention(r)
+                  }}
+                  className={`flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors ${i === mentionActiveIndex ? 'bg-white/[0.08]' : 'hover:bg-white/[0.05]'
+                    }`}
+                >
+                  {r.platform !== 'email' && r.platform !== 'username' && (
+                    <SocialPlatformIcon platform={r.platform} className="h-4 w-4 shrink-0 text-slate-400" />
+                  )}
+                  <span className="flex-1 min-w-0 truncate text-lg text-white">{r.platform === 'email' ? r.identifier : `@${r.identifier}`}</span>
+                  <span className="shrink-0 text-base text-slate-500">${r.lastAmount.toFixed(2)} &middot; {formatDistanceToNowStrict(new Date(r.lastAt), { addSuffix: true })}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <Input
+            ref={inputRef}
+            value={input}
+            onChange={(e) => handleInputChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+            onKeyDown={(e) => {
+              if (mention && mentionMatches.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setMention((m) => (m ? { ...m, index: Math.min(m.index + 1, mentionMatches.length - 1) } : m))
+                  return
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setMention((m) => (m ? { ...m, index: Math.max(m.index - 1, 0) } : m))
+                  return
+                }
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  selectMention(mentionMatches[mentionActiveIndex])
+                  return
+                }
+                if (e.key === 'Escape') {
+                  setMention(null)
+                  return
+                }
+              }
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                handleSubmit()
+              }
+            }}
+            placeholder='"send $5 to @alice on X"'
+            className="h-12 bg-white/5 border-white/10 text-white placeholder:text-slate-500 text-lg md:text-lg"
+          />
+          <Button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!input.trim()}
+            className="h-12 w-12 shrink-0 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-40"
+          >
+            <Send className="h-5 w-5" />
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }

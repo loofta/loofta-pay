@@ -8,22 +8,22 @@ import {
 import { randomBytes, randomUUID } from 'crypto';
 import {
   MAGICBLOCK_GAS_USDC,
-  MAGICBLOCK_GAS_SOL,
   MAGICBLOCK_VOLUME_FEE_BPS,
-  MULTI_SEND_LOOFTA_PLATFORM_FEE_BPS,
-  ENABLE_MULTI_SEND_PLATFORM_FEE,
+  SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS,
+  ENABLE_SINGLE_PAYMENT_PLATFORM_FEE,
   estimateMagicblockGrossUp,
-  fetchSolPriceUsd,
+  resolveMagicblockRelayFeeUsdc,
 } from '@/common/magicblock-private-transfer';
 import { quoteAtaRentRecoveryUsdc } from '@/common/ata-rent-recovery';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
+import { reclaimBurnerFunds } from '@/common/burner-reclaim';
 import { isValidSolanaSignature } from '@/common/solana-address';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService, type SocialPlatform } from '../users/users.service';
 import { SendPaymentEncryptionService } from './encryption.service';
 import { BuildMultiSendDto } from './dto';
-import { Keypair, Connection, PublicKey, Transaction } from '@solana/web3.js';
+import { Keypair, Connection, PublicKey } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
   createTransferInstruction,
@@ -452,15 +452,46 @@ export class SendPaymentService {
   }
 
   /**
-   * Sender has broadcast their one hub transfer for a private multi-send batch — kick off the
-   * server-side fan-out (poll hub balance, then a plain SPL transfer per recipient burner) in
-   * the background. Nothing here blocks the HTTP response; the sender's own signature is already
-   * done at this point. Each recipient's row moves to PRIVATE_TRANSFER_PENDING/SUCCESS as its own
-   * fan-out transfer confirms (see fanOutMultiSendHubTransfer → confirmMultiSend per row).
+   * Sender has broadcast their one funding transfer (sender → this batch's fresh throwaway
+   * burner) — flip every row in the batch OPEN → IN_FLIGHT immediately (the recipient's claim
+   * page already renders IN_FLIGHT as "waiting for funds," never a stale OPEN or a pay prompt),
+   * then kick off the server-side fan-out from the batch burner in the background. Nothing here
+   * blocks the HTTP response; the sender's own signature is already done at this point.
    */
-  confirmMultiSendHub(senderUserId: string, multiSendBatchId: string, txHash?: string): void {
-    this.logger.log(`[MultiSendHub] batch=${multiSendBatchId} hub transfer broadcast txHash=${txHash?.slice(0, 12) ?? 'n/a'} — starting fan-out`);
-    this.fanOutMultiSendHubTransfer(multiSendBatchId, senderUserId).catch((e) =>
+  confirmMultiSendBatchFunding(senderUserId: string, multiSendBatchId: string, txHash?: string): void {
+    this.logger.log(`[MultiSendFunding] batch=${multiSendBatchId} funding tx broadcast txHash=${txHash?.slice(0, 12) ?? 'n/a'}`);
+    this.finalizeMultiSendFunding(multiSendBatchId, senderUserId, txHash).catch((e) =>
+      this.logger.warn(`[MultiSendFunding] batch=${multiSendBatchId} confirm failed: ${(e as Error)?.message}`),
+    );
+  }
+
+  /** CAS the batch AWAITING_FUNDING → FUNDING_CONFIRMED (idempotent — a duplicate confirm call is
+   *  a silent no-op), batch-flip its rows OPEN → IN_FLIGHT, then start the fan-out. */
+  private async finalizeMultiSendFunding(multiSendBatchId: string, senderUserId: string, txHash?: string): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const { data: updated, error } = await this.supabaseService.multiSendBatches
+      .update({ status: 'FUNDING_CONFIRMED', funding_tx_hash: txHash ?? null, funded_at: nowIso })
+      .eq('id', multiSendBatchId)
+      .eq('sender_user_id', senderUserId)
+      .eq('status', 'AWAITING_FUNDING')
+      .select('id');
+    if (error) {
+      this.logger.warn(`[MultiSendFunding] batch=${multiSendBatchId} status update failed: ${error.message}`);
+      return;
+    }
+    if (!updated?.length) {
+      this.logger.log(`[MultiSendFunding] batch=${multiSendBatchId}: already confirmed (idempotent no-op)`);
+      return;
+    }
+    const { error: rowsErr } = await this.supabaseService.payments
+      .update({ status: 'IN_FLIGHT' })
+      .eq('multi_send_batch_id', multiSendBatchId)
+      .eq('sender_user_id', senderUserId)
+      .eq('status', 'OPEN');
+    if (rowsErr) {
+      this.logger.warn(`[MultiSendFunding] batch=${multiSendBatchId}: failed to flip rows to IN_FLIGHT: ${rowsErr.message}`);
+    }
+    this.runMultiSendFanOut(multiSendBatchId).catch((e) =>
       this.logger.warn(`[MultiSendFanOut] batch=${multiSendBatchId} failed: ${(e as Error)?.message}`),
     );
   }
@@ -511,8 +542,8 @@ export class SendPaymentService {
       const paymentId = row.id as string;
       const rowFee = computedFeeByPaymentId.get(paymentId);
       const isUnregistered = !!row.recipient_was_unregistered;
-      // A registered recipient can still have a burner_address set — the private hub fan-out
-      // (fanOutMultiSendHubTransfer) routes every recipient through their own dedicated burner,
+      // A registered recipient can still have a burner_address set — the private fan-out
+      // (runMultiSendFanOut) routes every recipient through their own dedicated burner,
       // registered or not, unlike the direct combined-tx path (buildMultiPrivateTransfer) which
       // sends registered recipients straight to their real wallet with no burner at all. Landing
       // in a burner is not the same as the recipient having the money — they still have to claim
@@ -578,18 +609,32 @@ export class SendPaymentService {
   }
 
   /**
-   * Build the sender's ONE private MagicBlock transfer for a multi-send batch — sender wallet →
-   * hub (Loofta's own fee-payer wallet). Requires createMultiPayments to have already run for
-   * this batch (rows + multiSendBatchId must exist). This is the sender's only signature for the
-   * whole batch; the hub then fans out to each recipient's own burner with plain SPL transfers
-   * (fanOutMultiSendHubTransfer, triggered from confirmMultiSend once this tx is broadcast).
-   *
-   * Why not a second MagicBlock private transfer for the fan-out too? MagicBlock charges its fee
-   * per transfer call, not per batch — a second private hop would double-charge it. A plain
-   * transfer out of a wallet that was itself funded privately costs network fee only and doesn't
-   * expose the sender (only "a known Loofta wallet paid burner X", never who funded the hub).
+   * A private multi-send recipient's own fee, computed exactly like a normal single private
+   * payment (ClaimsService.buildPrivateTransferForPayer's feeOnSender formula: MagicBlock's own
+   * bps + Loofta's SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS, gross-up on the amount, plus one flat
+   * relay fee) — no batch discount, computed per row every time it's used (estimate, funding
+   * total, and the real charge applied on the fan-out leg all call this same function so they
+   * never drift from each other). relayFeeUnits should come from resolveRelayFeeUnits(), which
+   * already carries this codebase's safety margin for live SOL/USD drift.
    */
-  async buildMultiSendHubTransfer(
+  private singlePaymentFeeUnits(amountBaseUnits: number, relayFeeUnits: number): number {
+    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + (ENABLE_SINGLE_PAYMENT_PLATFORM_FEE ? SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS : 0);
+    const grossUnits = estimateMagicblockGrossUp(amountBaseUnits, totalBps);
+    return (grossUnits - amountBaseUnits) + relayFeeUnits;
+  }
+
+  /**
+   * Build the sender's ONE private MagicBlock transfer for a multi-send batch — sender wallet →
+   * a fresh, single-use burner generated just for this batch (never the shared fee-payer wallet:
+   * a reused, discoverable custodial address is what let the old hub design be drained — see
+   * .claude/skills/solana-sponsor-safety). This is the sender's only signature for the whole
+   * batch; the burner then fans out to each recipient with its own individual MagicBlock private
+   * transfer (runMultiSendFanOut, triggered from confirmMultiSendBatchFunding once this tx is
+   * broadcast). The funding amount covers every recipient's amount PLUS that recipient's own
+   * single-payment fee, computed per row — not a batch-blended discount — so the burner always
+   * holds enough for every individual fan-out leg's own relay + platform fee.
+   */
+  async buildMultiSendBatchFunding(
     senderUserId: string,
     multiSendBatchId: string,
     senderWallet: string,
@@ -603,14 +648,27 @@ export class SendPaymentService {
     totalAmountUsdc: number;
   }> {
     if (!this.feePayerKeypair) {
-      throw new BadRequestException('Gas sponsorship not configured (SOLANA_FEE_PAYER_PRIVATE_KEY). Cannot build hub transfer.');
+      throw new BadRequestException('Gas sponsorship not configured (SOLANA_FEE_PAYER_PRIVATE_KEY). Cannot build batch funding transfer.');
     }
     const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
+
+    const { data: batch, error: batchErr } = await this.supabaseService.multiSendBatches
+      .select('id, status')
+      .eq('id', multiSendBatchId)
+      .eq('sender_user_id', senderUserId)
+      .single();
+    if (batchErr || !batch) {
+      throw new BadRequestException('Multi-send batch not found for this sender.');
+    }
+    if ((batch as { status: string }).status !== 'AWAITING_FUNDING') {
+      throw new BadRequestException('This batch has already been funded.');
+    }
 
     const { data: rows, error } = await this.supabaseService.payments
       .select('id, amount')
       .eq('multi_send_batch_id', multiSendBatchId)
-      .eq('sender_user_id', senderUserId);
+      .eq('sender_user_id', senderUserId)
+      .eq('status', 'OPEN');
     if (error || !rows?.length) {
       throw new BadRequestException('Multi-send batch not found for this sender.');
     }
@@ -622,149 +680,274 @@ export class SendPaymentService {
       ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
       : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
 
-    const totalBaseUnits = rows.reduce((sum, r) => sum + Math.round(parseFloat(String(r.amount || '0')) * 1_000_000), 0);
-    const hubAddress = this.feePayerKeypair.publicKey.toBase58();
-
     const relayFeeUnits = await this.resolveRelayFeeUnits();
-    // Cap Loofta's cut so the batch's actual charge never exceeds what N separate per-recipient
-    // private transfers would have cost — a fixed bps rate can't guarantee that on its own since
-    // it scales with dollar amount while the thing multi-send actually saves (fewer flat relay
-    // fees) doesn't. See computeDynamicPlatformFeeBps.
-    // (Disabled altogether — see ENABLE_MULTI_SEND_PLATFORM_FEE — until MagicBlock confirms the
-    // platformFeeBps + exactOut combination that broke claims.service.ts's single-payment path.)
-    const dynamicLooftaBps = ENABLE_MULTI_SEND_PLATFORM_FEE ? this.computeDynamicPlatformFeeBps(rows, totalBaseUnits, relayFeeUnits) : 0;
-    // MagicBlock confirmed platformFeeAccount must be the fee collector's initialized USDC ATA,
-    // not its wallet address — this was passing hubAddress (the wallet) directly, same bug as
-    // claims.service.ts's single-payment path.
-    const hubFeeAta = ENABLE_MULTI_SEND_PLATFORM_FEE
-      ? (await getAssociatedTokenAddress(effectiveMint, this.feePayerKeypair.publicKey)).toBase58()
-      : null;
+    let totalFundingBaseUnits = 0;
+    let totalFeeUsdc = 0;
+    for (const row of rows) {
+      const amountUnits = Math.round(parseFloat(String(row.amount || '0')) * 1_000_000);
+      const feeUnits = this.singlePaymentFeeUnits(amountUnits, relayFeeUnits);
+      totalFundingBaseUnits += amountUnits + feeUnits;
+      totalFeeUsdc += feeUnits / 1_000_000;
+    }
 
-    // Clean batch total + exactOut:true — MagicBlock grosses up the sender's debit internally so
-    // the hub nets exactly totalBaseUnits. platformFeeBps/platformFeeAccount take Loofta's own
-    // cut in the same call, additive to MagicBlock's own bps.
+    const burner = Keypair.generate();
+    const burnerEncryptedSecret = this.encryption.encrypt(Buffer.from(burner.secretKey));
+    const { error: updateErr } = await this.supabaseService.multiSendBatches
+      .update({
+        burner_address: burner.publicKey.toBase58(),
+        burner_encrypted_secret: burnerEncryptedSecret,
+        total_funded_base_units: totalFundingBaseUnits,
+      })
+      .eq('id', multiSendBatchId)
+      .eq('status', 'AWAITING_FUNDING');
+    if (updateErr) {
+      throw new BadRequestException(`Failed to prepare batch funding: ${updateErr.message}`);
+    }
+
+    // No platformFeeBps on this leg — Loofta's cut is fully accounted for per-recipient on the
+    // fan-out leg below, so this leg doesn't double-charge. exactOut ensures the burner receives
+    // exactly totalFundingBaseUnits regardless of MagicBlock's own gross-up on this hop.
     const txResponse = await requestMagicblockPrivateTransfer({
       from: senderWallet.trim(),
-      to: hubAddress,
+      to: burner.publicKey.toBase58(),
       mint: effectiveMint.toBase58(),
-      amount: totalBaseUnits,
+      amount: totalFundingBaseUnits,
       cluster: cluster === 'localhost' ? 'devnet' : cluster,
       exactOut: true,
       gasless: true,
-      ...(ENABLE_MULTI_SEND_PLATFORM_FEE ? { platformFeeBps: dynamicLooftaBps, platformFeeAccount: hubFeeAta! } : {}),
     });
 
-    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + dynamicLooftaBps;
-    const grossUnits = estimateMagicblockGrossUp(totalBaseUnits, totalBps);
-    const feeAmountUsdc = (grossUnits - totalBaseUnits + relayFeeUnits) / 1_000_000;
-
     this.logger.log(
-      `[MultiSendHub] batch=${multiSendBatchId} rows=${rows.length} totalBaseUnits=${totalBaseUnits} hub=${hubAddress.slice(0, 8)}… sendTo=${txResponse.sendTo} looftaBps=${dynamicLooftaBps} feeUsdc=${feeAmountUsdc.toFixed(4)}`,
+      `[MultiSendFunding] batch=${multiSendBatchId} rows=${rows.length} totalFundingBaseUnits=${totalFundingBaseUnits} burner=${burner.publicKey.toBase58().slice(0, 8)}… sendTo=${txResponse.sendTo} feeUsdc=${totalFeeUsdc.toFixed(4)}`,
     );
 
     return {
       transactionBase64: txResponse.transactionBase64,
       version: txResponse.version,
       sendTo: txResponse.sendTo,
-      feeAmountUsdc,
+      feeAmountUsdc: totalFeeUsdc,
       paymentIds: rows.map((r) => r.id as string),
-      totalAmountUsdc: totalBaseUnits / 1_000_000,
+      totalAmountUsdc: rows.reduce((sum, r) => sum + parseFloat(String(r.amount || '0')), 0),
     };
   }
 
   /**
-   * Fan out the hub's freshly-received batch total to each recipient's own burner with plain,
-   * non-private SPL transfers signed by the fee-payer keypair — same low-level pattern as the
-   * dust-sweep code in ClaimsService.sweepClaimBurnerPrivately. No proportional fee on this hop
-   * (network fee only), so recipients receive their exact listed amount by construction.
-   *
-   * Fire-and-forget from confirmMultiSend once the sender's hub transfer is broadcast — the
-   * sender-side signature is already done at that point, nothing here blocks the HTTP response.
+   * Cron entry point: finds batches whose fan-out evidently died mid-flight (funded a while ago,
+   * still not COMPLETED) and resumes them. Safe to call anytime — runMultiSendFanOut's own CAS
+   * only lets it actually proceed on a batch that's genuinely stale, and its row-level claiming
+   * means a batch that's still legitimately in progress is simply skipped, not disturbed.
    */
-  private async fanOutMultiSendHubTransfer(multiSendBatchId: string, senderUserId: string): Promise<void> {
-    if (!this.feePayerKeypair) {
-      this.logger.warn(`[MultiSendFanOut] batch=${multiSendBatchId}: no fee payer keypair configured, cannot fan out`);
+  async retryStuckMultiSendBatches(): Promise<void> {
+    const staleThreshold = new Date(Date.now() - 15 * 60_000).toISOString();
+    const { data: stuck, error } = await this.supabaseService.multiSendBatches
+      .select('id')
+      .in('status', ['FUNDING_CONFIRMED', 'FANNING_OUT'])
+      .not('funded_at', 'is', null)
+      .lt('funded_at', staleThreshold);
+    if (error) {
+      this.logger.warn(`[MultiSendRetry] failed to query stuck batches: ${error.message}`);
       return;
     }
-    const feePayerKp = this.feePayerKeypair;
-
-    const { data: rows, error } = await this.supabaseService.payments
-      .select('id, amount, burner_address, recipient_was_unregistered')
-      .eq('multi_send_batch_id', multiSendBatchId)
-      .eq('sender_user_id', senderUserId)
-      .eq('status', 'OPEN');
-    if (error || !rows?.length) {
-      this.logger.warn(`[MultiSendFanOut] batch=${multiSendBatchId}: fetch failed or no OPEN rows (${error?.message ?? 'none'})`);
-      return;
+    for (const row of (stuck ?? []) as Array<{ id: string }>) {
+      this.logger.log(`[MultiSendRetry] resuming stuck batch=${row.id}`);
+      await this.runMultiSendFanOut(row.id).catch((e) =>
+        this.logger.warn(`[MultiSendRetry] batch=${row.id} resume failed: ${(e as Error)?.message}`),
+      );
     }
+  }
 
-    const totalBaseUnits = rows.reduce((sum, r) => sum + Math.round(parseFloat(String(r.amount || '0')) * 1_000_000), 0);
-    const relayFeeUnits = await this.resolveRelayFeeUnits();
-    // Best-effort re-derivation of the bps actually used at buildMultiSendHubTransfer time — same
-    // formula, same rows, so deterministic unless the live SOL price moved between the two calls
-    // (fee_paid_usdc is already an estimate elsewhere in this file, not reconciled against
-    // on-chain ground truth, so this drift is consistent with the existing precision bar).
-    const dynamicLooftaBps = this.computeDynamicPlatformFeeBps(rows, totalBaseUnits, relayFeeUnits);
-    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + dynamicLooftaBps;
-    const batchFeeUnits = estimateMagicblockGrossUp(totalBaseUnits, totalBps) - totalBaseUnits + relayFeeUnits;
-
-    const hubAta = await getAssociatedTokenAddress(this.usdcMint, feePayerKp.publicKey);
-
-    // Poll until the hub's balance covers the batch — MagicBlock's private-delivery delay
-    // (1-10 min randomized on mainnet) still applies to the sender→hub leg.
-    const deadline = Date.now() + 11 * 60_000;
-    let balance = BigInt(0);
+  /** Polls a broadcast signature for confirmation without assuming we have its original
+   *  blockhash/lastValidBlockHeight on hand (a resumed leg from a prior crashed run won't). */
+  private async waitForConfirmation(signature: string, timeoutMs = 60_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      try {
-        balance = (await getAccount(this.connection, hubAta)).amount;
-      } catch { /* hub ATA may not exist yet on the very first batch ever */ }
-      if (balance >= BigInt(totalBaseUnits)) break;
-      await new Promise((r) => setTimeout(r, 5_000));
+      const { value } = await this.connection.getSignatureStatus(signature, { searchTransactionHistory: true });
+      if (value?.err) return false;
+      if (value?.confirmationStatus === 'confirmed' || value?.confirmationStatus === 'finalized') return true;
+      await new Promise((r) => setTimeout(r, 1500));
     }
-    if (balance < BigInt(totalBaseUnits)) {
-      this.logger.warn(`[MultiSendFanOut] batch=${multiSendBatchId}: hub balance ${balance} never reached ${totalBaseUnits} within timeout`);
+    return false;
+  }
+
+  /**
+   * Fan out this batch's freshly-funded burner to each recipient with its own individual
+   * MagicBlock private transfer, one at a time, signed directly by the burner's own key (server-
+   * held, no user interaction) — no artificial delay between legs, each finalizes independently
+   * as fast as build+broadcast+confirm allows.
+   *
+   * Idempotency, two layers:
+   *  - Batch-level: this function only proceeds past a CAS on multi_send_batches.status (fresh
+   *    FUNDING_CONFIRMED, or a stale FANNING_OUT whose fan_out_started_at is old enough that the
+   *    previous attempt evidently died — the only caller that can legitimately hit the stale
+   *    branch is the retryStuckMultiSendBatches cron). Only one runner can own a batch at a time.
+   *  - Row-level (the one that actually prevents a double payment): a row's payments.sender_tx_hash
+   *    starts NULL. Before sending anything, this claims the row by writing the sentinel
+   *    'CLAIMED' with `.is('sender_tx_hash', null)` — a second runner racing the same row loses
+   *    the claim and skips it. Once a real signature exists (broadcast succeeded), it is NEVER
+   *    resent — a resumed run just re-polls that same signature and finalizes the row's status.
+   */
+  private async runMultiSendFanOut(batchId: string): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const staleThreshold = new Date(Date.now() - 15 * 60_000).toISOString();
+
+    let claim = await this.supabaseService.multiSendBatches
+      .update({ status: 'FANNING_OUT', fan_out_started_at: nowIso })
+      .eq('id', batchId)
+      .eq('status', 'FUNDING_CONFIRMED')
+      .select('id, sender_user_id, burner_address, burner_encrypted_secret, total_funded_base_units');
+    if (claim.error) {
+      this.logger.warn(`[MultiSendFanOut] batch=${batchId}: claim (fresh) failed: ${claim.error.message}`);
       return;
     }
-    this.logger.log(`[MultiSendFanOut] batch=${multiSendBatchId}: hub funded (${balance} units) — fanning out to ${rows.length} recipients`);
+    if (!claim.data?.length) {
+      // Not fresh — only take over a FANNING_OUT batch whose previous attempt has gone stale.
+      claim = await this.supabaseService.multiSendBatches
+        .update({ status: 'FANNING_OUT', fan_out_started_at: nowIso })
+        .eq('id', batchId)
+        .eq('status', 'FANNING_OUT')
+        .lt('fan_out_started_at', staleThreshold)
+        .select('id, sender_user_id, burner_address, burner_encrypted_secret, total_funded_base_units');
+      if (claim.error || !claim.data?.length) {
+        this.logger.log(`[MultiSendFanOut] batch=${batchId}: not claimable (already running, done, or not yet stale)`);
+        return;
+      }
+    }
 
-    for (const row of rows as Array<{ id: string; amount: string; burner_address: string | null; recipient_was_unregistered: boolean | null }>) {
-      // Jittered timing softens batch-correlation — an observer watching the hub's public txs
-      // sees recipients funded at spread-out times instead of one obvious burst of N transfers.
-      await new Promise((r) => setTimeout(r, Math.floor(Math.random() * 20_000)));
+    const batch = claim.data[0] as {
+      sender_user_id: string;
+      burner_address: string;
+      burner_encrypted_secret: string;
+      total_funded_base_units: number | null;
+    };
+    const burnerSecret = this.encryption.decrypt(batch.burner_encrypted_secret);
+    const burnerKeypair = Keypair.fromSecretKey(burnerSecret);
+
+    const cluster: 'devnet' | 'mainnet' | 'localhost' = isSolanaLocalhostFromConfig(this.configService)
+      ? 'localhost'
+      : (isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet');
+    const feePayerUsdcAta = await getAssociatedTokenAddress(this.usdcMint, this.feePayerKeypair!.publicKey);
+    const relayFeeUnits = await this.resolveRelayFeeUnits();
+
+    // The sender's funding transaction confirming on-chain is NOT the same as the burner actually
+    // having the money — MagicBlock's private transfers settle via a delayed relay/crank (1-10min
+    // randomized on mainnet, by design, to decorrelate send/receive timing), so the burner's own
+    // token balance can lag its funding transaction's confirmation by up to that whole window. The
+    // deleted hub design polled the hub's balance for exactly this reason; a per-batch burner needs
+    // the same wait, just scoped to its own account instead of the shared hub's.
+    const totalFundedUnits = batch.total_funded_base_units ?? 0;
+    if (totalFundedUnits > 0) {
+      const burnerAta = await getAssociatedTokenAddress(this.usdcMint, burnerKeypair.publicKey);
+      const fundingDeadline = Date.now() + 11 * 60_000;
+      let burnerBalance = BigInt(0);
+      while (Date.now() < fundingDeadline) {
+        try {
+          burnerBalance = (await getAccount(this.connection, burnerAta)).amount;
+        } catch { /* burner ATA may not exist on-chain yet — MagicBlock creates it on delivery */ }
+        if (burnerBalance >= BigInt(totalFundedUnits)) break;
+        await new Promise((r) => setTimeout(r, 5_000));
+      }
+      if (burnerBalance < BigInt(totalFundedUnits)) {
+        this.logger.warn(
+          `[MultiSendFanOut] batch=${batchId}: burner balance ${burnerBalance} never reached ${totalFundedUnits} within timeout — leaving FANNING_OUT for the next retry`,
+        );
+        return;
+      }
+      this.logger.log(`[MultiSendFanOut] batch=${batchId}: burner funded (${burnerBalance} units) — starting fan-out`);
+    }
+
+    const { data: rows, error: rowsErr } = await this.supabaseService.payments
+      .select('id, amount, burner_address, sender_tx_hash')
+      .eq('multi_send_batch_id', batchId)
+      .eq('status', 'IN_FLIGHT');
+    if (rowsErr) {
+      this.logger.warn(`[MultiSendFanOut] batch=${batchId}: failed to load rows: ${rowsErr.message}`);
+      return;
+    }
+
+    for (const row of (rows ?? []) as Array<{ id: string; amount: string; burner_address: string | null; sender_tx_hash: string | null }>) {
+      const existingHash = (row.sender_tx_hash || '').trim() || null;
       try {
-        const burnerAddress = (row.burner_address || '').trim();
-        if (!burnerAddress) {
-          this.logger.warn(`[MultiSendFanOut] payment=${row.id}: no burner_address, skipping`);
+        let sig: string;
+        if (existingHash && existingHash !== 'CLAIMED') {
+          // A prior run already broadcast this row's leg (real money moved) — never resend, just
+          // pick the confirmation back up.
+          sig = existingHash;
+        } else {
+          if (!existingHash) {
+            const rowClaim = await this.supabaseService.payments
+              .update({ sender_tx_hash: 'CLAIMED' })
+              .eq('id', row.id)
+              .is('sender_tx_hash', null)
+              .select('id');
+            if (!rowClaim.data?.length) {
+              this.logger.log(`[MultiSendFanOut] payment=${row.id}: claimed by another run, skipping`);
+              continue;
+            }
+          }
+          // existingHash === 'CLAIMED' here means a prior run claimed this row and died before
+          // broadcasting anything — safe to retake, nothing was sent. Both branches converge here.
+          const burnerAddress = (row.burner_address || '').trim();
+          if (!burnerAddress) {
+            this.logger.warn(`[MultiSendFanOut] payment=${row.id}: no burner_address, skipping`);
+            continue;
+          }
+          const amountUnits = Math.round(parseFloat(String(row.amount || '0')) * 1_000_000);
+
+          const { requestMagicblockPrivateTransfer } = await import('@/common/magicblock-private-transfer');
+          const txResponse = await requestMagicblockPrivateTransfer({
+            from: burnerKeypair.publicKey.toBase58(),
+            to: burnerAddress,
+            mint: this.usdcMint.toBase58(),
+            amount: amountUnits,
+            cluster: cluster === 'localhost' ? 'devnet' : cluster,
+            exactOut: true,
+            gasless: true,
+            ...(ENABLE_SINGLE_PAYMENT_PLATFORM_FEE
+              ? { platformFeeBps: SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS, platformFeeAccount: feePayerUsdcAta.toBase58() }
+              : {}),
+          });
+          const txBytes = Buffer.from(txResponse.transactionBase64, 'base64');
+          const vtx = VersionedTransaction.deserialize(txBytes);
+          vtx.sign([burnerKeypair]);
+          sig = await this.connection.sendRawTransaction(vtx.serialize(), { skipPreflight: true, maxRetries: 3 });
+          await this.supabaseService.payments.update({ sender_tx_hash: sig }).eq('id', row.id);
+          this.logger.log(`[MultiSendFanOut] payment=${row.id} leg broadcast burner=${burnerAddress.slice(0, 8)}… sig=${sig.slice(0, 12)}…`);
+        }
+
+        const confirmed = await this.waitForConfirmation(sig);
+        if (!confirmed) {
+          this.logger.warn(`[MultiSendFanOut] payment=${row.id}: leg ${sig.slice(0, 12)}… not confirmed yet — will retry on next fan-out pass`);
           continue;
         }
-        const destPubkey = new PublicKey(burnerAddress);
-        const destAta = await getAssociatedTokenAddress(this.usdcMint, destPubkey);
-        const rowUnits = Math.round(parseFloat(String(row.amount || '0')) * 1_000_000);
-
-        const tx = new Transaction();
-        let destAtaExists = true;
-        try { await getAccount(this.connection, destAta); } catch { destAtaExists = false; }
-        if (!destAtaExists) {
-          // Fresh one-time burner — no create→close→responsor drain vector like a real wallet's
-          // ATA would have, so this skips guardAtaSponsorship (same as the public multi-send
-          // path's burner ATA creation in buildMultiPrivateTransfer).
-          tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, destAta, destPubkey, this.usdcMint));
-        }
-        tx.add(createTransferInstruction(hubAta, destAta, feePayerKp.publicKey, rowUnits));
-        tx.recentBlockhash = (await this.connection.getLatestBlockhash('confirmed')).blockhash;
-        tx.feePayer = feePayerKp.publicKey;
-        tx.sign(feePayerKp);
-        const sig = await this.connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
-
-        const rowFeeUsdc = totalBaseUnits > 0 ? (batchFeeUnits * rowUnits) / totalBaseUnits / 1_000_000 : 0;
-        // Reuses confirmMultiSend's existing per-row status/email logic (PRIVATE_TRANSFER_PENDING
-        // vs SUCCESS, paid_at, quest push, claim-ready/payment-received emails) instead of
-        // duplicating it — one row at a time so each gets its own pro-rated fee share.
-        await this.confirmMultiSend(senderUserId, [row.id], sig, rowFeeUsdc);
-        this.logger.log(`[MultiSendFanOut] payment=${row.id} funded burner=${burnerAddress.slice(0, 8)}… sig=${sig.slice(0, 12)}…`);
+        const amountUnits = Math.round(parseFloat(String(row.amount || '0')) * 1_000_000);
+        const rowFeeUsdc = this.singlePaymentFeeUnits(amountUnits, relayFeeUnits) / 1_000_000;
+        await this.confirmMultiSend(batch.sender_user_id, [row.id], sig, rowFeeUsdc);
+        this.logger.log(`[MultiSendFanOut] payment=${row.id} confirmed sig=${sig.slice(0, 12)}…`);
       } catch (e) {
-        this.logger.warn(`[MultiSendFanOut] payment=${row.id} fan-out failed: ${String(e)}`);
+        this.logger.warn(`[MultiSendFanOut] payment=${row.id} failed: ${String(e)}`);
+        // Only release the claim if nothing was actually sent — if a real signature already
+        // landed in sender_tx_hash, leave it; a retry must never re-send, only re-confirm.
+        await this.supabaseService.payments.update({ sender_tx_hash: null }).eq('id', row.id).eq('sender_tx_hash', 'CLAIMED');
       }
+    }
+
+    const { count: remainingCount } = await this.supabaseService.payments
+      .select('id', { count: 'exact', head: true })
+      .eq('multi_send_batch_id', batchId)
+      .eq('status', 'IN_FLIGHT');
+    if (!remainingCount) {
+      await this.supabaseService.multiSendBatches
+        .update({ status: 'COMPLETED', completed_at: new Date().toISOString() })
+        .eq('id', batchId);
+      try {
+        await reclaimBurnerFunds(this.connection, burnerKeypair, this.feePayerKeypair!);
+        await this.supabaseService.multiSendBatches
+          .update({ burner_reclaimed_at: new Date().toISOString() })
+          .eq('id', batchId);
+      } catch (e) {
+        this.logger.warn(`[MultiSendFanOut] batch=${batchId}: burner reclaim failed (cron will retry): ${String(e)}`);
+      }
+      this.logger.log(`[MultiSendFanOut] batch=${batchId}: COMPLETED`);
     }
   }
 
@@ -785,9 +968,9 @@ export class SendPaymentService {
     multi_send_batch_id: string;
   }> {
     const isDevnet = isSolanaDevnetFromConfig(this.configService);
-    // Every row this call creates belongs to the same batch — the hub-funded private fan-out
-    // (buildMultiSendHubTransfer + the fan-out step it triggers) uses this to look up every
-    // sibling row without threading payment_ids arrays through extra plumbing.
+    // Every row this call creates belongs to the same batch — the batch-funding build/fan-out
+    // steps use this to look up every sibling row without threading payment_ids arrays through
+    // extra plumbing.
     const multiSendBatchId = randomUUID();
 
     const PENDING_EMAIL_PREFIX = 'PENDING_EMAIL:';
@@ -801,18 +984,19 @@ export class SendPaymentService {
     const links: Array<{ id: string; link: string; short_id: string; recipient_identifier: string; amount: string }> = [];
     const fee_items: Array<{ payment_id: string; recipient_identifier: string; amount: string; fee_usdc: number }> = [];
     let total_amount_usdc = 0;
+    let total_fee_usdc = 0;
 
-    // Batch-level fee (one MagicBlock private transfer, sender → hub, for the whole batch) —
-    // not a per-row fee. MagicBlock's own 10bps + Loofta's platformFeeBps, plus one flat relay
-    // fee, gross-up computed on the batch total. Distributed proportionally below purely for the
-    // per-row fee_items display; the actual charge is the single hub transfer's own gross-up.
-    const totalBatchBaseUnits = dto.recipients.reduce((sum, r) => sum + Math.round(Number(r.amount) * 1_000_000), 0);
     const relayFeeUnitsForEstimate = await this.resolveRelayFeeUnits();
-    const dynamicLooftaBpsForEstimate = this.computeDynamicPlatformFeeBps(dto.recipients, totalBatchBaseUnits, relayFeeUnitsForEstimate);
-    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + dynamicLooftaBpsForEstimate;
-    const batchGrossUnits = estimateMagicblockGrossUp(totalBatchBaseUnits, totalBps);
-    const batchFeeUnits = batchGrossUnits - totalBatchBaseUnits + relayFeeUnitsForEstimate;
-    const total_fee_usdc = batchFeeUnits / 1_000_000;
+
+    const { error: batchInsertErr } = await this.supabaseService.multiSendBatches.insert({
+      id: multiSendBatchId,
+      sender_user_id: senderUserId,
+      sender_wallet: dto.sender_wallet,
+      status: 'AWAITING_FUNDING',
+    });
+    if (batchInsertErr) {
+      throw new BadRequestException(`Failed to create multi-send batch: ${batchInsertErr.message}`);
+    }
 
     for (const recipient of dto.recipients) {
       const normalizedId = this.normalizeIdentifier(recipient.recipient_type, recipient.recipient_identifier);
@@ -925,10 +1109,10 @@ export class SendPaymentService {
       const paymentId = (data as { id: string }).id;
       const linkUrl = `${this.baseUrl}/share/${shortId}`;
 
-      // This row's proportional share of the one batch-level fee — display only, not a
-      // separately-charged amount (the hub transfer charges the batch total once).
+      // This row's own real cost — the same formula that's actually charged on its fan-out leg
+      // (singlePaymentFeeUnits), not a pro-rata split of a batch-blended number.
       const baseUnits = Math.round(amountUsd * 1_000_000);
-      const feeUsdc = totalBatchBaseUnits > 0 ? (batchFeeUnits * baseUnits) / totalBatchBaseUnits / 1_000_000 : 0;
+      const feeUsdc = this.singlePaymentFeeUnits(baseUnits, relayFeeUnitsForEstimate) / 1_000_000;
 
       this.logger.log(
         `[MultiSendCreate] payment=${paymentId} recipient=${normalizedId} amount=${amountStr} registered=${isRegistered} feeUsdc=${feeUsdc}`,
@@ -938,6 +1122,7 @@ export class SendPaymentService {
       links.push({ id: paymentId, link: linkUrl, short_id: shortId, recipient_identifier: normalizedId, amount: amountStr });
       fee_items.push({ payment_id: paymentId, recipient_identifier: normalizedId, amount: amountStr, fee_usdc: feeUsdc });
       total_amount_usdc += amountUsd;
+      total_fee_usdc += feeUsdc;
     }
 
     return {
@@ -960,46 +1145,13 @@ export class SendPaymentService {
   }
 
   /**
-   * MagicBlock's flat relay fee is 0.002 SOL, not a fixed USD amount — price it live so fee
-   * estimates don't drift stale as SOL/USD moves. Falls back to the flat MAGICBLOCK_GAS_USDC
-   * approximation only if the price fetch fails (fetchSolPriceUsd never fakes a price itself).
+   * MagicBlock's flat relay fee, priced live so estimates don't drift stale as SOL/USD moves —
+   * delegates to resolveMagicblockRelayFeeUsdc, which already carries a floor + 5% safety margin
+   * (see that function's doc comment) so a batch's funding transfer can't leave the burner short
+   * for one of its later fan-out legs purely from price drift between build time and send time.
    */
   private async resolveRelayFeeUnits(): Promise<number> {
-    const solPriceUsd = await fetchSolPriceUsd();
-    const relayFeeUsdc = solPriceUsd ? MAGICBLOCK_GAS_SOL * solPriceUsd : MAGICBLOCK_GAS_USDC;
+    const relayFeeUsdc = await resolveMagicblockRelayFeeUsdc();
     return Math.round(relayFeeUsdc * 1_000_000);
-  }
-
-  /**
-   * Caps Loofta's platformFeeBps on a batch's hub transfer so the actual charge never exceeds
-   * what N separate per-recipient private transfers (the pre-hub model) would have cost, minus a
-   * small guaranteed-savings buffer — "multi-send is cheaper" holds by construction instead of
-   * only for large-enough batches. A fixed bps rate can't guarantee this on its own: Loofta's cut
-   * scales with the dollar amount, but what multi-send actually saves (fewer flat relay fees)
-   * doesn't — so for a small batch of large payments the extra bps can outweigh the flat-fee
-   * savings. Walks down from MULTI_SEND_LOOFTA_PLATFORM_FEE_BPS to 0 and returns the highest bps
-   * that still clears the target; 0 (MagicBlock's own rate only, no Loofta cut) always clears it,
-   * since at bps=0 the new model is the old model's bps rate plus one flat fee instead of N.
-   */
-  private computeDynamicPlatformFeeBps(
-    rows: Array<{ amount: string | number | null }>,
-    totalBaseUnits: number,
-    relayFeeUnits: number,
-  ): number {
-    const GUARANTEED_SAVINGS_UNITS = 30_000; // $0.03 buffer so cent-rounding never erases the shown discount
-    const oldModelFeeUnits = rows.reduce((sum, r) => {
-      const net = Math.round(parseFloat(String(r.amount ?? '0')) * 1_000_000);
-      if (net <= 0) return sum;
-      const gross = estimateMagicblockGrossUp(net, MAGICBLOCK_VOLUME_FEE_BPS);
-      return sum + (gross - net) + relayFeeUnits;
-    }, 0);
-    const targetMaxFeeUnits = oldModelFeeUnits - GUARANTEED_SAVINGS_UNITS;
-
-    for (let bps = MULTI_SEND_LOOFTA_PLATFORM_FEE_BPS; bps > 0; bps--) {
-      const gross = estimateMagicblockGrossUp(totalBaseUnits, MAGICBLOCK_VOLUME_FEE_BPS + bps);
-      const newFeeUnits = (gross - totalBaseUnits) + relayFeeUnits;
-      if (newFeeUnits <= targetMaxFeeUnits) return bps;
-    }
-    return 0;
   }
 }

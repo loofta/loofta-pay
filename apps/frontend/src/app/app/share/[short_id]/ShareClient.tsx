@@ -28,6 +28,12 @@ interface SharePaymentPreview {
 }
 
 const PAID_STATUSES = new Set(['SUCCESS', 'PRIVATE_TRANSFER_PENDING', 'CLAIMED', 'FUNDED']);
+// A funding leg has broadcast and money is already committed and moving (e.g. a private
+// multi-send batch's sender→burner transfer just landed) but this specific payment isn't in a
+// claimable/final state yet — same meaning IN_FLIGHT already has on /app/c/[id]. Neither "waiting
+// for sender" (recipient) nor "continue payment" (sender) is accurate here: the sender can't send
+// again without risking a double payment, and the recipient has nothing to wait ON the sender for.
+const IN_FLIGHT_STATUS = 'IN_FLIGHT';
 
 /** Public preview of an existing payment, keyed by its own share `short_id` — the same code used
  *  in `/c/:short_id` links. Shows Loofta usernames (not Twitter handles) for sender/recipient and
@@ -199,8 +205,17 @@ export default function ShareClient({ short_id }: { short_id: string }) {
           {/* ── UNPAID states (only shown when not paid) ── */}
           {!isPaid && (
             <>
+              {/* Sender — funding already broadcast, nothing left to do here (never offer to
+                  send again — that would risk a double payment) */}
+              {isSender && request.status === IN_FLIGHT_STATUS && (
+                <div className="flex items-center gap-2 rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 py-2.5">
+                  <Loader2 className="h-4 w-4 text-white/40 shrink-0 animate-spin" />
+                  <p className="text-base md:text-sm text-white/50">Payment sent — processing. This can take a few minutes.</p>
+                </div>
+              )}
+
               {/* Sender — payment still needs to be sent */}
-              {isSender && (
+              {isSender && request.status !== IN_FLIGHT_STATUS && (
                 <div className="space-y-3">
                   <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5">
                     <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
@@ -212,8 +227,20 @@ export default function ShareClient({ short_id }: { short_id: string }) {
                 </div>
               )}
 
+              {/* Recipient — funds are already committed and moving, not just "waiting" */}
+              {isRecipient && request.status === IN_FLIGHT_STATUS && (
+                <div className="space-y-3">
+                  <div className="text-center space-y-1.5 py-1">
+                    <p className="text-base font-medium text-white">You&apos;ll receive {amountDisplay}</p>
+                    <p className="text-base md:text-sm text-white/40">
+                      Funds are on the way — nothing to do. This will update automatically.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Recipient — waiting for sender */}
-              {isRecipient && (
+              {isRecipient && request.status !== IN_FLIGHT_STATUS && (
                 <div className="space-y-3">
                   <div className="text-center space-y-1.5 py-1">
                     <p className="text-base font-medium text-white">You&apos;ll receive {amountDisplay}</p>

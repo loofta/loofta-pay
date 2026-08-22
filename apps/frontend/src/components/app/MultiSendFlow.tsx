@@ -14,8 +14,8 @@ import { getEphemeralRpcForMode } from "@/lib/per/constants";
 import {
   createMultiPayments,
   buildMultiSend,
-  buildMultiSendHub,
-  confirmMultiSendHub,
+  buildMultiSendFunding,
+  confirmMultiSendFunding,
   multiConfirm,
   type MultiSendRecipient,
   type MultiSendLinkItem,
@@ -43,21 +43,24 @@ import { useSolPrice } from "@/hooks/useSolPrice";
 import type { MultiSendRecipientType } from "@/store/multiSend";
 import posthog from "posthog-js";
 
-// Multi-recipient send is temporarily disabled — the shared-hub fan-out mechanism it relies on
-// has no per-sender isolation, which allowed both a fund-drain exploit and separate race-driven
-// double-payments to real recipients (both discovered and remediated 2026-08-19). Flip back to
-// false once the hub is reworked with proper per-sender/per-batch isolation. Backend endpoints
-// are blocked independently in send-payment.controller.ts — this is the UI-side counterpart.
-const MULTI_SEND_DISABLED = true;
+// Multi-recipient send: re-enabled 2026-08-22 for manual devnet verification of the redesign
+// (per-batch throwaway burner instead of a shared hub, row-level idempotent fan-out, per-recipient
+// fees). The original shared-hub design had no per-sender isolation, which allowed both a
+// fund-drain exploit and separate race-driven double-payments to real recipients (both discovered
+// and remediated 2026-08-19) — do not re-disable by reverting this flag alone if a new issue is
+// found; the underlying design changed. Backend endpoints are gated independently in
+// send-payment.controller.ts — this is the UI-side counterpart.
+const MULTI_SEND_DISABLED = false;
 
 // MagicBlock's flat relay fee, in SOL — same figure as backend MAGICBLOCK_GAS_SOL
 // (apps/backend/src/common/magicblock-private-transfer.ts). Duplicated rather than shared
 // per this codebase's existing convention for small cross-app constants.
 const MAGICBLOCK_GAS_SOL = 0.002;
-// MagicBlock's own volume fee + Loofta's cut on the private multi-send hub transfer — same
-// figures as backend MAGICBLOCK_VOLUME_FEE_BPS + MULTI_SEND_LOOFTA_PLATFORM_FEE_BPS.
+// MagicBlock's own volume fee + Loofta's cut on a private multi-send recipient's own fan-out
+// leg — same figures as backend MAGICBLOCK_VOLUME_FEE_BPS + SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS.
+// Each recipient is charged this exactly (no batch discount), so this is also the correct
+// per-row estimate shown in the review list, not just the total.
 const MULTI_SEND_TOTAL_BPS = 20;
-const MAGICBLOCK_ONLY_BPS = 10;
 
 type ConfirmFeeData = {
   senderWallet: string;
@@ -353,10 +356,8 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Multi-recipient send is temporarily disabled — the shared-hub fan-out it relies on has no
-  // per-sender isolation, which allowed both a fund-drain exploit and separate race-driven
-  // double-payments to real recipients (both discovered and remediated 2026-08-19). Every hook
-  // above still runs normally (React rules-of-hooks); only the interactive UI is swapped out.
+  // See MULTI_SEND_DISABLED's doc comment above. Every hook above still runs normally (React
+  // rules-of-hooks); only the interactive UI is swapped out.
   if (MULTI_SEND_DISABLED) {
     return (
       <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
@@ -562,10 +563,13 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   }
 
   /**
-   * Private path: ONE MagicBlock private transfer, sender wallet → hub — the sender's only
-   * signature for the whole batch. The backend fans out to each recipient's own burner with
-   * plain SPL transfers afterward (see confirmMultiSendHub / fanOutMultiSendHubTransfer on the
-   * backend) — recipients aren't funded yet by the time this resolves, only the hub is.
+   * Private path: ONE MagicBlock private transfer, sender wallet → this batch's fresh, single-
+   * use burner (never the shared fee-payer wallet) — the sender's only signature for the whole
+   * batch. The backend fans out to each recipient with its own individual MagicBlock private
+   * transfer afterward (see confirmMultiSendFunding / runMultiSendFanOut on the backend) —
+   * recipients aren't funded yet by the time this resolves, only the batch burner is. Every row
+   * in the batch flips OPEN → IN_FLIGHT as soon as this broadcasts (backend-side), so the
+   * recipient's claim page shows "waiting for funds," never a stale "pay this" prompt.
    */
   async function executePayment(confirmState: ConfirmFeeData) {
     console.info(`[MultiSend] executePayment batch=${confirmState.multiSendBatchId} paymentIds=${confirmState.paymentIds.join(",")}`);
@@ -581,7 +585,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       if (!wallet) throw new Error("Loofta wallet not found. Try logging out and back in.");
 
       setPhase({ kind: "building", index: 1, total: 1 });
-      const hubTx = await buildMultiSendHub(
+      const fundingTx = await buildMultiSendFunding(
         { multi_send_batch_id: multiSendBatchId, sender_wallet: senderWallet, cluster: apiCluster },
         user.id,
         accessToken,
@@ -590,7 +594,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       setPhase({ kind: "awaiting_signature" });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const signedOutput = await (privySolanaSignTransaction as any)({
-        transaction: Buffer.from(hubTx.transactionBase64, "base64") as Uint8Array,
+        transaction: Buffer.from(fundingTx.transactionBase64, "base64") as Uint8Array,
         wallet,
         chain,
         options: { uiOptions: { showWalletUIs: false } },
@@ -598,13 +602,13 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       const signedBytes: Uint8Array = signedOutput.signedTransaction;
 
       setPhase({ kind: "broadcasting", index: 1, total: 1 });
-      const sig = await broadcastAndWaitForHash(signedBytes, "hub", hubTx.sendTo, cluster);
+      const sig = await broadcastAndWaitForHash(signedBytes, "funding", fundingTx.sendTo, cluster);
 
-      // Fire-and-forget — the backend polls for the hub's balance and fans out to each
-      // recipient burner in the background, resolving well after this call returns.
-      confirmMultiSendHub(multiSendBatchId, user.id, accessToken, sig).catch(() => { });
+      // Fire-and-forget — the backend flips this batch's rows to IN_FLIGHT and fans out to each
+      // recipient from the batch burner in the background, resolving well after this call returns.
+      confirmMultiSendFunding(multiSendBatchId, user.id, accessToken, sig).catch(() => { });
 
-      console.info(`[MultiSend] hub transfer broadcast batch=${multiSendBatchId} sig=${sig.slice(0, 12)}…`);
+      console.info(`[MultiSend] funding transfer broadcast batch=${multiSendBatchId} sig=${sig.slice(0, 12)}…`);
       setCompletedLinks(links as MultiSendLink[]);
       setReviewPending(false);
       setRows(defaultRows());
@@ -821,37 +825,23 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           const VISIBLE_LIMIT = 4;
           const visibleRows = showAllRecipients ? validRows : validRows.slice(0, VISIBLE_LIMIT);
           const hiddenCount = validRows.length - visibleRows.length;
-          // What sending the same batch as one MagicBlock private transfer PER recipient (the
-          // pre-hub model) would have cost, in base units — MagicBlock's own 10bps + a full flat
-          // relay fee on EACH row, since every row was its own separate MagicBlock call back then.
+          // Each recipient's own fee — MagicBlock's own bps + Loofta's cut, computed per row, no
+          // batch discount (the private path is now one funding transfer into a throwaway burner
+          // that then sends each recipient their own individual MagicBlock private transfer, each
+          // charged exactly like a normal single private payment). Matches backend
+          // singlePaymentFeeUnits exactly — same MULTI_SEND_TOTAL_BPS, same flat relay fee.
           const flatFeeUnits = Math.round(magicblockFlatFeeUsdc * 1_000_000);
-          const oldModelFeeUnits = validRows.reduce((s, r) => {
+          const perRowFeeUsdc = new Map<string, number>();
+          let totalFeeUnits = 0;
+          for (const r of validRows) {
             const net = Math.round(parseFloat(r.amount) * 1_000_000);
-            if (net <= 0) return s;
-            const mbGross = Math.ceil((net * 10_000) / (10_000 - MAGICBLOCK_ONLY_BPS));
-            return s + (mbGross - net) + flatFeeUnits;
-          }, 0);
-          // Batch-level fee, not per-row: the private path is now ONE MagicBlock transfer
-          // (sender → hub) for the whole batch, not one per recipient. Loofta's cut is capped
-          // (same algorithm as backend computeDynamicPlatformFeeBps) so the actual charge never
-          // exceeds the per-recipient model above, minus a small guaranteed-savings buffer — the
-          // shown discount is never zero/negative purely from a fixed-bps mismatch.
-          const netTotal = Math.round(reviewTotal * 1_000_000);
-          const GUARANTEED_SAVINGS_UNITS = 30_000; // $0.03, matches backend buffer
-          const targetMaxFeeUnits = oldModelFeeUnits - GUARANTEED_SAVINGS_UNITS;
-          let dynamicLooftaBps = 0;
-          if (netTotal > 0) {
-            for (let bps = MULTI_SEND_TOTAL_BPS - MAGICBLOCK_ONLY_BPS; bps > 0; bps--) {
-              const gross = Math.ceil((netTotal * 10_000) / (10_000 - (MAGICBLOCK_ONLY_BPS + bps)));
-              const newFeeUnits = (gross - netTotal) + flatFeeUnits;
-              if (newFeeUnits <= targetMaxFeeUnits) { dynamicLooftaBps = bps; break; }
-            }
+            if (net <= 0) { perRowFeeUsdc.set(r.id, 0); continue; }
+            const gross = Math.ceil((net * 10_000) / (10_000 - MULTI_SEND_TOTAL_BPS));
+            const feeUnits = (gross - net) + flatFeeUnits;
+            perRowFeeUsdc.set(r.id, feeUnits / 1_000_000);
+            totalFeeUnits += feeUnits;
           }
-          const totalFee = (() => {
-            if (netTotal <= 0) return 0;
-            const gross = Math.ceil((netTotal * 10_000) / (10_000 - (MAGICBLOCK_ONLY_BPS + dynamicLooftaBps)));
-            return Math.ceil(((gross - netTotal) / 1_000_000 + magicblockFlatFeeUsdc) * 100) / 100;
-          })();
+          const totalFee = totalFeeUnits / 1_000_000;
           const reviewTotalWithFees = sendPrivately ? reviewTotal + totalFee : reviewTotal;
           const hasEnough = solanaPayment.hasEnoughBalance(reviewTotalWithFees);
           const isBalanceBusy = solanaPayment.isBalanceLoading;
@@ -866,6 +856,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                 </div>
                 {visibleRows.map((row, idx) => {
                   const amt = parseFloat(row.amount);
+                  const rowFee = sendPrivately ? perRowFeeUsdc.get(row.id) ?? 0 : 0;
                   return (
                     <div
                       key={row.id}
@@ -882,7 +873,12 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                           <p className="text-slate-400 text-base truncate">{row.message.trim()}</p>
                         )}
                       </div>
-                      <span className="text-white text-base shrink-0">${amt.toFixed(2)}</span>
+                      <div className="text-right shrink-0">
+                        <span className="text-white text-base block">${amt.toFixed(2)}</span>
+                        {sendPrivately && (
+                          <span className="text-slate-400 text-base block">+${rowFee.toFixed(2)} fee</span>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -972,7 +968,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
                       "Setting up transactions. Please keep this window open."}
                     {phase.kind === "building" && (
                       sendPrivately
-                        ? "Building your one private transfer. Please keep this window open."
+                        ? "Building your private funding transfer. Please keep this window open."
                         : "Building your combined transfer. Please keep this window open."
                     )}
                     {phase.kind === "awaiting_signature" && (

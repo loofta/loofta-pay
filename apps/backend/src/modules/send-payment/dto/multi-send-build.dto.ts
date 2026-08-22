@@ -93,9 +93,9 @@ export class BuildMultiSendDto {
   cluster?: 'devnet' | 'mainnet';
 }
 
-/** Step 2 of the private hub flow: build the sender's one hub transfer for a batch that
- *  multi-create (createMultiPayments) already created. */
-export class BuildMultiSendHubDto {
+/** Step 2 of the private flow: build the sender's one funding transfer (sender → this batch's
+ *  fresh throwaway burner) for a batch that multi-create (createMultiPayments) already created. */
+export class BuildMultiSendFundingDto {
   @ApiProperty({ description: 'multi_send_batch_id returned by multi-create' })
   @IsString()
   @IsNotEmpty()
@@ -113,15 +113,15 @@ export class BuildMultiSendHubDto {
   cluster?: 'devnet' | 'mainnet';
 }
 
-/** Step 3 of the private hub flow: sender has broadcast the hub transfer — kick off the
- *  server-side fan-out to each recipient's burner. */
-export class ConfirmMultiSendHubDto {
+/** Step 3 of the private flow: sender has broadcast the funding transfer — flip this batch's
+ *  rows to IN_FLIGHT and kick off the server-side fan-out from the batch's own burner. */
+export class ConfirmMultiSendFundingDto {
   @ApiProperty({ description: 'multi_send_batch_id returned by multi-create' })
   @IsString()
   @IsNotEmpty()
   multi_send_batch_id: string;
 
-  @ApiPropertyOptional({ description: 'Hub transfer signature, for logging' })
+  @ApiPropertyOptional({ description: 'Funding transfer signature, for logging' })
   @IsOptional()
   @IsString()
   tx_hash?: string;

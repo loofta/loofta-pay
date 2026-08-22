@@ -6,7 +6,6 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,23 +18,22 @@ import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { getClientIp } from '@/common/get-client-ip';
 import { SendPaymentService } from './send-payment.service';
-import { BuildMultiSendDto, BuildMultiSendHubDto, ConfirmMultiSendHubDto, ConfirmMultiSendDto } from './dto';
+import { BuildMultiSendDto, BuildMultiSendFundingDto, ConfirmMultiSendFundingDto, ConfirmMultiSendDto } from './dto';
 
 @ApiTags('send-payment')
 @Controller('send-payment')
 export class SendPaymentController {
   constructor(private readonly sendPaymentService: SendPaymentService) {}
 
-  // Multi-recipient send is temporarily disabled — the shared-hub fan-out mechanism it relies on
-  // has no per-sender isolation, which allowed both a fund-drain exploit and separate race-driven
-  // double-payments to real recipients (both discovered and remediated 2026-08-19). Blocked at
-  // every entry point until the hub is reworked with proper isolation.
-  private static readonly MULTI_SEND_DISABLED_MESSAGE =
-    "We're working on making Multi Send even better. Please send to one recipient at a time for now.";
-
-  private assertMultiSendEnabled(): void {
-    throw new ServiceUnavailableException(SendPaymentController.MULTI_SEND_DISABLED_MESSAGE);
-  }
+  // Multi-recipient send: re-enabled 2026-08-22 on mainnet, at the user's explicit request and
+  // ahead of a completed devnet verification pass — flagged as a real risk (this redesign had not
+  // completed a single successful run on any cluster at the time this was opened) and confirmed
+  // anyway. The original shared-hub design had no per-sender isolation, which allowed both a
+  // fund-drain exploit and separate race-driven double-payments to real recipients (both
+  // discovered and remediated 2026-08-19) — the redesign (per-batch throwaway burner, row-level
+  // idempotent fan-out, per-recipient fees; see send-payment.service.ts) addresses that class of
+  // bug structurally, but watch its first live runs closely (fee-payer balance, burner reclaim,
+  // any row stuck IN_FLIGHT) rather than assuming the redesign is correct just because it compiles.
 
   @Post('multi-create')
   @UseGuards(AuthGuard, RateLimitGuard)
@@ -47,7 +45,6 @@ export class SendPaymentController {
     @PrivyUser() user: { id: string },
     @Body() dto: BuildMultiSendDto,
   ) {
-    this.assertMultiSendEnabled();
     return this.sendPaymentService.createMultiPayments(user.id, dto);
   }
 
@@ -62,37 +59,34 @@ export class SendPaymentController {
     @PrivyUser() user: { id: string },
     @Body() dto: BuildMultiSendDto,
   ) {
-    this.assertMultiSendEnabled();
     return this.sendPaymentService.buildMultiPrivateTransfer(user.id, dto);
   }
 
-  @Post('multi-build-hub')
+  @Post('multi-build-funding')
   @UseGuards(AuthGuard, RateLimitGuard)
   @RateLimit(20, 60, 'sendpay:build')
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Build the sender\'s one private hub transfer for a batch created by multi-create' })
-  @ApiResponse({ status: 200, description: 'One unsigned MagicBlock tx (sender → hub) + payment IDs' })
-  async buildMultiHub(
+  @ApiOperation({ summary: 'Build the sender\'s one funding transfer into a fresh, single-use batch burner (created by multi-create)' })
+  @ApiResponse({ status: 200, description: 'One unsigned MagicBlock tx (sender → batch burner) + payment IDs' })
+  async buildMultiFunding(
     @PrivyUser() user: { id: string },
-    @Body() dto: BuildMultiSendHubDto,
+    @Body() dto: BuildMultiSendFundingDto,
   ) {
-    this.assertMultiSendEnabled();
-    return this.sendPaymentService.buildMultiSendHubTransfer(user.id, dto.multi_send_batch_id, dto.sender_wallet, dto.cluster);
+    return this.sendPaymentService.buildMultiSendBatchFunding(user.id, dto.multi_send_batch_id, dto.sender_wallet, dto.cluster);
   }
 
-  @Post('multi-confirm-hub')
+  @Post('multi-confirm-funding')
   @UseGuards(AuthGuard, RateLimitGuard)
   @RateLimit(10, 60, 'sendpay:confirm')
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Sender broadcast the hub transfer — start the server-side fan-out to each recipient burner' })
-  async confirmMultiHub(
+  @ApiOperation({ summary: 'Sender broadcast the funding transfer — flip this batch\'s rows to IN_FLIGHT and start the server-side fan-out from the batch burner' })
+  async confirmMultiFunding(
     @PrivyUser() user: { id: string },
-    @Body() body: ConfirmMultiSendHubDto,
+    @Body() body: ConfirmMultiSendFundingDto,
   ) {
-    this.assertMultiSendEnabled();
-    this.sendPaymentService.confirmMultiSendHub(user.id, body.multi_send_batch_id, body.tx_hash);
+    this.sendPaymentService.confirmMultiSendBatchFunding(user.id, body.multi_send_batch_id, body.tx_hash);
     return { ok: true };
   }
 
@@ -107,7 +101,6 @@ export class SendPaymentController {
     @Body() body: ConfirmMultiSendDto,
     @Req() req: any,
   ) {
-    this.assertMultiSendEnabled();
     await this.sendPaymentService.confirmMultiSend(user.id, body.payment_ids, body.tx_hash, body.fee_usdc, getClientIp(req));
     return { ok: true };
   }

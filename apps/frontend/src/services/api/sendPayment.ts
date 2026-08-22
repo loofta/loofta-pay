@@ -36,8 +36,9 @@ export interface MultiSendResult {
   networkFeeUsdc: number;
 }
 
-/** The sender's one private MagicBlock transfer for a batch — sender wallet → hub. */
-export interface MultiSendHubBuildResult {
+/** The sender's one private MagicBlock transfer for a batch — sender wallet → this batch's
+ *  fresh, single-use throwaway burner (never the shared fee-payer wallet). */
+export interface MultiSendFundingBuildResult {
   transactionBase64: string;
   version: string;
   sendTo: string;
@@ -76,14 +77,15 @@ export async function createMultiPayments(
   });
 }
 
-/** Step 2 of the private hub flow — one MagicBlock private transfer, sender wallet → hub, for
- *  the whole batch multi-create just created. The sender's only signature for the batch. */
-export async function buildMultiSendHub(
+/** Step 2 of the private flow — one MagicBlock private transfer, sender wallet → this batch's
+ *  fresh throwaway burner, for the whole batch multi-create just created. The sender's only
+ *  signature for the batch. */
+export async function buildMultiSendFunding(
   input: { multi_send_batch_id: string; sender_wallet: string; cluster?: 'devnet' | 'mainnet' },
   userId: string,
   accessToken?: string | null,
-): Promise<MultiSendHubBuildResult> {
-  return fetchApi<MultiSendHubBuildResult>('/send-payment/multi-build-hub', {
+): Promise<MultiSendFundingBuildResult> {
+  return fetchApi<MultiSendFundingBuildResult>('/send-payment/multi-build-funding', {
     method: 'POST',
     body: JSON.stringify(input),
     userId,
@@ -91,15 +93,16 @@ export async function buildMultiSendHub(
   });
 }
 
-/** Step 3 of the private hub flow — sender broadcast the hub transfer; kicks off the backend
- *  fan-out to each recipient's burner. Fire-and-forget on the backend, resolves immediately. */
-export async function confirmMultiSendHub(
+/** Step 3 of the private flow — sender broadcast the funding transfer; flips this batch's rows
+ *  to IN_FLIGHT and kicks off the backend fan-out from the batch burner. Fire-and-forget on the
+ *  backend, resolves immediately. */
+export async function confirmMultiSendFunding(
   multiSendBatchId: string,
   userId: string,
   accessToken?: string | null,
   txHash?: string,
 ): Promise<void> {
-  await fetchApi<{ ok: boolean }>('/send-payment/multi-confirm-hub', {
+  await fetchApi<{ ok: boolean }>('/send-payment/multi-confirm-funding', {
     method: 'POST',
     body: JSON.stringify({
       multi_send_batch_id: multiSendBatchId,
