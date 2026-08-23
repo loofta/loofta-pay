@@ -389,16 +389,17 @@ export class GiveawayEntriesService {
       .filter((x): x is GiveawayTaskCompletion & { entry: GiveawayEntry; task: GiveawayTask } => x !== null);
 
     // Entering a giveaway creates a PENDING stub for every task up front (createTaskCompletionStubs),
-    // so this queue is full of stubs nobody has actually submitted proof for yet alongside real
-    // submissions awaiting a decision. Proof-having items first (oldest first within each group) so a
-    // reviewer isn't stuck paging past empty stubs to find the ones that actually need a decision.
+    // so this raw set is full of stubs nobody has actually submitted proof for yet — nothing for a
+    // reviewer to act on — alongside real submissions awaiting a decision. Drop the stubs entirely
+    // rather than just sorting them last, so the queue (and its total count) only ever holds items
+    // that actually require a reviewer's judgment.
     const hasProof = (c: GiveawayTaskCompletion) => Boolean(c.submission_data?.proof || c.submission_data?.proof_image_url);
-    all.sort((a, b) => Number(hasProof(b)) - Number(hasProof(a)));
+    const withProof = all.filter(hasProof);
 
     const pageSize = Math.min(Math.max(opts.pageSize ?? 20, 1), 100);
     const page = Math.max(opts.page ?? 1, 1);
-    const items = all.slice((page - 1) * pageSize, page * pageSize);
-    return { items, total: all.length };
+    const items = withProof.slice((page - 1) * pageSize, page * pageSize);
+    return { items, total: withProof.length };
   }
 
   /** Every task completion for one entry, any status, joined with task info — what the creator's
