@@ -255,7 +255,7 @@ export class OfframpService {
   async getUserOfframps(userId: string, limit = 10) {
     const { data } = await this.supabase.getClient()
       .from('offramp_requests')
-      .select('id, created_at, platform, platform_identifier, currency, amount_usdc, status, zkp2p_deposit_id, completed_at, cancelled_at')
+      .select('id, created_at, platform, platform_identifier, currency, amount_usdc, status, zkp2p_deposit_id, filled_amount_usdc, fill_state, completed_at, cancelled_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(limit);
@@ -300,12 +300,25 @@ export class OfframpService {
       const cash = await this.getCashClient();
       const order = await cash.order(record.zkp2p_deposit_id);
 
+      // Completion detection must never be coupled to the fill-tracking columns below — if that
+      // write fails for any reason (e.g. a migration lagging behind a deploy), status updates
+      // should keep working independently.
       if (order.state === 'delivered' && !order.isInFlight) {
         await this.supabase.getClient()
           .from('offramp_requests')
           .update({ status: 'COMPLETE', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
           .eq('id', record.id);
       }
+
+      await this.supabase.getClient()
+        .from('offramp_requests')
+        .update({
+          filled_amount_usdc: Number(order.filledAmount) / 1_000_000,
+          fill_state:         order.state,
+          updated_at:         new Date().toISOString(),
+        })
+        .eq('id', record.id)
+        .then(({ error }) => { if (error) this.logger.debug(`checkFulfilment fill columns ${record.id}:`, error.message); });
     } catch (err: any) {
       this.logger.debug(`checkFulfilment ${record.id}:`, err.message);
     }
@@ -315,7 +328,7 @@ export class OfframpService {
     const from = (page - 1) * limit;
     const { data, count, error } = await this.supabase.getClient()
       .from('offramp_requests')
-      .select('id, created_at, updated_at, user_id, platform, platform_identifier, currency, amount_usdc, status, zkp2p_deposit_id, zkp2p_tx_hash, access_policy_tx_hash, eta_seconds, eta_label, near_intents_deposit_address, completed_at, cancelled_at', { count: 'exact' })
+      .select('id, created_at, updated_at, user_id, platform, platform_identifier, currency, amount_usdc, status, zkp2p_deposit_id, zkp2p_tx_hash, access_policy_tx_hash, eta_seconds, eta_label, filled_amount_usdc, fill_state, near_intents_deposit_address, completed_at, cancelled_at', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, from + limit - 1);
 

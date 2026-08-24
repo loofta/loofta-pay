@@ -180,7 +180,7 @@ function randomLotteryQuickPick(): { main: number[]; bonus: number } {
 
 type WithdrawalStep = "idle" | "submitting" | "sent" | "bridging" | "complete" | "failed" | "settling";
 type PeerStep = "platform" | "form" | "bridging" | "creating-deposit" | "deposit-error" | "deposited" | "complete" | "cancelling" | "cancelled" | "failed";
-type PeerOfframpRecord = { id: string; created_at: string; platform: string; platform_identifier: string; currency: string; amount_usdc: number; status: string; zkp2p_deposit_id: string | null };
+type PeerOfframpRecord = { id: string; created_at: string; platform: string; platform_identifier: string; currency: string; amount_usdc: number; status: string; zkp2p_deposit_id: string | null; filled_amount_usdc?: number | null; fill_state?: string | null };
 
 // "cancelling" intentionally excluded — requires active signing and can't be resumed; maps to deposit-error on restore
 const ACTIVE_PEER_STEPS = new Set<PeerStep>(["bridging", "creating-deposit", "deposit-error", "deposited"]);
@@ -570,6 +570,7 @@ export function BalanceModal({
   const [peerBaseWalletAddress, setPeerBaseWalletAddress] = useState<string | null>(null);
   const [peerAmountUSDC, setPeerAmountUSDC] = useState<number>(0);
   const [peerZkp2pDepositId, setPeerZkp2pDepositId] = useState<string | null>(null);
+  const [peerFilledAmountUSDC, setPeerFilledAmountUSDC] = useState<number | null>(null);
   const peerBridgePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const peerStatusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const peerZkp2pSigningRef = useRef(false);
@@ -1463,8 +1464,9 @@ export function BalanceModal({
         const res = await fetch(`/api/offramp/${peerOfframpId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const data = await res.json() as { status?: string };
+        const data = await res.json() as { status?: string; filled_amount_usdc?: number | null };
         console.log(PEER_LOG, "Peer status poll", data.status);
+        if (!cancelled && typeof data.filled_amount_usdc === "number") setPeerFilledAmountUSDC(data.filled_amount_usdc);
         if (data.status === "COMPLETE" && !cancelled) {
           console.log(PEER_LOG, "offramp COMPLETE");
           setPeerStep("complete");
@@ -1560,7 +1562,7 @@ export function BalanceModal({
         setPeerStep("platform"); setPeerOfframpId(null);
         setPeerBridgeDepositAddress(null); setPeerBridgeMemo(null);
         setPeerBridgeTxSig(null); setPeerBridgeStatus(null);
-        setPeerBaseWalletAddress(null); setPeerAmountUSDC(0); setPeerZkp2pDepositId(null);
+        setPeerBaseWalletAddress(null); setPeerAmountUSDC(0); setPeerZkp2pDepositId(null); setPeerFilledAmountUSDC(null);
         peerZkp2pSigningRef.current = false;
       }
       // Keep deposit state alive while a deposit is still pending
@@ -1884,6 +1886,7 @@ export function BalanceModal({
           const record = await res.json() as {
             id: string; status: string; platform: string; platform_identifier: string;
             currency: string; amount_usdc: string; zkp2p_deposit_id: string | null;
+            filled_amount_usdc?: number | null;
           } | null;
           if (!record?.id) return;
 
@@ -1898,6 +1901,7 @@ export function BalanceModal({
           setPeerCurrency(record.currency);
           setPeerAmountUSDC(parseFloat(record.amount_usdc));
           if (baseWallet) setPeerBaseWalletAddress(baseWallet.address);
+          setPeerFilledAmountUSDC(typeof record.filled_amount_usdc === "number" ? record.filled_amount_usdc : null);
 
           if (record.status === 'CANCELLING') {
             // Cancellation was started but not completed — restore to deposit-error so user can finish bridging back
@@ -2196,6 +2200,7 @@ export function BalanceModal({
     setPeerAmountUSDC(record.amount_usdc);
     if (baseWallet) setPeerBaseWalletAddress(baseWallet.address);
     if (record.zkp2p_deposit_id) setPeerZkp2pDepositId(record.zkp2p_deposit_id);
+    setPeerFilledAmountUSDC(typeof record.filled_amount_usdc === "number" ? record.filled_amount_usdc : null);
     if (record.status === "CANCELLING") {
       setPeerStep("deposit-error");
     } else {
@@ -5202,6 +5207,9 @@ export function BalanceModal({
           {/* ── Peer offramp: deposited / waiting for payment ── */}
           {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "deposited" && (() => {
             const platform = getPlatform(peerPlatformId ?? "");
+            const escrowIdx = peerZkp2pDepositId?.lastIndexOf("_") ?? -1;
+            const escrowAddress = escrowIdx > 0 ? peerZkp2pDepositId!.slice(0, escrowIdx) : null;
+            const onchainDepositId = escrowIdx > 0 ? peerZkp2pDepositId!.slice(escrowIdx + 1) : null;
             return (
               <div className="py-2 space-y-4">
                 <div className={`rounded-2xl border p-4 space-y-1 ${dark ? "border-white/10 bg-white/5" : "border-emerald-100 bg-emerald-50/60"}`}>
@@ -5210,7 +5218,7 @@ export function BalanceModal({
                     <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cash out request sent</p>
                   </div>
                   <p className={`text-base ${dark ? "text-slate-400" : "text-gray-600"}`}>
-                    A peer will send <strong>{peerCurrency}</strong> to your {platform?.name} account (<strong>{peerIdentifier}</strong>).
+                    A peer will send <strong>{peerCurrency}</strong> to your {platform?.name} account (<span className="font-medium">{peerIdentifier}</span>).
                     {peerEstimate?.eta
                       ? ` Typical fill time: ${peerEstimate.eta.label}.`
                       : " This usually takes a few minutes, but may take longer depending on availability."}
@@ -5220,10 +5228,26 @@ export function BalanceModal({
                 <div className={`rounded-xl border p-3 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
                   <div>
                     <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>Amount</p>
-                    <p className={`text-base font-bold ${dark ? "text-white" : "text-gray-900"}`}>${(peerAmountUSDC || withdrawAmountNum).toFixed(2)} USDC → {peerCurrency}</p>
+                    <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>${(peerAmountUSDC || withdrawAmountNum).toFixed(2)} USDC → {peerCurrency}</p>
+                    {typeof peerFilledAmountUSDC === "number" && peerFilledAmountUSDC > 0 && peerFilledAmountUSDC < (peerAmountUSDC || withdrawAmountNum) && (
+                      <p className={`text-xs mt-0.5 ${dark ? "text-amber-300" : "text-amber-600"}`}>
+                        ${peerFilledAmountUSDC.toFixed(2)} funded so far, partial fill in progress
+                      </p>
+                    )}
                   </div>
                   {platform?.logo && <img src={platform.logo} alt={platform.name} className="w-8 h-8 rounded-lg object-cover shrink-0" />}
                 </div>
+
+                {escrowAddress && onchainDepositId && (
+                  <a
+                    href={`https://app.peer.xyz/deposit/${escrowAddress}/${onchainDepositId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`block text-xs -mt-2 ${dark ? "text-slate-500 hover:text-slate-300" : "text-gray-400 hover:text-gray-600"}`}
+                  >
+                    View deposit on Peer →
+                  </a>
+                )}
 
                 <div className={`rounded-xl border p-3 text-base ${dark ? "border-amber-400/20 bg-amber-400/5 text-amber-300" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
                   Taking too long? You can cancel to get your USDC back.{peerEstimate?.eta ? ` Typical fill time for ${platform?.name} is ${peerEstimate.eta.label}.` : " Cash outs usually complete within minutes, but can take longer if peers are busy."}

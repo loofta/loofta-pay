@@ -108,6 +108,7 @@ export function CashoutTab({
                     <th className="text-left px-4 py-2.5">Platform</th>
                     <th className="text-left px-4 py-2.5">Identifier</th>
                     <th className="text-right px-4 py-2.5">Amount</th>
+                    <th className="text-right px-4 py-2.5">Filled</th>
                     <th className="text-left px-4 py-2.5">Currency</th>
                     <th className="text-left px-4 py-2.5">Status</th>
                     <th className="text-left px-4 py-2.5">Time to fill</th>
@@ -117,7 +118,7 @@ export function CashoutTab({
                 </thead>
                 <tbody>
                   {data.length === 0 && (
-                    <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-600">No cash out requests found.</td></tr>
+                    <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-600">No cash out requests found.</td></tr>
                   )}
                   {data.map((row: any) => {
                     const statusColors: Record<string, string> = {
@@ -137,6 +138,14 @@ export function CashoutTab({
                         <td className="px-4 py-2.5 font-medium capitalize">{row.platform}</td>
                         <td className="px-4 py-2.5 font-mono">{row.platform_identifier}</td>
                         <td className="px-4 py-2.5 text-right tabular-nums font-medium">${Number(row.amount_usdc).toFixed(2)}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">
+                          {row.filled_amount_usdc != null ? (
+                            <span className={Number(row.filled_amount_usdc) < Number(row.amount_usdc) && row.status !== "COMPLETE" ? "text-amber-400" : "text-gray-400"}>
+                              ${Number(row.filled_amount_usdc).toFixed(2)}
+                            </span>
+                          ) : <span className="text-gray-700">—</span>}
+                          {row.fill_state && <span className="block text-sm text-gray-600 capitalize">{row.fill_state}</span>}
+                        </td>
                         <td className="px-4 py-2.5">{row.currency}</td>
                         <td className={`px-4 py-2.5 font-medium ${statusColors[row.status] ?? "text-gray-400"}`}>{row.status}</td>
                         <td className="px-4 py-2.5 text-gray-400">

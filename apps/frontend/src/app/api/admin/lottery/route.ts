@@ -46,6 +46,14 @@ export async function GET(request: NextRequest) {
 
   const enriched = tickets.map((t: any) => ({ ...t, user: userMap[t.user_id] ?? null }));
 
+  // Ticket total for the current filter: a row can represent several tickets bought in one
+  // purchase, so `count` (row count, used for pagination) understates real tickets sold/gifted.
+  // Sum num_tickets across all matching rows instead for the total shown to the admin.
+  let ticketsTotalQuery = supabase.from("lottery_tickets").select("num_tickets");
+  if (status) ticketsTotalQuery = ticketsTotalQuery.eq("status", status);
+  const { data: ticketsTotalRows } = await ticketsTotalQuery;
+  const totalTickets = (ticketsTotalRows ?? []).reduce((sum: number, r: any) => sum + (Number(r.num_tickets) || 0), 0);
+
   // Active tickets total: sum of num_tickets across every row currently in the live/undrawn
   // round — a row can represent several tickets bought in one purchase, so this is a sum, not
   // a row count. Not scoped to "today" — a ticket bought yesterday is still active until drawn.
@@ -65,5 +73,5 @@ export async function GET(request: NextRequest) {
     .gte("created_at", todayStart.toISOString());
   const revenueToday = (todayRows ?? []).reduce((sum: number, r: any) => sum + (Number(r.fee_amount_usdc) || 0), 0);
 
-  return NextResponse.json({ data: enriched, total: count ?? 0, page, limit: PAGE_SIZE, activeTicketsTotal, revenueToday });
+  return NextResponse.json({ data: enriched, total: count ?? 0, totalTickets, page, limit: PAGE_SIZE, activeTicketsTotal, revenueToday });
 }

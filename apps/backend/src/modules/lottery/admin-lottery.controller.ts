@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Patch, Body, Param, Query, Request, UseGuards, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiSecurity, ApiQuery } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 import { AdminGuard } from '@/common/guards';
 import { LotteryService } from './lottery.service';
 import { MegapotService, MEGAPOT_JACKPOT } from './megapot.service';
@@ -39,6 +39,12 @@ class SetPackDailyLimitDto {
   dailyOpenLimit: number | null;
 }
 
+class RecordReferralFeeClaimDto {
+  @IsString()
+  @Matches(/^0x[a-fA-F0-9]{64}$/, { message: 'txHash must be a 32-byte 0x-prefixed transaction hash' })
+  txHash: string;
+}
+
 class GrantFreeSpinDto {
   @IsIn(['email', 'handle'])
   recipientType: 'email' | 'handle';
@@ -65,18 +71,68 @@ export class AdminLotteryController {
   ) {}
 
   @Get('referral-fees')
-  @ApiOperation({ summary: 'Read the live, unclaimed Megapot referral fee balance (view-only — claiming is manual, see response)' })
-  async referralFees(): Promise<{ balanceUsdc: number; referrerWallet: string | null; jackpotContract: string; basescanWriteUrl: string | null }> {
+  @ApiOperation({ summary: 'Read the live unclaimed Megapot referral fee balance plus the recorded claim history/total (claiming itself happens client-side from the admin\'s own connected wallet, see POST referral-fees/claim)' })
+  async referralFees(): Promise<{
+    balanceUsdc: number;
+    claimedTotalUsdc: number;
+    claims: any[];
+    referrerWallet: string | null;
+    jackpotContract: string;
+    basescanWriteUrl: string | null;
+  }> {
     const referrerWallet = this.megapot.getReferrers()[0] ?? null;
     const balanceUsdc = referrerWallet ? await this.megapot.getReferralFeesBalanceUsdc(referrerWallet) : 0;
+
+    const db = this.supabase.getClient();
+    // Sum across every recorded claim, not just the page below — same "don't undercount" fix as
+    // the lottery ticket totals.
+    const { data: allClaims } = await db.from('megapot_referral_fee_claims').select('amount_usdc');
+    const claimedTotalUsdc = (allClaims ?? []).reduce((sum: number, c: any) => sum + Number(c.amount_usdc), 0);
+    const { data: claims } = await db
+      .from('megapot_referral_fee_claims')
+      .select('id, tx_hash, claimer_address, amount_usdc, claimed_at')
+      .order('claimed_at', { ascending: false })
+      .limit(50);
+
     return {
       balanceUsdc,
+      claimedTotalUsdc,
+      claims: claims ?? [],
       referrerWallet,
       jackpotContract: MEGAPOT_JACKPOT,
       // Deep-links straight to the claimReferralFees write method on Basescan's contract UI —
       // still requires connecting the wallet that actually controls referrerWallet to sign it.
       basescanWriteUrl: referrerWallet ? `https://basescan.org/address/${MEGAPOT_JACKPOT}#writeContract` : null,
     };
+  }
+
+  @Post('referral-fees/claim')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Record a Megapot referral-fee claim after the admin submits claimReferralFees() themselves from their own connected EVM wallet — verifies the tx on-chain (ReferralFeesClaimed event) before trusting the amount, so the claimed total can never be spoofed by client input' })
+  async recordReferralFeeClaim(@Body() dto: RecordReferralFeeClaimDto) {
+    let verified;
+    try {
+      verified = await this.megapot.verifyReferralFeeClaim(dto.txHash as `0x${string}`);
+    } catch (e: any) {
+      throw new BadRequestException(e.message ?? 'Could not verify this transaction on-chain');
+    }
+    const db = this.supabase.getClient();
+    const { data, error } = await db
+      .from('megapot_referral_fee_claims')
+      .insert({
+        tx_hash: dto.txHash.toLowerCase(),
+        claimer_address: verified.claimerAddress,
+        amount_usdc: verified.amountUsdc,
+        block_number: Number(verified.blockNumber),
+        claimed_at: verified.claimedAt.toISOString(),
+      })
+      .select('id, tx_hash, claimer_address, amount_usdc, claimed_at')
+      .single();
+    if (error) {
+      if (error.code === '23505') throw new BadRequestException('This claim transaction was already recorded');
+      throw new BadRequestException(error.message);
+    }
+    return data;
   }
 
   @Post('gift')

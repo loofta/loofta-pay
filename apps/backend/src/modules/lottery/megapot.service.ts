@@ -7,8 +7,10 @@ import {
   parseUnits,
   erc20Abi,
   type Address,
+  type Hash,
   encodeFunctionData,
   toHex,
+  parseEventLogs,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
@@ -81,6 +83,22 @@ export const JACKPOT_ABI = [
     stateMutability: 'view',
     inputs: [{ name: '', type: 'address' }],
     outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    name: 'claimReferralFees',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [],
+  },
+  {
+    name: 'ReferralFeesClaimed',
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'userAddress', type: 'address', indexed: true },
+      { name: 'amount', type: 'uint256', indexed: false },
+    ],
   },
   {
     name: 'getDrawingState',
@@ -589,6 +607,43 @@ export class MegapotService {
       args: [referrerAddress],
     }) as bigint;
     return Number(balance) / 1_000_000;
+  }
+
+  /**
+   * Verify a `claimReferralFees()` transaction the admin submitted from their own connected
+   * wallet (not this backend's key — see admin UI) before trusting it enough to record in the
+   * ledger: the tx must have succeeded, been sent to the Jackpot contract, and actually emitted
+   * `ReferralFeesClaimed` — the claimed amount is read from that event, never from client input.
+   */
+  async verifyReferralFeeClaim(txHash: Hash): Promise<{
+    claimerAddress: Address;
+    amountUsdc: number;
+    blockNumber: bigint;
+    claimedAt: Date;
+  }> {
+    const client = this.getPublicClient();
+    const receipt = await client.getTransactionReceipt({ hash: txHash });
+    if (receipt.status !== 'success') {
+      throw new Error('Transaction did not succeed on-chain');
+    }
+    if (receipt.to?.toLowerCase() !== MEGAPOT_JACKPOT.toLowerCase()) {
+      throw new Error('Transaction was not sent to the Megapot Jackpot contract');
+    }
+    const [claimEvent] = parseEventLogs({
+      abi: JACKPOT_ABI,
+      eventName: 'ReferralFeesClaimed',
+      logs: receipt.logs.filter((log) => log.address.toLowerCase() === MEGAPOT_JACKPOT.toLowerCase()),
+    });
+    if (!claimEvent) {
+      throw new Error('Transaction did not emit a ReferralFeesClaimed event');
+    }
+    const block = await client.getBlock({ blockNumber: receipt.blockNumber });
+    return {
+      claimerAddress: claimEvent.args.userAddress,
+      amountUsdc: Number(claimEvent.args.amount) / 1_000_000,
+      blockNumber: receipt.blockNumber,
+      claimedAt: new Date(Number(block.timestamp) * 1000),
+    };
   }
 
   /**

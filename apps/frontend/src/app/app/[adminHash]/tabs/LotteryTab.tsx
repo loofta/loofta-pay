@@ -14,11 +14,13 @@ export function LotteryTab({
   gifting, createGiftTicket, lastGiftLink, copyText,
 
   referralFeesLoading, referralFeesLoaded, referralFeesBalance, referralFeesWallet, referralFeesBasescanUrl,
+  referralFeesClaimedTotal, referralFeesClaims,
+  connectedEvmAddress, connectEvmWallet, claimingReferralFees, claimReferralFeesOnChain,
 
   giftsLoaded, giftsData,
 
   statusFilter, setStatusFilter, fetchLottery,
-  total, activeTicketsTotal, revenueToday, loading, loaded, data, page,
+  total, totalTickets, activeTicketsTotal, revenueToday, loading, loaded, data, page,
   expandedId, setExpandedId,
 }: {
   giftIdentifierInput: string;
@@ -37,6 +39,12 @@ export function LotteryTab({
   referralFeesBalance: number | null;
   referralFeesWallet: string | null;
   referralFeesBasescanUrl: string | null;
+  referralFeesClaimedTotal: number;
+  referralFeesClaims: any[];
+  connectedEvmAddress: string | null;
+  connectEvmWallet: () => void;
+  claimingReferralFees: boolean;
+  claimReferralFeesOnChain: () => void;
 
   giftsLoaded: boolean;
   giftsData: any[];
@@ -45,6 +53,7 @@ export function LotteryTab({
   setStatusFilter: (v: string) => void;
   fetchLottery: (page?: number, status?: string) => void;
   total: number;
+  totalTickets: number;
   activeTicketsTotal: number;
   revenueToday: number;
   loading: boolean;
@@ -121,12 +130,13 @@ export function LotteryTab({
         )}
       </div>
 
-      {/* Megapot referral fees — read-only balance, claim is manual */}
-      <div className="rounded-xl border border-gray-800 p-4 space-y-2">
+      {/* Megapot referral fees — unclaimed balance is read-only on-chain; claiming is done from
+          the admin's own connected EVM wallet, then recorded here for tracking. */}
+      <div className="rounded-xl border border-gray-800 p-4 space-y-3">
         <div className="text-base font-semibold text-gray-200">Megapot referral fees</div>
         <p className="text-sm text-gray-500">
           Accrues automatically from Loofta-referred tickets (10% of winners&apos; payouts). This backend never
-          holds that wallet&apos;s private key — claiming is a manual on-chain action from whatever wallet controls it.
+          holds that wallet&apos;s private key — connect the wallet that controls it below to claim.
         </p>
         {referralFeesLoading && (
           <div className="flex items-center gap-2 text-base text-gray-400 py-2">
@@ -134,26 +144,89 @@ export function LotteryTab({
           </div>
         )}
         {!referralFeesLoading && referralFeesLoaded && (
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-            <div>
-              <div className="text-2xl font-semibold text-emerald-400 tabular-nums">
-                ${(referralFeesBalance ?? 0).toFixed(6)}
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-sm text-gray-500 uppercase tracking-wide">Unclaimed</div>
+                <div className="text-2xl font-semibold text-emerald-400 tabular-nums mt-1">
+                  ${(referralFeesBalance ?? 0).toFixed(6)}
+                </div>
               </div>
-              {referralFeesWallet && (
-                <div className="text-sm text-gray-500 font-mono">{referralFeesWallet}</div>
+              <div>
+                <div className="text-sm text-gray-500 uppercase tracking-wide">Claimed total</div>
+                <div className="text-2xl font-semibold text-blue-400 tabular-nums mt-1">
+                  ${referralFeesClaimedTotal.toFixed(6)}
+                </div>
+              </div>
+            </div>
+            {referralFeesWallet && (
+              <div className="text-sm text-gray-500 font-mono">Referrer wallet: {referralFeesWallet}</div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {!connectedEvmAddress ? (
+                <Button size="sm" onClick={connectEvmWallet} className="bg-teal-700 hover:bg-teal-600 text-white">
+                  Connect EVM wallet
+                </Button>
+              ) : (
+                <>
+                  <span className="text-sm text-gray-400 font-mono">{trunc(connectedEvmAddress, 10)}</span>
+                  <Button
+                    size="sm"
+                    onClick={claimReferralFeesOnChain}
+                    disabled={claimingReferralFees || (referralFeesBalance ?? 0) <= 0}
+                    className="bg-emerald-700 hover:bg-emerald-600 text-white"
+                  >
+                    {claimingReferralFees ? <Loader2 className="w-4 h-4 animate-spin" /> : "Claim referral fees"}
+                  </Button>
+                </>
+              )}
+              {referralFeesBasescanUrl && (
+                <a
+                  href={referralFeesBasescanUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-300 underline underline-offset-2"
+                >
+                  Or claim on Basescan <ExternalLink className="w-3.5 h-3.5" />
+                </a>
               )}
             </div>
-            {referralFeesBasescanUrl && (
-              <a
-                href={referralFeesBasescanUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-base md:text-sm text-teal-400 hover:text-teal-300 underline underline-offset-2"
-              >
-                Claim on Basescan <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+
+            {referralFeesClaims.length > 0 && (
+              <div className="overflow-x-auto rounded-lg border border-gray-800 mt-1">
+                <table className="w-full text-sm text-gray-300">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-gray-500 text-sm uppercase tracking-wide">
+                      <th className="text-left px-3 py-2">Date</th>
+                      <th className="text-right px-3 py-2">Amount</th>
+                      <th className="text-left px-3 py-2">Tx</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {referralFeesClaims.map((c: any) => (
+                      <tr key={c.id} className="border-b border-gray-800/50">
+                        <td className="px-3 py-2 whitespace-nowrap tabular-nums text-gray-500">
+                          {new Date(c.claimed_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-emerald-400">${Number(c.amount_usdc).toFixed(6)}</td>
+                        <td className="px-3 py-2">
+                          <a
+                            href={`https://basescan.org/tx/${c.tx_hash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono text-gray-500 hover:text-teal-400"
+                          >
+                            {trunc(c.tx_hash, 12)}
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
-          </div>
+          </>
         )}
       </div>
 
@@ -235,7 +308,9 @@ export function LotteryTab({
           <option value="failed">Failed</option>
           <option value="withdrawn">Withdrawn</option>
         </select>
-        <span className="text-base text-gray-500">{total} total</span>
+        <span className="text-base text-gray-500">
+          {totalTickets.toLocaleString()} tickets{total !== totalTickets ? ` (${total.toLocaleString()} entries)` : ""}
+        </span>
       </div>
 
       {loading && (

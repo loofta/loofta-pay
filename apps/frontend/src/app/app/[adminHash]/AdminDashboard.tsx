@@ -9,6 +9,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
+import { createWalletClient, createPublicClient, custom, http, encodeFunctionData } from "viem";
+import { base } from "viem/chains";
 import {
   Loader2, RefreshCw, Shield,
   Zap, BarChart2, SendHorizonal,
@@ -158,6 +160,7 @@ export default function AdminDashboard() {
   const [lotteryLoading, setLotteryLoading] = useState(false);
   const [lotteryLoaded, setLotteryLoaded] = useState(false);
   const [lotteryTotal, setLotteryTotal] = useState(0);
+  const [lotteryTotalTickets, setLotteryTotalTickets] = useState(0);
   const [lotteryActiveTicketsTotal, setLotteryActiveTicketsTotal] = useState(0);
   const [lotteryRevenueToday, setLotteryRevenueToday] = useState(0);
   const [lotteryPage, setLotteryPage] = useState(1);
@@ -176,12 +179,17 @@ export default function AdminDashboard() {
   const [giftsTotal, setGiftsTotal] = useState(0);
   const [giftsPage, setGiftsPage] = useState(1);
 
-  // Megapot referral fees — read-only balance; claiming is manual (see AdminDashboard UI note)
+  // Megapot referral fees — unclaimed balance is read-only on-chain; claiming happens from the
+  // admin's own connected EVM wallet (e.g. Enkrypt), then the tx is recorded server-side.
   const [referralFeesBalance, setReferralFeesBalance] = useState<number | null>(null);
   const [referralFeesLoading, setReferralFeesLoading] = useState(false);
   const [referralFeesLoaded, setReferralFeesLoaded] = useState(false);
   const [referralFeesWallet, setReferralFeesWallet] = useState<string | null>(null);
   const [referralFeesBasescanUrl, setReferralFeesBasescanUrl] = useState<string | null>(null);
+  const [referralFeesClaimedTotal, setReferralFeesClaimedTotal] = useState(0);
+  const [referralFeesClaims, setReferralFeesClaims] = useState<any[]>([]);
+  const [connectedEvmAddress, setConnectedEvmAddress] = useState<string | null>(null);
+  const [claimingReferralFees, setClaimingReferralFees] = useState(false);
 
   // Analytics
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
@@ -414,6 +422,7 @@ export default function AdminDashboard() {
       const data = await res.json();
       setLotteryData(data.data ?? []);
       setLotteryTotal(data.total ?? 0);
+      setLotteryTotalTickets(data.totalTickets ?? 0);
       setLotteryActiveTicketsTotal(data.activeTicketsTotal ?? 0);
       setLotteryRevenueToday(data.revenueToday ?? 0);
       setLotteryPage(page);
@@ -465,6 +474,8 @@ export default function AdminDashboard() {
       setReferralFeesBalance(data.balanceUsdc ?? 0);
       setReferralFeesWallet(data.referrerWallet ?? null);
       setReferralFeesBasescanUrl(data.basescanWriteUrl ?? null);
+      setReferralFeesClaimedTotal(data.claimedTotalUsdc ?? 0);
+      setReferralFeesClaims(data.claims ?? []);
       setReferralFeesLoaded(true);
     } catch {
       toast({ variant: "destructive", title: "Failed to load referral fees" });
@@ -472,6 +483,85 @@ export default function AdminDashboard() {
       setReferralFeesLoading(false);
     }
   }, [authHeaders, toast]);
+
+  // Connect the admin's own EVM wallet (e.g. Enkrypt) via the injected EIP-1193 provider —
+  // this backend never holds the referral wallet's private key, so claiming has to be signed
+  // by whoever controls it, from their own browser wallet.
+  const connectEvmWallet = useCallback(async () => {
+    const eth = (window as any).ethereum;
+    if (!eth) {
+      toast({ variant: "destructive", title: "No EVM wallet found", description: "Install Enkrypt or another browser wallet extension." });
+      return;
+    }
+    try {
+      const accounts: string[] = await eth.request({ method: "eth_requestAccounts" });
+      setConnectedEvmAddress(accounts[0] ?? null);
+    } catch {
+      toast({ variant: "destructive", title: "Wallet connection was rejected" });
+    }
+  }, [toast]);
+
+  const claimReferralFeesOnChain = useCallback(async () => {
+    const eth = (window as any).ethereum;
+    if (!eth || !connectedEvmAddress) {
+      toast({ variant: "destructive", title: "Connect your EVM wallet first" });
+      return;
+    }
+    setClaimingReferralFees(true);
+    try {
+      try {
+        await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] });
+      } catch (switchErr: any) {
+        if (switchErr?.code === 4902) {
+          await eth.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: "0x2105",
+              chainName: "Base",
+              nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+              rpcUrls: ["https://mainnet.base.org"],
+              blockExplorerUrls: ["https://basescan.org"],
+            }],
+          });
+        } else {
+          throw switchErr;
+        }
+      }
+
+      const walletClient = createWalletClient({ chain: base, transport: custom(eth) });
+      const publicClient = createPublicClient({ chain: base, transport: http() });
+      const data = encodeFunctionData({
+        abi: [{ name: "claimReferralFees", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] }] as const,
+        functionName: "claimReferralFees",
+      });
+
+      const txHash = await walletClient.sendTransaction({
+        account: connectedEvmAddress as `0x${string}`,
+        to: "0x3bAe643002069dBCbcd62B1A4eb4C4A397d042a2",
+        data,
+      });
+
+      toast({ title: "Claim submitted", description: "Waiting for on-chain confirmation…" });
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const headers = await authHeaders();
+      const res = await fetch("/api/admin/lottery/referral-fees", {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ txHash }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || "Claim succeeded on-chain but failed to record");
+      }
+      toast({ title: "Referral fees claimed" });
+      await fetchReferralFees();
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Claim failed", description: e?.shortMessage || e?.message || "Unknown error" });
+    } finally {
+      setClaimingReferralFees(false);
+    }
+  }, [connectedEvmAddress, authHeaders, toast, fetchReferralFees]);
 
   const createGiftTicket = useCallback(async () => {
     const recipientIdentifier = giftIdentifierInput.trim().replace(/^@+/, "");
@@ -850,7 +940,7 @@ export default function AdminDashboard() {
           className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "lottery" ? "border-teal-500 text-teal-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
           Lottery Tickets
-          {lotteryLoaded && <span className="text-sm bg-teal-900/50 text-teal-400 rounded px-1.5 py-0.5">{lotteryTotal}</span>}
+          {lotteryLoaded && <span className="text-sm bg-teal-900/50 text-teal-400 rounded px-1.5 py-0.5">{lotteryTotalTickets}</span>}
         </button>
         <button
           type="button"
@@ -919,9 +1009,12 @@ export default function AdminDashboard() {
           gifting={gifting} createGiftTicket={createGiftTicket} lastGiftLink={lastGiftLink} copyText={copyText}
           referralFeesLoading={referralFeesLoading} referralFeesLoaded={referralFeesLoaded}
           referralFeesBalance={referralFeesBalance} referralFeesWallet={referralFeesWallet} referralFeesBasescanUrl={referralFeesBasescanUrl}
+          referralFeesClaimedTotal={referralFeesClaimedTotal} referralFeesClaims={referralFeesClaims}
+          connectedEvmAddress={connectedEvmAddress} connectEvmWallet={connectEvmWallet}
+          claimingReferralFees={claimingReferralFees} claimReferralFeesOnChain={claimReferralFeesOnChain}
           giftsLoaded={giftsLoaded} giftsData={giftsData}
           statusFilter={lotteryStatusFilter} setStatusFilter={setLotteryStatusFilter} fetchLottery={fetchLottery}
-          total={lotteryTotal} activeTicketsTotal={lotteryActiveTicketsTotal} revenueToday={lotteryRevenueToday}
+          total={lotteryTotal} totalTickets={lotteryTotalTickets} activeTicketsTotal={lotteryActiveTicketsTotal} revenueToday={lotteryRevenueToday}
           loading={lotteryLoading} loaded={lotteryLoaded} data={lotteryData} page={lotteryPage}
           expandedId={lotteryExpandedId} setExpandedId={setLotteryExpandedId}
         />

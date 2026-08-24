@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   let query = supabase
     .from("offramp_requests")
     .select(
-      "id, created_at, updated_at, user_id, platform, platform_identifier, currency, amount_usdc, status, zkp2p_deposit_id, zkp2p_tx_hash, access_policy_tx_hash, eta_seconds, eta_label, near_intents_deposit_address, completed_at, cancelled_at",
+      "id, created_at, updated_at, user_id, platform, platform_identifier, currency, amount_usdc, status, zkp2p_deposit_id, zkp2p_tx_hash, access_policy_tx_hash, eta_seconds, eta_label, filled_amount_usdc, fill_state, near_intents_deposit_address, completed_at, cancelled_at",
       { count: "exact" }
     )
     .order("created_at", { ascending: false })
