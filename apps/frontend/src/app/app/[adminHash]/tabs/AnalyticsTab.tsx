@@ -207,6 +207,15 @@ export function AnalyticsTab({
                   <div className="text-sm text-gray-500 mt-0.5">unique buyers</div>
                 </div>
                 <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                  <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1 font-medium">Lottery Repeat Buyers</div>
+                  <div className="text-2xl font-bold text-white tabular-nums">{analyticsData.lottery_repeat_buyers.toLocaleString()}</div>
+                  <div className="text-sm text-gray-500 mt-0.5">
+                    {analyticsData.users_lottery > 0
+                      ? Math.round((analyticsData.lottery_repeat_buyers / analyticsData.users_lottery) * 100)
+                      : 0}% of buyers · {analyticsData.lottery_one_time_buyers.toLocaleString()} one-time
+                  </div>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                   <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-medium">Deposit Volume</div>
                   <div className="text-2xl font-bold text-white tabular-nums">
                     {analyticsData.volume_deposits.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}

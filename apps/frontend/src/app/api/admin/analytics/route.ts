@@ -84,12 +84,14 @@ export async function GET(request: NextRequest) {
       .not("twitter_username", "is", null)
       .neq("twitter_username", ""),
     // Lottery (Megapot) — mainnet-only feature, no devnet split. Only count tickets that
-    // actually completed a purchase (active/won/lost) — pending/bridging tickets haven't
-    // committed the spend yet, and failed tickets get refunded.
+    // actually completed a purchase (active/won/lost/withdrawn) — pending/bridging tickets
+    // haven't committed the spend yet, and failed tickets get refunded. "withdrawn" is a later
+    // terminal status reached from "won" once a payout is claimed/replayed, not a refund — it
+    // must stay included or every cashed-out winning ticket silently drops out of the totals.
     supabase
       .from("lottery_tickets")
       .select("cost_usdc, user_id, num_tickets")
-      .in("status", ["active", "won", "lost"])
+      .in("status", ["active", "won", "lost", "withdrawn"])
       .limit(100000),
     supabase
       .from("user_deposits")
@@ -240,6 +242,15 @@ export async function GET(request: NextRequest) {
   const users_lottery = new Set(
     (lotteryRes.data ?? []).map((t: any) => t.user_id).filter(Boolean)
   ).size;
+  // Repeat buyers: distinct users with more than one completed purchase row (a row is one
+  // purchase event, which can itself cover multiple tickets via num_tickets).
+  const lotteryPurchasesByUser = new Map<string, number>();
+  (lotteryRes.data ?? []).forEach((t: any) => {
+    if (!t.user_id) return;
+    lotteryPurchasesByUser.set(t.user_id, (lotteryPurchasesByUser.get(t.user_id) ?? 0) + 1);
+  });
+  const lottery_repeat_buyers = Array.from(lotteryPurchasesByUser.values()).filter((c) => c > 1).length;
+  const lottery_one_time_buyers = lotteryPurchasesByUser.size - lottery_repeat_buyers;
   const volume_deposits = sum(depositsRes.data, "amount_usdc");
   const volume_withdrawals_devnet = sumCompletedWithdrawals(withdrawalsDevnetRes.data);
   const volume_withdrawals_mainnet = sumCompletedWithdrawals(withdrawalsMainnetRes.data);
@@ -270,6 +281,8 @@ export async function GET(request: NextRequest) {
     volume_lottery,
     tx_lottery_count,
     users_lottery,
+    lottery_repeat_buyers,
+    lottery_one_time_buyers,
     volume_deposits,
     tx_deposits_count: depositsRes.data?.length ?? 0,
     volume_withdrawals_devnet,

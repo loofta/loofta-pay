@@ -137,6 +137,8 @@ export type AnalyticsData = {
   volume_lottery: number;
   tx_lottery_count: number;
   users_lottery: number;
+  lottery_repeat_buyers: number;
+  lottery_one_time_buyers: number;
   volume_deposits: number;
   tx_deposits_count: number;
   volume_withdrawals_devnet: number;

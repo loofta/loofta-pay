@@ -254,7 +254,16 @@ export class UsersService {
       .maybeSingle();
     if (error) return null;
     if (user?.email) return (user.email as string).trim().toLowerCase();
+    return this.resolveLiveEmailAndBackfill(privyUserId);
+  }
 
+  /**
+   * Shared fallback for a DB-null email column: looks it up live from Privy and, if found,
+   * fires off a best-effort backfill of app_users.email so subsequent DB reads (this one
+   * included) don't have to hit Privy again. Used by getEmailByPrivyId and resolveGiftRecipient's
+   * handle branch — both hit the same stale-null-email problem described on getEmailByPrivyId.
+   */
+  private async resolveLiveEmailAndBackfill(privyUserId: string): Promise<string | null> {
     const privyUser = await this.getPrivyUser(privyUserId).catch(() => null);
     const emailAccount = privyUser?.linked_accounts?.find((a: any) => (a.type ?? '').toLowerCase() === 'email');
     const liveEmail = (emailAccount?.address as string | undefined)?.trim().toLowerCase();
@@ -264,7 +273,7 @@ export class UsersService {
       .update({ email: liveEmail })
       .eq('privy_user_id', privyUserId)
       .then(({ error: updateError }: { error: any }) => {
-        if (updateError) this.logger.warn(`getEmailByPrivyId: failed to backfill email for ${privyUserId}: ${updateError.message}`);
+        if (updateError) this.logger.warn(`resolveLiveEmailAndBackfill: failed to backfill email for ${privyUserId}: ${updateError.message}`);
       });
     return liveEmail;
   }
@@ -328,7 +337,11 @@ export class UsersService {
         .or(`username.ilike.${clean},twitter_username.ilike.${clean}`)
         .maybeSingle();
       if (!user?.privy_user_id) return null;
-      return { privyUserId: user.privy_user_id, email: user.email ?? null };
+      // Gifting by handle commonly targets X-first users whose app_users.email is still null
+      // even though they've since linked one (see getEmailByPrivyId) — fall back live so the
+      // gift/free-spin notification actually reaches them instead of silently not sending.
+      const email = user.email ?? (await this.resolveLiveEmailAndBackfill(user.privy_user_id));
+      return { privyUserId: user.privy_user_id, email };
     } catch (e: any) {
       this.logger.warn(`resolveGiftRecipient(${recipientType}) failed: ${e?.message ?? e}`);
       return null;
