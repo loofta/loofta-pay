@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
-import { getVerifiedUserId, getVerifiedLiveHandle } from "@/lib/serverAuth";
+import { getVerifiedUserId, getVerifiedLiveTwitterProfile } from "@/lib/serverAuth";
 import { redisDel } from "@/lib/redis-cache";
 
 function userPrefsKey(uid: string) { return `user:prefs:${uid}`; }
@@ -24,19 +24,22 @@ export async function POST(request: NextRequest) {
     const { twitterUsername } = await request.json() as { twitterUsername: string | null };
 
     let handle: string | null = null;
+    let avatarUrl: string | null = null;
     if (twitterUsername !== null) {
-      handle = await getVerifiedLiveHandle(privyUserId, "twitter");
-      if (!handle) {
+      const profile = await getVerifiedLiveTwitterProfile(privyUserId);
+      if (!profile) {
         return NextResponse.json({ error: "No verified Twitter/X account linked to this Loofta account." }, { status: 400 });
       }
+      handle = profile.handle;
+      avatarUrl = profile.avatarUrl;
     }
 
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("app_users")
-      .update({ twitter_username: handle })
+      .update({ twitter_username: handle, avatar_url: avatarUrl })
       .eq("privy_user_id", privyUserId)
-      .select("id, username, twitter_username")
+      .select("id, username, twitter_username, avatar_url")
       .single();
 
     if (error) {
@@ -51,6 +54,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       twitterUsername: data.twitter_username,
+      avatarUrl: data.avatar_url,
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : "Internal server error";

@@ -23,6 +23,7 @@ interface PublicGiveawayListItem {
   winner_count: number;
   selection_mode: "random" | "first_come" | "manual";
   prize_amount_usd: string;
+  reward_type?: "usdc" | "megapot_ticket";
   entries_close_at: string;
   status: string;
   is_official: boolean;
@@ -30,6 +31,20 @@ interface PublicGiveawayListItem {
   entries_count?: number;
   entries_last_hour?: number;
   entry_avatars?: string[];
+}
+
+/** Big headline figure for a list card's prize pool — dollars for a usdc giveaway, ticket count
+ *  for a megapot_ticket one (tickets are $1 each, so total pool === total ticket count). */
+function poolLabel(g: Pick<PublicGiveawayListItem, "reward_type">, total: number): string {
+  const formatted = total.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return g.reward_type === "megapot_ticket" ? `${formatted} ticket${total === 1 ? "" : "s"}` : `$${formatted}`;
+}
+
+/** "$5 × 3 winners" vs "5 tickets × 3 winners" sub-line. */
+function perWinnerLabel(g: Pick<PublicGiveawayListItem, "reward_type" | "prize_amount_usd">): string {
+  return g.reward_type === "megapot_ticket"
+    ? `${g.prize_amount_usd} ticket${Number(g.prize_amount_usd) === 1 ? "" : "s"}`
+    : `$${g.prize_amount_usd}`;
 }
 
 interface GiveawayStats {
@@ -292,7 +307,6 @@ export default function GiveawaysListPage() {
               </div>
               <div className="space-y-3">
                 {data.map((g) => {
-                  const per = g.prize_amount_usd;
                   // prize_amount_usd is PER WINNER (see giveaways table comment) — the headline
                   // number on the card is the total pool, i.e. per-winner × winner count.
                   const total = parseFloat(String(g.prize_amount_usd)) * g.winner_count;
@@ -321,10 +335,10 @@ export default function GiveawaysListPage() {
                               className="text-3xl font-medium bg-clip-text text-transparent"
                               style={{ backgroundImage: GRADIENT }}
                             >
-                              ${total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                              {poolLabel(g, total)}
                             </p>
                             <p className="text-base text-slate-500">
-                              ${per} × {g.winner_count} winner{g.winner_count === 1 ? "" : "s"}
+                              {perWinnerLabel(g)} × {g.winner_count} winner{g.winner_count === 1 ? "" : "s"}
                             </p>
                           </div>
                         </div>
@@ -377,9 +391,9 @@ export default function GiveawaysListPage() {
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-base font-semibold uppercase tracking-widest text-slate-600">Was</p>
-                        <p className="text-3xl font-medium text-slate-400">${total.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
+                        <p className="text-3xl font-medium text-slate-400">{poolLabel(g, total)}</p>
                         <p className="text-base text-slate-600">
-                          ${g.prize_amount_usd} × {g.winner_count} winner{g.winner_count === 1 ? "" : "s"}
+                          {perWinnerLabel(g)} × {g.winner_count} winner{g.winner_count === 1 ? "" : "s"}
                         </p>
                       </div>
                     </div>

@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
         const u = JSON.parse(cached) as {
           id: string; privyUserId: string; email: string | null;
           username: string | null; looUsername: string | null; twitterUsername: string | null;
+          avatarUrl: string | null;
           skipOnboarding: boolean;
           ataMigratedMainnet: boolean; ataMigratedDevnet: boolean; createdAt: string;
         };
@@ -42,7 +43,7 @@ export async function POST(request: NextRequest) {
 
     const { data: user, error } = await supabase
       .from("app_users")
-      .select("id, privy_user_id, email, username, loo_username, twitter_username, skip_onboarding, ata_migrated_mainnet, ata_migrated_devnet, created_at")
+      .select("id, privy_user_id, email, username, loo_username, twitter_username, avatar_url, skip_onboarding, ata_migrated_mainnet, ata_migrated_devnet, created_at")
       .eq("privy_user_id", privyUserId)
       .single();
 
@@ -62,6 +63,7 @@ export async function POST(request: NextRequest) {
         username: user.username ?? null,
         looUsername: user.loo_username ?? null,
         twitterUsername: user.twitter_username ?? null,
+        avatarUrl: user.avatar_url ?? null,
         skipOnboarding: user.skip_onboarding ?? false,
         ataMigratedMainnet: user.ata_migrated_mainnet ?? false,
         ataMigratedDevnet: user.ata_migrated_devnet ?? false,
@@ -76,9 +78,11 @@ export async function POST(request: NextRequest) {
 
     // User doesn't exist — detect Twitter handle via Privy so we can set all three columns upfront
     const privyUserObj = await getPrivyUser(privyUserId);
-    const twitterHandle = getTwitterHandleFromLinkedAccounts(
-      privyUserObj?.linkedAccounts as Array<{ type: string; username?: string | null; name?: string | null }> | undefined
-    );
+    const linkedAccounts = privyUserObj?.linkedAccounts as Array<{ type: string; username?: string | null; name?: string | null; profilePictureUrl?: string | null }> | undefined;
+    const twitterHandle = getTwitterHandleFromLinkedAccounts(linkedAccounts);
+    const twitterAvatarUrl = twitterHandle
+      ? (linkedAccounts ?? []).find((a) => a.type === "twitter_oauth" || a.type === "twitter" || a.type === "x")?.profilePictureUrl?.trim() || null
+      : null;
 
     const insertPayload: Record<string, string | boolean | null> = {
       privy_user_id: privyUserId,
@@ -103,6 +107,7 @@ export async function POST(request: NextRequest) {
       initialTwitterUsername = twitterHandle;
       insertPayload.username = twitterHandle;
       insertPayload.twitter_username = initialTwitterUsername;
+      insertPayload.avatar_url = twitterAvatarUrl;
     } else {
       // Email-only: active username starts as the loo- username
       insertPayload.username = initialLooUsername;
@@ -112,7 +117,7 @@ export async function POST(request: NextRequest) {
     const { data: newUser, error: createError } = await supabase
       .from("app_users")
       .insert(insertPayload)
-      .select("id, privy_user_id, email, username, loo_username, twitter_username, created_at")
+      .select("id, privy_user_id, email, username, loo_username, twitter_username, avatar_url, created_at")
       .single();
 
     if (createError) {
@@ -132,6 +137,7 @@ export async function POST(request: NextRequest) {
         username: newUser.username ?? null,
         looUsername: newUser.loo_username ?? null,
         twitterUsername: newUser.twitter_username ?? null,
+        avatarUrl: newUser.avatar_url ?? null,
         skipOnboarding: false,
         ataMigratedMainnet: true,
         ataMigratedDevnet: true,

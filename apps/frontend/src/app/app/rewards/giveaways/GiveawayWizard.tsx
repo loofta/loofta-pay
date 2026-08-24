@@ -28,9 +28,9 @@ const TOTAL_STEPS = 5;
 // divide it evenly, so prize-per-winner is always a whole dollar amount — no need to round or
 // display cents. Changing the pool re-snaps the current winner count to the nearest still-valid
 // divisor if it no longer divides evenly.
-const MIN_TOTAL_POOL = 50;
+const MIN_TOTAL_POOL = 20;
 // Lower floor for an admin testing the full mechanism end to end ("create as Loofta") — real
-// creators still see the normal $50 floor above.
+// creators still see the normal $20 floor above.
 const ADMIN_MIN_TOTAL_POOL = 10;
 const MAX_TOTAL_POOL = 10_000;
 // Frontend-only UI ceiling for the winners slider/divisor search — the backend has no upper
@@ -426,6 +426,7 @@ interface GiveawayDraft {
   totalPool: number;
   winnerCount: number;
   selectionMode: "random" | "first_come" | "manual";
+  rewardType: "usdc" | "megapot_ticket";
   entriesCloseAt: string;
   minFollowers: string;
   minAccountAgeDays: string;
@@ -443,6 +444,7 @@ function defaultDraft(): GiveawayDraft {
     totalPool: 500,
     winnerCount: 10,
     selectionMode: "random",
+    rewardType: "usdc",
     entriesCloseAt: "",
     minFollowers: "",
     minAccountAgeDays: "",
@@ -460,6 +462,7 @@ interface RemoteGiveaway {
   winner_count: number;
   selection_mode: "random" | "first_come" | "manual";
   prize_amount_usd: string;
+  reward_type?: "usdc" | "megapot_ticket";
   entries_close_at: string;
   eligibility: { min_followers?: number; min_account_age_days?: number; verified_only?: boolean };
   status: string;
@@ -477,6 +480,7 @@ function draftFromRemote(g: RemoteGiveaway): GiveawayDraft {
     totalPool: Math.max(MIN_TOTAL_POOL, Math.round(prizeAmount * g.winner_count)),
     winnerCount: g.winner_count,
     selectionMode: g.selection_mode,
+    rewardType: g.reward_type ?? "usdc",
     entriesCloseAt: g.entries_close_at ? toLocalInputValue(new Date(g.entries_close_at)) : "",
     minFollowers: g.eligibility?.min_followers != null ? String(g.eligibility.min_followers) : "",
     minAccountAgeDays: g.eligibility?.min_account_age_days != null ? String(g.eligibility.min_account_age_days) : "",
@@ -563,7 +567,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     gcTime: Infinity,
     retry: false,
   });
-  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks } = draft;
+  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks } = draft;
   const prizeAmount = winnerCount > 0 ? totalPool / winnerCount : 0;
   const validWinnerCounts = useMemo(() => divisorsUpTo(totalPool, MAX_WINNERS), [totalPool]);
 
@@ -620,6 +624,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     }
   }, [getAccessToken, updateDraft, toast]);
   const setSelectionMode = useCallback((v: GiveawayDraft["selectionMode"]) => updateDraft({ selectionMode: v }), [updateDraft]);
+  const setRewardType = useCallback((v: GiveawayDraft["rewardType"]) => updateDraft({ rewardType: v }), [updateDraft]);
   const setEntriesCloseAt = useCallback((v: string) => updateDraft({ entriesCloseAt: v }), [updateDraft]);
   const setMinFollowers = useCallback((v: string) => updateDraft({ minFollowers: v }), [updateDraft]);
   const setMinAccountAgeDays = useCallback((v: string) => updateDraft({ minAccountAgeDays: v }), [updateDraft]);
@@ -687,7 +692,10 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   }, [updateDraft]);
 
   const step1Valid = title.trim().length > 0;
-  const step2Valid = prizeAmount > 0 && winnerCount > 0 && totalPool >= effectiveMinPool;
+  // Megapot tickets are $1 each and lottery_gifts caps a single gift at 100 tickets — prizeAmount
+  // is already always a whole number here (winnerCount is snapped to a divisor of totalPool).
+  const step2Valid = prizeAmount > 0 && winnerCount > 0 && totalPool >= effectiveMinPool
+    && (rewardType !== "megapot_ticket" || prizeAmount <= 100);
   const step3Valid = tasks.every(rowIsValid);
   const step4Valid = Boolean(entriesCloseAt);
 
@@ -782,6 +790,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
           winner_count: winnerCount,
           selection_mode: selectionMode,
           prize_amount_usd: prizeAmount,
+          reward_type: rewardType,
           entries_close_at: new Date(entriesCloseAt).toISOString(),
           eligibility: {
             ...(minFollowers ? { min_followers: Number(minFollowers) } : {}),
@@ -814,7 +823,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     } finally {
       setSubmitting(false);
     }
-  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
+  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
 
   const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
@@ -982,6 +991,29 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                       {step === 2 && (
                         <>
                           <div>
+                            <Label className={labelClass}>Prize type</Label>
+                            <div className="flex gap-2">
+                              {(["usdc", "megapot_ticket"] as const).map((rt) => (
+                                <button
+                                  key={rt}
+                                  type="button"
+                                  onClick={() => setRewardType(rt)}
+                                  className={`flex-1 rounded-xl px-3 py-3 text-base font-medium border transition-all ${
+                                    rewardType === rt ? "border-[#FF7A2A] text-white" : "border-white/15 text-slate-300 hover:bg-white/[0.06]"
+                                  }`}
+                                >
+                                  {rt === "usdc" ? "USDC" : "Megapot tickets"}
+                                </button>
+                              ))}
+                            </div>
+                            <p className="text-sm text-slate-500 mt-1.5">
+                              {rewardType === "usdc"
+                                ? "Winners get a normal USDC claim link."
+                                : "Winners get that many dollars' worth of Megapot tickets, gifted automatically at payout — capped at $100 (100 tickets) per winner."}
+                            </p>
+                          </div>
+
+                          <div>
                             <Label className={labelClass}>Total prize pool</Label>
                             <RangeSlider min={effectiveMinPool} max={MAX_TOTAL_POOL} step={10} value={totalPool} onChange={setTotalPool} onCommit={commitTotalPool} />
                             <div className="relative mt-2">
@@ -1024,8 +1056,15 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
 
                           <div className="rounded-xl border border-white/15 bg-white/[0.04] p-3 flex items-center justify-between">
                             <span className={helperClass}>Prize per winner</span>
-                            <span className="text-xl font-medium text-white">${prizeAmount}</span>
+                            <span className="text-xl font-medium text-white">
+                              ${prizeAmount}{rewardType === "megapot_ticket" ? ` = ${prizeAmount} ticket${prizeAmount === 1 ? "" : "s"}` : ""}
+                            </span>
                           </div>
+                          {rewardType === "megapot_ticket" && prizeAmount > 100 && (
+                            <p className="text-sm text-red-400 -mt-3">
+                              Ticket prizes are capped at $100 per winner — lower the pool or add more winners.
+                            </p>
+                          )}
 
                           <div>
                             <Label className={labelClass}>Winner selection</Label>
@@ -1222,7 +1261,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                           <div className="rounded-xl border border-white/15 bg-white/[0.04] p-5 space-y-1.5">
                             <p className="text-2xl font-medium text-white truncate">{title}</p>
                             <p className="text-base text-slate-300">
-                              ${totalPool} total · ${prizeAmount} × {winnerCount} winner{winnerCount === 1 ? "" : "s"} · {SELECTION_MODE_LABELS[selectionMode]}
+                              ${totalPool} total · {rewardType === "megapot_ticket" ? `${prizeAmount} ticket${prizeAmount === 1 ? "" : "s"}` : `$${prizeAmount}`} × {winnerCount} winner{winnerCount === 1 ? "" : "s"} · {SELECTION_MODE_LABELS[selectionMode]}
                             </p>
                             <p className="text-base text-slate-500">
                               Closes {entriesCloseAt ? new Date(entriesCloseAt).toLocaleDateString() : "—"} · {tasks.length} task{tasks.length === 1 ? "" : "s"}
@@ -1292,6 +1331,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                   totalPool={totalPool}
                   winnerCount={winnerCount}
                   selectionMode={selectionMode}
+                  rewardType={rewardType}
                   entriesCloseAt={entriesCloseAt}
                   minFollowers={minFollowers}
                   verifiedOnly={verifiedOnly}

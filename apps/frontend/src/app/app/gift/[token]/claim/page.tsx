@@ -370,7 +370,7 @@ export default function LotteryGiftClaimPage() {
   const recipientLabel = data.recipientIdentifier
     ? (data.recipientType === 'handle' ? `@${data.recipientIdentifier}` : data.recipientIdentifier)
     : 'them';
-  const senderLabel = data.senderUsername ? `@${data.senderUsername}` : 'Someone';
+  const senderLabel = data.senderHandle ? `@${data.senderHandle}` : data.senderUsername ? `@${data.senderUsername}` : 'Someone';
   const sentAgo = data.createdAt ? formatDistanceToNowStrict(new Date(data.createdAt), { addSuffix: true }) : 'just now';
   const claimedAgo = data.claimedAt ? formatDistanceToNowStrict(new Date(data.claimedAt), { addSuffix: true }) : 'just now';
   const prizePoolLabel = formatPrizePool(nextDraw?.prizePool ?? null);
@@ -414,7 +414,7 @@ export default function LotteryGiftClaimPage() {
                   </p>
                   <CardShell>
                     <div className="flex items-center gap-3 px-5 pb-4 pt-5">
-                      <Avatar label={senderLabel} />
+                      <Avatar label={senderLabel} avatarUrl={data.senderAvatarUrl} />
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-display text-base font-medium text-white">{senderLabel}</div>
                         <div className="text-base text-slate-500">Sent {sentAgo}</div>
@@ -456,7 +456,7 @@ export default function LotteryGiftClaimPage() {
                   </p>
                   <CardShell>
                     <div className="flex items-center gap-3 px-5 pb-4 pt-5">
-                      <Avatar label={senderLabel} />
+                      <Avatar label={senderLabel} avatarUrl={data.senderAvatarUrl} />
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-display text-base font-medium text-white">{senderLabel}</div>
                         <div className="text-base text-slate-500">Gift claimed · {claimedAgo}</div>
@@ -500,7 +500,7 @@ export default function LotteryGiftClaimPage() {
                   </p>
                   <CardShell>
                     <div className="flex items-center gap-3 px-5 pb-4 pt-5">
-                      <Avatar label={senderLabel} />
+                      <Avatar label={senderLabel} avatarUrl={data.senderAvatarUrl} />
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-display text-base font-medium text-white">{senderLabel}</div>
                         <div className="text-base text-slate-500">Gift claimed · {claimedAgo}</div>
@@ -648,7 +648,7 @@ export default function LotteryGiftClaimPage() {
                   </p>
                   <CardShell>
                     <div className="flex items-center gap-3 px-5 pb-4 pt-5">
-                      <Avatar label={recipientLabel} />
+                      <Avatar label={recipientLabel} avatarUrl={data.recipientAvatarUrl} />
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-display text-base font-medium text-white">{recipientLabel}</div>
                         <div className="text-base text-slate-500">Claimed {claimedAgo}</div>

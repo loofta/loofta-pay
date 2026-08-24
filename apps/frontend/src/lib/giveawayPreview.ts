@@ -4,6 +4,7 @@ export interface GiveawayPreview {
   id: string;
   title: string;
   prize_amount_usd: number;
+  reward_type: "usdc" | "megapot_ticket";
   winner_count: number;
   entries_close_at: string;
   status: string;
@@ -19,7 +20,7 @@ export interface GiveawayPreview {
  */
 export async function getGiveawayPreview(id: string): Promise<GiveawayPreview | null> {
   const supabase = getSupabaseAdmin();
-  const cols = "id, title, prize_amount_usd, winner_count, entries_close_at, status, is_devnet";
+  const cols = "id, title, prize_amount_usd, reward_type, winner_count, entries_close_at, status, is_devnet";
   // Accepts either the UUID or the 8-char short_id — same dual-lookup convention as the backend's
   // GiveawaysPublicController.fetchGiveawayByIdOrShortId, so a shared short link's OG image/meta
   // tags resolve exactly like the full-uuid one.
@@ -31,6 +32,7 @@ export async function getGiveawayPreview(id: string): Promise<GiveawayPreview | 
     id: data.id,
     title: data.title,
     prize_amount_usd: parseFloat(String(data.prize_amount_usd || "0")),
+    reward_type: (data.reward_type as "usdc" | "megapot_ticket") ?? "usdc",
     winner_count: data.winner_count,
     entries_close_at: data.entries_close_at,
     status: String(data.status || "").toUpperCase(),

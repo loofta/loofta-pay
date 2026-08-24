@@ -3,6 +3,7 @@
 // Small presentational pieces for the gift claim page's recipient/sender cards — page-scoped
 // (not a globally shared module) since GiftShareClient.tsx intentionally stays visually simpler.
 import { Check } from 'lucide-react';
+import { UserAvatar } from '@/components/UserAvatar';
 
 /** Outer ticket-card chrome (gradient top edge + rounded border) shared by every state — only
  *  the inner content differs per branch on the page. */
@@ -15,13 +16,8 @@ export function CardShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function Avatar({ label }: { label: string }) {
-  const initial = label.replace(/^@/, '').charAt(0).toUpperCase() || '?';
-  return (
-    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#FF1301] to-[#EAB308] font-display text-base font-semibold text-white">
-      {initial}
-    </div>
-  );
+export function Avatar({ label, avatarUrl }: { label: string; avatarUrl?: string | null }) {
+  return <UserAvatar label={label} avatarUrl={avatarUrl} className="h-9 w-9 text-base" />;
 }
 
 export function Chip({ tone = 'plain', children }: { tone?: 'plain' | 'ok' | 'wait'; children: React.ReactNode }) {

@@ -243,7 +243,7 @@ function groupTasksForDisplay(tasks: PublicTask[]): TaskDisplayGroup[] {
 
 interface PublicGiveaway {
   id: string; title: string; description: string | null; logo_url: string | null; project_name: string | null; short_id: string | null;
-  winner_count: number; selection_mode: string; prize_amount_usd: string; entries_close_at: string;
+  winner_count: number; selection_mode: string; prize_amount_usd: string; reward_type?: "usdc" | "megapot_ticket"; entries_close_at: string;
   eligibility: { min_followers?: number; min_account_age_days?: number; verified_only?: boolean };
   status: string; burner_address: string | null; mint: string | null; is_devnet: boolean;
   funding_required_usd: string | null; funding_confirmed_usd: string; entry_count: number;
@@ -258,7 +258,16 @@ interface TaskCompletion {
 
 interface MyEntry {
   id: string; status: string; payout_status: string | null; claim_payment_id: string | null;
+  claim_gift_id: string | null; claim_gift_short_id: string | null;
   completions: TaskCompletion[];
+}
+
+/** A winner's prize claim link — /c/[id] for a usdc giveaway, /gift/[shortId] (already claimed,
+ *  real Megapot ticket numbers) for a megapot_ticket one. Null until the payout lands. */
+function myEntryClaimPath(entry: MyEntry): string | null {
+  if (entry.claim_gift_id && entry.claim_gift_short_id) return `/gift/${entry.claim_gift_short_id}`;
+  if (entry.claim_payment_id) return `/c/${entry.claim_payment_id}`;
+  return null;
 }
 
 async function authHeaders(getAccessToken: () => Promise<string | null>): Promise<Record<string, string>> {
@@ -829,7 +838,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               <ShareLinkMenu
                 url={giveawayUrl}
                 title={giveaway.title}
-                text={`$${giveaway.prize_amount_usd} × ${giveaway.winner_count} winner${giveaway.winner_count === 1 ? "" : "s"} — enter "${giveaway.title}" on Loofta 🎁`}
+                text={`${giveaway.reward_type === "megapot_ticket" ? `${giveaway.prize_amount_usd} Megapot ticket${Number(giveaway.prize_amount_usd) === 1 ? "" : "s"}` : `$${giveaway.prize_amount_usd}`} × ${giveaway.winner_count} winner${giveaway.winner_count === 1 ? "" : "s"} — enter "${giveaway.title}" on Loofta 🎁`}
                 ogUrl={`${siteUrl}/api/giveaways/${shareId}/og`}
                 triggerLabel="Share"
                 triggerClassName="h-11 w-full"
@@ -861,12 +870,18 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               <Image src="/images/icons/shield-icon.png" alt="" width={26} height={26} className="shrink-0 opacity-90" />
             </div>
             <p className="flex items-baseline gap-2.5 mb-3">
-              <span className="text-5xl font-bold tracking-tight text-white">${totalPoolLabel}</span>
-              <span className="text-base text-slate-400">USDC</span>
+              <span className="text-5xl font-bold tracking-tight text-white">
+                {giveaway.reward_type === "megapot_ticket" ? totalPoolLabel : `$${totalPoolLabel}`}
+              </span>
+              <span className="text-base text-slate-400">
+                {giveaway.reward_type === "megapot_ticket" ? `ticket${totalPoolLabel === "1" ? "" : "s"}` : "USDC"}
+              </span>
             </p>
             <div className="flex flex-wrap gap-2 mb-3">
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
-                ${giveaway.prize_amount_usd} each
+                {giveaway.reward_type === "megapot_ticket"
+                  ? `${giveaway.prize_amount_usd} ticket${Number(giveaway.prize_amount_usd) === 1 ? "" : "s"} each`
+                  : `$${giveaway.prize_amount_usd} each`}
               </span>
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
                 {giveaway.winner_count} winner{giveaway.winner_count === 1 ? "" : "s"}
@@ -1360,12 +1375,16 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 </div>
               )}
             </>
-          ) : myEntry?.status === "winner" && myEntry.claim_payment_id ? (
+          ) : myEntry?.status === "winner" && myEntryClaimPath(myEntry) ? (
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
               <p className="font-semibold text-lg mb-1 text-emerald-400">You won!</p>
-              <p className="text-base text-slate-300 mb-3">Claim your prize below — you can choose to claim it publicly or privately. You have 30 days to claim it.</p>
-              <GradientActionButton onClick={() => router.push(`/c/${myEntry.claim_payment_id}`)}>
-                Claim your prize
+              <p className="text-base text-slate-300 mb-3">
+                {myEntry.claim_gift_id
+                  ? "Your Megapot tickets are already in — check them out below."
+                  : "Claim your prize below — you can choose to claim it publicly or privately. You have 30 days to claim it."}
+              </p>
+              <GradientActionButton onClick={() => router.push(myEntryClaimPath(myEntry)!)}>
+                {myEntry.claim_gift_id ? "View your tickets" : "Claim your prize"}
               </GradientActionButton>
             </div>
           ) : myEntry?.status === "winner" ? (

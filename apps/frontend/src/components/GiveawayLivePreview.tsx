@@ -67,6 +67,7 @@ export interface GiveawayLivePreviewProps {
   totalPool: number;
   winnerCount: number;
   selectionMode: "random" | "first_come" | "manual";
+  rewardType?: "usdc" | "megapot_ticket";
   entriesCloseAt: string;
   minFollowers: string;
   verifiedOnly: boolean;
@@ -83,6 +84,7 @@ export function GiveawayLivePreview({
   totalPool,
   winnerCount,
   selectionMode,
+  rewardType = "usdc",
   entriesCloseAt,
   minFollowers,
   verifiedOnly,
@@ -146,18 +148,35 @@ export function GiveawayLivePreview({
           </div>
           <p className="flex items-baseline gap-2 mb-2.5">
             <span className="text-4xl font-bold tracking-tight text-white">
-              <CountUp value={totalPool} prefix="$" />
+              <CountUp value={totalPool} prefix={rewardType === "megapot_ticket" ? "" : "$"} />
             </span>
-            <span className="text-sm text-slate-400">USDC</span>
+            <span className="text-sm text-slate-400">{rewardType === "megapot_ticket" ? `ticket${totalPool === 1 ? "" : "s"}` : "USDC"}</span>
           </p>
           <div className="flex flex-wrap gap-1.5 mb-2.5">
+            {/* Each chip's CountUp + suffix text must share one wrapping <span> — as two direct
+                children of this inline-flex chip they'd each become their own anonymous flex
+                item, and a flex item's leading whitespace gets trimmed, gluing the number to the
+                following word (e.g. "10tickets"). */}
             <span className={CHIP_CLS}>
-              <CountUp value={prizeAmount} prefix="$" />
-              {" each"}
+              <span>
+                {rewardType === "megapot_ticket" ? (
+                  <>
+                    <CountUp value={prizeAmount} />
+                    {` ticket${prizeAmount === 1 ? "" : "s"} each`}
+                  </>
+                ) : (
+                  <>
+                    <CountUp value={prizeAmount} prefix="$" />
+                    {" each"}
+                  </>
+                )}
+              </span>
             </span>
             <span className={CHIP_CLS}>
-              <CountUp value={winnerCount} />
-              {` winner${winnerCount === 1 ? "" : "s"}`}
+              <span>
+                <CountUp value={winnerCount} />
+                {` winner${winnerCount === 1 ? "" : "s"}`}
+              </span>
             </span>
             <span className={CHIP_CLS}>
               {selectionMode === "random" ? "Random draw" : selectionMode === "first_come" ? "First come, first serve" : "Picked by creator"}

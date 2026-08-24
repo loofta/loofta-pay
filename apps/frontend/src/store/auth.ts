@@ -19,6 +19,7 @@ type AuthState = {
 	username?: string | null;
 	looUsername?: string | null;
 	twitterUsername?: string | null;
+	avatarUrl?: string | null;
 	mainnetAccess: boolean;
 	networkMode: "devnet" | "mainnet";
 	openShareModal: boolean;
@@ -33,10 +34,11 @@ type AuthState = {
 	ataMigratedMainnet: boolean | null; // null = not yet loaded from DB
 	ataMigratedDevnet: boolean | null;
 	setAtaMigrated: (network: "mainnet" | "devnet", value: boolean) => void;
-	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null; looUsername?: string | null; twitterUsername?: string | null }) => void;
+	setAuth: (v: { authenticated: boolean; userId?: string; email?: string; username?: string | null; looUsername?: string | null; twitterUsername?: string | null; avatarUrl?: string | null }) => void;
 	setUsername: (username: string | null) => void;
 	setLooUsername: (v: string | null) => void;
 	setTwitterUsername: (v: string | null) => void;
+	setAvatarUrl: (v: string | null) => void;
 	setMainnetAccess: (access: boolean) => void;
 	setNetworkMode: (mode: "devnet" | "mainnet") => void;
 	setOpenShareModal: (open: boolean) => void;
@@ -68,6 +70,7 @@ export const useAuthStore = create<AuthState>()(
 			username: undefined,
 			looUsername: undefined,
 			twitterUsername: undefined,
+			avatarUrl: undefined,
 			mainnetAccess: true,
 			networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
 			openShareModal: false,
@@ -94,6 +97,7 @@ export const useAuthStore = create<AuthState>()(
 							username: null,
 							looUsername: null,
 							twitterUsername: null,
+							avatarUrl: null,
 							mainnetAccess: true,
 							networkMode: CLUSTER_DEFAULT_NETWORK_MODE,
 							tier: 'noob',
@@ -112,11 +116,13 @@ export const useAuthStore = create<AuthState>()(
 						...(v.username !== undefined && { username: v.username }),
 						...(v.looUsername !== undefined && { looUsername: v.looUsername }),
 						...(v.twitterUsername !== undefined && { twitterUsername: v.twitterUsername }),
+						...(v.avatarUrl !== undefined && { avatarUrl: v.avatarUrl }),
 					};
 				}),
 			setUsername: (username) => set({ username }),
 			setLooUsername: (looUsername) => set({ looUsername }),
 			setTwitterUsername: (twitterUsername) => set({ twitterUsername }),
+			setAvatarUrl: (avatarUrl) => set({ avatarUrl }),
 			setMainnetAccess: (access) => set({ mainnetAccess: access }),
 			setNetworkMode: (mode) =>
 				set((state) => {

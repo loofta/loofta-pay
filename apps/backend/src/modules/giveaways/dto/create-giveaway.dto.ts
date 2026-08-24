@@ -17,7 +17,7 @@ import {
   ArrayMaxSize,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { GiveawaySelectionMode, GiveawayTaskType } from '../entities/giveaway.entity';
+import { GiveawayRewardType, GiveawaySelectionMode, GiveawayTaskType } from '../entities/giveaway.entity';
 
 const MAX_TASKS_PER_GIVEAWAY = 8;
 
@@ -123,6 +123,11 @@ export class CreateGiveawayDto {
   @IsNumber()
   @Min(0.01)
   prize_amount_usd: number;
+
+  @ApiPropertyOptional({ enum: GiveawayRewardType, description: 'How the prize is delivered — a normal USDC claim link (default), or that many dollars\' worth of gifted Megapot tickets (prize_amount_usd must then be a whole dollar amount, 1-100).' })
+  @IsOptional()
+  @IsEnum(GiveawayRewardType)
+  reward_type?: GiveawayRewardType;
 
   @ApiProperty({ description: 'ISO 8601 timestamp entries close at.' })
   @IsISO8601()

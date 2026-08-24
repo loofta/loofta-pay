@@ -80,6 +80,32 @@ export async function getVerifiedLiveHandle(
 }
 
 /**
+ * Same trust model as getVerifiedLiveHandle, but for X/Twitter specifically returns the profile
+ * picture too — Privy's Twitter linked-account object carries `profilePictureUrl` right next to
+ * `username`/`name` (confirmed in @privy-io/server-auth's own types), so no extra API call is
+ * needed. Used to persist a real avatar (save-twitter-username) instead of only the handle.
+ */
+export async function getVerifiedLiveTwitterProfile(
+  privyUserId: string,
+): Promise<{ handle: string; avatarUrl: string | null } | null> {
+  const user = await getPrivyUser(privyUserId);
+  if (!user) return null;
+  for (const account of (user.linkedAccounts || []) as Array<{ type?: string; username?: string | null; name?: string | null; address?: string | null; profilePictureUrl?: string | null }>) {
+    const type = (account.type || "").toLowerCase();
+    if (!["twitter", "x", "twitter_oauth"].includes(type)) continue;
+    const handle = (account.username || account.name || account.address || "")
+      .toString()
+      .replace(/^@/, "")
+      .replace(/#\d+$/, "")
+      .toLowerCase()
+      .trim();
+    if (!handle) continue;
+    return { handle, avatarUrl: account.profilePictureUrl?.trim() || null };
+  }
+  return null;
+}
+
+/**
  * The caller's own LIVE Telegram handle, verified against Privy's record for the Privy access
  * token supplied — never trust a client-supplied `handle` string for Telegram. Unlike
  * getVerifiedLiveHandle, this takes a raw access token rather than a privyUserId: the Telegram

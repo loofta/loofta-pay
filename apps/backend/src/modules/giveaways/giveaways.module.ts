@@ -4,6 +4,7 @@ import { SendPaymentModule } from '../send-payment/send-payment.module';
 import { EmailModule } from '../email/email.module';
 import { IntentsModule } from '../intents/intents.module';
 import { UsersModule } from '../users/users.module';
+import { LotteryModule } from '../lottery/lottery.module';
 import { GiveawaysController } from './giveaways.controller';
 import { GiveawaysAdminController } from './giveaways-admin.controller';
 import { GiveawaysPublicController } from './giveaways-public.controller';
@@ -20,7 +21,7 @@ import { GiveawayGiphyService } from './giveaway-giphy.service';
 import { GiveawayCronService } from './giveaway-cron.service';
 
 @Module({
-  imports: [ClaimsModule, SendPaymentModule, EmailModule, IntentsModule, UsersModule],
+  imports: [ClaimsModule, SendPaymentModule, EmailModule, IntentsModule, UsersModule, LotteryModule],
   // GiveawaysPublicController, GiveawaysAdminController, and GiveawaysReviewLinkController MUST
   // all be registered before GiveawaysController. GiveawaysController's `:id`-based routes
   // (`GET /giveaways/:id`, `GET /giveaways/:id/review-queue`, etc.) happily match "public",

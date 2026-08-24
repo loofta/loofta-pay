@@ -4,6 +4,11 @@ export enum GiveawaySelectionMode {
   MANUAL = 'manual',
 }
 
+export enum GiveawayRewardType {
+  USDC = 'usdc',
+  MEGAPOT_TICKET = 'megapot_ticket',
+}
+
 export enum GiveawayStatus {
   DRAFT = 'DRAFT',
   PENDING_APPROVAL = 'PENDING_APPROVAL',
@@ -86,6 +91,10 @@ export interface Giveaway {
   winner_count: number;
   selection_mode: GiveawaySelectionMode;
   prize_amount_usd: string;
+  /** 'usdc' (default): each winner gets a normal /c/[id] claim link. 'megapot_ticket': prize_amount_usd
+   *  (must be a whole dollar amount, TICKET_PRICE_USDC = 1) is gifted as that many Megapot tickets
+   *  instead — see GiveawayPayoutService.processGiveaway. */
+  reward_type: GiveawayRewardType;
   entries_close_at: string;
 
   eligibility: GiveawayEligibility;
@@ -152,8 +161,10 @@ export interface GiveawayEntry {
   payout_status: 'not_applicable' | 'pending' | 'in_progress' | 'succeeded' | 'failed' | null;
   payout_tx_hash: string | null;
   payout_amount_usd: string | null;
-  /** payments.id for this winner's claim link (/c/[id]) once their prize has been delivered as a claimable payment. */
+  /** payments.id for this winner's claim link (/c/[id]) once their prize has been delivered as a claimable payment. Null for megapot_ticket giveaways — see claim_gift_id. */
   claim_payment_id: string | null;
+  /** lottery_gifts.id once a megapot_ticket giveaway's prize has been gifted as tickets — already 'claimed', winner goes straight to /gift/[shortId]. Null for usdc giveaways. */
+  claim_gift_id: string | null;
 }
 
 export enum GiveawayTaskCompletionStatus {

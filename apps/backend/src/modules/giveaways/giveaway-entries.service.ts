@@ -178,7 +178,19 @@ export class GiveawayEntriesService {
     if (error) this.logger.warn(`[GiveawayEntries] failed to create task completion stubs for entry ${entryId}: ${error.message}`);
   }
 
-  async findMyEntry(giveawayId: string, userId: string): Promise<(GiveawayEntry & { completions: GiveawayTaskCompletion[] }) | null> {
+  /** claim_gift_id points at a lottery_gifts row (megapot_ticket reward) — its /gift/[shortId]
+   *  claim link needs that row's short_id, which isn't stored on the entry itself. */
+  private async resolveGiftShortIds(giftIds: string[]): Promise<Map<string, string>> {
+    if (!giftIds.length) return new Map();
+    const { data, error } = await this.supabaseService.getClient()
+      .from('lottery_gifts')
+      .select('id, short_id')
+      .in('id', giftIds);
+    if (error) throw new BadRequestException(error.message);
+    return new Map((data ?? []).map((g) => [g.id as string, g.short_id as string]));
+  }
+
+  async findMyEntry(giveawayId: string, userId: string): Promise<(GiveawayEntry & { completions: GiveawayTaskCompletion[]; claim_gift_short_id: string | null }) | null> {
     const { data: entry, error } = await this.supabaseService.giveawayEntries
       .select('*')
       .eq('giveaway_id', giveawayId)
@@ -190,7 +202,12 @@ export class GiveawayEntriesService {
       .select('*')
       .eq('giveaway_entry_id', entry.id);
     if (compError) throw new BadRequestException(compError.message);
-    return { ...(entry as GiveawayEntry), completions: (completions ?? []) as GiveawayTaskCompletion[] };
+    const giftShortIds = entry.claim_gift_id ? await this.resolveGiftShortIds([entry.claim_gift_id]) : new Map<string, string>();
+    return {
+      ...(entry as GiveawayEntry),
+      completions: (completions ?? []) as GiveawayTaskCompletion[],
+      claim_gift_short_id: entry.claim_gift_id ? (giftShortIds.get(entry.claim_gift_id) ?? null) : null,
+    };
   }
 
   /** Participant marking a task done. For auto_api tasks (x_follow/x_retweet/x_like/x_comment),
@@ -332,7 +349,7 @@ export class GiveawayEntriesService {
    *  creator-facing manage page needs this join, so it's kept separate from listEntries (used by
    *  the draw/eligibility internals on every cron tick, where the extra payments query would be
    *  pure overhead). */
-  async listEntriesWithClaimStatus(giveawayId: string): Promise<Array<GiveawayEntry & { payment_status: string | null; payment_paid_at: string | null }>> {
+  async listEntriesWithClaimStatus(giveawayId: string): Promise<Array<GiveawayEntry & { payment_status: string | null; payment_paid_at: string | null; claim_gift_short_id: string | null }>> {
     const entries = await this.listEntries(giveawayId);
 
     const paymentIds = entries.map((e) => e.claim_payment_id).filter((id): id is string => Boolean(id));
@@ -345,9 +362,29 @@ export class GiveawayEntriesService {
       paymentsById = new Map((payments ?? []).map((p) => [p.id as string, { status: p.status as string, paid_at: p.paid_at as string | null }]));
     }
 
+    const giftIds = entries.map((e) => e.claim_gift_id).filter((id): id is string => Boolean(id));
+    let giftsById = new Map<string, { short_id: string; status: string; claimed_at: string | null }>();
+    if (giftIds.length) {
+      const { data: gifts, error: giftsError } = await this.supabaseService.getClient()
+        .from('lottery_gifts')
+        .select('id, short_id, status, claimed_at')
+        .in('id', giftIds);
+      if (giftsError) throw new BadRequestException(giftsError.message);
+      giftsById = new Map((gifts ?? []).map((g) => [g.id as string, { short_id: g.short_id as string, status: g.status as string, claimed_at: g.claimed_at as string | null }]));
+    }
+
     return entries.map((e) => {
       const payment = e.claim_payment_id ? paymentsById.get(e.claim_payment_id) : undefined;
-      return { ...e, payment_status: payment?.status ?? null, payment_paid_at: payment?.paid_at ?? null };
+      const gift = e.claim_gift_id ? giftsById.get(e.claim_gift_id) : undefined;
+      // Ticket-gift wins are delivered pre-claimed (see GiveawayPayoutService), so their
+      // "payment_status" analog is always SUCCESS/paid the instant claim_gift_id is set — reuses
+      // the same vocabulary claimStatus()'s frontend consumers already branch on for payments.
+      return {
+        ...e,
+        payment_status: gift ? (gift.status === 'claimed' ? 'SUCCESS' : gift.status) : (payment?.status ?? null),
+        payment_paid_at: gift ? gift.claimed_at : (payment?.paid_at ?? null),
+        claim_gift_short_id: gift?.short_id ?? null,
+      };
     });
   }
 

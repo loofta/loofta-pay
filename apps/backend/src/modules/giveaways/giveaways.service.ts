@@ -17,6 +17,7 @@ import {
   Giveaway,
   GiveawayTask,
   GiveawayStatus,
+  GiveawayRewardType,
   GiveawayTaskCompletionStatus,
   GIVEAWAY_TASK_VERIFICATION_MODE,
 } from './entities/giveaway.entity';
@@ -218,6 +219,16 @@ export class GiveawaysService {
       throw new BadRequestException('entries_close_at must be a valid future date');
     }
 
+    const rewardType = dto.reward_type ?? GiveawayRewardType.USDC;
+    // Megapot tickets are $1 each (TICKET_PRICE_USDC) — prize_amount_usd becomes numTickets
+    // directly at payout time (giveaway-payout.service.ts), and lottery_gifts.num_tickets itself
+    // is capped 1-100, so enforce both constraints up front rather than failing deep in payout.
+    if (rewardType === GiveawayRewardType.MEGAPOT_TICKET) {
+      if (!Number.isInteger(dto.prize_amount_usd) || dto.prize_amount_usd < 1 || dto.prize_amount_usd > 100) {
+        throw new BadRequestException('Ticket prizes must be a whole dollar amount between $1 and $100 per winner.');
+      }
+    }
+
     // "Create as Loofta" — never trust dto.is_official alone; re-check the caller is actually an
     // admin here, server-side, same as every other admin-gated action in this module. An official
     // giveaway auto-approves (mints its burner and skips PENDING_APPROVAL) so the sole admin can
@@ -334,6 +345,13 @@ export class GiveawaysService {
       throw new BadRequestException(`Cannot edit — giveaway is ${giveaway.status}, already funded or beyond`);
     }
 
+    const rewardType = dto.reward_type ?? GiveawayRewardType.USDC;
+    if (rewardType === GiveawayRewardType.MEGAPOT_TICKET) {
+      if (!Number.isInteger(dto.prize_amount_usd) || dto.prize_amount_usd < 1 || dto.prize_amount_usd > 100) {
+        throw new BadRequestException('Ticket prizes must be a whole dollar amount between $1 and $100 per winner.');
+      }
+    }
+
     if (giveaway.status === GiveawayStatus.PENDING_FUNDING) {
       // Re-check on-chain rather than trusting the DB's (possibly stale) confirmed amount — same
       // pattern as cancelOrDelete's PENDING_FUNDING branch.
@@ -341,7 +359,8 @@ export class GiveawaysService {
       const moneyShapeChanged =
         Number(giveaway.prize_amount_usd) !== dto.prize_amount_usd ||
         giveaway.winner_count !== dto.winner_count ||
-        giveaway.selection_mode !== dto.selection_mode;
+        giveaway.selection_mode !== dto.selection_mode ||
+        giveaway.reward_type !== rewardType;
       if (fundingConfirmedUsd > 0 && moneyShapeChanged) {
         throw new BadRequestException(
           'Funds have already started arriving for this giveaway, so the prize amount, winner count, and ' +
@@ -368,6 +387,7 @@ export class GiveawaysService {
         winner_count: dto.winner_count,
         selection_mode: dto.selection_mode,
         prize_amount_usd: dto.prize_amount_usd,
+        reward_type: rewardType,
         entries_close_at: closeAt.toISOString(),
         eligibility: dto.eligibility ?? {},
         funding_required_usd,

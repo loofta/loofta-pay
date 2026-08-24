@@ -10,6 +10,7 @@ import { useTranslations } from "next-intl";
 import { TIERS, getTierForVolume } from "@/lib/tiers";
 import { getClientGeo } from "@/lib/geo";
 import { pajLinkStatus, pajListBankAccounts, type PajSavedBankAccount } from "@/services/pajCash";
+import { UserAvatar } from "@/components/UserAvatar";
 
 const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
 
@@ -61,6 +62,7 @@ export default function ProfilePage() {
   const router = useRouter();
   const { authenticated, logout, getAccessToken } = useAuth();
   const username = useAuthStore((s) => s.username ?? null);
+  const avatarUrl = useAuthStore((s) => s.avatarUrl ?? null);
   const email = useAuthStore((s) => s.email);
   const tier = useAuthStore((s) => s.tier);
   const totalVolumeUsd = useAuthStore((s) => s.totalVolumeUsd);
@@ -122,6 +124,12 @@ export default function ProfilePage() {
 
         {/* User info box */}
         <div className="rounded-xl bg-white/5 border border-white/10 p-4 mb-4">
+          {username && (
+            <div className="flex items-center gap-3 mb-4">
+              <UserAvatar label={username} avatarUrl={avatarUrl} className="h-12 w-12 text-lg" />
+              <p className="text-lg font-semibold text-white truncate">@{username}</p>
+            </div>
+          )}
           {username && (
             <div className="mb-3 last:mb-0">
               <p className="text-base font-medium text-slate-400 mb-1">{t('username')}</p>

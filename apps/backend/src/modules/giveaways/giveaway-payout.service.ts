@@ -8,8 +8,9 @@ import { EmailService } from '../email/email.service';
 import { GiveawayBurnerSweepService } from './giveaway-burner-sweep.service';
 import { GiveawayGiphyService } from './giveaway-giphy.service';
 import { GiveawaysService } from './giveaways.service';
-import { Giveaway, GiveawayStatus, GiveawayEntry } from './entities/giveaway.entity';
-import { randomBytes } from 'crypto';
+import { Giveaway, GiveawayStatus, GiveawayEntry, GiveawayRewardType } from './entities/giveaway.entity';
+import { LotteryService } from '../lottery/lottery.service';
+import { randomBytes, randomUUID } from 'crypto';
 
 // Same generator as ClaimsService/SendPaymentService — duplicated rather than shared per this
 // codebase's existing convention (see claims.service.ts, send-payment.service.ts).
@@ -42,6 +43,7 @@ export class GiveawayPayoutService {
     private readonly burnerSweep: GiveawayBurnerSweepService,
     private readonly giphy: GiveawayGiphyService,
     private readonly emailService: EmailService,
+    private readonly lotteryService: LotteryService,
   ) {
     this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
   }
@@ -84,7 +86,7 @@ export class GiveawayPayoutService {
     }
 
     const ready = (winners ?? []).filter(
-      (w) => w.payout_status !== 'succeeded' && !w.claim_payment_id,
+      (w) => w.payout_status !== 'succeeded' && !w.claim_payment_id && !w.claim_gift_id,
     ) as GiveawayEntry[];
 
     if (ready.length && giveaway.status === GiveawayStatus.WINNERS_SELECTED) {
@@ -115,51 +117,94 @@ export class GiveawayPayoutService {
           amountBaseUnits,
         });
 
-        const shortId = generateShortId();
-        const { data: payment, error: paymentError } = await this.supabaseService.payments
-          .insert({
-            amount: giveaway.prize_amount_usd,
-            direction: 'from_sender',
-            recipient_address: winnerWallet,
-            recipient_user_id: entry.user_id,
-            recipient_was_unregistered: false,
-            created_by: giveaway.created_by,
-            sender_user_id: giveaway.created_by,
-            status: 'PRIVATE_TRANSFER_PENDING',
-            paid_at: new Date().toISOString(),
-            sender_tx_hash: txHash,
-            description,
-            from_chain: 'solana',
-            from_token: 'USDC',
-            to_chain: 'solana',
-            to_token: 'USDC',
-            is_devnet: giveaway.is_devnet,
-            short_id: shortId,
-            burner_address: burner.address,
-            burner_encrypted_secret: burner.encryptedSecret,
-            is_multi_send: true,
-            is_private: false,
-            multi_send_batch_id: giveaway.id,
-          })
-          .select('id')
-          .single();
-        if (paymentError || !payment) throw new Error(paymentError?.message ?? 'Failed to create claim payment');
+        let claimUrl: string;
+        let entryUpdate: Record<string, unknown>;
+        let eventPayload: Record<string, unknown>;
 
-        await this.supabaseService.giveawayEntries
-          .update({
+        if (giveaway.reward_type === GiveawayRewardType.MEGAPOT_TICKET) {
+          // Same "sender_paid" shape LotteryService.purchaseGiftTickets already knows how to
+          // spend from — except the burner it reuses was just funded from the giveaway's own
+          // escrow (fundNewClaimBurner above), not a winner-facing private payment. Pre-marked
+          // 'claimed' since the winner is already a known Loofta user — no separate claim click
+          // needed, same shortcut LotteryService.createGift takes for an already-resolved
+          // recipient.
+          const shortId = generateShortId();
+          const { data: gift, error: giftError } = await this.supabaseService.getClient()
+            .from('lottery_gifts')
+            .insert({
+              created_by_user_id: giveaway.created_by,
+              funding_mode: 'sender_paid',
+              funded_privately: false,
+              num_tickets: Number(giveaway.prize_amount_usd),
+              recipient_type: 'handle',
+              recipient_identifier: entry.x_handle,
+              claim_token: randomUUID(),
+              short_id: shortId,
+              status: 'claimed',
+              claimed_at: new Date().toISOString(),
+              claimed_by_user_id: entry.user_id,
+              burner_sol_address: burner.address,
+              burner_sol_key_enc: burner.encryptedSecret,
+              sender_tx_hash: txHash,
+              note: `Won "${giveaway.title}"!`,
+            })
+            .select('id, short_id, num_tickets, funding_mode, burner_sol_address, burner_sol_key_enc, sender_tx_hash, funded_privately')
+            .single();
+          if (giftError || !gift) throw new Error(giftError?.message ?? 'Failed to create prize ticket gift');
+
+          await this.lotteryService.purchaseGiftTickets(gift, entry.user_id);
+
+          claimUrl = `${this.baseUrl}/gift/${gift.short_id}`;
+          entryUpdate = {
+            payout_status: 'succeeded',
+            payout_tx_hash: txHash,
+            payout_amount_usd: giveaway.prize_amount_usd,
+            claim_gift_id: gift.id as string,
+          };
+          eventPayload = { entry_id: entry.id, tx_hash: txHash, claim_gift_id: gift.id, claim_url: claimUrl };
+        } else {
+          const shortId = generateShortId();
+          const { data: payment, error: paymentError } = await this.supabaseService.payments
+            .insert({
+              amount: giveaway.prize_amount_usd,
+              direction: 'from_sender',
+              recipient_address: winnerWallet,
+              recipient_user_id: entry.user_id,
+              recipient_was_unregistered: false,
+              created_by: giveaway.created_by,
+              sender_user_id: giveaway.created_by,
+              status: 'PRIVATE_TRANSFER_PENDING',
+              paid_at: new Date().toISOString(),
+              sender_tx_hash: txHash,
+              description,
+              from_chain: 'solana',
+              from_token: 'USDC',
+              to_chain: 'solana',
+              to_token: 'USDC',
+              is_devnet: giveaway.is_devnet,
+              short_id: shortId,
+              burner_address: burner.address,
+              burner_encrypted_secret: burner.encryptedSecret,
+              is_multi_send: true,
+              is_private: false,
+              multi_send_batch_id: giveaway.id,
+            })
+            .select('id')
+            .single();
+          if (paymentError || !payment) throw new Error(paymentError?.message ?? 'Failed to create claim payment');
+
+          claimUrl = `${this.baseUrl}/c/${payment.id}`;
+          entryUpdate = {
             payout_status: 'succeeded',
             payout_tx_hash: txHash,
             payout_amount_usd: giveaway.prize_amount_usd,
             claim_payment_id: payment.id as string,
-          })
-          .eq('id', entry.id);
-        const claimUrl = `${this.baseUrl}/c/${payment.id}`;
-        await this.logEvent(giveaway.id, 'payout_succeeded', {
-          entry_id: entry.id,
-          tx_hash: txHash,
-          claim_payment_id: payment.id,
-          claim_url: claimUrl,
-        });
+          };
+          eventPayload = { entry_id: entry.id, tx_hash: txHash, claim_payment_id: payment.id, claim_url: claimUrl };
+        }
+
+        await this.supabaseService.giveawayEntries.update(entryUpdate).eq('id', entry.id);
+        await this.logEvent(giveaway.id, 'payout_succeeded', eventPayload);
 
         // Fire-and-forget, only if they've actually linked an email — never blocks/fails the
         // payout itself (matches send-payment.service.ts's multi-send email convention).

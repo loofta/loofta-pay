@@ -25,6 +25,12 @@ export interface LotteryGiftPublic {
   isRecipient: boolean;
   /** Loofta username of whoever sent the gift, or null if unresolved. */
   senderUsername: string | null;
+  /** Sender's X handle, only set when they have X linked — prefer over senderUsername for display. */
+  senderHandle: string | null;
+  /** Sender's X profile picture, only set when they have X linked. */
+  senderAvatarUrl: string | null;
+  /** Claimant's X profile picture, only set once claimed and only when they have X linked. */
+  recipientAvatarUrl: string | null;
   /** Recipient's X/Loofta handle — only set when the gift targeted a handle, never an email. */
   recipientHandle: string | null;
   createdAt: string;

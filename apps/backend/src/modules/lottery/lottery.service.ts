@@ -763,6 +763,12 @@ export class LotteryService {
     recipientIdentifier: string | null;
     isSender: boolean; isClaimant: boolean; isRecipient: boolean;
     senderUsername: string | null; recipientHandle: string | null;
+    /** Sender's X handle, only when they have X linked — prefer this + senderAvatarUrl over
+     *  senderUsername for display; additive fields, existing callers ignoring them see no change. */
+    senderHandle: string | null; senderAvatarUrl: string | null;
+    /** Once claimed, the claimant's own X profile picture (if they have X linked) — shown on the
+     *  sender's "your gift was claimed" card instead of a letter avatar. Null while unclaimed. */
+    recipientAvatarUrl: string | null;
     createdAt: string; claimedAt: string | null;
     resultingTicketId: string | null;
     costUsdc: number;
@@ -796,7 +802,10 @@ export class LotteryService {
     }
 
     const { data: senderAppUser } = gift.created_by_user_id
-      ? await db.from('app_users').select('username').eq('privy_user_id', gift.created_by_user_id).maybeSingle()
+      ? await db.from('app_users').select('username, twitter_username, avatar_url').eq('privy_user_id', gift.created_by_user_id).maybeSingle()
+      : { data: null };
+    const { data: recipientAppUser } = gift.claimed_by_user_id
+      ? await db.from('app_users').select('avatar_url').eq('privy_user_id', gift.claimed_by_user_id).maybeSingle()
       : { data: null };
 
     return {
@@ -815,6 +824,9 @@ export class LotteryService {
       isClaimant,
       isRecipient,
       senderUsername: (senderAppUser as { username?: string } | null)?.username ?? null,
+      senderHandle: (senderAppUser as { twitter_username?: string } | null)?.twitter_username ?? null,
+      senderAvatarUrl: (senderAppUser as { avatar_url?: string } | null)?.avatar_url ?? null,
+      recipientAvatarUrl: (recipientAppUser as { avatar_url?: string } | null)?.avatar_url ?? null,
       recipientHandle: gift.recipient_type === 'handle' ? gift.recipient_identifier : null,
       createdAt: gift.created_at,
       claimedAt: gift.claimed_at,
@@ -1064,8 +1076,12 @@ export class LotteryService {
    * admin_treasury: generates a fresh burner and funds it from Loofta's fee wallet right here.
    * sender_paid: reuses the burner the sender already funded back at initiateGiftedPurchase (see
    * that method) — no additional funding needed, just a companion wallet to buy into.
+   *
+   * Public (not just claimGift-internal) so GiveawayPayoutService can drive it directly for a
+   * megapot_ticket giveaway: it constructs a sender_paid gift row itself (burner funded from the
+   * giveaway's own escrow, not a sender's private payment) and calls this to execute the buy.
    */
-  private async purchaseGiftTickets(gift: any, claimantPrivyUserId: string): Promise<{ ticketId: string; numTickets: number }> {
+  async purchaseGiftTickets(gift: any, claimantPrivyUserId: string): Promise<{ ticketId: string; numTickets: number }> {
     try {
       await this.assertNotInDrawCutoff();
       const userSolanaAddress = await this.usersService.getSolanaWalletAddress(claimantPrivyUserId);

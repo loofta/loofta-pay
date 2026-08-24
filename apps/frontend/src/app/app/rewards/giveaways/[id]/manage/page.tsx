@@ -60,6 +60,15 @@ interface GiveawayDetail {
 interface Entry {
   id: string; user_id: string; entry_index: number; x_handle: string; status: string;
   payout_status: string | null; claim_payment_id: string | null; payment_status: string | null;
+  claim_gift_id: string | null; claim_gift_short_id: string | null;
+}
+
+/** A winner's prize claim link — /c/[id] for a usdc giveaway, /gift/[shortId] (already claimed,
+ *  real Megapot ticket numbers) for a megapot_ticket one. Null until the payout lands. */
+function claimPath(entry: Entry): string | null {
+  if (entry.claim_gift_id && entry.claim_gift_short_id) return `/gift/${entry.claim_gift_short_id}`;
+  if (entry.claim_payment_id) return `/c/${entry.claim_payment_id}`;
+  return null;
 }
 
 interface EntryCompletion {
@@ -246,11 +255,14 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   const winners = (entries ?? []).filter((e) => e.status === "winner");
   const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://pay.loofta.xyz";
 
-  const winnersAsRows = winners.map((w) => ({
-    handle: w.x_handle,
-    status: claimStatus(w).label,
-    claim_link: w.claim_payment_id ? `${siteUrl}/c/${w.claim_payment_id}` : "",
-  }));
+  const winnersAsRows = winners.map((w) => {
+    const path = claimPath(w);
+    return {
+      handle: w.x_handle,
+      status: claimStatus(w).label,
+      claim_link: path ? `${siteUrl}${path}` : "",
+    };
+  });
 
   const copyWinners = () => {
     const text = winnersAsRows.map((w) => `@${w.handle}\t${w.status}\t${w.claim_link}`).join("\n");
@@ -354,9 +366,9 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                         {claimStatus(entry).label}
                       </p>
                     </div>
-                    {entry.claim_payment_id && (
+                    {claimPath(entry) && (
                       <Link
-                        href={`/c/${entry.claim_payment_id}`}
+                        href={claimPath(entry)!}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="shrink-0 text-base text-[#FF7A2A] hover:underline underline-offset-2"
@@ -433,9 +445,9 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                               #{entry.entry_index} · {entry.status}
                               {entry.status === "winner" ? ` · ${claimStatus(entry).label}` : ""}
                             </p>
-                            {entry.status === "winner" && entry.claim_payment_id && (
+                            {entry.status === "winner" && claimPath(entry) && (
                               <Link
-                                href={`/c/${entry.claim_payment_id}`}
+                                href={claimPath(entry)!}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={(e) => e.stopPropagation()}
