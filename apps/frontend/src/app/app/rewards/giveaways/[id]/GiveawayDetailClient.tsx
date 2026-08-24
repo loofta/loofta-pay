@@ -408,6 +408,14 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     refetchInterval: 15_000,
   });
 
+  // This poll is what actually detects on-chain funding and flips the giveaway to OPEN
+  // server-side (checkAndUpdateFundingStatus) — but that only updates *this* query's own cache.
+  // Without also refetching giveaway-public, the page keeps showing "Needs funding" from its own
+  // stale copy of `status` until an unrelated refetch happens to fire or the page is reloaded.
+  useEffect(() => {
+    if (funding?.justFunded) refetch();
+  }, [funding?.justFunded, refetch]);
+
   // Public entry list (X handle + status) — becomes available once entries close (backend gates
   // this the same way, `visible: false` before that). Doubles as the "provably fair" recompute
   // data (id + status for every entrant) and the source for the winners list below.

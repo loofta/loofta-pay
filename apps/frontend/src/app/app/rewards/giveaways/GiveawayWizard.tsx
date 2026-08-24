@@ -816,6 +816,10 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
         });
       }
       clearDraft();
+      // Without this, a "mine" list fetched within the last staleTime window (15s) serves its
+      // cached pre-creation snapshot straight from cache on navigation — the new giveaway looks
+      // missing until an unrelated refetch happens to fire or the page is manually reloaded.
+      queryClient.invalidateQueries({ queryKey: ["giveaways-mine"] });
       const redirectTo = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways/mine";
       setTimeout(() => router.push(redirectTo), 1800);
     } catch (err: any) {
@@ -823,7 +827,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     } finally {
       setSubmitting(false);
     }
-  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft]);
+  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft, queryClient]);
 
   const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
