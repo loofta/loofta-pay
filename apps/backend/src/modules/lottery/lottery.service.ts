@@ -1198,9 +1198,20 @@ export class LotteryService {
     return this.topUpFromFeeWallet(userSolanaAddress, units);
   }
 
-  async purchaseTicketsForUser(userId: string, numTickets: number): Promise<{ ticketId: string }> {
+  /**
+   * `pickedTickets`, when provided, must exactly cover `numTickets` and stay within the on-chain
+   * per-call cap on custom tickets (MAX_CUSTOM_TICKETS_PER_BUY) — same validation as
+   * initiatePurchase's own `requestedNumbers` guard. Any mismatch silently falls back to
+   * quick-pick at buy time rather than blocking the purchase, since the caller here (a Mystery
+   * Pack win, a subscription batch) has already committed real money and shouldn't fail just
+   * because a picked-numbers request was malformed.
+   */
+  async purchaseTicketsForUser(userId: string, numTickets: number, pickedTickets?: TicketPick[]): Promise<{ ticketId: string }> {
     await this.assertNotInDrawCutoff();
     const userSolanaAddress = await this.usersService.getSolanaWalletAddress(userId);
+    const requestedNumbers = pickedTickets && pickedTickets.length === numTickets && numTickets <= MAX_CUSTOM_TICKETS_PER_BUY
+      ? pickedTickets
+      : null;
 
     const companionPrivKey = generatePrivateKey();
     const companionAddress = await this.rhinestone.getCompanionAddress(companionPrivKey);
@@ -1237,6 +1248,7 @@ export class LotteryService {
         status: 'pending_send',
         is_gift: false,
         funded_privately: false,
+        requested_numbers: requestedNumbers,
       })
       .select('id')
       .single();

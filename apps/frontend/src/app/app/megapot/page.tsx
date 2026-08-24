@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, MoreVertical, Plus, ChevronDown, Eraser, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, VenetianMask, Send } from "lucide-react";
+import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, ChevronDown, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, VenetianMask, Send } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { getMyGifts, updateGiftRecipient, type MyGiftItem } from "@/services/api/lotteryGift";
 import { MessageInput } from "@/components/MessageInput";
@@ -20,6 +20,7 @@ import { getSolanaCluster } from "@/lib/solanaCluster";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 import { PRIZE_TIERS, TicketNumberCard } from "@/components/megapot/TicketNumberCard";
+import { MAIN_MAX, MAIN_COUNT, BONUS_MAX, type TicketNumbers, randomTicket, NumberPickerModal, ChooseNumbers } from "@/components/megapot/ChooseNumbers";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
@@ -44,17 +45,12 @@ function isFreeTicketAmount(winUsdc: number | null | undefined, thresholdUsdc: n
   const n = winUsdc ?? 0;
   return n > 0 && n < thresholdUsdc;
 }
-const MAIN_MAX = 30;
-const MAIN_COUNT = 5;
-const BONUS_MAX = 10;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Tab = "buy" | "redeem" | "history";
 type BuyStep = "idle" | "signing" | "sent" | "confirmed" | "checking" | "bridging" | "buying" | "done" | "error";
 type TicketStatus = "pending_send" | "sent" | "bridging" | "buying" | "active" | "won" | "lost" | "failed" | "withdrawn";
-
-interface TicketNumbers { main: number[]; bonus: number }
 
 interface TicketSummary {
   id: string; status: TicketStatus; numTickets: number; costUsdc: number;
@@ -84,12 +80,6 @@ interface Dashboard {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function randomTicket(): TicketNumbers {
-  const s = new Set<number>();
-  while (s.size < MAIN_COUNT) s.add(Math.ceil(Math.random() * MAIN_MAX));
-  return { main: [...s].sort((a, b) => a - b), bonus: Math.ceil(Math.random() * BONUS_MAX) };
-}
 
 function statusLabel(s: TicketStatus, bridgeStatus?: string | null, drawTime?: string | null, ticketRoundId?: string | null, currentRoundId?: string | null): string {
   if (s === "failed" && bridgeStatus) {
@@ -201,11 +191,36 @@ function TierBalls({ normal, bonusMatch }: { normal: number; bonusMatch: boolean
   );
 }
 
-function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPool?: string | null }) {
+// Real per-tier payout from the most recently SETTLED round — GET /lottery/prize-tiers (public,
+// no auth). Deliberately NOT the static PRIZE_TIERS snapshot in TicketNumberCard.tsx: that array
+// is net of an assumed ~10% referral cut baked into a one-off July 2026 pull from Megapot's docs,
+// so it drifts from — and can meaningfully understate — the real number as the pool grows. This
+// is the actual amount a ticket in that tier just paid out, straight from the backend
+// (MegapotService.getLatestSettledPrizeTiers), which itself applies no display-estimate cut.
+interface LivePrizeTier { normalMatches: number; bonusMatch: boolean; grossUsdc: number; }
+interface LivePrizeTiersSnapshot { tiers: LivePrizeTier[] }
+
+function PrizeTiersModal({ onClose, totalPool, withdrawMinUsdc }: { onClose: () => void; totalPool?: string | null; withdrawMinUsdc?: number }) {
   const poolAmt = totalPool ? parseFloat(totalPool) : null;
   const poolDisplay = poolAmt
     ? `$${poolAmt.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     : "$1,100,000+";
+  const minWithdraw = withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC;
+
+  const [liveTiers, setLiveTiers] = useState<LivePrizeTier[] | null>(null);
+  const [liveTiersFailed, setLiveTiersFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/lottery/prize-tiers")
+      .then(res => (res.ok ? res.json() : Promise.reject(new Error("failed"))))
+      .then((data: LivePrizeTiersSnapshot | null) => {
+        if (cancelled) return;
+        if (data?.tiers?.length) setLiveTiers(data.tiers);
+        else setLiveTiersFailed(true);
+      })
+      .catch(() => { if (!cancelled) setLiveTiersFailed(true); });
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70" onClick={onClose}>
@@ -229,10 +244,21 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
 
           <p className="text-base font-semibold text-white mb-2">Tiers</p>
           <div className="rounded-2xl border border-white/10 overflow-hidden divide-y divide-white/[0.06]">
+            {/* Ball shapes/order come from the static PRIZE_TIERS constant (it's just the fixed
+                10-tier ladder, always correct) — only the dollar amount comes from the live fetch,
+                matched by index since both list the tiers in the same published order. */}
             {PRIZE_TIERS.map((tier, i) => {
               const desc = tier.normal === 0
                 ? "1 bonus ball"
                 : `${tier.normal} normal ball${tier.normal !== 1 ? "s" : ""}${tier.bonusMatch ? " + 1 bonus ball" : ""}`;
+              const live = liveTiers?.[i];
+              const prizeLabel = liveTiersFailed
+                ? "Unavailable"
+                : !liveTiers
+                  ? "…"
+                  : isFreeTicketAmount(live?.grossUsdc, minWithdraw)
+                    ? "Free ticket"
+                    : `$${(live?.grossUsdc ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
               return (
                 <div key={i} className="flex items-center justify-between px-4 py-3 bg-white/[0.015]">
                   <div>
@@ -240,13 +266,16 @@ function PrizeTiersModal({ onClose, totalPool }: { onClose: () => void; totalPoo
                     <p className="text-base text-slate-500 mt-1">{desc}</p>
                   </div>
                   <span className={["text-base font-semibold tabular-nums shrink-0 ml-4",
-                    tier.prize === "Free ticket" ? "text-[#FF7A2A]" : "text-white"].join(" ")}>
-                    {tier.prize}
+                    prizeLabel === "Free ticket" ? "text-[#FF7A2A]" : liveTiersFailed ? "text-slate-500" : "text-white"].join(" ")}>
+                    {prizeLabel}
                   </span>
                 </div>
               );
             })}
           </div>
+          <p className="text-sm text-slate-500 mt-2">
+            Real payouts from the most recently completed draw — actual prizes shift daily with the pool.
+          </p>
 
           <p className="text-base font-semibold text-white mt-5 mb-2">Ball Range</p>
           <div className="grid grid-cols-2 gap-3 mb-2">
@@ -329,224 +358,6 @@ function MegapotTabs({ activeTab, wonCount }: { activeTab: Tab; wonCount: number
         </svg>
       </Link>
     </div>
-  );
-}
-
-// ─── Number Picker Modal ──────────────────────────────────────────────────────
-
-function NumberPickerModal({ ticket, onSave, onClose }: {
-  ticket: TicketNumbers;
-  onSave: (t: TicketNumbers) => void;
-  onClose: () => void;
-}) {
-  const [draft, setDraft] = useState<TicketNumbers>({ main: [...ticket.main], bonus: ticket.bonus });
-
-  function toggleMain(n: number) {
-    setDraft(d => {
-      if (d.main.includes(n)) return { ...d, main: d.main.filter(x => x !== n) };
-      if (d.main.length >= MAIN_COUNT) {
-        // swap last picked for the new number
-        return { ...d, main: [...d.main.slice(0, -1), n].sort((a, b) => a - b) };
-      }
-      return { ...d, main: [...d.main, n].sort((a, b) => a - b) };
-    });
-  }
-
-  function toggleBonus(n: number) {
-    setDraft(d => ({ ...d, bonus: d.bonus === n ? 0 : n }));
-  }
-
-  const isComplete = draft.main.length === MAIN_COUNT && draft.bonus > 0;
-
-  const mainRemaining = MAIN_COUNT - draft.main.length;
-  const saveLabel = !isComplete
-    ? [mainRemaining > 0 && `${mainRemaining} main`, draft.bonus === 0 && "bonus"].filter(Boolean).join(" + ") + " left"
-    : "Save numbers";
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70" onClick={onClose}>
-      <div
-        className="w-full max-w-sm bg-[#1a1a22] rounded-t-2xl sm:rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 pt-5 pb-3">
-          <div>
-            <h3 className="text-white font-bold text-lg leading-tight">Pick your numbers</h3>
-            <p className="text-base text-slate-500 mt-0.5">
-              {draft.main.length}/{MAIN_COUNT} main · {draft.bonus > 0 ? 1 : 0}/1 bonus
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button onClick={() => setDraft(randomTicket())}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-slate-300 bg-white/[0.06] hover:bg-white/[0.10] transition-colors">
-              <Shuffle className="w-3.5 h-3.5" />
-            </button>
-            <button onClick={() => setDraft({ main: [], bonus: 0 })}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-slate-300 bg-white/[0.06] hover:bg-white/[0.10] transition-colors">
-              <Eraser className="w-3.5 h-3.5" />
-            </button>
-            <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        <div className="px-5 pb-3 space-y-4 max-h-[60vh] overflow-y-auto">
-          {/* Main numbers 1–30 */}
-          <div>
-            <p className="text-base font-medium text-slate-500 mb-2">Main numbers — pick 5</p>
-            <div className="grid grid-cols-6 gap-2">
-              {Array.from({ length: MAIN_MAX }, (_, i) => i + 1).map(n => {
-                const selected = draft.main.includes(n);
-                const willSwap = !selected && draft.main.length >= MAIN_COUNT;
-                return (
-                  <button key={n} onClick={() => toggleMain(n)}
-                    className={[
-                      "h-10 w-10 rounded-full text-sm font-semibold transition-all duration-150",
-                      selected
-                        ? "bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] text-white shadow-[0_4px_12px_rgba(255,122,42,0.35)]"
-                        : willSwap
-                          ? "bg-white/[0.05] text-slate-500 hover:bg-white/[0.10] hover:text-slate-300"
-                          : "bg-white/[0.07] text-slate-300 hover:bg-white/[0.12]",
-                    ].join(" ")}>
-                    {n}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Bonus 1–BONUS_MAX */}
-          <div>
-            <p className="text-base font-medium text-slate-500 mb-2">Bonus number — pick 1</p>
-            <div className="grid grid-cols-6 gap-2">
-              {Array.from({ length: BONUS_MAX }, (_, i) => i + 1).map(n => (
-                <button key={n} onClick={() => toggleBonus(n)}
-                  className={[
-                    "h-10 w-10 rounded-full text-sm font-semibold transition-all duration-150",
-                    draft.bonus === n
-                      ? "bg-white text-[#0f0f12] shadow-[0_4px_12px_rgba(255,255,255,0.2)]"
-                      : "bg-white/[0.07] text-slate-300 hover:bg-white/[0.12]",
-                  ].join(" ")}>
-                  {n}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom CTA */}
-        <div className="px-5 pb-6 pt-3 border-t border-white/[0.06] space-y-2">
-          <button onClick={() => { onSave(draft); onClose(); }} disabled={!isComplete}
-            className="w-full h-13 py-3.5 rounded-xl font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 transition-all disabled:opacity-30 disabled:cursor-not-allowed">
-            {saveLabel}
-          </button>
-          <button onClick={onClose}
-            className="w-full py-2.5 text-base text-slate-500 hover:text-slate-300 transition-colors">
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Choose numbers ───────────────────────────────────────────────────────────
-
-function ChooseNumbers({ tickets, setTickets }: {
-  tickets: TicketNumbers[];
-  setTickets: (t: TicketNumbers[]) => void;
-}) {
-  const [editingIdx, setEditingIdx] = useState<number | null>(null);
-  const [menuOpenIdx, setMenuOpenIdx] = useState<number | null>(null);
-
-  function updateTicket(idx: number, t: TicketNumbers) {
-    setTickets(tickets.map((tt, i) => i === idx ? t : tt));
-  }
-
-  return (
-    <>
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 mb-3">
-        <button onClick={() => setTickets(tickets.map(() => randomTicket()))}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-base font-medium bg-white/[0.05] border border-white/10 text-slate-300 hover:bg-white/[0.09] hover:text-white transition-colors">
-          <Shuffle className="w-3.5 h-3.5" /> Shuffle all
-        </button>
-        <div className="flex-1" />
-      </div>
-
-      {/* Ticket rows */}
-      <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] divide-y divide-white/[0.06]">
-        {tickets.map((t, i) => (
-          <div key={i} className="flex items-center gap-2 px-3 py-2.5 group">
-            {/* Number bubbles — click row to open picker */}
-            <button type="button" onClick={() => setEditingIdx(i)}
-              className="flex items-center gap-1.5 flex-1 min-w-0">
-              {t.main.map((n, pos) => (
-                <span key={pos}
-                  className="w-8 h-8 rounded-full bg-white/[0.08] border border-white/[0.08] text-slate-200 text-sm font-semibold flex items-center justify-center shrink-0">
-                  {n}
-                </span>
-              ))}
-              {t.bonus > 0 && (
-                <>
-                  <span className="w-px h-4 bg-white/10 mx-0.5 shrink-0" />
-                  <span className="w-8 h-8 rounded-full bg-white/80 text-[#0f0f12] text-sm font-bold flex items-center justify-center shrink-0 shadow-sm">
-                    {t.bonus}
-                  </span>
-                </>
-              )}
-            </button>
-
-            {/* Row menu */}
-            <div className="relative shrink-0">
-              <button type="button" onClick={() => setMenuOpenIdx(menuOpenIdx === i ? null : i)}
-                className="p-1.5 rounded-lg text-slate-600 hover:text-slate-300 transition-colors">
-                <MoreVertical className="w-4 h-4" />
-              </button>
-              {menuOpenIdx === i && (
-                <div className="absolute right-0 top-8 z-30 w-36 rounded-xl bg-[#1a1a22] border border-white/10 shadow-xl py-1">
-                  <button type="button" onClick={() => { setEditingIdx(i); setMenuOpenIdx(null); }}
-                    className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-white/[0.06] hover:text-white transition-colors">
-                    Edit numbers
-                  </button>
-                  <button type="button" onClick={() => { updateTicket(i, randomTicket()); setMenuOpenIdx(null); }}
-                    className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-white/[0.06] hover:text-white transition-colors">
-                    Shuffle
-                  </button>
-                  {tickets.length > 1 && (
-                    <button type="button" onClick={() => { setTickets(tickets.filter((_, ti) => ti !== i)); setMenuOpenIdx(null); }}
-                      className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 transition-colors">
-                      Remove
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Add ticket */}
-      <button type="button" onClick={() => setTickets([...tickets, randomTicket()])}
-        className="mt-3 flex items-center gap-2 px-4 py-2.5 rounded-xl text-base font-medium text-slate-400 hover:text-white bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.06] transition-all w-full justify-center">
-        <Plus className="w-4 h-4" /> Add ticket
-      </button>
-
-      <p className="text-sm text-slate-600 text-center mt-2">
-        Tap any row to edit numbers
-      </p>
-
-      {/* Number picker modal */}
-      {editingIdx !== null && (
-        <NumberPickerModal
-          ticket={tickets[editingIdx]}
-          onSave={t => updateTicket(editingIdx, t)}
-          onClose={() => setEditingIdx(null)}
-        />
-      )}
-    </>
   );
 }
 
@@ -1887,6 +1698,44 @@ function MysteryPackBanner() {
         </div>
         <span className="flex items-center gap-1 rounded-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-3.5 py-2 text-sm font-semibold text-white shrink-0">
           Open
+          <ArrowUpRight className="w-4 h-4" />
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+// Promo banner for the ticket subscription feature — same animated-glow treatment as
+// MysteryPackBanner above, just Megapot's own red/orange/amber palette instead of the pack's,
+// linking to its own dedicated page (/app/megapot/subscribe) the same way Mystery Packs does.
+function SubscriptionBanner() {
+  const reduceMotion = useReducedMotion();
+  return (
+    <Link
+      href="/app/megapot/subscribe"
+      className="relative mb-4 block rounded-2xl active:scale-[0.99] transition-transform"
+    >
+      <style>{`@keyframes subBannerGlow { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }`}</style>
+      <div
+        aria-hidden
+        className="absolute -inset-px rounded-2xl blur-[6px]"
+        style={{
+          background: "linear-gradient(110deg,#FF4A26,#FF7A2A,#E1A041,#FF4A26)",
+          backgroundSize: "220% 100%",
+          animation: reduceMotion ? undefined : "subBannerGlow 6s linear infinite",
+          opacity: reduceMotion ? 0.5 : 0.7,
+        }}
+      />
+      <div className="relative flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-[#15110d] px-4 py-3.5">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="shrink-0 text-3xl leading-none">🎟️</span>
+          <div className="min-w-0">
+            <p className="text-base font-semibold text-slate-100">Ticket subscription</p>
+            <p className="text-sm text-slate-400 truncate">Cheaper than buying one at a time — auto-bought on your schedule</p>
+          </div>
+        </div>
+        <span className="flex items-center gap-1 rounded-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-3.5 py-2 text-sm font-semibold text-white shrink-0">
+          Subscribe
           <ArrowUpRight className="w-4 h-4" />
         </span>
       </div>
@@ -3494,6 +3343,17 @@ const FAQ_ITEMS: { question: string; answer: ReactNode }[] = [
       </>
     ),
   },
+  {
+    question: "What's the ticket subscription?",
+    answer: (
+      <>
+        <p className="mb-3">Pick how many tickets you want bought per day (1–10) and pay once — Loofta buys them for you automatically, one batch a day, for <span className="font-medium text-slate-300">30 days</span>. It&apos;s a little cheaper than buying the same tickets one at a time: $28 for 30 tickets instead of $30.</p>
+        <p className="mb-3">Numbers can be quick-pick (fresh random ones every day) or your own choice — pick once and the same numbers get bought every day for the whole run.</p>
+        <p className="mb-3">You can cancel for a full refund only before your first ticket buys. Once the first batch goes through, it runs to completion automatically.</p>
+        <p>It&apos;s a one-time run — after the 30 days it&apos;s done and <span className="font-medium text-slate-300">doesn&apos;t auto-renew</span>. Find it under <span className="font-medium text-slate-300">Subscribe &amp; save</span> on the Buy tab.</p>
+      </>
+    ),
+  },
 ];
 
 // ─── Live SOL price ───────────────────────────────────────────────────────────
@@ -3862,6 +3722,7 @@ export default function MegapotPage() {
         {tab === "buy" && (
           <>
             <MysteryPackBanner />
+            <SubscriptionBanner />
 
             <PrizePoolHero
               prizePool={dashboard?.nextDraw?.prizePool ?? null}
@@ -3901,7 +3762,7 @@ export default function MegapotPage() {
       </div>
 
       {prizeTiersOpen && (
-        <PrizeTiersModal onClose={() => setPrizeTiersOpen(false)} totalPool={dashboard?.nextDraw?.prizePool} />
+        <PrizeTiersModal onClose={() => setPrizeTiersOpen(false)} totalPool={dashboard?.nextDraw?.prizePool} withdrawMinUsdc={dashboard?.withdrawMinUsdc} />
       )}
       {showResultModal && drawResults.length > 0 && (
         <DrawResultModal

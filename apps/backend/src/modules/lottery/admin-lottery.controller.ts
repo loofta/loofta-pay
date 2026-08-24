@@ -5,6 +5,7 @@ import { AdminGuard } from '@/common/guards';
 import { LotteryService } from './lottery.service';
 import { MegapotService, MEGAPOT_JACKPOT } from './megapot.service';
 import { PackService, PackTierConfig } from './pack.service';
+import { MegapotSubscriptionService } from './megapot-subscription.service';
 import { SupabaseService } from '@/database/supabase.service';
 
 class CreateGiftDto {
@@ -59,6 +60,7 @@ export class AdminLotteryController {
     private readonly lottery: LotteryService,
     private readonly megapot: MegapotService,
     private readonly packs: PackService,
+    private readonly subscriptions: MegapotSubscriptionService,
     private readonly supabase: SupabaseService,
   ) {}
 
@@ -186,5 +188,25 @@ export class AdminLotteryController {
   async listFreeSpins(@Query('page') pageRaw?: string) {
     const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
     return this.packs.getAdminFreeSpins(page, 50);
+  }
+
+  @Get('subscriptions')
+  @ApiOperation({ summary: 'List Megapot ticket subscriptions (paginated, newest first)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  async listSubscriptions(@Query('page') pageRaw?: string) {
+    const page = Math.max(1, parseInt(pageRaw ?? '1', 10) || 1);
+    return this.subscriptions.getAdminSubscriptions(page, 50);
+  }
+
+  @Get('subscriptions/revenue')
+  @ApiOperation({ summary: 'Megapot ticket subscription net revenue — gross collected minus refunds minus what delivered tickets cost' })
+  async subscriptionsRevenue() {
+    return this.subscriptions.getRevenue();
+  }
+
+  @Post('subscriptions/batches/:batchId/refund')
+  @ApiOperation({ summary: "Refund a subscription batch whose treasury-funded purchase permanently failed (only when it never delivered a ticket)" })
+  async refundSubscriptionBatch(@Param('batchId') batchId: string) {
+    return this.subscriptions.refundFailedBatch(batchId);
   }
 }

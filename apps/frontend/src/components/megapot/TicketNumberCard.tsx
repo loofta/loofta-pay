@@ -1,9 +1,11 @@
 // Snapshot of Megapot's published tiers (docs.megapot.io/learn/prize-structure, taken
-// 2026-07-12 against a ~$1.1M pool), net of the ~10% on-chain referral cut Loofta actually
-// takes on every cash win (mirrors DEFAULT_REFERRAL_WIN_SHARE_FACTOR in megapot.service.ts —
-// the real per-drawing cut is read live on payout via getWinClaimFactor, this is just the
-// display estimate). Megapot's pool grows daily, so these dollar figures drift out of date —
-// re-pull from the docs page periodically rather than assuming they still match.
+// 2026-07-12 against a ~$1.1M pool). The `prize` dollar figures here are a stale, ~10%-discounted
+// estimate and are NOT shown to users anymore — PrizeTiersModal in megapot/page.tsx fetches the
+// real, live per-tier payout from GET /lottery/prize-tiers instead (the amount a ticket in that
+// tier just actually paid out from the most recently settled round). This array now only supplies
+// the tier SHAPE/ORDER (normal/bonusMatch combos) for the ball display and for ticketTierLabel's
+// win/no-win existence check below — its `prize` field is otherwise unused and shouldn't be
+// trusted as a real number.
 export const PRIZE_TIERS = [
   { normal: 5, bonusMatch: true, prize: "$183,918.03" },
   { normal: 5, bonusMatch: false, prize: "$1,858.64" },

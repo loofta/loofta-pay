@@ -20,6 +20,7 @@ import { AuthGuard, Public, OptionalAuthGuard } from '@/common/guards';
 import { LotteryService, InitiatePurchaseResult, InitiatePublicPurchaseResult, LotteryDashboard, LotteryTicketSummary } from './lottery.service';
 import { PrizeTiersSnapshot } from './megapot.service';
 import { LifiService } from './lifi.service';
+import { MegapotSubscriptionService, SubscriptionSummary, MIN_TICKETS_PER_DAY, MAX_TICKETS_PER_DAY } from './megapot-subscription.service';
 
 class TicketNumbersDto {
   @IsArray()
@@ -138,6 +139,41 @@ class PlayAgainBatchDto {
   ticketIds: string[];
 }
 
+class SubscriptionPayDto {
+  @IsInt()
+  @Min(MIN_TICKETS_PER_DAY)
+  @Max(MAX_TICKETS_PER_DAY)
+  ticketsPerDay: number;
+
+  @IsString()
+  userSolanaAddress: string;
+
+  /** One number set per daily ticket, reused unchanged for every batch across the whole 30-day
+   *  run — omit for quick-pick (fresh random numbers bought each day). Length must equal
+   *  ticketsPerDay when provided (validated server-side in MegapotSubscriptionService). */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TicketNumbersDto)
+  tickets?: TicketNumbersDto[];
+}
+
+class SubscriptionActivateDto {
+  @IsString()
+  paymentTxHash: string;
+
+  @IsInt()
+  @Min(MIN_TICKETS_PER_DAY)
+  @Max(MAX_TICKETS_PER_DAY)
+  ticketsPerDay: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TicketNumbersDto)
+  tickets?: TicketNumbersDto[];
+}
+
 class WithdrawBatchDto {
   @IsArray()
   @IsString({ each: true })
@@ -161,6 +197,7 @@ export class LotteryController {
   constructor(
     private readonly lottery: LotteryService,
     private readonly lifi: LifiService,
+    private readonly subscriptions: MegapotSubscriptionService,
   ) {}
 
   @Get('bridge-fee')
@@ -446,6 +483,40 @@ export class LotteryController {
   @ApiOperation({ summary: 'Claim a gifted ticket — verifies identity, then buys the ticket(s) now' })
   async claimGift(@Param('token') token: string, @Request() req: any): Promise<{ ticketId: string; numTickets: number }> {
     return this.lottery.claimGift(token, req.user.id);
+  }
+
+  @Post('subscription/pay')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Build the payment transfer for a ticket subscription (price scales with ticketsPerDay, base rate $28/30 tickets) — sign client-side, then POST subscription/activate' })
+  async subscriptionPay(@Body() dto: SubscriptionPayDto, @Request() req: any): Promise<{ txBase64: string }> {
+    const txBase64 = await this.subscriptions.buildPaymentTx(
+      dto.userSolanaAddress, req.user.id, dto.ticketsPerDay,
+      dto.tickets?.map(t => ({ main: t.main, bonus: t.bonus })),
+    );
+    return { txBase64 };
+  }
+
+  @Post('subscription/activate')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify the subscription payment on-chain, activate it, and buy the first batch immediately' })
+  async subscriptionActivate(@Body() dto: SubscriptionActivateDto, @Request() req: any): Promise<SubscriptionSummary> {
+    return this.subscriptions.activateSubscription(
+      req.user.id, dto.paymentTxHash, dto.ticketsPerDay,
+      dto.tickets?.map(t => ({ main: t.main, bonus: t.bonus })),
+    );
+  }
+
+  @Get('subscription')
+  @ApiOperation({ summary: 'Current/most recent Megapot ticket subscription for the user, with batch history' })
+  async subscription(@Request() req: any): Promise<SubscriptionSummary | null> {
+    return this.subscriptions.getMySubscription(req.user.id);
+  }
+
+  @Post('subscription/:subscriptionId/cancel')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cancel a subscription and get a full refund — only available before the first ticket batch has bought' })
+  async subscriptionCancel(@Param('subscriptionId') subscriptionId: string, @Request() req: any): Promise<{ refundTxHash: string }> {
+    return this.subscriptions.cancelSubscription(req.user.id, subscriptionId);
   }
 
   @Post('withdraw')

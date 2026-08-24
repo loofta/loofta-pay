@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { LotteryService } from './lottery.service';
 import { PackService } from './pack.service';
+import { MegapotSubscriptionService } from './megapot-subscription.service';
 
 @Injectable()
 export class LotteryCronService {
@@ -11,6 +12,7 @@ export class LotteryCronService {
   constructor(
     private readonly lottery: LotteryService,
     private readonly pack: PackService,
+    private readonly subscriptions: MegapotSubscriptionService,
     private readonly config: ConfigService,
   ) {
     if (!this.isProd) {
@@ -173,6 +175,38 @@ export class LotteryCronService {
     if (!this.isProd) return;
     await this.pack.retryFailedPackPurchases().catch(e =>
       this.logger.error(`retryFailedPackPurchases: ${e.message}`),
+    );
+  }
+
+  /** Every 10 minutes: buy the next due batch for every active Megapot ticket subscription whose
+   *  next batch is due — a due-check cadence, not tight timing (unlike the withdrawal pipeline
+   *  steps above, a subscription batch being a few minutes late is harmless). */
+  @Cron('*/10 * * * *')
+  async processSubscriptionBatches(): Promise<void> {
+    if (!this.isProd) return;
+    await this.subscriptions.processDueBatches().catch(e =>
+      this.logger.error(`processSubscriptionBatches: ${e.message}`),
+    );
+  }
+
+  /** Every 2 minutes: retry a subscription batch whose treasury-funded purchase failed on the
+   *  first attempt — same cadence/shape as retryFailedPackPurchases. */
+  @Cron('*/2 * * * *')
+  async retryFailedSubscriptionBatches(): Promise<void> {
+    if (!this.isProd) return;
+    await this.subscriptions.retryFailedBatches().catch(e =>
+      this.logger.error(`retryFailedSubscriptionBatches: ${e.message}`),
+    );
+  }
+
+  /** Once a day: the 30-month safety-net check for subscriptions stuck past their expiry with
+   *  tickets still undelivered. This should essentially never find anything — see
+   *  MegapotSubscriptionService.expireStaleSubscriptions. */
+  @Cron('0 3 * * *')
+  async expireStaleSubscriptions(): Promise<void> {
+    if (!this.isProd) return;
+    await this.subscriptions.expireStaleSubscriptions().catch(e =>
+      this.logger.error(`expireStaleSubscriptions: ${e.message}`),
     );
   }
 }
