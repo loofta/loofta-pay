@@ -307,7 +307,12 @@ export class PajCashOrdersService {
       case 'COMPLETED':
         return 'COMPLETE';
       case 'PAID':
-        return row.direction === 'OFF_RAMP' ? 'PAJ_PAID' : row.status; // for ON_RAMP, PAID just means the user's bank transfer landed with PAJ; wait for COMPLETED
+        // For OFF_RAMP, PAID is PAJ's terminal state — money is already disbursed to the bank
+        // account. There's no confirmed follow-up COMPLETED event for off-ramp orders (unlike
+        // ON_RAMP, where PAID only means the user's bank transfer landed with PAJ and we still
+        // wait for COMPLETED). Treating OFF_RAMP PAID as non-terminal left orders stuck showing
+        // "In progress" forever once PAJ stopped reporting anything past PAID.
+        return row.direction === 'OFF_RAMP' ? 'COMPLETE' : row.status;
       case 'FAILED':
         return 'FAILED';
       case 'CANCELLED':
