@@ -20,7 +20,7 @@ import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { X, Loader2, CheckCircle2 } from "lucide-react";
+import { X, Loader2, CheckCircle2, Ticket } from "lucide-react";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { ChooseNumbers, randomTicket, type TicketNumbers } from "@/components/megapot/ChooseNumbers";
 
@@ -328,10 +328,17 @@ export default function MegapotSubscribePage() {
           <StatusCard subscription={subscription!} onCancel={handleCancel} cancelling={cancelling} cancelError={cancelError} />
         ) : (
           <div className="space-y-5">
-            <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-[#1a1108] to-[#15110d] p-5 text-center space-y-1.5">
-              <div className="mb-1 text-4xl leading-none">🎟️</div>
-              <p className="text-2xl font-bold text-white">${priceUsdc} for {totalTickets} tickets</p>
-              <p className="text-sm text-slate-400">Over {SUBSCRIPTION_DAYS} days — save ${totalTickets - priceUsdc} vs buying one at a time</p>
+            <div className="rounded-2xl border border-amber-500/30 bg-black/30 p-5 flex items-center gap-4">
+              <div className="w-16 h-16 shrink-0 rounded-2xl bg-gradient-to-br from-[#FF1301] to-[#EAB308] flex items-center justify-center">
+                <Ticket className="w-8 h-8 text-white" strokeWidth={2.2} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-2xl font-extrabold text-white leading-tight">
+                  {totalTickets} tickets <span className="text-slate-500">·</span>{" "}
+                  <span className="bg-gradient-to-r from-[#FF7A2A] to-[#FFC53D] bg-clip-text text-transparent">${priceUsdc}</span>
+                </p>
+                <p className="text-sm text-slate-400 mt-0.5">{ticketsPerDay}/day for {SUBSCRIPTION_DAYS} days · save ${totalTickets - priceUsdc} vs one at a time</p>
+              </div>
             </div>
 
             {subscription && (subscription.status === "completed" || subscription.status === "cancelled" || subscription.status === "expired") && (
@@ -340,29 +347,39 @@ export default function MegapotSubscribePage() {
               </div>
             )}
 
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-slate-400">How many tickets per day?</p>
-              <div className="grid grid-cols-3 gap-2">
-                {CADENCE_OPTIONS.map(n => (
-                  <button
-                    key={n}
-                    onClick={() => setTicketsPerDay(n)}
-                    className={[
-                      "h-14 rounded-xl text-sm font-semibold transition-all flex flex-col items-center justify-center gap-0.5",
-                      ticketsPerDay === n
-                        ? "bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] text-white shadow-[0_4px_12px_rgba(255,122,42,0.35)]"
-                        : "bg-white/[0.07] text-slate-300 hover:bg-white/[0.12]",
-                    ].join(" ")}
-                  >
-                    <span>{cadenceLabel(n)}</span>
-                    <span className={ticketsPerDay === n ? "text-xs font-normal text-white/80" : "text-xs font-normal text-slate-500"}>
-                      ${computePriceUsdc(n)}
-                    </span>
-                  </button>
-                ))}
+            <div className="space-y-3">
+              <p className="text-base font-semibold text-slate-300">How many tickets per day?</p>
+              <div className="grid grid-cols-3 gap-2.5">
+                {CADENCE_OPTIONS.map(n => {
+                  const selected = ticketsPerDay === n;
+                  const stickerPrice = computeTotalTickets(n) * 1; // $1/ticket at retail
+                  return (
+                    <button
+                      key={n}
+                      onClick={() => setTicketsPerDay(n)}
+                      className={[
+                        "h-[76px] rounded-2xl transition-all flex flex-col items-center justify-center gap-1 border",
+                        selected
+                          ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10"
+                          : "border-white/10 bg-white/5 hover:bg-white/[0.06] hover:border-white/20",
+                      ].join(" ")}
+                    >
+                      <span className={selected ? "text-lg font-extrabold text-[#FF7A2A]" : "text-lg font-extrabold text-slate-200"}>
+                        {cadenceLabel(n)}
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-sm font-medium text-slate-600 line-through">
+                          ${stickerPrice}
+                        </span>
+                        <span className="text-sm font-bold text-[#FF7A2A]">
+                          ${computePriceUsdc(n)}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
-              <p className="text-sm text-slate-500 text-center">{totalTickets} tickets total, one draw a day for {SUBSCRIPTION_DAYS} days</p>
-              <p className="text-sm text-slate-600 text-center">One-time — runs for {SUBSCRIPTION_DAYS} days only, doesn&apos;t auto-renew</p>
+              <p className="text-sm text-slate-500 text-center">One draw a day for {SUBSCRIPTION_DAYS} days. One-time — no auto-renew.</p>
             </div>
 
             <div className="space-y-2">
@@ -371,10 +388,10 @@ export default function MegapotSubscribePage() {
                 <button
                   onClick={() => setNumberMode("random")}
                   className={[
-                    "h-11 rounded-xl text-sm font-semibold transition-all",
+                    "h-11 rounded-xl text-sm font-semibold transition-all border",
                     numberMode === "random"
-                      ? "bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] text-white shadow-[0_4px_12px_rgba(255,122,42,0.35)]"
-                      : "bg-white/[0.07] text-slate-300 hover:bg-white/[0.12]",
+                      ? "bg-[#FF7A2A]/20 border-[#FF7A2A]/40 text-[#FF7A2A]"
+                      : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10",
                   ].join(" ")}
                 >
                   Random each day
@@ -382,10 +399,10 @@ export default function MegapotSubscribePage() {
                 <button
                   onClick={() => setNumberMode("custom")}
                   className={[
-                    "h-11 rounded-xl text-sm font-semibold transition-all",
+                    "h-11 rounded-xl text-sm font-semibold transition-all border",
                     numberMode === "custom"
-                      ? "bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] text-white shadow-[0_4px_12px_rgba(255,122,42,0.35)]"
-                      : "bg-white/[0.07] text-slate-300 hover:bg-white/[0.12]",
+                      ? "bg-[#FF7A2A]/20 border-[#FF7A2A]/40 text-[#FF7A2A]"
+                      : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10",
                   ].join(" ")}
                 >
                   Choose my numbers
