@@ -234,7 +234,15 @@ export class UsersService {
   }
 
   /**
-   * Get current user's email by Privy user ID (for recipient-check: compare to PENDING_EMAIL claim)
+   * Get current user's email by Privy user ID (for recipient-check: compare to PENDING_EMAIL claim,
+   * and as the recipient address for every notification email sent across the app).
+   *
+   * app_users.email is only ever written once, at row-creation time (see ensureAppUser / the
+   * frontend's /api/users/check) — nothing re-syncs it afterward. A user who first signs up via
+   * X and only later links an email through Privy (e.g. useAddEmailToast) ends up with a
+   * permanently null column even though Privy has a real email on file, silently skipping every
+   * notification. Falls back to a live Privy lookup when the column is null, and opportunistically
+   * backfills it so subsequent calls hit the DB again.
    */
   async getEmailByPrivyId(privyUserId: string): Promise<string | null> {
     if (!privyUserId || !privyUserId.includes('did:privy:')) {
@@ -244,8 +252,21 @@ export class UsersService {
       .select('email')
       .eq('privy_user_id', privyUserId)
       .maybeSingle();
-    if (error || !user?.email) return null;
-    return (user.email as string).trim().toLowerCase();
+    if (error) return null;
+    if (user?.email) return (user.email as string).trim().toLowerCase();
+
+    const privyUser = await this.getPrivyUser(privyUserId).catch(() => null);
+    const emailAccount = privyUser?.linked_accounts?.find((a: any) => (a.type ?? '').toLowerCase() === 'email');
+    const liveEmail = (emailAccount?.address as string | undefined)?.trim().toLowerCase();
+    if (!liveEmail) return null;
+
+    this.supabaseService.appUsers
+      .update({ email: liveEmail })
+      .eq('privy_user_id', privyUserId)
+      .then(({ error: updateError }: { error: any }) => {
+        if (updateError) this.logger.warn(`getEmailByPrivyId: failed to backfill email for ${privyUserId}: ${updateError.message}`);
+      });
+    return liveEmail;
   }
 
   /**
