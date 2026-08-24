@@ -1754,12 +1754,20 @@ export function BalanceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [privateWithdrawId, privateWithdrawStatus, user?.id]);
 
-  // Auto-cancel pending deposits/withdrawals older than 1 hour
+  // Auto-cancel pending near-intents deposits older than 1 hour, but only if bridging never
+  // even started (bridge_status unset) — the client-side poll that sets bridge_status only runs
+  // while this tab is open, so a deposit that's actually in flight (or already settled) must
+  // never get blindly stamped "cancelled" here on a wall-clock timer alone. That used to happen
+  // for ANY dep.status === "pending" row regardless of type or progress, and since the backend
+  // reconciliation cron (user-deposits-processor.service.ts) only polls status='pending' rows,
+  // a wrongly-cancelled row was permanently excluded from ever being corrected. Scoped to
+  // near-intents specifically since coinbase/moonpay deposits have no reconciliation cron at all —
+  // guessing "cancelled" for those would be strictly worse than leaving them visibly pending.
   const ONE_HOUR_MS = 60 * 60 * 1000;
   useEffect(() => {
     const now = Date.now();
     dbDeposits.forEach((dep) => {
-      if (dep.status === "pending" && !autoExpiredRef.current.has(dep.id)) {
+      if (dep.type === "near-intents" && dep.status === "pending" && !dep.bridge_status && !autoExpiredRef.current.has(dep.id)) {
         const age = now - new Date(dep.created_at).getTime();
         if (age > ONE_HOUR_MS) {
           autoExpiredRef.current.add(dep.id);

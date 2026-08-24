@@ -47,10 +47,14 @@ export class UserDepositsProcessorService {
   }
 
   private async reconcilePendingDeposits() {
+    // Also picks up 'cancelled' rows: the frontend's blind 1hr auto-cancel (BalanceModal.tsx) is
+    // the only place that ever sets this status for near-intents deposits, and it can race a
+    // deposit that actually did settle — including 'cancelled' here means a wrongly-cancelled row
+    // still gets corrected to its real outcome instead of being permanently excluded.
     const { data, error } = await this.supabaseService.userDeposits
       .select('id, deposit_address, status')
       .eq('type', 'near-intents')
-      .eq('status', 'pending')
+      .in('status', ['pending', 'cancelled'])
       .not('deposit_address', 'is', null)
       .limit(BATCH_LIMIT);
     if (error) { this.logger.warn(`query failed: ${error.message}`); return; }

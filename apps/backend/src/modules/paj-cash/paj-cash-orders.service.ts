@@ -308,11 +308,17 @@ export class PajCashOrdersService {
         return 'COMPLETE';
       case 'PAID':
         // For OFF_RAMP, PAID is PAJ's terminal state — money is already disbursed to the bank
-        // account. There's no confirmed follow-up COMPLETED event for off-ramp orders (unlike
-        // ON_RAMP, where PAID only means the user's bank transfer landed with PAJ and we still
-        // wait for COMPLETED). Treating OFF_RAMP PAID as non-terminal left orders stuck showing
-        // "In progress" forever once PAJ stopped reporting anything past PAID.
-        return row.direction === 'OFF_RAMP' ? 'COMPLETE' : row.status;
+        // account, no confirmed follow-up COMPLETED event ever arrives for off-ramp orders.
+        //
+        // For ON_RAMP, PAID means the user's Naira transfer landed with PAJ, but the USDC
+        // settlement to their wallet is a separate step we still wait for COMPLETED on — so this
+        // must NOT jump straight to COMPLETE (that would show the deposit as done before the
+        // USDC actually arrives). It must also not stay 'row.status' unchanged: nothing else ever
+        // advances an ON_RAMP row off CREATED, and expireStaleOrders treats CREATED as "nobody
+        // funded this, safe to auto-expire" — so a paid-but-not-yet-settled order used to get
+        // force-marked EXPIRED after 2h even though the user's money had already been taken.
+        // PAJ_PAID (non-terminal, rank 3) marks it funded so the CREATED-only expiry filter skips it.
+        return row.direction === 'OFF_RAMP' ? 'COMPLETE' : 'PAJ_PAID';
       case 'FAILED':
         return 'FAILED';
       case 'CANCELLED':
@@ -341,14 +347,43 @@ export class PajCashOrdersService {
       .eq('status', 'CREATED')
       .lt('created_at', offrampCutoff);
 
-    const { data: stuck } = await this.table()
+    const { data: stuckOfframp } = await this.table()
       .select('id, user_id, updated_at')
       .eq('direction', 'OFF_RAMP')
       .eq('status', 'USDC_SENT')
       .lt('updated_at', offrampCutoff);
 
-    for (const row of stuck ?? []) {
+    for (const row of stuckOfframp ?? []) {
       this.logger.warn(`[PajCashAlert] offramp order ${row.id} (user ${row.user_id}) stuck in USDC_SENT past 30min — USDC already sent, needs manual review`);
+    }
+
+    // ON_RAMP: user's Naira already landed with PAJ (status=PAJ_PAID) but USDC settlement never
+    // arrived. Money has moved, so — same as the OFF_RAMP case above — this is never auto-failed,
+    // only flagged for manual review.
+    const { data: stuckOnramp } = await this.table()
+      .select('id, user_id, updated_at')
+      .eq('direction', 'ON_RAMP')
+      .eq('status', 'PAJ_PAID')
+      .lt('updated_at', onrampCutoff);
+
+    for (const row of stuckOnramp ?? []) {
+      this.logger.warn(`[PajCashAlert] onramp order ${row.id} (user ${row.user_id}) stuck in PAJ_PAID past 2h — Naira already received by PAJ, needs manual review`);
+    }
+
+    // Any non-terminal order that hasn't successfully reconciled in a long time is a signal
+    // reconcileOrder() has been silently failing every cycle (e.g. an undecryptable session
+    // token, or a permanently-404ing paj_order_id) rather than just being unfunded — those never
+    // hit either of the funded-order branches above, so they'd otherwise sit invisible forever.
+    const staleReconcileCutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const { data: staleReconcile } = await this.table()
+      .select('id, user_id, direction, status, last_reconciled_at, updated_at')
+      .not('status', 'in', `(${TERMINAL.join(',')})`)
+      .not('paj_order_id', 'is', null)
+      .lt('updated_at', staleReconcileCutoff)
+      .or(`last_reconciled_at.is.null,last_reconciled_at.lt.${staleReconcileCutoff}`);
+
+    for (const row of staleReconcile ?? []) {
+      this.logger.warn(`[PajCashAlert] ${row.direction.toLowerCase()} order ${row.id} (user ${row.user_id}, status=${row.status}) hasn't reconciled since ${row.last_reconciled_at ?? 'creation'} — reconcileOrder may be silently failing, needs manual review`);
     }
   }
 
