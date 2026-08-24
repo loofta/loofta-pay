@@ -887,17 +887,23 @@ export function BalanceModal({
     }
   };
 
-  // MoonPay Onramp: buy USDC via Privy's fund wallet, bypassing the method picker
+  // MoonPay Onramp: buy USDC via Privy's fund wallet, bypassing the method picker.
+  // Privy's auto-skip (defaultFundingMethod: 'card') fires the MoonPay popup from inside a
+  // useEffect after the modal mounts, not from the original tap, so mobile Safari/WebKit treats
+  // it as untrusted and silently blocks the popup, leaving users stuck on the method picker.
+  // Desktop browsers are lenient about the delay so the auto-skip works fine there. On mobile we
+  // skip `defaultFundingMethod` and let the picker's own "Pay with card" button (a real click) fire it.
   const handleMoonpayOnramp = async () => {
     if (!solanaAddress) return;
     setMoonpayOnrampLoading(true);
     try {
       recordDeposit("moonpay", "pending");
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
       await privyFundWallet({
         address: solanaAddress,
         options: {
           asset: 'USDC',
-          defaultFundingMethod: 'card',
+          ...(isMobile ? {} : { defaultFundingMethod: 'card' as const }),
           card: { preferredProvider: 'moonpay' },
         },
       });
