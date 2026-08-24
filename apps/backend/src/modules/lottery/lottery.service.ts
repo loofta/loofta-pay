@@ -816,8 +816,11 @@ export class LotteryService {
       numTickets: gift.num_tickets,
       // The note is private correspondence between sender and recipient — unlike ticket
       // count/status (shown on the public share card), it never goes out over the wire to
-      // anyone else, authenticated or not.
-      note: isSender || isClaimant ? gift.note : null,
+      // anyone else, authenticated or not. isRecipient (not just isClaimant) needs to see it
+      // too — a winner deciding whether to claim is still the intended recipient, not a
+      // stranger; excluding them left this hidden on the exact "you won, claim it" screen the
+      // note (e.g. "Won \"...\"!") is meant for.
+      note: isSender || isClaimant || isRecipient ? gift.note : null,
       status: gift.status,
       recipientType: gift.recipient_type,
       isSender,
