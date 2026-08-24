@@ -3813,8 +3813,14 @@ export function BalanceModal({
 
                         const item = entry.item;
                         const withdrawAgeMs = Date.now() - item.createdAt;
+                        // A backend cron reconciles near_intents_complete against the real bridge
+                        // status (see near-intents-withdrawals-processor.service.ts), so an
+                        // over-1hr row isn't presumed dead here anymore — it's still genuinely in
+                        // flight until that cron (or this poll) says otherwise. This used to stamp
+                        // "Cancelled" purely off elapsed time, mislabeling withdrawals that were
+                        // just slow, or had already succeeded while the tab was closed.
                         const isStaleWithdraw = item.isNearIntents && !item.nearIntentsComplete && withdrawAgeMs > ONE_HOUR_MS;
-                        const isInProgress = item.isNearIntents && !item.nearIntentsComplete && !isStaleWithdraw;
+                        const isInProgress = item.isNearIntents && !item.nearIntentsComplete;
                         return (
                           <li key={item.id}>
                             <div className={`rounded-lg border p-3 transition-colors ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
@@ -3839,10 +3845,8 @@ export function BalanceModal({
                                   {isInProgress ? (
                                     <span className="flex items-center gap-1 text-base font-medium text-blue-400">
                                       <Loader2 className="h-3 w-3 animate-spin" />
-                                      Bridging
+                                      {isStaleWithdraw ? "Still bridging" : "Bridging"}
                                     </span>
-                                  ) : isStaleWithdraw ? (
-                                    <span className={`text-base font-medium ${dark ? "text-slate-500" : "text-gray-400"}`}>Cancelled</span>
                                   ) : item.nearIntentsComplete && item.nearIntentsStatus ? (
                                     <span className={`text-base font-medium ${SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "text-emerald-400" : "text-amber-400"}`}>
                                       {SUCCESS_BRIDGE_STATUSES.has(item.nearIntentsStatus.toUpperCase()) ? "Completed" : item.nearIntentsStatus}

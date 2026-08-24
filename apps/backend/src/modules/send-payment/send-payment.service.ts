@@ -653,7 +653,7 @@ export class SendPaymentService {
     }
 
     const { data: batch, error: batchErr } = await this.supabaseService.multiSendBatches
-      .select('id, status')
+      .select('id, status, burner_address')
       .eq('id', multiSendBatchId)
       .eq('sender_user_id', senderUserId)
       .single();
@@ -663,6 +663,7 @@ export class SendPaymentService {
     if ((batch as { status: string }).status !== 'AWAITING_FUNDING') {
       throw new BadRequestException('This batch has already been funded.');
     }
+    const existingBurnerAddress = (batch as { burner_address: string | null }).burner_address;
 
     const { data: rows, error } = await this.supabaseService.payments
       .select('id, amount')
@@ -690,23 +691,56 @@ export class SendPaymentService {
       totalFeeUsdc += feeUnits / 1_000_000;
     }
 
-    const burner = Keypair.generate();
-    const burnerEncryptedSecret = this.encryption.encrypt(Buffer.from(burner.secretKey));
-    const { error: updateErr } = await this.supabaseService.multiSendBatches
-      .update({
-        burner_address: burner.publicKey.toBase58(),
-        burner_encrypted_secret: burnerEncryptedSecret,
-        total_funded_base_units: totalFundingBaseUnits,
-      })
-      .eq('id', multiSendBatchId)
-      .eq('status', 'AWAITING_FUNDING');
-    if (updateErr) {
-      throw new BadRequestException(`Failed to prepare batch funding: ${updateErr.message}`);
+    // Reuse the batch's existing burner if this isn't the first call (e.g. a retry after the
+    // sender's earlier funding transfer landed on-chain but the confirm-funding request never
+    // reached us). The burner's encrypted secret only ever lives in this one column — minting a
+    // fresh Keypair here would silently orphan any funds already sent to the old burner, since
+    // nothing would ever be able to decrypt or spend from it again. A burner is a one-time
+    // throwaway address for this batch; it must never rotate while the batch is still open.
+    let burnerPubkey: PublicKey;
+    if (existingBurnerAddress) {
+      burnerPubkey = new PublicKey(existingBurnerAddress);
+
+      // Guard against the retry double-paying: if the earlier attempt's transfer actually landed
+      // on-chain (just never got confirmed to us), the burner is already funded — hand back a new
+      // transfer to sign here would let the sender pay twice. Finalize off the real balance
+      // instead of building another transfer.
+      const existingBurnerAta = await getAssociatedTokenAddress(effectiveMint, burnerPubkey);
+      const existingBalance = await this.connection.getTokenAccountBalance(existingBurnerAta).catch(() => null);
+      if (existingBalance && BigInt(existingBalance.value.amount) >= BigInt(totalFundingBaseUnits)) {
+        this.finalizeMultiSendFunding(multiSendBatchId, senderUserId, undefined).catch((e) =>
+          this.logger.warn(`[MultiSendFunding] batch=${multiSendBatchId} finalize-on-already-funded failed: ${(e as Error)?.message}`),
+        );
+        throw new BadRequestException('This batch has already been funded.');
+      }
+
+      const { error: updateErr } = await this.supabaseService.multiSendBatches
+        .update({ total_funded_base_units: totalFundingBaseUnits })
+        .eq('id', multiSendBatchId)
+        .eq('status', 'AWAITING_FUNDING');
+      if (updateErr) {
+        throw new BadRequestException(`Failed to prepare batch funding: ${updateErr.message}`);
+      }
+    } else {
+      const burner = Keypair.generate();
+      const burnerEncryptedSecret = this.encryption.encrypt(Buffer.from(burner.secretKey));
+      const { error: updateErr } = await this.supabaseService.multiSendBatches
+        .update({
+          burner_address: burner.publicKey.toBase58(),
+          burner_encrypted_secret: burnerEncryptedSecret,
+          total_funded_base_units: totalFundingBaseUnits,
+        })
+        .eq('id', multiSendBatchId)
+        .eq('status', 'AWAITING_FUNDING');
+      if (updateErr) {
+        throw new BadRequestException(`Failed to prepare batch funding: ${updateErr.message}`);
+      }
+      burnerPubkey = burner.publicKey;
     }
 
     const senderPubkey = new PublicKey(senderWallet.trim());
     const senderAta = await getAssociatedTokenAddress(effectiveMint, senderPubkey);
-    const burnerAta = await getAssociatedTokenAddress(effectiveMint, burner.publicKey);
+    const burnerAta = await getAssociatedTokenAddress(effectiveMint, burnerPubkey);
 
     const senderAtaInfo = await this.connection.getAccountInfo(senderAta);
     if (!senderAtaInfo) {
@@ -717,12 +751,14 @@ export class SendPaymentService {
     // into the batch's own throwaway burner fast, with an instant on-chain confirmation for the
     // sender (no MagicBlock delivery delay). Privacy is preserved on the recipient-facing side
     // instead: each fan-out leg (runMultiSendFanOut, burner → recipient) is still an individual
-    // MagicBlock private transfer. The burner's own ATA is guaranteed not to exist yet (freshly
-    // generated key, can't have prior on-chain history), so creating it here is unconditional — the
-    // fee payer fronts that rent and gets it back via reclaimBurnerFunds when the batch completes,
-    // same as every other burner in this codebase.
+    // MagicBlock private transfer. The fee payer fronts the ATA's rent and gets it back via
+    // reclaimBurnerFunds when the batch completes, same as every other burner in this codebase.
+    // A freshly generated burner's ATA can't already exist, but a reused one (see above) might —
+    // this is a rebuild of the same funding tx after an earlier attempt, so only create it if
+    // needed instead of unconditionally, which would fail on-chain with AccountAlreadyInUse.
+    const burnerAtaInfo = await this.connection.getAccountInfo(burnerAta);
     const instructions = [
-      createAssociatedTokenAccountInstruction(this.feePayerKeypair.publicKey, burnerAta, burner.publicKey, effectiveMint),
+      ...(burnerAtaInfo ? [] : [createAssociatedTokenAccountInstruction(this.feePayerKeypair.publicKey, burnerAta, burnerPubkey, effectiveMint)]),
       createTransferInstruction(senderAta, burnerAta, senderPubkey, totalFundingBaseUnits),
     ];
 
@@ -736,7 +772,7 @@ export class SendPaymentService {
     tx.sign([this.feePayerKeypair]);
 
     this.logger.log(
-      `[MultiSendFunding] batch=${multiSendBatchId} rows=${rows.length} totalFundingBaseUnits=${totalFundingBaseUnits} burner=${burner.publicKey.toBase58().slice(0, 8)}… feeUsdc=${totalFeeUsdc.toFixed(4)}`,
+      `[MultiSendFunding] batch=${multiSendBatchId} rows=${rows.length} totalFundingBaseUnits=${totalFundingBaseUnits} burner=${burnerPubkey.toBase58().slice(0, 8)}… feeUsdc=${totalFeeUsdc.toFixed(4)}`,
     );
 
     return {
@@ -771,6 +807,48 @@ export class SendPaymentService {
       await this.runMultiSendFanOut(row.id).catch((e) =>
         this.logger.warn(`[MultiSendRetry] batch=${row.id} resume failed: ${(e as Error)?.message}`),
       );
+    }
+    await this.reconcileStaleAwaitingFundingBatches(staleThreshold);
+  }
+
+  /**
+   * Self-heals the case buildMultiSendBatchFunding's burner-reuse fix above guards against: the
+   * sender's funding transfer actually landed on-chain but confirmMultiSendBatchFunding never
+   * reached us (client crash, lost network request, rate limit) — the batch is stuck at
+   * AWAITING_FUNDING forever since nothing else ever polls it. Checks the burner's real on-chain
+   * balance rather than trusting any client callback, mirroring the reconciliation pattern used
+   * for PAJ Cash / NEAR Intents deposits elsewhere in this codebase.
+   */
+  private async reconcileStaleAwaitingFundingBatches(staleThreshold: string): Promise<void> {
+    const { data: candidates, error } = await this.supabaseService.multiSendBatches
+      .select('id, sender_user_id, burner_address, total_funded_base_units')
+      .eq('status', 'AWAITING_FUNDING')
+      .not('burner_address', 'is', null)
+      .lt('created_at', staleThreshold);
+    if (error) {
+      this.logger.warn(`[MultiSendRetry] failed to query stale AWAITING_FUNDING batches: ${error.message}`);
+      return;
+    }
+    if (!candidates?.length) return;
+
+    const cluster: 'devnet' | 'mainnet' = isSolanaDevnetFromConfig(this.configService) ? 'devnet' : 'mainnet';
+    const effectiveMint = cluster === 'mainnet'
+      ? new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
+      : new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || this.usdcMint.toBase58());
+
+    for (const row of candidates as Array<{ id: string; sender_user_id: string; burner_address: string; total_funded_base_units: number | null }>) {
+      try {
+        if (!row.total_funded_base_units) continue; // build-funding tx was never actually issued
+        const burnerAta = await getAssociatedTokenAddress(effectiveMint, new PublicKey(row.burner_address));
+        const balance = await this.connection.getTokenAccountBalance(burnerAta).catch(() => null);
+        const lamports = BigInt(balance?.value.amount ?? '0');
+        if (lamports < BigInt(row.total_funded_base_units)) continue; // genuinely not funded yet
+
+        this.logger.log(`[MultiSendRetry] batch=${row.id}: burner already funded on-chain (${lamports} >= ${row.total_funded_base_units}) but never confirmed — finalizing`);
+        await this.finalizeMultiSendFunding(row.id, row.sender_user_id, undefined);
+      } catch (e) {
+        this.logger.warn(`[MultiSendRetry] batch=${row.id}: stale AWAITING_FUNDING check failed: ${(e as Error)?.message}`);
+      }
     }
   }
 
