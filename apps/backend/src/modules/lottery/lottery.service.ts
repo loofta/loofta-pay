@@ -1076,12 +1076,8 @@ export class LotteryService {
    * admin_treasury: generates a fresh burner and funds it from Loofta's fee wallet right here.
    * sender_paid: reuses the burner the sender already funded back at initiateGiftedPurchase (see
    * that method) — no additional funding needed, just a companion wallet to buy into.
-   *
-   * Public (not just claimGift-internal) so GiveawayPayoutService can drive it directly for a
-   * megapot_ticket giveaway: it constructs a sender_paid gift row itself (burner funded from the
-   * giveaway's own escrow, not a sender's private payment) and calls this to execute the buy.
    */
-  async purchaseGiftTickets(gift: any, claimantPrivyUserId: string): Promise<{ ticketId: string; numTickets: number }> {
+  private async purchaseGiftTickets(gift: any, claimantPrivyUserId: string): Promise<{ ticketId: string; numTickets: number }> {
     try {
       await this.assertNotInDrawCutoff();
       const userSolanaAddress = await this.usersService.getSolanaWalletAddress(claimantPrivyUserId);

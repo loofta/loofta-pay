@@ -870,11 +870,9 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               <Image src="/images/icons/shield-icon.png" alt="" width={26} height={26} className="shrink-0 opacity-90" />
             </div>
             <p className="flex items-baseline gap-2.5 mb-3">
-              <span className="text-5xl font-bold tracking-tight text-white">
-                {giveaway.reward_type === "megapot_ticket" ? totalPoolLabel : `$${totalPoolLabel}`}
-              </span>
+              <span className="text-5xl font-bold tracking-tight text-white">${totalPoolLabel}</span>
               <span className="text-base text-slate-400">
-                {giveaway.reward_type === "megapot_ticket" ? `ticket${totalPoolLabel === "1" ? "" : "s"}` : "USDC"}
+                {giveaway.reward_type === "megapot_ticket" ? "worth of Megapot tickets" : "USDC"}
               </span>
             </p>
             <div className="flex flex-wrap gap-2 mb-3">

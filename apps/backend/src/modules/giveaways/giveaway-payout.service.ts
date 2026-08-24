@@ -9,7 +9,6 @@ import { GiveawayBurnerSweepService } from './giveaway-burner-sweep.service';
 import { GiveawayGiphyService } from './giveaway-giphy.service';
 import { GiveawaysService } from './giveaways.service';
 import { Giveaway, GiveawayStatus, GiveawayEntry, GiveawayRewardType } from './entities/giveaway.entity';
-import { LotteryService } from '../lottery/lottery.service';
 import { randomBytes, randomUUID } from 'crypto';
 
 // Same generator as ClaimsService/SendPaymentService — duplicated rather than shared per this
@@ -43,7 +42,6 @@ export class GiveawayPayoutService {
     private readonly burnerSweep: GiveawayBurnerSweepService,
     private readonly giphy: GiveawayGiphyService,
     private readonly emailService: EmailService,
-    private readonly lotteryService: LotteryService,
   ) {
     this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
   }
@@ -122,12 +120,13 @@ export class GiveawayPayoutService {
         let eventPayload: Record<string, unknown>;
 
         if (giveaway.reward_type === GiveawayRewardType.MEGAPOT_TICKET) {
-          // Same "sender_paid" shape LotteryService.purchaseGiftTickets already knows how to
-          // spend from — except the burner it reuses was just funded from the giveaway's own
-          // escrow (fundNewClaimBurner above), not a winner-facing private payment. Pre-marked
-          // 'claimed' since the winner is already a known Loofta user — no separate claim click
-          // needed, same shortcut LotteryService.createGift takes for an already-resolved
-          // recipient.
+          // Same "sender_paid, deferred purchase" shape a normal user-initiated gift produces
+          // (see the 20260709160000 migration) — the burner is funded now (from the giveaway's
+          // own escrow, via fundNewClaimBurner above), but the actual Megapot buy only happens
+          // when the winner visits and claims it (LotteryService.claimGift), same as any other
+          // gift. Left 'unclaimed' on purpose: a winner should get a real "you won, claim it"
+          // moment (and the existing unclaimed-gift toast), not have it silently pre-claimed for
+          // them.
           const shortId = generateShortId();
           const { data: gift, error: giftError } = await this.supabaseService.getClient()
             .from('lottery_gifts')
@@ -140,19 +139,15 @@ export class GiveawayPayoutService {
               recipient_identifier: entry.x_handle,
               claim_token: randomUUID(),
               short_id: shortId,
-              status: 'claimed',
-              claimed_at: new Date().toISOString(),
-              claimed_by_user_id: entry.user_id,
+              status: 'unclaimed',
               burner_sol_address: burner.address,
               burner_sol_key_enc: burner.encryptedSecret,
               sender_tx_hash: txHash,
               note: `Won "${giveaway.title}"!`,
             })
-            .select('id, short_id, num_tickets, funding_mode, burner_sol_address, burner_sol_key_enc, sender_tx_hash, funded_privately')
+            .select('id, short_id')
             .single();
           if (giftError || !gift) throw new Error(giftError?.message ?? 'Failed to create prize ticket gift');
-
-          await this.lotteryService.purchaseGiftTickets(gift, entry.user_id);
 
           claimUrl = `${this.baseUrl}/gift/${gift.short_id}`;
           entryUpdate = {
