@@ -114,12 +114,17 @@ export class GiveawayPayoutService {
       // to fund a second claim burner for the same winner. This is a real compare-and-swap, not a
       // best-effort check — it holds even across separate backend instances, since it's enforced by
       // Postgres row locking, not in-process state.
+      // .neq('payout_status', 'in_progress') alone would be a NULL trap: SQL's NULL <> 'in_progress'
+      // is unknown, not true, so it would silently exclude every brand-new winner (payout_status
+      // starts null) and this atomic claim would never match anyone on their first attempt. The
+      // explicit .or(...) below makes NULL count as claimable too, same fix as finalizeIfComplete's
+      // identical trap below (2026-08-25).
       const { data: claimedRows, error: claimError } = await this.supabaseService.giveawayEntries
         .update({ payout_status: 'in_progress' })
         .eq('id', entry.id)
         .is('claim_payment_id', null)
         .is('claim_gift_id', null)
-        .neq('payout_status', 'in_progress')
+        .or('payout_status.is.null,payout_status.neq.in_progress')
         .select('id');
       if (claimError) {
         this.logger.warn(`[GiveawayPayout] ${giveaway.id} entry ${entry.id}: claim check failed: ${claimError.message}`);
@@ -243,11 +248,18 @@ export class GiveawayPayoutService {
   }
 
   private async finalizeIfComplete(giveaway: Giveaway): Promise<void> {
+    // .neq('payout_status', 'succeeded') alone is a NULL trap: in SQL, NULL <> 'succeeded'
+    // evaluates to unknown/false, not true, so a winner sitting at payout_status = null (the
+    // normal pre-payout default, but also reachable via a manual DB reset) is silently invisible
+    // to this count. That's exactly what let this giveaway complete — and refund its leftover
+    // buffer to the creator, closing the burner's token account — while a winner was still
+    // unpaid (2026-08-25 incident). The explicit `.is(...)` OR clause below makes NULL count as
+    // unpaid too, matching the plain-JS `!== 'succeeded'` semantics used elsewhere in this file.
     const { count: unpaidWinners, error } = await this.supabaseService.giveawayEntries
       .select('id', { count: 'exact', head: true })
       .eq('giveaway_id', giveaway.id)
       .eq('status', 'winner')
-      .neq('payout_status', 'succeeded');
+      .or('payout_status.is.null,payout_status.neq.succeeded');
     if (error) {
       this.logger.warn(`[GiveawayPayout] ${giveaway.id}: failed to check completion: ${error.message}`);
       return;
