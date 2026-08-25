@@ -647,22 +647,38 @@ export class GiveawayEntriesService {
     );
   }
 
-  /** Count of completions still awaiting a decision (unresolved X-verification, or an
-   *  un-reviewed self-report submission) among currently-ENTERED entries. Used to block
-   *  finalizing the draw while real work is still outstanding — without this, a self-report task
-   *  the creator just hasn't reviewed yet would silently exclude that entrant from the draw
-   *  instead of the draw waiting for the review queue to clear. Disqualified entries are excluded
-   *  from the count since their pending work (if any) can never become eligible anyway. */
+  /** Count of completions still awaiting a *human* decision among currently-ENTERED entries —
+   *  self-report submissions with real proof attached, i.e. exactly what listReviewQueue shows.
+   *  Used to block finalizing the draw while real reviewer work is still outstanding, so a
+   *  self-report task the creator hasn't looked at yet doesn't silently exclude that entrant.
+   *
+   *  Deliberately excludes: (1) self-report stubs nobody ever submitted proof for — that entrant
+   *  just didn't finish the task, which already excludes them via getEligibleVerifiedEntries, not
+   *  something a reviewer can act on; (2) AUTO_API (X follow/retweet/comment) completions — those
+   *  resolve programmatically via XVerificationService (see runFinalXVerificationSweep, which the
+   *  caller runs once before this count is taken) and never need a human here either; anything
+   *  still PENDING there after that one sweep means the entrant never attempted it, not that
+   *  something is stuck waiting on review. Counting those used to block the draw indefinitely
+   *  while showing 0 items in the review queue — confusing and, worse, undrawable once the sweep's
+   *  one-shot guard had already fired. Disqualified entries are excluded from the count since
+   *  their pending work (if any) can never become eligible anyway. */
   async countPendingCompletions(giveawayId: string): Promise<number> {
     const entries = await this.listEntries(giveawayId);
     const activeEntryIds = entries.filter((e) => e.status === GiveawayEntryStatus.ENTERED).map((e) => e.id);
     if (!activeEntryIds.length) return 0;
 
-    const { count, error } = await this.supabaseService.giveawayTaskCompletions
-      .select('id', { count: 'exact', head: true })
+    const tasks = await this.giveawaysService.getTasks(giveawayId);
+    const selfReportTaskIds = tasks.filter((t) => t.verification_mode === GiveawayTaskVerificationMode.SELF_REPORT).map((t) => t.id);
+    if (!selfReportTaskIds.length) return 0;
+
+    const { data, error } = await this.supabaseService.giveawayTaskCompletions
+      .select('submission_data')
       .in('giveaway_entry_id', activeEntryIds)
+      .in('giveaway_task_id', selfReportTaskIds)
       .eq('verification_status', GiveawayTaskCompletionStatus.PENDING);
     if (error) throw new BadRequestException(error.message);
-    return count ?? 0;
+
+    const hasProof = (c: { submission_data: Record<string, unknown> | null }) => Boolean(c.submission_data?.proof || c.submission_data?.proof_image_url);
+    return (data ?? []).filter(hasProof).length;
   }
 }

@@ -1027,7 +1027,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             );
           })()}
 
-          {authenticated && hasXLinked && myEntry && myEntry.status !== "disqualified" && (() => {
+          {authenticated && hasXLinked && myEntry && myEntry.status !== "disqualified" && !giveawayEnded && (() => {
             const displayGroups = groupTasksForDisplay(giveaway.tasks);
             const groupStatuses: RowStatus[] = displayGroups.map((group) => {
               if (group.kind === "engage") {

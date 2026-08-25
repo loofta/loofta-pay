@@ -65,24 +65,33 @@ export class GiveawayDrawService {
     }
   }
 
-  /** Creator-triggered early close: force entries shut and run the draw immediately instead of
-   *  waiting for entries_close_at + the cron. Unlike advance() (one step per call, meant for a
-   *  cron tick), this drives every step synchronously within the request — including polling the
-   *  VRF oracle to fulfillment (bounded to ~15s; observed real fulfillment latency is ~2-4s) — so
-   *  a creator clicking "Run draw now" sees the real final state, not an intermediate one, whether
-   *  or not any cron is running against this instance. Manual-selection giveaways stop at DRAWING
-   *  same as always; the creator still picks winners separately via select-winners. */
+  /** Creator-triggered draw: force entries shut (if still open) and run the draw immediately
+   *  instead of waiting for entries_close_at + the cron. Also doubles as a manual "unstick" for a
+   *  giveaway that already ended (ENTRIES_CLOSED/DRAWING) but is waiting on the next cron tick —
+   *  e.g. right after the creator clears the review queue, or outside prod where the cron never
+   *  runs at all (advanceDraws no-ops unless NODE_ENV=production). Unlike advance() (one step per
+   *  call, meant for a cron tick), this drives every remaining step synchronously within the
+   *  request — including polling the VRF oracle to fulfillment (bounded to ~15s; observed real
+   *  fulfillment latency is ~2-4s) — so a creator clicking "Run draw now" sees the real final
+   *  state, not an intermediate one. Manual-selection giveaways stop at DRAWING same as always;
+   *  the creator still picks winners separately via select-winners. */
   async forceRunDrawNow(giveawayId: string, creatorId: string): Promise<Giveaway> {
     let giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
     if (giveaway.created_by !== creatorId) throw new ForbiddenException('Not your giveaway');
-    if (giveaway.status !== GiveawayStatus.OPEN) {
-      throw new BadRequestException(`Giveaway is ${giveaway.status}, can only force-run the draw from OPEN`);
+    const forceable: GiveawayStatus[] = [GiveawayStatus.OPEN, GiveawayStatus.ENTRIES_CLOSED, GiveawayStatus.DRAWING];
+    if (!forceable.includes(giveaway.status)) {
+      throw new BadRequestException(`Giveaway is ${giveaway.status}, can only force-run the draw before winners are selected`);
     }
 
-    await this.closeEntries(giveaway);
-    giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
-    await this.freezeSnapshotAndStartDrawing(giveaway, { throwIfPending: true });
-    giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+    if (giveaway.status === GiveawayStatus.OPEN) {
+      await this.closeEntries(giveaway);
+      giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+    }
+
+    if (giveaway.status === GiveawayStatus.ENTRIES_CLOSED) {
+      await this.freezeSnapshotAndStartDrawing(giveaway, { throwIfPending: true });
+      giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+    }
 
     if (giveaway.status === GiveawayStatus.DRAWING && giveaway.selection_mode !== GiveawaySelectionMode.MANUAL) {
       for (let i = 0; i < 15; i++) {
@@ -131,25 +140,30 @@ export class GiveawayDrawService {
   }
 
   private async freezeSnapshotAndStartDrawing(giveaway: Giveaway, opts: { throwIfPending?: boolean } = {}): Promise<void> {
-    // Never freeze the pool while real work is still outstanding — a self-report task the
-    // creator hasn't reviewed yet (or an X-verification that's still pending for some other
-    // reason) must not silently exclude that entrant. The cron path just defers and retries next
-    // tick; forceRunDrawNow surfaces this to the creator instead, since it's an explicit action
-    // expecting an immediate result.
-    let pendingCount = await this.entriesService.countPendingCompletions(giveaway.id);
-
-    // Only pay for a real X API sweep if there's something to sweep AND it hasn't already run for
-    // this giveaway. Previously forceRunDrawNow (opts.throwIfPending) was exempted from this guard
-    // on the assumption a creator forcing a draw is "rare, human-paced, not a cost driver" — false
-    // in practice during active testing/iteration, where the same giveaway gets force-closed
-    // repeatedly and each call re-paid for a full live X sweep (confirmed cost driver, 2026-08-16).
-    // The guard now applies unconditionally; a giveaway that still has pending completions after its
-    // one sweep just surfaces to the creator via the throwIfPending error path below, same as ever.
-    if (pendingCount > 0 && !(await this.hasSweptAlready(giveaway.id))) {
+    // Give AUTO_API tasks (X follow/retweet/comment) their one shot at resolving programmatically
+    // before deciding who's actually still pending — this must run regardless of whether anything
+    // needs *human* review below, since an entrant who genuinely did the X task but never clicked
+    // "Verify" would otherwise never get checked. runFinalXVerificationSweep no-ops cheaply (no X
+    // API calls) when there's nothing to sweep, so calling it unconditionally here is fine; the
+    // real cost guard is the one-shot `hasSweptAlready` flag — previously forceRunDrawNow
+    // (opts.throwIfPending) was exempted from that guard on the assumption a creator forcing a
+    // draw is "rare, human-paced, not a cost driver" — false in practice during active
+    // testing/iteration, where the same giveaway gets force-closed repeatedly and each call
+    // re-paid for a full live X sweep (confirmed cost driver, 2026-08-16). The guard now applies
+    // unconditionally.
+    if (!(await this.hasSweptAlready(giveaway.id))) {
       await this.entriesService.runFinalXVerificationSweep(giveaway);
       await this.logEvent(giveaway.id, 'final_sweep_ran');
-      pendingCount = await this.entriesService.countPendingCompletions(giveaway.id);
     }
+
+    // Never freeze the pool while a *human* still owes a decision — countPendingCompletions only
+    // counts self-report submissions with real proof attached (exactly what the review queue
+    // shows). AUTO_API completions still pending after the sweep above just mean the entrant never
+    // attempted the task, which already excludes them via getEligibleVerifiedEntries below; that
+    // must not block everyone else's draw. The cron path just defers and retries next tick;
+    // forceRunDrawNow surfaces this to the creator instead, since it's an explicit action
+    // expecting an immediate result.
+    const pendingCount = await this.entriesService.countPendingCompletions(giveaway.id);
 
     if (pendingCount > 0) {
       if (opts.throwIfPending) {

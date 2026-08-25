@@ -250,6 +250,13 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   }
 
   const canPickManually = giveaway.status === "DRAWING" && giveaway.selection_mode === "manual";
+  // Mirrors the backend's forceable-status set in giveaway-draw.service.ts — OPEN (early close),
+  // ENTRIES_CLOSED (waiting on the next cron tick or review), or DRAWING for an auto-selection
+  // giveaway stuck on VRF. Manual-selection DRAWING uses the "pick winner" flow instead.
+  const canForceDraw =
+    giveaway.status === "OPEN" ||
+    giveaway.status === "ENTRIES_CLOSED" ||
+    (giveaway.status === "DRAWING" && giveaway.selection_mode !== "manual");
   const pendingReviewCount = reviewQueue?.total ?? 0;
   const totalReviewPages = Math.max(1, Math.ceil((reviewQueue?.total ?? 0) / REVIEW_PAGE_SIZE));
   const winners = (entries ?? []).filter((e) => e.status === "winner");
@@ -314,7 +321,7 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                   {STATUS_LABELS[giveaway.status] ?? giveaway.status.replace(/_/g, " ")}
                 </span>
               </div>
-              {giveaway.status === "OPEN" && (
+              {canForceDraw && (
                 <button
                   type="button"
                   onClick={() => setShowRunDrawConfirm(true)}
@@ -325,7 +332,7 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                 </button>
               )}
             </div>
-            {giveaway.status === "OPEN" && pendingReviewCount > 0 && (
+            {canForceDraw && pendingReviewCount > 0 && (
               <p className="text-base text-slate-500 mt-3">
                 Review the {pendingReviewCount} pending submission{pendingReviewCount === 1 ? "" : "s"} below first — the draw can&apos;t run until the queue is clear.
               </p>
@@ -673,7 +680,9 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
           <AlertDialogHeader>
             <AlertDialogTitle>Run the draw now?</AlertDialogTitle>
             <AlertDialogDescription>
-              This closes entries immediately, even if the scheduled close time hasn&apos;t passed yet, and runs the draw right away. This can&apos;t be undone.
+              {giveaway.status === "OPEN"
+                ? "This closes entries immediately, even if the scheduled close time hasn't passed yet, and runs the draw right away. This can't be undone."
+                : "This runs the draw right away instead of waiting for the next automatic check. This can't be undone."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
