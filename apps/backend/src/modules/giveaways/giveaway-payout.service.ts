@@ -11,6 +11,10 @@ import { GiveawaysService } from './giveaways.service';
 import { Giveaway, GiveawayStatus, GiveawayEntry, GiveawayRewardType } from './entities/giveaway.entity';
 import { randomBytes, randomUUID } from 'crypto';
 
+// RPC-load pacing for processGiveaway's payout loop — see the pause call further down.
+const PAYOUT_BATCH_SIZE = 5;
+const PAYOUT_BATCH_PAUSE_MS = 10_000;
+
 // Same generator as ClaimsService/SendPaymentService — duplicated rather than shared per this
 // codebase's existing convention (see claims.service.ts, send-payment.service.ts).
 const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -104,6 +108,7 @@ export class GiveawayPayoutService {
     const gifUrl = await this.giphy.getFirstGifUrl('winning');
     const description = `Congrats on winning "${giveaway.title}"!${gifUrl ? ` ${gifUrl}` : ''}`;
 
+    let processedCount = 0;
     for (const entry of ready) {
       // Atomic claim, not just a status write: the WHERE clause only matches a row nobody has
       // touched yet, so if two processes are running this same cron concurrently against the same
@@ -241,6 +246,17 @@ export class GiveawayPayoutService {
         this.logger.warn(`[GiveawayPayout] ${giveaway.id} entry ${entry.id}: payout failed (will retry next cron): ${String(e)}`);
         await this.supabaseService.giveawayEntries.update({ payout_status: 'failed' }).eq('id', entry.id);
         await this.logEvent(giveaway.id, 'payout_failed', { entry_id: entry.id, error: String(e) });
+      }
+
+      // Each payout is 2-3 RPC calls (blockhash, sendRawTransaction, confirmation polling) fired
+      // back-to-back with no throttling — a giveaway with many winners could burst well past
+      // Alchemy's rate limit in a tight loop. Pausing after every batch spreads the load; any
+      // winner not reached in this tick just gets picked up on the next 30s cron pass, same as a
+      // failure would be.
+      processedCount++;
+      if (processedCount % PAYOUT_BATCH_SIZE === 0 && processedCount < ready.length) {
+        this.logger.log(`[GiveawayPayout] ${giveaway.id}: paced pause after ${processedCount} payout attempts (RPC load protection)`);
+        await new Promise((r) => setTimeout(r, PAYOUT_BATCH_PAUSE_MS));
       }
     }
 
