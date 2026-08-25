@@ -22,12 +22,12 @@ import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
-import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X, VenetianMask, Ticket, Wallet } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X, VenetianMask, Ticket, Wallet, CreditCard } from "lucide-react";
 import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, clearPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
-import { usePrivy, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction } from "@privy-io/react-auth";
+import { usePrivy, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction, useFiatOnramp } from "@privy-io/react-auth";
 import { useWallets, useSignTransaction, useSignAndSendTransaction, useFundWallet } from "@privy-io/react-auth/solana";
 import { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
@@ -654,6 +654,7 @@ export function BalanceModal({
   const { signTransaction } = useSignTransaction();
   const { signAndSendTransaction: signAndSendLotteryTx } = useSignAndSendTransaction();
   const { fundWallet: privyFundWallet } = useFundWallet();
+  const { fund: fundFiatOnramp } = useFiatOnramp();
   const { wallets: evmWallets } = useEvmWallets();
   const { createWallet: createEvmWallet } = useCreateWallet();
   const { sendTransaction: privySendEvmTx } = useEvmSendTransaction();
@@ -887,29 +888,41 @@ export function BalanceModal({
     }
   };
 
-  // MoonPay Onramp: buy USDC via Privy's fund wallet, bypassing the method picker.
-  // Privy's auto-skip (defaultFundingMethod: 'card') fires the MoonPay popup from inside a
-  // useEffect after the modal mounts, not from the original tap, so mobile Safari/WebKit treats
-  // it as untrusted and silently blocks the popup, leaving users stuck on the method picker.
-  // Desktop browsers are lenient about the delay so the auto-skip works fine there. On mobile we
-  // skip `defaultFundingMethod` and let the picker's own "Pay with card" button (a real click) fire it.
+  // Card onramp: buy USDC via Privy.
+  // Desktop: privyFundWallet with card.preferredProvider: 'moonpay' — Privy's auto-skip
+  // (defaultFundingMethod: 'card') fires the MoonPay popup from a useEffect after the modal
+  // mounts, which desktop browsers still treat as a trusted gesture.
+  // Mobile: that same popup gets silently blocked by mobile Safari/WebKit because it's opened
+  // outside the original tap's call stack. useFiatOnramp().fund() runs synchronously from this
+  // click instead, so its popup stays inside a trusted gesture — but it has no provider override,
+  // so Privy may route to Coinbase/Stripe/Meld instead of MoonPay. The button below drops the
+  // MoonPay branding on mobile to stay honest about that, and the deposit record uses a neutral
+  // "card-onramp" type since we can't know which provider was actually used.
+  const isMobileDevice = typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   const handleMoonpayOnramp = async () => {
     if (!solanaAddress) return;
     setMoonpayOnrampLoading(true);
     try {
-      recordDeposit("moonpay", "pending");
-      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-      await privyFundWallet({
-        address: solanaAddress,
-        options: {
-          asset: 'USDC',
-          ...(isMobile ? {} : { defaultFundingMethod: 'card' as const }),
-          card: { preferredProvider: 'moonpay' },
-        },
-      });
+      if (isMobileDevice) {
+        recordDeposit("card-onramp", "pending");
+        await fundFiatOnramp({
+          source: { defaultAsset: "usd" },
+          destination: { asset: "USDC", chain: "solana:mainnet", address: solanaAddress },
+        });
+      } else {
+        recordDeposit("moonpay", "pending");
+        await privyFundWallet({
+          address: solanaAddress,
+          options: {
+            asset: 'USDC',
+            defaultFundingMethod: 'card',
+            card: { preferredProvider: 'moonpay' },
+          },
+        });
+      }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Could not open MoonPay.";
-      toast({ variant: "destructive", title: "MoonPay error", description: msg });
+      const msg = err instanceof Error ? err.message : "Could not open card onramp.";
+      toast({ variant: "destructive", title: "Card onramp error", description: msg });
     } finally {
       setMoonpayOnrampLoading(false);
     }
@@ -3178,7 +3191,7 @@ export function BalanceModal({
                     Choose your provider
                   </p>
 
-                  {/* MoonPay — card, via Privy's fund-wallet modal */}
+                  {/* Card onramp: MoonPay on desktop, provider-agnostic on mobile (see handleMoonpayOnramp) */}
                   <button
                     type="button"
                     disabled={!solanaAddress || moonpayOnrampLoading}
@@ -3193,11 +3206,13 @@ export function BalanceModal({
                     <div className="w-12 h-12 shrink-0 flex items-center justify-center">
                       {moonpayOnrampLoading
                         ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-                        : <img src="/images/icons/moonpay-logo.svg" alt="MoonPay" className="w-10 h-10 object-contain" />
+                        : isMobileDevice
+                          ? <CreditCard className={`h-8 w-8 ${dark ? "text-slate-300" : "text-gray-700"}`} />
+                          : <img src="/images/icons/moonpay-logo.svg" alt="MoonPay" className="w-10 h-10 object-contain" />
                       }
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>MoonPay</p>
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>{isMobileDevice ? "Card" : "MoonPay"}</p>
                       <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Apple Pay · debit or credit card</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
