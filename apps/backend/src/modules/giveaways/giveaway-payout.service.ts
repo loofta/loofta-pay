@@ -105,7 +105,30 @@ export class GiveawayPayoutService {
     const description = `Congrats on winning "${giveaway.title}"!${gifUrl ? ` ${gifUrl}` : ''}`;
 
     for (const entry of ready) {
-      await this.supabaseService.giveawayEntries.update({ payout_status: 'in_progress' }).eq('id', entry.id);
+      // Atomic claim, not just a status write: the WHERE clause only matches a row nobody has
+      // touched yet, so if two processes are running this same cron concurrently against the same
+      // DB (e.g. a local backend pointed at prod alongside the deployed one — exactly what caused
+      // the 2026-08-25 double/triple-payout incident), Postgres serializes the two UPDATEs to the
+      // same row: whichever commits first flips payout_status to 'in_progress', and the second
+      // one's WHERE no longer matches, so it affects zero rows instead of both processes racing on
+      // to fund a second claim burner for the same winner. This is a real compare-and-swap, not a
+      // best-effort check — it holds even across separate backend instances, since it's enforced by
+      // Postgres row locking, not in-process state.
+      const { data: claimedRows, error: claimError } = await this.supabaseService.giveawayEntries
+        .update({ payout_status: 'in_progress' })
+        .eq('id', entry.id)
+        .is('claim_payment_id', null)
+        .is('claim_gift_id', null)
+        .neq('payout_status', 'in_progress')
+        .select('id');
+      if (claimError) {
+        this.logger.warn(`[GiveawayPayout] ${giveaway.id} entry ${entry.id}: claim check failed: ${claimError.message}`);
+        continue;
+      }
+      if (!claimedRows?.length) {
+        this.logger.log(`[GiveawayPayout] ${giveaway.id} entry ${entry.id}: already claimed by another payout run, skipping`);
+        continue;
+      }
       try {
         const winnerWallet = await this.usersService.getSolanaWalletAddress(entry.user_id);
         const { burner, txHash } = await this.burnerSweep.fundNewClaimBurner({
