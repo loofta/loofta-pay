@@ -1,4 +1,4 @@
-import { Controller, Get, NotFoundException, Param } from '@nestjs/common';
+import { Controller, Get, Logger, NotFoundException, Param } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { SupabaseService } from '@/database/supabase.service';
 import { GiveawaysService } from './giveaways.service';
@@ -44,6 +44,8 @@ const ENDED_STATUSES: readonly string[] = [
 @ApiTags('giveaways-public')
 @Controller('giveaways/public')
 export class GiveawaysPublicController {
+  private readonly logger = new Logger(GiveawaysPublicController.name);
+
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly giveawaysService: GiveawaysService,
@@ -176,11 +178,22 @@ export class GiveawaysPublicController {
     // (e.g. a giveaway that got raced and finished by legacy non-VRF code would still have these
     // columns populated). Fetch the real DrawRequest account and require its randomness to match
     // what's stored before exposing an Explorer link a visitor could click and find nothing at.
+    // This whole check is a best-effort on-chain verification for the "Draw proof" panel — it must
+    // never take down the entire public giveaway page (winners, claim status, everything else) if
+    // it fails, whether that's a misconfigured VRF program id, a flaky RPC call, or anything else.
+    // A failure here degrades to "can't verify this draw" (drawRequestPda stays null), exactly what
+    // the frontend already treats absence as — it must not surface as a 500 (2026-08-25 incident:
+    // LOOFTA_VRF_PROGRAM_ID_MAINNET was misconfigured and took down every visitor's page load for a
+    // completed giveaway).
     let drawRequestPda: string | null = null;
     if (giveaway.vrf_fulfilled_at && giveaway.vrf_randomness) {
-      const onChainRandomness = await this.vrf.pollFulfillment({ id: realId, is_devnet: giveaway.is_devnet } as Giveaway);
-      if (onChainRandomness && onChainRandomness === giveaway.vrf_randomness) {
-        drawRequestPda = this.vrf.derivePda(realId, giveaway.is_devnet ? 'devnet' : 'mainnet')[0].toBase58();
+      try {
+        const onChainRandomness = await this.vrf.pollFulfillment({ id: realId, is_devnet: giveaway.is_devnet } as Giveaway);
+        if (onChainRandomness && onChainRandomness === giveaway.vrf_randomness) {
+          drawRequestPda = this.vrf.derivePda(realId, giveaway.is_devnet ? 'devnet' : 'mainnet')[0].toBase58();
+        }
+      } catch (e: any) {
+        this.logger.warn(`[GiveawaysPublic] ${realId}: VRF draw-proof check failed (non-fatal, page still loads): ${e?.message ?? e}`);
       }
     }
 
