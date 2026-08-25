@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { isCronEnabled } from '@/common/cron-gate';
 import { Cron } from '@nestjs/schedule';
 import { SupabaseService } from '@/database/supabase.service';
 import { MagicblockQuestService } from './magicblock-quest.service';
@@ -38,7 +39,7 @@ export class MagicblockQuestCronService {
   }
 
   private get isProd(): boolean {
-    return this.config.get<string>('NODE_ENV') === 'production';
+    return isCronEnabled(this.config);
   }
 
   /** Every 8 hours: re-run the full backfill reconciliation for every connected MagicBlock wallet. */

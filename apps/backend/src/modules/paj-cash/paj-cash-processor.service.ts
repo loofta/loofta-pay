@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
+import { isCronEnabled } from '@/common/cron-gate';
 import { PajCashOrdersService } from './paj-cash-orders.service';
 
 /**
@@ -25,7 +26,7 @@ export class PajCashProcessorService {
   }
 
   private get isProd(): boolean {
-    return this.config.get<string>('NODE_ENV') === 'production';
+    return isCronEnabled(this.config);
   }
 
   // Every 20s — active orders should feel close to real-time without hammering PAJ's API.

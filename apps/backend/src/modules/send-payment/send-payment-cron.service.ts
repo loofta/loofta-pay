@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { isCronEnabled } from '@/common/cron-gate';
 import { Cron } from '@nestjs/schedule';
 import { SendPaymentService } from './send-payment.service';
 
@@ -13,7 +14,7 @@ export class SendPaymentCronService {
   ) {}
 
   private get isProd(): boolean {
-    return this.config.get<string>('NODE_ENV') === 'production';
+    return isCronEnabled(this.config);
   }
 
   /** Every 5 minutes: resume any private multi-send batch whose fan-out died mid-flight (funded

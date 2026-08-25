@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
+import { isCronEnabled } from '@/common/cron-gate';
 import { OfframpService } from './offramp.service';
 
 /**
@@ -24,7 +25,7 @@ export class OfframpProcessorService {
   }
 
   private get isProd(): boolean {
-    return this.config.get<string>('NODE_ENV') === 'production';
+    return isCronEnabled(this.config);
   }
 
   @Cron(CronExpression.EVERY_MINUTE)

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
+import { isCronEnabled } from '@/common/cron-gate';
 import { Keypair, PublicKey, Transaction, VersionedTransaction, Connection } from '@solana/web3.js';
 import { getAssociatedTokenAddress, getAccount, createTransferInstruction, createAssociatedTokenAccountInstruction, createCloseAccountInstruction } from '@solana/spl-token';
 import { SupabaseService } from '@/database/supabase.service';
@@ -46,7 +47,7 @@ export class PrivateBalanceProcessorService {
    * against the same rate-limited key.
    */
   private get isProd(): boolean {
-    return this.config.get<string>('NODE_ENV') === 'production';
+    return isCronEnabled(this.config);
   }
 
   @Cron(CronExpression.EVERY_MINUTE)

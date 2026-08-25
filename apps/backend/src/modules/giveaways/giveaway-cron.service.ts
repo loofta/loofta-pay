@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
+import { isCronEnabled } from '@/common/cron-gate';
 import { GiveawaysService } from './giveaways.service';
 import { GiveawayFundingService } from './giveaway-funding.service';
 import { GiveawayDrawService } from './giveaway-draw.service';
@@ -33,7 +34,7 @@ export class GiveawayCronService {
   }
 
   private get isProd(): boolean {
-    return this.config.get<string>('NODE_ENV') === 'production';
+    return isCronEnabled(this.config);
   }
 
   /** Every 30s: poll PENDING_FUNDING burners for an on-chain deposit. */

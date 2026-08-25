@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { isCronEnabled } from '@/common/cron-gate';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { LotteryService } from './lottery.service';
 import { PackService } from './pack.service';
@@ -29,7 +30,7 @@ export class LotteryCronService {
    * bug entirely instead of patching each race as it's found.
    */
   private get isProd(): boolean {
-    return this.config.get<string>('NODE_ENV') === 'production';
+    return isCronEnabled(this.config);
   }
 
   /** Every 5 seconds: check sent tickets for USDC + start bridge (overlap-guarded in service) */
