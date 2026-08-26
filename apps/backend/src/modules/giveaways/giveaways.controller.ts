@@ -133,6 +133,17 @@ export class GiveawaysController {
     return { entries };
   }
 
+  @Get(':id/eligible-count')
+  @ApiOperation({ summary: 'How many currently-entered entrants have every task verified (eligible to win right now) vs. total entries, for a giveaway you created' })
+  async eligibleCount(@Req() req: { user?: { id: string } }, @Param('id') id: string) {
+    await this.giveawaysService.findOneForCreator(id, req.user!.id);
+    const [entries, eligible] = await Promise.all([
+      this.entriesService.listEntries(id),
+      this.entriesService.getEligibleVerifiedEntries(id),
+    ]);
+    return { eligible: eligible.length, total: entries.length };
+  }
+
   @Get(':id/entries/:entryId/completions')
   @ApiOperation({ summary: 'Every task completion for one entry (any status), for a giveaway you created' })
   async entryCompletions(@Req() req: { user?: { id: string } }, @Param('id') id: string, @Param('entryId') entryId: string) {

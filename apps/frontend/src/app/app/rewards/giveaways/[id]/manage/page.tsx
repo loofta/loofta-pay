@@ -75,7 +75,7 @@ interface EntryCompletion {
   id: string;
   submission_data: Record<string, unknown> | null;
   verification_status: string;
-  task: { task_type: string; config?: { target?: string } };
+  task: { task_type: string; config?: { target?: string }; verification_mode: string };
 }
 
 const COMPLETION_STATUS_LABELS: Record<string, string> = {
@@ -87,9 +87,10 @@ const COMPLETION_STATUS_LABELS: Record<string, string> = {
 };
 
 function completionStatusColor(status: string): string {
-  if (status === "VERIFIED" || status === "AUTO_VERIFIED") return "text-emerald-400";
-  if (status === "REJECTED") return "text-red-400";
-  if (status === "API_ERROR") return "text-amber-400";
+  const upper = status.toUpperCase();
+  if (upper === "VERIFIED" || upper === "AUTO_VERIFIED") return "text-emerald-400";
+  if (upper === "REJECTED") return "text-red-400";
+  if (upper === "API_ERROR") return "text-amber-400";
   return "text-slate-500";
 }
 
@@ -142,7 +143,7 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
     },
   });
 
-  const { data: expandedEntryCompletions, isLoading: loadingEntryCompletions } = useQuery({
+  const { data: expandedEntryCompletions, isLoading: loadingEntryCompletions, refetch: refetchEntryCompletions } = useQuery({
     queryKey: ["giveaway-entry-completions", id, expandedEntryId],
     queryFn: async (): Promise<EntryCompletion[]> => {
       const res = await fetch(`${BACKEND_URL}/giveaways/${id}/entries/${expandedEntryId}/completions`, { headers: await authHeaders(getAccessToken) });
@@ -150,6 +151,15 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
       return (await res.json()).completions ?? [];
     },
     enabled: !!expandedEntryId,
+  });
+
+  const { data: eligibleCount, refetch: refetchEligibleCount } = useQuery({
+    queryKey: ["giveaway-eligible-count", id],
+    queryFn: async (): Promise<{ eligible: number; total: number }> => {
+      const res = await fetch(`${BACKEND_URL}/giveaways/${id}/eligible-count`, { headers: await authHeaders(getAccessToken) });
+      if (!res.ok) throw new Error("Failed to load eligible count");
+      return res.json();
+    },
   });
 
   const { data: reviewQueue, refetch: refetchReviewQueue } = useQuery({
@@ -172,10 +182,11 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
       if (!res.ok) throw new Error(await res.text());
       toast({ title: `Marked ${decision}` });
       refetchReviewQueue();
+      refetchEligibleCount();
     } catch (err: any) {
       toast({ variant: "destructive", title: "Failed to review", description: err.message });
     }
-  }, [id, getAccessToken, toast, refetchReviewQueue]);
+  }, [id, getAccessToken, toast, refetchReviewQueue, refetchEligibleCount]);
 
   const generateReviewLink = useCallback(async () => {
     setGeneratingLink(true);
@@ -323,6 +334,14 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${statusColor(giveaway.status)}`}>
                   {STATUS_LABELS[giveaway.status] ?? giveaway.status.replace(/_/g, " ")}
                 </span>
+                {eligibleCount && (
+                  <p className="text-base text-slate-400 mt-2">
+                    <span className="font-semibold text-emerald-400">{eligibleCount.eligible}</span> of {eligibleCount.total} entr{eligibleCount.total === 1 ? "y" : "ies"} have every task verified
+                    {eligibleCount.eligible >= giveaway.winner_count && giveaway.selection_mode === "first_come" && (
+                      <span className="text-emerald-400"> — enough for all {giveaway.winner_count} winners</span>
+                    )}
+                  </p>
+                )}
               </div>
               {canForceDraw && (
                 <button
@@ -497,11 +516,12 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                           {(expandedEntryCompletions ?? []).map((c) => {
                             const proofImageUrl = typeof c.submission_data?.proof_image_url === "string" ? c.submission_data.proof_image_url : null;
                             const proofText = typeof c.submission_data?.proof === "string" ? c.submission_data.proof : null;
-                            const statusLabel = c.verification_status === "PENDING" && !proofImageUrl && !proofText
+                            const statusUpper = c.verification_status.toUpperCase();
+                            const statusLabel = statusUpper === "PENDING" && !proofImageUrl && !proofText
                               ? COMPLETION_STATUS_LABELS.PENDING
-                              : c.verification_status === "PENDING"
+                              : statusUpper === "PENDING"
                                 ? "Awaiting review"
-                                : (COMPLETION_STATUS_LABELS[c.verification_status] ?? c.verification_status);
+                                : (COMPLETION_STATUS_LABELS[statusUpper] ?? c.verification_status);
                             return (
                               <div key={c.id} className="flex items-start gap-2.5">
                                 {proofImageUrl && (
@@ -519,6 +539,29 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                                     ) : (
                                       <p className="text-base text-slate-500 break-all">{proofText}</p>
                                     )
+                                  )}
+                                  {/* Manual override for self-report tasks — covers someone who did the
+                                      task but hit an upload issue (no proof ever attached) as much as a
+                                      normal review, since reviewCompletion doesn't require proof to exist. */}
+                                  {c.task.verification_mode === "self_report" && statusUpper !== "VERIFIED" && (
+                                    <div className="flex items-center gap-2 mt-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={async () => { await review(c.id, "verified"); refetchEntryCompletions(); }}
+                                        className="rounded-lg px-2.5 py-1 text-sm font-medium border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                                      >
+                                        Approve manually
+                                      </button>
+                                      {statusUpper !== "REJECTED" && (
+                                        <button
+                                          type="button"
+                                          onClick={async () => { await review(c.id, "rejected"); refetchEntryCompletions(); }}
+                                          className="rounded-lg px-2.5 py-1 text-sm font-medium border border-white/10 text-slate-400 hover:bg-white/[0.06] transition-colors"
+                                        >
+                                          Reject
+                                        </button>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               </div>

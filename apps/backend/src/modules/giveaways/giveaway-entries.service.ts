@@ -265,6 +265,7 @@ export class GiveawayEntriesService {
           verification_status: GiveawayTaskCompletionStatus.VERIFIED,
           verification_detail: { note },
           reviewed_at: new Date().toISOString(),
+          submitted_at: new Date().toISOString(),
         })
         .eq('id', completion.id)
         .select()
@@ -283,6 +284,7 @@ export class GiveawayEntriesService {
     const { data, error } = await this.supabaseService.giveawayTaskCompletions
       .update({
         submission_data: submissionData ?? null,
+        submitted_at: new Date().toISOString(),
         ...(isSelfReportResubmit
           ? {
               verification_status: GiveawayTaskCompletionStatus.PENDING,
@@ -668,16 +670,19 @@ export class GiveawayEntriesService {
     return new Map(ids.map((id, i) => [id, i + 1]));
   }
 
-  /** For first-come-first-serve draws: the moment each entry became fully eligible, i.e. when its
-   *  *last* task flipped to verified/auto_verified — not when the entrant clicked "Enter". Without
-   *  this, first_come picked winners by entry order regardless of how long someone then took to
-   *  actually finish the tasks, which isn't "first come" by task completion, the mode's whole
-   *  point. Only entries with every completion verified even have a timestamp here anyway (see
-   *  getEligibleVerifiedEntries), so a partially-completed entry never wins purely on entry order. */
+  /** For first-come-first-serve draws: the moment each entry got its *last* task submitted, i.e.
+   *  when the entrant actually finished their part — not when the entrant clicked "Enter", and
+   *  not when a creator later got around to reviewing a self-report submission. Uses submitted_at
+   *  (set at submission time) rather than updated_at, which also moves on a later human review —
+   *  a self-report task can sit reviewed hours or days after it was actually submitted, and
+   *  updated_at would silently attribute that review lag to the entrant. Falls back to updated_at
+   *  only for rows written before submitted_at existed. Only entries with every completion
+   *  verified even have a timestamp here anyway (see getEligibleVerifiedEntries), so a
+   *  partially-completed entry never wins purely on entry order. */
   async getVerifiedCompletionTimestamps(entryIds: string[]): Promise<Map<string, string>> {
     if (!entryIds.length) return new Map();
     const { data, error } = await this.supabaseService.giveawayTaskCompletions
-      .select('giveaway_entry_id, updated_at, verification_status')
+      .select('giveaway_entry_id, submitted_at, updated_at, verification_status')
       .in('giveaway_entry_id', entryIds)
       .in('verification_status', [GiveawayTaskCompletionStatus.VERIFIED, GiveawayTaskCompletionStatus.AUTO_VERIFIED]);
     if (error) throw new BadRequestException(error.message);
@@ -685,10 +690,10 @@ export class GiveawayEntriesService {
     const latestByEntry = new Map<string, string>();
     for (const row of data ?? []) {
       const entryId = row.giveaway_entry_id as string;
-      const updatedAt = row.updated_at as string;
+      const submittedAt = (row.submitted_at as string | null) ?? (row.updated_at as string);
       const current = latestByEntry.get(entryId);
-      if (!current || new Date(updatedAt).getTime() > new Date(current).getTime()) {
-        latestByEntry.set(entryId, updatedAt);
+      if (!current || new Date(submittedAt).getTime() > new Date(current).getTime()) {
+        latestByEntry.set(entryId, submittedAt);
       }
     }
     return latestByEntry;

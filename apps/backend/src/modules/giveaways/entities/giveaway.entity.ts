@@ -186,6 +186,9 @@ export interface GiveawayTaskCompletion {
   verification_detail: Record<string, unknown> | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
+  // When the entrant actually submitted/attempted this task — distinct from updated_at, which
+  // also moves on a later human review. Null for rows created before this column existed.
+  submitted_at: string | null;
 }
 
 export interface GiveawayTask {
