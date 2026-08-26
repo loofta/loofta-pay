@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { SupabaseService } from '@/database/supabase.service';
 import { GiveawaysService } from './giveaways.service';
 import { GiveawayVrfService } from './giveaway-vrf.service';
+import { GiveawayEntriesService } from './giveaway-entries.service';
 import { Giveaway, GiveawayStatus } from './entities/giveaway.entity';
 
 // Entries (and who won) go public once the pool is frozen — before that, revealing who's in the
@@ -50,6 +51,7 @@ export class GiveawaysPublicController {
     private readonly supabaseService: SupabaseService,
     private readonly giveawaysService: GiveawaysService,
     private readonly vrf: GiveawayVrfService,
+    private readonly entriesService: GiveawayEntriesService,
   ) {}
 
   @Get()
@@ -255,9 +257,10 @@ export class GiveawaysPublicController {
       .order('entry_index', { ascending: true });
     if (error) throw new NotFoundException(error.message);
 
+    const rankMap = await this.entriesService.getWinnerRankMap(giveaway.id as string);
     return {
       visible: true,
-      entries: (data ?? []).map((e) => ({ id: e.id, x_handle: e.x_handle, status: e.status })),
+      entries: (data ?? []).map((e) => ({ id: e.id, x_handle: e.x_handle, status: e.status, rank: rankMap.get(e.id) ?? null })),
     };
   }
 }

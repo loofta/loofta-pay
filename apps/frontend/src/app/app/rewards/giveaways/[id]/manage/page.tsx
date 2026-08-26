@@ -60,7 +60,7 @@ interface GiveawayDetail {
 interface Entry {
   id: string; user_id: string; entry_index: number; x_handle: string; status: string;
   payout_status: string | null; claim_payment_id: string | null; payment_status: string | null;
-  claim_gift_id: string | null; claim_gift_short_id: string | null;
+  claim_gift_id: string | null; claim_gift_short_id: string | null; rank: number | null;
 }
 
 /** A winner's prize claim link — /c/[id] for a usdc giveaway, /gift/[shortId] (already claimed,
@@ -259,12 +259,15 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
     (giveaway.status === "DRAWING" && giveaway.selection_mode !== "manual");
   const pendingReviewCount = reviewQueue?.total ?? 0;
   const totalReviewPages = Math.max(1, Math.ceil((reviewQueue?.total ?? 0) / REVIEW_PAGE_SIZE));
-  const winners = (entries ?? []).filter((e) => e.status === "winner");
+  const winners = (entries ?? [])
+    .filter((e) => e.status === "winner")
+    .sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
   const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://pay.loofta.xyz";
 
   const winnersAsRows = winners.map((w) => {
     const path = claimPath(w);
     return {
+      rank: w.rank,
       handle: w.x_handle,
       status: claimStatus(w).label,
       claim_link: path ? `${siteUrl}${path}` : "",
@@ -272,14 +275,14 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   });
 
   const copyWinners = () => {
-    const text = winnersAsRows.map((w) => `@${w.handle}\t${w.status}\t${w.claim_link}`).join("\n");
+    const text = winnersAsRows.map((w) => `${w.rank ?? ""}\t@${w.handle}\t${w.status}\t${w.claim_link}`).join("\n");
     navigator.clipboard.writeText(text);
     toast({ title: "Winners copied to clipboard" });
   };
 
   const exportWinnersCsv = () => {
-    const header = "handle,status,claim_link";
-    const rows = winnersAsRows.map((w) => `"${w.handle}","${w.status}","${w.claim_link}"`);
+    const header = "rank,handle,status,claim_link";
+    const rows = winnersAsRows.map((w) => `"${w.rank ?? ""}","${w.handle}","${w.status}","${w.claim_link}"`);
     const csv = [header, ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -367,11 +370,18 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
               <div className="space-y-2">
                 {winners.map((entry) => (
                   <div key={entry.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-base font-medium text-white truncate">@{entry.x_handle}</p>
-                      <p className={`text-base ${claimStatus(entry).className}`}>
-                        {claimStatus(entry).label}
-                      </p>
+                    <div className="min-w-0 flex items-center gap-2">
+                      {entry.rank != null && (
+                        <span className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-sm font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30">
+                          {entry.rank}
+                        </span>
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-base font-medium text-white truncate">@{entry.x_handle}</p>
+                        <p className={`text-base ${claimStatus(entry).className}`}>
+                          {claimStatus(entry).label}
+                        </p>
+                      </div>
                     </div>
                     {claimPath(entry) && (
                       <Link

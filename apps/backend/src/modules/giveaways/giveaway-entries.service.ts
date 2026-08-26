@@ -190,7 +190,7 @@ export class GiveawayEntriesService {
     return new Map((data ?? []).map((g) => [g.id as string, g.short_id as string]));
   }
 
-  async findMyEntry(giveawayId: string, userId: string): Promise<(GiveawayEntry & { completions: GiveawayTaskCompletion[]; claim_gift_short_id: string | null }) | null> {
+  async findMyEntry(giveawayId: string, userId: string): Promise<(GiveawayEntry & { completions: GiveawayTaskCompletion[]; claim_gift_short_id: string | null; rank: number | null }) | null> {
     const { data: entry, error } = await this.supabaseService.giveawayEntries
       .select('*')
       .eq('giveaway_id', giveawayId)
@@ -203,10 +203,12 @@ export class GiveawayEntriesService {
       .eq('giveaway_entry_id', entry.id);
     if (compError) throw new BadRequestException(compError.message);
     const giftShortIds = entry.claim_gift_id ? await this.resolveGiftShortIds([entry.claim_gift_id]) : new Map<string, string>();
+    const rankMap = entry.status === GiveawayEntryStatus.WINNER ? await this.getWinnerRankMap(giveawayId) : new Map<string, number>();
     return {
       ...(entry as GiveawayEntry),
       completions: (completions ?? []) as GiveawayTaskCompletion[],
       claim_gift_short_id: entry.claim_gift_id ? (giftShortIds.get(entry.claim_gift_id) ?? null) : null,
+      rank: rankMap.get(entry.id) ?? null,
     };
   }
 
@@ -349,8 +351,9 @@ export class GiveawayEntriesService {
    *  creator-facing manage page needs this join, so it's kept separate from listEntries (used by
    *  the draw/eligibility internals on every cron tick, where the extra payments query would be
    *  pure overhead). */
-  async listEntriesWithClaimStatus(giveawayId: string): Promise<Array<GiveawayEntry & { payment_status: string | null; payment_paid_at: string | null; claim_gift_short_id: string | null }>> {
+  async listEntriesWithClaimStatus(giveawayId: string): Promise<Array<GiveawayEntry & { payment_status: string | null; payment_paid_at: string | null; claim_gift_short_id: string | null; rank: number | null }>> {
     const entries = await this.listEntries(giveawayId);
+    const rankMap = await this.getWinnerRankMap(giveawayId);
 
     const paymentIds = entries.map((e) => e.claim_payment_id).filter((id): id is string => Boolean(id));
     let paymentsById = new Map<string, { status: string; paid_at: string | null }>();
@@ -384,6 +387,7 @@ export class GiveawayEntriesService {
         payment_status: gift ? (gift.status === 'claimed' ? 'SUCCESS' : gift.status) : (payment?.status ?? null),
         payment_paid_at: gift ? gift.claimed_at : (payment?.paid_at ?? null),
         claim_gift_short_id: gift?.short_id ?? null,
+        rank: rankMap.get(e.id) ?? null,
       };
     });
   }
@@ -645,6 +649,23 @@ export class GiveawayEntriesService {
     return entries.filter(
       (e) => e.status === GiveawayEntryStatus.ENTERED && allVerifiedByEntry.get(e.id) === true,
     );
+  }
+
+  /** 1-indexed rank for each winner, in the exact order finalizeWinners logged them in — ascending
+   *  verified-completion time for first_come, ascending VRF-derived sort key for random. Empty map
+   *  before the draw has run. Reads the same `winners_selected` event both the public "provably
+   *  fair" recompute and the manage-page winners list already rely on, so rank always matches
+   *  whatever winner list actually got persisted, not a live recomputation that could drift from it. */
+  async getWinnerRankMap(giveawayId: string): Promise<Map<string, number>> {
+    const { data } = await this.supabaseService.giveawayEvents
+      .select('payload')
+      .eq('giveaway_id', giveawayId)
+      .eq('type', 'winners_selected')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const ids = ((data?.payload as { winner_entry_ids?: string[] } | null)?.winner_entry_ids ?? []) as string[];
+    return new Map(ids.map((id, i) => [id, i + 1]));
   }
 
   /** For first-come-first-serve draws: the moment each entry became fully eligible, i.e. when its

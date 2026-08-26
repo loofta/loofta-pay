@@ -265,7 +265,7 @@ interface TaskCompletion {
 
 interface MyEntry {
   id: string; status: string; payout_status: string | null; claim_payment_id: string | null;
-  claim_gift_id: string | null; claim_gift_short_id: string | null;
+  claim_gift_id: string | null; claim_gift_short_id: string | null; rank: number | null;
   completions: TaskCompletion[];
 }
 
@@ -428,7 +428,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   // data (id + status for every entrant) and the source for the winners list below.
   const { data: publicEntries } = useQuery({
     queryKey: ["giveaway-public-entries", resolvedId],
-    queryFn: async (): Promise<{ visible: boolean; entries: Array<{ id: string; x_handle: string; status: string }> }> => {
+    queryFn: async (): Promise<{ visible: boolean; entries: Array<{ id: string; x_handle: string; status: string; rank: number | null }> }> => {
       const res = await fetch(`${BACKEND_URL}/giveaways/public/${resolvedId}/entries`);
       if (!res.ok) return { visible: false, entries: [] };
       return res.json();
@@ -437,7 +437,10 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     staleTime: 15_000,
     refetchOnWindowFocus: false,
   });
-  const winnerHandles = (publicEntries?.entries ?? []).filter((e) => e.status === "winner").map((e) => e.x_handle);
+  const winners = (publicEntries?.entries ?? [])
+    .filter((e) => e.status === "winner")
+    .map((e) => ({ handle: e.x_handle, rank: e.rank }))
+    .sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
 
   const enter = useCallback(async () => {
     setEntering(true);
@@ -942,19 +945,19 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 View on-chain proof
               </button>
             )}
-            {winnerHandles.length > 0 && (
+            {winners.length > 0 && (
               <div className="mb-3">
                 <p className="text-base text-slate-400 mb-2">Winners</p>
                 <div className="flex flex-wrap gap-2">
-                  {winnerHandles.map((handle) => (
+                  {winners.map((w) => (
                     <a
-                      key={handle}
-                      href={`https://x.com/${handle}`}
+                      key={w.handle}
+                      href={`https://x.com/${w.handle}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 transition-colors"
                     >
-                      @{handle}
+                      {w.rank != null && <span className="text-emerald-400/70 mr-1">#{w.rank}</span>}@{w.handle}
                     </a>
                   ))}
                 </div>
@@ -1437,7 +1440,9 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             </>
           ) : myEntry?.status === "winner" && myEntryClaimPath(myEntry) ? (
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
-              <p className="font-semibold text-lg mb-1 text-emerald-400">You won!</p>
+              <p className="font-semibold text-lg mb-1 text-emerald-400">
+                You won!{myEntry.rank != null && ` Ranked #${myEntry.rank}`}
+              </p>
               <p className="text-base text-slate-300 mb-3">
                 {myEntry.claim_gift_id
                   ? "Your Megapot tickets are already in — check them out below."
