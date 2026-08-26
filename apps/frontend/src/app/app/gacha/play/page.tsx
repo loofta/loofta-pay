@@ -12,11 +12,12 @@ import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { AlertCircle, Check, ChevronLeft, Copy, Eye, Lock, LogOut, Plus, RefreshCw } from "lucide-react";
+import { AlertCircle, Check, ChevronLeft, Copy, ExternalLink, Eye, Lock, LogOut, Plus, RefreshCw, X } from "lucide-react";
 import MascotPicker from "@/components/MascotPicker";
 import { Shell } from "@/components/PackParty";
 import Mascot from "@/components/Mascot";
 import { getMascot } from "@/lib/mascots";
+import GachaTransactionProofs, { gachaSolscanTxUrl } from "@/components/GachaTransactionProofs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -114,6 +115,10 @@ export default function GachaPlayPage() {
   const rematchRoomId = searchParams.get("rematchRoomId");
   const rematchMascotKey = searchParams.get("mascotKey");
   const rematchClaimDeadline = searchParams.get("claimDeadline");
+  const refundTxSig = searchParams.get("refundTxSig");
+  const refundedEntryPaymentTxSig = searchParams.get("entryPaymentTxSig");
+  const refundAmountParam = searchParams.get("refundAmountUsdc");
+  const refundAmountUsdc = refundAmountParam === null ? null : Number(refundAmountParam);
   const directRoomSeatsParam = searchParams.get("seats");
   const { user, authenticated, login, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
@@ -561,7 +566,22 @@ export default function GachaPlayPage() {
           headers: { "Content-Type": "application/json", ...authHeader },
           body: JSON.stringify({ paymentTxHash, mascotKey }),
         });
-        if (!joinRes.ok) throw new Error((await joinRes.json().catch(() => null))?.message ?? "Failed to join room");
+        const joinPayload = await joinRes.json().catch(() => null);
+        if (!joinRes.ok) {
+          if (joinPayload?.code === "ROOM_FILLED_ENTRY_REFUNDED" && typeof joinPayload.refundTxSig === "string") {
+            const nextParams = new URLSearchParams(searchParams.toString());
+            nextParams.set("entryPaymentTxSig", paymentTxHash);
+            nextParams.set("refundTxSig", joinPayload.refundTxSig);
+            nextParams.set("refundAmountUsdc", String(joinPayload.refundAmountUsdc ?? ""));
+            router.replace(`/app/gacha/play?${nextParams.toString()}`);
+            setCreatedRoom(null);
+            setRoomMode("browse");
+            setError("This room filled before your seat landed. Your entry was automatically refunded.");
+            void loadRooms(true);
+            return;
+          }
+          throw new Error(joinPayload?.message ?? "Failed to join room");
+        }
 
         router.push(`/app/gacha/${roomId}${inviteQuery}`);
       } catch (err: any) {
@@ -575,7 +595,7 @@ export default function GachaPlayPage() {
         setJoiningSeats(null);
       }
     },
-    [authenticated, login, embeddedWallet, mascotKey, getAccessToken, signAndSendTransaction, router, loadRooms],
+    [authenticated, login, embeddedWallet, mascotKey, getAccessToken, signAndSendTransaction, router, loadRooms, searchParams],
   );
 
   const handleLeaveRoom = useCallback(async () => {
@@ -591,6 +611,15 @@ export default function GachaPlayPage() {
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.message ?? "Couldn't leave this room");
       setShowLeaveConfirm(false);
+      if (payload?.entryRefunded && typeof payload.refundTxSig === "string") {
+        const nextParams = new URLSearchParams(searchParams.toString());
+        if (typeof payload.entryPaymentTxSig === "string") {
+          nextParams.set("entryPaymentTxSig", payload.entryPaymentTxSig);
+        }
+        nextParams.set("refundTxSig", payload.refundTxSig);
+        nextParams.set("refundAmountUsdc", String(payload.refundAmountUsdc ?? ""));
+        router.replace(`/app/gacha/play?${nextParams.toString()}`);
+      }
       await loadCurrentRoom(false);
       await loadRooms(true);
     } catch (err: any) {
@@ -599,7 +628,16 @@ export default function GachaPlayPage() {
     } finally {
       setLeavingRoom(false);
     }
-  }, [existingRoom, leavingRoom, getAccessToken, loadCurrentRoom, loadRooms]);
+  }, [existingRoom, leavingRoom, getAccessToken, loadCurrentRoom, loadRooms, router, searchParams]);
+
+  const dismissRefundProof = useCallback(() => {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete("entryPaymentTxSig");
+    nextParams.delete("refundTxSig");
+    nextParams.delete("refundAmountUsdc");
+    const query = nextParams.toString();
+    router.replace(query ? `/app/gacha/play?${query}` : "/app/gacha/play");
+  }, [router, searchParams]);
 
   const pickedMascot = getMascot(mascotKey);
 
@@ -638,6 +676,40 @@ export default function GachaPlayPage() {
       >
         <ChevronLeft className="w-4 h-4" /> Back
       </Link>
+
+      {refundTxSig && (
+        <section
+          role="status"
+          aria-live="polite"
+          className="fixed left-1/2 top-16 z-50 flex w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 items-start gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground shadow-xl sm:items-center"
+        >
+          <Check className="mt-0.5 h-5 w-5 shrink-0 text-primary sm:mt-0" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">
+              {Number.isFinite(refundAmountUsdc) ? `$${refundAmountUsdc!.toFixed(2)} USDC refunded` : "Entry refunded"}
+            </p>
+            <p className="mt-1 truncate font-mono text-xs text-muted-foreground" title={refundTxSig}>
+              Transaction {refundTxSig.slice(0, 8)}…{refundTxSig.slice(-8)}
+            </p>
+          </div>
+          <a
+            href={gachaSolscanTxUrl(refundTxSig)}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            View proof <ExternalLink className="h-4 w-4" aria-hidden="true" />
+          </a>
+          <button
+            type="button"
+            onClick={dismissRefundProof}
+            aria-label="Dismiss refund proof"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </section>
+      )}
 
       {stage === "pick" && (
         <MascotPicker lockedMascotKey={null} onLock={handleLocalMascotPick} />
@@ -973,6 +1045,13 @@ export default function GachaPlayPage() {
         </Shell>
       )}
 
+      <GachaTransactionProofs
+        proofs={[
+          { label: "Entry payment", signature: refundedEntryPaymentTxSig },
+          { label: "Entry refund", signature: refundTxSig },
+        ]}
+      />
+
       <AlertDialog open={showLeaveConfirm} onOpenChange={(open) => { if (!leavingRoom) setShowLeaveConfirm(open); }}>
         <AlertDialogContent className="border-white/10 bg-[#0f0f12] text-white sm:max-w-md">
           <AlertDialogHeader>
@@ -980,6 +1059,8 @@ export default function GachaPlayPage() {
             <AlertDialogDescription className="text-slate-300">
               {existingRoom?.canCancel
                 ? "This empty room will be cancelled so you can create or join another room."
+                : existingRoom?.isCreator && existingRoom.hasSeat && existingRoom.seatsFilled === 1
+                  ? "You are the only paid player. This room will be cancelled and your Devnet test entry will be automatically refunded."
                 : "Your waiting seat will be released so you can join another room. Your Devnet test entry is not refunded."}
             </AlertDialogDescription>
           </AlertDialogHeader>

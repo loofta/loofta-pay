@@ -330,12 +330,54 @@ describe("GachaService explicit room browser", () => {
       roomId: "room-1",
       seatsFilled: 1,
       entryRefunded: false,
+      entryPaymentTxSig: null,
+      refundTxSig: null,
+      refundAmountUsdc: null,
     });
     expect(rpc).toHaveBeenCalledWith("gacha_leave_waiting_room", {
       p_room_id: "room-1",
       p_user_id: "user-1",
     });
     expect(emit).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ roomId: "room-1" }));
+  });
+
+  it("refunds the creator when the RPC reports they were the only paid participant", async () => {
+    const rpc = jest.fn().mockResolvedValue({
+      data: {
+        roomId: "room-creator-only",
+        seatsFilled: 0,
+        seats: 5,
+        roomCancelled: true,
+        entryRefunded: false,
+        entryRefundRequired: true,
+        refundPaymentTxHash: "entry-payment-sig",
+        refundAmountUsdc: 10,
+      },
+      error: null,
+    });
+    const service = makeService({ rpc });
+    (service as any).usersService = {
+      getSolanaWalletAddress: jest.fn().mockResolvedValue("11111111111111111111111111111111"),
+    };
+    const refund = jest.spyOn(service as any, "refundFailedJoin").mockResolvedValue("refund-sig");
+
+    await expect(service.leaveWaitingRoom("room-creator-only", "creator-1")).resolves.toEqual({
+      roomId: "room-creator-only",
+      seatsFilled: 0,
+      seats: 5,
+      roomCancelled: true,
+      entryRefunded: true,
+      entryPaymentTxSig: "entry-payment-sig",
+      refundTxSig: "refund-sig",
+      refundAmountUsdc: 10,
+    });
+    expect(refund).toHaveBeenCalledWith(
+      "room-creator-only",
+      "creator-1",
+      "entry-payment-sig",
+      10,
+      "11111111111111111111111111111111",
+    );
   });
 
   it("returns the existing room so the owner can recover from a duplicate create", async () => {

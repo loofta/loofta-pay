@@ -21,6 +21,8 @@ export const BACKEND_URL = getBackendUrl();
 export interface RequestOptions {
   headers?: Record<string, string>;
   signal?: AbortSignal;
+  /** Suppress console error output for optional background reads whose caller handles failure. */
+  silent?: boolean;
   /** Privy user ID — sent as x-privy-user-id (legacy). Prefer accessToken when available. */
   userId?: string;
   /** Privy access token from getAccessToken(). Sent as Authorization: Bearer when provided. */
@@ -34,7 +36,7 @@ export async function fetchApi<T>(
   endpoint: string,
   options: RequestInit & RequestOptions = {},
 ): Promise<T> {
-  const { headers, signal, userId, accessToken, ...fetchOptions } = options;
+  const { headers, signal, silent, userId, accessToken, ...fetchOptions } = options;
 
   const requestHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -78,7 +80,9 @@ export async function fetchApi<T>(
     if (error.name === 'AbortError') {
       throw error;
     }
-    console.error(`[API] ${options.method || 'GET'} ${endpoint} failed:`, error.message);
+    if (!silent) {
+      console.error(`[API] ${options.method || 'GET'} ${endpoint} failed:`, error.message);
+    }
     throw error;
   }
 }

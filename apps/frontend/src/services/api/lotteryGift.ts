@@ -143,7 +143,9 @@ export interface UnclaimedGift {
 
 /** Gifts sent to the current user that they haven't claimed yet — powers the unclaimed-gift toast. */
 export async function getMyUnclaimedGifts(userId: string, accessToken?: string | null): Promise<UnclaimedGift[]> {
-  return fetchApi<UnclaimedGift[]>('/lottery/my-unclaimed-gifts', { userId, accessToken });
+  // This powers an optional background toast and the hook deliberately treats downtime as an
+  // empty list. Avoid turning a handled backend-restart race into a Next.js dev error overlay.
+  return fetchApi<UnclaimedGift[]>('/lottery/my-unclaimed-gifts', { userId, accessToken, silent: true });
 }
 
 /** Fix a typo'd recipient on a gift you sent — only works while it's still unclaimed. */
