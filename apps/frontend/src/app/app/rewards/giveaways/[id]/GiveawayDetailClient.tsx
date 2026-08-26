@@ -241,6 +241,13 @@ function groupTasksForDisplay(tasks: PublicTask[]): TaskDisplayGroup[] {
   return groups;
 }
 
+/** Title shown for a single (non-engage) task, whether interactive or preview-only. */
+function taskDisplayTitle(task: PublicTask): string {
+  const isCustom = task.task_type === "custom";
+  const hasStructuredTitle = isCustom && typeof task.config?.title === "string" && task.config.title.trim().length > 0;
+  return hasStructuredTitle ? (task.config.title as string) : (TASK_TYPE_LABELS[task.task_type] ?? task.task_type);
+}
+
 interface PublicGiveaway {
   id: string; title: string; description: string | null; logo_url: string | null; project_name: string | null; short_id: string | null;
   winner_count: number; selection_mode: string; prize_amount_usd: string; reward_type?: "usdc" | "megapot_ticket"; entries_close_at: string;
@@ -685,6 +692,12 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const isEscrowSecured = ["FUNDED", "OPEN", "ENTRIES_CLOSED", "DRAWING", "WINNERS_SELECTED", "PAYOUT_IN_PROGRESS", "COMPLETED"].includes(giveaway.status);
   const totalPoolNum = Number(giveaway.prize_amount_usd) * giveaway.winner_count;
   const totalPoolLabel = Number.isInteger(totalPoolNum) ? totalPoolNum.toString() : totalPoolNum.toFixed(2);
+  // isOwner/myEntry start out `undefined` (not yet fetched) and only settle once their queries
+  // resolve — treating "not yet known" the same as "no" made canEnter briefly true on every load
+  // for anyone who actually owns the giveaway or already has an entry, flashing "Enter giveaway"
+  // right before it flips to the real state. Both queries are disabled while logged out, so this
+  // only waits while `authenticated` is true (otherwise it'd wait forever on a disabled query).
+  const identityPending = authenticated && (isOwner === undefined || myEntry === undefined);
   const canEnter = giveaway.status === "OPEN" && !myEntry && !isOwner;
   const giveawayEnded = giveaway.status !== "OPEN";
   const canShare = giveaway.status !== "REJECTED" && giveaway.status !== "CANCELLED";
@@ -1345,6 +1358,45 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             );
           })()}
 
+          {/* Before someone has an entry (or hasn't signed in yet), the interactive checklist above
+              never renders — this was the "tasks aren't visible" bug: the page showed a bare
+              "Sign in to enter" button with zero indication of what entering actually requires. */}
+          {!identityPending &&
+            !(authenticated && hasXLinked && myEntry && myEntry.status !== "disqualified" && !giveawayEnded) &&
+            giveaway.tasks.length > 0 &&
+            !giveawayEnded &&
+            (() => {
+              const previewGroups = groupTasksForDisplay(giveaway.tasks);
+              return (
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-5">
+                  <p className="text-base font-medium text-slate-400 uppercase tracking-widest mb-3">What you&apos;ll need to do</p>
+                  <div className="space-y-2">
+                    {previewGroups.map((group, i) => {
+                      if (group.kind === "engage") {
+                        return (
+                          <div key={`preview-engage-${i}`} className="flex items-center gap-3 p-3 rounded-xl border border-white/10 bg-white/[0.03]">
+                            <span className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 border bg-white/5 border-white/10">
+                              <Repeat2 className="w-4 h-4 text-slate-300" />
+                            </span>
+                            <span className="text-base font-medium text-white">Engage with the post</span>
+                          </div>
+                        );
+                      }
+                      const Icon = TASK_TYPE_ICON[group.task.task_type] ?? Sparkles;
+                      return (
+                        <div key={group.task.id} className="flex items-center gap-3 p-3 rounded-xl border border-white/10 bg-white/[0.03]">
+                          <span className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 border bg-white/5 border-white/10">
+                            <Icon className="w-4 h-4 text-slate-300" />
+                          </span>
+                          <span className="text-base font-medium text-white">{taskDisplayTitle(group.task)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
           {(giveaway.eligibility?.min_followers || giveaway.eligibility?.min_account_age_days || giveaway.eligibility?.verified_only) && (
             <p className="text-base text-slate-500 mb-3">
               To enter: linked X account
@@ -1358,7 +1410,9 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             Winners will have 30 days to claim their payment once announced.
           </p>
 
-          {!authenticated ? (
+          {identityPending ? (
+            <div className="h-12 rounded-xl bg-white/5 animate-pulse" />
+          ) : !authenticated ? (
             // Every giveaway requires a linked X account to enter (see eligibility text above) —
             // sign in with X directly instead of offering methods that would just dead-end at a
             // second "Connect X" prompt right after.

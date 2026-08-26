@@ -647,6 +647,32 @@ export class GiveawayEntriesService {
     );
   }
 
+  /** For first-come-first-serve draws: the moment each entry became fully eligible, i.e. when its
+   *  *last* task flipped to verified/auto_verified — not when the entrant clicked "Enter". Without
+   *  this, first_come picked winners by entry order regardless of how long someone then took to
+   *  actually finish the tasks, which isn't "first come" by task completion, the mode's whole
+   *  point. Only entries with every completion verified even have a timestamp here anyway (see
+   *  getEligibleVerifiedEntries), so a partially-completed entry never wins purely on entry order. */
+  async getVerifiedCompletionTimestamps(entryIds: string[]): Promise<Map<string, string>> {
+    if (!entryIds.length) return new Map();
+    const { data, error } = await this.supabaseService.giveawayTaskCompletions
+      .select('giveaway_entry_id, updated_at, verification_status')
+      .in('giveaway_entry_id', entryIds)
+      .in('verification_status', [GiveawayTaskCompletionStatus.VERIFIED, GiveawayTaskCompletionStatus.AUTO_VERIFIED]);
+    if (error) throw new BadRequestException(error.message);
+
+    const latestByEntry = new Map<string, string>();
+    for (const row of data ?? []) {
+      const entryId = row.giveaway_entry_id as string;
+      const updatedAt = row.updated_at as string;
+      const current = latestByEntry.get(entryId);
+      if (!current || new Date(updatedAt).getTime() > new Date(current).getTime()) {
+        latestByEntry.set(entryId, updatedAt);
+      }
+    }
+    return latestByEntry;
+  }
+
   /** Count of completions still awaiting a *human* decision among currently-ENTERED entries —
    *  self-report submissions with real proof attached, i.e. exactly what listReviewQueue shows.
    *  Used to block finalizing the draw while real reviewer work is still outstanding, so a

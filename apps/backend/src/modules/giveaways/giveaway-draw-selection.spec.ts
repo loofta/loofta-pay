@@ -41,7 +41,16 @@ describe('giveaway-draw-selection', () => {
   });
 
   describe('selectFirstComeWinners', () => {
-    it('picks the lowest entry_index values', () => {
+    it('picks earliest completedAt regardless of entry order', () => {
+      const entries = [
+        { id: 'e1', entry_index: 1, completedAt: '2026-08-26T12:00:00Z' }, // entered first, finished last
+        { id: 'e2', entry_index: 2, completedAt: '2026-08-26T10:00:00Z' },
+        { id: 'e3', entry_index: 3, completedAt: '2026-08-26T09:00:00Z' }, // entered last, finished first
+      ];
+      expect(selectFirstComeWinners(entries, 2)).toEqual(['e3', 'e2']);
+    });
+
+    it('falls back to entry_index when completedAt is missing (e.g. a task-less giveaway)', () => {
       const entries = [
         { id: 'e3', entry_index: 3 },
         { id: 'e1', entry_index: 1 },
@@ -50,10 +59,18 @@ describe('giveaway-draw-selection', () => {
       expect(selectFirstComeWinners(entries, 2)).toEqual(['e1', 'e2']);
     });
 
+    it('ranks any entry with a completedAt above one without', () => {
+      const entries = [
+        { id: 'e1', entry_index: 1, completedAt: null },
+        { id: 'e2', entry_index: 2, completedAt: '2026-08-26T10:00:00Z' },
+      ];
+      expect(selectFirstComeWinners(entries, 1)).toEqual(['e2']);
+    });
+
     it('selects all entries when winnerCount exceeds the entry count', () => {
       const entries = [
-        { id: 'e1', entry_index: 1 },
-        { id: 'e2', entry_index: 2 },
+        { id: 'e1', entry_index: 1, completedAt: '2026-08-26T10:00:00Z' },
+        { id: 'e2', entry_index: 2, completedAt: '2026-08-26T11:00:00Z' },
       ];
       expect(selectFirstComeWinners(entries, 5)).toEqual(['e1', 'e2']);
     });

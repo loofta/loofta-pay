@@ -224,7 +224,11 @@ export class GiveawayDrawService {
     const entries = await this.entriesService.listEntries(giveaway.id);
     const byId = new Map(entries.map((e) => [e.id, e]));
     const frozenEntries = entryIds.map((id) => byId.get(id)).filter((e): e is NonNullable<typeof e> => !!e);
-    const winnerIds = selectFirstComeWinners(frozenEntries, giveaway.winner_count);
+    const completedAtByEntry = await this.entriesService.getVerifiedCompletionTimestamps(entryIds);
+    const winnerIds = selectFirstComeWinners(
+      frozenEntries.map((e) => ({ ...e, completedAt: completedAtByEntry.get(e.id) ?? null })),
+      giveaway.winner_count,
+    );
     await this.finalizeWinners(giveaway, entryIds, winnerIds);
   }
 

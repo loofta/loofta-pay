@@ -680,8 +680,10 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
           <AlertDialogHeader>
             <AlertDialogTitle>Run the draw now?</AlertDialogTitle>
             <AlertDialogDescription>
-              {giveaway.status === "OPEN"
-                ? "This closes entries immediately, even if the scheduled close time hasn't passed yet, and runs the draw right away. This can't be undone."
+              {giveaway.status === "OPEN" && (entries?.length ?? 0) === 0
+                ? "No one has entered yet. Running the draw now closes entries immediately and, with nobody eligible, cancels this giveaway instead of picking winners. This can't be undone."
+                : giveaway.status === "OPEN"
+                ? `This closes entries immediately, even if the scheduled close time (${new Date(giveaway.entries_close_at).toLocaleString()}) hasn't passed yet, and picks winners only from entrants who've already verified every task — anyone still mid-task is excluded. This can't be undone.`
                 : "This runs the draw right away instead of waiting for the next automatic check. This can't be undone."}
             </AlertDialogDescription>
           </AlertDialogHeader>
