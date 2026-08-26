@@ -41,9 +41,10 @@ import { useAuthStore } from "@/store/auth";
 import { DescriptionWithGif } from "@/components/DescriptionWithGif";
 import { TokenIcon } from "@/components/TokenIcon";
 import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
+import { GuestCheckoutPay } from "@/components/app/GuestCheckoutPay";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
@@ -229,12 +230,20 @@ function IncognitoCardBadge() {
 
 function ClaimPayLayout({
   embedInApp,
+  chrome = "full",
+  merchantName,
+  merchantLogoUrl,
   topRight,
   from,
   incognito,
   children,
 }: {
   embedInApp?: boolean;
+  chrome?: "full" | "minimal";
+  /** Only rendered when chrome="minimal" — the merchant's own branding (Developer settings ->
+   *  Branding), snapshotted onto the payment at link-creation time. */
+  merchantName?: string | null;
+  merchantLogoUrl?: string | null;
   topRight?: React.ReactNode;
   from?: string | null;
   /** True once the sender has opted into incognito mode for this payment — darkens the whole
@@ -282,6 +291,40 @@ function ClaimPayLayout({
           >
             {children}
           </motion.div>
+        </div>
+      </div>
+    );
+  }
+  if (chrome === "minimal") {
+    return (
+      <div className="min-h-screen w-full bg-slate-50 text-gray-900 [@media(prefers-color-scheme:dark)]:bg-[#0f0f12] [@media(prefers-color-scheme:dark)]:text-slate-100 flex flex-col items-center justify-center">
+        <div className="w-full max-w-[900px] px-4 py-10">
+          <div className="flex items-center justify-between gap-3 mb-6">
+            <div className="flex items-center gap-3">
+              {merchantLogoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element -- merchant-supplied URL, not a local/optimizable asset
+                <img
+                  src={merchantLogoUrl}
+                  alt={merchantName || "Merchant logo"}
+                  className="h-10 w-10 rounded-full object-cover border border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10 shrink-0"
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                />
+              ) : (
+                <LooftaIcon className="w-7 h-7 text-orange-500 shrink-0" />
+              )}
+              <span className="text-base font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">{merchantName || "Loofta"}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {topRight}
+              <span className="hidden sm:inline-flex items-center gap-1.5 text-base text-emerald-600 [@media(prefers-color-scheme:dark)]:text-emerald-400">
+                <Lock className="w-3.5 h-3.5" />
+                Secure payment
+              </span>
+            </div>
+          </div>
+          <div className="space-y-4 md:space-y-0 md:grid md:grid-cols-[1fr_380px] md:gap-6 md:items-start">
+            {children}
+          </div>
         </div>
       </div>
     );
@@ -752,7 +795,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; recipient_user_id?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_pending_social?: boolean; recipient_pending_social_platform?: string | null; recipient_pending_social_value?: string | null; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; claimed_privately?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null },
+    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; recipient_user_id?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_pending_social?: boolean; recipient_pending_social_platform?: string | null; recipient_pending_social_value?: string | null; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; claimed_privately?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null; merchant_name?: string | null; merchant_logo_url?: string | null },
     latestIntent: data.latestIntent || null,
     pendingEmail: false,
     pendingSocialPlatform: null,
@@ -1103,7 +1146,19 @@ const CLAIM_PRIVACY_FAQ_ITEMS: { question: string; answer: React.ReactNode }[] =
   },
 ];
 
-function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: boolean }) {
+export function ClaimPayView({
+  claimId,
+  embedInApp,
+  chrome = "full",
+}: {
+  claimId: string;
+  embedInApp?: boolean;
+  /** "minimal": no Loofta page furniture beyond the pay card itself — used by /checkout/[id]
+   *  (AppShell already strips the header/footer/bottom-nav for any /checkout* path; this just
+   *  adds the small "Powered by Loofta" badge). Every payment/deposit code path below is
+   *  identical between "full" and "minimal" — this only ever affects presentation. */
+  chrome?: "full" | "minimal";
+}) {
   const id = claimId;
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1556,10 +1611,13 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       const data = await r.json();
       return { isRecipient: data?.isRecipient === true };
     },
-    enabled: !!claim && !!user?.id,
+    enabled: !!claim && !!user?.id && chrome !== "minimal",
     staleTime: 60_000,
   });
-  const isRecipient = recipientCheckQuery.data?.isRecipient === true;
+  // Merchant checkout links (chrome="minimal") always show the payer experience, even when the
+  // signed-in visitor happens to also be the link's creator (e.g. testing your own checkout link)
+  // — never flip into the "payment to yourself, here's how to claim it" recipient view there.
+  const isRecipient = chrome !== "minimal" && recipientCheckQuery.data?.isRecipient === true;
   // True while we're still checking — hide the pay form until we know the user is NOT the recipient.
   const isCheckingRecipient = recipientCheckQuery.isLoading || recipientCheckQuery.isFetching;
   // True only for the very first check (no data yet) — unlike isCheckingRecipient, this stays
@@ -2699,6 +2757,41 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
+  // Checkout-only: once the payer's own side of the payment lands (SUCCESS or
+  // PRIVATE_TRANSFER_PENDING — the latter is what a freshly-paid claim shows immediately,
+  // before the async recipient sweep completes; from the payer's point of view they're done
+  // either way), tell whoever opened this checkout. Popup mode: postMessage, matching what
+  // PayButton's onSuccess already listens for. Redirect/same-tab mode: navigate to ?callback=
+  // (set by PayButton) with the outcome appended, so the merchant's own page can show it.
+  const checkoutSettledNotifiedRef = React.useRef(false);
+  useEffect(() => {
+    if (chrome !== "minimal" || checkoutSettledNotifiedRef.current) return;
+    const effectiveStatus = String(status || claim?.status || "").toUpperCase();
+    if (effectiveStatus !== "SUCCESS" && effectiveStatus !== "PRIVATE_TRANSFER_PENDING") return;
+    checkoutSettledNotifiedRef.current = true;
+
+    const paymentId = claim?.short_id || id;
+    if (typeof window !== "undefined" && window.opener) {
+      try {
+        window.opener.postMessage({ type: "loofta-payment-success", paymentId }, "*");
+      } catch {
+        /* opener from a different origin closed/unreachable — nothing else to do */
+      }
+      return;
+    }
+    const callback = searchParams.get("callback");
+    if (callback) {
+      try {
+        const dest = new URL(decodeURIComponent(callback));
+        dest.searchParams.set("payment", "success");
+        dest.searchParams.set("short_id", paymentId);
+        window.location.href = dest.toString();
+      } catch {
+        /* malformed callback URL — stay put rather than navigating somewhere broken */
+      }
+    }
+  }, [chrome, status, claim?.status, claim?.short_id, id, searchParams]);
+
   // Covers the plain "already claimed" view (isRecipient + SUCCESS, no pending flags) —
   // reachable directly via optimistic status updates or a fresh page load without ever
   // passing through the claimCompleted branch above, so it needs its own refresh trigger.
@@ -2779,6 +2872,11 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
   const privatePayActive = requiresPrivate;
   // Effective privacy for this payment: forced when the claim requires it, otherwise the payer's own choice via the switch.
   const payingPrivately = requiresPrivate || isPrivateMode;
+  // Mirrors the ternary below that actually picks GuestCheckoutPay vs the authenticated Pay Now
+  // button — used to decide where the "Pay privately" switch renders (see the block right above
+  // that ternary): inside GuestCheckoutPay itself (under the selected option) when this is true,
+  // above the whole section otherwise.
+  const showGuestCheckout = !DEMO_MODE && chrome === "minimal" && !!claim?.claim_burner_address;
   const isCreatorView = !!user?.id && claim?.created_by === user.id;
 
   // Has the sender ever completed a public (non-private) payment to this same recipient before?
@@ -3818,6 +3916,31 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
       });
   }, [claim?.sender_tx_hash, claim?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Opens the Pay Now modal, which pays from the signed-in user's own Loofta balance. Shared by
+  // the normal "Pay now" button and, on checkout links, the balance readout GuestCheckoutPay
+  // shows instead of its "Pay with Loofta" login button once the visitor is already authenticated.
+  async function handlePayWithLooftaBalance() {
+    if (!authenticated) {
+      login();
+      return;
+    }
+    setPayWithLooftaError(null);
+    setConfirmingTxSignature(null);
+    setConfirmingTxSource(null);
+    setPerTransferPhase(null);
+    setPendingFeeUsdc(null);
+    setPreBuilding(true);
+    try {
+      if (payingPrivately) {
+        const fee = await preBuildFee();
+        if (fee != null) setPendingFeeUsdc(fee);
+      }
+    } finally {
+      setPreBuilding(false);
+    }
+    setShowPayNowModal(true);
+  }
+
   async function onPayNow() {
     if (!claim || !selectedFrom || !destToken) return;
 
@@ -4015,6 +4138,9 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
       <ClaimPayLayout
         embedInApp={embedInApp}
+        chrome={chrome}
+        merchantName={(claim as { merchant_name?: string | null } | null)?.merchant_name}
+        merchantLogoUrl={(claim as { merchant_logo_url?: string | null } | null)?.merchant_logo_url}
         from={from}
         incognito={showingPrivatePayForm || showingPrivateRecipientView}
         topRight={
@@ -4118,16 +4244,29 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
           </div>
         )}
         {loadingClaim || !privyReady || (authenticated && isInitialRecipientCheck) ? (
-          <div className="space-y-5 animate-pulse">
-            <div className="flex items-center gap-3">
-              <Skeleton className="h-10 w-10 rounded-full" />
-              <Skeleton className="h-5 w-36" />
+          chrome === "minimal" ? (
+            <div className="space-y-4 md:space-y-0 md:grid md:grid-cols-[1fr_380px] md:gap-6 md:[grid-column:1/-1] animate-pulse">
+              <div className="space-y-4">
+                <Skeleton className="h-52 w-full rounded-2xl" />
+                <Skeleton className="h-32 w-full rounded-2xl" />
+              </div>
+              <div className="space-y-4">
+                <Skeleton className="h-14 w-full rounded-xl" />
+                <Skeleton className="h-64 w-full rounded-2xl" />
+              </div>
             </div>
-            <Skeleton className="h-14 w-2/3" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-4/5" />
-            <Skeleton className="h-12 w-full rounded-xl mt-2" />
-          </div>
+          ) : (
+            <div className="space-y-5 animate-pulse">
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-full" />
+                <Skeleton className="h-5 w-36" />
+              </div>
+              <Skeleton className="h-14 w-2/3" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-4/5" />
+              <Skeleton className="h-12 w-full rounded-xl mt-2" />
+            </div>
+          )
         ) : !authenticated && claim?.direction !== 'from_recipient' ? (
           <div className="py-16 flex flex-col items-center text-center">
             <div className="w-16 h-16 rounded-full bg-white/10 border border-white/10 flex items-center justify-center mb-5">
@@ -4858,10 +4997,16 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                   + ${parseFloat(claim?.amount || "0").toFixed(2)}
                 </div>
                 <div className="text-xl text-gray-500 mt-3 mb-5">
-                  from{" "}
-                  {claim?.creator_username
-                    ? `@${claim.creator_username}`
-                    : claim?.creator_email || "Anonymous"}
+                  {isCreatorView ? (
+                    "Payment to yourself — you're logged in as the account that created this link."
+                  ) : (
+                    <>
+                      from{" "}
+                      {claim?.creator_username
+                        ? `@${claim.creator_username}`
+                        : claim?.creator_email || "Anonymous"}
+                    </>
+                  )}
                 </div>
                 <div className="text-left max-w-md mx-auto">
                   <ClaimDescriptionMessageBox description={claim?.description} />
@@ -5141,7 +5286,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
               </>
             ) : (
               <>
-                {!embedInApp && (
+                {!embedInApp && chrome !== "minimal" && (
                   <div className="mb-3">
                     <div className="text-xl font-sans font-medium text-slate-300">
                       {(claim as { direction?: string } | null)?.direction === "from_sender" ? (
@@ -5177,91 +5322,228 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                     </div>
                   </div>
                 )}
-                {!embedInApp && claim?.description && (
-                  <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
-                    <div className="text-base md:text-sm text-gray-600 mb-1">Message</div>
-                    <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
-                      {(() => {
-                        const desc = claim.description || '';
-                        // Check if description contains GIF URLs (common patterns including Giphy)
-                        const gifUrlPattern = /(https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\/[^\s]*)/gi;
-                        const parts: string[] = [];
-                        let lastIndex = 0;
-                        let match;
-
-                        // Reset regex lastIndex
-                        gifUrlPattern.lastIndex = 0;
-
-                        while ((match = gifUrlPattern.exec(desc)) !== null) {
-                          // Add text before match
-                          if (match.index > lastIndex) {
-                            parts.push(desc.slice(lastIndex, match.index));
-                          }
-                          // Add GIF URL
-                          parts.push(match[0]);
-                          lastIndex = match.index + match[0].length;
-                        }
-
-                        // Add remaining text
-                        if (lastIndex < desc.length) {
-                          parts.push(desc.slice(lastIndex));
-                        }
-
-                        // If no matches, return original text
-                        if (parts.length === 0) {
-                          return desc;
-                        }
-
-                        return parts.map((part, idx) => {
-                          // Check if this part is a GIF URL
-                          if (gifUrlPattern.test(part) || part.match(/https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\//i)) {
-                            // Convert Giphy URL to direct image URL if needed
-                            let imageUrl = part;
-                            if (part.includes('giphy.com') && !part.endsWith('.gif')) {
-                              // Extract Giphy ID and use direct GIF URL
-                              const giphyIdMatch = part.match(/giphy\.com\/media\/([^\/]+)/);
-                              if (giphyIdMatch) {
-                                imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
-                              } else {
-                                // Try to get the original URL
-                                imageUrl = part.replace(/\/$/, '') + '.gif';
+                {chrome === "minimal" ? (
+                  <div className="rounded-2xl p-5 bg-white border border-gray-200 shadow-sm [@media(prefers-color-scheme:dark)]:bg-[#17171b] [@media(prefers-color-scheme:dark)]:border-white/10">
+                    {!embedInApp && claim?.description && (
+                      <div className="mb-3 pb-3 border-b border-gray-100 [@media(prefers-color-scheme:dark)]:border-white/10">
+                        <div className="text-base uppercase tracking-wide font-semibold text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400 mb-1">What you&apos;re paying for</div>
+                        <div className="text-base text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100 whitespace-pre-wrap break-words">
+                          {(() => {
+                            const desc = claim.description || '';
+                            const gifUrlPattern = /(https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\/[^\s]*)/gi;
+                            const parts: string[] = [];
+                            let lastIndex = 0;
+                            let match;
+                            gifUrlPattern.lastIndex = 0;
+                            while ((match = gifUrlPattern.exec(desc)) !== null) {
+                              if (match.index > lastIndex) {
+                                parts.push(desc.slice(lastIndex, match.index));
                               }
+                              parts.push(match[0]);
+                              lastIndex = match.index + match[0].length;
                             }
-                            return (
-                              <img
-                                key={idx}
-                                src={imageUrl}
-                                alt="GIF"
-                                className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
-                                style={{ maxHeight: '200px', maxWidth: '100%' }}
-                              />
-                            );
-                          }
-                          return <span key={idx}>{part}</span>;
-                        });
-                      })()}
+                            if (lastIndex < desc.length) {
+                              parts.push(desc.slice(lastIndex));
+                            }
+                            if (parts.length === 0) {
+                              return desc;
+                            }
+                            return parts.map((part, idx) => {
+                              if (gifUrlPattern.test(part) || part.match(/https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\//i)) {
+                                let imageUrl = part;
+                                if (part.includes('giphy.com') && !part.endsWith('.gif')) {
+                                  const giphyIdMatch = part.match(/giphy\.com\/media\/([^\/]+)/);
+                                  if (giphyIdMatch) {
+                                    imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
+                                  } else {
+                                    imageUrl = part.replace(/\/$/, '') + '.gif';
+                                  }
+                                }
+                                return (
+                                  <img
+                                    key={idx}
+                                    src={imageUrl}
+                                    alt="GIF"
+                                    className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
+                                    style={{ maxHeight: '200px', maxWidth: '100%' }}
+                                  />
+                                );
+                              }
+                              return <span key={idx}>{part}</span>;
+                            });
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                    {!embedInApp && <div className="text-base uppercase tracking-wide font-semibold text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">{(claim as { direction?: string } | null)?.direction === "from_sender" ? "Amount to send" : "Amount to pay"}</div>}
+                    <div className="mt-1 flex items-baseline justify-between">
+                      <div className="text-3xl md:text-4xl font-sans font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100 leading-none">
+                        {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
+                      </div>
+                      <div className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">
+                        <span className="inline-flex items-center gap-1">
+                          <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
+                          {destTokenAmount != null ? Number(parseFloat(String(destTokenAmount)).toFixed(4)) : "—"} {claim.to_symbol} {destToken?.chain ? `on ${destToken.chain.charAt(0).toUpperCase() + destToken.chain.slice(1)}` : ""}
+                        </span>
+                      </div>
                     </div>
+                    {/* Payment breakdown — merged into this same card for guest checkout. Mirrors
+                        the shared breakdown block below (kept for chrome="full") and the same
+                        three-way payingPrivately/isFeeOnSender logic: free by default, the real
+                        MagicBlock privacy fee (estimatePrivateTotal) once private payment is on. */}
+                    {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase()) && !deposit && (
+                      <div className="mt-4 pt-4 border-t border-gray-100 [@media(prefers-color-scheme:dark)]:border-white/10">
+                        <div className="text-base uppercase tracking-wide font-semibold font-sans text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400 mb-2">Payment breakdown</div>
+                        <div className="space-y-1.5 text-base">
+                          {!payingPrivately ? (
+                            <>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">You pay</span>
+                                <span className="font-semibold font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${claimAmountUSD.toFixed(2)}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Network fee</span>
+                                <span className="font-medium text-emerald-600 [@media(prefers-color-scheme:dark)]:text-emerald-400">Free</span>
+                              </div>
+                              <div className="pt-2 border-t border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10 flex items-center justify-between">
+                                <span className="font-medium font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">Merchant receives</span>
+                                <span className="font-semibold font-sans text-lg text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${claimAmountUSD.toFixed(2)}</span>
+                              </div>
+                            </>
+                          ) : isFeeOnSender ? (
+                            <>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Merchant receives</span>
+                                <span className="font-semibold font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${claimAmountUSD.toFixed(2)}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Privacy fee</span>
+                                <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
+                              </div>
+                              <div className="pt-2 border-t border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10 flex items-center justify-between">
+                                <span className="font-medium font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">You pay</span>
+                                <span className="font-semibold font-sans text-lg text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${privatePayTotal.toFixed(2)}</span>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">You pay</span>
+                                <span className="font-semibold font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${claimAmountUSD.toFixed(2)}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Privacy fee (deducted)</span>
+                                <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
+                              </div>
+                              <div className="pt-2 border-t border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10 flex items-center justify-between">
+                                <span className="font-medium font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">Merchant receives</span>
+                                <span className="font-semibold font-sans text-lg text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">~${(claimAmountUSD - (privatePayProtocolFee + privatePayGasFee)).toFixed(2)}</span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
+                ) : (
+                  <>
+                    {!embedInApp && claim?.description && (
+                      <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                        <div className="text-base md:text-sm text-gray-600 mb-1">Message</div>
+                        <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
+                          {(() => {
+                            const desc = claim.description || '';
+                            // Check if description contains GIF URLs (common patterns including Giphy)
+                            const gifUrlPattern = /(https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\/[^\s]*)/gi;
+                            const parts: string[] = [];
+                            let lastIndex = 0;
+                            let match;
+
+                            // Reset regex lastIndex
+                            gifUrlPattern.lastIndex = 0;
+
+                            while ((match = gifUrlPattern.exec(desc)) !== null) {
+                              // Add text before match
+                              if (match.index > lastIndex) {
+                                parts.push(desc.slice(lastIndex, match.index));
+                              }
+                              // Add GIF URL
+                              parts.push(match[0]);
+                              lastIndex = match.index + match[0].length;
+                            }
+
+                            // Add remaining text
+                            if (lastIndex < desc.length) {
+                              parts.push(desc.slice(lastIndex));
+                            }
+
+                            // If no matches, return original text
+                            if (parts.length === 0) {
+                              return desc;
+                            }
+
+                            return parts.map((part, idx) => {
+                              // Check if this part is a GIF URL
+                              if (gifUrlPattern.test(part) || part.match(/https?:\/\/(?:[^\s/]+\.)?(?:giphy\.com|tenor\.com|gfycat\.com)\//i)) {
+                                // Convert Giphy URL to direct image URL if needed
+                                let imageUrl = part;
+                                if (part.includes('giphy.com') && !part.endsWith('.gif')) {
+                                  // Extract Giphy ID and use direct GIF URL
+                                  const giphyIdMatch = part.match(/giphy\.com\/media\/([^\/]+)/);
+                                  if (giphyIdMatch) {
+                                    imageUrl = `https://media.giphy.com/media/${giphyIdMatch[1]}/giphy.gif`;
+                                  } else {
+                                    // Try to get the original URL
+                                    imageUrl = part.replace(/\/$/, '') + '.gif';
+                                  }
+                                }
+                                return (
+                                  <img
+                                    key={idx}
+                                    src={imageUrl}
+                                    alt="GIF"
+                                    className="max-w-full h-auto rounded-lg mt-2 mb-2 block"
+                                    style={{ maxHeight: '200px', maxWidth: '100%' }}
+                                  />
+                                );
+                              }
+                              return <span key={idx}>{part}</span>;
+                            });
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                    {!embedInApp && <div className="text-base mt-2 text-slate-500">{(claim as { direction?: string } | null)?.direction === "from_sender" ? "Amount to send" : "Amount requested"}</div>}
+                    <div className={embedInApp ? "mt-2 flex items-baseline justify-between" : "mt-1 flex items-baseline justify-between"}>
+                      <div className="text-3xl md:text-4xl font-sans font-semibold text-gray-900 leading-none">
+                        {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
+                      </div>
+                      <div className="text-base text-gray-500">
+                        <span className="inline-flex items-center gap-1">
+                          <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
+                          {destTokenAmount != null ? Number(parseFloat(String(destTokenAmount)).toFixed(4)) : "—"} {claim.to_symbol} {destToken?.chain ? `on ${destToken.chain.charAt(0).toUpperCase() + destToken.chain.slice(1)}` : ""}
+                        </span>
+                      </div>
+                    </div>
+                  </>
                 )}
-                {!embedInApp && <div className="text-base mt-2 text-slate-500">{(claim as { direction?: string } | null)?.direction === "from_sender" ? "Amount to send" : "Amount requested"}</div>}
-                <div className={embedInApp ? "mt-2 flex items-baseline justify-between" : "mt-1 flex items-baseline justify-between"}>
-                  <div className="text-3xl md:text-4xl font-sans font-semibold text-gray-900 leading-none">
-                    {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
-                  </div>
-                  <div className="text-base text-gray-500">
-                    <span className="inline-flex items-center gap-1">
-                      <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
-                      {destTokenAmount != null ? Number(parseFloat(String(destTokenAmount)).toFixed(4)) : "—"} {claim.to_symbol} {destToken?.chain ? `on ${destToken.chain.charAt(0).toUpperCase() + destToken.chain.slice(1)}` : ""}
-                    </span>
-                  </div>
-                </div>
               </>
             )}
 
             {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase()) && (!deposit ? (
               <>
-                {/* Private indicator — only when payment is private */}
-                {requiresPrivate ? (
+                {/* Private indicator — only when payment is private. Shown on checkout regardless
+                    of auth state, driving the fee breakdown above either way. Note it only drives
+                    that breakdown for a guest, though — MagicBlock privacy is an authenticated-
+                    account feature, and GuestCheckoutPay's own payment methods (USDC on Solana,
+                    the NEAR Intents bridge) don't read isPrivateMode at all, so an unauthenticated
+                    visitor can flip this on and see private pricing without it changing how their
+                    actual payment goes out. Only the authenticated "Pay now" balance flow (via the
+                    Pay Now modal below) genuinely pays privately when this is on.
+                    On the GuestCheckoutPay path (showGuestCheckout) this is skipped here entirely —
+                    GuestCheckoutPay renders its own copy of the switch, above its token/method
+                    selection, instead of up top on this card. */}
+                {showGuestCheckout ? null : requiresPrivate ? (
                   <div className="mt-5 flex gap-2 text-base md:text-sm text-gray-600">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0 mt-0.5">
                       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -5296,18 +5578,21 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
 
                 {/* Minimum amount notice */}
                 {claimAmountUSD > 0 && claimAmountUSD < 5 && (
-                  <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-base md:text-sm text-amber-700">
+                  <div className={chrome === "minimal" ? "mt-4 md:mt-0 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-base md:text-sm text-amber-700" : "mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-base md:text-sm text-amber-700"}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
                     <span>Minimum payment amount is <strong>$5.00 USDC</strong>. This payment link cannot be paid.</span>
                   </div>
                 )}
 
 
-                {/* Payment breakdown */}
+                {/* Payment breakdown — chrome="full" only; for chrome="minimal" this is rendered
+                    merged into the amount card above instead (see the block right after the
+                    amount row), so it isn't duplicated here. */}
+                {chrome !== "minimal" && (
                 <div className="mt-4">
                   <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
-                    <div className="text-base md:text-sm font-medium font-sans text-gray-700 mb-2">Payment breakdown</div>
-                    <div className="space-y-1.5 text-base md:text-sm">
+                    <div className="text-base md:text-sm font-medium font-sans text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300 mb-2">Payment breakdown</div>
+                    <div className="space-y-1.5 text-base md:text-sm [@media(prefers-color-scheme:dark)]:[&_.text-gray-600]:text-slate-400 [@media(prefers-color-scheme:dark)]:[&_.text-gray-700]:text-slate-300 [@media(prefers-color-scheme:dark)]:[&_.text-gray-900]:text-slate-100 [@media(prefers-color-scheme:dark)]:[&_.border-gray-200]:border-white/10">
                       {!payingPrivately ? (
                         /* Non-private: no fees */
                         <>
@@ -5365,8 +5650,10 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       This payment link was created on <strong>{claimExpectedNetwork}</strong>. Switch your network to <strong>{claimExpectedNetwork}</strong> to pay.
                     </div>
                   )}
+                </div>
+                )}
 
-                  <div className="mt-4 flex gap-3">
+                <div className={chrome === "minimal" ? "mt-4 flex gap-3 md:mt-0 md:[grid-column:2] md:[grid-row:1/-1] md:self-start" : "mt-4 flex gap-3"}>
                     {DEMO_MODE ? (
                       <Button
                         disabled
@@ -5375,26 +5662,29 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                       >
                         Demo Mode - Payments Disabled
                       </Button>
+                    ) : showGuestCheckout && claim?.claim_burner_address ? (
+                      <div className="w-full rounded-2xl p-5 bg-white border border-gray-200 shadow-sm [@media(prefers-color-scheme:dark)]:bg-[#17171b] [@media(prefers-color-scheme:dark)]:border-white/10">
+                        <GuestCheckoutPay
+                          claimId={id}
+                          burnerAddress={claim.claim_burner_address}
+                          amountUsd={claimAmountUSD}
+                          onLogin={() => login()}
+                          authenticated={authenticated}
+                          looftaBalanceUSD={authenticated ? looftaBalanceUSD : undefined}
+                          onPayWithLoofta={handlePayWithLooftaBalance}
+                          isPrivateMode={isPrivateMode}
+                          onTogglePrivateMode={handleTogglePrivateMode}
+                          requiresPrivate={requiresPrivate}
+                          onSettled={() => {
+                            setStatus("SUCCESS");
+                            useClaimPayStore.getState().setStatus(id, "SUCCESS");
+                            claimQuery.refetch();
+                          }}
+                        />
+                      </div>
                     ) : (
                       <GradientActionButton
-                        onClick={async () => {
-                          if (!authenticated) { login(); return; }
-                          setPayWithLooftaError(null);
-                          setConfirmingTxSignature(null);
-                          setConfirmingTxSource(null);
-                          setPerTransferPhase(null);
-                          setPendingFeeUsdc(null);
-                          setPreBuilding(true);
-                          try {
-                            if (payingPrivately) {
-                              const fee = await preBuildFee();
-                              if (fee != null) setPendingFeeUsdc(fee);
-                            }
-                          } finally {
-                            setPreBuilding(false);
-                          }
-                          setShowPayNowModal(true);
-                        }}
+                        onClick={handlePayWithLooftaBalance}
                         disabled={
                           preBuilding
                             ? true
@@ -5413,11 +5703,14 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
                         loading={preBuilding || preparing || (authenticated && !isPayerWalletReady)}
                         loadingText={preBuilding ? "Calculating fees…" : "Wallet loading…"}
                       >
-                        {isWrongNetwork && claimExpectedNetwork ? `Switch to ${claimExpectedNetwork}` : !authenticated ? "Sign in to pay" : "Pay now"}
+                        {isWrongNetwork && claimExpectedNetwork
+                          ? `Switch to ${claimExpectedNetwork}`
+                          : !authenticated
+                            ? "Sign in to pay"
+                            : "Pay now"}
                       </GradientActionButton>
                     )}
                   </div>
-                </div>
               </>
             ) : (
               <>
@@ -6159,7 +6452,7 @@ function ClaimPayView({ claimId, embedInApp }: { claimId: string; embedInApp?: b
         </DialogContent>
       </Dialog>
 
-      {isClaimPageLocalhost && <DevPreviewPanel />}
+      {isClaimPageLocalhost && chrome !== "minimal" && <DevPreviewPanel />}
     </>
   );
 }

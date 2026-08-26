@@ -1,24 +1,22 @@
 /**
  * Loofta Pay SDK Components
- * 
+ *
  * Embeddable payment components for integrating Loofta Pay
  * into your application.
- * 
+ *
  * @example
  * ```tsx
  * import { PayButton } from '@/components/sdk';
- * 
- * <PayButton 
- *   organizationId="your-org-id"
- *   amount={100}
+ *
+ * <PayButton
+ *   checkoutUrl="https://pay.loofta.xyz/checkout/your-short-id"
  *   onSuccess={(id) => console.log('Paid:', id)}
  * />
  * ```
  */
 
-export { 
-  PayButton, 
-  generateEmbedCode, 
-  generateScriptEmbed,
-  type PayButtonProps 
+export {
+  PayButton,
+  generateEmbedCode,
+  type PayButtonProps
 } from './PayButton';

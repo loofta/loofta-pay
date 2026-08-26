@@ -31,6 +31,15 @@ type Props = {
 	hideChains?: string[];
 	/** When true, "All networks" is selected by default so all chains are visible (e.g. for withdraw token picker). */
 	defaultShowAllChains?: boolean;
+	/**
+	 * The closed trigger button's own text/icon colors are hardcoded white — fine when it sits on
+	 * a dark host background (BalanceModal, ClaimPageContent, NearSwapWidget all fix their own
+	 * container dark regardless of the caller's `className`), unreadable on a light one. Set this
+	 * when embedding on a light-background card (e.g. guest checkout) so the trigger's own text
+	 * switches to a dark color; the popup content itself stays dark either way, matching every
+	 * other dropdown-style overlay in the app.
+	 */
+	light?: boolean;
 };
 
 const EMPTY_CHAINS: string[] = [];
@@ -43,7 +52,8 @@ export function TokenCombobox({
 	className,
 	onQuery,
 	hideChains = EMPTY_CHAINS,
-	defaultShowAllChains = false
+	defaultShowAllChains = false,
+	light = false,
 }: Props) {
 	const [open, setOpen] = React.useState(false);
 	const [query, setQuery] = React.useState("");
@@ -168,16 +178,25 @@ export function TokenCombobox({
 				>
 					<div className="flex items-center gap-2.5 min-w-0">
 						<TokenIcon token={selectedToken ?? undefined} chain={selectedToken?.chain} size={26} />
-						<span className="text-base font-medium text-white truncate">
+						<span className={cn(
+							"text-base font-medium truncate",
+							light ? "text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100" : "text-white"
+						)}>
 							{selectedToken ? selectedToken.symbol : placeholder}
 						</span>
 						{selectedToken ? (
-							<span className="text-sm text-white/45 ml-0.5 truncate">
+							<span className={cn(
+								"text-sm ml-0.5 truncate",
+								light ? "text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400" : "text-white/45"
+							)}>
 								{formatChainLabel(selectedToken.chain)}
 							</span>
 						) : null}
 					</div>
-					<ChevronsUpDown className="h-4 w-4 shrink-0 text-white/35" />
+					<ChevronsUpDown className={cn(
+						"h-4 w-4 shrink-0",
+						light ? "text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500" : "text-white/35"
+					)} />
 				</button>
 			</DialogTrigger>
 			<DialogPortal>

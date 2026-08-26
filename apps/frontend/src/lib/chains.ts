@@ -14,6 +14,25 @@ function getIconFromTokenListBySymbol(sym: string): string | undefined {
 	return entry.icon || entry.groupedTokens?.[0]?.icon;
 }
 
+const EVM_CHAINS = new Set([
+	"eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism",
+	"bsc", "berachain", "pol", "polygon", "avax", "avalanche", "gnosis",
+	"fantom", "ftm", "linea", "scroll", "zksync", "zk", "blast", "matic",
+]);
+
+/**
+ * Groups a raw chain identifier (as returned by NEAR Intents' token list) into the wallet-connect
+ * family it belongs to, so callers can route to the matching connect flow (EVM via wagmi/RainbowKit,
+ * TON via TonConnect, Bitcoin via a bvm wallet) instead of a manual refund address.
+ */
+export function getChainFamily(chain: string): "evm" | "ton" | "bitcoin" | "other" {
+	const ch = String(chain || "").toLowerCase();
+	if (EVM_CHAINS.has(ch)) return "evm";
+	if (ch === "ton") return "ton";
+	if (ch === "btc" || ch === "bitcoin") return "bitcoin";
+	return "other";
+}
+
 export function getChainIcon(chain?: string): string | undefined {
 	if (!chain) return undefined;
 	let key = String(chain).toLowerCase();
@@ -32,6 +51,8 @@ export function getChainIcon(chain?: string): string | undefined {
 		xrp: "xrpledger",
 		zec: "zcash",
 		bera: "berachain",
+		hyperliquid: "hypercore",
+		abs: "abstract",
 	};
 	if (alias[key]) key = alias[key];
 	// Only map icons that exist in /public/static/icons/network to avoid broken images.
@@ -57,6 +78,14 @@ export function getChainIcon(chain?: string): string | undefined {
 		bch: "/static/icons/network/bitcoincash.svg",
 		xlayer: "/static/icons/network/layerx.svg",
 		adi: "/static/icons/network/adi.svg",
+		scroll: "/static/icons/network/scroll.svg",
+		plasma: "/static/icons/network/plasma.svg",
+		aleo: "/static/icons/network/aleo-white.svg",
+		// HyperCore is Hyperliquid's native chain; reuse the existing Hyperliquid mark.
+		hypercore: "/static/icons/network/hyperliquid.svg",
+		// Abstract has no CoinMarketCap-listed native token — saved locally from DefiLlama's chain
+		// icon CDN rather than hotlinked, since the CSP's img-src doesn't allow arbitrary hosts.
+		abstract: "/static/icons/network/abstract.webp",
 	};
 	const local = map[key];
 	if (local) return local;
@@ -92,6 +121,7 @@ export function getChainIcon(chain?: string): string | undefined {
 		starknet: "STRK",
 		bch: "BCH",
 		xlayer: "XLAYER",
+		movement: "MOVE",
 	};
 	const sym = chainToSymbol[key];
 	if (sym) {

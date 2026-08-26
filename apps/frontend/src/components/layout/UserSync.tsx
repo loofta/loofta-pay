@@ -13,7 +13,7 @@ import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
  * Syncs authenticated user to store (username) and shows username/onboarding modals.
  * Renders no UI; keeps auth state and username/onboarding modals working alongside MinimalHeader.
  */
-export function UserSync() {
+export function UserSync({ suppressOnboarding = false }: { suppressOnboarding?: boolean } = {}) {
   const { authenticated, email, userId, getAccessToken } = useAuth();
   const { user: privyUser, ready: privyReady } = usePrivy();
   const { createWallet } = useCreateWallet();
@@ -131,14 +131,20 @@ export function UserSync() {
 
   // Allow external callers (e.g. "Change username" in settings) to re-open onboarding via store flag
   useEffect(() => {
+    if (suppressOnboarding) return;
     if (isOnboardingOpen && !showWelcomeOnboarding) {
       welcomeDismissedRef.current = false;
       setShowWelcomeOnboarding(true);
     }
-  }, [isOnboardingOpen]);
+  }, [isOnboardingOpen, suppressOnboarding]);
 
   // Show onboarding right after login (add-email, then welcome flow). Don't wait for Solana wallet.
+  // Skipped entirely on checkout (suppressOnboarding) — a payer on someone else's payment link
+  // should never see Loofta's own new-user onboarding. Wallet creation and username assignment
+  // above still run unconditionally; ensureAppUser on the backend already assigns a username with
+  // no interactive step (see users.service.ts), so paying isn't blocked by skipping this modal.
   useEffect(() => {
+    if (suppressOnboarding) return;
     if (!authenticated || !privyReady || !privyUser || !userId) {
       return;
     }
@@ -198,7 +204,7 @@ export function UserSync() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [authenticated, userId, email, privyReady, privyUser?.id]);
+  }, [authenticated, userId, email, privyReady, privyUser?.id, suppressOnboarding]);
 
   const refreshUser = async () => {
     if (!authenticated || !userId) return;
@@ -235,7 +241,7 @@ export function UserSync() {
           privyUserId={userId}
         />
       )}
-      {userId && (
+      {userId && !suppressOnboarding && (
         <WelcomeOnboarding
           open={showWelcomeOnboarding}
           onClose={() => {

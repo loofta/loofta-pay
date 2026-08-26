@@ -40,32 +40,65 @@ export function uniqueChains(tokens: NearToken[]): string[] {
 	return Array.from(s.values()).sort((a, b) => a.localeCompare(b));
 }
 
-export function findTokenBySelection(
-	tokens: NearToken[],
+export function findTokenBySelection<T extends { symbol: string; chain: string } = NearToken>(
+	tokens: T[],
 	selection: { symbol: string; chain: string } | undefined | null
-): NearToken | undefined {
+): T | undefined {
 	if (!selection) return undefined;
 	return tokens.find((t) => t.symbol === selection.symbol && t.chain === selection.chain)
 		|| tokens.find((t) => t.symbol === selection.symbol);
 }
 
+// Keyed by the raw `blockchain` code NEAR Intents actually returns (eth, arb, pol, btc, sol,
+// zec, ...), not the full chain name — a prior version of this map used full names like
+// "ethereum"/"zcash" which never matched live token data, so those chains fell through to the
+// generic short-code fallback below and weren't findable by their full name in search.
 const CHAIN_LABELS: Record<string, string> = {
+	eth: "Ethereum",
 	ethereum: "Ethereum",
+	arb: "Arbitrum",
 	arbitrum: "Arbitrum",
 	base: "Base",
+	pol: "Polygon",
 	polygon: "Polygon",
 	gnosis: "Gnosis",
 	bnb: "BNB Smart Chain",
+	bsc: "BNB Smart Chain",
+	avax: "Avalanche",
+	avalanche: "Avalanche",
+	op: "Optimism",
+	optimism: "Optimism",
+	sol: "Solana",
 	solana: "Solana",
 	near: "NEAR",
+	btc: "Bitcoin",
 	bitcoin: "Bitcoin",
+	bch: "Bitcoin Cash",
+	ltc: "Litecoin",
+	doge: "Dogecoin",
+	dash: "Dash",
 	tron: "Tron",
 	ton: "TON",
 	sui: "Sui",
 	stellar: "Stellar",
 	cardano: "Cardano",
 	xrp: "XRP",
-	zcash: "ZCash",
+	zec: "Zcash",
+	zcash: "Zcash",
+	bera: "Berachain",
+	berachain: "Berachain",
+	monad: "Monad",
+	starknet: "Starknet",
+	aptos: "Aptos",
+	scroll: "Scroll",
+	plasma: "Plasma",
+	aleo: "Aleo",
+	movement: "Movement",
+	hypercore: "HyperCore",
+	abs: "Abstract",
+	abstract: "Abstract",
+	fogo: "Fogo",
+	xlayer: "X Layer",
 };
 
 export function formatChainLabel(chain: string | undefined): string {

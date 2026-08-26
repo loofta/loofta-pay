@@ -16,6 +16,7 @@ export function IncognitoModeToggle({
   offLabel = "Pay privately",
   ariaLabel = "Make this payment private",
   className,
+  light = false,
 }: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
@@ -25,11 +26,29 @@ export function IncognitoModeToggle({
   offLabel?: string;
   ariaLabel?: string;
   className?: string;
+  /** Text/icon are slate-toned by default — fine on the dark pay card this was built for, unreadable
+   *  on a light host background (e.g. GuestCheckoutPay's card). Set this there, same convention as
+   *  TokenCombobox's own `light` prop. */
+  light?: boolean;
 }) {
   return (
-    <div className={cn("flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2", className)}>
-      {checked && <VenetianMask className="h-4 w-4 shrink-0 text-slate-300" strokeWidth={1.75} />}
-      <span className={cn("flex-1 min-w-0 text-sm font-medium transition-colors", checked ? "text-slate-100" : "text-slate-200")}>
+    <div className={cn(
+      "flex items-center gap-2.5 rounded-xl border px-3 py-2",
+      light ? "border-gray-200 bg-gray-50 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5" : "border-white/10 bg-white/5",
+      className
+    )}>
+      {checked && (
+        <VenetianMask
+          className={cn("h-4 w-4 shrink-0", light ? "text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-300" : "text-slate-300")}
+          strokeWidth={1.75}
+        />
+      )}
+      <span className={cn(
+        "flex-1 min-w-0 text-sm font-medium transition-colors",
+        light
+          ? (checked ? "text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100" : "text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-200")
+          : (checked ? "text-slate-100" : "text-slate-200")
+      )}>
         {checked ? onLabel : offLabel}
       </span>
       <Switch checked={checked} onCheckedChange={onCheckedChange} aria-label={ariaLabel} />

@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { extractChainsFromAssets } from "@/lib/assetUtils";
 import { getVerifiedSolanaWallets } from "@/lib/serverAuth";
 import { verifySolanaUsdcPayment } from "@/lib/verifySolanaPayment";
+import { getUsdcAtaBalanceBaseUnits } from "@/services/solanaBalance";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
@@ -101,7 +102,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
   const { data: paymentRow } = await supabase
     .from("payments")
-    .select("id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, claimed_privately")
+    .select("id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, claimed_privately, merchant_name, merchant_logo_url")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -293,20 +294,13 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
   const params = await props.params;
   const paymentId = params.id;
   const verifiedId = await getVerifiedUserId(request);
-  if (!verifiedId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const userId: string = verifiedId;
-  if (process.env.NODE_ENV !== "production") {
-    console.log("[payments/PATCH] Updating payment:", paymentId, "verifiedUser:", userId);
-  }
 
   try {
     const body = await request.json();
     if (process.env.NODE_ENV !== "production") {
       console.log("[payments/PATCH] Request body:", body);
     }
-    const { status: inputStatus, txHash, paidWith, paidWithChain, paidWithToken, depositReceivedAt, originAsset, destinationAsset } = body || {};
+    const { status: inputStatus, txHash, paidWith, paidWithChain, paidWithToken, depositReceivedAt, originAsset, destinationAsset, guest_email: guestEmail } = body || {};
 
     const statusMap: Record<string, string> = {
       "PROCESSING": "IN_FLIGHT",
@@ -321,6 +315,29 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     };
 
     const status = statusMap[inputStatus?.toUpperCase()] || inputStatus;
+
+    // Guest checkout: no Privy session, only reachable for the one narrow case this route
+    // already independently verifies below (first-time SUCCESS attribution on a from_recipient
+    // link, gated on the burner's on-chain balance — see below) — every other transition (cancel,
+    // edit, re-attribution, any non-SUCCESS status) still 401s with no session, same as before.
+    // No guest_wallet/guest_email required to attempt this: the on-chain balance check is what
+    // actually gates it, so there's nothing to spoof by omitting them. guest_email, if given, is
+    // stored for reconciliation only (see the guest_sender_email column) and never verified —
+    // same trust level as any "receipt email," not an identity claim.
+    const isGuestAttempt = !verifiedId && status === "SUCCESS";
+    if (!verifiedId && !isGuestAttempt) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (isGuestAttempt) {
+      const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+      if (isRateLimited(ip)) {
+        return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+      }
+    }
+    const userId: string | null = verifiedId;
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[payments/PATCH] Updating payment:", paymentId, "verifiedUser:", userId, "guest:", isGuestAttempt);
+    }
 
     const allowedStatuses = ["OPEN", "PENDING_DEPOSIT", "IN_FLIGHT", "SUCCESS", "REFUNDED", "EXPIRED", "CANCELLED"];
     if (!status || !allowedStatuses.includes(status)) {
@@ -397,20 +414,34 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
           if (!ep.burner_address) {
             return NextResponse.json({ error: "This payment has no verifiable destination yet — try again shortly." }, { status: 400 });
           }
-          if (!txHash) {
-            return NextResponse.json({ error: "A transaction signature is required to mark this as paid." }, { status: 400 });
-          }
-          const callerWallets = await getVerifiedSolanaWallets(userId);
-          const verification = await verifySolanaUsdcPayment({
-            txHash,
-            destinationWallet: ep.burner_address,
-            minAmountUsd: Number(ep.amount) || 0,
-            callerWalletAddresses: callerWallets,
-            isDevnet: !!ep.is_devnet,
-          });
-          if (!verification.valid) {
-            console.warn(`[payments/PATCH] Rejected unverified SUCCESS claim on ${paymentId} by ${userId}: ${verification.reason}`);
-            return NextResponse.json({ error: verification.reason || "Could not verify this payment on-chain." }, { status: 400 });
+          if (isGuestAttempt) {
+            // No client-signed transaction to check a signature against here — a guest may have
+            // paid via wallet-connect (their own signed tx) or a card onramp (Coinbase's own
+            // internal transfer, never seen or signed by the browser at all), so this checks the
+            // one thing true either way: does the burner actually hold the money now? The burner
+            // address is unique per payment link, so a sufficient balance there can only mean
+            // *this* link was funded — no signer/txHash needed to prove that.
+            const balanceUnits = await getUsdcAtaBalanceBaseUnits(ep.burner_address, ep.is_devnet ? "devnet" : "mainnet");
+            const requiredUnits = Math.round((Number(ep.amount) || 0) * 1_000_000);
+            if (balanceUnits < requiredUnits) {
+              return NextResponse.json({ error: "No payment has landed at this link's destination yet." }, { status: 400 });
+            }
+          } else {
+            if (!txHash) {
+              return NextResponse.json({ error: "A transaction signature is required to mark this as paid." }, { status: 400 });
+            }
+            const callerWallets = await getVerifiedSolanaWallets(userId as string);
+            const verification = await verifySolanaUsdcPayment({
+              txHash,
+              destinationWallet: ep.burner_address,
+              minAmountUsd: Number(ep.amount) || 0,
+              callerWalletAddresses: callerWallets,
+              isDevnet: !!ep.is_devnet,
+            });
+            if (!verification.valid) {
+              console.warn(`[payments/PATCH] Rejected unverified SUCCESS claim on ${paymentId} by ${userId}: ${verification.reason}`);
+              return NextResponse.json({ error: verification.reason || "Could not verify this payment on-chain." }, { status: 400 });
+            }
           }
         }
       } else {
@@ -436,6 +467,12 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         if (ep.direction === "from_recipient" && !ep.sender_user_id) updateData.sender_user_id = userId;
         // Set sender_user_id for from_sender payments too if missing
         if (ep.direction !== "from_recipient" && !ep.sender_user_id) updateData.sender_user_id = userId;
+      } else if (isGuestAttempt) {
+        // No Loofta account to attribute this to — mirrors the existing PENDING_EMAIL: pattern
+        // already used for unregistered *recipients*, just for the sender side. If this email
+        // later signs up for real, a future reconciliation pass could backfill sender_user_id,
+        // same idea as the pendingAddresses matching in the payments/history route.
+        if (typeof guestEmail === "string" && guestEmail.trim()) updateData.guest_sender_email = guestEmail.trim().toLowerCase();
       }
 
       const { data, error } = await supabase

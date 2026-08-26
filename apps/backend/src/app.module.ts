@@ -34,6 +34,7 @@ import { PajCashModule } from './modules/paj-cash/paj-cash.module';
 import { UserDepositsModule } from './modules/user-deposits/user-deposits.module';
 import { GiveawaysModule } from './modules/giveaways/giveaways.module';
 import { MarketingModule } from './modules/marketing/marketing.module';
+import { PaymentLinksModule } from './modules/payment-links/payment-links.module';
 
 @Module({
   imports: [
@@ -113,6 +114,7 @@ import { MarketingModule } from './modules/marketing/marketing.module';
     UserDepositsModule,
     GiveawaysModule,
     MarketingModule,
+    PaymentLinksModule,
   ],
   providers: [
     {

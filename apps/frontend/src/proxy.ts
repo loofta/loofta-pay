@@ -62,10 +62,11 @@ export function proxy(request: NextRequest) {
     "/usdc-to-ngn",
     "/dollar-to-naira-today",
     "/blog",
+    "/docs",
   ]);
-  // /blog/[slug] is dynamic, so the exact-match Set above can't cover it — treat any /blog/*
-  // path as marketing too, same as the literal paths in marketingPaths.
-  const isMarketingPath = (p: string) => marketingPaths.has(p) || p.startsWith("/blog/");
+  // /blog/[slug] and /docs/[slug] are dynamic, so the exact-match Set above can't cover their
+  // sub-pages — treat any path under either as marketing too, same as their index page.
+  const isMarketingPath = (p: string) => marketingPaths.has(p) || p.startsWith("/blog/") || p.startsWith("/docs/");
   const isLocalAppPath =
     isLocalhost &&
     !isMarketingPath(pathname) &&

@@ -72,10 +72,12 @@ function ShellContent({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <UserSync />
-      <UpdateJun26Modal show={updateShow} />
-      <MainnetLaunchCelebration blockedByUpdate={!updateResolved || updateShow} />
-      {(unclaimed || unclaimedGifts || (hasFreeSpin && !isImmersivePage) || showAddEmail || showTerminalPromo) && (
+      <UserSync suppressOnboarding={isCheckoutPage} />
+      {/* Checkout is meant to feel like a self-contained payment page (Stripe-style) — none of
+          these promo/update overlays belong on top of someone else's embedded payment flow. */}
+      {!isCheckoutPage && <UpdateJun26Modal show={updateShow} />}
+      {!isCheckoutPage && <MainnetLaunchCelebration blockedByUpdate={!updateResolved || updateShow} />}
+      {!isCheckoutPage && (unclaimed || unclaimedGifts || (hasFreeSpin && !isImmersivePage) || showAddEmail || showTerminalPromo) && (
         <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:bottom-4 z-[100] sm:max-w-sm flex flex-col-reverse gap-3">
           {unclaimed && <UnclaimedPaymentToast payments={unclaimed} onDismiss={dismissUnclaimed} />}
           {unclaimedGifts && <UnclaimedGiftToast gifts={unclaimedGifts} onDismiss={dismissUnclaimedGifts} />}

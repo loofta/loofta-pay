@@ -52,9 +52,9 @@ function MobileMenu({
 
   const navLinks = [
     { href: "/", label: "Send & Receive", description: "Send and receive payments" },
+    { href: "/terminal", label: "Terminal", description: "Send payments by chat — no wallet steps, just tell it who to pay" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
-    { href: "/terminal", label: "Terminal", description: "Send payments by chat — no wallet steps, just tell it who to pay" },
   ];
 
   return (
@@ -276,6 +276,18 @@ export function MinimalHeader() {
                   <span>Send & Receive</span>
                 </Link>
 
+                {/* Desktop: Terminal link */}
+                <Link
+                  href="/terminal"
+                  className={[
+                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                    isTerminalActive
+                      ? "text-sky-300 bg-sky-500/10"
+                      : "text-slate-300 hover:text-white hover:bg-white/10",
+                  ].join(" ")}
+                >
+                  <span>Terminal</span>
+                </Link>
 
                 {/* Desktop: Rewards link */}
                 <Link
@@ -301,19 +313,6 @@ export function MinimalHeader() {
                   ].join(" ")}
                 >
                   <span>Megapot</span>
-                </Link>
-
-                {/* Desktop: Terminal link */}
-                <Link
-                  href="/terminal"
-                  className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isTerminalActive
-                      ? "text-sky-300 bg-sky-500/10"
-                      : "text-slate-300 hover:text-white hover:bg-white/10",
-                  ].join(" ")}
-                >
-                  <span>Terminal</span>
                 </Link>
 
                 {/* Desktop: Balance button */}

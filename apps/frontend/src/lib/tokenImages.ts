@@ -25,6 +25,7 @@ const CMC_IDS: Record<string, number> = {
 	ARB: 11841,
 	OP: 11840,
 	NEAR: 6535,
+	MOVE: 32452,
 };
 
 export function cmcLogoForSymbol(symbol?: string): string | undefined {

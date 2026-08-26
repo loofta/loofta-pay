@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createPrivateKey, randomBytes, sign as cryptoSign } from "node:crypto";
 import { getVerifiedUserId } from "@/lib/serverAuth";
+import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
 const LOG = "[coinbase/session]";
 
@@ -81,25 +82,44 @@ export async function POST(request: Request) {
   const origin = request.headers.get("origin");
   const headers = { "Content-Type": "application/json", ...corsHeaders(origin) };
 
-  // 1. Authenticate — only verified Loofta users may request tokens
-  // In development the NestJS backend may not be running, so skip the check.
-  const isDev = process.env.NODE_ENV === "development";
-  if (!isDev) {
-    const userId = await getVerifiedUserId(request);
-    if (!userId) {
-      return new NextResponse(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
-    }
-  }
-
-  // 2. Parse body
+  // 2. Parse body first — guest checkout (checkoutClaimId set) skips the login check below
+  // entirely, but only ever routes to that specific claim's own burner address (resolved
+  // server-side, never the client-supplied walletAddress) so this can't be used to mint a
+  // Coinbase session for an arbitrary destination without a Loofta account.
   let walletAddress: string | undefined;
   let blockchains: string[] = ["solana"];
+  let checkoutClaimId: string | undefined;
   try {
     const body = await request.json();
     walletAddress = body.walletAddress;
+    checkoutClaimId = body.checkoutClaimId;
     if (Array.isArray(body.blockchains)) blockchains = body.blockchains;
   } catch {
     return new NextResponse(JSON.stringify({ error: "Invalid JSON body" }), { status: 400, headers });
+  }
+
+  if (checkoutClaimId) {
+    const supabase = getSupabaseAdmin();
+    const { data: claim } = await supabase
+      .from("payments")
+      .select("direction, status, burner_address")
+      .eq("id", checkoutClaimId)
+      .maybeSingle();
+    const payable = ["OPEN", "PENDING_DEPOSIT"].includes(String(claim?.status || "").toUpperCase());
+    if (!claim || claim.direction !== "from_recipient" || !payable || !claim.burner_address) {
+      return new NextResponse(JSON.stringify({ error: "This payment link isn't available for guest checkout." }), { status: 400, headers });
+    }
+    walletAddress = claim.burner_address;
+  } else {
+    // 1. Authenticate — only verified Loofta users may request tokens for their own wallet.
+    // In development the NestJS backend may not be running, so skip the check.
+    const isDev = process.env.NODE_ENV === "development";
+    if (!isDev) {
+      const userId = await getVerifiedUserId(request);
+      if (!userId) {
+        return new NextResponse(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers });
+      }
+    }
   }
 
   if (!walletAddress) {

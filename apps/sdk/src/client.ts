@@ -1,7 +1,7 @@
 import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { createTransferCheckedInstruction, getAssociatedTokenAddress } from "@solana/spl-token";
 import bs58 from "bs58";
-import type { LooftaPayClientOptions, PayHumanParams, PayHumanResult } from "./types";
+import type { LooftaPayClientOptions, PayHumanParams, PayHumanResult, CreatePaymentLinkParams, CreatePaymentLinkResult, PaymentLinkStatus } from "./types";
 
 const DEFAULT_BASE_URL = "https://api.loofta.xyz";
 const USDC_DECIMALS = 6;
@@ -72,6 +72,54 @@ export class LooftaPayClient {
 
   async payHuman(params: PayHumanParams): Promise<PayHumanResult> {
     return this.apiKey ? this.payHumanViaApiKey(params) : this.payHumanViaX402(params);
+  }
+
+  /**
+   * Creates a checkout link that pays YOU (the API key owner) — the receive side of the Loofta
+   * Pay Protocol. Requires an API key with the `payment_links:create` scope (self-serve, minted
+   * from the Loofta app's Developer settings). Not available on the x402/signer path.
+   */
+  async createPaymentLink(params: CreatePaymentLinkParams): Promise<CreatePaymentLinkResult> {
+    if (!this.apiKey) throw new Error("createPaymentLink requires an API key");
+    const res = await fetch(`${this.baseUrl}/payment-links`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
+      body: JSON.stringify({
+        amount: params.amount,
+        message: params.message,
+        is_private: params.isPrivate,
+        webhook_url: params.webhookUrl,
+      }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
+    return {
+      shortId: data.short_id,
+      url: data.url,
+      amount: data.amount,
+      message: data.message ?? null,
+      webhookSecret: data.webhook_secret ?? null,
+    };
+  }
+
+  /**
+   * Polls a payment link's status — the alternative to webhookUrl for whoever'd rather check than
+   * be pushed to. Only ever sees your own links (a short_id belonging to a different API key 404s).
+   */
+  async getPaymentLinkStatus(shortId: string): Promise<PaymentLinkStatus> {
+    if (!this.apiKey) throw new Error("getPaymentLinkStatus requires an API key");
+    const res = await fetch(`${this.baseUrl}/payment-links/${shortId}`, {
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
+    return {
+      shortId: data.short_id,
+      status: data.status,
+      amount: data.amount,
+      message: data.message ?? null,
+      paidAt: data.paid_at ?? null,
+    };
   }
 
   private async payHumanViaApiKey(params: PayHumanParams): Promise<PayHumanResult> {

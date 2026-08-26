@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
 import { AdminIntegratorsController } from './admin-integrators.controller';
+import { SelfServeIntegratorsController } from './self-serve-integrators.controller';
 import { IntegratorsService } from './integrators.service';
 import { IntegratorGuard } from '@/common/guards/integrator.guard';
 
 @Module({
-  controllers: [AdminIntegratorsController],
+  controllers: [AdminIntegratorsController, SelfServeIntegratorsController],
   providers: [IntegratorsService, IntegratorGuard],
   exports: [IntegratorsService, IntegratorGuard],
 })

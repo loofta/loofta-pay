@@ -149,6 +149,7 @@ export async function createTestIntent(input: CreateIntentInput): Promise<Create
 export type QuoteResponse = {
   raw: any;
   amountOut?: string; // human-readable amount for destination token when available
+  amountIn?: string; // human-readable amount for origin token when available (populated for EXACT_OUTPUT quotes)
   error?: {
     type: "client" | "server" | "network" | "unknown";
     status?: number;
@@ -176,7 +177,7 @@ export type DepositInfo = {
 export async function getAccurateQuote(params: {
   fromToken: NearToken;
   toToken: NearToken;
-  amount: string; // human-readable input amount
+  amount: string; // human-readable amount — input amount for EXACT_INPUT, desired output amount for EXACT_OUTPUT
   recipient?: string;
   sender?: string;
   refundAddress?: string; // User-provided refund address (required for non-custodial)
@@ -184,12 +185,14 @@ export async function getAccurateQuote(params: {
   dryRun?: boolean; // default true for quick quote
   userAddress?: string; // optional; when provided with authMethod, uses INTENTS routing
   authMethod?: AuthMethod;
+  swapType?: "EXACT_INPUT" | "EXACT_OUTPUT"; // default EXACT_INPUT
 }): Promise<QuoteResponse> {
-  const { fromToken, toToken, amount, recipient, sender, refundAddress, slippageBps = 100, dryRun = true, userAddress, authMethod } = params;
-  
+  const { fromToken, toToken, amount, recipient, sender, refundAddress, slippageBps = 100, dryRun = true, userAddress, authMethod, swapType = "EXACT_INPUT" } = params;
+  const swapTypeEnum = swapType === "EXACT_OUTPUT" ? QuoteRequest.swapType.EXACT_OUTPUT : QuoteRequest.swapType.EXACT_INPUT;
+
   // Use user-provided refund address or default placeholder for quotes (dry runs)
   const refundTo = refundAddress || getRefundToForChain(fromToken.chain || "");
-  
+
   if (!refundTo) {
     throw new Error("Could not determine refund address for quote");
   }
@@ -202,7 +205,10 @@ export async function getAccurateQuote(params: {
   };
   const originAsset = fromToken.tokenId || fromToken.address;
   const destinationAsset = toToken.tokenId || toToken.address;
-  const atomicIn = toAtomic(amount || "0", fromToken.decimals || 0);
+  // EXACT_INPUT: `amount` is how much of the origin asset is being sent, atomic-encoded with its decimals.
+  // EXACT_OUTPUT: `amount` is the desired amount of the destination asset, atomic-encoded with ITS decimals —
+  // the API then computes how much of the origin asset is required (returned as amountIn/minAmountIn).
+  const atomicIn = toAtomic(amount || "0", (swapType === "EXACT_OUTPUT" ? toToken.decimals : fromToken.decimals) || 0);
   try {
     let req: QuoteRequest;
     if (userAddress && authMethod) {
@@ -210,7 +216,7 @@ export async function getAccurateQuote(params: {
       const intentsUserId = `${authMethod.toLowerCase()}:${userAddress}`;
       req = attachAppFees({
       dry: dryRun,
-        swapType: QuoteRequest.swapType.EXACT_INPUT,
+        swapType: swapTypeEnum,
         slippageTolerance: slippageBps,
         originAsset,
         depositType: QuoteRequest.depositType.INTENTS,
@@ -234,7 +240,7 @@ export async function getAccurateQuote(params: {
         const sameChain = String(fromToken.chain || "").toLowerCase() === String(toToken.chain || "").toLowerCase();
         req = attachAppFees({
           dry: true,
-          swapType: QuoteRequest.swapType.EXACT_INPUT,
+          swapType: swapTypeEnum,
           slippageTolerance: slippageBps,
           originAsset,
           depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
@@ -256,7 +262,7 @@ export async function getAccurateQuote(params: {
         const sameChain = String(fromToken.chain || "").toLowerCase() === String(toToken.chain || "").toLowerCase();
         req = attachAppFees({
           dry: false,
-      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      swapType: swapTypeEnum,
       slippageTolerance: slippageBps,
       originAsset,
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
@@ -279,7 +285,12 @@ export async function getAccurateQuote(params: {
       : (typeof q?.amountOut === "string" && toToken.decimals != null
           ? (Number(q.amountOut) / Math.pow(10, toToken.decimals)).toString()
           : undefined);
-    return { raw, amountOut: humanOut };
+    const humanIn = q?.amountInFormatted
+      ? String(q.amountInFormatted)
+      : (typeof q?.amountIn === "string" && fromToken.decimals != null
+          ? (Number(q.amountIn) / Math.pow(10, fromToken.decimals)).toString()
+          : undefined);
+    return { raw, amountOut: humanOut, amountIn: humanIn };
   } catch (_e: any) {
     // Build an error typology from SDK/axios error shapes
     const err = _e || {};
@@ -332,14 +343,12 @@ export async function getAccurateQuote(params: {
     // network/bridge fee and any appFees) and is NOT a substitute for a real quote.
   const pIn = typeof fromToken.price === "number" ? fromToken.price : undefined;
   const pOut = typeof toToken.price === "number" ? toToken.price : undefined;
-  if (pIn && pOut && pOut > 0) {
+  if (pIn && pOut && pIn > 0 && pOut > 0) {
     const n = Number(amount || 0);
     if (Number.isFinite(n)) {
-        return {
-          raw: null,
-          amountOut: ((n * pIn) / pOut).toString(),
-          error: { type, status, message, correlationId },
-        };
+        return swapType === "EXACT_OUTPUT"
+          ? { raw: null, amountIn: ((n * pOut) / pIn).toString(), error: { type, status, message, correlationId } }
+          : { raw: null, amountOut: ((n * pIn) / pOut).toString(), error: { type, status, message, correlationId } };
     }
   }
     return { raw: null, amountOut: undefined, error: { type, status, message, correlationId } };
@@ -350,19 +359,21 @@ export async function getAccurateQuote(params: {
 export async function getDepositInfo(params: {
   fromToken: NearToken;
   toToken: NearToken;
-  amount: string; // human-readable input amount
+  amount: string; // human-readable amount — input amount for EXACT_INPUT, desired output amount for EXACT_OUTPUT
   recipient?: string;
   sender?: string;
   refundAddress?: string; // User-provided refund address (required for non-custodial)
   slippageBps?: number; // default 100 = 1%
   userAddress?: string;
   authMethod?: AuthMethod;
+  swapType?: "EXACT_INPUT" | "EXACT_OUTPUT"; // default EXACT_INPUT
 }): Promise<DepositInfo> {
   // Block deposit creation in demo mode
   assertNotDemoMode("Deposit address creation");
 
-  const { fromToken, toToken, amount, recipient, sender, refundAddress, slippageBps = 100, userAddress, authMethod } = params;
-  
+  const { fromToken, toToken, amount, recipient, sender, refundAddress, slippageBps = 100, userAddress, authMethod, swapType = "EXACT_INPUT" } = params;
+  const swapTypeEnum = swapType === "EXACT_OUTPUT" ? QuoteRequest.swapType.EXACT_OUTPUT : QuoteRequest.swapType.EXACT_INPUT;
+
   // Refund address is required for non-custodial operations
   if (!refundAddress) {
     throw new Error("Refund address is required for deposit creation");
@@ -375,18 +386,18 @@ export async function getDepositInfo(params: {
   };
   const originAsset = fromToken.tokenId || fromToken.address;
   const destinationAsset = toToken.tokenId || toToken.address;
-  const atomicIn = toAtomic(amount || "0", fromToken.decimals || 0);
+  // See getAccurateQuote for why the decimals source flips between EXACT_INPUT/EXACT_OUTPUT.
+  const atomicIn = toAtomic(amount || "0", (swapType === "EXACT_OUTPUT" ? toToken.decimals : fromToken.decimals) || 0);
   let req: QuoteRequest;
   if (userAddress && authMethod) {
     const intentsUserId = `${authMethod.toLowerCase()}:${userAddress}`;
     req = attachAppFees({
       dry: false,
-      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      swapType: swapTypeEnum,
       slippageTolerance: slippageBps,
       originAsset,
       depositType: QuoteRequest.depositType.INTENTS,
       destinationAsset,
-      // EXACT_INPUT expects input amount in atomic units for origin asset
       amount: atomicIn,
       refundTo: refundAddress || intentsUserId, // Prefer user-provided refund address
       refundType: QuoteRequest.refundType.INTENTS,
@@ -403,12 +414,11 @@ export async function getDepositInfo(params: {
     const sameChain = String(fromToken.chain || "").toLowerCase() === String(toToken.chain || "").toLowerCase();
     req = attachAppFees({
       dry: false,
-      swapType: QuoteRequest.swapType.EXACT_INPUT,
+      swapType: swapTypeEnum,
       slippageTolerance: slippageBps,
       originAsset,
       depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
       destinationAsset,
-      // EXACT_INPUT expects input amount in atomic units for origin asset
       amount: atomicIn,
       refundTo: refundAddress, // Use user-provided refund address
       refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
@@ -440,7 +450,10 @@ export async function getDepositInfo(params: {
       quoteId: q?.id || q?.quoteId,
       originAsset,
       destinationAsset,
-      amountAtomic: atomicIn,
+      // For EXACT_OUTPUT, `atomicIn` above is actually the atomic-encoded desired OUTPUT (see
+      // getAccurateQuote) — the atomic amount of origin asset to send is whatever the API solved
+      // for instead (q.amountIn/minAmountIn), never the request's own echoed `amount` field.
+      amountAtomic: swapType === "EXACT_OUTPUT" ? (q?.amountIn ?? q?.minAmountIn ?? atomicIn) : atomicIn,
       minDepositFormatted,
     };
   } catch (_e: any) {

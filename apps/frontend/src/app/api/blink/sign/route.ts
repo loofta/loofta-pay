@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID, createSign } from "node:crypto";
 import { getVerifiedUserId } from "@/lib/serverAuth";
+import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
 const MERCHANT_ID = process.env.BLINK_MERCHANT_ID ?? "";
 const SOLANA_CHAIN_ID = 792703809;
@@ -17,11 +18,6 @@ function isValidSolanaAddress(address: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  const userId = await getVerifiedUserId(req);
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   if (!MERCHANT_ID) {
     return NextResponse.json({ error: "Merchant not configured" }, { status: 500 });
   }
@@ -38,7 +34,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { amount, chainId, address, token, callbackScheme = null, version = "v1", reference, metadata } = body as {
+  let { amount, chainId, address, token, callbackScheme = null, version = "v1", reference, metadata } = body as {
     amount: unknown;
     chainId: unknown;
     address: unknown;
@@ -47,7 +43,35 @@ export async function POST(req: NextRequest) {
     version?: string;
     reference?: string;
     metadata?: Record<string, string>;
+    checkoutClaimId?: string;
   };
+
+  // Guest checkout: this signer is merchant-scoped (BLINK_MERCHANT_ID/PRIVATE_KEY, Loofta's own
+  // credentials, not tied to any Loofta user), and never verified that `address` belonged to the
+  // authenticated caller anyway — so the login requirement below was only ever a "must have an
+  // account to use this" gate, not an ownership check. checkoutClaimId skips that gate but, same
+  // as Coinbase's guest mode, ignores whatever `address` the client sent and resolves the real
+  // destination server-side from the claim's own burner — never trusting a client-supplied
+  // destination just because a claim id was attached to the request.
+  const checkoutClaimId = (body as { checkoutClaimId?: string }).checkoutClaimId;
+  if (checkoutClaimId) {
+    const supabase = getSupabaseAdmin();
+    const { data: claim } = await supabase
+      .from("payments")
+      .select("direction, status, burner_address")
+      .eq("id", checkoutClaimId)
+      .maybeSingle();
+    const payable = ["OPEN", "PENDING_DEPOSIT"].includes(String(claim?.status || "").toUpperCase());
+    if (!claim || claim.direction !== "from_recipient" || !payable || !claim.burner_address) {
+      return NextResponse.json({ error: "This payment link isn't available for guest checkout." }, { status: 400 });
+    }
+    address = claim.burner_address;
+  } else {
+    const userId = await getVerifiedUserId(req);
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+  }
 
   // Validate fields
 

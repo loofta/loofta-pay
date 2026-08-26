@@ -135,6 +135,15 @@ const nextConfig = {
           },
         ],
       },
+      {
+        // Network/token icon SVGs and images never change in place — a new chain gets a new
+        // filename, an existing one is never silently swapped — so they're safe to cache
+        // aggressively client- and CDN-side instead of being refetched on every combobox open.
+        source: "/static/icons/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
+      },
     ];
   },
 };

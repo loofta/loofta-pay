@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, Optional, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes, createHmac } from 'crypto';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import nacl from 'tweetnacl';
@@ -3127,7 +3127,63 @@ export class ClaimsService {
       );
     }
 
+    // Only ever set for API-created payment links (see PaymentLinksService) — a no-op for every
+    // human-created claim. Only fires on the genuinely-settled SUCCESS (not the intermediate
+    // PRIVATE_TRANSFER_PENDING every payment detours through while funds sit in the burner) —
+    // this is reached both from the payer's own HTTP call and from the internal recipient-sweep
+    // completion, so it's the one place that sees the true final transition either way.
+    if (effectiveStatus === 'SUCCESS') {
+      this.dispatchWebhookIfConfigured(id).catch((e) =>
+        this.logger.warn(`Webhook dispatch failed for payment ${id}: ${(e as Error)?.message}`),
+      );
+    }
+
     return { id, status: effectiveStatus } as unknown as Claim;
+  }
+
+  /**
+   * POSTs a signed "payment.succeeded" event to payments.webhook_url, if one was set at creation
+   * (only ever true for API-created payment links — see PaymentLinksService.create). Never throws
+   * — callers treat this as fire-and-forget. One retry on failure/non-2xx, both attempts logged.
+   */
+  private async dispatchWebhookIfConfigured(paymentId: string): Promise<void> {
+    const { data: row } = await this.supabaseService.payments
+      .select('webhook_url, webhook_secret, short_id, amount, description, paid_at')
+      .eq('id', paymentId)
+      .maybeSingle();
+    const webhookUrl = row?.webhook_url as string | null | undefined;
+    if (!webhookUrl) return;
+
+    const payload = JSON.stringify({
+      event: 'payment.succeeded',
+      short_id: row!.short_id,
+      amount: Number(row!.amount),
+      message: row!.description ?? null,
+      paid_at: row!.paid_at,
+    });
+    const secret = (row!.webhook_secret as string | null) ?? '';
+    const signature = createHmac('sha256', secret).update(payload).digest('hex');
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8_000);
+        const res = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Loofta-Signature': `sha256=${signature}` },
+          body: payload,
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (res.ok) {
+          this.logger.log(`Webhook delivered for payment ${paymentId} (attempt ${attempt})`);
+          return;
+        }
+        this.logger.warn(`Webhook for payment ${paymentId} returned ${res.status} (attempt ${attempt})`);
+      } catch (e) {
+        this.logger.warn(`Webhook for payment ${paymentId} failed (attempt ${attempt}): ${(e as Error)?.message}`);
+      }
+    }
   }
 
   /** Fire-and-forget email after payment confirms. 5 min delay for registered recipients, 15 min for unregistered. */

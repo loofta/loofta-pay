@@ -29,6 +29,10 @@ import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 
 // All payment-mutating endpoints require authentication (create, pay, status, tx-hash).
 // Read-only claim endpoints (GET /:id, /:id/latest-intent) remain public via OptionalAuthGuard.
+// Guest checkout (no Privy session) is handled entirely in the frontend's own /api/claims/[id]
+// PATCH route instead of here — it needs verifySolanaUsdcPayment (a frontend-only utility) to
+// independently prove a guest's claimed payment actually happened on-chain before trusting it,
+// since there's no authenticated account to anchor trust in like every endpoint below has.
 import { ClaimsService } from './claims.service';
 import { ConfigService } from '@nestjs/config';
 import { DepositService, DepositResult } from './deposit.service';

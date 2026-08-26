@@ -42,6 +42,8 @@ export function Footer() {
               <li><a href={looftaXyz.checkout} className="text-slate-400 hover:text-white transition-colors">{t('checkout')}</a></li>
               <li><a href={looftaXyz.partners} className="text-slate-400 hover:text-white transition-colors">{t('partners')}</a></li>
               <li><a href="/payment-links" className="text-slate-400 hover:text-white transition-colors">Payment links</a></li>
+              <li><a href="/app/developer" className="text-slate-400 hover:text-white transition-colors">Developer</a></li>
+              <li><a href="/docs" className="text-slate-400 hover:text-white transition-colors">API Docs</a></li>
             </ul>
           </div>
 

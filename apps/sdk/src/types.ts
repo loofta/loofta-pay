@@ -24,6 +24,44 @@ export interface PayHumanResult {
   requiredAmountBaseUnits?: string;
 }
 
+export interface CreatePaymentLinkParams {
+  /** USD amount the recipient (the API key owner) should net. $5 minimum — every payment link is
+   *  private, and the private-transfer path enforces a $5 floor. */
+  amount: number;
+  /** Shown to the payer on the checkout page. */
+  message?: string;
+  /** Defaults to true — the amount and that it went to you are shielded on-chain, $5 minimum.
+   *  Pass false for a plain public transfer instead ($1 minimum) — the amount and your wallet
+   *  become visible on-chain. */
+  isPrivate?: boolean;
+  /** POSTed with a signed "payment.succeeded" event once this link is paid — see
+   *  CreatePaymentLinkResult.webhookSecret for verifying the signature. */
+  webhookUrl?: string;
+}
+
+export interface CreatePaymentLinkResult {
+  shortId: string;
+  /** Minimal, unbranded checkout page — no Loofta chrome, just the pay card. */
+  url: string;
+  amount: number;
+  message: string | null;
+  /**
+   * Only present when webhookUrl was set — shown once, store it yourself. Each webhook POST
+   * carries `X-Loofta-Signature: sha256=<hex>`, an HMAC-SHA256 of the raw JSON body keyed by
+   * this secret; recompute and compare to verify the callback actually came from Loofta.
+   */
+  webhookSecret: string | null;
+}
+
+export interface PaymentLinkStatus {
+  shortId: string;
+  /** OPEN | IN_FLIGHT | SUCCESS | PRIVATE_TRANSFER_PENDING | EXPIRED | CANCELLED | ... */
+  status: string;
+  amount: number;
+  message: string | null;
+  paidAt: string | null;
+}
+
 export interface LooftaPayClientOptions {
   /** Integrator API key (Bearer token) — the plain-REST path. Your own system funds the deposit
    *  address returned by payHuman(); the SDK doesn't sign or send anything in this mode. */

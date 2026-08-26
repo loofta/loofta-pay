@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { useAuthStore } from "@/store/auth";
 import { useRouter } from "next/navigation";
-import { Settings, Landmark } from "lucide-react";
+import { Settings, Landmark, Code2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { TIERS, getTierForVolume } from "@/lib/tiers";
 import { getClientGeo } from "@/lib/geo";
@@ -263,6 +263,14 @@ export default function ProfilePage() {
           <Settings className="w-4 h-4 shrink-0" />
           {t('settings')}
         </button>
+
+        <Link
+          href="/app/developer"
+          className="w-full text-left px-3 py-3 rounded-lg text-base font-medium transition-colors flex items-center gap-3 text-white hover:bg-white/10"
+        >
+          <Code2 className="w-4 h-4 shrink-0" />
+          Developer
+        </Link>
 
         <div className="h-px bg-white/10 my-2" />
 
