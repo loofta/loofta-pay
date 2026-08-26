@@ -269,6 +269,10 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
     giveaway.status === "ENTRIES_CLOSED" ||
     (giveaway.status === "DRAWING" && giveaway.selection_mode !== "manual");
   const pendingReviewCount = reviewQueue?.total ?? 0;
+  // Undefined (still loading) counts as "not enough" — safer to hold the button off for a moment
+  // than to let an early click run the draw before we actually know the eligible count, which
+  // would fall back to "all eligible entries win" (fewer winners than intended) instead of erroring.
+  const notEnoughEligible = eligibleCount ? eligibleCount.eligible < giveaway.winner_count : true;
   const totalReviewPages = Math.max(1, Math.ceil((reviewQueue?.total ?? 0) / REVIEW_PAGE_SIZE));
   const winners = (entries ?? [])
     .filter((e) => e.status === "winner")
@@ -347,7 +351,7 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                 <button
                   type="button"
                   onClick={() => setShowRunDrawConfirm(true)}
-                  disabled={runningDraw || pendingReviewCount > 0}
+                  disabled={runningDraw || pendingReviewCount > 0 || (giveaway.status === "OPEN" && notEnoughEligible)}
                   className="shrink-0 inline-flex items-center rounded-lg px-3 py-1.5 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {runningDraw ? "Running draw…" : "Run draw now"}
@@ -357,6 +361,11 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
             {canForceDraw && pendingReviewCount > 0 && (
               <p className="text-base text-slate-500 mt-3">
                 Review the {pendingReviewCount} pending submission{pendingReviewCount === 1 ? "" : "s"} below first — the draw can&apos;t run until the queue is clear.
+              </p>
+            )}
+            {canForceDraw && pendingReviewCount === 0 && giveaway.status === "OPEN" && notEnoughEligible && (
+              <p className="text-base text-slate-500 mt-3">
+                {eligibleCount?.eligible ?? 0} of {giveaway.winner_count} winner slots have a fully-verified entrant so far — running the draw now would leave some prizes unclaimed instead of picking a full set of winners. Wait for entries to close, or for more entrants to finish verifying.
               </p>
             )}
           </div>
@@ -540,10 +549,12 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
                                       <p className="text-base text-slate-500 break-all">{proofText}</p>
                                     )
                                   )}
-                                  {/* Manual override for self-report tasks — covers someone who did the
-                                      task but hit an upload issue (no proof ever attached) as much as a
-                                      normal review, since reviewCompletion doesn't require proof to exist. */}
-                                  {c.task.verification_mode === "self_report" && statusUpper !== "VERIFIED" && (
+                                  {/* Manual override for any task, self-report or X (auto_api) — covers
+                                      someone who did the task but hit an upload issue (no proof ever
+                                      attached), or whose X action Sorsa couldn't confirm (API gap, rate
+                                      limit, account went private), same as a normal review either way
+                                      since reviewCompletion doesn't require proof or a prior API result. */}
+                                  {statusUpper !== "VERIFIED" && statusUpper !== "AUTO_VERIFIED" && (
                                     <div className="flex items-center gap-2 mt-1.5">
                                       <button
                                         type="button"

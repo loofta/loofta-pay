@@ -175,6 +175,7 @@ function UsdcSolanaOption({
   isPrivateMode,
   authenticated,
   onLogin,
+  onPayWithLoofta,
 }: {
   claimId: string;
   burnerAddress: string;
@@ -184,17 +185,18 @@ function UsdcSolanaOption({
   onToggle: () => void;
   onSettled: () => void;
   setError: (e: string | null) => void;
-  /** When true, this option is always blocked — regardless of auth state — in favor of a prompt
-   *  pointing at the real private mechanism. See the file header comment: privacy requires the
-   *  real onPayPrivately flow (MagicBlock PER transfer, Privy-authenticated); this component's own
-   *  plain SPL transfer can't provide it and, critically, never adds the privacy fee to the amount
-   *  it sends — silently letting it through once merely *signed in* (the previous condition here)
-   *  built and broadcast an unprivate, under-charged transfer while the UI still showed a privacy
-   *  fee line item, since being authenticated is not the same as actually using the balance flow
-   *  that goes through onPayPrivately. */
+  /** When true, this tile's own plain-SPL-transfer flow is always blocked, signed in or not — it
+   *  can't provide real privacy and, critically, never added the privacy fee to the amount it
+   *  sent, so silently letting it through once merely *signed in* (a past bug here) built and
+   *  broadcast an unprivate, under-charged transfer while the UI still showed a privacy fee line
+   *  item. Once authenticated, onPayWithLoofta below reuses the actual mechanism instead — same
+   *  onPayPrivately MagicBlock PER transfer the top "Pay now" button already triggers. */
   isPrivateMode?: boolean;
   authenticated?: boolean;
   onLogin: () => void;
+  /** The real private-transfer trigger (Phantom connect + MagicBlock PER, see onPayPrivately in
+   *  c/[id]/page.tsx) — only meaningful once authenticated; not this component's own to build. */
+  onPayWithLoofta?: () => void;
 }) {
   const [payMethod, setPayMethod] = useState<"wallet" | "qr">("wallet");
   const [payStatus, setPayStatus] = useState<PayFromWalletStatus>("idle");
@@ -270,18 +272,20 @@ function UsdcSolanaOption({
             <>
               <p className="text-base text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-300">
                 {authenticated
-                  ? "This wallet-connect option can't pay privately — use the \"Pay now\" button above instead, it pays from your Loofta balance through the real private transfer."
+                  ? "Private payments go through a MagicBlock transfer, signed by your connected wallet and authorized by your Loofta account."
                   : "Private payments use a MagicBlock transfer straight to the recipient — that needs a Loofta account to authorize."}
               </p>
-              {!authenticated && (
-                <button
-                  type="button"
-                  onClick={onLogin}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-                >
-                  <LogIn className="w-4 h-4" /> Sign in to pay privately
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={authenticated ? onPayWithLoofta : onLogin}
+                className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+              >
+                {authenticated ? (
+                  <>Pay ${amountUsd.toFixed(2)} privately</>
+                ) : (
+                  <><LogIn className="w-4 h-4" /> Sign in to pay privately</>
+                )}
+              </button>
             </>
           ) : payMethod === "wallet" ? (
             <SolanaWalletConnectProvider rpcUrl={getSolanaHttpRpc()}>
@@ -431,7 +435,12 @@ export function GuestCheckoutPay({
         <IncognitoModeToggle checked={!!isPrivateMode} onCheckedChange={onTogglePrivateMode} light />
       ) : null}
 
-      <fieldset disabled={!emailValid} className="grid grid-cols-2 gap-2 disabled:opacity-50" onClick={() => !emailValid && setEmailTouched(true)}>
+      {/* Guest email is irrelevant once private mode is on — that path either needs a real sign-in
+          (no guest identity involved at all) or reuses the authenticated balance flow above (which
+          already has the account's real email on file) — so the fieldset's email gate is skipped
+          in that case, or the "sign in"/"pay privately" actions inside it would stay disabled until
+          a guest typed something that's never actually used. */}
+      <fieldset disabled={!emailValid && !effectivePrivate} className="grid grid-cols-2 gap-2 disabled:opacity-50" onClick={() => !emailValid && !effectivePrivate && setEmailTouched(true)}>
         <UsdcSolanaOption
           claimId={claimId}
           burnerAddress={burnerAddress}
@@ -444,6 +453,7 @@ export function GuestCheckoutPay({
           isPrivateMode={effectivePrivate}
           authenticated={authenticated}
           onLogin={onLogin}
+          onPayWithLoofta={onPayWithLoofta}
         />
         <NearIntentsAnyTokenOption
           claimId={claimId}

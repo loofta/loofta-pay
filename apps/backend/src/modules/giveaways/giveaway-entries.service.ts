@@ -486,11 +486,15 @@ export class GiveawayEntriesService {
     return (data ?? []) as GiveawayTaskCompletion[];
   }
 
-  /** Confirms completionId actually belongs to giveawayId (via its entry) and that its task is
-   *  eligible for manual review — a caller authorized for giveawayId must not be able to touch a
-   *  completion under a DIFFERENT giveaway, or override an AUTO_API task Sorsa already resolved,
-   *  just by guessing/enumerating a completionId. Shared by both the authenticated
-   *  creator-dashboard path and the password-protected public review-link path. */
+  /** Confirms completionId actually belongs to giveawayId (via its entry) — a caller authorized
+   *  for giveawayId must not be able to touch a completion under a DIFFERENT giveaway just by
+   *  guessing/enumerating a completionId. Shared by both the authenticated creator-dashboard path
+   *  and the password-protected public review-link path.
+   *
+   *  Manual review is allowed for AUTO_API tasks too (not just self-report) — X's API has real,
+   *  recurring gaps (Like Lookup access, rate limits, an entrant's account going private mid-check,
+   *  see the X_LIKE/X_BOOKMARK comments in submitTaskCompletion) that shouldn't leave a genuine
+   *  entrant permanently stuck just because Sorsa couldn't confirm it automatically. */
   private async assertCompletionBelongsToGiveaway(
     giveawayId: string,
     completionId: string,
@@ -513,7 +517,7 @@ export class GiveawayEntriesService {
 
     const tasks = await this.giveawaysService.getTasks(giveawayId);
     const task = tasks.find((t) => t.id === (completion as GiveawayTaskCompletion).giveaway_task_id);
-    if (!task || task.verification_mode !== GiveawayTaskVerificationMode.SELF_REPORT) {
+    if (!task) {
       throw new ForbiddenException('This task is not eligible for manual review');
     }
     return completion as GiveawayTaskCompletion;
