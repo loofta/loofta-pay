@@ -61,11 +61,13 @@ function formatAmount(value: string | undefined): string {
 function PayPanel({
   claimId,
   amountUsd,
+  email,
   onSettled,
   setError,
 }: {
   claimId: string;
   amountUsd: number;
+  email: string;
   onSettled: () => void;
   setError: (e: string | null) => void;
 }) {
@@ -203,6 +205,7 @@ function PayPanel({
           amount: amountUsd.toFixed(2),
           userAddress: refundAddress,
           refundAddress,
+          guestEmail: email,
         }),
       });
       const data = await r.json();
@@ -388,6 +391,7 @@ function PayPanel({
 export function NearIntentsAnyTokenOption({
   claimId,
   amountUsd,
+  email,
   expanded,
   onToggle,
   onSettled,
@@ -396,6 +400,10 @@ export function NearIntentsAnyTokenOption({
 }: {
   claimId: string;
   amountUsd: number;
+  /** Guest checkout's shared email field, stamped onto the payment as guest_sender_email once the
+   *  deposit is created — otherwise a bridge-paid guest payment shows as "Anonymous" everywhere
+   *  (history, claim page) since nothing else identifies the payer for this flow. */
+  email: string;
   expanded: boolean;
   onToggle: () => void;
   onSettled: () => void;
@@ -428,7 +436,7 @@ export function NearIntentsAnyTokenOption({
       {!disabled && expanded && (
         <div className="col-span-2 [grid-row:2] rounded-xl border border-gray-200 bg-gray-50 p-4 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
           <DynamicWalletProviders>
-            <PayPanel claimId={claimId} amountUsd={amountUsd} onSettled={onSettled} setError={setError} />
+            <PayPanel claimId={claimId} amountUsd={amountUsd} email={email} onSettled={onSettled} setError={setError} />
           </DynamicWalletProviders>
         </div>
       )}

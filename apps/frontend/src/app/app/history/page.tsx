@@ -39,11 +39,17 @@ export type PaymentHistoryClaim = {
   claimed_privately?: boolean | null;
   description: string | null;
   is_devnet?: boolean;
+  /** Set only for a from_recipient payment (checkout/payment-link) paid by a guest with no
+   *  Loofta account — the only sender identity there is to show for one. */
+  guest_sender_email?: string | null;
 };
 
 function getSenderDisplay(claim: PaymentHistoryClaim, anonymous: string): string {
   if (claim.direction === "from_recipient") {
     if (claim.sender_username) return `@${claim.sender_username}`;
+    // No account, so no username — a guest checkout payer's only identity is the email they
+    // typed in at checkout (GuestCheckoutPay), stored as guest_sender_email.
+    if (claim.guest_sender_email) return claim.guest_sender_email;
     return anonymous;
   }
   if (claim.creator_username) return `@${claim.creator_username}`;

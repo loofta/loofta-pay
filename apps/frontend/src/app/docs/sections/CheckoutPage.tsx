@@ -9,22 +9,26 @@ export function CheckoutPage() {
       </p>
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">What the payer does</h2>
+      <p className="text-base text-slate-400 mb-3">
+        No Loofta account required — checkout defaults to a guest flow:
+      </p>
       <ol className="list-decimal list-inside space-y-2 text-base text-slate-300 mb-6">
-        <li>Opens the link and logs in with Loofta (email, X, Discord, or GitHub).</li>
-        <li>If they already have a Loofta balance, they pay with one tap.</li>
-        <li>If not, they fund the payment — card, bank transfer, Coinbase, or any token — and pay.</li>
+        <li>Opens the link, enters an email (used for a receipt — no verification, no account created).</li>
+        <li>Picks a payment method: USDC on Solana from a connected wallet, or any token on any
+          chain via a cross-chain bridge.</li>
+        <li>Pays. Nothing to sign up for, nothing to confirm afterward.</li>
       </ol>
       <p className="text-base text-slate-400 mb-6">
-        Logging in on a checkout page never shows Loofta's own onboarding — no username prompts,
-        no product tour. A wallet and a username are created for them automatically in the
-        background so paying is never blocked on that.
+        If they already have a Loofta account, they can sign in on the same page instead and pay
+        with their existing balance in one tap — but that's an option, never a requirement.
       </p>
 
-      <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Every payment is private</h2>
+      <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Public by default, private on request</h2>
       <p className="text-base text-slate-400 mb-6">
-        Links created via the API are private by default — the amount and counterparty aren't a
-        public on-chain record. The payer's total already includes that fee; you still receive
-        exactly the amount you set.
+        Links created via the API are public by default — no privacy fee, you still receive exactly
+        the <code>amount</code> you set. Pass <code>is_private: true</code> at creation to require
+        the payer to pay privately instead (the amount and counterparty aren't a public on-chain
+        record); the payer's total already includes that fee either way.
       </p>
     </article>
   );

@@ -25,18 +25,23 @@ export interface PayHumanResult {
 }
 
 export interface CreatePaymentLinkParams {
-  /** USD amount the recipient (the API key owner) should net. $5 minimum — every payment link is
-   *  private, and the private-transfer path enforces a $5 floor. */
+  /** USD amount the recipient (the API key owner) should net. $1 minimum for a plain public
+   *  transfer (the default); $5 minimum if isPrivate is true (MagicBlock's private-transfer floor). */
   amount: number;
   /** Shown to the payer on the checkout page. */
   message?: string;
-  /** Defaults to true — the amount and that it went to you are shielded on-chain, $5 minimum.
-   *  Pass false for a plain public transfer instead ($1 minimum) — the amount and your wallet
-   *  become visible on-chain. */
+  /** Defaults to false (a plain public transfer) — the recipient can still choose to claim
+   *  privately at claim time regardless. Pass true to require the payer to pay privately instead
+   *  (shields the amount and that it went to you on-chain, $5 minimum). */
   isPrivate?: boolean;
   /** POSTed with a signed "payment.succeeded" event once this link is paid — see
    *  CreatePaymentLinkResult.webhookSecret for verifying the signature. */
   webhookUrl?: string;
+  /** Where to send the buyer back once paid — baked into the returned checkout URL, so it works
+   *  no matter how the link ends up being opened (PayButton, a plain link, a QR code, pasted
+   *  directly into a browser). The checkout page appends ?payment=success&short_id=... and
+   *  navigates there once the payment settles. */
+  returnUrl?: string;
 }
 
 export interface CreatePaymentLinkResult {
@@ -57,6 +62,13 @@ export interface PaymentLinkStatus {
   shortId: string;
   /** OPEN | IN_FLIGHT | SUCCESS | PRIVATE_TRANSFER_PENDING | EXPIRED | CANCELLED | ... */
   status: string;
+  /**
+   * Whether the customer's payment has actually landed — true for both SUCCESS and
+   * PRIVATE_TRANSFER_PENDING. Check this, not `status`: PRIVATE_TRANSFER_PENDING means the
+   * customer already paid and only the recipient's own claim into their wallet is still
+   * outstanding, which has nothing to do with whether the order should be treated as paid.
+   */
+  paid: boolean;
   amount: number;
   message: string | null;
   paidAt: string | null;

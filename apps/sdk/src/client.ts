@@ -89,6 +89,7 @@ export class LooftaPayClient {
         message: params.message,
         is_private: params.isPrivate,
         webhook_url: params.webhookUrl,
+        return_url: params.returnUrl,
       }),
     });
     const data = await res.json().catch(() => null);
@@ -116,6 +117,7 @@ export class LooftaPayClient {
     return {
       shortId: data.short_id,
       status: data.status,
+      paid: data.paid === true,
       amount: data.amount,
       message: data.message ?? null,
       paidAt: data.paid_at ?? null,

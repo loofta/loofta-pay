@@ -4,11 +4,10 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/components/ui/use-toast";
-import { Loader2, Copy, Check, KeyRound, ExternalLink, RefreshCw, Trash2, BookOpen, Store } from "lucide-react";
+import { Loader2, Copy, Check, KeyRound, ExternalLink, Trash2, BookOpen, Store } from "lucide-react";
 import {
   getSelfServeStatus,
   provisionSelfServeKey,
-  rotateSelfServeKey,
   revokeSelfServeKey,
   getSelfServeBranding,
   updateSelfServeBranding,
@@ -45,8 +44,21 @@ export default function DeveloperPage() {
   const [statusLoading, setStatusLoading] = useState(true);
   const [minting, setMinting] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
-  // Raw key only ever lives in this component's memory — never persisted, never refetchable.
-  const [rawKey, setRawKey] = useState<string | null>(null);
+  // Raw key is never retrievable from the server after creation — this is only ever a client-side
+  // convenience so navigating between tabs, or reloading this page, doesn't force a destructive
+  // re-generate (which now revokes the previous key) just to use "Try it" again. sessionStorage
+  // (not localStorage) so it still clears itself the moment the tab/browser closes.
+  const RAW_KEY_STORAGE_KEY = "loofta-dev-raw-key";
+  const [rawKey, setRawKeyState] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.sessionStorage.getItem(RAW_KEY_STORAGE_KEY);
+  });
+  const setRawKey = useCallback((key: string | null) => {
+    setRawKeyState(key);
+    if (typeof window === "undefined") return;
+    if (key) window.sessionStorage.setItem(RAW_KEY_STORAGE_KEY, key);
+    else window.sessionStorage.removeItem(RAW_KEY_STORAGE_KEY);
+  }, []);
 
   const [brandName, setBrandName] = useState("");
   const [brandLogoUrl, setBrandLogoUrl] = useState("");
@@ -158,25 +170,14 @@ export default function DeveloperPage() {
     }
   }
 
-  async function handleRotate() {
-    setMinting(true);
-    try {
-      const token = await getAccessToken();
-      const minted = await rotateSelfServeKey(token);
-      setRawKey(minted.api_key);
-      await refreshStatus();
-    } catch (e: any) {
-      toast({ variant: "destructive", title: "Could not rotate key", description: e?.message });
-    } finally {
-      setMinting(false);
-    }
-  }
-
   async function handleRevoke(keyId: string) {
     setRevokingId(keyId);
     try {
       const token = await getAccessToken();
       await revokeSelfServeKey(token, keyId);
+      // Only one active key can exist at a time now, so revoking always invalidates whatever raw
+      // value is held here — never leave a now-dead key sitting around looking usable.
+      setRawKey(null);
       await refreshStatus();
     } catch (e: any) {
       toast({ variant: "destructive", title: "Could not revoke key", description: e?.message });
@@ -192,7 +193,7 @@ export default function DeveloperPage() {
     setDemoLink(null);
     try {
       const amount = Number(demoAmount);
-      if (!amount || amount < 5) throw new Error("Minimum is $5 (every link is private, private transfers have a $5 floor)");
+      if (!amount || amount < 1) throw new Error("Minimum is $1.");
       const link = await createPaymentLinkWithKey(rawKey, { amount, message: demoMessage });
       setDemoLink(link);
     } catch (e: any) {
@@ -245,7 +246,7 @@ export default function DeveloperPage() {
           <button
             type="button"
             onClick={() => setActiveTab("keys")}
-            className={`px-3 py-2 text-base font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "keys" ? "border-orange-400 text-orange-400" : "border-transparent text-slate-500 hover:text-slate-300"}`}
+            className={`px-3 py-2 text-base font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "keys" ? "border-orange-400 text-orange-400" : "border-transparent text-slate-400 hover:text-slate-200"}`}
           >
             <KeyRound className="w-3.5 h-3.5" />
             API key
@@ -253,7 +254,7 @@ export default function DeveloperPage() {
           <button
             type="button"
             onClick={() => setActiveTab("branding")}
-            className={`px-3 py-2 text-base font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "branding" ? "border-orange-400 text-orange-400" : "border-transparent text-slate-500 hover:text-slate-300"}`}
+            className={`px-3 py-2 text-base font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "branding" ? "border-orange-400 text-orange-400" : "border-transparent text-slate-400 hover:text-slate-200"}`}
           >
             <Store className="w-3.5 h-3.5" />
             Branding
@@ -261,7 +262,7 @@ export default function DeveloperPage() {
           <button
             type="button"
             onClick={() => setActiveTab("try")}
-            className={`px-3 py-2 text-base font-medium border-b-2 transition-colors ${activeTab === "try" ? "border-orange-400 text-orange-400" : "border-transparent text-slate-500 hover:text-slate-300"}`}
+            className={`px-3 py-2 text-base font-medium border-b-2 transition-colors ${activeTab === "try" ? "border-orange-400 text-orange-400" : "border-transparent text-slate-400 hover:text-slate-200"}`}
           >
             Try it
           </button>
@@ -293,7 +294,7 @@ export default function DeveloperPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-base text-slate-500 mb-3">No API key yet.</p>
+                <p className="text-base text-slate-300 mb-3">No API key yet.</p>
               )}
 
               {rawKey && (
@@ -306,37 +307,27 @@ export default function DeveloperPage() {
                 </div>
               )}
 
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleGenerate}
-                  disabled={minting}
-                  title={status?.keys.length ? "Replaces your active key — the old one is revoked immediately" : undefined}
-                  className="flex-1 flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-50"
-                >
-                  {minting ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-                  {status?.keys.length ? "Generate new key" : "Generate API key"}
-                </button>
-                {!!status?.keys.length && (
-                  <button
-                    type="button"
-                    onClick={handleRotate}
-                    disabled={minting}
-                    className="flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 font-medium text-base border border-white/15 text-slate-300 hover:bg-white/10 disabled:opacity-50"
-                    title="Rotate — mint a new key without revoking the old one"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-              <p className="text-base text-slate-500 mt-2">Devnet only for now. Scoped to creating payment links only.</p>
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={minting}
+                title={status?.keys.length ? "Revokes your current key immediately and mints a new one in its place" : undefined}
+                className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {minting ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+                {status?.keys.length ? "Generate new key" : "Generate API key"}
+              </button>
+              <p className="text-base text-slate-400 mt-2">
+                Live (mainnet) — payments move real money. Scoped to creating payment links only.
+                At most one active key at a time for now — generating a new one revokes the old.
+              </p>
             </>
           )}
         </div>
 
         {/* Branding — shown on your checkout pages instead of your Loofta username */}
         <div className={`rounded-xl bg-white/5 border border-white/10 p-4 mb-4 ${activeTab === "branding" ? "" : "hidden"}`}>
-          <p className="text-base text-slate-500 mb-3">
+          <p className="text-base text-slate-400 mb-3">
             Shown on checkout pages for links you create from now on — existing links keep whatever they already had.
           </p>
           {brandLoading ? (
@@ -369,7 +360,7 @@ export default function DeveloperPage() {
                         onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                       />
                     ) : (
-                      <Store className="w-5 h-5 text-slate-600" />
+                      <Store className="w-5 h-5 text-slate-500" />
                     )}
                   </div>
                   <label className="flex-1 flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-medium text-base border border-white/15 text-slate-300 hover:bg-white/10 cursor-pointer disabled:opacity-50">
@@ -388,7 +379,7 @@ export default function DeveloperPage() {
                     />
                   </label>
                 </div>
-                <p className="text-base text-slate-500 mt-1.5">Any image works — we crop it to a circle for you.</p>
+                <p className="text-base text-slate-400 mt-1.5">Any image works — we crop it to a circle for you.</p>
                 {logoUploadError && <p className="text-base text-red-400 mt-1">{logoUploadError}</p>}
               </div>
               <button
@@ -406,38 +397,48 @@ export default function DeveloperPage() {
 
         {/* Live demo — only once a raw key is in memory this session */}
         <div className={`rounded-xl bg-white/5 border border-white/10 p-4 mb-4 ${activeTab === "try" ? "" : "hidden"}`}>
-          <div className="flex items-center justify-end gap-4 mb-1">
+          <p className="text-lg font-semibold text-slate-100 mb-1">Try it</p>
+          <p className="text-base text-slate-400 mb-4">Create a real payment link against your account.</p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
             <Link
               href={rawKey ? `/app/demo-store?key=${encodeURIComponent(rawKey)}` : "/app/demo-store"}
-              className="text-base text-orange-400 hover:underline"
+              className="block rounded-lg bg-black/20 border border-white/10 p-3 hover:border-orange-400/40 hover:bg-black/30 transition-colors"
             >
-              Demo store →
+              <p className="text-base font-semibold text-orange-400">Demo store →</p>
+              <p className="text-base text-slate-400 mt-0.5">See it as a buyer would — one product, one "Buy now" button, a real checkout.</p>
             </Link>
             <Link
               href={rawKey ? `/app/demo?key=${encodeURIComponent(rawKey)}` : "/app/demo"}
-              className="text-base text-orange-400 hover:underline"
+              className="block rounded-lg bg-black/20 border border-white/10 p-3 hover:border-orange-400/40 hover:bg-black/30 transition-colors"
             >
-              Full demo page →
+              <p className="text-base font-semibold text-orange-400">Pay button config →</p>
+              <p className="text-base text-slate-400 mt-0.5">Set amount, message, and webhook by hand, then preview the button.</p>
             </Link>
           </div>
           {!rawKey ? (
             status?.provisioned ? (
-              <div className="space-y-2">
-                <p className="text-base text-slate-500">
-                  You already have a key, but the raw value is only ever shown once, right when it's minted — this page can't recover it after a reload. Mint a fresh one to use here (your old key keeps working; nothing is revoked).
+              <div className="rounded-lg bg-black/20 border border-white/10 p-3.5 space-y-3">
+                <p className="text-base text-slate-300">
+                  This browser doesn&apos;t have your raw key anymore — it's kept only for this
+                  browser tab and cleared once it's closed, since the server never stores it
+                  retrievably after creation.
                 </p>
-                <button
-                  type="button"
-                  onClick={handleGenerate}
-                  disabled={minting}
-                  className="flex items-center gap-2 text-base text-orange-400 hover:underline disabled:opacity-50"
-                >
-                  {minting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  Mint a key to use here →
-                </button>
+                <div>
+                  <button
+                    type="button"
+                    onClick={handleGenerate}
+                    disabled={minting}
+                    className="inline-flex items-center gap-2 rounded-lg px-3 py-2 font-semibold text-base bg-white/10 text-white hover:bg-white/15 disabled:opacity-50"
+                  >
+                    {minting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    Generate a key to use here →
+                  </button>
+                  <p className="text-base text-slate-400 mt-1.5">Revokes your old key and replaces it with this one.</p>
+                </div>
               </div>
             ) : (
-              <p className="text-base text-slate-500">Generate a key above to create a real payment link.</p>
+              <p className="text-base text-slate-300">Generate a key above first, then come back to try it here.</p>
             )
           ) : (
             <div className="space-y-3">
@@ -445,7 +446,7 @@ export default function DeveloperPage() {
                 <label className="text-base text-slate-400 mb-1 block">Amount (USD)</label>
                 <input
                   type="number"
-                  min={5}
+                  min={1}
                   value={demoAmount}
                   onChange={(e) => setDemoAmount(e.target.value)}
                   className="w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-base text-white outline-none focus:border-orange-400/50"
@@ -496,11 +497,11 @@ export default function DeveloperPage() {
           <p className="text-base font-semibold text-white mb-2">Quick reference</p>
           <pre className="text-base text-slate-300 bg-black/40 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">
 {`curl -X POST https://api.loofta.xyz/payment-links \\
-  -H "Authorization: Bearer lft_test_..." \\
+  -H "Authorization: Bearer lft_live_..." \\
   -H "Content-Type: application/json" \\
   -d '{"amount": 25, "message": "Invoice #1042"}'`}
           </pre>
-          <p className="text-base text-slate-500 mt-2">
+          <p className="text-base text-slate-400 mt-2">
             Full docs, the SDK, and a copyable agent skill: <Link href="/docs" className="text-orange-400 hover:underline">/docs</Link>.
           </p>
         </div>

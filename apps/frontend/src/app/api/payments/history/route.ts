@@ -5,7 +5,7 @@ import { getVerifiedSolanaWallets } from "@/lib/serverAuth";
 
 // recipient_address included only to detect PENDING_* prefixes — real wallet addresses are stripped in normalisePayment
 const PAYMENT_SELECT =
-  "id, short_id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, recipient_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, is_private, claimed_privately";
+  "id, short_id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, recipient_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, is_private, claimed_privately, guest_sender_email";
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -39,6 +39,10 @@ export type PaymentHistoryClaim = {
   created_by: string | null;
   description: string | null;
   is_devnet?: boolean;
+  /** Set only for a from_recipient payment (checkout/payment-link) paid by a guest with no Loofta
+   *  account — see the guest_sender_email migration comment. Stored purely for display; never used
+   *  to verify identity, and no account-linking reconciliation reads it (not built yet). */
+  guest_sender_email?: string | null;
 };
 
 const TERMINAL_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CANCELLED", "REFUNDED", "EXPIRED", "DELETED"];
@@ -104,6 +108,7 @@ function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & {
     claimed_privately: Boolean(row.claimed_privately),
     description: (row.description as string | null) ?? null,
     is_devnet: Boolean(row.is_devnet),
+    guest_sender_email: (row.guest_sender_email as string | null) ?? null,
     _recipient_user_id: (row.recipient_user_id as string | null) ?? null,
   };
 }

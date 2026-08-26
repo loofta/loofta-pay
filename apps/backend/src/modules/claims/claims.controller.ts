@@ -548,6 +548,11 @@ export class ClaimsController {
   @UseGuards(CronGuard)
   async notifyPayment(@Param('id') id: string): Promise<{ ok: boolean }> {
     this.claimsService.notifyRecipientAfterPayment(id);
+    // Called by the guest-checkout PATCH route on every SUCCESS/PRIVATE_TRANSFER_PENDING
+    // transition — the one place that flow's completion touches the backend, so it's also where
+    // that flow's payment_links webhook_url has to fire from (dispatchWebhookForPaidPayment is a
+    // no-op for any payment with no webhook_url set, i.e. every non-API-created claim).
+    this.claimsService.dispatchWebhookForPaidPayment(id);
     return { ok: true };
   }
 

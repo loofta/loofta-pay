@@ -132,7 +132,9 @@ export class PaymentLinksService {
     // configured NEXT_PUBLIC_BASE_URL as before.
     const configuredOrigin = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
     const origin = requestOrigin && /^https?:\/\//.test(requestOrigin) ? requestOrigin : configuredOrigin;
-    return { shortId, url: `${origin}/checkout/${shortId}`, amount: dto.amount, message: dto.message ?? null, webhookSecret };
+    const checkoutUrl = new URL(`${origin}/checkout/${shortId}`);
+    if (dto.return_url) checkoutUrl.searchParams.set('callback', dto.return_url);
+    return { shortId, url: checkoutUrl.toString(), amount: dto.amount, message: dto.message ?? null, webhookSecret };
   }
 
   /**
@@ -143,7 +145,7 @@ export class PaymentLinksService {
   async getStatus(
     shortId: string,
     integrator: AuthenticatedIntegrator,
-  ): Promise<{ shortId: string; status: string; amount: number; message: string | null; paidAt: string | null }> {
+  ): Promise<{ shortId: string; status: string; paid: boolean; amount: number; message: string | null; paidAt: string | null }> {
     const { data: row } = await this.supabaseService.payments
       .select('short_id, status, amount, description, paid_at, integrator_id')
       .eq('short_id', shortId)
@@ -151,9 +153,16 @@ export class PaymentLinksService {
     if (!row || row.integrator_id !== integrator.id) {
       throw new NotFoundException('Payment link not found');
     }
+    // `status` is Loofta's own internal state — PRIVATE_TRANSFER_PENDING means the customer's
+    // payment already landed and only the *recipient's* claim/sweep into their own wallet is still
+    // outstanding, which has nothing to do with whether the merchant's order is paid. `paid` is the
+    // one field integrators should actually check: true the moment the customer's leg settles,
+    // matching what the checkout page's own postMessage/redirect callback already reports.
+    const paid = row.status === 'SUCCESS' || row.status === 'PRIVATE_TRANSFER_PENDING';
     return {
       shortId: row.short_id,
       status: row.status,
+      paid,
       amount: Number(row.amount),
       message: row.description ?? null,
       paidAt: row.paid_at ?? null,

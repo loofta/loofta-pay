@@ -12,7 +12,7 @@ function DemoPageInner() {
   const searchParams = useSearchParams();
   const [apiKey, setApiKey] = useState(() => searchParams.get("key") ?? "");
 
-  // If a key arrived via ?key= (e.g. the "Full demo page" link from Developer settings), drop it
+  // If a key arrived via ?key= (e.g. the "Pay button config" link from Developer settings), drop it
   // from the URL right after reading it once — no reason for a live API key to sit in the address
   // bar or browser history any longer than the initial navigation.
   useEffect(() => {
@@ -25,6 +25,7 @@ function DemoPageInner() {
   const [message, setMessage] = useState("Sample payment link");
   const [buttonText, setButtonText] = useState("Pay with Loofta");
   const [webhookUrl, setWebhookUrl] = useState("");
+  const [returnUrl, setReturnUrl] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +49,7 @@ function DemoPageInner() {
         message: message || undefined,
         isPrivate: false,
         webhookUrl: webhookUrl.trim() || undefined,
+        returnUrl: returnUrl.trim() || undefined,
       });
       setLink(created);
     } catch (e: any) {
@@ -63,11 +65,13 @@ function DemoPageInner() {
         <Link href="/app/developer" className="text-base text-slate-400 hover:text-white mb-4 inline-block">
           ← Developer
         </Link>
-        <h1 className="text-2xl font-medium text-white mb-2">Demo</h1>
+        <h1 className="text-2xl font-medium text-white mb-2">Pay button config</h1>
         <p className="text-base text-slate-400 mb-6">
-          Configure a payment link and see the actual <code className="text-orange-300">PayButton</code> component
-          you'd embed on your own site. Want to see it as a buyer would instead — one product,
-          one price, one button? Try the <Link href="/app/demo-store" className="text-orange-400 hover:underline">demo store</Link>.
+          Configure every <code className="text-orange-300">POST /payment-links</code> field by hand
+          and inspect the raw response — useful for testing, not a pattern to copy as-is (a real
+          storefront generates one fresh link per order, from its own backend). For the actual
+          integration pattern, see the{" "}
+          <Link href="/app/demo-store" className="text-orange-400 hover:underline">demo store</Link>.
         </p>
 
         {/* Config */}
@@ -80,10 +84,10 @@ function DemoPageInner() {
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="lft_test_..."
+              placeholder="lft_live_..."
               className="w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-base text-white outline-none focus:border-orange-400/50"
             />
-            <p className="text-base text-slate-500 mt-1">
+            <p className="text-base text-slate-400 mt-1">
               Not saved anywhere — only kept in this page while it's open. Get one from{" "}
               <Link href="/app/developer" className="text-orange-400 hover:underline">Developer settings</Link>.
             </p>
@@ -130,9 +134,24 @@ function DemoPageInner() {
               placeholder="https://your-server.com/webhooks/loofta"
               className="w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-base text-white outline-none focus:border-orange-400/50"
             />
-            <p className="text-base text-slate-500 mt-1">
+            <p className="text-base text-slate-400 mt-1">
               POSTed with a signed "payment.succeeded" event once this link is paid. A one-time
               secret to verify it comes back with the created link.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-base text-slate-400 mb-1 block">Return URL (optional)</label>
+            <input
+              type="text"
+              value={returnUrl}
+              onChange={(e) => setReturnUrl(e.target.value)}
+              placeholder="https://your-store.com/order-confirmed"
+              className="w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-base text-white outline-none focus:border-orange-400/50"
+            />
+            <p className="text-base text-slate-400 mt-1">
+              Where the checkout page sends the buyer once paid (?payment=success&amp;short_id=...
+              appended) — works even if the link is opened directly, not just through PayButton.
             </p>
           </div>
 

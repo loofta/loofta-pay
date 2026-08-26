@@ -147,6 +147,12 @@ export class IntegratorsService {
   async provisionSelfServe(ownerUserId: string): Promise<{ integratorId: string; rawKey: string; keyPrefix: string }> {
     const existing = await this.findSelfServeByOwner(ownerUserId);
     if (existing) {
+      // At most one active self-serve key at a time, for now — revoke here (server-side, before
+      // minting) rather than relying on the frontend to revoke the old ones after the fact, which
+      // left a window where a failed/partial revoke could strand more than one active key.
+      for (const key of existing.keys) {
+        await this.revokeKey(key.id);
+      }
       const { rawKey, keyPrefix } = await this.mintAdditionalKey(existing.id, false);
       return { integratorId: existing.id, rawKey, keyPrefix };
     }
@@ -192,9 +198,18 @@ export class IntegratorsService {
     return { id: integrator.id, keys: (keys ?? []).map((k) => ({ id: k.id as string, keyPrefix: k.key_prefix as string })) };
   }
 
+  /**
+   * At most one active self-serve key at a time, for now — no overlapping-key rotation window.
+   * Revokes the existing key(s) before minting, same as provisionSelfServe's re-provision path;
+   * kept as a separate method (rather than folded into provisionSelfServe) since the two have
+   * distinct callers/error semantics — this one 404s if nothing exists yet, that one creates.
+   */
   async rotateSelfServeKey(ownerUserId: string): Promise<{ rawKey: string; keyPrefix: string }> {
     const existing = await this.findSelfServeByOwner(ownerUserId);
     if (!existing) throw new NotFoundException('No API key provisioned yet — create one first');
+    for (const key of existing.keys) {
+      await this.revokeKey(key.id);
+    }
     return this.mintAdditionalKey(existing.id, false);
   }
 

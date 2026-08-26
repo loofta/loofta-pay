@@ -49,10 +49,15 @@ const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 3 * 60_000;
 
 async function confirmClaimPaid(claimId: string, email: string, txHash?: string): Promise<boolean> {
+  // PRIVATE_TRANSFER_PENDING, not SUCCESS — a guest payment always lands in the claim's burner,
+  // never the recipient's real wallet (see NearIntentsCheckoutOption's privacy comment), so the
+  // recipient still has to claim/sweep it out. SUCCESS reads as "fully settled, nothing left to
+  // do", which stranded funds with no visible claim action once a recipient landed on their own
+  // claim page (incident 2026-08-26, payment 1352b7e4-c2f3-4e31-9bca-45ff88acc151).
   const res = await fetch(`/api/claims/${claimId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status: "SUCCESS", guest_email: email, txHash }),
+    body: JSON.stringify({ status: "PRIVATE_TRANSFER_PENDING", guest_email: email, txHash }),
   });
   return res.ok;
 }
@@ -179,11 +184,14 @@ function UsdcSolanaOption({
   onToggle: () => void;
   onSettled: () => void;
   setError: (e: string | null) => void;
-  /** When true and not authenticated, this option shows a "sign in to pay privately" prompt
-   *  instead of the plain wallet-connect/QR flow below — see the file header comment: privacy
-   *  requires the real onPayPrivately flow (MagicBlock PER transfer, Privy-authenticated), which
-   *  this component's own plain SPL transfer can't provide. Once signed in, GuestCheckoutPay's
-   *  top button switches to the authenticated "Pay now" balance flow, which already handles it. */
+  /** When true, this option is always blocked — regardless of auth state — in favor of a prompt
+   *  pointing at the real private mechanism. See the file header comment: privacy requires the
+   *  real onPayPrivately flow (MagicBlock PER transfer, Privy-authenticated); this component's own
+   *  plain SPL transfer can't provide it and, critically, never adds the privacy fee to the amount
+   *  it sends — silently letting it through once merely *signed in* (the previous condition here)
+   *  built and broadcast an unprivate, under-charged transfer while the UI still showed a privacy
+   *  fee line item, since being authenticated is not the same as actually using the balance flow
+   *  that goes through onPayPrivately. */
   isPrivateMode?: boolean;
   authenticated?: boolean;
   onLogin: () => void;
@@ -258,18 +266,22 @@ function UsdcSolanaOption({
 
       {expanded && (
         <div className="col-span-2 [grid-row:2] rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3 text-center [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
-          {isPrivateMode && !authenticated ? (
+          {isPrivateMode ? (
             <>
               <p className="text-base text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-300">
-                Private payments use a MagicBlock transfer straight to the recipient — that needs a Loofta account to authorize.
+                {authenticated
+                  ? "This wallet-connect option can't pay privately — use the \"Pay now\" button above instead, it pays from your Loofta balance through the real private transfer."
+                  : "Private payments use a MagicBlock transfer straight to the recipient — that needs a Loofta account to authorize."}
               </p>
-              <button
-                type="button"
-                onClick={onLogin}
-                className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-              >
-                <LogIn className="w-4 h-4" /> Sign in to pay privately
-              </button>
+              {!authenticated && (
+                <button
+                  type="button"
+                  onClick={onLogin}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                >
+                  <LogIn className="w-4 h-4" /> Sign in to pay privately
+                </button>
+              )}
             </>
           ) : payMethod === "wallet" ? (
             <SolanaWalletConnectProvider rpcUrl={getSolanaHttpRpc()}>
@@ -436,6 +448,7 @@ export function GuestCheckoutPay({
         <NearIntentsAnyTokenOption
           claimId={claimId}
           amountUsd={amountUsd}
+          email={email}
           expanded={activeOption === "any"}
           onToggle={() => setActiveOption((v) => (v === "any" ? null : "any"))}
           onSettled={onSettled}

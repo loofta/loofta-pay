@@ -32,4 +32,12 @@ export class CreatePaymentLinkDto {
   @IsOptional()
   @IsUrl({ require_tld: false }) // require_tld: false so http://localhost:*/webhook works while testing
   webhook_url?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Where to send the buyer back once paid. Baked into the returned checkout URL as ?callback=, so it works regardless of how the link was opened (PayButton, a plain link, a QR code, pasted directly into a browser) — the checkout page appends ?payment=success&short_id=... and navigates there once the payment settles.',
+  })
+  @IsOptional()
+  @IsUrl({ require_tld: false })
+  return_url?: string;
 }

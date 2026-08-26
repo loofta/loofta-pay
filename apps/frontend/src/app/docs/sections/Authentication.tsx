@@ -17,17 +17,24 @@ export function Authentication() {
         ever stores a salted hash of it.
       </p>
       <p className="text-base text-slate-400 mb-6">
-        Keys are devnet-only for now. Mainnet access is a manual upgrade — reach out if you need it.
+        Keys are live (mainnet) — payments made through them move real money. There is no sandbox
+        mode yet; test with small real amounts.
       </p>
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">2. Send it as a bearer token</h2>
-      <DocsCodeBlock code={`Authorization: Bearer lft_test_...`} />
+      <DocsCodeBlock code={`Authorization: Bearer lft_live_...`} />
 
-      <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Rotating and revoking</h2>
+      <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Generating vs. rotating</h2>
       <p className="text-base text-slate-400 mb-2">
-        "Generate another" on the Developer page mints an additional key without invalidating the
-        old one — rotate on your own schedule, then revoke the old key once you've switched over.
-        Revoked keys stop working immediately.
+        These are opposites, so pick deliberately:
+      </p>
+      <ul className="list-disc list-inside space-y-2 text-base text-slate-300 mb-2">
+        <li><strong className="text-slate-100">Generate</strong> — revokes your existing key and mints a fresh one in its place. Use this if a key may have leaked, or you just want a clean slate.</li>
+        <li><strong className="text-slate-100">Rotate</strong> — mints an additional key without touching the old one, so you can switch your deployed code over on your own schedule before manually revoking the old key. Use this for a zero-downtime swap.</li>
+      </ul>
+      <p className="text-base text-slate-400 mb-6">
+        Revoked keys stop working immediately. The raw key value is only ever shown once, at
+        creation — Loofta stores just a salted hash of it.
       </p>
     </article>
   );

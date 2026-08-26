@@ -15,7 +15,7 @@ export interface CreatedPaymentLink {
 
 export async function createPaymentLinkWithKey(
   apiKey: string,
-  input: { amount: number; message?: string; isPrivate?: boolean; webhookUrl?: string },
+  input: { amount: number; message?: string; isPrivate?: boolean; webhookUrl?: string; returnUrl?: string },
 ): Promise<CreatedPaymentLink> {
   // fetchApi's `accessToken` option only ever becomes `Authorization: Bearer <value>` — reused
   // here for the raw API key, which is exactly what IntegratorGuard expects on this endpoint.
@@ -27,6 +27,7 @@ export async function createPaymentLinkWithKey(
       message: input.message,
       is_private: input.isPrivate,
       webhook_url: input.webhookUrl,
+      return_url: input.returnUrl,
     }),
   });
 }
@@ -34,6 +35,9 @@ export async function createPaymentLinkWithKey(
 export interface PaymentLinkStatus {
   short_id: string;
   status: string;
+  /** true once the customer's payment has landed (SUCCESS or PRIVATE_TRANSFER_PENDING) — check
+   *  this, not `status`, for "did they pay". */
+  paid: boolean;
   amount: number;
   message: string | null;
   paid_at: string | null;

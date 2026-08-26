@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { DocsCodeBlock } from "../DocsCodeBlock";
 
 export function CodeExamples({ onNavigate }: { onNavigate: (slug: string) => void }) {
@@ -33,18 +34,28 @@ console.log(link.url); // https://pay.loofta.xyz/checkout/aB3xK9pQ`}
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Embedding a checkout button</h2>
       <p className="text-base text-slate-400 mb-3">
-        Create the link server-side (never expose your API key in the browser), then render a
-        button that opens it:
+        <code className="text-orange-300">@loofta/pay-sdk</code> is server-side only — it never
+        exposes your API key to the browser, so it doesn't ship a React component either. Copy{" "}
+        <code className="text-orange-300">components/sdk/PayButton.tsx</code> from the Loofta repo
+        into your project, or write your own equivalent against a "create checkout" endpoint on
+        your own backend. Real integration pattern — one fresh link per click, not one static URL
+        reused across every order:
       </p>
       <DocsCodeBlock
-        code={`import { PayButton } from "@loofta/pay-sdk/react"; // or copy components/sdk/PayButton.tsx
-
-<PayButton
-  checkoutUrl={link.url}
-  buttonText={\`Pay $\${link.amount}\`}
+        code={`<PayButton
+  onGenerateLink={async () => {
+    const res = await fetch("/api/create-checkout", { method: "POST" }); // your own backend, calls createPaymentLink server-side
+    const { url } = await res.json();
+    return url;
+  }}
+  buttonText="Buy now"
   onSuccess={(paymentId) => console.log("Paid:", paymentId)}
 />`}
       />
+      <p className="text-base text-slate-400 mb-6">
+        See the <Link href="/app/demo-store" className="text-orange-400 hover:underline">demo store</Link>{" "}
+        for this pattern actually wired up end to end.
+      </p>
 
       <div className="rounded-xl border border-white/10 bg-white/5 p-4 mt-8">
         <p className="text-slate-300 text-base">

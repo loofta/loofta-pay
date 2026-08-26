@@ -89,6 +89,11 @@ export class ClaimsService {
   private readonly usdcMint: PublicKey;
   private readonly perProgramId: PublicKey;
   private readonly emailSentAt = new Map<string, number>();
+  // Dedupe for dispatchWebhookIfConfigured — the /:id/notify endpoint fires on every PATCH that
+  // reaches SUCCESS/PRIVATE_TRANSFER_PENDING (e.g. a client retry after a lost response), so
+  // without this a merchant's webhook_url could get POSTed the same "payment.succeeded" event more
+  // than once for one payment.
+  private readonly webhookSentAt = new Map<string, number>();
   // Resend id of the still-pending scheduled notify email per claim (sendPaymentEmail's 15-min
   // delayed send) — lets a recipient edit that lands before the delay elapses cancel the email
   // already addressed to the OLD recipient instead of leaving it to fire regardless.
@@ -3128,17 +3133,34 @@ export class ClaimsService {
     }
 
     // Only ever set for API-created payment links (see PaymentLinksService) — a no-op for every
-    // human-created claim. Only fires on the genuinely-settled SUCCESS (not the intermediate
-    // PRIVATE_TRANSFER_PENDING every payment detours through while funds sit in the burner) —
-    // this is reached both from the payer's own HTTP call and from the internal recipient-sweep
-    // completion, so it's the one place that sees the true final transition either way.
-    if (effectiveStatus === 'SUCCESS') {
-      this.dispatchWebhookIfConfigured(id).catch((e) =>
-        this.logger.warn(`Webhook dispatch failed for payment ${id}: ${(e as Error)?.message}`),
-      );
+    // human-created claim. Fires on SUCCESS or PRIVATE_TRANSFER_PENDING — the merchant's order is
+    // "paid" the moment the customer's leg settles, regardless of whether the recipient (the
+    // merchant themselves, in their own separate Loofta account) has gotten around to claiming/
+    // sweeping the funds into their own wallet yet. dispatchWebhookForPaidPayment dedupes so this
+    // firing from multiple transitions for the same payment doesn't double-POST the merchant.
+    if (effectiveStatus === 'SUCCESS' || effectiveStatus === 'PRIVATE_TRANSFER_PENDING') {
+      this.dispatchWebhookForPaidPayment(id);
     }
 
     return { id, status: effectiveStatus } as unknown as Claim;
+  }
+
+  /**
+   * Public, deduped entry point for /:id/notify (called by both the guest-checkout PATCH route and
+   * the NEAR Intents bridge cron on every payer-leg settlement) — see dispatchWebhookIfConfigured
+   * for what this actually sends. Deduped per payment for an hour, same window as the email dedupe
+   * this mirrors, so a retried PATCH after a lost response can't double-fire the merchant's webhook.
+   */
+  dispatchWebhookForPaidPayment(paymentId: string): void {
+    const lastSent = this.webhookSentAt.get(paymentId);
+    if (lastSent && Date.now() - lastSent < 60 * 60 * 1000) {
+      this.logger.log(`[webhook] payment ${paymentId}: duplicate suppressed (already sent ${Math.round((Date.now() - lastSent) / 1000)}s ago)`);
+      return;
+    }
+    this.webhookSentAt.set(paymentId, Date.now());
+    this.dispatchWebhookIfConfigured(paymentId).catch((e) =>
+      this.logger.warn(`Webhook dispatch failed for payment ${paymentId}: ${(e as Error)?.message}`),
+    );
   }
 
   /**

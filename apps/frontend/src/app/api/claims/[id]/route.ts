@@ -102,7 +102,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
   const { data: paymentRow } = await supabase
     .from("payments")
-    .select("id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, claimed_privately, merchant_name, merchant_logo_url")
+    .select("id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, claimed_privately, merchant_name, merchant_logo_url, sender_user_id, guest_sender_email")
     .eq("id", params.id)
     .maybeSingle();
 
@@ -196,21 +196,37 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     ? supabase.from("app_users").select("username").eq("privy_user_id", recipientUserId).maybeSingle()
     : Promise.resolve({ data: null });
 
+  // direction === "from_recipient" only: the payer's own username, when they have an account —
+  // the "+$X.XX from Y" card (getSenderDisplay in c/[id]/page.tsx) needs this to show who actually
+  // paid instead of falling back to the creator (the merchant/recipient, backwards for this
+  // direction). guest_sender_email (added to rawPayment via the select above) covers the no-account
+  // case for the same card.
+  const senderUserId = String((rawPayment as Record<string, unknown> | null)?.sender_user_id ?? "");
+  const senderUsernamePromise = senderUserId.includes('did:privy:')
+    ? supabase.from("app_users").select("username").eq("privy_user_id", senderUserId).maybeSingle()
+    : Promise.resolve({ data: null });
+
   const intentPromise = supabase.from("payment_intents").select("deposit_address, memo, deadline, time_estimate, quote_id, status").eq("payment_id", params.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
 
-  const [{ data: appUser }, { data: recipientAppUser }, { data: intentData }] = await Promise.all([
+  const [{ data: appUser }, { data: recipientAppUser }, { data: senderAppUser }, { data: intentData }] = await Promise.all([
     creatorUsernamePromise,
     recipientUsernamePromise,
+    senderUsernamePromise,
     intentPromise,
   ]);
 
   const creator_username: string | null = (appUser as { username?: string } | null)?.username ?? null;
   const resolvedRecipientUsername: string | null = (recipientAppUser as { username?: string } | null)?.username ?? null;
+  const sender_username: string | null = (senderAppUser as { username?: string } | null)?.username ?? null;
 
   const claim: Record<string, unknown> = {
     ...rawPayment,
     creator_username: creator_username ?? null,
     recipient_username: (rawPayment?.recipient_username as string | null | undefined) ?? resolvedRecipientUsername ?? null,
+    sender_username,
+    // Raw Privy ID, only ever fetched above to resolve sender_username — this is a public,
+    // no-auth-required endpoint for from_recipient links, so it must never reach the client.
+    sender_user_id: undefined,
   };
 
   // Mask recipient wallet — never expose the real address to the public
@@ -312,19 +328,36 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       "EXPIRED": "EXPIRED",
       "CANCELLED": "CANCELLED",
       "OPEN": "OPEN",
+      "PRIVATE_TRANSFER_PENDING": "PRIVATE_TRANSFER_PENDING",
     };
 
     const status = statusMap[inputStatus?.toUpperCase()] || inputStatus;
+    // Every burner-mediated payer-leg completion (guest checkout, private transfers) lands in the
+    // claim's burner, not the recipient's real wallet — the recipient still has to claim/sweep it
+    // out. PRIVATE_TRANSFER_PENDING is the existing status for exactly that "payer done, claim
+    // pending" state (already used by the MagicBlock private-payment flow); GuestCheckoutPay now
+    // sends it too instead of SUCCESS, so every code path below that used to gate on the payer's
+    // leg completing (attribution, on-chain verification, paid_at) has to trigger on either value.
+    const isPayerLegSettling = status === "SUCCESS" || status === "PRIVATE_TRANSFER_PENDING";
 
     // Guest checkout: no Privy session, only reachable for the one narrow case this route
     // already independently verifies below (first-time SUCCESS attribution on a from_recipient
     // link, gated on the burner's on-chain balance — see below) — every other transition (cancel,
     // edit, re-attribution, any non-SUCCESS status) still 401s with no session, same as before.
-    // No guest_wallet/guest_email required to attempt this: the on-chain balance check is what
-    // actually gates it, so there's nothing to spoof by omitting them. guest_email, if given, is
-    // stored for reconciliation only (see the guest_sender_email column) and never verified —
-    // same trust level as any "receipt email," not an identity claim.
-    const isGuestAttempt = !verifiedId && status === "SUCCESS";
+    //
+    // guest_email is also the signal for "treat this as a guest payment" even when a Privy session
+    // DOES exist — GuestCheckoutPay always sends it, deliberately, from its own confirmation call,
+    // regardless of whether the browser happens to also be logged in. Without this, an already-
+    // authenticated user completing a guest payment (their own email + a connected wallet, not
+    // their Loofta balance) got silently attributed as having paid via their own account instead —
+    // `isGuestAttempt` used to require *no* session at all, so `userId` below fell through to
+    // `verifiedId` whenever one existed. Harmless for two different people, but when that logged-in
+    // user is also the payment's own creator/recipient (a merchant testing their own checkout
+    // link), sender_user_id ends up equal to recipient_user_id — a self-payment that trips the
+    // self-issued-claim guard in SolanaSponsorService and strands the funds in the burner
+    // (incident 2026-08-26, payment 1352b7e4-c2f3-4e31-9bca-45ff88acc151).
+    const hasGuestEmail = typeof guestEmail === "string" && guestEmail.trim().length > 0;
+    const isGuestAttempt = isPayerLegSettling && (!verifiedId || hasGuestEmail);
     if (!verifiedId && !isGuestAttempt) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -334,12 +367,14 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         return NextResponse.json({ error: "Too many requests" }, { status: 429 });
       }
     }
-    const userId: string | null = verifiedId;
+    // A guest_email-flagged request never attributes to the caller's own session, even if one
+    // exists — see isGuestAttempt above.
+    const userId: string | null = hasGuestEmail ? null : verifiedId;
     if (process.env.NODE_ENV !== "production") {
       console.log("[payments/PATCH] Updating payment:", paymentId, "verifiedUser:", userId, "guest:", isGuestAttempt);
     }
 
-    const allowedStatuses = ["OPEN", "PENDING_DEPOSIT", "IN_FLIGHT", "SUCCESS", "REFUNDED", "EXPIRED", "CANCELLED"];
+    const allowedStatuses = ["OPEN", "PENDING_DEPOSIT", "IN_FLIGHT", "SUCCESS", "REFUNDED", "EXPIRED", "CANCELLED", "PRIVATE_TRANSFER_PENDING"];
     if (!status || !allowedStatuses.includes(status)) {
       return NextResponse.json({ error: `Invalid status: ${inputStatus}. Allowed: ${allowedStatuses.join(", ")}` }, { status: 400 });
     }
@@ -348,7 +383,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
 
     const updateData: Record<string, unknown> = { status };
 
-    if (status === "SUCCESS") {
+    if (isPayerLegSettling) {
       updateData.paid_at = new Date().toISOString();
     }
 
@@ -404,13 +439,24 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
           return NextResponse.json({ error: "Not authorized to update this payment" }, { status: 403 });
         }
 
+        // Every OTHER transition (REFUNDED, EXPIRED, IN_FLIGHT, OPEN, PENDING_DEPOSIT, CANCELLED)
+        // is administrative, not a payment landing — only the creator may make it. The check above
+        // is a no-op here for any guest-paid link: guest payments never set sender_user_id (only
+        // guest_sender_email, see isGuestAttempt), so ep.sender_user_id stays null forever and that
+        // condition never fires. Without this, any authenticated stranger with zero relationship to
+        // this payment could reset someone else's live payment link's status — e.g. back to OPEN or
+        // to EXPIRED — despite never having paid or created it.
+        if (!isPayerLegSettling && ep.created_by && ep.created_by !== userId) {
+          return NextResponse.json({ error: "Not authorized to update this payment" }, { status: 403 });
+        }
+
         // First-time attribution ("who actually paid this request?") is the exploitable gap:
         // without this, any authenticated user could POST status:"SUCCESS" with a fabricated or
         // unrelated txHash and get themselves recorded as having paid someone else's request,
         // firing a false "you got paid" notification to the real creator. Once sender_user_id is
         // already set, later transitions are already ownership-gated above, so this only needs
         // to run on the transition that assigns it.
-        if (status === "SUCCESS" && !ep.sender_user_id) {
+        if (isPayerLegSettling && !ep.sender_user_id) {
           if (!ep.burner_address) {
             return NextResponse.json({ error: "This payment has no verifiable destination yet — try again shortly." }, { status: 400 });
           }
@@ -461,7 +507,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         }
       }
 
-      if (status === "SUCCESS" && userId) {
+      if (isPayerLegSettling && userId) {
         if (!ep.created_by) updateData.created_by = userId;
         // Set sender_user_id when payer completes a from_recipient request link
         if (ep.direction === "from_recipient" && !ep.sender_user_id) updateData.sender_user_id = userId;
@@ -488,7 +534,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       }
 
       // Update payment_intents for routing analytics
-      if (status === "IN_FLIGHT" || status === "SUCCESS" || status === "REFUNDED") {
+      if (status === "IN_FLIGHT" || status === "SUCCESS" || status === "REFUNDED" || status === "PRIVATE_TRANSFER_PENDING") {
         try {
           const intentUpdate: Record<string, unknown> = {
             status,

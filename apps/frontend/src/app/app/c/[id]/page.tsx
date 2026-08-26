@@ -44,7 +44,7 @@ import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCar
 import { GuestCheckoutPay } from "@/components/app/GuestCheckoutPay";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock, ShoppingBag } from "lucide-react";
 import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
@@ -233,6 +233,7 @@ function ClaimPayLayout({
   chrome = "full",
   merchantName,
   merchantLogoUrl,
+  merchantLoading = false,
   topRight,
   from,
   incognito,
@@ -244,6 +245,11 @@ function ClaimPayLayout({
    *  Branding), snapshotted onto the payment at link-creation time. */
   merchantName?: string | null;
   merchantLogoUrl?: string | null;
+  /** True until the claim itself has loaded — merchantName/merchantLogoUrl come straight from it,
+   *  so both are `undefined` for that whole window, indistinguishable from "this link genuinely
+   *  has no merchant branding." Without this, the header flashes the generic Loofta mark/name
+   *  first and then swaps to the real branding once it arrives, every single load. */
+  merchantLoading?: boolean;
   topRight?: React.ReactNode;
   from?: string | null;
   /** True once the sender has opted into incognito mode for this payment — darkens the whole
@@ -301,18 +307,27 @@ function ClaimPayLayout({
         <div className="w-full max-w-[900px] px-4 py-10">
           <div className="flex items-center justify-between gap-3 mb-6">
             <div className="flex items-center gap-3">
-              {merchantLogoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element -- merchant-supplied URL, not a local/optimizable asset
-                <img
-                  src={merchantLogoUrl}
-                  alt={merchantName || "Merchant logo"}
-                  className="h-10 w-10 rounded-full object-cover border border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10 shrink-0"
-                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                />
+              {merchantLoading ? (
+                <>
+                  <Skeleton className="h-10 w-10 rounded-full bg-gray-200 [@media(prefers-color-scheme:dark)]:bg-muted" />
+                  <Skeleton className="h-4 w-24 bg-gray-200 [@media(prefers-color-scheme:dark)]:bg-muted" />
+                </>
               ) : (
-                <LooftaIcon className="w-7 h-7 text-orange-500 shrink-0" />
+                <>
+                  {merchantLogoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- merchant-supplied URL, not a local/optimizable asset
+                    <img
+                      src={merchantLogoUrl}
+                      alt={merchantName || "Merchant logo"}
+                      className="h-10 w-10 rounded-full object-cover border border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10 shrink-0"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                    />
+                  ) : (
+                    <LooftaIcon className="w-7 h-7 text-orange-500 shrink-0" />
+                  )}
+                  <span className="text-base font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">{merchantName || "Loofta"}</span>
+                </>
               )}
-              <span className="text-base font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">{merchantName || "Loofta"}</span>
             </div>
             <div className="flex items-center gap-2">
               {topRight}
@@ -953,6 +968,34 @@ function ClaimDescriptionMessageBox({ description }: { description?: string | nu
   return (
     <div className="mb-4">
       <DescriptionWithGif text={description} />
+    </div>
+  );
+}
+
+/** Small logo + name row marking a direction="from_recipient" claim as a merchant payment on the
+ *  recipient's own incoming-payment views (already-received cards, claim panel) — same branding
+ *  data the payer-side receipt view and checkout header already use, just for the other side. */
+function MerchantPaymentBadge({
+  claim,
+}: {
+  claim: { merchant_name?: string | null; merchant_logo_url?: string | null } | null;
+}) {
+  return (
+    <div className="flex items-center justify-center gap-2 mb-3">
+      {claim?.merchant_logo_url ? (
+        // eslint-disable-next-line @next/next/no-img-element -- merchant-supplied URL, not a local/optimizable asset
+        <img
+          src={claim.merchant_logo_url}
+          alt={claim?.merchant_name || "Merchant logo"}
+          className="h-8 w-8 rounded-full object-cover border border-gray-200"
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+        />
+      ) : (
+        <ShoppingBag className="h-5 w-5 text-gray-400" />
+      )}
+      <span className="text-base font-medium text-gray-600">
+        {claim?.merchant_name || "Merchant payment"}
+      </span>
     </div>
   );
 }
@@ -1618,6 +1661,14 @@ export function ClaimPayView({
   // signed-in visitor happens to also be the link's creator (e.g. testing your own checkout link)
   // — never flip into the "payment to yourself, here's how to claim it" recipient view there.
   const isRecipient = chrome !== "minimal" && recipientCheckQuery.data?.isRecipient === true;
+  // Merchant/payment-links claims stamp both created_by AND recipient_user_id to the same
+  // (merchant) account at creation time (see payment-links.service.ts) — so for this claim type,
+  // "I created this link" and "I am the recipient" are the same fact, checkable synchronously off
+  // data already on hand, with no dependency on the async recipient-check round trip above. Used
+  // as a fallback alongside isRecipient so a slow/failed recipient-check request never strands a
+  // merchant on the generic payer view of their own sale.
+  const isMerchantRecipientView =
+    chrome !== "minimal" && claim?.direction === "from_recipient" && !!user?.id && claim?.created_by === user.id;
   // True while we're still checking — hide the pay form until we know the user is NOT the recipient.
   const isCheckingRecipient = recipientCheckQuery.isLoading || recipientCheckQuery.isFetching;
   // True only for the very first check (no data yet) — unlike isCheckingRecipient, this stays
@@ -1656,7 +1707,11 @@ export function ClaimPayView({
       );
       return { balance, isReady: claimExpectedBaseUnits > 0 && balance >= claimExpectedBaseUnits };
     },
-    enabled: !!burnerAddr && !!user?.id && isPendingRecipientClaim,
+    // Also poll for a registered-at-creation recipient (e.g. a merchant checkout payment) even
+    // though isPendingRecipientClaim is false for them — their claim still routes through this
+    // same burner, and without polling burnerIsReady stays permanently false, which used to hide
+    // the claim button entirely and strand funds in the burner with no way to sweep them.
+    enabled: !!burnerAddr && !!user?.id && (isPendingRecipientClaim || isRecipient || isMerchantRecipientView),
     refetchInterval: 15_000,
     staleTime: 12_000,
   });
@@ -2879,6 +2934,58 @@ export function ClaimPayView({
   const showGuestCheckout = !DEMO_MODE && chrome === "minimal" && !!claim?.claim_burner_address;
   const isCreatorView = !!user?.id && claim?.created_by === user.id;
 
+  // Checkout never trusts an ambient Privy session on load — the visitor has to explicitly click
+  // Login before "Pay with Loofta balance" becomes available, and that unlock expires after 15
+  // minutes, so testing the guest flow (or someone else's checkout link) never silently inherits
+  // whatever account happened to already be signed in on this browser/domain. sessionStorage (not
+  // localStorage) so it also resets on its own the moment the tab/window closes. Scoped entirely
+  // to chrome="minimal" — every other page keeps using Privy's real `authenticated` unchanged.
+  const CHECKOUT_SESSION_TTL_MS = 15 * 60_000;
+  const CHECKOUT_SESSION_STORAGE_KEY = "loofta-checkout-unlocked-at";
+  const [checkoutUnlockedAt, setCheckoutUnlockedAt] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    const raw = window.sessionStorage.getItem(CHECKOUT_SESSION_STORAGE_KEY);
+    return raw ? Number(raw) : null;
+  });
+  // Only exists to force a re-render once the 15-min TTL elapses while the tab stays open — its
+  // value is never read, checkoutSessionActive below just re-evaluates Date.now() fresh.
+  const [, forceCheckoutSessionRecheck] = useState(0);
+  useEffect(() => {
+    if (!showGuestCheckout || checkoutUnlockedAt == null) return;
+    const remaining = CHECKOUT_SESSION_TTL_MS - (Date.now() - checkoutUnlockedAt);
+    if (remaining <= 0) return;
+    const t = setTimeout(() => forceCheckoutSessionRecheck((v) => v + 1), remaining + 50);
+    return () => clearTimeout(t);
+  }, [showGuestCheckout, checkoutUnlockedAt]);
+  const checkoutSessionActive =
+    checkoutUnlockedAt != null && Date.now() - checkoutUnlockedAt < CHECKOUT_SESSION_TTL_MS;
+  const unlockCheckoutSession = () => {
+    const now = Date.now();
+    setCheckoutUnlockedAt(now);
+    if (typeof window !== "undefined") window.sessionStorage.setItem(CHECKOUT_SESSION_STORAGE_KEY, String(now));
+  };
+  // Set right before calling Privy's login() when there was no session to unlock yet — the effect
+  // below unlocks checkout the moment `authenticated` flips true as a result of that login.
+  const pendingCheckoutLoginRef = React.useRef(false);
+  useEffect(() => {
+    if (authenticated && pendingCheckoutLoginRef.current) {
+      pendingCheckoutLoginRef.current = false;
+      unlockCheckoutSession();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated]);
+  const handleCheckoutLogin = () => {
+    if (!authenticated) {
+      pendingCheckoutLoginRef.current = true;
+      login();
+      return;
+    }
+    // Already has a live Privy session from elsewhere on the site — no modal needed, this click is
+    // just the explicit "yes, use it here" checkout requires.
+    unlockCheckoutSession();
+  };
+  const checkoutAuthenticated = showGuestCheckout ? authenticated && checkoutSessionActive : authenticated;
+
   // Has the sender ever completed a public (non-private) payment to this same recipient before?
   // If so, a private payment now can't undo that — the recipient already knows their wallet
   // address. Only meaningful for a registered recipient (recipient_user_id set); a still-pending
@@ -3111,6 +3218,24 @@ export function ClaimPayView({
     if (entry?.claimed) setClaimInitiated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Server truth wins once it reports a terminal state. The hydration effect above seeds `status`
+  // from useClaimPayStore — a localStorage-persisted cache keyed only by claim id, with no
+  // expiry — so a non-terminal status (e.g. IN_FLIGHT) cached from an earlier, abandoned visit to
+  // this exact claim can otherwise sit there indefinitely and permanently shadow a real SUCCESS
+  // from the server on every future load, surviving hard refreshes and dev-server restarts alike.
+  // Only firing on terminal claim.status values (not e.g. PENDING_DEPOSIT) avoids clobbering a
+  // legitimate optimistic status set moments ago, ahead of the next claim refetch.
+  useEffect(() => {
+    const fresh = String(claim?.status || "").toUpperCase();
+    const TERMINAL = new Set(["SUCCESS", "CLAIMED", "FAILED", "REFUNDED", "EXPIRED", "CANCELLED"]);
+    if (TERMINAL.has(fresh) && status !== fresh) {
+      console.log("[Claim] Overriding stale local status with server status:", { claimId: id, stale: status, fresh });
+      setStatus(fresh);
+      useClaimPayStore.getState().setStatus(id, fresh);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claim?.status, id]);
 
 
   // Hydrate from latest-intent cache (skip if user manually cancelled)
@@ -4070,6 +4195,19 @@ export function ClaimPayView({
   }
 
   function getSenderDisplay(claim: PaymentHistoryClaim): string {
+    // creator_username/creator_email correctly identify the sender ONLY for direction ===
+    // "from_sender" (the creator sent this to someone). For "from_recipient" (a payment request
+    // or checkout link), the creator is the RECIPIENT, not the sender — using creator_username
+    // there shows the merchant's own name as if they paid themselves. Real bug, not cosmetic:
+    // this is the "+$X.XX from Y" card, seen live on payment 1352b7e4-c2f3-4e31-9bca-45ff88acc151
+    // showing "from @looftaxyz" on a payment looftaxyz *received*, paid by a guest with no
+    // account — sender_username/guest_sender_email were correct in the database the whole time.
+    const c = claim as PaymentHistoryClaim & { direction?: string; sender_username?: string | null; guest_sender_email?: string | null };
+    if (c.direction === "from_recipient") {
+      if (c.sender_username) return `@${c.sender_username}`;
+      if (c.guest_sender_email) return c.guest_sender_email;
+      return "Anonymous";
+    }
     if (claim.creator_username) return `@${claim.creator_username}`;
     if (claim.creator_email) return claim.creator_email;
     return "Anonymous";
@@ -4141,10 +4279,11 @@ export function ClaimPayView({
         chrome={chrome}
         merchantName={(claim as { merchant_name?: string | null } | null)?.merchant_name}
         merchantLogoUrl={(claim as { merchant_logo_url?: string | null } | null)?.merchant_logo_url}
+        merchantLoading={!claim}
         from={from}
         incognito={showingPrivatePayForm || showingPrivateRecipientView}
         topRight={
-          user?.id && claim?.created_by === user.id && ["OPEN", "PENDING_DEPOSIT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+          chrome !== "minimal" && user?.id && claim?.created_by === user.id && ["OPEN", "PENDING_DEPOSIT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
             <>
               <button
                 type="button"
@@ -4247,12 +4386,12 @@ export function ClaimPayView({
           chrome === "minimal" ? (
             <div className="space-y-4 md:space-y-0 md:grid md:grid-cols-[1fr_380px] md:gap-6 md:[grid-column:1/-1] animate-pulse">
               <div className="space-y-4">
-                <Skeleton className="h-52 w-full rounded-2xl" />
-                <Skeleton className="h-32 w-full rounded-2xl" />
+                <Skeleton className="h-52 w-full rounded-2xl bg-gray-200 [@media(prefers-color-scheme:dark)]:bg-muted" />
+                <Skeleton className="h-32 w-full rounded-2xl bg-gray-200 [@media(prefers-color-scheme:dark)]:bg-muted" />
               </div>
               <div className="space-y-4">
-                <Skeleton className="h-14 w-full rounded-xl" />
-                <Skeleton className="h-64 w-full rounded-2xl" />
+                <Skeleton className="h-14 w-full rounded-xl bg-gray-200 [@media(prefers-color-scheme:dark)]:bg-muted" />
+                <Skeleton className="h-64 w-full rounded-2xl bg-gray-200 [@media(prefers-color-scheme:dark)]:bg-muted" />
               </div>
             </div>
           ) : (
@@ -4337,7 +4476,50 @@ export function ClaimPayView({
                   isConfirmingIdentity={isConfirmingIdentity}
                 />
               )
-            ) : (isRecipient || String(status || claim?.status || "").toUpperCase() === "SUCCESS") &&
+            ) : chrome !== "minimal" &&
+              !isRecipient &&
+              !isMerchantRecipientView &&
+              (claim as { merchant_name?: string | null; direction?: string })?.merchant_name &&
+              claim?.direction === "from_recipient" &&
+              // Not just exact "SUCCESS" — guest checkout now settles to PRIVATE_TRANSFER_PENDING
+              // (the payer's leg is done, the merchant still has to claim), and this receipt is
+              // written from the payer's point of view either way: their payment went through.
+              ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(
+                String(status || claim?.status || "").toUpperCase(),
+              ) ? (
+              // Receipt view: /c/[id] opened by whoever PAID a merchant checkout link (e.g. the
+              // "View receipt" link from checkout's own success card), not the merchant. The
+              // "+$X.XX from Y" card right below is written from the recipient's point of view —
+              // wrong for a payer looking at their own purchase, same reasoning as checkout's own
+              // success state. The merchant (isRecipient) still gets that card as-is below; it's
+              // already correct framing for them ("+$X.XX from [payer]").
+              <div className="mt-6 py-6 text-center">
+                {(claim as { merchant_logo_url?: string | null }).merchant_logo_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- merchant-supplied URL, not a local/optimizable asset
+                  <img
+                    src={(claim as { merchant_logo_url?: string | null }).merchant_logo_url as string}
+                    alt={(claim as { merchant_name?: string | null }).merchant_name || "Merchant logo"}
+                    className="h-14 w-14 rounded-full object-cover border border-gray-200 mx-auto mb-4"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
+                ) : (
+                  <div className="mb-4 text-5xl">🧾</div>
+                )}
+                <p className="text-base text-gray-500 mb-1">Receipt from</p>
+                <h3 className="text-xl font-semibold text-gray-900 mb-4">
+                  {(claim as { merchant_name?: string | null }).merchant_name}
+                </h3>
+                <div className="text-5xl font-sans font-semibold text-gray-900 mb-2">
+                  ${parseFloat(claim?.amount || "0").toFixed(2)}
+                </div>
+                {claim?.paid_at && (
+                  <p className="text-base text-gray-500">Paid {formatUTCTimestamp(claim.paid_at)}</p>
+                )}
+                <div className="mt-4 max-w-md mx-auto">
+                  <ClaimDescriptionMessageBox description={claim?.description} />
+                </div>
+              </div>
+            ) : chrome !== "minimal" && (isRecipient || String(status || claim?.status || "").toUpperCase() === "SUCCESS") &&
               !claim?.recipient_pending_email &&
               !claim?.recipient_pending_username &&
               !claim?.recipient_pending_social &&
@@ -4349,6 +4531,9 @@ export function ClaimPayView({
               !burnerIsReady ? (
               <div className="mt-6 py-6">
                 <div className="text-center mb-6">
+                  {claim?.direction === "from_recipient" && (
+                    <MerchantPaymentBadge claim={claim} />
+                  )}
                   <div className="mb-4 text-6xl">✅</div>
                   <div className={"text-6xl font-sans font-semibold"}>
                     +  ${parseFloat(claim?.amount || "0").toFixed(2)}
@@ -4600,18 +4785,25 @@ export function ClaimPayView({
                   </motion.div>
                 );
               })()
-            ) : isRecipient &&
+            ) : (isRecipient || isMerchantRecipientView) &&
               !isPendingRecipientClaim &&
               ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CLAIMED"].includes(
                 String(status || claim?.status || "").toUpperCase(),
-              ) ? (
+              ) &&
+              // Same reasoning as the receipt-view branch above: SUCCESS can be premature while
+              // the burner still holds unswept funds. Don't tell a merchant "already received"
+              // while their money is still sitting in the burner — fall through to the claim
+              // panel below instead.
+              !burnerIsReady ? (
               (() => {
-                const senderLabel =
-                  claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
+                const senderLabel = getSenderDisplay(claim);
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
                 return (
                   <div className="mt-6 py-6 px-4">
                     <div className="text-center mb-6">
+                      {claim?.direction === "from_recipient" && (
+                        <MerchantPaymentBadge claim={claim} />
+                      )}
                       <div className="mb-4 text-6xl">✅</div>
                       <div className="text-5xl font-bold text-gray-900 mb-3">+ ${amt}</div>
                       {senderLabel && (
@@ -4766,7 +4958,7 @@ export function ClaimPayView({
                   </p>
                 )}
               </div>
-            ) : claim?.recipient_pending_email && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+            ) : claim?.recipient_pending_email && user?.id && claim?.created_by === user.id && claim?.direction !== "from_recipient" && chrome !== "minimal" && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
                 claimId={id}
                 shortCode={claim?.short_id}
@@ -4779,7 +4971,7 @@ export function ClaimPayView({
                 claimLocked={!!claim?.recipient_claim_in_progress}
                 onRecipientUpdated={() => invalidateAfterRecipientUpdate(queryClient, id, user?.id)}
               />
-            ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+            ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && claim?.direction !== "from_recipient" && chrome !== "minimal" && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
                 claimId={id}
                 shortCode={claim?.short_id}
@@ -4792,7 +4984,7 @@ export function ClaimPayView({
                 claimLocked={!!claim?.recipient_claim_in_progress}
                 onRecipientUpdated={() => invalidateAfterRecipientUpdate(queryClient, id, user?.id)}
               />
-            ) : claim?.recipient_pending_social && user?.id && claim?.created_by === user.id && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+            ) : claim?.recipient_pending_social && user?.id && claim?.created_by === user.id && claim?.direction !== "from_recipient" && chrome !== "minimal" && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
                 claimId={id}
                 shortCode={claim?.short_id}
@@ -4807,7 +4999,7 @@ export function ClaimPayView({
                 onRecipientUpdated={() => invalidateAfterRecipientUpdate(queryClient, id, user?.id)}
               />
             ) : (claim as { recipient_is_registered?: boolean })?.recipient_is_registered &&
-              user?.id && claim?.created_by === user.id &&
+              user?.id && claim?.created_by === user.id && claim?.direction !== "from_recipient" && chrome !== "minimal" &&
               ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               // Recipient resolved to a registered account immediately at creation (e.g. a Telegram/
               // username/email handle that already matched an existing user) — still editable up
@@ -4991,21 +5183,25 @@ export function ClaimPayView({
                   </div>
                 );
               })()
-            ) : isRecipient && !["SUCCESS", "CLAIMED"].includes(String(claim?.status || "").toUpperCase()) ? (
+            ) : (isRecipient || isMerchantRecipientView) &&
+              (!["SUCCESS", "CLAIMED"].includes(String(claim?.status || "").toUpperCase()) ||
+                // Merchant/registered-at-creation recipient whose status went SUCCESS before
+                // they claimed — same "still in burner" case the two branches above defer here
+                // for. isPendingRecipientClaim is false for this claim type, so it never hits the
+                // isCreatorView "payment to yourself" P2P copy below.
+                (!isPendingRecipientClaim && burnerIsReady)) ? (
               <div className="mt-6 text-center pt-12 pb-6 px-4">
+                {claim?.direction === "from_recipient" && (
+                  <MerchantPaymentBadge claim={claim} />
+                )}
                 <div className="text-6xl font-sans font-semibold">
                   + ${parseFloat(claim?.amount || "0").toFixed(2)}
                 </div>
                 <div className="text-xl text-gray-500 mt-3 mb-5">
-                  {isCreatorView ? (
+                  {isCreatorView && claim?.direction !== "from_recipient" ? (
                     "Payment to yourself — you're logged in as the account that created this link."
                   ) : (
-                    <>
-                      from{" "}
-                      {claim?.creator_username
-                        ? `@${claim.creator_username}`
-                        : claim?.creator_email || "Anonymous"}
-                    </>
+                    <>from {getSenderDisplay(claim)}</>
                   )}
                 </div>
                 <div className="text-left max-w-md mx-auto">
@@ -5039,13 +5235,17 @@ export function ClaimPayView({
                   {renderClaimPanel(true)}
                 </div>
               </div>
-            ) : ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+            ) : chrome !== "minimal" && !isRecipient && !isMerchantRecipientView && ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <>
-                {/* Payment Complete — hero + share + summary. IN_FLIGHT included: the sender's
-                    debit already happened (broadcast tx confirmed or awaiting confirmation) —
-                    "sent" is factually true even before the recipient-side leg settles. Showing
-                    the default Pay Now view instead (pre-fix behavior) let a sender who already
-                    broadcast see "Amount to send" again and risk a genuine double payment. */}
+                {/* Payment Complete — hero + share + summary. This is the PAYER's own "I sent it"
+                    view (share link, "sent to X", "Recipient receives") — never the recipient's
+                    (they get the "already received"/claim branches above) and never checkout's
+                    (chrome="minimal" has its own dedicated success card). IN_FLIGHT included: the
+                    sender's debit already happened (broadcast tx confirmed or awaiting
+                    confirmation) — "sent" is factually true even before the recipient-side leg
+                    settles. Showing the default Pay Now view instead (pre-fix behavior) let a
+                    sender who already broadcast see "Amount to send" again and risk a genuine
+                    double payment. */}
                 {(() => {
                   const recipientLabel =
                     (claim as any)?.recipient_pending_username_value
@@ -5288,6 +5488,11 @@ export function ClaimPayView({
               <>
                 {!embedInApp && chrome !== "minimal" && (
                   <div className="mb-3">
+                    {claim?.direction === "from_recipient" && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-base md:text-xs font-medium text-slate-300 mb-1.5">
+                        <ShoppingBag className="w-3 h-3" /> Merchant payment
+                      </span>
+                    )}
                     <div className="text-xl font-sans font-medium text-slate-300">
                       {(claim as { direction?: string } | null)?.direction === "from_sender" ? (
                         <>
@@ -5310,6 +5515,16 @@ export function ClaimPayView({
                                   : claim?.recipient_email
                                     ? claim.recipient_email
                                     : null}
+                        </>
+                      ) : claim?.direction === "from_recipient" && (isRecipient || isMerchantRecipientView) ? (
+                        // The merchant viewing their own sale — "Payment request from yourself"
+                        // reads as nonsense here, this is money coming IN, not a request they owe.
+                        "Payment received"
+                      ) : claim?.direction === "from_recipient" ? (
+                        <>
+                          {"Payment request from "}
+                          {(claim as { merchant_name?: string | null }).merchant_name ||
+                            (claim?.creator_username ? `@${claim.creator_username}` : claim?.creator_email || "Anonymous")}
                         </>
                       ) : (
                         <>
@@ -5390,8 +5605,12 @@ export function ClaimPayView({
                     {/* Payment breakdown — merged into this same card for guest checkout. Mirrors
                         the shared breakdown block below (kept for chrome="full") and the same
                         three-way payingPrivately/isFeeOnSender logic: free by default, the real
-                        MagicBlock privacy fee (estimatePrivateTotal) once private payment is on. */}
-                    {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase()) && !deposit && (
+                        MagicBlock privacy fee (estimatePrivateTotal) once private payment is on.
+                        Kept visible after payment too on checkout (chrome="minimal") — the left
+                        column should read the same before and after paying, not lose its breakdown
+                        the moment status flips; the right column is what changes on success (see
+                        the dedicated success card further down). */}
+                    {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && (chrome === "minimal" || !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase())) && !deposit && (
                       <div className="mt-4 pt-4 border-t border-gray-100 [@media(prefers-color-scheme:dark)]:border-white/10">
                         <div className="text-base uppercase tracking-wide font-semibold font-sans text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400 mb-2">Payment breakdown</div>
                         <div className="space-y-1.5 text-base">
@@ -5528,6 +5747,32 @@ export function ClaimPayView({
                   </>
                 )}
               </>
+            )}
+
+            {/* Checkout's own success state — deliberately not the shared "+$X.XX from Y" card
+                further up (that one's written from the recipient's point of view: "you received
+                money", wrong framing for the buyer looking at their own purchase). Occupies the
+                same right-column slot the payment-method tiles were in, so this is what "keep the
+                column" plays out as: same layout, buyer-appropriate content once it's paid. The
+                receipt link goes to /c/[id] — the payer's own view of this same payment, styled as
+                a receipt (business logo/name, amount, date), separate from the merchant's own
+                payment-received view of the identical row. */}
+            {chrome === "minimal" && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) && (
+              <div className="mt-4 flex gap-3 md:mt-0 md:[grid-column:2] md:[grid-row:1/-1] md:self-start">
+                <div className="w-full rounded-2xl p-6 bg-white border border-gray-200 shadow-sm text-center [@media(prefers-color-scheme:dark)]:bg-[#17171b] [@media(prefers-color-scheme:dark)]:border-white/10">
+                  <div className="mb-3 text-5xl">✅</div>
+                  <h3 className="text-lg font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100 mb-1">Payment successful</h3>
+                  <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400 mb-5">
+                    ${parseFloat(claim?.amount || "0").toFixed(2)} paid to {(claim as { merchant_name?: string | null } | null)?.merchant_name || "the merchant"}
+                  </p>
+                  <Link
+                    href={`/c/${id}`}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                  >
+                    View receipt
+                  </Link>
+                </div>
+              </div>
             )}
 
             {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase()) && (!deposit ? (
@@ -5668,16 +5913,22 @@ export function ClaimPayView({
                           claimId={id}
                           burnerAddress={claim.claim_burner_address}
                           amountUsd={claimAmountUSD}
-                          onLogin={() => login()}
-                          authenticated={authenticated}
-                          looftaBalanceUSD={authenticated ? looftaBalanceUSD : undefined}
+                          onLogin={handleCheckoutLogin}
+                          authenticated={checkoutAuthenticated}
+                          looftaBalanceUSD={checkoutAuthenticated ? looftaBalanceUSD : undefined}
                           onPayWithLoofta={handlePayWithLooftaBalance}
                           isPrivateMode={isPrivateMode}
                           onTogglePrivateMode={handleTogglePrivateMode}
                           requiresPrivate={requiresPrivate}
                           onSettled={() => {
-                            setStatus("SUCCESS");
-                            useClaimPayStore.getState().setStatus(id, "SUCCESS");
+                            // Not "SUCCESS" — a guest payment always lands in the burner, never the
+                            // recipient's real wallet, so it still needs an explicit claim. Setting
+                            // SUCCESS here unconditionally used to re-poison the local + persisted
+                            // status back to "done, nothing to claim" on every settlement, regardless
+                            // of what the PATCH request actually told the server (see
+                            // confirmClaimPaid in GuestCheckoutPay.tsx).
+                            setStatus("PRIVATE_TRANSFER_PENDING");
+                            useClaimPayStore.getState().setStatus(id, "PRIVATE_TRANSFER_PENDING");
                             claimQuery.refetch();
                           }}
                         />

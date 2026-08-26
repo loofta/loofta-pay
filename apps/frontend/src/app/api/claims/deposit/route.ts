@@ -26,7 +26,8 @@ const INTENTS_ONLY_CHAINS = new Set(['zec', 'zcash', 'btc', 'bitcoin', 'xrp', 'x
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { claimId, fromToken, amount, userAddress, refundAddress, orgReferral } = body || {};
+    const { claimId, fromToken, amount, userAddress, refundAddress, orgReferral, guestEmail } = body || {};
+    const guestEmailTrimmed = typeof guestEmail === "string" && guestEmail.trim() ? guestEmail.trim().toLowerCase() : null;
     if (!claimId || !fromToken?.tokenId || !fromToken?.decimals || !amount) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
@@ -445,7 +446,13 @@ export async function POST(request: Request) {
           from_chain: String(fromToken?.chain || "").toLowerCase() || null,
           to_chain: "solana",
         });
-      await supabase.from("payments").update({ status: "PENDING_DEPOSIT" }).eq("id", claimId);
+      await supabase
+        .from("payments")
+        .update({
+          status: "PENDING_DEPOSIT",
+          ...(guestEmailTrimmed ? { guest_sender_email: guestEmailTrimmed } : {}),
+        })
+        .eq("id", claimId);
     } catch {}
     
     // Round UP the minAmountIn to avoid INCOMPLETE_DEPOSIT issues

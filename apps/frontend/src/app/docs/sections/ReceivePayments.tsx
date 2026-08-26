@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { DocsCodeBlock } from "../DocsCodeBlock";
 
 export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => void }) {
@@ -14,7 +15,7 @@ export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => 
       <DocsCodeBlock
         label="POST /payment-links"
         code={`curl -X POST https://api.loofta.xyz/payment-links \\
-  -H "Authorization: Bearer lft_test_..." \\
+  -H "Authorization: Bearer lft_live_..." \\
   -H "Content-Type: application/json" \\
   -d '{
     "amount": 25,
@@ -34,7 +35,7 @@ export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => 
           <tr className="border-b border-white/5">
             <td className="py-2 pr-4"><code>amount</code></td>
             <td className="py-2 pr-4 text-slate-400">number</td>
-            <td className="py-2 text-slate-400">USD, $10,000 maximum. $5 minimum if private (the default), $1 minimum if public.</td>
+            <td className="py-2 text-slate-400">USD, $10,000 maximum. $1 minimum for a plain public transfer (the default), $5 minimum if <code>is_private</code> is <code>true</code>.</td>
           </tr>
           <tr className="border-b border-white/5">
             <td className="py-2 pr-4"><code>message</code></td>
@@ -44,12 +45,17 @@ export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => 
           <tr className="border-b border-white/5">
             <td className="py-2 pr-4"><code>is_private</code></td>
             <td className="py-2 pr-4 text-slate-400">boolean, optional</td>
-            <td className="py-2 text-slate-400">Defaults to <code>true</code>. Private shields the amount and that it went to your wallet; pass <code>false</code> for a plain public transfer.</td>
+            <td className="py-2 text-slate-400">Defaults to <code>false</code> (plain public transfer). Pass <code>true</code> to require the payer to pay privately — shields the amount and that it went to your wallet on-chain, $5 minimum.</td>
           </tr>
-          <tr>
+          <tr className="border-b border-white/5">
             <td className="py-2 pr-4"><code>webhook_url</code></td>
             <td className="py-2 pr-4 text-slate-400">string, optional</td>
-            <td className="py-2 text-slate-400">POSTed a signed "payment.succeeded" event once this link is paid — see below.</td>
+            <td className="py-2 text-slate-400">POSTed a signed "payment.succeeded" event once the payer's leg lands — see below.</td>
+          </tr>
+          <tr>
+            <td className="py-2 pr-4"><code>return_url</code></td>
+            <td className="py-2 pr-4 text-slate-400">string, optional</td>
+            <td className="py-2 text-slate-400">Where the checkout page sends the buyer once paid. Baked into the returned <code>url</code> — works no matter how the link was opened (a plain link, QR code, or <code>PayButton</code>).</td>
           </tr>
         </tbody>
       </table>
@@ -69,14 +75,22 @@ export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => 
       <p className="text-base text-slate-400 mb-6">
         The payer does. You always receive exactly <code>amount</code> — any fee is added on top
         of what they pay, never deducted from what you get. A private link's fee is 10 bps plus
-        ~$0.20 flat gas; a public link has no privacy fee.
+        ~$0.20 flat gas; a public link (the default) has no privacy fee at all.
       </p>
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Knowing when it's paid</h2>
       <p className="text-base text-slate-400 mb-3">
         One link is one transaction — it can't be paid twice, so create a new link per order/customer
-        rather than reusing one link for everyone. Two ways to find out it's done, pick whichever
-        fits — you don't need both.
+        rather than reusing one link for everyone. See{" "}
+        <code className="text-orange-300">onGenerateLink</code> in the{" "}
+        <Link href="/app/demo-store" className="text-orange-400 hover:underline">demo store</Link> for the
+        actual pattern: call this endpoint fresh, right when the buyer clicks "Buy now".
+      </p>
+      <p className="text-base text-slate-400 mb-3">
+        Save <code>short_id</code> against your own order record the moment the create response
+        comes back, server-side — that's the only point you'll ever see it handed to you, and
+        it's what you'll poll or match an incoming webhook against later. Two ways to find out
+        it's done, pick whichever fits — you don't need both.
       </p>
 
       <p className="text-base text-slate-300 font-medium mb-2">Option A — poll</p>
@@ -87,26 +101,32 @@ export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => 
       <DocsCodeBlock
         label="GET /payment-links/{short_id}"
         code={`curl https://api.loofta.xyz/payment-links/aB3xK9pQ \\
-  -H "Authorization: Bearer lft_test_..."
+  -H "Authorization: Bearer lft_live_..."
 
 {
   "short_id": "aB3xK9pQ",
-  "status": "SUCCESS",
+  "status": "PRIVATE_TRANSFER_PENDING",
+  "paid": true,
   "amount": 25,
   "message": "Invoice #1042",
   "paid_at": "2026-08-24T12:00:00.000Z"
 }`}
       />
       <p className="text-base text-slate-400 mb-6">
-        Only ever returns your own links — a <code>short_id</code> that isn't yours 404s.{" "}
-        <code>status</code> is <code>OPEN</code> until paid, then <code>SUCCESS</code>.
+        Only ever returns your own links — a <code>short_id</code> that isn't yours 404s. Check{" "}
+        <code>paid</code>, not <code>status</code>, for "did the customer pay": it's <code>true</code>{" "}
+        for both <code>SUCCESS</code> and <code>PRIVATE_TRANSFER_PENDING</code>. The latter just
+        means your own claim/sweep of the funds into your wallet is still outstanding — that's a
+        separate step you take in the Loofta app, unrelated to whether the order should be
+        considered paid.
       </p>
 
       <p className="text-base text-slate-300 font-medium mb-2">Option B — webhook</p>
       <p className="text-base text-slate-400 mb-3">
         Pushed to you the moment it happens, no polling loop to run — better if you're fulfilling
         orders unattended. If you passed <code>webhook_url</code>, Loofta POSTs a signed event
-        there the moment the payment is fully settled to your wallet:
+        there the moment the customer's payment lands (same <code>paid: true</code> moment as
+        above — not when you personally get around to claiming it):
       </p>
       <DocsCodeBlock
         code={`POST <your webhook_url>

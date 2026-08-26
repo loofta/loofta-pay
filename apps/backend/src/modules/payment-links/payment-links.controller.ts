@@ -36,12 +36,13 @@ export class PaymentLinksController {
   @ApiSecurity('integrator-key')
   @ApiParam({ name: 'shortId', description: 'The short_id returned when the link was created' })
   @ApiOperation({ summary: 'Poll a payment link\'s status — the alternative to webhook_url, for merchants who\'d rather check than be pushed to' })
-  @ApiResponse({ status: 200, description: '{ short_id, status, amount, message, paid_at }' })
+  @ApiResponse({ status: 200, description: '{ short_id, status, paid, amount, message, paid_at } — check `paid`, not `status`, for "did the customer pay"' })
   async getStatus(@Param('shortId') shortId: string, @Req() req: { integrator: AuthenticatedIntegrator }) {
     const link = await this.paymentLinks.getStatus(shortId, req.integrator);
     return {
       short_id: link.shortId,
       status: link.status,
+      paid: link.paid,
       amount: link.amount,
       message: link.message,
       paid_at: link.paidAt,
