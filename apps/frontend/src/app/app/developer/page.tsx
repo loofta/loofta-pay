@@ -150,18 +150,14 @@ export default function DeveloperPage() {
   async function handleGenerate() {
     setMinting(true);
     try {
-      // Snapshot before minting — refreshStatus() below would otherwise mix the new key in with
-      // these, and revoking the just-minted one along with them would be a bug, not a feature.
-      const previousKeyIds = (status?.keys ?? []).map((k) => k.id);
+      // "Generate" replaces the active key rather than adding to it — provisionSelfServeKey
+      // itself now revokes any existing key server-side before minting the new one (atomic, no
+      // separate frontend revoke round-trip needed — that used to run after this and re-revoke
+      // already-revoked keys, delaying refreshStatus() below and showing a stale/empty state
+      // flicker before the new key finally appeared).
       const token = await getAccessToken();
       const minted = await provisionSelfServeKey(token);
       setRawKey(minted.api_key);
-      // "Generate" replaces the active key rather than adding to it — one active key at a time is
-      // the expectation here. Rotate (below) stays the separate, explicitly non-destructive option
-      // for actually overlapping old and new during a real rollout.
-      for (const keyId of previousKeyIds) {
-        await revokeSelfServeKey(token, keyId).catch(() => {});
-      }
       await refreshStatus();
     } catch (e: any) {
       toast({ variant: "destructive", title: "Could not generate key", description: e?.message });

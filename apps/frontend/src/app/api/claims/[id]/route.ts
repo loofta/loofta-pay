@@ -316,7 +316,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     if (process.env.NODE_ENV !== "production") {
       console.log("[payments/PATCH] Request body:", body);
     }
-    const { status: inputStatus, txHash, paidWith, paidWithChain, paidWithToken, depositReceivedAt, originAsset, destinationAsset, guest_email: guestEmail } = body || {};
+    const { status: inputStatus, txHash, paidWith, paidWithChain, paidWithToken, depositReceivedAt, originAsset, destinationAsset, guest_email: guestEmail, isPrivate } = body || {};
 
     const statusMap: Record<string, string> = {
       "PROCESSING": "IN_FLIGHT",
@@ -389,6 +389,13 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
 
     if (txHash) {
       updateData.sender_tx_hash = txHash;
+    }
+
+    // Only ever set true, never false — false is already the safe default and no caller here
+    // should be able to erase a true flag set elsewhere. Set by a guest's private MagicBlock
+    // Payments API transfer (see GuestCheckoutPay.tsx) confirming its own on-chain result.
+    if (isPrivate === true) {
+      updateData.is_private = true;
     }
 
     // from_chain / from_token: prefer explicit paidWithChain/paidWithToken when provided;

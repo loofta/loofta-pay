@@ -19,28 +19,32 @@
  * inherently session/identity-based across multiple steps, not a one-shot API call — making it
  * guest-capable means redesigning that flow, not adding a parameter.
  *
- * MagicBlock privacy only ever goes through one real mechanism in this codebase: onPayPrivately
- * in c/[id]/page.tsx, a MagicBlock PER transfer signed by a connected wallet (Phantom) but
- * authorized by a Privy access token — there's no guest-capable private-transfer path, and this
- * component doesn't invent one. So the "Pay privately" switch here (above the token/method
- * selection) only actually applies to USDC on Solana and the authenticated "Pay with Loofta" /
- * balance flow — "Any token" (the NEAR Intents bridge) has no private variant and is disabled
- * while it's on. For USDC on Solana specifically: if private is on and the guest isn't signed in,
- * that tile shows "sign in to pay privately" instead of its normal wallet-connect/QR flow — once
- * signed in, the top button becomes the authenticated "Pay now" balance flow, which already routes
- * through onPayPrivately when isPrivateMode is set. Nothing here builds a new private-transfer
- * mechanism; it only decides when to reuse the existing one vs. require login for it.
+ * MagicBlock privacy for "USDC on Solana" goes through MagicBlock's own public Payments API
+ * (https://payments.magicblock.app/v1/spl/transfer, visibility: "private", gasless: true) — a
+ * stateless, third-party-hosted endpoint that only builds an unsigned transaction, never signs,
+ * and never touches Loofta's backend or Privy at all (see services/magicblockPrivateTransfer.ts
+ * and .claude/skills/magicblock/private-payments.md). No login required, guest or not: the
+ * connected wallet (any Wallet Standard wallet, same as the plain-transfer case) only signs the
+ * transfer authority — MagicBlock's own sponsor pays the SOL network fee and collects its own
+ * relay fee automatically as part of the same transaction, no Loofta involvement in either. This
+ * is deliberately a *different* mechanism from onPayPrivately in c/[id]/page.tsx (a
+ * Privy-authorized MagicBlock PER transfer, backend-built by Loofta, used by the authenticated
+ * "Pay now"/balance flow above) — that one exists to move funds out of a Loofta-custodied balance,
+ * which needs to know whose balance it is; this one moves funds straight from an external wallet,
+ * which doesn't. "Any token" (the NEAR Intents bridge) still has no private variant and stays
+ * disabled while private mode is on.
  */
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { Connection, type Transaction, type VersionedTransaction } from "@solana/web3.js";
+import { Connection, VersionedTransaction, type Transaction } from "@solana/web3.js";
 import { Loader2, LogIn, VenetianMask } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { NearIntentsAnyTokenOption } from "@/components/app/NearIntentsCheckoutOption";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { SolanaWalletConnectProvider, useWallet as useSolanaWalletAdapter, WalletMultiButton } from "@/components/SolanaWalletConnect";
 import { buildUSDCTransferTransaction, sendSignedUSDCTransfer } from "@/services/solanaTransfer";
+import { buildMagicBlockPrivateTransferWithLooftaFee, totalWithLooftaPrivateFee } from "@/services/magicblockPrivateTransfer";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { PRIVATE_PAYMENT_ALL_PRIVATE_LINE } from "@/lib/privatePaymentCopy";
@@ -48,7 +52,7 @@ import { PRIVATE_PAYMENT_ALL_PRIVATE_LINE } from "@/lib/privatePaymentCopy";
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 3 * 60_000;
 
-async function confirmClaimPaid(claimId: string, email: string, txHash?: string): Promise<boolean> {
+async function confirmClaimPaid(claimId: string, email: string, txHash?: string, isPrivate?: boolean): Promise<boolean> {
   // PRIVATE_TRANSFER_PENDING, not SUCCESS — a guest payment always lands in the claim's burner,
   // never the recipient's real wallet (see NearIntentsCheckoutOption's privacy comment), so the
   // recipient still has to claim/sweep it out. SUCCESS reads as "fully settled, nothing left to
@@ -57,16 +61,16 @@ async function confirmClaimPaid(claimId: string, email: string, txHash?: string)
   const res = await fetch(`/api/claims/${claimId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status: "PRIVATE_TRANSFER_PENDING", guest_email: email, txHash }),
+    body: JSON.stringify({ status: "PRIVATE_TRANSFER_PENDING", guest_email: email, txHash, ...(isPrivate ? { isPrivate: true } : {}) }),
   });
   return res.ok;
 }
 
-async function pollUntilSettled(claimId: string, email: string, txHash: string | undefined, shouldAbort: () => boolean): Promise<boolean> {
+async function pollUntilSettled(claimId: string, email: string, txHash: string | undefined, isPrivate: boolean, shouldAbort: () => boolean): Promise<boolean> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (shouldAbort()) return false;
-    if (await confirmClaimPaid(claimId, email, txHash)) return true;
+    if (await confirmClaimPaid(claimId, email, txHash, isPrivate)) return true;
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
   return false;
@@ -86,11 +90,15 @@ function UsdcSolanaWalletPanel({
   status,
   onPay,
   onViewQrInstead,
+  private: isPrivate,
 }: {
   amountUsd: number;
   status: PayFromWalletStatus;
   onPay: (senderAddress: string, signTransaction: <T extends Transaction | VersionedTransaction>(tx: T) => Promise<T>) => void;
-  onViewQrInstead: () => void;
+  /** Undefined (not a no-op function) when there's no QR fallback to offer — a private transfer
+   *  can't be represented as "send to this address", it has to go through the Payments API. */
+  onViewQrInstead?: () => void;
+  private?: boolean;
 }) {
   const { publicKey, signTransaction, connected, disconnect } = useSolanaWalletAdapter();
   const canPay = connected && !!publicKey && !!signTransaction && status === "idle";
@@ -137,12 +145,14 @@ function UsdcSolanaWalletPanel({
           ) : status === "broadcasting" ? (
             <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</>
           ) : (
-            `Pay $${amountUsd.toFixed(2)} USDC`
+            isPrivate
+              ? `Pay $${totalWithLooftaPrivateFee(amountUsd).toFixed(2)} privately`
+              : `Pay $${amountUsd.toFixed(2)} USDC`
           )}
         </button>
       )}
 
-      {status === "idle" && (
+      {status === "idle" && onViewQrInstead && (
         <button
           type="button"
           onClick={onViewQrInstead}
@@ -173,9 +183,6 @@ function UsdcSolanaOption({
   onSettled,
   setError,
   isPrivateMode,
-  authenticated,
-  onLogin,
-  onPayWithLoofta,
 }: {
   claimId: string;
   burnerAddress: string;
@@ -185,18 +192,10 @@ function UsdcSolanaOption({
   onToggle: () => void;
   onSettled: () => void;
   setError: (e: string | null) => void;
-  /** When true, this tile's own plain-SPL-transfer flow is always blocked, signed in or not — it
-   *  can't provide real privacy and, critically, never added the privacy fee to the amount it
-   *  sent, so silently letting it through once merely *signed in* (a past bug here) built and
-   *  broadcast an unprivate, under-charged transfer while the UI still showed a privacy fee line
-   *  item. Once authenticated, onPayWithLoofta below reuses the actual mechanism instead — same
-   *  onPayPrivately MagicBlock PER transfer the top "Pay now" button already triggers. */
+  /** When true, the connected wallet builds and sends a private transfer via MagicBlock's public
+   *  Payments API instead of a plain SPL transfer — see the file header comment. No auth needed
+   *  either way; this only changes which transaction gets built. */
   isPrivateMode?: boolean;
-  authenticated?: boolean;
-  onLogin: () => void;
-  /** The real private-transfer trigger (Phantom connect + MagicBlock PER, see onPayPrivately in
-   *  c/[id]/page.tsx) — only meaningful once authenticated; not this component's own to build. */
-  onPayWithLoofta?: () => void;
 }) {
   const [payMethod, setPayMethod] = useState<"wallet" | "qr">("wallet");
   const [payStatus, setPayStatus] = useState<PayFromWalletStatus>("idle");
@@ -209,7 +208,7 @@ function UsdcSolanaOption({
     if (!expanded) return;
     let aborted = false;
     setError(null);
-    pollUntilSettled(claimId, email, sentTxHash, () => aborted).then((settled) => {
+    pollUntilSettled(claimId, email, sentTxHash, !!isPrivateMode, () => aborted).then((settled) => {
       if (aborted) return;
       if (settled) onSettled();
       else setError("Still waiting for the deposit to arrive. Refresh in a moment once you've sent it.");
@@ -228,18 +227,43 @@ function UsdcSolanaOption({
     setPayStatus("building");
     try {
       const connection = new Connection(getSolanaHttpRpc(), "confirmed");
-      const tx = await buildUSDCTransferTransaction({
-        senderAddress,
-        recipientAddress: burnerAddress,
-        amountUSDC: amountUsd,
-        connection,
-      });
 
-      setPayStatus("awaiting_signature");
-      const signed = await signTx(tx);
+      let signature: string;
+      if (isPrivateMode) {
+        // Legacy or v0 depending on what MagicBlock's own API decides fits — either way, Loofta's
+        // 10bps fee is already appended as a second instruction, one signature covers both.
+        // sendRawTransaction below works identically for either serialized transaction type.
+        const tx = await buildMagicBlockPrivateTransferWithLooftaFee({
+          from: senderAddress,
+          to: burnerAddress,
+          amountUSDC: amountUsd,
+          memo: claimId,
+          connection,
+        });
 
-      setPayStatus("broadcasting");
-      const signature = await sendSignedUSDCTransfer(signed as VersionedTransaction, connection);
+        setPayStatus("awaiting_signature");
+        const signed = await signTx(tx);
+
+        setPayStatus("broadcasting");
+        signature = await connection.sendRawTransaction(signed.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: "confirmed",
+          maxRetries: 3,
+        });
+      } else {
+        const tx = await buildUSDCTransferTransaction({
+          senderAddress,
+          recipientAddress: burnerAddress,
+          amountUSDC: amountUsd,
+          connection,
+        });
+
+        setPayStatus("awaiting_signature");
+        const signed = await signTx(tx);
+
+        setPayStatus("broadcasting");
+        signature = await sendSignedUSDCTransfer(signed as VersionedTransaction, connection);
+      }
       await waitForSignatureConfirmation(connection, signature, 60_000, 1500, "guestCheckoutUsdcSolana");
 
       setSentTxHash(signature);
@@ -268,32 +292,19 @@ function UsdcSolanaOption({
 
       {expanded && (
         <div className="col-span-2 [grid-row:2] rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3 text-center [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
-          {isPrivateMode ? (
-            <>
-              <p className="text-base text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-300">
-                {authenticated
-                  ? "Private payments go through a MagicBlock transfer, signed by your connected wallet and authorized by your Loofta account."
-                  : "Private payments use a MagicBlock transfer straight to the recipient — that needs a Loofta account to authorize."}
-              </p>
-              <button
-                type="button"
-                onClick={authenticated ? onPayWithLoofta : onLogin}
-                className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-              >
-                {authenticated ? (
-                  <>Pay ${amountUsd.toFixed(2)} privately</>
-                ) : (
-                  <><LogIn className="w-4 h-4" /> Sign in to pay privately</>
-                )}
-              </button>
-            </>
-          ) : payMethod === "wallet" ? (
+          {isPrivateMode && (
+            <p className="text-base text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-300 flex items-center justify-center gap-1.5">
+              <VenetianMask className="w-4 h-4 shrink-0" /> Your wallet signs a private MagicBlock transfer — no account needed, network fee included.
+            </p>
+          )}
+          {payMethod === "wallet" || isPrivateMode ? (
             <SolanaWalletConnectProvider rpcUrl={getSolanaHttpRpc()}>
               <UsdcSolanaWalletPanel
                 amountUsd={amountUsd}
                 status={payStatus}
                 onPay={handlePayFromWallet}
-                onViewQrInstead={() => setPayMethod("qr")}
+                onViewQrInstead={isPrivateMode ? undefined : () => setPayMethod("qr")}
+                private={isPrivateMode}
               />
             </SolanaWalletConnectProvider>
           ) : (
@@ -435,12 +446,7 @@ export function GuestCheckoutPay({
         <IncognitoModeToggle checked={!!isPrivateMode} onCheckedChange={onTogglePrivateMode} light />
       ) : null}
 
-      {/* Guest email is irrelevant once private mode is on — that path either needs a real sign-in
-          (no guest identity involved at all) or reuses the authenticated balance flow above (which
-          already has the account's real email on file) — so the fieldset's email gate is skipped
-          in that case, or the "sign in"/"pay privately" actions inside it would stay disabled until
-          a guest typed something that's never actually used. */}
-      <fieldset disabled={!emailValid && !effectivePrivate} className="grid grid-cols-2 gap-2 disabled:opacity-50" onClick={() => !emailValid && !effectivePrivate && setEmailTouched(true)}>
+      <fieldset disabled={!emailValid} className="grid grid-cols-2 gap-2 disabled:opacity-50" onClick={() => !emailValid && setEmailTouched(true)}>
         <UsdcSolanaOption
           claimId={claimId}
           burnerAddress={burnerAddress}
@@ -451,9 +457,6 @@ export function GuestCheckoutPay({
           onSettled={onSettled}
           setError={setError}
           isPrivateMode={effectivePrivate}
-          authenticated={authenticated}
-          onLogin={onLogin}
-          onPayWithLoofta={onPayWithLoofta}
         />
         <NearIntentsAnyTokenOption
           claimId={claimId}
