@@ -974,6 +974,17 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             </div>
           </div>
 
+          {/* Logged-out visitors land here from a shared link — get them to the entry CTA
+              immediately instead of making them scroll past the full task checklist first
+              (that checklist is only useful once there's an entry to track progress against). */}
+          {!authenticated && !giveawayEnded && (
+            <div className="mb-5">
+              <GradientActionButton onClick={() => login({ loginMethods: ["twitter"], disableSignup: false })}>
+                Sign in with X to enter
+              </GradientActionButton>
+            </div>
+          )}
+
           {isOwner && giveaway.status === "PENDING_FUNDING" && giveaway.burner_address && (() => {
             const requiredUsd = Number(giveaway.funding_required_usd ?? 0);
             const confirmedUsd = Number(funding?.fundingConfirmedUsd ?? giveaway.funding_confirmed_usd ?? 0);
@@ -1361,11 +1372,12 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             );
           })()}
 
-          {/* Before someone has an entry (or hasn't signed in yet), the interactive checklist above
-              never renders — this was the "tasks aren't visible" bug: the page showed a bare
-              "Sign in to enter" button with zero indication of what entering actually requires. */}
-          {!identityPending &&
-            !(authenticated && hasXLinked && myEntry && myEntry.status !== "disqualified" && !giveawayEnded) &&
+          {/* Once someone has signed in (or has an entry), show what entering actually requires —
+              but logged-out visitors get straight to the CTA above instead of a wall of tasks
+              before they've even signed in. */}
+          {authenticated &&
+            !identityPending &&
+            !(hasXLinked && myEntry && myEntry.status !== "disqualified" && !giveawayEnded) &&
             giveaway.tasks.length > 0 &&
             !giveawayEnded &&
             (() => {
@@ -1416,12 +1428,9 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
           {identityPending ? (
             <div className="h-12 rounded-xl bg-white/5 animate-pulse" />
           ) : !authenticated ? (
-            // Every giveaway requires a linked X account to enter (see eligibility text above) —
-            // sign in with X directly instead of offering methods that would just dead-end at a
-            // second "Connect X" prompt right after.
-            <GradientActionButton onClick={() => login({ loginMethods: ["twitter"], disableSignup: false })}>
-              Sign in with X to enter
-            </GradientActionButton>
+            // The live "sign in to enter" CTA already rendered right below the prize card above —
+            // this only covers the ended-giveaway case, which that CTA deliberately excludes.
+            <p className="text-base text-slate-500 text-center">This giveaway has closed.</p>
           ) : canEnter && !hasXLinked ? (
             <GradientActionButton onClick={() => linkTwitter()}>
               Connect X to enter
