@@ -49,6 +49,10 @@ type DepositInfo = {
   depositAddress: string;
   memo?: string | null;
   minAmountInFormatted?: string;
+  /** Raw atomic amount (e.g. nanotons for TON) in the origin token's own decimals — what an
+   *  on-chain transfer instruction actually needs, as opposed to minAmountInFormatted which is
+   *  human-readable-only. */
+  minAmountIn?: string;
 };
 
 function formatAmount(value: string | undefined): string {
@@ -214,11 +218,45 @@ function PayPanel({
         depositAddress: data.depositAddress,
         memo: data.memo ?? null,
         minAmountInFormatted: data.minAmountInFormatted,
+        minAmountIn: data.minAmountIn,
       });
     } catch (e: any) {
       setError(e?.message || "Failed to create deposit address");
     } finally {
       setCreating(false);
+    }
+  };
+
+  // TON: the connected wallet can build+sign+broadcast the deposit transfer itself via TonConnect
+  // (tonConnectUI.sendTransaction) instead of only being used to capture a refund address — the
+  // wallet already has everything it needs (deposit address + exact nanoton amount from the
+  // response above). Settlement is still confirmed the same way either way: the poll loop below
+  // watches the deposit address regardless of how the transfer actually got sent.
+  const [tonSending, setTonSending] = useState(false);
+  const [tonSent, setTonSent] = useState(false);
+  const [tonSendError, setTonSendError] = useState<string | null>(null);
+  const handleSendFromTonWallet = async () => {
+    if (!deposit?.depositAddress || !deposit.minAmountIn) return;
+    // A memo on a TON deposit would mean this is an INTENTS-mode shared address (see
+    // /api/claims/deposit's INTENTS_ONLY_CHAINS) — TON isn't in that set, so this should never
+    // actually happen, but a plain TonConnect transfer has no comment/memo field wired up here,
+    // so refuse rather than silently sending a transfer NEAR Intents can't attribute.
+    if (deposit.memo) {
+      setTonSendError("This deposit needs a memo — send it manually using the details below.");
+      return;
+    }
+    setTonSending(true);
+    setTonSendError(null);
+    try {
+      await tonConnectUI.sendTransaction({
+        validUntil: Math.floor(Date.now() / 1000) + 300,
+        messages: [{ address: deposit.depositAddress, amount: deposit.minAmountIn }],
+      });
+      setTonSent(true);
+    } catch (e: any) {
+      setTonSendError(e?.message || "Failed to send from wallet. You can still send manually below.");
+    } finally {
+      setTonSending(false);
     }
   };
 
@@ -267,18 +305,43 @@ function PayPanel({
   }, [deposit?.depositAddress]);
 
   if (deposit) {
+    const canAutoSendTon = chainFamily === "ton" && !!tonAddress && !!deposit.minAmountIn && !deposit.memo;
+    const payLabel = `Pay ${formatAmount(deposit.minAmountInFormatted)} ${selectedToken?.symbol || ""}`.trim();
     return (
       <div className="space-y-3 text-center">
+        {canAutoSendTon ? (
+          <div className="space-y-2">
+            {tonSent ? (
+              <p className="text-base font-medium text-green-600 [@media(prefers-color-scheme:dark)]:text-green-400">
+                Sent from your wallet — waiting for confirmation…
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSendFromTonWallet}
+                disabled={tonSending}
+                className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {tonSending ? <><Loader2 className="w-4 h-4 animate-spin" /> Confirm in your wallet…</> : payLabel}
+              </button>
+            )}
+            {tonSendError && <p className="text-base text-red-600 [@media(prefers-color-scheme:dark)]:text-red-400">{tonSendError}</p>}
+            {!tonSent && (
+              <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">Or send manually</p>
+            )}
+          </div>
+        ) : (
+          <div>
+            <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">Send exactly</p>
+            <p className="text-lg font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">
+              {formatAmount(deposit.minAmountInFormatted)} {selectedToken?.symbol}
+            </p>
+            <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">
+              on {formatChainLabel(selectedToken?.chain)}
+            </p>
+          </div>
+        )}
         <QRCodeSVG value={deposit.depositAddress} size={140} className="mx-auto rounded-lg bg-white p-2 border border-gray-200" />
-        <div>
-          <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">Send exactly</p>
-          <p className="text-lg font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">
-            {formatAmount(deposit.minAmountInFormatted)} {selectedToken?.symbol}
-          </p>
-          <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">
-            on {formatChainLabel(selectedToken?.chain)}
-          </p>
-        </div>
         <div className="rounded-lg bg-white border border-gray-200 px-3 py-2 break-all text-base font-mono text-gray-700 [@media(prefers-color-scheme:dark)]:bg-black/20 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:text-slate-300">
           {deposit.depositAddress}
         </div>
