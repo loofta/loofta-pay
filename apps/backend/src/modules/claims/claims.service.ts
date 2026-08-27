@@ -1226,6 +1226,71 @@ export class ClaimsService {
     });
   }
 
+  /**
+   * Build an unsigned plain (non-private) SPL USDC transfer for the payer to sign — the backend
+   * equivalent of the frontend's client-side transfer builder, needed here because API-key payout
+   * callers are headless servers with no browser wallet-adapter to build this themselves. Same
+   * destination as the private path above: the claim's burner, never the recipient's real wallet
+   * (see resolveEffectiveRecipientForPrivatePayment) — a public transfer has no MagicBlock/
+   * ephemeral-rollup involvement and no Loofta fee, so this is just a plain instruction.
+   */
+  async buildPublicTransferForPayer(
+    claimId: string,
+    privyUserId: string,
+    senderWallet: string,
+  ): Promise<{ transactionBase64: string; version: 'legacy' }> {
+    const claim = await this.findOneRaw(claimId);
+    const row = claim as Claim & { claim_burner_address?: string | null };
+    const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
+    if (isRecipient) {
+      throw new ForbiddenException(
+        'This action is for the payer. Recipients complete payment on the claim side.',
+      );
+    }
+    const to = this.resolveEffectiveRecipientForPrivatePayment(row);
+    if (!to || !isValidSolanaAddress(to)) {
+      throw new BadRequestException('Recipient is not available for this claim yet.');
+    }
+    if (!isValidSolanaAddress(senderWallet)) {
+      throw new BadRequestException('Invalid sender_wallet.');
+    }
+    const amountUsd = parseFloat(String(claim.amount || '0'));
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+      throw new BadRequestException('Invalid claim amount');
+    }
+    if (amountUsd < 1) {
+      throw new BadRequestException('Minimum payment amount is $1.00 USDC.');
+    }
+
+    const { conn, claimMint } = this.resolveClaimNetwork(claim);
+    const baseUnits = Math.round(amountUsd * 1_000_000);
+    const payer = new PublicKey(senderWallet.trim());
+    const burner = new PublicKey(to);
+    const payerAta = await getAssociatedTokenAddress(claimMint, payer);
+    const burnerAta = await getAssociatedTokenAddress(claimMint, burner);
+
+    const instructions: TransactionInstruction[] = [];
+    if (!(await tokenAccountExists(conn, burnerAta))) {
+      instructions.push(
+        createAssociatedTokenAccountInstruction(payer, burnerAta, burner, claimMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID),
+      );
+    }
+    instructions.push(createTransferInstruction(payerAta, burnerAta, payer, baseUnits, [], TOKEN_PROGRAM_ID));
+
+    const tx = new Transaction().add(...instructions);
+    tx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
+    tx.feePayer = payer;
+
+    // Correct is_devnet already stamped at creation time; only sender_user_id needs setting here
+    // so the payer sees this payout in their own history, same as the private path does.
+    await this.supabaseService.payments.update({ sender_user_id: privyUserId }).eq('id', claimId);
+
+    return {
+      transactionBase64: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+      version: 'legacy',
+    };
+  }
+
   /** Resolve the correct Solana connection and USDC mint for a claim based on its is_devnet flag.
    *  Falls back to backend SOLANA_CLUSTER config when is_devnet is null (legacy claims). */
   private resolveClaimNetwork(claim: Claim): { conn: Connection; claimMint: PublicKey; cluster: 'mainnet' | 'devnet' } {

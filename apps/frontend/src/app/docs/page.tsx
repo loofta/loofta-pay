@@ -51,7 +51,7 @@ function DocsBody() {
       case "agent-skill":
         return <AgentSkill />;
       case "send-payments":
-        return <SendPayments />;
+        return <SendPayments onNavigate={navigate} />;
       default:
         return <Intro onNavigate={navigate} />;
     }

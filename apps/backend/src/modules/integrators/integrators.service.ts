@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { createHmac, randomBytes } from 'crypto';
 import { SupabaseService } from '@/database/supabase.service';
 
-const SELF_SERVE_SCOPES = ['payment_links:create'];
+const SELF_SERVE_SCOPES = ['payment_links:create', 'payouts:create'];
 
 /** What IntegratorGuard attaches to the request — never the raw key or its hash. */
 export interface AuthenticatedIntegrator {

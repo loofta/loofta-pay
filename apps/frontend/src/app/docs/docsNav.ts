@@ -38,7 +38,7 @@ export const DOCS_NAV: DocsNavSection[] = [
     ],
   },
   {
-    section: "Coming soon",
-    pages: [{ slug: "send-payments", title: "Send payments API" }],
+    section: "Send payments",
+    pages: [{ slug: "send-payments", title: "Pay a recipient" }],
   },
 ];

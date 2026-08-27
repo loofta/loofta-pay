@@ -1,9 +1,9 @@
 export const LOOFTA_PAYMENT_LINKS_SKILL = `---
 name: loofta-payment-links
-description: Integrate Loofta Pay payment links into an app so it can receive payments. Use when the user asks to "accept payments", "add a pay button", "get paid", "create a checkout link", "integrate Loofta", or "receive payments" — for a web app, backend, or bot that needs to charge a human and receive USD.
+description: Integrate Loofta Pay into an app so it can receive payments (payment links) and send payments (payouts). Use when the user asks to "accept payments", "add a pay button", "get paid", "create a checkout link", "pay someone out", "send USDC to an email/handle", "integrate Loofta", "receive payments", or "send payments" — for a web app, backend, or bot that needs to charge a human, pay one out, or both.
 ---
 
-# Loofta Payment Links
+# Loofta Pay
 
 Create a checkout link that pays a specific Loofta account. The payer needs no Loofta account at
 all — checkout defaults to a guest flow (email + any token on any chain, or USDC on Solana from a
@@ -146,6 +146,72 @@ a full component:
 
 See https://pay.loofta.xyz/docs?p=try-it for this pattern wired up end to end.
 
+## 5. Send payments (pay someone out)
+
+The reverse of a payment link: \`POST /payouts\` pays a recipient — by email, username, or social
+handle — from the API key owner's own account, instead of collecting from someone else.
+Self-custody: it returns an **unsigned** transaction, never moves funds itself. Only the caller's
+own \`sender_wallet\` can authorize it, by signing that transaction and broadcasting it.
+
+\`\`\`bash
+curl -X POST https://api.loofta.xyz/payouts \\
+  -H "Authorization: Bearer $LOOFTA_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "amount": 25,
+    "recipient_type": "email",
+    "recipient_identifier": "alice@example.com",
+    "sender_wallet": "5dCT...BKuq",
+    "message": "August payout"
+  }'
+\`\`\`
+
+Response:
+
+\`\`\`json
+{
+  "payment_id": "b3f1...e02a",
+  "short_id": "aB3xK9pQ",
+  "claim_link": "https://pay.loofta.xyz/c/aB3xK9pQ",
+  "unsigned_transaction": "AQAAAAAAAAAAAAAAAAAAAAAA...",
+  "transaction_version": "legacy",
+  "is_private": false
+}
+\`\`\`
+
+Fields:
+
+- \`amount\` (required): USD, $10,000 maximum, $1 minimum ($5 if \`is_private\` is \`true\`).
+- \`recipient_type\` (required): \`email\`, \`username\`, \`twitter\`, \`discord\`, \`github\`, or \`telegram\`.
+- \`recipient_identifier\` (required): the email/username/handle matching \`recipient_type\`.
+- \`sender_wallet\` (required): the caller's own Solana wallet public key — pays gas and signs the
+  returned transaction. Loofta never holds this wallet's key.
+- \`message\` (optional): shown to the recipient on their claim page, 500 chars max.
+- \`is_private\` (optional): defaults to \`false\`. \`true\` shields the amount and sender wallet
+  on-chain — a MagicBlock private transfer, ~10 bps + $0.20 flat gas on top of \`amount\`.
+
+Sign and broadcast \`unsigned_transaction\` yourself — \`transaction_version\` tells you whether to
+deserialize it as a legacy \`Transaction\` or \`VersionedTransaction\`:
+
+\`\`\`ts
+import { Connection, Transaction, VersionedTransaction, Keypair } from "@solana/web3.js";
+
+const connection = new Connection("https://api.mainnet-beta.solana.com");
+const senderKeypair = Keypair.fromSecretKey(/* your own key, never sent to Loofta */);
+
+const raw = Buffer.from(unsigned_transaction, "base64");
+const tx = transaction_version === "v0"
+  ? VersionedTransaction.deserialize(raw)
+  : Transaction.from(raw);
+
+tx.sign(senderKeypair); // VersionedTransaction: tx.sign([senderKeypair])
+const signature = await connection.sendRawTransaction(tx.serialize());
+\`\`\`
+
+The recipient sees the payout waiting at \`claim_link\` the moment the transaction lands — same
+claim/burner mechanics as every other Loofta payment. An unregistered recipient claims by signing
+in with the same email/handle it was sent to.
+
 ## Constraints to respect
 
 - One payment link = one fixed amount, one transaction. There is no "open amount" / pay-what-you-want
@@ -153,7 +219,10 @@ See https://pay.loofta.xyz/docs?p=try-it for this pattern wired up end to end.
 - Links are public (not private) by default. \`is_private: true\` requires the payer to pay
   privately and adds a fee to their total — you still net exactly \`amount\` either way. Don't
   assume privacy or add your own fee expecting to net more.
-- The send-payments API (pushing money out programmatically) does not exist yet — only receiving.
+- \`/payouts\` is single-recipient only — there is no batch/multi-recipient payout endpoint.
+- \`/payouts\` never signs or broadcasts anything itself — you must sign \`unsigned_transaction\`
+  with \`sender_wallet\`'s own key and submit it. Don't expect the funds to move just from calling
+  the endpoint.
 - No sandbox/test mode — every key is live. Don't build a "test mode" flag expecting one to exist.
 - Full reference: https://pay.loofta.xyz/docs
 `;

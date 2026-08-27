@@ -12,7 +12,7 @@ export function AgentSkill() {
       <h1 className="text-3xl font-medium text-slate-100 mb-3">Agent skill</h1>
       <p className="text-base text-slate-400 leading-relaxed mb-6">
         Copy this into your coding agent (e.g. as <code className="text-orange-300">.claude/skills/loofta-payment-links/SKILL.md</code>)
-        so it can wire up Loofta payment links for you.
+        so it can wire up Loofta payment links and payouts for you.
       </p>
 
       <button
