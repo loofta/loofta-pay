@@ -16,7 +16,7 @@ real money; test with small real amounts.
 
 ## 1. Get an API key
 
-The user must generate one themselves at https://pay.loofta.xyz/app/developer (log in first) —
+The user must generate one themselves at https://pay.loofta.xyz/docs?p=api-key (log in first) —
 an agent cannot mint this on their behalf. Ask them to paste the raw key (starts with \`lft_live_\`)
 and store it as an environment variable, e.g. \`LOOFTA_API_KEY\`. Never hardcode it or expose it to
 a browser — it must only be used server-side.
@@ -144,7 +144,7 @@ a full component:
 </a>
 \`\`\`
 
-See https://pay.loofta.xyz/app/demo-store for this pattern wired up end to end.
+See https://pay.loofta.xyz/docs?p=try-it for this pattern wired up end to end.
 
 ## Constraints to respect
 

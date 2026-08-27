@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { DocsCodeBlock } from "../DocsCodeBlock";
 
 export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => void }) {
@@ -83,7 +82,7 @@ export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => 
         One link is one transaction — it can't be paid twice, so create a new link per order/customer
         rather than reusing one link for everyone. See{" "}
         <code className="text-orange-300">onGenerateLink</code> in the{" "}
-        <Link href="/app/demo-store" className="text-orange-400 hover:underline">demo store</Link> for the
+        <button type="button" onClick={() => onNavigate("try-it")} className="text-orange-400 hover:underline">demo store</button> for the
         actual pattern: call this endpoint fresh, right when the buyer clicks "Buy now".
       </p>
       <p className="text-base text-slate-400 mb-3">

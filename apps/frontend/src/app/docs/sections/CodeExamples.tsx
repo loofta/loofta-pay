@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { DocsCodeBlock } from "../DocsCodeBlock";
 
 export function CodeExamples({ onNavigate }: { onNavigate: (slug: string) => void }) {
@@ -53,7 +52,7 @@ console.log(link.url); // https://pay.loofta.xyz/checkout/aB3xK9pQ`}
 />`}
       />
       <p className="text-base text-slate-400 mb-6">
-        See the <Link href="/app/demo-store" className="text-orange-400 hover:underline">demo store</Link>{" "}
+        See the <button type="button" onClick={() => onNavigate("try-it")} className="text-orange-400 hover:underline">demo store</button>{" "}
         for this pattern actually wired up end to end.
       </p>
 

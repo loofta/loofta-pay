@@ -1,7 +1,6 @@
-import Link from "next/link";
 import { DocsCodeBlock } from "../DocsCodeBlock";
 
-export function Authentication() {
+export function Authentication({ onNavigate }: { onNavigate: (slug: string) => void }) {
   return (
     <article>
       <h1 className="text-3xl font-medium text-slate-100 mb-3">Authentication</h1>
@@ -12,7 +11,10 @@ export function Authentication() {
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">1. Generate a key</h2>
       <p className="text-base text-slate-400 mb-3">
-        Log into Loofta and open <Link href="/app/developer" className="text-orange-400 hover:underline">Developer settings</Link>.
+        Log into Loofta and open{" "}
+        <button type="button" onClick={() => onNavigate("api-key")} className="text-orange-400 hover:underline">
+          API key &amp; branding
+        </button>.
         Click "Generate API key" — the raw key is shown once. Store it somewhere safe; Loofta only
         ever stores a salted hash of it.
       </p>

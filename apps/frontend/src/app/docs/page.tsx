@@ -12,6 +12,8 @@ import { CheckoutPage } from "./sections/CheckoutPage";
 import { CodeExamples } from "./sections/CodeExamples";
 import { AgentSkill } from "./sections/AgentSkill";
 import { SendPayments } from "./sections/SendPayments";
+import { ApiKeySetup } from "./sections/ApiKeySetup";
+import { TryIt } from "./sections/TryIt";
 
 // All doc content lives in ./sections as plain components, not separate routes — clicking the
 // sidebar just swaps which one is rendered (instant, client-side only), instead of every doc
@@ -35,7 +37,11 @@ function DocsBody() {
   const content = useMemo(() => {
     switch (activeSlug) {
       case "authentication":
-        return <Authentication />;
+        return <Authentication onNavigate={navigate} />;
+      case "api-key":
+        return <ApiKeySetup onNavigate={navigate} />;
+      case "try-it":
+        return <TryIt onNavigate={navigate} />;
       case "receive-payments":
         return <ReceivePayments onNavigate={navigate} />;
       case "checkout-page":

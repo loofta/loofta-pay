@@ -194,14 +194,21 @@ export class ClaimProcessorService {
 
       // Update claim status based on normalized status
       if (statusResult.isComplete) {
-        // Near Intents completed - funds arrived. For private claims OR unresolved recipients,
-        // do NOT mark recipient-claimed yet.
+        // Near Intents completed - funds arrived at the claim's burner, not the recipient's real
+        // wallet — the payer never gets that address directly (see PaymentLinksService / the
+        // guest-checkout burner architecture). Do NOT mark recipient-claimed yet: private claims,
+        // unresolved (pending-email/username) recipients, AND ordinary merchant/payment-links
+        // claims (registered recipient, resolved at creation, still burner-mediated) all still
+        // need an explicit claim/sweep. Going straight to SUCCESS here — the pre-existing branch
+        // below, for a claim with a burner but neither private nor pending — left the recipient
+        // with no visible claim action for funds that were, in fact, still sitting unswept.
         const claim = await this.claimsService.findOne(claimId);
         const recipientAddress = (claim.recipient_address || '').trim();
         const hasPendingRecipient =
           recipientAddress.startsWith('PENDING_EMAIL:') || recipientAddress.startsWith('PENDING_USERNAME:');
-        if (claim.is_private === true || hasPendingRecipient) {
-          await this.claimsService.updateStatus(claimId, 'PRIVATE_TRANSFER_PENDING');
+        const hasBurner = !!(claim as { claim_burner_address?: string | null }).claim_burner_address?.trim();
+        if (claim.is_private === true || hasPendingRecipient || hasBurner) {
+          await this.claimsService.updateStatus(claimId, 'PRIVATE_TRANSFER_PENDING', { txHash: statusResult.txHash });
           this.claimsService.notifyRecipientAfterPayment(claimId);
           return {
             claimId,
@@ -210,7 +217,7 @@ export class ClaimProcessorService {
             success: true,
           };
         }
-        await this.claimsService.updateStatus(claimId, 'SUCCESS');
+        await this.claimsService.updateStatus(claimId, 'SUCCESS', { txHash: statusResult.txHash });
         this.claimsService.notifyRecipientAfterPayment(claimId);
         return {
           claimId,

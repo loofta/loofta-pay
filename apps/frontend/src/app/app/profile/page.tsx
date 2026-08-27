@@ -265,7 +265,7 @@ export default function ProfilePage() {
         </button>
 
         <Link
-          href="/app/developer"
+          href="/docs?p=api-key"
           className="w-full text-left px-3 py-3 rounded-lg text-base font-medium transition-colors flex items-center gap-3 text-white hover:bg-white/10"
         >
           <Code2 className="w-4 h-4 shrink-0" />

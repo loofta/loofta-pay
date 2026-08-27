@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 export function Intro({ onNavigate }: { onNavigate: (slug: string) => void }) {
   return (
     <article>
@@ -13,7 +11,7 @@ export function Intro({ onNavigate }: { onNavigate: (slug: string) => void }) {
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">How it works</h2>
       <ol className="list-decimal list-inside space-y-2 text-base text-slate-300 mb-6">
-        <li>Generate an API key from your <Link href="/app/developer" className="text-orange-400 hover:underline">Developer settings</Link>.</li>
+        <li>Generate an <button type="button" onClick={() => onNavigate("api-key")} className="text-orange-400 hover:underline">API key</button>.</li>
         <li>Call <code className="text-orange-300">POST /payment-links</code> with an amount and a message — fresh, per order.</li>
         <li>Share the returned checkout URL — a minimal, unbranded payment page.</li>
         <li>The payer pays, no account needed. You always receive the exact amount; fees are on them.</li>

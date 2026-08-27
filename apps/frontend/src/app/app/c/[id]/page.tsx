@@ -1142,6 +1142,39 @@ function ConfirmingIdentityNotice() {
   );
 }
 
+// ─── Checkout info (chrome="minimal") — what a payer on a merchant link actually needs to know,
+// not the P2P claim-page FAQ below (which talks about "claiming privately", irrelevant to a
+// payer who's never claiming anything here). Deliberately doesn't restate a specific fee number —
+// that's already live on the left-side breakdown and would drift out of sync with two different
+// private-payment mechanisms (balance-based vs. wallet-direct) charging differently. ───────────
+
+const CHECKOUT_INFO_FAQ_ITEMS: { question: string; answer: React.ReactNode }[] = [
+  {
+    question: "What does \"Pay privately\" do?",
+    answer: (
+      <>
+        <p className="mb-3 flex items-center gap-2">
+          <PrivacyGlyph size={20} opacity={1} />
+          <span>Shields the amount and your wallet from public view — nobody can trace this payment back to you on-chain.</span>
+        </p>
+        <p>It runs through MagicBlock&apos;s private ephemeral rollup, either from your Loofta balance (if you&apos;re signed in) or directly from a connected wallet — either way, nothing about it is a plain public transfer. The exact fee is shown on the left before you pay.</p>
+      </>
+    ),
+  },
+  {
+    question: "What does \"Any token\" mean?",
+    answer: (
+      <p>Pay with any token on any supported chain — Bitcoin, Ethereum, and dozens more — instead of USDC on Solana. It&apos;s converted automatically before it reaches the merchant; they always receive exactly the amount due.</p>
+    ),
+  },
+  {
+    question: "Why sign in to top up instead of paying as a guest?",
+    answer: (
+      <p>Signing in lets you fund a Loofta balance from any token, a credit card, or Naira — then future payments (here or on any other Loofta checkout) are one tap, no wallet or token conversion needed each time. Paying as a guest works fine too; it just doesn&apos;t save anything for next time.</p>
+    ),
+  },
+];
+
 // ─── Privacy FAQ (same accordion style as send/receive and megapot) ───────────
 
 const CLAIM_PRIVACY_FAQ_ITEMS: { question: string; answer: React.ReactNode }[] = [
@@ -6467,18 +6500,46 @@ export function ClaimPayView({
         )}
       </ClaimPayLayout>
 
-      {/* FAQ — same style as send/receive and megapot */}
-      <section id="how-privacy-works" className="md:pb-16 px-4 mt-2 pb-24">
+      {/* FAQ — checkout gets its own, payer-relevant explainer (light theme, matches checkout's
+          card); the regular claim page keeps the original privacy FAQ (dark theme, matches that
+          page). Same accordion mechanics either way, same style as send/receive and megapot.
+          This section is a sibling AFTER </ClaimPayLayout> closes, so it sits on the outer page
+          div's own always-dark bg-[#0f0f12] — not inside ClaimPayLayout's chrome="minimal" light
+          wrapper. Needs its own matching light/dark background here, or the light-mode text above
+          renders on a dark page background (looked like black-on-black). */}
+      <section
+        id="how-privacy-works"
+        className={
+          chrome === "minimal"
+            ? "md:pb-16 px-4 pt-2 pb-24 bg-slate-50 [@media(prefers-color-scheme:dark)]:bg-[#0f0f12]"
+            : "md:pb-16 px-4 mt-2 pb-24"
+        }
+      >
         <div className="max-w-xl mx-auto">
-          <h2 className="text-3xl md:text-4xl font-medium font-sans text-white text-center mb-8 md:mb-10">
-            How private payments work
+          <h2 className={
+            chrome === "minimal"
+              ? "text-3xl md:text-4xl font-medium font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100 text-center mb-8 md:mb-10"
+              : "text-3xl md:text-4xl font-medium font-sans text-white text-center mb-8 md:mb-10"
+          }>
+            {chrome === "minimal" ? "About this checkout" : "How private payments work"}
           </h2>
           <div className="flex flex-col gap-4">
-            {CLAIM_PRIVACY_FAQ_ITEMS.map((item, index) => (
-              <div key={index} className="rounded-[20px] border border-white/10 bg-white/5 overflow-hidden">
+            {(chrome === "minimal" ? CHECKOUT_INFO_FAQ_ITEMS : CLAIM_PRIVACY_FAQ_ITEMS).map((item, index) => (
+              <div
+                key={index}
+                className={
+                  chrome === "minimal"
+                    ? "rounded-[20px] border border-gray-200 bg-white [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5 overflow-hidden"
+                    : "rounded-[20px] border border-white/10 bg-white/5 overflow-hidden"
+                }
+              >
                 <button type="button" onClick={() => setOpenPrivacyFaq(openPrivacyFaq === index ? null : index)}
                   className="w-full px-6 py-5 flex items-center justify-between text-left">
-                  <span className="text-lg md:text-xl font-semibold font-sans text-slate-200">{item.question}</span>
+                  <span className={
+                    chrome === "minimal"
+                      ? "text-lg md:text-xl font-semibold font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-200"
+                      : "text-lg md:text-xl font-semibold font-sans text-slate-200"
+                  }>{item.question}</span>
                   <motion.span className="text-4xl text-orange-500 shrink-0 ml-4"
                     animate={{ rotate: openPrivacyFaq === index ? 45 : 0 }} transition={{ duration: 0.2 }}>
                     +
@@ -6489,7 +6550,11 @@ export function ClaimPayView({
                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
                       exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3, ease: "easeInOut" }}
                       className="overflow-hidden">
-                      <div className="px-6 pb-5 text-lg text-slate-400 leading-relaxed">{item.answer}</div>
+                      <div className={
+                        chrome === "minimal"
+                          ? "px-6 pb-5 text-lg text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400 leading-relaxed"
+                          : "px-6 pb-5 text-lg text-slate-400 leading-relaxed"
+                      }>{item.answer}</div>
                     </motion.div>
                   )}
                 </AnimatePresence>
