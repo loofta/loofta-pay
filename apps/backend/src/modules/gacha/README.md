@@ -191,6 +191,9 @@ that audit surface is added; the UI does not invent a transaction link for it.
   and cancels the room when its final participant leaves. When the creator is the only paid
   participant, cancelling the room returns that entry through the idempotent refund ledger;
   other waiting-room leaves do not refund the Devnet test entry.
+- Three paid creator create/cancel cycles within a rolling ten-minute window block that user from
+  creating another room for one hour. Empty, unpaid room cancellation does not count. Durable
+  database events and an insert guard enforce the cooldown even when Redis is unavailable.
 - Private rooms are excluded from public room lists. Their random invite code is the bearer
   capability: room detail, payment preparation, and payment confirmation accept it (or an
   existing participant/creator) and otherwise return the same not-found response as an unknown

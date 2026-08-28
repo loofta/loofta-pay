@@ -16,6 +16,7 @@ const describeDb = runIntegration ? describe : describe.skip;
 describeDb('Gacha room browser database invariants', () => {
   let db: SupabaseClient;
   const createdRoomIds: string[] = [];
+  const rateLimitUserIds: string[] = [];
   // Keep generated room names within gacha_rooms.name's 24-character constraint.
   const testRun = `db-${randomUUID().slice(0, 8)}`;
 
@@ -27,11 +28,30 @@ describeDb('Gacha room browser database invariants', () => {
   });
 
   afterAll(async () => {
-    if (!db || !createdRoomIds.length) return;
-    await db.from('gacha_entry_refunds').delete().in('room_id', createdRoomIds);
-    await db.from('gacha_room_participants').delete().in('room_id', createdRoomIds);
-    await db.from('gacha_room_departures').delete().in('room_id', createdRoomIds);
-    await db.from('gacha_rooms').delete().in('id', createdRoomIds);
+    if (!db) return;
+    if (rateLimitUserIds.length) {
+      await db.from('gacha_room_creation_cooldowns').delete().in('user_id', rateLimitUserIds);
+      await db.from('gacha_room_create_cancel_events').delete().in('user_id', rateLimitUserIds);
+    }
+    if (!createdRoomIds.length) return;
+    const cleanupSteps = [
+      db.from('gacha_rematch_groups').delete().in('source_room_id', createdRoomIds),
+      db.from('gacha_rematch_groups').delete().in('next_room_id', createdRoomIds),
+      db.from('gacha_entry_refunds').delete().in('room_id', createdRoomIds),
+      // The sole-creator refund tests also generate cancellation events.
+      db.from('gacha_room_create_cancel_events').delete().in('room_id', createdRoomIds),
+      // Paid creator cancellations archive a departure before deleting the live seat. This must
+      // be removed before the room because room_id is a restrictive foreign key.
+      db.from('gacha_room_departures').delete().in('room_id', createdRoomIds),
+      db.from('gacha_room_participants').delete().in('room_id', createdRoomIds),
+      db.from('gacha_bids').delete().in('room_id', createdRoomIds),
+    ];
+    const cleanupResults = await Promise.all(cleanupSteps);
+    const cleanupError = cleanupResults.find((result) => result.error)?.error;
+    if (cleanupError) throw new Error(`Failed to clean up Gacha integration dependencies: ${cleanupError.message}`);
+
+    const { error: roomCleanupError } = await db.from('gacha_rooms').delete().in('id', createdRoomIds);
+    if (roomCleanupError) throw new Error(`Failed to clean up Gacha integration rooms: ${roomCleanupError.message}`);
   });
 
   async function createRoom(ownerId: string): Promise<string> {
@@ -113,6 +133,42 @@ describeDb('Gacha room browser database invariants', () => {
 
     expect(error).toBeNull();
     expect(data).toMatchObject({ id: roomId, is_private: false, status: 'waiting' });
+  });
+
+  it('blocks creation for one hour after three paid creator cancellations in ten minutes', async () => {
+    const ownerId = `${testRun}-rate-owner`;
+    rateLimitUserIds.push(ownerId);
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      const roomId = await createRoom(ownerId);
+      const { error: participantError } = await db.from('gacha_room_participants').insert({
+        room_id: roomId,
+        user_id: ownerId,
+        payment_tx_hash: `${testRun}-rate-payment-${cycle}`,
+      });
+      if (participantError) throw new Error(participantError.message);
+
+      const { data: leaveResult, error: leaveError } = await db.rpc('gacha_leave_waiting_room', {
+        p_room_id: roomId,
+        p_user_id: ownerId,
+      });
+      if (leaveError) throw new Error(leaveError.message);
+      expect(leaveResult).toMatchObject({
+        roomCancelled: true,
+        entryRefundRequired: true,
+        refundPaymentTxHash: `${testRun}-rate-payment-${cycle}`,
+      });
+    }
+
+    const { data: cooldown, error: cooldownError } = await db
+      .from('gacha_room_creation_cooldowns')
+      .select('blocked_until')
+      .eq('user_id', ownerId)
+      .single();
+    if (cooldownError) throw new Error(cooldownError.message);
+    expect(new Date(cooldown.blocked_until).getTime()).toBeGreaterThan(Date.now() + 59 * 60_000);
+
+    await expect(createRoom(ownerId)).rejects.toThrow('GACHA_ROOM_CREATION_COOLDOWN');
   });
 
   it('reports refund metadata when the creator leaves as the only paid participant', async () => {
