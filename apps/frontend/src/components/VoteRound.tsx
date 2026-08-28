@@ -28,6 +28,7 @@ export default function VoteRound({
   potUsdc,
   myVote,
   onVote,
+  locked = false,
   spectating = false,
 }: {
   round: number;
@@ -36,6 +37,8 @@ export default function VoteRound({
   /** undefined = haven't voted yet this round (resets to undefined whenever `round` changes). */
   myVote: boolean | undefined;
   onVote: (vote: boolean) => void;
+  /** The vote already passed and the server is waiting for the VRF cut draw. */
+  locked?: boolean;
   /** Spectators see the live round without participant voting controls. */
   spectating?: boolean;
 }) {
@@ -54,7 +57,9 @@ export default function VoteRound({
     isMe: p.isMe,
   }));
 
-  const footer = spectating ? (
+  const footer = locked ? (
+    <p className="pp-small" role="status" style={{ marginTop: 0 }}>votes locked — drawing who gets cut…</p>
+  ) : spectating ? (
     <p className="pp-small" style={{ marginTop: 0 }}>watching the survivors decide live</p>
   ) : iAmSurvivor ? (
     myVote === undefined ? (
@@ -96,7 +101,7 @@ export default function VoteRound({
           <b style={{ background: "linear-gradient(90deg,#FF1301,#FF6A00,#EAB308)", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>${shareIfCut.toFixed(2)}</b>
         </div>
       </div>
-      {voting && <p className="pp-small">30s to vote, or it's a NO for you.</p>}
+      {voting && !locked && <p className="pp-small">30s to vote, or it's a NO for you.</p>}
     </Shell>
   );
 }

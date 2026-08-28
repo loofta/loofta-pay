@@ -61,6 +61,7 @@ interface RoomDetail {
     entryUsdc: number;
     exclusionCount: number;
     voteRound: number | null;
+    voteLocked: boolean;
     status: string;
     seatsFilled: number;
     nftMetadata: { image?: string; backImage?: string; name?: string; insuredValueUsdc?: number; attributes?: GachaNftAttribute[] } | null;
@@ -102,6 +103,7 @@ export default function GachaRoomPage() {
   const roomId = params.roomId;
   const searchParams = useSearchParams();
   const inviteCode = searchParams.get("inviteCode");
+  const requestedSpectator = searchParams.get("spectate") === "1";
   const router = useRouter();
   const { ready: authReady, authenticated, login, getAccessToken } = usePrivy();
 
@@ -320,7 +322,8 @@ export default function GachaRoomPage() {
   }, [castVote, refresh]);
 
   const room = detail?.room;
-  const isSpectator = !!detail && !detail.myParticipant;
+  // `?spectate=1` is read-only even when this signed-in viewer also owns a seat.
+  const isSpectator = !!detail && (requestedSpectator || !detail.myParticipant);
   const transactionProofs = detail ? [
     { label: "Your entry payment", signature: detail.myParticipant?.entryPaymentTxSig },
     { label: "Your winning bid payment", signature: detail.myParticipant?.winningBidPaymentTxSig },
@@ -332,7 +335,9 @@ export default function GachaRoomPage() {
   ] : [];
   const hasPendingHumanVote =
     room?.status === "voting"
+    && !room.voteLocked
     && !detail?.gate // a pending reveal gate means the cut reveal is still playing — no live round to vote in yet
+    && !isSpectator
     && !!detail?.myParticipant
     && !detail.myParticipant.excluded
     && myVote === undefined;
@@ -478,11 +483,11 @@ export default function GachaRoomPage() {
   // cannot join before the synthetic seats arrive.
   const autoFilledRef = useRef(false);
   useEffect(() => {
-    if (!autoFillGachaBots || autoFilledRef.current) return;
+    if (!autoFillGachaBots || autoFilledRef.current || isSpectator) return;
     if (room?.status !== "waiting" || !detail?.myParticipant) return;
     autoFilledRef.current = true;
     handleFillWithBots();
-  }, [autoFillGachaBots, room?.status, detail?.myParticipant, handleFillWithBots]);
+  }, [autoFillGachaBots, room?.status, detail?.myParticipant, handleFillWithBots, isSpectator]);
 
   const handleMarkReady = useCallback(() => {
     setIAmReady(true);
@@ -498,19 +503,19 @@ export default function GachaRoomPage() {
   const cardAckedRef = useRef(false);
   useEffect(() => {
     if (cardAckedRef.current) return;
-    if (!detail?.room.nftMetadata || !detail.myParticipant) return;
+    if (!detail?.room.nftMetadata || !detail.myParticipant || isSpectator) return;
     const doneWatchingCard = cardRevealDismissed || arrivedAlreadyRevealedRef.current === true;
     if (!doneWatchingCard) return;
     cardAckedRef.current = true;
     watchedCard();
-  }, [detail?.room.nftMetadata, detail?.myParticipant, cardRevealDismissed, watchedCard]);
+  }, [detail?.room.nftMetadata, detail?.myParticipant, cardRevealDismissed, watchedCard, isSpectator]);
 
   // Same "don't let one distracted player stall the room" pattern as MascotPicker's own 30s
   // timer — the ready-gate used to wait indefinitely for a manual click with no fallback.
   const [readyCountdown, setReadyCountdown] = useState(READY_SECONDS);
   const readyGateEligible = !arrivedAlreadyRevealedRef.current && !played3DReveal
     && detail?.room.status !== "failed" && detail?.room.status !== "cancelled"
-    && !!detail?.room.nftMetadata && !!detail?.myParticipant && !autoOpen;
+    && !!detail?.room.nftMetadata && !!detail?.myParticipant && !isSpectator && !autoOpen;
   useEffect(() => {
     if (!readyGateEligible || iAmReady) return;
     setReadyCountdown(READY_SECONDS);
@@ -601,10 +606,10 @@ export default function GachaRoomPage() {
   const autoClaimedRef = useRef(false);
   useEffect(() => {
     if (autoClaimedRef.current) return;
-    if (detail?.room.status !== "settled" || !detail.myParticipant || detail.myParticipant.excluded || detail.myParticipant.claimed || detail.myParticipant.claimPending) return;
+    if (isSpectator || detail?.room.status !== "settled" || !detail.myParticipant || detail.myParticipant.excluded || detail.myParticipant.claimed || detail.myParticipant.claimPending) return;
     autoClaimedRef.current = true;
     handleClaim();
-  }, [detail?.room.status, detail?.myParticipant, handleClaim]);
+  }, [detail?.room.status, detail?.myParticipant, handleClaim, isSpectator]);
 
   const statusCaption = useMemo(() => {
     if (!room) return "";
@@ -685,10 +690,10 @@ export default function GachaRoomPage() {
   // it once this session) gets the flat settled view straight away.
   const show3D = !arrivedAlreadyRevealedRef.current && !played3DReveal && room.status !== "failed" && room.status !== "cancelled";
   const cardResult: GachaOpenResult | null = revealedCard ?? (room.nftMetadata ? { nftMetadata: room.nftMetadata, rarity: (room.rarity ?? "common") as GachaRarity } : null);
-  const showReadyGate = show3D && !!room.nftMetadata && !!detail.myParticipant && !autoOpen;
+  const showReadyGate = show3D && !!room.nftMetadata && !!detail.myParticipant && !isSpectator && !autoOpen;
   // Mascot lock-in is its own isolated screen — see the file header. Mascot is now picked BEFORE
   // joining (see /app/gacha/play), so this is dormant except for legacy/edge-case seats.
-  const isPicking = room.status === "waiting" && !!detail.myParticipant && !detail.myParticipant.mascotLocked;
+  const isPicking = room.status === "waiting" && !!detail.myParticipant && !isSpectator && !detail.myParticipant.mascotLocked;
   const myMascot = getMascot(detail.myParticipant?.mascotKey);
   const directJoinHref = room.isPrivate && inviteCode
     ? `/app/gacha/play?inviteCode=${encodeURIComponent(inviteCode)}`
@@ -786,6 +791,7 @@ export default function GachaRoomPage() {
         potUsdc={room.buybackAmountUsdc ?? 0}
         myVote={myVote}
         onVote={handleVote}
+        locked={room.voteLocked}
         spectating={isSpectator}
       />
     );
@@ -890,7 +896,7 @@ export default function GachaRoomPage() {
         potUsdc={room.buybackAmountUsdc ?? 0}
         exclusionCount={room.exclusionCount}
         finalVictims={finalVictims}
-        onContinue={() => { setRouletteActive(false); watchedRoulette(); }}
+        onContinue={() => { setRouletteActive(false); if (!isSpectator) watchedRoulette(); }}
       />
     );
   } else if (voteCutRouletteActive) {
@@ -903,7 +909,7 @@ export default function GachaRoomPage() {
         potUsdc={room.buybackAmountUsdc ?? 0}
         exclusionCount={1}
         finalVictims={voteCutFinalVictim}
-        onContinue={() => { setVoteCutRouletteActive(false); watchedRoulette(); }}
+        onContinue={() => { setVoteCutRouletteActive(false); if (!isSpectator) watchedRoulette(); }}
       />
     );
   } else if (room.status === "waiting") {
@@ -915,7 +921,9 @@ export default function GachaRoomPage() {
         titleGrad="ROOM"
         sub={statusCaption}
         footer={
-          !detail.myParticipant ? (
+          isSpectator ? (
+            <p className="pp-small" style={{ marginTop: 0 }}>watching this room live</p>
+          ) : !detail.myParticipant ? (
             <Link href={directJoinHref} className="pp-btn gold">
               JOIN FOR ${room.entryUsdc.toFixed(2)} →
             </Link>
@@ -960,6 +968,7 @@ export default function GachaRoomPage() {
         potUsdc={room.buybackAmountUsdc ?? 0}
         myVote={myVote}
         onVote={handleVote}
+        locked={room.voteLocked}
         spectating={isSpectator}
       />
     );
