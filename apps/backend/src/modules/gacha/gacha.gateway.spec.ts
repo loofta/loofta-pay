@@ -55,4 +55,11 @@ describe('GachaGateway spectator access', () => {
     expect(client.emit).not.toHaveBeenCalled();
     expect(broadcastEmit).not.toHaveBeenCalled();
   });
+
+  it('does not crash when a delayed viewer update runs after the socket adapter is torn down', () => {
+    const { gateway } = makeGateway(jest.fn());
+    (gateway as any).server = { to: jest.fn(() => ({ emit: jest.fn() })) };
+
+    expect(() => (gateway as any).emitViewerCount('public-room')).not.toThrow();
+  });
 });

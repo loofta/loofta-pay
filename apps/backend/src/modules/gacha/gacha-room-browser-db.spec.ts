@@ -28,7 +28,9 @@ describeDb('Gacha room browser database invariants', () => {
 
   afterAll(async () => {
     if (!db || !createdRoomIds.length) return;
+    await db.from('gacha_entry_refunds').delete().in('room_id', createdRoomIds);
     await db.from('gacha_room_participants').delete().in('room_id', createdRoomIds);
+    await db.from('gacha_room_departures').delete().in('room_id', createdRoomIds);
     await db.from('gacha_rooms').delete().in('id', createdRoomIds);
   });
 
@@ -111,5 +113,80 @@ describeDb('Gacha room browser database invariants', () => {
 
     expect(error).toBeNull();
     expect(data).toMatchObject({ id: roomId, is_private: false, status: 'waiting' });
+  });
+
+  it('reports refund metadata when the creator leaves as the only paid participant', async () => {
+    const ownerId = `${testRun}-refund-owner`;
+    const roomId = await createRoom(ownerId);
+    const paymentTxHash = `${testRun}-entry-payment`;
+    const { error: participantError } = await db.from('gacha_room_participants').insert({
+      room_id: roomId,
+      user_id: ownerId,
+      payment_tx_hash: paymentTxHash,
+    });
+    if (participantError) throw new Error(participantError.message);
+
+    const { data, error } = await db.rpc('gacha_leave_waiting_room', {
+      p_room_id: roomId,
+      p_user_id: ownerId,
+    });
+    if (error) throw new Error(error.message);
+
+    expect(data).toMatchObject({
+      roomId,
+      seatsFilled: 0,
+      roomCancelled: true,
+      entryRefunded: false,
+      entryRefundRequired: true,
+      refundPaymentTxHash: paymentTxHash,
+      refundAmountUsdc: 10,
+    });
+
+    const { data: room } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
+    const { data: participant } = await db.from('gacha_room_participants').select('id').eq('room_id', roomId).maybeSingle();
+    const { data: departure } = await db.from('gacha_room_departures').select('payment_tx_hash').eq('room_id', roomId).single();
+    expect(room?.status).toBe('cancelled');
+    expect(participant).toBeNull();
+    expect(departure?.payment_tx_hash).toBe(paymentTxHash);
+
+    // A retry returns the same metadata so the backend can resume an interrupted idempotent refund.
+    const retry = await db.rpc('gacha_leave_waiting_room', { p_room_id: roomId, p_user_id: ownerId });
+    expect(retry.error).toBeNull();
+    expect(retry.data).toMatchObject({
+      entryRefundRequired: true,
+      refundPaymentTxHash: paymentTxHash,
+    });
+  });
+
+  it('does not report an entry refund when another paid seat remains', async () => {
+    const ownerId = `${testRun}-shared-owner`;
+    const guestId = `${testRun}-shared-guest`;
+    const roomId = await createRoom(ownerId);
+    const { error: participantError } = await db.from('gacha_room_participants').insert([
+      { room_id: roomId, user_id: ownerId, payment_tx_hash: `${testRun}-owner-payment` },
+      { room_id: roomId, user_id: guestId, payment_tx_hash: `${testRun}-guest-payment` },
+    ]);
+    if (participantError) throw new Error(participantError.message);
+
+    const { data, error } = await db.rpc('gacha_leave_waiting_room', {
+      p_room_id: roomId,
+      p_user_id: ownerId,
+    });
+    if (error) throw new Error(error.message);
+
+    expect(data).toMatchObject({
+      roomId,
+      seatsFilled: 1,
+      roomCancelled: false,
+      entryRefunded: false,
+      entryRefundRequired: false,
+    });
+    expect(data.refundPaymentTxHash).toBeNull();
+    expect(data.refundAmountUsdc).toBeNull();
+
+    const { data: room } = await db.from('gacha_rooms').select('status').eq('id', roomId).single();
+    const { data: remaining } = await db.from('gacha_room_participants').select('user_id').eq('room_id', roomId).single();
+    expect(room?.status).toBe('waiting');
+    expect(remaining?.user_id).toBe(guestId);
   });
 });

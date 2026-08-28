@@ -30,6 +30,7 @@ import VoteRound from "@/components/VoteRound";
 import Mascot from "@/components/Mascot";
 import GachaCard from "@/components/GachaCard";
 import CardAttributesPanel from "@/components/CardAttributesPanel";
+import GachaTransactionProofs from "@/components/GachaTransactionProofs";
 import { Shell, Chip, money, GRAD_STYLE, type ChipPlayer } from "@/components/PackParty";
 import { getMascot } from "@/lib/mascots";
 import type { GachaOpenResult, GachaRarity, GachaNftAttribute } from "@/components/GachaPack3D";
@@ -67,14 +68,22 @@ interface RoomDetail {
     rarity: string | null;
     buybackAmountUsdc: number | null;
     bidWindowEndsAt: string | null;
+    purchaseTxSig: string | null;
+    openTxSig: string | null;
+    buybackTxSig: string | null;
+    nftTransferTxSig: string | null;
     createdAt: string;
     isPrivate: boolean;
   };
+  leaveRefundEligible: boolean;
   gate: { type: "card" | "roulette"; epoch: number; deadline: string | null; ackedSeats: number[]; requiredCount: number } | null;
   myParticipant: {
     seatNumber: number;
     payoutUsdc: number | null;
     payoutIsPrivate: boolean | null;
+    entryPaymentTxSig: string | null;
+    winningBidPaymentTxSig: string | null;
+    payoutTxSig: string | null;
     claimed: boolean;
     claimPending: boolean;
     mascotKey: string | null;
@@ -315,6 +324,15 @@ export default function GachaRoomPage() {
   const room = detail?.room;
   // `?spectate=1` is read-only even when this signed-in viewer also owns a seat.
   const isSpectator = !!detail && (requestedSpectator || !detail.myParticipant);
+  const transactionProofs = detail ? [
+    { label: "Your entry payment", signature: detail.myParticipant?.entryPaymentTxSig },
+    { label: "Your winning bid payment", signature: detail.myParticipant?.winningBidPaymentTxSig },
+    { label: "Pack purchase", signature: detail.room.purchaseTxSig },
+    { label: "Pack opening", signature: detail.room.openTxSig },
+    { label: "Collector buyback", signature: detail.room.buybackTxSig },
+    { label: "NFT transfer", signature: detail.room.nftTransferTxSig },
+    { label: "Your payout", signature: detail.myParticipant?.payoutTxSig },
+  ] : [];
   const hasPendingHumanVote =
     room?.status === "voting"
     && !room.voteLocked
@@ -563,7 +581,18 @@ export default function GachaRoomPage() {
       const payload = await res.json().catch(() => null);
       if (!res.ok) throw new Error(payload?.message ?? "Couldn't leave this room");
       setShowLeaveConfirm(false);
-      router.replace("/app/gacha/play");
+      if (payload?.entryRefunded && typeof payload.refundTxSig === "string") {
+        const proof = new URLSearchParams({
+          refundTxSig: payload.refundTxSig,
+          refundAmountUsdc: String(payload.refundAmountUsdc ?? ""),
+        });
+        if (typeof payload.entryPaymentTxSig === "string") {
+          proof.set("entryPaymentTxSig", payload.entryPaymentTxSig);
+        }
+        router.replace(`/app/gacha/play?${proof.toString()}`);
+      } else {
+        router.replace("/app/gacha/play");
+      }
     } catch (err: any) {
       setShowLeaveConfirm(false);
       setError(err?.message?.length < 200 ? err.message : "Couldn't leave this room — please try again.");
@@ -1003,12 +1032,15 @@ export default function GachaRoomPage() {
     <div className="relative min-h-screen">
       {chrome}
       {screen}
+      <GachaTransactionProofs proofs={transactionProofs} />
       <AlertDialog open={showLeaveConfirm} onOpenChange={(open) => { if (!leavingRoom) setShowLeaveConfirm(open); }}>
         <AlertDialogContent className="border-white/10 bg-[#0f0f12] text-white sm:max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle>Leave this {room.isPrivate ? "private" : "public"} room?</AlertDialogTitle>
             <AlertDialogDescription className="text-slate-300">
-              Your waiting seat will be released and you can choose another room. Your Devnet test entry is not refunded.
+              {detail.leaveRefundEligible
+                ? "You are the only paid player. This room will be cancelled and your Devnet test entry will be automatically refunded."
+                : "Your waiting seat will be released and you can choose another room. Your Devnet test entry is not refunded."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

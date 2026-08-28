@@ -161,6 +161,19 @@ bidding/settlement sweep remains `NODE_ENV=production`-only, preventing a local 
 racing the shared production deployment. Local dev tools still expose authenticated,
 non-production-only force-advance endpoints as recovery/debugging fallbacks.
 
+## On-chain transaction proofs
+
+Room detail responses expose the authenticated player's entry, legacy winning-bid, and payout
+signatures together with the room's pack-purchase, pack-opening, buyback, and NFT-transfer
+signatures. The frontend keeps every available signature in an expandable **On-chain proof**
+panel linked to Solscan Devnet.
+Creator-only cancellation and last-seat-race refund responses also return both the original entry
+payment and refund signatures, so the user can verify the full debit-and-refund pair.
+
+VRF currently records its request slot, randomness account, and fulfillment data rather than a
+transaction signature. Those values must be presented as a separate randomness-account proof if
+that audit surface is added; the UI does not invent a transaction link for it.
+
 ## Security and correctness invariants
 
 - The backend derives the Solana wallet from the authenticated Privy user; join callers cannot
@@ -175,8 +188,9 @@ non-production-only force-advance endpoints as recovery/debugging fallbacks.
 - Selecting a different room never silently redirects to an existing private/public seat. A
   participant may release that seat only while the room is non-full and still waiting; the
   atomic leave function archives its payment audit row, fills future seat-number gaps safely,
-  and cancels the room when its final participant leaves. Waiting-room leaves do not refund the
-  Devnet test entry.
+  and cancels the room when its final participant leaves. When the creator is the only paid
+  participant, cancelling the room returns that entry through the idempotent refund ledger;
+  other waiting-room leaves do not refund the Devnet test entry.
 - Private rooms are excluded from public room lists. Their random invite code is the bearer
   capability: room detail, payment preparation, and payment confirmation accept it (or an
   existing participant/creator) and otherwise return the same not-found response as an unknown

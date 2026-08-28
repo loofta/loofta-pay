@@ -159,7 +159,10 @@ export class GachaGateway implements OnGatewayInit, OnGatewayDisconnect {
   }
 
   private emitViewerCount(roomId: string): void {
-    const viewerCount = this.server?.sockets.adapter.rooms.get(roomId)?.size ?? 0;
+    // During dev hot-reloads/disconnect teardown the gateway can briefly retain a timer while
+    // Socket.IO's adapter is already gone. Viewer counts are best-effort and must never crash the
+    // whole backend in that window.
+    const viewerCount = this.server?.sockets?.adapter?.rooms?.get(roomId)?.size ?? 0;
     this.server?.to(roomId).emit('room:viewer_count', { viewerCount });
   }
 
