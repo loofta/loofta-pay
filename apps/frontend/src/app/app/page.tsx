@@ -142,6 +142,15 @@ export default function Home() {
     }
   }, [searchParams]);
 
+  // ?balance=topup|withdraw|history — lets an external link (marketing pages, docs) deep-link
+  // straight into BalanceModal on a specific tab, same event MinimalHeader's own CTAs use.
+  useEffect(() => {
+    const tab = searchParams.get("balance");
+    if (tab === "topup" || tab === "withdraw" || tab === "history") {
+      window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab } }));
+    }
+  }, [searchParams]);
+
   const setActiveTab = (tab: "send" | "receive") => {
     setActiveTabState(tab);
     if (typeof window !== "undefined") localStorage.setItem(HOME_TAB_KEY, tab);

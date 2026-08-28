@@ -42,8 +42,7 @@ export function Footer() {
               <li><a href={looftaXyz.checkout} className="text-slate-400 hover:text-white transition-colors">{t('checkout')}</a></li>
               <li><a href={looftaXyz.partners} className="text-slate-400 hover:text-white transition-colors">{t('partners')}</a></li>
               <li><a href="/payment-links" className="text-slate-400 hover:text-white transition-colors">Payment links</a></li>
-              <li><a href="/docs?p=api-key" className="text-slate-400 hover:text-white transition-colors">Developer</a></li>
-              <li><a href="/docs" className="text-slate-400 hover:text-white transition-colors">API Docs</a></li>
+              <li><a href="/docs" className="text-slate-400 hover:text-white transition-colors">Developer docs</a></li>
             </ul>
           </div>
 
@@ -51,6 +50,7 @@ export function Footer() {
           <div>
             <h4 className="text-white font-semibold mb-4">Learn</h4>
             <ul className="space-y-2">
+              <li><a href="/how-it-works" className="text-slate-400 hover:text-white transition-colors">How Loofta works</a></li>
               <li><a href="/guides/send-crypto-privately" className="text-slate-400 hover:text-white transition-colors">Send crypto privately</a></li>
               <li><a href="/usdc-to-ngn" className="text-slate-400 hover:text-white transition-colors">USDC to Naira rate</a></li>
               <li><a href="/dollar-to-naira-today" className="text-slate-400 hover:text-white transition-colors">Dollar to Naira today</a></li>

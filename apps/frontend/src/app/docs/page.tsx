@@ -63,7 +63,7 @@ function DocsBody() {
         {/* Sidebar */}
         <nav className="hidden md:block w-60 shrink-0 sticky top-24 self-start">
           <div className="mb-6">
-            <p className="text-base font-medium text-slate-300 uppercase tracking-wide mb-2">Loofta Pay API</p>
+            <p className="text-base font-medium text-slate-300 uppercase tracking-wide mb-2">Developer</p>
           </div>
           {DOCS_NAV.map((group) => (
             <div key={group.section} className="mb-6">
