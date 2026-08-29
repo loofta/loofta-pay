@@ -20,6 +20,26 @@ function Cta({ href, label }: { href: string; label: string }) {
   );
 }
 
+function ProviderChip({ logo, name }: { logo: string; name: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 pl-2 pr-3.5 py-1.5">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={logo} alt="" className="w-5 h-5 object-contain shrink-0" />
+      <span className="text-base font-medium text-slate-200">{name}</span>
+    </span>
+  );
+}
+
+function ProviderRow({ providers }: { providers: { logo: string; name: string }[] }) {
+  return (
+    <div className="flex flex-wrap gap-2 my-2">
+      {providers.map((p) => (
+        <ProviderChip key={p.name} logo={p.logo} name={p.name} />
+      ))}
+    </div>
+  );
+}
+
 function Card({ slug, title, body, onNavigate }: { slug: string; title: string; body: string; onNavigate: (slug: string) => void }) {
   return (
     <button
@@ -57,10 +77,16 @@ function Overview({ onNavigate }: { onNavigate: (slug: string) => void }) {
   );
 }
 
-function Page({ title, children }: { title: string; children: React.ReactNode }) {
+function Page({ title, logo, children }: { title: string; logo?: string; children: React.ReactNode }) {
   return (
     <article>
-      <h1 className="text-3xl font-medium text-slate-100 mb-6">{title}</h1>
+      <div className="flex items-center gap-3 mb-6">
+        {logo && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logo} alt="" className="w-9 h-9 object-contain shrink-0" />
+        )}
+        <h1 className="text-3xl font-medium text-slate-100">{title}</h1>
+      </div>
       <div className="flex flex-col gap-4 text-base text-slate-400 leading-relaxed [&_strong]:text-slate-200 [&_strong]:font-medium">
         {children}
       </div>
@@ -101,7 +127,24 @@ function GuideContent({ slug, onNavigate }: { slug: string; onNavigate: (slug: s
       return (
         <Page title="Deposit">
           <p>Top up your Loofta balance from any token on any supported chain — it bridges in and lands as USDC, ready to spend or send.</p>
+          <p>Or skip crypto entirely and fund it directly with fiat:</p>
+          <ProviderRow
+            providers={[
+              { logo: "/images/icons/moonpay-logo.svg", name: "MoonPay — card" },
+              { logo: "/images/icons/coinbase-logo.png", name: "Coinbase — card, bank" },
+              { logo: "/images/icons/paj-cash-logo.svg", name: "PAJ Cash — Naira" },
+            ]}
+          />
           <p>There's also a private deposit path for funding your balance without that top-up showing up as a plain public transfer.</p>
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 mt-2">
+            <p className="text-slate-200 font-medium text-base mb-1">Secured by passkeys, not a seed phrase</p>
+            <p>
+              Loofta's embedded wallet is unlocked with a <strong>passkey</strong> — Face ID, Touch ID, or your
+              device's screen lock — instead of a 12-word phrase you have to write down and could lose. It's
+              what confirms every deposit and payment you make. (This is also the security feature our Blink
+              rewards program was built to get people to set up.)
+            </p>
+          </div>
           <Cta href={`${APP_URL}?balance=topup`} label="Open balance" />
         </Page>
       );
@@ -109,6 +152,12 @@ function GuideContent({ slug, onNavigate }: { slug: string; onNavigate: (slug: s
       return (
         <Page title="Withdraw">
           <p>Cash out however fits — Loofta doesn't lock you into one rail:</p>
+          <ProviderRow
+            providers={[
+              { logo: "/images/icons/peer-logo.svg", name: "Peer Cash — USD" },
+              { logo: "/images/icons/paj-cash-logo.svg", name: "PAJ Cash — Naira" },
+            ]}
+          />
           <ul className="list-disc pl-5 space-y-2">
             <li>
               <strong>Peer Cash</strong> — a peer-to-peer off-ramp (built on Peer.xyz) that pays out straight to <strong>Venmo, Cash App, Revolut, or Zelle</strong>, in USD. No bank details to enter: just the username or handle for whichever app you use, and a real person on the other side of the network fills the order at the live rate, zero spread.
@@ -124,7 +173,7 @@ function GuideContent({ slug, onNavigate }: { slug: string; onNavigate: (slug: s
       );
     case "megapot":
       return (
-        <Page title="How Megapot works">
+        <Page title="How Megapot works" logo="/images/megapot/logo.svg">
           <p>Megapot is a lottery that runs on Base, playable from Solana — Loofta bridges your ticket purchase over automatically, so you never have to leave the app or hold ETH for gas.</p>
           <p>Draws happen <strong>daily</strong>. Buy a ticket publicly, or pay for it with a MagicBlock private transfer so the purchase itself isn't a plain public payment.</p>
           <p>Wins are tracked automatically — small wins can be played forward into another ticket, larger ones can be withdrawn.</p>
@@ -133,7 +182,7 @@ function GuideContent({ slug, onNavigate }: { slug: string; onNavigate: (slug: s
       );
     case "gift-tickets":
       return (
-        <Page title="Gift a ticket">
+        <Page title="Gift a ticket" logo="/images/megapot/logo.svg">
           <p>Send someone a Megapot ticket instead of cash — from the Megapot page directly, or by asking Terminal to gift one in chat.</p>
           <p>They get a claim link the same way any other payment works; claiming it enters the ticket in their name for the next draw.</p>
           <Cta href={`${APP_URL}/megapot`} label="Gift a ticket" />
