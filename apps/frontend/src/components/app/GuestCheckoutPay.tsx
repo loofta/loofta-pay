@@ -1,9 +1,10 @@
 "use client";
 
 /**
- * Checkout for someone with no Loofta account: "Pay with Loofta" triggers a real login (the
- * normal authenticated pay flow takes over once that resolves) — everything below that divider
- * never touches Privy at all. "USDC on Solana" is a plain transfer straight to the payment link's
+ * Two tabs: "Pay with Loofta" triggers a real login (the normal authenticated pay flow takes over
+ * once that resolves; a new visitor gets a Loofta account/embedded wallet the same way sign-in
+ * anywhere else in the app does — nothing checkout-specific about that part). "Pay as guest" never
+ * touches Privy at all. "USDC on Solana" is a plain transfer straight to the payment link's
  * own burner address (no swap, no vendor involved at all). "Any token" is NearIntentsAnyTokenOption
  * (components/app/NearIntentsCheckoutOption.tsx) — pick a token/chain via the same TokenCombobox
  * used everywhere else, connect a wallet matched to that chain for the refund address, and pay to
@@ -374,6 +375,15 @@ export function GuestCheckoutPay({
   const [emailTouched, setEmailTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const emailValid = isValidEmail(email);
+  // Two top-level ways to pay, as tabs instead of a button stacked above a divider. Defaults to
+  // whichever fits the visitor already: signed in -> Loofta tab, otherwise guest. If sign-in
+  // completes while the guest tab is open (the Loofta tab is the only thing that triggers
+  // onLogin, but authenticated can also flip from a session restore), jump back to the Loofta tab
+  // so the visitor isn't left looking at the guest options after they just signed in.
+  const [activeTab, setActiveTab] = useState<"loofta" | "guest">(() => (authenticated ? "loofta" : "guest"));
+  useEffect(() => {
+    if (authenticated) setActiveTab("loofta");
+  }, [authenticated]);
   // Only one payment-option panel open at a time — both live in the same 2-column grid row, so
   // showing both simultaneously would either overlap (each pinned to row 2) or push one tile onto
   // a third row depending on which expanded first. Keeping this exclusive keeps the QR/deposit
@@ -394,91 +404,113 @@ export function GuestCheckoutPay({
 
   return (
     <div className="space-y-4">
-      {authenticated ? (
+      <div className="grid grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1 [@media(prefers-color-scheme:dark)]:bg-white/5">
         <button
           type="button"
-          onClick={onPayWithLoofta}
-          className="w-full flex items-center justify-between gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-        >
-          <span>Pay now</span>
-          <span className="text-sm font-medium opacity-90">
-            Balance: {typeof looftaBalanceUSD === "number" ? `$${looftaBalanceUSD.toFixed(2)}` : "…"}
-          </span>
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={onLogin}
-          className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-        >
-          <LogIn className="w-4 h-4" /> Pay with Loofta
-        </button>
-      )}
-
-      <div className="flex items-center gap-3">
-        <div className="h-px flex-1 bg-gray-200 [@media(prefers-color-scheme:dark)]:bg-white/10" />
-        <span className="text-base text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500">or pay another way</span>
-        <div className="h-px flex-1 bg-gray-200 [@media(prefers-color-scheme:dark)]:bg-white/10" />
-      </div>
-
-      <div>
-        <label className="text-base text-gray-500 mb-1 block [@media(prefers-color-scheme:dark)]:text-slate-400">Email <span className="text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500">&middot; enter this first to unlock the options below</span></label>
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          onBlur={() => setEmailTouched(true)}
-          placeholder="you@example.com"
-          autoFocus
-          className={`w-full rounded-lg bg-white border px-3 py-2 text-base text-gray-900 outline-none [@media(prefers-color-scheme:dark)]:bg-black/20 [@media(prefers-color-scheme:dark)]:text-slate-100 ${
-            emailTouched && !emailValid ? "border-red-400 focus:border-red-500" : "border-gray-300 focus:border-orange-400 [@media(prefers-color-scheme:dark)]:border-white/20"
+          onClick={() => setActiveTab("loofta")}
+          className={`rounded-lg py-2 text-base font-medium transition-colors ${
+            activeTab === "loofta"
+              ? "bg-white text-gray-900 shadow-sm [@media(prefers-color-scheme:dark)]:bg-white/10 [@media(prefers-color-scheme:dark)]:text-slate-100"
+              : "text-gray-500 hover:text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-400 [@media(prefers-color-scheme:dark)]:hover:text-slate-200"
           }`}
-        />
-        {emailTouched && !emailValid && <p className="text-base text-red-600 mt-1 [@media(prefers-color-scheme:dark)]:text-red-400">Enter a valid email to continue.</p>}
+        >
+          Pay with Loofta
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("guest")}
+          className={`rounded-lg py-2 text-base font-medium transition-colors ${
+            activeTab === "guest"
+              ? "bg-white text-gray-900 shadow-sm [@media(prefers-color-scheme:dark)]:bg-white/10 [@media(prefers-color-scheme:dark)]:text-slate-100"
+              : "text-gray-500 hover:text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-400 [@media(prefers-color-scheme:dark)]:hover:text-slate-200"
+          }`}
+        >
+          Pay as guest
+        </button>
       </div>
 
-      {requiresPrivate ? (
-        <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
-          <VenetianMask className="h-4 w-4 shrink-0 text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-300" strokeWidth={1.75} />
-          <p className="text-sm text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-300">{PRIVATE_PAYMENT_ALL_PRIVATE_LINE}</p>
+      {activeTab === "loofta" ? (
+        <div className="space-y-2">
+          {authenticated ? (
+            <button
+              type="button"
+              onClick={onPayWithLoofta}
+              className="w-full flex items-center justify-between gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+            >
+              <span>Pay now</span>
+              <span className="text-sm font-medium opacity-90">
+                Balance: {typeof looftaBalanceUSD === "number" ? `$${looftaBalanceUSD.toFixed(2)}` : "…"}
+              </span>
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onLogin}
+                className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+              >
+                <LogIn className="w-4 h-4" /> Sign in to pay
+              </button>
+              <p className="text-base text-gray-400 text-center [@media(prefers-color-scheme:dark)]:text-slate-500">
+                New to Loofta? Signing in sets up your account automatically — no separate signup.
+              </p>
+            </>
+          )}
         </div>
-      ) : onTogglePrivateMode ? (
-        <IncognitoModeToggle checked={!!isPrivateMode} onCheckedChange={onTogglePrivateMode} light />
-      ) : null}
+      ) : (
+        <>
+          <div>
+            <label className="text-base text-gray-500 mb-1 block [@media(prefers-color-scheme:dark)]:text-slate-400">Email <span className="text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500">&middot; enter this first to unlock the options below</span></label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onBlur={() => setEmailTouched(true)}
+              placeholder="you@example.com"
+              autoFocus
+              className={`w-full rounded-lg bg-white border px-3 py-2 text-base text-gray-900 outline-none [@media(prefers-color-scheme:dark)]:bg-black/20 [@media(prefers-color-scheme:dark)]:text-slate-100 ${
+                emailTouched && !emailValid ? "border-red-400 focus:border-red-500" : "border-gray-300 focus:border-orange-400 [@media(prefers-color-scheme:dark)]:border-white/20"
+              }`}
+            />
+            {emailTouched && !emailValid && <p className="text-base text-red-600 mt-1 [@media(prefers-color-scheme:dark)]:text-red-400">Enter a valid email to continue.</p>}
+          </div>
 
-      <fieldset disabled={!emailValid} className="grid grid-cols-2 gap-2 disabled:opacity-50" onClick={() => !emailValid && setEmailTouched(true)}>
-        <UsdcSolanaOption
-          claimId={claimId}
-          burnerAddress={burnerAddress}
-          amountUsd={amountUsd}
-          email={email}
-          expanded={activeOption === "usdc"}
-          onToggle={() => setActiveOption((v) => (v === "usdc" ? null : "usdc"))}
-          onSettled={onSettled}
-          setError={setError}
-          isPrivateMode={effectivePrivate}
-        />
-        <NearIntentsAnyTokenOption
-          claimId={claimId}
-          amountUsd={amountUsd}
-          email={email}
-          expanded={activeOption === "any"}
-          onToggle={() => setActiveOption((v) => (v === "any" ? null : "any"))}
-          onSettled={onSettled}
-          setError={setError}
-          disabled={effectivePrivate}
-        />
-      </fieldset>
+          {requiresPrivate ? (
+            <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
+              <VenetianMask className="h-4 w-4 shrink-0 text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-300" strokeWidth={1.75} />
+              <p className="text-sm text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-300">{PRIVATE_PAYMENT_ALL_PRIVATE_LINE}</p>
+            </div>
+          ) : onTogglePrivateMode ? (
+            <IncognitoModeToggle checked={!!isPrivateMode} onCheckedChange={onTogglePrivateMode} light />
+          ) : null}
 
-      {error && <p className="text-base text-red-600 [@media(prefers-color-scheme:dark)]:text-red-400 text-center">{error}</p>}
+          <fieldset disabled={!emailValid} className="grid grid-cols-2 gap-2 disabled:opacity-50" onClick={() => !emailValid && setEmailTouched(true)}>
+            <UsdcSolanaOption
+              claimId={claimId}
+              burnerAddress={burnerAddress}
+              amountUsd={amountUsd}
+              email={email}
+              expanded={activeOption === "usdc"}
+              onToggle={() => setActiveOption((v) => (v === "usdc" ? null : "usdc"))}
+              onSettled={onSettled}
+              setError={setError}
+              isPrivateMode={effectivePrivate}
+            />
+            <NearIntentsAnyTokenOption
+              claimId={claimId}
+              amountUsd={amountUsd}
+              email={email}
+              expanded={activeOption === "any"}
+              onToggle={() => setActiveOption((v) => (v === "any" ? null : "any"))}
+              onSettled={onSettled}
+              setError={setError}
+              disabled={effectivePrivate}
+            />
+          </fieldset>
 
-      <div className="flex items-center justify-center gap-1.5 text-base text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500 pt-1">
-        <span className="leading-none">Powered by</span>
-        <span className="relative inline-block h-3 w-16 shrink-0">
-          <Image src="/loofta.svg" alt="Loofta" fill className="object-contain object-left [@media(prefers-color-scheme:dark)]:hidden" />
-          <Image src="/loofta-white.svg" alt="Loofta" fill className="hidden object-contain object-left [@media(prefers-color-scheme:dark)]:block" />
-        </span>
-      </div>
+          {error && <p className="text-base text-red-600 [@media(prefers-color-scheme:dark)]:text-red-400 text-center">{error}</p>}
+        </>
+      )}
     </div>
   );
 }

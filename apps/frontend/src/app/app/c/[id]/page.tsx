@@ -45,7 +45,6 @@ import { GuestCheckoutPay } from "@/components/app/GuestCheckoutPay";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock, ShoppingBag } from "lucide-react";
-import { PaymentStatusTracker } from "@/components/PaymentStatusTracker";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -975,6 +974,50 @@ function ClaimDescriptionMessageBox({ description }: { description?: string | nu
 /** Small logo + name row marking a direction="from_recipient" claim as a merchant payment on the
  *  recipient's own incoming-payment views (already-received cards, claim panel) — same branding
  *  data the payer-side receipt view and checkout header already use, just for the other side. */
+// A plain 3-row step list for tracking a NEAR Intents deposit — same spirit as BalanceModal's
+// ProgressSteps (icon + label, no per-row countdown, no card-list theatrics), used in place of
+// PaymentStatusTracker on the deposit-tracking view below. PaymentStatusTracker's own per-step
+// time estimates and animated character read as clutter once the mascot/progress-bar wrapper
+// around it is gone, so this replaces it there rather than sitting inside that removed wrapper.
+function DepositProgressSteps({ status }: { status: string | null }) {
+  const s = String(status || "PENDING_DEPOSIT").toUpperCase();
+  const isWaiting = s === "PENDING_DEPOSIT" || s === "INCOMPLETE_DEPOSIT" || !status;
+  const isProcessing = s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX";
+  const isSent = s === "SUCCESS";
+
+  const steps: { label: string; state: "done" | "active" | "pending" }[] = [
+    { label: "Send deposit", state: isWaiting ? "active" : "done" },
+    { label: "Processing", state: isProcessing ? "active" : isWaiting ? "pending" : "done" },
+    { label: "Sent to recipient", state: isSent ? "done" : "pending" },
+  ];
+
+  return (
+    <div className="space-y-2">
+      {steps.map((step, i) => (
+        <div
+          key={step.label}
+          className="flex items-center gap-3 rounded-xl border p-3 border-gray-200 bg-white [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5"
+        >
+          <div className="shrink-0 w-6 h-6 flex items-center justify-center">
+            {step.state === "done" ? (
+              <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+            ) : step.state === "active" ? (
+              <Loader2 className="h-5 w-5 text-orange-500 animate-spin" />
+            ) : (
+              <span className="w-5 h-5 rounded-full border-2 border-gray-300 [@media(prefers-color-scheme:dark)]:border-white/20 flex items-center justify-center text-xs font-bold text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500">
+                {i + 1}
+              </span>
+            )}
+          </div>
+          <p className={`text-base font-medium ${step.state === "pending" ? "text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500" : "text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100"}`}>
+            {step.label}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function MerchantPaymentBadge({
   claim,
 }: {
@@ -3273,11 +3316,16 @@ export function ClaimPayView({
 
   // Hydrate from latest-intent cache (skip if user manually cancelled)
   useEffect(() => {
-    // Don't re-hydrate if user cancelled
+    // Don't re-hydrate if user cancelled this session (userCancelled.current) — or, surviving a
+    // refresh where that ref has already reset, if this exact intent's deposit address is the one
+    // they cancelled (see the "Cancel & choose a different token" button, which persists it to
+    // dismissedDepositAddress precisely so a reload can't resurrect the intent it just dismissed).
     if (userCancelled.current) return;
 
     const d: any = latestIntentData;
     if (!d) return;
+    const dismissedAddr = useClaimPayStore.getState().byId[id]?.dismissedDepositAddress;
+    if (dismissedAddr && d?.depositAddress === dismissedAddr) return;
     // Set deposit if we have a depositAddress and haven't set it yet
     if (d?.depositAddress && !deposit) {
       const dep = {
@@ -3334,6 +3382,13 @@ export function ClaimPayView({
     const isTerminalStatus = ["SUCCESS", "FAILED", "REFUNDED"].includes(mappedStatus);
     const claimInProgress = ["PENDING_DEPOSIT", "IN_FLIGHT", "PRIVATE_TRANSFER_PENDING"].includes(mappedStatus);
     const showingStaleFailure = status === "FAILED" || status === "REFUNDED";
+    // A cancelled deposit is still PENDING_DEPOSIT server-side (Cancel only clears local/persisted
+    // UI state, not the backend intent) — without this, a refresh would sync that status straight
+    // back in even with the deposit-address hydration above suppressed, since this effect reacts
+    // to claim.status directly and has no address of its own to compare against.
+    const dismissedAnyDeposit = !!useClaimPayStore.getState().byId[id]?.dismissedDepositAddress;
+    const isDismissiblePending = mappedStatus === "PENDING_DEPOSIT" || mappedStatus === "INCOMPLETE_DEPOSIT";
+    if (dismissedAnyDeposit && isDismissiblePending && !status) return;
     const shouldSync =
       (!status || mappedStatus === "SUCCESS" || mappedStatus === "PRIVATE_TRANSFER_PENDING" || isTerminalStatus || (claimInProgress && showingStaleFailure))
       && mappedStatus !== "PENDING"
@@ -5941,30 +5996,39 @@ export function ClaimPayView({
                         Demo Mode - Payments Disabled
                       </Button>
                     ) : showGuestCheckout && claim?.claim_burner_address ? (
-                      <div className="w-full rounded-2xl p-5 bg-white border border-gray-200 shadow-sm [@media(prefers-color-scheme:dark)]:bg-[#17171b] [@media(prefers-color-scheme:dark)]:border-white/10">
-                        <GuestCheckoutPay
-                          claimId={id}
-                          burnerAddress={claim.claim_burner_address}
-                          amountUsd={claimAmountUSD}
-                          onLogin={handleCheckoutLogin}
-                          authenticated={checkoutAuthenticated}
-                          looftaBalanceUSD={checkoutAuthenticated ? looftaBalanceUSD : undefined}
-                          onPayWithLoofta={handlePayWithLooftaBalance}
-                          isPrivateMode={isPrivateMode}
-                          onTogglePrivateMode={handleTogglePrivateMode}
-                          requiresPrivate={requiresPrivate}
-                          onSettled={() => {
-                            // Not "SUCCESS" — a guest payment always lands in the burner, never the
-                            // recipient's real wallet, so it still needs an explicit claim. Setting
-                            // SUCCESS here unconditionally used to re-poison the local + persisted
-                            // status back to "done, nothing to claim" on every settlement, regardless
-                            // of what the PATCH request actually told the server (see
-                            // confirmClaimPaid in GuestCheckoutPay.tsx).
-                            setStatus("PRIVATE_TRANSFER_PENDING");
-                            useClaimPayStore.getState().setStatus(id, "PRIVATE_TRANSFER_PENDING");
-                            claimQuery.refetch();
-                          }}
-                        />
+                      <div className="w-full flex flex-col gap-2">
+                        <div className="w-full rounded-2xl p-5 bg-white border border-gray-200 shadow-sm [@media(prefers-color-scheme:dark)]:bg-[#17171b] [@media(prefers-color-scheme:dark)]:border-white/10">
+                          <GuestCheckoutPay
+                            claimId={id}
+                            burnerAddress={claim.claim_burner_address}
+                            amountUsd={claimAmountUSD}
+                            onLogin={handleCheckoutLogin}
+                            authenticated={checkoutAuthenticated}
+                            looftaBalanceUSD={checkoutAuthenticated ? looftaBalanceUSD : undefined}
+                            onPayWithLoofta={handlePayWithLooftaBalance}
+                            isPrivateMode={isPrivateMode}
+                            onTogglePrivateMode={handleTogglePrivateMode}
+                            requiresPrivate={requiresPrivate}
+                            onSettled={() => {
+                              // Not "SUCCESS" — a guest payment always lands in the burner, never the
+                              // recipient's real wallet, so it still needs an explicit claim. Setting
+                              // SUCCESS here unconditionally used to re-poison the local + persisted
+                              // status back to "done, nothing to claim" on every settlement, regardless
+                              // of what the PATCH request actually told the server (see
+                              // confirmClaimPaid in GuestCheckoutPay.tsx).
+                              setStatus("PRIVATE_TRANSFER_PENDING");
+                              useClaimPayStore.getState().setStatus(id, "PRIVATE_TRANSFER_PENDING");
+                              claimQuery.refetch();
+                            }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-center gap-1.5 text-base text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500 pt-2">
+                          <span className="leading-none">Powered by</span>
+                          <span className="relative inline-block h-3 w-16 shrink-0">
+                            <Image src="/loofta.svg" alt="Loofta" fill className="object-contain object-left [@media(prefers-color-scheme:dark)]:hidden" />
+                            <Image src="/loofta-white.svg" alt="Loofta" fill className="hidden object-contain object-left [@media(prefers-color-scheme:dark)]:block" />
+                          </span>
+                        </div>
                       </div>
                     ) : (
                       <GradientActionButton
@@ -6010,15 +6074,15 @@ export function ClaimPayView({
                   // If expired, show expired message
                   if (isExpired) {
                     return (
-                      <div className="mt-6 text-center py-12">
+                      <div className="mt-6 text-center py-12 rounded-2xl border border-gray-200 bg-white shadow-sm [@media(prefers-color-scheme:dark)]:bg-[#17171b] [@media(prefers-color-scheme:dark)]:border-white/10">
                         <div className="mb-4 text-6xl">🔗</div>
-                        <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                        <h3 className="text-2xl font-semibold text-gray-900 mb-2 [@media(prefers-color-scheme:dark)]:text-slate-100">
                           Payment Link Expired
                         </h3>
-                        <p className="text-gray-600 text-base mb-4">
+                        <p className="text-gray-600 text-base mb-4 [@media(prefers-color-scheme:dark)]:text-slate-400">
                           This payment link has expired. The deadline was {deposit.deadline ? formatUTCTimestamp(deposit.deadline) : 'not set'}.
                         </p>
-                        <p className="text-base md:text-sm text-gray-500">
+                        <p className="text-base md:text-sm text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-500">
                           Please request a new payment link from the sender.
                         </p>
                       </div>
@@ -6051,26 +6115,7 @@ export function ClaimPayView({
                     return (
                       <>
                         <div className="mt-6">
-                          <PaymentStatusTracker
-                            status={status}
-                            statusData={statusData}
-                            depositReceivedAt={latestIntentData?.depositReceivedAt || statusData?.updatedAt}
-                            startedAt={deposit?.deadline ? new Date(deposit.deadline).toISOString() : undefined}
-                            fromChain={selectedFrom?.chain}
-                            toChain={destToken?.chain}
-                            depositAddress={depositAddr}
-                            timeEstimate={timeEstimate}
-                            paymentType={
-                              deposit?.isDirect ? 'direct' :
-                                deposit?.isCompanionSwap ? 'companion-swap' :
-                                  'near-intent'
-                            }
-                            isPrivate={claim?.is_private === true || privatePayActive}
-                            isLooftaPay={
-                              claim?.paid_with_token?.toUpperCase() === "USDC" &&
-                              (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
-                            }
-                          />
+                          <DepositProgressSteps status={status} />
                         </div>
                         <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
                           <div className="text-lg font-semibold text-slate-200 mb-2">Payment summary</div>
@@ -6112,11 +6157,11 @@ export function ClaimPayView({
                       {depositAddr ? (
                         <>
                           {/* Amount to Pay - AT THE TOP */}
-                          <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
-                            <div className="text-base text-gray-700 space-y-2">
+                          <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 p-4 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
+                            <div className="text-base text-gray-700 space-y-2 [@media(prefers-color-scheme:dark)]:text-slate-300">
                               <div className="flex items-center justify-between">
-                                <span className="text-gray-600">Amount to pay</span>
-                                <span className="text-lg font-medium text-gray-900 inline-flex items-center gap-2">
+                                <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Amount to pay</span>
+                                <span className="text-lg font-medium text-gray-900 inline-flex items-center gap-2 [@media(prefers-color-scheme:dark)]:text-slate-100">
                                   <TokenIcon
                                     token={(selectedFrom as any) ?? (destToken as any) ?? undefined}
                                     chain={(selectedFrom?.chain as any) ?? (destToken?.chain as any)}
@@ -6131,7 +6176,7 @@ export function ClaimPayView({
                                   </span>
                                   <button
                                     type="button"
-                                    className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors ml-2"
+                                    className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors ml-2 [@media(prefers-color-scheme:dark)]:border-white/20 [@media(prefers-color-scheme:dark)]:bg-white/10 [@media(prefers-color-scheme:dark)]:text-slate-300 [@media(prefers-color-scheme:dark)]:hover:bg-white/20"
                                     onClick={async () => {
                                       try {
                                         const amountToCopy = amountToSend && selectedFrom
@@ -6154,14 +6199,14 @@ export function ClaimPayView({
                                 </span>
                               </div>
                               <div className="flex items-center justify-between">
-                                <span className="text-gray-600">Deposit address</span>
-                                <span className="text-lg font-medium text-gray-900 inline-flex items-center gap-2">
+                                <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Deposit address</span>
+                                <span className="text-lg font-medium text-gray-900 inline-flex items-center gap-2 [@media(prefers-color-scheme:dark)]:text-slate-100">
                                   <span className="font-display  text-base md:text-sm break-all">
                                     {depositAddr}
                                   </span>
                                   <button
                                     type="button"
-                                    className="inline-flex items-center justify-center w-8 h-8 rounded-md  border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors ml-2"
+                                    className="inline-flex items-center justify-center w-8 h-8 rounded-md  border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors ml-2 [@media(prefers-color-scheme:dark)]:border-white/20 [@media(prefers-color-scheme:dark)]:bg-white/10 [@media(prefers-color-scheme:dark)]:text-slate-300 [@media(prefers-color-scheme:dark)]:hover:bg-white/20"
                                     onClick={async () => {
                                       try {
                                         await navigator.clipboard.writeText(depositAddr);
@@ -6247,152 +6292,31 @@ export function ClaimPayView({
                             ) : null}
                           </div>
 
-                          {/* Animated Character and Status Message - ABOVE QR CODE */}
-                          {(() => {
-                            const s = String(status || "PENDING_DEPOSIT").toUpperCase();
-                            let statusTitle = "Waiting for Deposit";
-                            let statusSubtitle: string | React.ReactNode = "Send the exact amount to the deposit address shown above.";
-                            const isProcessing = s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX" || s === "PRIVATE_TRANSFER_PENDING";
-                            const isSuccess = s === "SUCCESS";
-                            const isWaiting = s === "PENDING_DEPOSIT" || !status;
-
-                            if (s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX") {
-                              statusTitle = "Route & swapping";
-                              statusSubtitle = "We're routing your funds and executing the swap. This usually takes 1-2 minutes.";
-                            } else if (s === "PRIVATE_TRANSFER_PENDING") {
-                              statusTitle = "Performing private deposit";
-                              statusSubtitle = "Funds are in your wallet. Complete the private transfer to the recipient using the button below.";
-                            } else if (s === "INCOMPLETE_DEPOSIT") {
-                              statusTitle = "Incomplete Deposit";
-                              statusSubtitle = "Please send the remaining amount to complete your payment.";
-                            } else if (s === "SUCCESS") {
-                              statusTitle = "Payment Complete! 🎉";
-                              statusSubtitle = "Your funds have been successfully sent to the recipient.";
-                            } else if (s === "REFUNDED") {
-                              statusTitle = "Payment Refunded";
-                              statusSubtitle = "Your deposit has been refunded. Please check your wallet.";
-                            } else if (s === "FAILED") {
-                              statusTitle = "Payment Failed";
-                              statusSubtitle = "The payment could not be completed. Your funds may be refunded.";
-                            }
-
-                            // For PENDING_DEPOSIT, add important info and speed up link to subtitle
-                            if (isWaiting && !deposit?.isCompanionSwap && !deposit?.isDirect) {
-                              statusSubtitle = (
-                                <>
-                                  Send the exact amount to the deposit address shown above.
-                                  <br />
-                                  <span className="text-base font-medium block">Only deposit {selectedFrom?.symbol} from {String(selectedFrom?.chain || "").toUpperCase()} network.</span>
-                                  {!speedUpOpen && (
-                                    <>
-                                      <br />
-                                      <button
-                                        type="button"
-                                        className="text-base md:text-sm text-gray-600 hover:text-gray-900 underline mt-1"
-                                        onClick={() => setSpeedUpOpen(true)}
-                                      >
-                                        Already deposited? Speed up processing
-                                      </button>
-                                    </>
-                                  )}
-                                </>
-                              );
-                            }
-
-                            return (
-                              <div className="mb-6 mt-6 text-center">
-                                {/* Animated Character */}
-                                <div className="mb-4 flex justify-center">
-                                  {isProcessing ? (
-                                    <motion.div
-                                      animate={{ rotate: [0, 10, -10, 10, -10, 0] }}
-                                      transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                                      className="text-6xl"
-                                    >
-                                      ⚡
-                                    </motion.div>
-                                  ) : isSuccess ? (
-                                    <motion.div
-                                      initial={{ scale: 0 }}
-                                      animate={{ scale: [0, 1.2, 1] }}
-                                      transition={{ duration: 0.5 }}
-                                      className="text-6xl"
-                                    >
-                                      🎉
-                                    </motion.div>
-                                  ) : isWaiting ? (
-                                    <motion.div
-                                      animate={{ y: [0, -10, 0] }}
-                                      transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                                      className="text-6xl"
-                                    >
-                                      💳
-                                    </motion.div>
-                                  ) : (
-                                    <div className="text-6xl">💳</div>
-                                  )}
-                                </div>
-
-                                {/* Status Message */}
-                                <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-                                  {statusTitle}
-                                </h3>
-                                <div className="text-gray-600 text-base">
-                                  {typeof statusSubtitle === 'string' ? statusSubtitle : statusSubtitle}
-                                </div>
-                              </div>
-                            );
-                          })()}
-
-                          {/* Progress Bar and Step Counter - BELOW QR CODE */}
-                          {(() => {
-                            // Calculate steps and progress based on status
-                            const s = String(status || "PENDING_DEPOSIT").toUpperCase();
-                            let completedSteps = 0;
-                            const totalSteps = 5; // deposit, routing, processing, private deposit, success
-
-                            if (s === 'SUCCESS') {
-                              completedSteps = 5;
-                            } else if (s === 'PRIVATE_TRANSFER_PENDING') {
-                              completedSteps = 3; // Route done, performing private deposit step
-                            } else if (s === 'PROCESSING' || s === 'KNOWN_DEPOSIT_TX') {
-                              completedSteps = 1; // Deposit completed, routing active
-                            } else if (s === 'INCOMPLETE_DEPOSIT') {
-                              completedSteps = 0; // Deposit active but incomplete
-                            } else {
-                              completedSteps = 0; // PENDING_DEPOSIT
-                            }
-
-                            const progress = (completedSteps / (totalSteps - 1)) * 100; // -1 because success step doesn't count
-
-                            return (
-                              <div className="mb-6">
-                                {/* Progress Bar */}
-                                <div className="mb-2">
-                                  <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                    <motion.div
-                                      initial={{ width: 0 }}
-                                      animate={{ width: `${progress}%` }}
-                                      transition={{ duration: 0.5, ease: 'easeOut' }}
-                                      className="h-full rounded-full"
-                                      style={{ background: 'linear-gradient(to right, #FF0F00, #EAB308)' }}
-                                    />
-                                  </div>
-                                </div>
-                                {/* Step Counter */}
-                                <div className="text-center text-base md:text-sm text-gray-500">
-                                  Step {completedSteps} of {totalSteps - 1}
-                                </div>
-                              </div>
-                            );
-                          })()}
-
-                          {/* PRIVATE_TRANSFER_PENDING */}
-                          {String(status || "").toUpperCase() === "PRIVATE_TRANSFER_PENDING" && claim?.is_private && (
-                            <div className="mb-6 p-4 rounded-xl border-2 border-amber-200 bg-amber-50">
-                              <p className="text-base md:text-sm text-amber-900">
-                                Processing private transfer…
+                          {/* Status line — one plain line, no mascot/progress-bar duplication.
+                              DepositProgressSteps below is the single place progress is shown;
+                              PROCESSING/KNOWN_DEPOSIT_TX/SUCCESS/FAILED/REFUNDED already return
+                              earlier in this switch, so only PENDING_DEPOSIT, INCOMPLETE_DEPOSIT,
+                              and PRIVATE_TRANSFER_PENDING are ever reachable here. */}
+                          {String(status || "").toUpperCase() === "PRIVATE_TRANSFER_PENDING" && claim?.is_private ? (
+                            <div className="mb-6 p-4 rounded-xl border-2 border-amber-200 bg-amber-50 [@media(prefers-color-scheme:dark)]:border-amber-500/30 [@media(prefers-color-scheme:dark)]:bg-amber-500/10">
+                              <p className="text-base font-medium text-amber-900 [@media(prefers-color-scheme:dark)]:text-amber-200">Complete your private transfer</p>
+                              <p className="text-base text-amber-900/80 mt-1 [@media(prefers-color-scheme:dark)]:text-amber-200/70">Funds are in your wallet — finish the private transfer to the recipient using the button below.</p>
+                            </div>
+                          ) : !deposit?.isCompanionSwap && !deposit?.isDirect && (
+                            <div className="mb-6 flex items-center justify-between gap-3">
+                              <p className="text-base text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">
+                                Send the exact amount above to the deposit address, from{" "}
+                                <span className="font-medium text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-200">{String(selectedFrom?.chain || "").toUpperCase()}</span> only.
                               </p>
+                              {!speedUpOpen && (
+                                <button
+                                  type="button"
+                                  className="shrink-0 text-base text-gray-600 hover:text-gray-900 underline [@media(prefers-color-scheme:dark)]:text-slate-400 [@media(prefers-color-scheme:dark)]:hover:text-slate-100"
+                                  onClick={() => setSpeedUpOpen(true)}
+                                >
+                                  Already deposited?
+                                </button>
+                              )}
                             </div>
                           )}
 
@@ -6419,26 +6343,7 @@ export function ClaimPayView({
 
                           {/* Timeline/Steps - BELOW PROGRESS BAR */}
                           <div className="mb-6">
-                            <PaymentStatusTracker
-                              status={status || "PENDING_DEPOSIT"}
-                              statusData={statusData}
-                              depositReceivedAt={latestIntentData?.depositReceivedAt || (status === "PROCESSING" ? statusData?.updatedAt : null)}
-                              startedAt={deposit?.deadline ? new Date(deposit.deadline).toISOString() : undefined}
-                              fromChain={selectedFrom?.chain}
-                              toChain={destToken?.chain}
-                              depositAddress={depositAddr}
-                              timeEstimate={timeEstimate}
-                              paymentType={
-                                deposit?.isDirect ? 'direct' :
-                                  deposit?.isCompanionSwap ? 'companion-swap' :
-                                    'near-intent'
-                              }
-                              isPrivate={claim?.is_private === true || privatePayActive}
-                              isLooftaPay={
-                                claim?.paid_with_token?.toUpperCase() === "USDC" &&
-                                (claim?.paid_with_chain?.toLowerCase() === "solana" || claim?.paid_with_chain?.toLowerCase() === "sol")
-                              }
-                            />
+                            <DepositProgressSteps status={status || "PENDING_DEPOSIT"} />
                           </div>
 
                           {/* Cancel/Change Token Button - AT THE BOTTOM */}
@@ -6454,11 +6359,20 @@ export function ClaimPayView({
                                 setRefundAddressError(null);
                                 userCancelled.current = true;
                                 useClaimPayStore.getState().clear(id);
+                                // userCancelled is a ref — it resets on the next page load, so
+                                // without this a refresh re-fetches latestIntentData, still finds
+                                // this same still-pending intent server-side, and the hydration
+                                // effect above resurrects the exact view Cancel just dismissed.
+                                // Persisting the dismissed address (not a blanket flag) means a
+                                // genuinely new deposit attempt for this claim can still hydrate.
+                                if (depositAddr) {
+                                  useClaimPayStore.getState().setDismissedDepositAddress(id, depositAddr);
+                                }
                                 toast({ title: "Cancelled", description: "You can now choose a different token." });
                               }}
-                              className="text-base md:text-sm"
+                              className="text-base md:text-sm bg-white border-gray-300 text-gray-700 hover:bg-gray-50 [@media(prefers-color-scheme:dark)]:bg-white/5 [@media(prefers-color-scheme:dark)]:border-white/20 [@media(prefers-color-scheme:dark)]:text-slate-200 [@media(prefers-color-scheme:dark)]:hover:bg-white/10"
                             >
-                              Cancel & Choose Different Token
+                              Cancel & choose a different token
                             </Button>
                           </div>
                         </>
