@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 
 const CAMPAIGN_START = new Date('2026-07-07T15:00:00.000Z'); // Jul 7 2026, 5pm CET
-const CAMPAIGN_END = new Date('2026-08-31T00:00:00.000Z'); // through Aug 30 2026
+const CAMPAIGN_END = new Date('2026-09-30T00:00:00.000Z'); // through Aug 30 2026
 
 const REQUIRED_TICKETS = 5;
 const PRIZE_POOL_USD = 1000;
