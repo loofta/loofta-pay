@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
 
 import { usePrivy, useUser, useWallets, useLinkAccount, useUnlinkOAuth, useUnlinkEmail } from "@privy-io/react-auth";
 import { useExportWallet } from "@privy-io/react-auth/solana";
@@ -12,16 +11,7 @@ import { createPortal } from "react-dom";
 import { useAuthStore } from "@/store/auth";
 import { TIERS, getTierForVolume } from "@/lib/tiers";
 import { useToast } from "@/components/ui/use-toast";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Wallet, Info } from "lucide-react";
+import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Wallet, Info, KeyRound } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { ChangeUsernameModal } from "@/components/ChangeUsernameModal";
@@ -200,7 +190,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [linkCopied, setLinkCopied] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showWalletModal, setShowWalletModal] = useState(false);
-  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportingWallet, setExportingWallet] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showRotateConfirm, setShowRotateConfirm] = useState(false);
   const [rotateState, setRotateState] = useState<"idle" | "loading" | "done" | "error">("idle");
@@ -210,7 +200,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   useEffect(() => {
     setIsLocalhost(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
   }, []);
-  const [exportedPrivateKey, setExportedPrivateKey] = useState<string | null>(null);
   const [updatingToTwitter, setUpdatingToTwitter] = useState(false);
   const [twitterLinkedOptimistic, setTwitterLinkedOptimistic] = useState(false);
   const [linkingMethod, setLinkingMethod] = useState<"twitter" | "email" | "discord" | "github" | null>(null);
@@ -310,6 +299,21 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const { wallets } = useWallets();
   const { toast } = useToast();
   const { balanceUSD } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated === true });
+
+  const handleExportWallet = async () => {
+    if (!walletAddress) {
+      toast({ variant: "destructive", title: t('exportWalletUnavailable') });
+      return;
+    }
+    setExportingWallet(true);
+    try {
+      await exportWallet({ address: walletAddress });
+    } catch {
+      // User closed Privy's export modal or export failed — nothing to surface.
+    } finally {
+      setExportingWallet(false);
+    }
+  };
 
   const linkedAccounts = (privyUser?.linkedAccounts || []) as Array<{ type?: string; username?: string; name?: string; address?: string; subject?: string }>;
   const hasTwitter = linkedAccounts.some((a) => a.type && TWITTER_TYPES.includes(a.type as any));
@@ -1819,6 +1823,20 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                               {t('viewOnSolscan')}
                             </button>
 
+                            <button
+                              type="button"
+                              disabled={exportingWallet}
+                              onClick={handleExportWallet}
+                              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-base text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors disabled:opacity-50"
+                            >
+                              {exportingWallet ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <KeyRound className="w-3.5 h-3.5" />
+                              )}
+                              {exportingWallet ? t('exportingWallet') : t('exportWallet')}
+                            </button>
+
                             {walletAddress && isLocalhost && (
                               <div className="flex items-center justify-between gap-3 pt-2 border-t border-white/[0.06]">
                                 <div>
@@ -1883,74 +1901,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
           if (twitterUsername !== null) setTwitterUsername(twitterUsername);
         }}
       />
-
-      {/* Export Wallet Modal */}
-      <Dialog open={showExportModal} onOpenChange={setShowExportModal}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Export Private Key</DialogTitle>
-            <DialogDescription>
-              ⚠️ Keep your private key secure. Anyone with access to this key can control your wallet.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            {exportedPrivateKey ? (
-              <>
-                <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                  <Label className="text-base md:text-sm font-medium mb-2 block">Your Private Key:</Label>
-                  <div className="flex items-center gap-2">
-                    <code className="flex-1 text-sm font-mono break-all p-2 bg-white dark:bg-gray-800 rounded border">
-                      {exportedPrivateKey}
-                    </code>
-                    <button
-                      onClick={() => {
-                        copyToClipboard(exportedPrivateKey, false);
-                        toast({
-                          title: "Copied!",
-                          description: "Private key copied to clipboard.",
-                        });
-                      }}
-                      className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
-                  <p className="text-base md:text-sm text-red-800 dark:text-red-200">
-                    <strong>Warning:</strong> Never share this private key with anyone. Store it securely and never store it in plain text online.
-                  </p>
-                </div>
-              </>
-            ) : (
-              <div className="text-center py-4">
-                <p className="text-base md:text-sm text-gray-600 dark:text-gray-400">Loading private key...</p>
-              </div>
-            )}
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowExportModal(false);
-                setExportedPrivateKey(null);
-              }}
-            >
-              Close
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
     </div>
   );
