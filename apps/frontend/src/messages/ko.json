@@ -373,6 +373,9 @@
     "clickToHide": "클릭하여 줄인 버전 보기",
     "clickToCopy": "전체 복사하려면 주소를 클릭",
     "viewOnSolscan": "Solscan에서 보기",
+    "exportWallet": "지갑 내보내기",
+    "exportingWallet": "내보내기 여는 중…",
+    "exportWalletUnavailable": "이 지갑은 내보내기를 사용할 수 없습니다.",
     "loadingWallet": "지갑 로딩 중...",
     "walletAutoCreated": "필요할 때 지갑이 자동으로 생성됩니다."
   },

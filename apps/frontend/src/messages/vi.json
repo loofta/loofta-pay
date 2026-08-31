@@ -373,6 +373,9 @@
     "clickToHide": "Nhấp để hiển thị rút gọn",
     "clickToCopy": "Nhấp vào địa chỉ để sao chép đầy đủ",
     "viewOnSolscan": "Xem trên Solscan",
+    "exportWallet": "Xuất ví",
+    "exportingWallet": "Đang mở xuất ví…",
+    "exportWalletUnavailable": "Không thể xuất ví này.",
     "loadingWallet": "Đang tải ví...",
     "walletAutoCreated": "Ví sẽ được tạo tự động khi cần."
   },

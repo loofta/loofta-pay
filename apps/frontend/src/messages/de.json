@@ -373,6 +373,9 @@
     "clickToHide": "Klicken zum Anzeigen der Kurzform",
     "clickToCopy": "Adresse klicken, um vollständig zu kopieren",
     "viewOnSolscan": "Auf Solscan anzeigen",
+    "exportWallet": "Wallet exportieren",
+    "exportingWallet": "Export wird geöffnet…",
+    "exportWalletUnavailable": "Der Export ist für dieses Wallet nicht verfügbar.",
     "loadingWallet": "Wallet wird geladen...",
     "walletAutoCreated": "Wallet wird bei Bedarf automatisch erstellt."
   },

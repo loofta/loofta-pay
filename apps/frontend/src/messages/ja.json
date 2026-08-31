@@ -373,6 +373,9 @@
     "clickToHide": "クリックして短縮版を表示",
     "clickToCopy": "アドレスをクリックして全体をコピー",
     "viewOnSolscan": "Solscanで表示",
+    "exportWallet": "ウォレットをエクスポート",
+    "exportingWallet": "エクスポートを開いています…",
+    "exportWalletUnavailable": "このウォレットはエクスポートできません。",
     "loadingWallet": "ウォレットを読み込み中...",
     "walletAutoCreated": "必要に応じてウォレットが自動的に作成されます。"
   },

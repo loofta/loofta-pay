@@ -373,6 +373,9 @@
     "clickToHide": "انقر لعرض المختصر",
     "clickToCopy": "انقر على العنوان لنسخه كاملاً",
     "viewOnSolscan": "عرض على Solscan",
+    "exportWallet": "تصدير المحفظة",
+    "exportingWallet": "جارٍ فتح التصدير…",
+    "exportWalletUnavailable": "تصدير المحفظة غير متاح لهذه المحفظة.",
     "loadingWallet": "جارٍ تحميل المحفظة...",
     "walletAutoCreated": "ستُنشأ المحفظة تلقائياً عند الحاجة."
   },

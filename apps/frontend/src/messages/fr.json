@@ -373,6 +373,9 @@
     "clickToHide": "Cliquez pour afficher abrégé",
     "clickToCopy": "Cliquez sur l'adresse pour copier en entier",
     "viewOnSolscan": "Voir sur Solscan",
+    "exportWallet": "Exporter le portefeuille",
+    "exportingWallet": "Ouverture de l'exportation…",
+    "exportWalletUnavailable": "L'exportation n'est pas disponible pour ce portefeuille.",
     "loadingWallet": "Chargement du portefeuille...",
     "walletAutoCreated": "Le portefeuille sera créé automatiquement si nécessaire."
   },

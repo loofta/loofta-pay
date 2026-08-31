@@ -373,6 +373,9 @@
     "clickToHide": "Klik untuk tampilkan versi singkat",
     "clickToCopy": "Klik alamat untuk salin selengkapnya",
     "viewOnSolscan": "Lihat di Solscan",
+    "exportWallet": "Ekspor Wallet",
+    "exportingWallet": "Membuka ekspor…",
+    "exportWalletUnavailable": "Ekspor tidak tersedia untuk wallet ini.",
     "loadingWallet": "Memuat dompet...",
     "walletAutoCreated": "Dompet akan dibuat secara otomatis saat diperlukan."
   },

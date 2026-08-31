@@ -373,6 +373,9 @@
     "clickToHide": "点击显示缩短版本",
     "clickToCopy": "点击地址复制完整版本",
     "viewOnSolscan": "在 Solscan 上查看",
+    "exportWallet": "导出钱包",
+    "exportingWallet": "正在打开导出…",
+    "exportWalletUnavailable": "此钱包不支持导出。",
     "loadingWallet": "正在加载钱包...",
     "walletAutoCreated": "需要时将自动创建钱包。"
   },

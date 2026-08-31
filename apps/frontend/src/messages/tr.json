@@ -373,6 +373,9 @@
     "clickToHide": "Kısaltılmışı görmek için tıklayın",
     "clickToCopy": "Tam kopyalamak için adrese tıklayın",
     "viewOnSolscan": "Solscan'de görüntüle",
+    "exportWallet": "Cüzdanı dışa aktar",
+    "exportingWallet": "Dışa aktarma açılıyor…",
+    "exportWalletUnavailable": "Bu cüzdan için dışa aktarma kullanılamıyor.",
     "loadingWallet": "Cüzdan yükleniyor...",
     "walletAutoCreated": "Gerektiğinde cüzdan otomatik olarak oluşturulacak."
   },

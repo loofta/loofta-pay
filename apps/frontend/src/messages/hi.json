@@ -371,6 +371,9 @@
     "clickToHide": "संक्षिप्त दिखाने के लिए क्लिक करें",
     "clickToCopy": "पूरा कॉपी करने के लिए एड्रेस क्लिक करें",
     "viewOnSolscan": "Solscan पर देखें",
+    "exportWallet": "वॉलेट निर्यात करें",
+    "exportingWallet": "निर्यात खोला जा रहा है…",
+    "exportWalletUnavailable": "इस वॉलेट के लिए निर्यात उपलब्ध नहीं है।",
     "loadingWallet": "वॉलेट लोड हो रहा है...",
     "walletAutoCreated": "जरूरत पड़ने पर वॉलेट स्वतः बन जाएगा।"
   },

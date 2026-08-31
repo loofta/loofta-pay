@@ -373,6 +373,9 @@
     "clickToHide": "Clique para mostrar resumido",
     "clickToCopy": "Clique no endereço para copiar completo",
     "viewOnSolscan": "Ver no Solscan",
+    "exportWallet": "Exportar carteira",
+    "exportingWallet": "Abrindo exportação da carteira…",
+    "exportWalletUnavailable": "A exportação não está disponível para esta carteira.",
     "loadingWallet": "Carregando carteira...",
     "walletAutoCreated": "A carteira será criada automaticamente quando necessário."
   },

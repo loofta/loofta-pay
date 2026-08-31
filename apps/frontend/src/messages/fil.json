@@ -373,6 +373,9 @@
     "clickToHide": "I-click para ipakita ang pinaiksi",
     "clickToCopy": "I-click ang address para kopyahin ang buong address",
     "viewOnSolscan": "Tingnan sa Solscan",
+    "exportWallet": "I-export ang Wallet",
+    "exportingWallet": "Binubuksan ang export…",
+    "exportWalletUnavailable": "Hindi available ang pag-export para sa wallet na ito.",
     "loadingWallet": "Naglo-load ang wallet...",
     "walletAutoCreated": "Awtomatikong malilikha ang wallet kapag kailangan."
   },
