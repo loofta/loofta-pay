@@ -11,7 +11,7 @@ import { usePrivy } from "@privy-io/react-auth";
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
 const MEGAPOT_START_DATE = new Date("2026-07-07T15:00:00.000Z"); // Jul 7 2026, 5pm CET
-const MEGAPOT_END_DATE = new Date("2026-08-31T00:00:00.000Z"); // through Aug 30 2026
+const MEGAPOT_END_DATE = new Date("2026-09-30T00:00:00.000Z"); // through Aug 30 2026
 const REQUIRED_TICKETS = 5;
 const ACCENT = "#5EEAD4"; // teal — distinct from Blink's yellow and Sparks' amber
 
