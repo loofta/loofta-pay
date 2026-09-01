@@ -1367,12 +1367,23 @@ export class LotteryService {
 
   async confirmSend(opts: { ticketId: string; userId: string; senderTxHash: string }): Promise<void> {
     const db = this.supabase.getClient();
-    const { error } = await db
+    // Guarded on status='pending_send' so a duplicate/retried call (client resubmit, lost
+    // response, etc.) can never regress a ticket that has already progressed past 'sent' — e.g.
+    // straight back to 'sent' on a ticket that already bridged, bought, and went 'active'. Without
+    // this guard the ticket looks permanently stuck ("Syncing…") since the recovery cron only
+    // re-triggers a bridge by checking the burner's on-chain balance, which is long since drained.
+    const { error, data } = await db
       .from('lottery_tickets')
       .update({ status: 'sent', sender_tx_hash: opts.senderTxHash, updated_at: new Date().toISOString() })
       .eq('id', opts.ticketId)
-      .eq('user_id', opts.userId);
+      .eq('user_id', opts.userId)
+      .eq('status', 'pending_send')
+      .select('id');
     if (error) throw new Error(`confirmSend failed: ${error.message}`);
+    if (!data?.length) {
+      this.logger.log(`Ticket ${opts.ticketId}: confirmSend no-op — already past pending_send`);
+      return;
+    }
     this.logger.log(`Ticket ${opts.ticketId} marked sent, tx: ${opts.senderTxHash}`);
 
     this.magicblockQuest.maybePushLotteryTicketQuest(opts.ticketId).catch((e) =>
