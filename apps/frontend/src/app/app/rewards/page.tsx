@@ -400,97 +400,97 @@ export default function RewardsPage() {
 
         {/* Blink Campaign */}
         <div className="mt-4">
-        {(() => {
-          const blinkClickable = blinkActive || isLocalhost;
-          const blinkCard = (
-          <div
-            className="relative rounded-2xl overflow-hidden border border-[#F7C948]/20 group-hover:border-[#F7C948]/40 transition-all duration-200 group-hover:shadow-[0_0_32px_rgba(247,201,72,0.10)]"
-            style={{ backgroundImage: `url("${BLINK_BG}")`, backgroundSize: "cover", backgroundPosition: "center" }}
-          >
-            {/* Gradient overlay */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/15" />
+          {(() => {
+            const blinkClickable = blinkActive || isLocalhost;
+            const blinkCard = (
+              <div
+                className="relative rounded-2xl overflow-hidden border border-[#F7C948]/20 group-hover:border-[#F7C948]/40 transition-all duration-200 group-hover:shadow-[0_0_32px_rgba(247,201,72,0.10)]"
+                style={{ backgroundImage: `url("${BLINK_BG}")`, backgroundSize: "cover", backgroundPosition: "center" }}
+              >
+                {/* Gradient overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/15" />
 
-            {/* Blink icon watermark — top right */}
-            <div className="absolute top-4 right-4 w-28 h-28 opacity-[0.12] pointer-events-none select-none">
-              <Image
-                src="/images/blink/icon-yellow.png"
-                alt=""
-                fill
-                priority
-                className="object-contain"
-              />
-            </div>
-
-            <div className="relative z-10 p-6">
-              {/* Badges */}
-              <div className="flex items-center gap-2 mb-6">
-                <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-[#F7C948]/15 text-[#F7C948] border border-[#F7C948]/25">
-                  Mainnet
-                </span>
-                {blinkDaysLeft !== null && (
-                  <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
-                    Ends Aug 15
-                  </span>
-                )}
-              </div>
-
-              {/* Loofta x Blink branding */}
-              <div className="flex items-center gap-2 mb-3">
-                <Image
-                  src="/loofta-white.svg"
-                  alt="Loofta"
-                  width={72}
-                  height={20}
-                  priority
-                  className="opacity-90"
-                />
-                <span className="text-slate-500 font-light text-lg">×</span>
-                <Image
-                  src="/images/blink/logo-white.png"
-                  alt="Blink"
-                  width={64}
-                  height={20}
-                  priority
-                  className="opacity-90 object-contain"
-                />
-              </div>
-
-              {/* Campaign title */}
-              <h2 className="text-2xl font-bold text-white leading-tight mb-2">
-                Blink Campaign
-              </h2>
-
-              {/* Description */}
-              <p className="text-base text-slate-300 mb-5 leading-relaxed">
-                Complete Blink quests and earn your share of the prize pool — paid out through Loofta.
-              </p>
-
-              {/* Reward + CTA */}
-              <div className="flex items-end justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-[#F7C948]/60 uppercase tracking-wider mb-1">
-                    Total reward pool
-                  </p>
-                  <p className="text-3xl font-bold text-[#F7C948] leading-none">
-                    $2,000
-                  </p>
+                {/* Blink icon watermark — top right */}
+                <div className="absolute top-4 right-4 w-28 h-28 opacity-[0.12] pointer-events-none select-none">
+                  <Image
+                    src="/images/blink/icon-yellow.png"
+                    alt=""
+                    fill
+                    priority
+                    className="object-contain"
+                  />
                 </div>
-                {blinkClickable && (
-                  <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
-                    <span>View quests</span>
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
-                      <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
+
+                <div className="relative z-10 p-6">
+                  {/* Badges */}
+                  <div className="flex items-center gap-2 mb-6">
+                    <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-[#F7C948]/15 text-[#F7C948] border border-[#F7C948]/25">
+                      Mainnet
+                    </span>
+                    {blinkDaysLeft !== null && (
+                      <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
+                        Ends Aug 15
+                      </span>
+                    )}
                   </div>
-                )}
+
+                  {/* Loofta x Blink branding */}
+                  <div className="flex items-center gap-2 mb-3">
+                    <Image
+                      src="/loofta-white.svg"
+                      alt="Loofta"
+                      width={72}
+                      height={20}
+                      priority
+                      className="opacity-90"
+                    />
+                    <span className="text-slate-500 font-light text-lg">×</span>
+                    <Image
+                      src="/images/blink/logo-white.png"
+                      alt="Blink"
+                      width={64}
+                      height={20}
+                      priority
+                      className="opacity-90 object-contain"
+                    />
+                  </div>
+
+                  {/* Campaign title */}
+                  <h2 className="text-2xl font-bold text-white leading-tight mb-2">
+                    Blink Campaign
+                  </h2>
+
+                  {/* Description */}
+                  <p className="text-base text-slate-300 mb-5 leading-relaxed">
+                    Complete Blink quests and earn your share of the prize pool — paid out through Loofta.
+                  </p>
+
+                  {/* Reward + CTA */}
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-[#F7C948]/60 uppercase tracking-wider mb-1">
+                        Total reward pool
+                      </p>
+                      <p className="text-3xl font-bold text-[#F7C948] leading-none">
+                        $2,000
+                      </p>
+                    </div>
+                    {blinkClickable && (
+                      <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
+                        <span>View quests</span>
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
+                          <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-          );
-          return blinkClickable
-            ? <Link href="/rewards/blink" className="block group">{blinkCard}</Link>
-            : <div className="block">{blinkCard}</div>;
-        })()}
+            );
+            return blinkClickable
+              ? <Link href="/rewards/blink" className="block group">{blinkCard}</Link>
+              : <div className="block">{blinkCard}</div>;
+          })()}
         </div>
 
         {/* Megapot Campaign */}
@@ -498,82 +498,82 @@ export default function RewardsPage() {
           {(() => {
             const megapotClickable = megapotActive || isLocalhost;
             const megapotCard = (
-            <div
-              className="relative rounded-2xl overflow-hidden border transition-all duration-200"
-              style={{
-                backgroundImage: `url("${MEGAPOT_BG}")`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-                borderColor: `${MEGAPOT_ACCENT}33`,
-              }}
-            >
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/15" />
+              <div
+                className="relative rounded-2xl overflow-hidden border transition-all duration-200"
+                style={{
+                  backgroundImage: `url("${MEGAPOT_BG}")`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                  borderColor: `${MEGAPOT_ACCENT}33`,
+                }}
+              >
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/15" />
 
-              <div className="relative z-10 p-6">
-                <div className="flex items-center gap-2 mb-6">
-                  <span
-                    className="text-sm font-bold px-2.5 py-1 rounded-full border"
-                    style={{ backgroundColor: `${MEGAPOT_ACCENT}26`, color: MEGAPOT_ACCENT, borderColor: `${MEGAPOT_ACCENT}40` }}
-                  >
-                    Mainnet
-                  </span>
-                  {megapotDaysLeft !== null && (
-                    <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
-                      Ends Aug 30
+                <div className="relative z-10 p-6">
+                  <div className="flex items-center gap-2 mb-6">
+                    <span
+                      className="text-sm font-bold px-2.5 py-1 rounded-full border"
+                      style={{ backgroundColor: `${MEGAPOT_ACCENT}26`, color: MEGAPOT_ACCENT, borderColor: `${MEGAPOT_ACCENT}40` }}
+                    >
+                      Mainnet
                     </span>
-                  )}
-                </div>
+                    {megapotDaysLeft !== null && (
+                      <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-black/30 text-slate-400 border border-white/10">
+                        Ends Sept 30
+                      </span>
+                    )}
+                  </div>
 
-                <div className="flex items-center gap-2 mb-3">
-                  <Image
-                    src="/loofta-white.svg"
-                    alt="Loofta"
-                    width={72}
-                    height={20}
-                    priority
-                    className="opacity-90"
-                  />
-                  <span className="text-slate-500 font-light text-lg">×</span>
-                  <div className="bg-white rounded-md px-2 py-1 flex items-center">
+                  <div className="flex items-center gap-2 mb-3">
                     <Image
-                      src="/images/megapot/logo.svg"
-                      alt="Megapot"
-                      width={78}
-                      height={15}
+                      src="/loofta-white.svg"
+                      alt="Loofta"
+                      width={72}
+                      height={20}
                       priority
-                      className="object-contain"
+                      className="opacity-90"
                     />
-                  </div>
-                </div>
-
-                <h2 className="text-2xl font-bold text-white leading-tight mb-2">
-                  Megapot Campaign
-                </h2>
-
-                <p className="text-base text-slate-300 mb-5 leading-relaxed">
-                  Buy 5 Megapot tickets privately on Loofta to enter the draw — the prize pool is shared across eligible participants.
-                </p>
-
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className="text-sm font-semibold uppercase tracking-wider mb-1" style={{ color: `${MEGAPOT_ACCENT}99` }}>
-                      Total reward pool
-                    </p>
-                    <p className="text-3xl font-bold leading-none" style={{ color: MEGAPOT_ACCENT }}>
-                      $1,000
-                    </p>
-                  </div>
-                  {megapotClickable && (
-                    <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
-                      <span>View quest</span>
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
-                        <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
+                    <span className="text-slate-500 font-light text-lg">×</span>
+                    <div className="bg-white rounded-md px-2 py-1 flex items-center">
+                      <Image
+                        src="/images/megapot/logo.svg"
+                        alt="Megapot"
+                        width={78}
+                        height={15}
+                        priority
+                        className="object-contain"
+                      />
                     </div>
-                  )}
+                  </div>
+
+                  <h2 className="text-2xl font-bold text-white leading-tight mb-2">
+                    Megapot Campaign
+                  </h2>
+
+                  <p className="text-base text-slate-300 mb-5 leading-relaxed">
+                    Buy 5 Megapot tickets privately on Loofta to enter the draw — the prize pool is shared across eligible participants.
+                  </p>
+
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <p className="text-sm font-semibold uppercase tracking-wider mb-1" style={{ color: `${MEGAPOT_ACCENT}99` }}>
+                        Total reward pool
+                      </p>
+                      <p className="text-3xl font-bold leading-none" style={{ color: MEGAPOT_ACCENT }}>
+                        $1,000
+                      </p>
+                    </div>
+                    {megapotClickable && (
+                      <div className="flex items-center gap-1.5 text-base font-semibold text-slate-300 group-hover:text-white transition-colors pb-0.5">
+                        <span>View quest</span>
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
+                          <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
             );
             return megapotClickable
               ? <Link href="/rewards/megapot" className="block group">{megapotCard}</Link>
