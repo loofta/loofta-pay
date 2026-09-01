@@ -248,6 +248,7 @@ export default function RewardsPage() {
   const [sparksEnded, setSparksEnded] = useState(false);
   const [blinkDaysLeft, setBlinkDaysLeft] = useState<number | null>(null);
   const [blinkActive, setBlinkActive] = useState(false);
+  const [blinkEnded, setBlinkEnded] = useState(false);
   const [megapotDaysLeft, setMegapotDaysLeft] = useState<number | null>(null);
   const [megapotActive, setMegapotActive] = useState(false);
   const [isLocalhost, setIsLocalhost] = useState(false);
@@ -264,6 +265,7 @@ export default function RewardsPage() {
     setSparksEnded(now >= SPARKS_END_DATE);
     setBlinkDaysLeft(getDaysLeft(BLINK_END_DATE));
     setBlinkActive(now >= BLINK_START_DATE);
+    setBlinkEnded(now >= BLINK_END_DATE);
     setMegapotDaysLeft(getDaysLeft(MEGAPOT_END_DATE));
     setMegapotActive(now >= MEGAPOT_START_DATE);
     setIsLocalhost(window.location.hostname === "localhost");
@@ -399,6 +401,7 @@ export default function RewardsPage() {
         </div>
 
         {/* Blink Campaign */}
+        {!blinkEnded && (
         <div className="mt-4">
           {(() => {
             const blinkClickable = blinkActive || isLocalhost;
@@ -492,6 +495,7 @@ export default function RewardsPage() {
               : <div className="block">{blinkCard}</div>;
           })()}
         </div>
+        )}
 
         {/* Megapot Campaign */}
         <div className="mt-4">
@@ -586,6 +590,73 @@ export default function RewardsPage() {
           <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4">
             Ended
           </p>
+
+          {/* Blink Campaign — ended */}
+          {blinkEnded && (
+          <Link href="/rewards/blink" className="block group mb-4">
+            <div
+              className="relative rounded-2xl overflow-hidden border border-white/10 group-hover:border-white/20 transition-all duration-200 opacity-70"
+              style={{ backgroundImage: `url("${BLINK_BG}")`, backgroundSize: "cover", backgroundPosition: "center" }}
+            >
+              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/30" />
+              <div className="relative z-10 p-6">
+                <div className="flex items-center gap-2 mb-6">
+                  <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-white/10 text-slate-400 border border-white/15">
+                    Mainnet
+                  </span>
+                  <span className="text-sm font-bold px-2.5 py-1 rounded-full bg-white/10 text-slate-400 border border-white/15">
+                    Ended
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 mb-3">
+                  <Image
+                    src="/loofta-white.svg"
+                    alt="Loofta"
+                    width={72}
+                    height={20}
+                    priority
+                    className="opacity-90"
+                  />
+                  <span className="text-slate-500 font-light text-lg">×</span>
+                  <Image
+                    src="/images/blink/logo-white.png"
+                    alt="Blink"
+                    width={64}
+                    height={20}
+                    priority
+                    className="opacity-60 object-contain"
+                  />
+                </div>
+
+                <h2 className="text-2xl font-bold text-white leading-tight mb-2">
+                  Blink Campaign
+                </h2>
+
+                <p className="text-base text-slate-400 mb-6 leading-relaxed">
+                  Complete Blink quests and earn your share of the prize pool — paid out through Loofta.
+                </p>
+
+                <div className="flex items-end justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Total reward pool
+                    </p>
+                    <p className="text-3xl font-bold text-slate-300 leading-none">
+                      $2,000
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-base font-semibold text-slate-500 group-hover:text-slate-400 transition-colors pb-0.5">
+                    <span>View results</span>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="group-hover:translate-x-0.5 transition-transform">
+                      <path d="M6 12l4-4-4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Link>
+          )}
 
           {/* Get Paid Campaign — ended */}
           <Link href="/rewards/getpaid" className="block group mb-4">
