@@ -588,7 +588,7 @@ export function BalanceModal({
   const [peerEstimateLoading, setPeerEstimateLoading] = useState(false);
 
   // Near Intents top-up deposit
-  const [topUpView, setTopUpView] = useState<"crypto-picker" | "usdc-deposit" | "near-intents-deposit" | "private-deposit" | "paj-cash-onramp" | null>(null);
+  const [topUpView, setTopUpView] = useState<"crypto-picker" | "usdc-deposit" | "near-intents-deposit" | "private-deposit" | "paj-cash-onramp" | "peer-deposit" | null>(null);
 
   // PAJ Cash (Naira on/off-ramp) history
   const [pajCashHistory, setPajCashHistory] = useState<PajCashOrder[]>([]);
@@ -662,6 +662,15 @@ export function BalanceModal({
   const depositPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoExpiredRef = useRef<Set<string>>(new Set());
 
+  // Peer deposit (Peer Pay hosted checkout — Venmo/Cash App/Zelle/PayPal/Revolut/etc, settles
+  // USDC on Base only). We don't bridge Base -> Solana ourselves: we get a one-time Near Intents
+  // deposit address for (USDC-Base -> USDC-Solana) first, hand that to Peer as destinationAddress,
+  // then reuse the Near Intents deposit view/polling above for everything after that — Peer just
+  // funds that address instead of a manual wallet-to-wallet send.
+  const [peerDepositAmount, setPeerDepositAmount] = useState("");
+  const [peerDepositSubmitting, setPeerDepositSubmitting] = useState(false);
+  const [peerDepositError, setPeerDepositError] = useState<string | null>(null);
+
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { user, getAccessToken } = usePrivy();
@@ -700,7 +709,7 @@ export function BalanceModal({
   }, [getAccessToken]);
 
   const recordDeposit = useCallback(async (
-    type: string, status = "pending", amount_usdc?: number, deposit_address?: string
+    type: string, status = "pending", amount_usdc?: number, deposit_address?: string, provider_order_id?: string
   ): Promise<string | null> => {
     const token = await getAccessToken();
     if (!token) return null;
@@ -708,7 +717,7 @@ export function BalanceModal({
       const res = await fetch("/api/users/deposits", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ type, status, amount_usdc, deposit_address }),
+        body: JSON.stringify({ type, status, amount_usdc, deposit_address, provider_order_id }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -970,6 +979,81 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "Failed to get deposit address", description: msg });
     } finally {
       setDepositSubmitting(false);
+    }
+  };
+
+  // Peer deposit: get a Near Intents deposit address for (USDC-Base -> USDC-Solana), create a
+  // Peer Pay checkout that settles to that address, then hand off to the same deposit-address
+  // view/polling the "Near" crypto option already uses (setDepositAddr/setDepositPollAddr below).
+  const handlePeerDeposit = async () => {
+    if (!solanaAddress || !usdcSolanaToken || !baseUsdcToken || !peerDepositAmountNum) return;
+    setPeerDepositSubmitting(true);
+    setPeerDepositError(null);
+    try {
+      // Resolve/create the user's own Base (EVM) embedded wallet — used only as the Near Intents
+      // refund address in case the bridge leg needs to return funds; Peer settles the checkout
+      // itself, no signature from this wallet is required.
+      const findEvmWallet = () => evmWalletsRef.current.find(
+        (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
+      );
+      let baseWallet = findEvmWallet();
+      if (!baseWallet) {
+        try { await createEvmWallet(); } catch (e: any) {
+          if (!String(e?.message).toLowerCase().includes("already has")) throw e;
+        }
+        for (let i = 0; i < 20; i++) {
+          await new Promise((r) => setTimeout(r, 300));
+          baseWallet = findEvmWallet();
+          if (baseWallet) break;
+        }
+      }
+      if (!baseWallet) throw new Error("Could not load Base wallet. Please try again.");
+      const baseWalletAddr = baseWallet.address;
+
+      const info = await getDepositInfo({
+        fromToken: baseUsdcToken,
+        toToken: usdcSolanaToken as NearToken,
+        amount: peerDepositAmount,
+        recipient: solanaAddress,
+        sender: baseWalletAddr,
+        refundAddress: baseWalletAddr,
+      });
+      if (!info.depositAddress) throw new Error("Could not get a deposit address");
+
+      const accessToken = await getAccessToken();
+      const res = await fetch("/api/peer-pay/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+        body: JSON.stringify({ amountUsdc: peerDepositAmountNum, destinationAddress: info.depositAddress }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(err.error || `Checkout error ${res.status}`);
+      }
+      const { checkoutUrl, orderId } = await res.json();
+
+      recordDeposit("peer-pay", "pending", peerDepositAmountNum, info.depositAddress, orderId).then((id) => {
+        setDepositDbId(id);
+      });
+
+      // Feed the same address into the existing Near Intents deposit view/polling.
+      setDepositAddr(info.depositAddress);
+      setDepositMemo(info.memo ?? null);
+      setDepositQuoteOut(peerDepositAmount);
+      setDepositPollAddr(info.depositAddress);
+      setDepositBridgeStatus("PENDING");
+      setTopUpView("near-intents-deposit");
+
+      const popup = window.open(checkoutUrl, "peer-checkout", "width=460,height=730,left=200,top=100,resizable=yes,scrollbars=yes");
+      if (!popup) window.open(checkoutUrl, "_blank");
+
+      setPeerDepositAmount("");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not start Peer deposit.";
+      setPeerDepositError(msg);
+      toast({ variant: "destructive", title: "Peer deposit error", description: msg });
+    } finally {
+      setPeerDepositSubmitting(false);
     }
   };
 
@@ -1282,6 +1366,13 @@ export function BalanceModal({
   const depositAmountNum = parseFloat(depositAmount) || 0;
   const depositChain = selectedDepositToken?.chain || "";
   const depositRefundAddrValid = !depositRefundAddr || isValidAddressForChain(depositRefundAddr, depositChain);
+
+  // Peer deposit always bridges from USDC on Base — Peer Pay only ever settles there.
+  const baseUsdcToken = useMemo(
+    () => depositTokens.find((t) => t.symbol?.toUpperCase() === "USDC" && t.chain?.toLowerCase() === "base"),
+    [depositTokens]
+  );
+  const peerDepositAmountNum = parseFloat(peerDepositAmount) || 0;
 
   const withdrawTokens = useMemo(() => {
     const solLower = (c: string | undefined) => (c || "").toLowerCase() === "solana" || (c || "").toLowerCase() === "sol";
@@ -3309,6 +3400,29 @@ export function BalanceModal({
                     </button>
                   )}
 
+                  {/* Peer — Venmo/Cash App/Zelle/PayPal/Revolut checkout, settles USDC on Base
+                      then bridges to your Solana balance via Near Intents (see peer-deposit view) */}
+                  <button
+                    type="button"
+                    disabled={!solanaAddress}
+                    onClick={() => { setShowFiatOnrampPicker(false); setTopUpView("peer-deposit"); }}
+                    className={cn(
+                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                      dark
+                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    )}
+                  >
+                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                      <img src="/images/icons/peer-logo.svg" alt="" className="w-10 h-10 object-contain" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Peer</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Venmo · Cash App · Zelle · PayPal · Revolut</p>
+                    </div>
+                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                  </button>
+
                   {/* Coinbase — always last */}
                   <button
                     type="button"
@@ -3753,6 +3867,49 @@ export function BalanceModal({
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Top Up tab — Peer deposit amount entry (settles USDC on Base, then hands off to the
+              Near Intents deposit view/polling below via handlePeerDeposit) */}
+          {tab === "topup" && !devnetMode && topUpView === "peer-deposit" && (
+            <div className="space-y-4 py-2">
+
+              {/* Back */}
+              <button type="button" onClick={() => { setTopUpView(null); setPeerDepositAmount(""); setPeerDepositError(null); }}
+                className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
+                <ChevronLeft className="h-4 w-4" />Back
+              </button>
+
+              <div className="space-y-4">
+                <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                  Pay with Venmo, Cash App, Zelle, PayPal, Revolut, and more — Peer opens in a
+                  window, and your balance updates once the payment settles.
+                </p>
+                <div>
+                  <Label htmlFor="peer-deposit-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
+                  <AmountInput
+                    id="peer-deposit-amount"
+                    dark={dark}
+                    value={peerDepositAmount}
+                    onChange={setPeerDepositAmount}
+                    suffix="USDC"
+                    className="mt-1"
+                  />
+                </div>
+                {peerDepositError && <p className="text-base text-orange-500 text-center px-1">{peerDepositError}</p>}
+                <Button
+                  onClick={handlePeerDeposit}
+                  disabled={peerDepositSubmitting || !peerDepositAmountNum || !baseUsdcToken}
+                  className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
+                >
+                  {peerDepositSubmitting ? (
+                    <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Preparing…</span>
+                  ) : (
+                    "Continue to Peer"
+                  )}
+                </Button>
+              </div>
             </div>
           )}
 

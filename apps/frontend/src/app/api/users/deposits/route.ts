@@ -23,18 +23,26 @@ export async function POST(request: Request) {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json().catch(() => ({}));
-  const { type, status = "pending", amount_usdc, deposit_address } = body as {
-    type?: string; status?: string; amount_usdc?: number; deposit_address?: string;
+  const { type, status = "pending", amount_usdc, deposit_address, provider_order_id } = body as {
+    type?: string; status?: string; amount_usdc?: number; deposit_address?: string; provider_order_id?: string;
   };
 
-  if (!type || !["blink", "near-intents", "coinbase", "moonpay"].includes(type)) {
+  // Matches the user_deposits_type_check constraint (see supabase/migrations). "card-onramp" and
+  // "usdc-wallet" were already sent by BalanceModal.tsx but missing here — every one of those
+  // inserts was silently rejected below until this list caught up with the constraint.
+  if (!type || !["blink", "near-intents", "coinbase", "moonpay", "card-onramp", "usdc-wallet", "peer-pay"].includes(type)) {
     return NextResponse.json({ error: "Invalid type" }, { status: 400 });
   }
 
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("user_deposits")
-    .insert({ user_id: userId, type, status, amount_usdc: amount_usdc ?? null, deposit_address: deposit_address ?? null })
+    .insert({
+      user_id: userId, type, status,
+      amount_usdc: amount_usdc ?? null,
+      deposit_address: deposit_address ?? null,
+      provider_order_id: provider_order_id ?? null,
+    })
     .select("id")
     .single();
 
