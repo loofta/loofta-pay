@@ -106,62 +106,66 @@ export function PayButton({
     return u.toString();
   }, [callbackUrl]);
 
-  const openCheckout = useCallback((url: string) => {
-    if (openMode === 'redirect') {
-      window.location.href = url;
-      return;
-    }
-
-    if (openMode === 'tab') {
-      window.open(url, '_blank', 'noopener,noreferrer');
-      setLoading(false);
-      return;
-    }
-
-    // Popup mode
+  // Opens a blank tab/popup right now — called synchronously from handleClick, before
+  // onGenerateLink's await — and navigated to the real URL once that resolves (see handleClick).
+  // Tab and popup both open a real window reference; only the window features differ (a
+  // sized/chromeless popup vs a plain new tab). No noopener (unlike a typical target="_blank"
+  // link) — window.opener must stay intact so the checkout page can post its completion message
+  // back to it either way.
+  const openBlankWindow = useCallback((): Window | null => {
+    if (openMode === 'tab') return window.open('about:blank', '_blank');
     const width = 500;
     const height = 700;
     const left = window.screenX + (window.outerWidth - width) / 2;
     const top = window.screenY + (window.outerHeight - height) / 2;
-
-    const popup = window.open(
-      url,
+    return window.open(
+      'about:blank',
       'loofta-pay-checkout',
       `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
     );
+  }, [openMode]);
 
+  const attachCompletionListeners = useCallback((win: Window | null) => {
     // Listen for payment completion message
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'loofta-payment-success') {
         setLoading(false);
         setPaid(true);
         onSuccess?.(event.data.paymentId);
-        popup?.close();
+        win?.close();
         window.removeEventListener('message', handleMessage);
       }
     };
     window.addEventListener('message', handleMessage);
 
-    // Check if popup was closed
+    // Check if the tab/popup was closed
     const checkClosed = setInterval(() => {
-      if (popup?.closed) {
+      if (win?.closed) {
         clearInterval(checkClosed);
         setLoading(false);
         window.removeEventListener('message', handleMessage);
       }
     }, 500);
-  }, [openMode, onSuccess]);
+  }, [onSuccess]);
 
   const handleClick = useCallback(async () => {
     if (disabled || loading || paid) return;
     setGenerateError(null);
     setLoading(true);
 
+    // Open the destination window synchronously, in the same tick as this click — a window.open()
+    // called AFTER an awaited async step (onGenerateLink below) falls outside the browser's
+    // "user gesture" window and gets silently popup-blocked or left stranded on about:blank in
+    // most browsers (Safari especially, increasingly Chrome too). Opening a blank window now and
+    // navigating it once the real URL is ready keeps the whole thing inside one user gesture.
+    const win = openMode === 'redirect' ? null : openBlankWindow();
+
     let url: string;
     if (onGenerateLink) {
       try {
         url = await onGenerateLink();
       } catch (e: any) {
+        win?.close();
         setLoading(false);
         setGenerateError(e?.message || 'Could not start checkout');
         return;
@@ -169,13 +173,27 @@ export function PayButton({
     } else if (checkoutUrl) {
       url = checkoutUrl;
     } else {
+      win?.close();
       setLoading(false);
       setGenerateError('PayButton needs either checkoutUrl or onGenerateLink');
       return;
     }
 
-    openCheckout(withCallback(url));
-  }, [disabled, loading, paid, onGenerateLink, checkoutUrl, withCallback, openCheckout]);
+    const finalUrl = withCallback(url);
+    if (openMode === 'redirect') {
+      window.location.href = finalUrl;
+      return;
+    }
+    if (!win) {
+      // Left the synchronous click handler already (onGenerateLink's await), so there's no
+      // second chance to reopen — surface it rather than silently doing nothing.
+      setLoading(false);
+      setGenerateError('Your browser blocked the checkout popup — allow popups for this site and try again.');
+      return;
+    }
+    win.location.href = finalUrl;
+    attachCompletionListeners(win);
+  }, [disabled, loading, paid, onGenerateLink, checkoutUrl, withCallback, openMode, openBlankWindow, attachCompletionListeners]);
 
   // Success state style (green)
   const successStyle = {

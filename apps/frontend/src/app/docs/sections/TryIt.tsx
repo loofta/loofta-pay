@@ -29,8 +29,8 @@ export function TryIt({ onNavigate }: { onNavigate: (slug: string) => void }) {
 
   // The actual thing worth demonstrating: PayButton's onGenerateLink calls this fresh, right at
   // click time — a real store never reuses one checkout URL across orders — then opens the result
-  // in a popup and listens for the "loofta-payment-success" message the checkout page posts back
-  // to window.opener once it settles, flipping itself to "Paid successfully" in place.
+  // in a new tab and listens for the "loofta-payment-success" message the checkout page posts
+  // back to window.opener once it settles, flipping itself to "Paid successfully" in place.
   async function handleGenerateStoreLink(): Promise<string> {
     if (!apiKey.trim()) {
       throw new Error("Paste your API key first (generate one above).");
@@ -102,7 +102,7 @@ export function TryIt({ onNavigate }: { onNavigate: (slug: string) => void }) {
       <p className="text-base text-slate-400 mb-4">
         One product, one price, one button — pressing it calls{" "}
         <code className="text-orange-300">POST /payment-links</code> right then, opens a
-        brand-new checkout link in a popup, and updates itself once you pay. This is the pattern
+        brand-new checkout link in a new tab, and updates itself once you pay. This is the pattern
         to copy into your own storefront: a fresh link per order, never a reused URL.
       </p>
 
@@ -122,7 +122,7 @@ export function TryIt({ onNavigate }: { onNavigate: (slug: string) => void }) {
             onGenerateLink={handleGenerateStoreLink}
             buttonText={`Buy now — $${PRODUCT_PRICE.toFixed(2)}`}
             successText="Paid successfully!"
-            openMode="popup"
+            openMode="tab"
           />
         </div>
       </div>

@@ -232,6 +232,16 @@ function PayPanel({
   // wallet already has everything it needs (deposit address + exact nanoton amount from the
   // response above). Settlement is still confirmed the same way either way: the poll loop below
   // watches the deposit address regardless of how the transfer actually got sent.
+  //
+  // NATIVE TON ONLY. A bare {address, amount} message is a plain native-coin transfer — correct
+  // for TON itself, but WRONG for a jetton (USDT-TON, USDC-TON, etc.): that sent the wrong asset
+  // entirely (native TON instead of the jetton) using the wrong decimals (TON's 9 vs. the
+  // jetton's own, e.g. USDT's 6), since minAmountIn is in the SELECTED token's atomic units, not
+  // nanotons. A real jetton transfer needs its own jetton-wallet address + a jetton-transfer
+  // message body (BOC), not built here — isNativeTon below gates this to the one case (symbol
+  // "TON") where a bare message is actually correct; every jetton falls through to the existing
+  // manual deposit-address flow instead.
+  const isNativeTon = chainFamily === "ton" && (selectedToken?.symbol || "").trim().toUpperCase() === "TON";
   const [tonSending, setTonSending] = useState(false);
   const [tonSent, setTonSent] = useState(false);
   const [tonSendError, setTonSendError] = useState<string | null>(null);
@@ -305,7 +315,7 @@ function PayPanel({
   }, [deposit?.depositAddress]);
 
   if (deposit) {
-    const canAutoSendTon = chainFamily === "ton" && !!tonAddress && !!deposit.minAmountIn && !deposit.memo;
+    const canAutoSendTon = isNativeTon && !!tonAddress && !!deposit.minAmountIn && !deposit.memo;
     const payLabel = `Pay ${formatAmount(deposit.minAmountInFormatted)} ${selectedToken?.symbol || ""}`.trim();
     return (
       <div className="space-y-3 text-center">
