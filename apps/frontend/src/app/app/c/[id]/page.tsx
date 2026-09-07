@@ -5698,7 +5698,7 @@ export function ClaimPayView({
                         column should read the same before and after paying, not lose its breakdown
                         the moment status flips; the right column is what changes on success (see
                         the dedicated success card further down). */}
-                    {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && (chrome === "minimal" || !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase())) && !deposit && (
+                    {!isSenderPendingFundedView && !hidePaySectionForPendingClaimant && !isRecipient && !isCheckingRecipient && (chrome === "minimal" || !["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase())) && (
                       <div className="mt-4 pt-4 border-t border-gray-100 [@media(prefers-color-scheme:dark)]:border-white/10">
                         <div className="text-base uppercase tracking-wide font-semibold font-sans text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400 mb-2">Payment breakdown</div>
                         <div className="space-y-1.5 text-base">
@@ -6110,44 +6110,60 @@ export function ClaimPayView({
                     });
                   }
 
-                  // Show status tracker for active payment states (PROCESSING/KNOWN_DEPOSIT_TX only)
+                  // Show status tracker for active payment states (PROCESSING/KNOWN_DEPOSIT_TX only).
+                  // No separate "Payment summary" card here anymore — the amount/breakdown card
+                  // above (now visible regardless of deposit state) already covers it, and having
+                  // both showed the same amount twice.
                   if (s === "PROCESSING" || s === "KNOWN_DEPOSIT_TX") {
                     return (
-                      <>
-                        <div className="mt-6">
-                          <DepositProgressSteps status={status} />
-                        </div>
-                        <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
-                          <div className="text-lg font-semibold text-slate-200 mb-2">Payment summary</div>
-                          <div className="text-base text-gray-700 space-y-1">
-                            <div className="flex items-center justify-between">
-                              <span className="text-gray-600">{(claim as { direction?: string } | null)?.direction === "from_sender" ? "Amount paid" : "Amount requested"}</span>
-                              <span className="text-lg font-semibold text-gray-900">
-                                <span className="inline-flex items-center gap-1">
-                                  <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={24} />
-                                  {destTokenAmount != null ? roundUpDecimals(String(destTokenAmount), 6) : "—"} {claim.to_symbol}
-
-                                </span>
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </>
+                      <div className="mt-6">
+                        <DepositProgressSteps status={status} />
+                      </div>
                     );
                   }
                   if (s === "SUCCESS") return null;
+
+                  // Shared by this terminal-state retry button and the "Cancel & choose a
+                  // different token" button further below — same reset either way: forget this
+                  // deposit attempt (locally and in the persisted claimPay store) and let the
+                  // hydrate-from-latestIntent effect above sit dormant for it (dismissedDepositAddress),
+                  // so a refresh doesn't resurrect the exact attempt that just failed/refunded.
+                  const resetForRetry = (toastTitle: string, toastDescription: string) => {
+                    setDeposit(null);
+                    setStatus(null);
+                    setFromSel(undefined);
+                    setRefundAddress("");
+                    setRefundAddressError(null);
+                    userCancelled.current = true;
+                    useClaimPayStore.getState().clear(id);
+                    if (depositAddr) {
+                      useClaimPayStore.getState().setDismissedDepositAddress(id, depositAddr);
+                    }
+                    toast({ title: toastTitle, description: toastDescription });
+                  };
+
                   if (isTerminal) {
                     return (
-                      <>
-                        <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-3">
-                          <div className="text-base md:text-sm font-semibold text-red-700">
-                            {s === "FAILED" ? "Deposit failed." : "Deposit was refunded."}
-                          </div>
-                          <div className="text-base md:text-sm  text-red-700/80 mt-1">
-                            Please try again with a different token or network.
-                          </div>
+                      <div className="mt-6 rounded-2xl border border-gray-200 bg-white shadow-sm p-5 text-center [@media(prefers-color-scheme:dark)]:bg-[#17171b] [@media(prefers-color-scheme:dark)]:border-white/10">
+                        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 [@media(prefers-color-scheme:dark)]:bg-amber-500/15">
+                          <AlertTriangle className="h-5 w-5 text-amber-600 [@media(prefers-color-scheme:dark)]:text-amber-400" />
                         </div>
-                      </>
+                        <p className="text-base font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">
+                          {s === "FAILED" ? "Deposit failed" : "Deposit was refunded"}
+                        </p>
+                        <p className="text-base text-gray-500 mt-1 mb-4 [@media(prefers-color-scheme:dark)]:text-slate-400">
+                          {s === "FAILED"
+                            ? "Something went wrong before your deposit could be routed. Nothing was charged."
+                            : "The route couldn't be completed, so your funds were sent back to your wallet."}
+                        </p>
+                        <Button
+                          type="button"
+                          onClick={() => resetForRetry("Let's try again", "Choose a different token or network below.")}
+                          className="bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+                        >
+                          Try again
+                        </Button>
+                      </div>
                     );
                   }
 
@@ -6350,26 +6366,7 @@ export function ClaimPayView({
                           <div className="mt-6 flex justify-center">
                             <Button
                               variant="outline"
-                              onClick={() => {
-                                setDeposit(null);
-                                setStatus(null);
-                                setFromSel(undefined);
-                                // Reset refund address - will be auto-populated by useEffect
-                                setRefundAddress("");
-                                setRefundAddressError(null);
-                                userCancelled.current = true;
-                                useClaimPayStore.getState().clear(id);
-                                // userCancelled is a ref — it resets on the next page load, so
-                                // without this a refresh re-fetches latestIntentData, still finds
-                                // this same still-pending intent server-side, and the hydration
-                                // effect above resurrects the exact view Cancel just dismissed.
-                                // Persisting the dismissed address (not a blanket flag) means a
-                                // genuinely new deposit attempt for this claim can still hydrate.
-                                if (depositAddr) {
-                                  useClaimPayStore.getState().setDismissedDepositAddress(id, depositAddr);
-                                }
-                                toast({ title: "Cancelled", description: "You can now choose a different token." });
-                              }}
+                              onClick={() => resetForRetry("Cancelled", "You can now choose a different token.")}
                               className="text-base md:text-sm bg-white border-gray-300 text-gray-700 hover:bg-gray-50 [@media(prefers-color-scheme:dark)]:bg-white/5 [@media(prefers-color-scheme:dark)]:border-white/20 [@media(prefers-color-scheme:dark)]:text-slate-200 [@media(prefers-color-scheme:dark)]:hover:bg-white/10"
                             >
                               Cancel & choose a different token

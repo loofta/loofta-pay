@@ -66,28 +66,38 @@ export function isValidAddressForChain(address: string, chain: string): boolean 
 export function getRefundToForChain(chain: string): string {
 	const key = String(chain || "").toLowerCase();
 	
-	// EVM family chains - all use the same placeholder address
+	// EVM family chains - all use the same placeholder address. NOT any well-known null/system/
+	// burn address (0x0-address, the "dead" address, etc.) — verified directly against 1-click's
+	// /v0/quote: it rejects EVERY synthetic-looking address as "recipient is not valid" /
+	// "refundTo is not valid", not just the literal zero address (confirmed both the zero address
+	// AND 0x000...dEaD fail; an ordinary randomly-generated, unowned address passes). Since these
+	// are dry quotes only (no funds ever move), any random valid-format address works — this one
+	// was generated once and hardcoded, not derived from anything meaningful.
 	const evmChains = new Set([
 		"eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism",
 		"bsc", "berachain", "pol", "polygon", "avax", "avalanche", "gnosis",
 		"fantom", "ftm", "linea", "scroll", "zksync", "zk", "blast"
 	]);
 	if (evmChains.has(key)) {
-		return "0x0000000000000000000000000000000000000000";
+		return "0x8910b3f20921f1be3847182c54f10cd71d3de2d7";
 	}
 	
-	// Chain-specific placeholder addresses (format-specific but not real addresses)
+	// Chain-specific placeholder addresses (format-specific, not real addresses).
+	// sol/solana was previously the System Program ID (all-zero pubkey) — also confirmed rejected
+	// by 1-click's /v0/quote as "recipient is not valid"/"refundTo is not valid", same as the EVM
+	// zero/dead addresses above. Now an ordinary randomly-generated Solana address, verified
+	// against the live API. The other entries below are still the old all-zero/all-same-char
+	// style placeholders and have NOT been individually verified against 1-click — if a dry quote
+	// for one of these chains ever hits the same "not valid" rejection, replace it with a genuine
+	// random address for that chain the same way (see git history on this file for how sol/EVM
+	// were fixed and verified).
 	const chainAddressMap: Record<string, string> = {
 		ton: "UQ0000000000000000000000000000000000000000000000000000000000000000",
 		btc: "bc1q000000000000000000000000000000000000000000000000000000000000",
 		bitcoin: "bc1q000000000000000000000000000000000000000000000000000000000000",
 		sui: "0x0000000000000000000000000000000000000000000000000000000000000000",
-		// Solana's base58 alphabet excludes '0' entirely, so an all-zero string isn't even a
-		// syntactically valid address — 1-click's API rejected it with "recipient is not valid"
-		// for every Solana-destination dry quote. Use the well-known System Program ID instead
-		// (base58 encodes a leading zero byte as '1', so 32 '1's is exactly the zero pubkey).
-		sol: "11111111111111111111111111111111",
-		solana: "11111111111111111111111111111111",
+		sol: "DYeBR1Aimoib4cMyAgXYvrYKsorxNuPzc92mWHCmvLEu",
+		solana: "DYeBR1Aimoib4cMyAgXYvrYKsorxNuPzc92mWHCmvLEu",
 		ada: "addr1q000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 		cardano: "addr1q000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 		zec: "t100000000000000000000000000000000000000000",

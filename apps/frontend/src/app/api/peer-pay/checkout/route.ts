@@ -108,6 +108,12 @@ export async function POST(request: Request) {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`${LOG} Error:`, msg);
+    // Per-order destinationAddress ("recipient override") is a gated Peer Pay capability, off by
+    // default — this whole flow depends on it (a fresh Near Intents bridge address per checkout),
+    // so until Peer's team enables it for this merchant, every order will fail exactly this way.
+    if (/recipient override/i.test(msg)) {
+      return new NextResponse(JSON.stringify({ error: "Peer deposit isn't available yet — recipient overrides aren't enabled for this merchant account." }), { status: 503, headers });
+    }
     return new NextResponse(JSON.stringify({ error: "Failed to create Peer checkout" }), { status: 502, headers });
   }
 }

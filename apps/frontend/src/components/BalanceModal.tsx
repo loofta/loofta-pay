@@ -82,7 +82,6 @@ import { usePerPrivateSelfTransfer } from "@/hooks/usePerPrivateSelfTransfer";
 import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
 import { SolanaWalletConnectProvider, useWallet as useSolanaWalletAdapter, WalletMultiButton } from "@/components/SolanaWalletConnect";
 import { startPrivateDeposit, buildDirectPrivateDeposit, getPrivateTransferStatus, type PrivateTransferStatus } from "@/services/api/privateBalance";
-import { buildUSDCTransferTransaction, sendSignedUSDCTransfer } from "@/services/solanaTransfer";
 import { PRIVATE_PAYMENT_MAX_WAIT_MINUTES } from "@/lib/privatePaymentCopy";
 import { PajCashOnrampView } from "@/components/paj-cash/PajCashOnrampView";
 import { PajCashOfframpView } from "@/components/paj-cash/PajCashOfframpView";
@@ -592,18 +591,6 @@ export function BalanceModal({
 
   // PAJ Cash (Naira on/off-ramp) history
   const [pajCashHistory, setPajCashHistory] = useState<PajCashOrder[]>([]);
-
-  // USDC deposit (regular, not private) — direct transfer to the user's own Loofta Solana
-  // address, either "Pay now" from a connected external wallet or "copy address" and send from
-  // anywhere. Mirrors the Private Deposit UX below minus the burner-relay privacy routing.
-  const [usdcDepositAmount, setUsdcDepositAmount] = useState("");
-  const [usdcDepositIsPrivate, setUsdcDepositIsPrivate] = useState(false);
-  const [usdcDepositStarted, setUsdcDepositStarted] = useState(false);
-  // Which CTA the user picked once past the amount screen: "address" shows the copy/QR view;
-  // null shows the direct Pay now (connected wallet) view, the default.
-  const [usdcDepositEntryMode, setUsdcDepositEntryMode] = useState<"address" | null>(null);
-  const [usdcDepositPayStatus, setUsdcDepositPayStatus] = useState<"idle" | "building" | "awaiting_signature" | "broadcasting" | "sent">("idle");
-  const [usdcDepositPayError, setUsdcDepositPayError] = useState<string | null>(null);
 
   // Private Deposit (MagicBlock burner-relay) — USDC on Solana only for now (cross-chain sources
   // are built server-side but gated off until failed-bridge refund recovery is automated)
@@ -1143,58 +1130,6 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "Payment failed", description: msg });
     }
   }, [devnetMode, toast, user?.id, privateDepositAmountNum, getAccessToken, onRefresh]);
-
-  // USDC deposit (regular, not private): amount screen -> "Pay now" a direct transfer from a
-  // connected external wallet straight to the user's own Loofta Solana address. No burner, no
-  // relay — same connected-wallet UX as Private Deposit's "Pay now" (WalletPayNowWidget), just a
-  // plain SPL transfer built by buildUSDCTransferTransaction.
-  const usdcDepositAmountNum = parseFloat(usdcDepositAmount) || 0;
-  const payUsdcDepositFromWallet = useCallback(async (
-    senderAddress: string,
-    signTx: <T extends Transaction | VersionedTransaction>(tx: T) => Promise<T>,
-  ) => {
-    if (!solanaAddress || !usdcDepositAmountNum) return;
-    setUsdcDepositPayError(null);
-    try {
-      const mode = devnetMode ? "devnet" : "mainnet";
-      const connection = new Connection(getRpcForMode(mode), "confirmed");
-
-      setUsdcDepositPayStatus("building");
-      const tx = await buildUSDCTransferTransaction({
-        senderAddress,
-        recipientAddress: solanaAddress,
-        amountUSDC: usdcDepositAmountNum,
-        connection,
-        usdcMint: getUsdcMintForMode(mode),
-      });
-
-      setUsdcDepositPayStatus("awaiting_signature");
-      const signedTx = await signTx(tx);
-
-      setUsdcDepositPayStatus("broadcasting");
-      const signature = await sendSignedUSDCTransfer(signedTx as VersionedTransaction, connection);
-      await waitForSignatureConfirmation(connection, signature, 120_000, 1500, "usdcDepositDirect");
-
-      setUsdcDepositPayStatus("sent");
-      recordDeposit("usdc-wallet", "complete", usdcDepositAmountNum);
-      onRefresh();
-      toast({ title: "Sent!", description: "Your balance will update shortly." });
-    } catch (err: unknown) {
-      setUsdcDepositPayStatus("idle");
-      const msg = err instanceof Error ? err.message : "Payment failed. Please try again.";
-      setUsdcDepositPayError(msg);
-      toast({ variant: "destructive", title: "Payment failed", description: msg });
-    }
-  }, [devnetMode, toast, solanaAddress, usdcDepositAmountNum, onRefresh, recordDeposit]);
-
-  const resetUsdcDeposit = useCallback(() => {
-    setUsdcDepositStarted(false);
-    setUsdcDepositAmount("");
-    setUsdcDepositIsPrivate(false);
-    setUsdcDepositEntryMode(null);
-    setUsdcDepositPayStatus("idle");
-    setUsdcDepositPayError(null);
-  }, []);
 
   // Private Withdrawal: sign leg 1 (own wallet -> burner); backend cron handles leg 2 (burner -> destination).
   // USDC on Solana only for now — reuses withdrawAmount/withdrawAddress, same state usdc-sol uses.
@@ -3466,7 +3401,7 @@ export function BalanceModal({
                     Choose your network
                   </p>
 
-                  {/* USDC — direct deposit to your own Loofta Solana address, connect wallet or copy address */}
+                  {/* USDC — direct deposit to your own Loofta Solana address (copy/QR only) */}
                   <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("usdc-deposit")}
                     className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
@@ -3475,7 +3410,7 @@ export function BalanceModal({
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>USDC</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Solana · connect wallet or copy address</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Solana · your wallet address</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
@@ -3517,10 +3452,25 @@ export function BalanceModal({
                   <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("crypto-picker")}
                     className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center -space-x-3">
-                      <img src="/images/icons/withdraw-usdc.svg" alt="" className="w-8 h-8 rounded-full ring-2 ring-white object-contain bg-white" />
-                      <img src="/images/blink/icon-yellow.png" alt="" className="w-8 h-8 rounded-full ring-2 ring-white object-contain bg-white" />
-                      <img src="/images/icons/near-logo.png" alt="" className="w-8 h-8 rounded-full ring-2 ring-white object-contain bg-white" />
+                    <div className="w-14 h-12 shrink-0 flex items-center justify-center -space-x-2">
+                      {/* Fixed pixel width/height as both the HTML attribute AND a Tailwind class
+                          on every <img>, absolutely positioned to fill its own wrapper via
+                          inset-0 — not size-via-flex (w-full/h-full on a flex child can get
+                          squashed by flex-shrink/min-width:auto) and not size-via-CSS-only on an
+                          SVG source (an <img>'s CSS width/height can be ignored in favor of the
+                          SVG's own intrinsic size when nothing else pins it down, which is what
+                          let Solana's wide 128x128 mark render at some other aspect entirely).
+                          overflow-hidden + rounded-full on the wrapper still does the circular
+                          clipping, now against a guaranteed-square filled box. */}
+                      <span className={cn("relative shrink-0 w-9 h-9 rounded-full bg-white overflow-hidden ring-2", dark ? "ring-[#0a0a0c]" : "ring-white")}>
+                        <img src="/images/icons/near-logo.png" alt="" width={36} height={36} className="absolute inset-0 w-9 h-9 object-contain" />
+                      </span>
+                      <span className={cn("relative shrink-0 w-9 h-9 rounded-full bg-white overflow-hidden ring-2", dark ? "ring-[#0a0a0c]" : "ring-white")}>
+                        <img src="/images/blink/icon-yellow.png" alt="" width={36} height={36} className="absolute inset-0 w-9 h-9 object-contain" />
+                      </span>
+                      <span className={cn("relative shrink-0 w-9 h-9 rounded-full bg-white overflow-hidden ring-2", dark ? "ring-[#0a0a0c]" : "ring-white")}>
+                        <img src="/images/logo/solana-mark.svg" alt="" width={36} height={36} className="absolute inset-0 w-9 h-9 object-contain" />
+                      </span>
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Crypto deposit</p>
@@ -3553,82 +3503,20 @@ export function BalanceModal({
             <div className="space-y-4 py-2">
 
               {/* Back */}
-              <button type="button" onClick={() => { setTopUpView("crypto-picker"); resetUsdcDeposit(); }}
+              <button type="button" onClick={() => setTopUpView("crypto-picker")}
                 className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
                 <ChevronLeft className="h-4 w-4" />Back
               </button>
 
-              {!usdcDepositStarted ? (
-                /* ── Amount form ── */
-                <div className="space-y-4">
-                  <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    Connect a wallet and send directly, or send USDC (Solana) from any wallet to your Loofta address.
-                  </p>
-                  <div>
-                    <Label htmlFor="usdc-deposit-amount" className={dark ? "text-slate-300" : undefined}>Amount (USDC)</Label>
-                    <AmountInput
-                      id="usdc-deposit-amount"
-                      dark={dark}
-                      value={usdcDepositAmount}
-                      onChange={setUsdcDepositAmount}
-                      suffix="USDC"
-                      className="mt-1"
-                    />
-                  </div>
+              {/* Wallet-connect "Pay now" never worked reliably here, so this is just the
+                  address — send USDC (Solana) from anywhere and it shows up in your balance. */}
+              <div className="space-y-3">
+                <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                  All payments on Loofta are USDC. Send USDC (Solana) to your Loofta address below to top up your balance.
+                </p>
 
-                  {/* Private toggle — same bordered-card + Switch pattern as the lottery-ticket
-                      upsell (p-4, rounded-2xl, icon badge, items-start). On: routes into the
-                      existing burner-relay Private Deposit flow (with this amount carried over)
-                      instead of the plain wallet/address flow below, so the choice is visible
-                      right here instead of only on a separate top-level tile. */}
-                  <div className={cn(
-                    "flex items-start gap-3 rounded-2xl border p-4",
-                    dark ? "border-white/10 bg-white/5" : "border-gray-100 bg-gray-50/60"
-                  )}>
-                    <span className={cn(
-                      "shrink-0 w-10 h-10 rounded-full flex items-center justify-center",
-                      dark ? "bg-white/10" : "bg-gray-100"
-                    )}>
-                      <VenetianMask className={`h-5 w-5 ${dark ? "text-slate-300" : "text-gray-500"}`} strokeWidth={1.75} />
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Private</p>
-                      <p className={`text-base mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>Not linked to your wallet on-chain</p>
-                    </div>
-                    <Switch
-                      checked={usdcDepositIsPrivate}
-                      onCheckedChange={setUsdcDepositIsPrivate}
-                      className="shrink-0 mt-1 data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-orange-500 data-[state=checked]:to-red-500"
-                    />
-                  </div>
-
-                  <Button
-                    onClick={() => {
-                      if (usdcDepositIsPrivate) {
-                        setPrivateDepositAmount(usdcDepositAmount);
-                        setPrivateDepositStarted(true);
-                        resetUsdcDeposit();
-                        setTopUpView("private-deposit");
-                      } else {
-                        setUsdcDepositStarted(true);
-                      }
-                    }}
-                    disabled={!usdcDepositAmountNum}
-                    className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
-                  >
-                    Deposit
-                  </Button>
-                </div>
-              ) : usdcDepositEntryMode === "address" && solanaAddress ? (
-                /* ── Deposit address view (connect wallet OR copy/send to this address) ── */
-                <div className="space-y-3">
+                {solanaAddress && (
                   <div className={`rounded-2xl border overflow-hidden ${dark ? "border-white/10" : "border-gray-100"}`}>
-                    <div className={`px-4 py-3 border-b ${dark ? "border-white/[0.06] bg-white/5" : "border-gray-100 bg-gray-50/60"}`}>
-                      <p className={`text-base font-medium ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                        Send <span className={`font-bold ${dark ? "text-white" : "text-gray-900"}`}>{usdcDepositAmountNum.toFixed(2)} USDC</span> (Solana) to this address
-                      </p>
-                    </div>
-
                     <div className="px-4 py-3">
                       <p className={`text-sm font-medium mb-1.5 uppercase tracking-wide ${dark ? "text-slate-500" : "text-gray-400"}`}>Your Loofta address</p>
                       <div className="flex items-center gap-2">
@@ -3645,59 +3533,14 @@ export function BalanceModal({
                         <QRCodeSVG value={solanaAddress} size={140} />
                       </div>
                     </div>
-
-                    <div className="px-4 py-3 border-t border-inherit">
-                      <button type="button" onClick={() => setUsdcDepositEntryMode(null)}
-                        className={`w-full text-center text-base underline underline-offset-2 ${dark ? "text-slate-500 hover:text-white" : "text-gray-400 hover:text-gray-700"}`}>
-                        Or pay with a connected wallet instead
-                      </button>
-                    </div>
                   </div>
+                )}
 
-                  <Button onClick={() => { setTopUpView(null); resetUsdcDeposit(); }}
-                    className="w-full bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white">
-                    Done
-                  </Button>
-                </div>
-              ) : (
-                /* ── Pay now (connect wallet, direct transfer) ── */
-                <div className="space-y-4">
-                  {usdcDepositPayStatus === "sent" ? (
-                    <div className={`flex items-center gap-3 rounded-2xl px-4 py-3.5 ${dark ? "bg-white/5 border border-white/10" : "bg-gradient-to-r from-orange-50/70 to-amber-50/30 border border-orange-100"}`}>
-                      <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
-                      <div>
-                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Sent!</p>
-                        <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                          Your balance will update shortly.
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                      Connect a Solana wallet and send {usdcDepositAmountNum.toFixed(2)} USDC directly to your Loofta balance.
-                    </p>
-                  )}
-
-                  {usdcDepositPayStatus !== "sent" && (
-                    <SolanaWalletConnectProvider rpcUrl={getRpcForMode(devnetMode ? "devnet" : "mainnet")}>
-                      <WalletPayNowWidget
-                        dark={dark}
-                        status={usdcDepositPayStatus}
-                        error={usdcDepositPayError}
-                        onPay={(senderAddress, signTx) => void payUsdcDepositFromWallet(senderAddress, signTx)}
-                        onViewAddressInstead={() => setUsdcDepositEntryMode("address")}
-                      />
-                    </SolanaWalletConnectProvider>
-                  )}
-
-                  {usdcDepositPayStatus === "sent" && (
-                    <Button onClick={() => { setTopUpView(null); resetUsdcDeposit(); }}
-                      className="w-full bg-gradient-to-r from-emerald-500 to-green-500 hover:opacity-90 text-white">
-                      Done
-                    </Button>
-                  )}
-                </div>
-              )}
+                <button type="button" onClick={() => setTopUpView("private-deposit")}
+                  className={`w-full text-center text-base underline underline-offset-2 ${dark ? "text-slate-500 hover:text-white" : "text-gray-400 hover:text-gray-700"}`}>
+                  Want this deposit to stay private instead?
+                </button>
+              </div>
             </div>
           )}
 
