@@ -18,8 +18,8 @@ export class PayoutsController {
   @RequireScope('payouts:create')
   @RateLimit(20, 60, 'payouts:create', 'integrator')
   @ApiSecurity('integrator-key')
-  @ApiOperation({ summary: 'Pay a recipient (by email/username/social handle) from the API key owner\'s account — returns an unsigned tx to sign with your own wallet' })
-  @ApiResponse({ status: 201, description: '{ payment_id, short_id, claim_link, unsigned_transaction, transaction_version, is_private, fee_amount_usdc? }' })
+  @ApiOperation({ summary: 'Pay a recipient (by email/username/social handle) from the API key owner\'s account — returns an unsigned Solana tx to sign, or (with funding_source) a deposit address to fund from another chain' })
+  @ApiResponse({ status: 201, description: '{ payment_id, short_id, claim_link, is_private, unsigned_transaction?, transaction_version?, send_to?, fee_amount_usdc?, funding_source?, deposit_address?, deposit_memo?, deposit_amount?, deposit_deadline? }' })
   async create(
     @Body() dto: CreatePayoutDto,
     @Req() req: { integrator: AuthenticatedIntegrator },

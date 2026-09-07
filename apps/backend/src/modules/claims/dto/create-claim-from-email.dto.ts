@@ -31,4 +31,6 @@ export class CreateClaimFromEmailDto {
 
   // Server-side only — stripped from request body by ValidationPipe whitelist.
   userId?: string;
+  /** ISO timestamp — claim auto-expires (EXPIRED) if still unsettled past this. Server-side only. */
+  expiresAt?: string;
 }

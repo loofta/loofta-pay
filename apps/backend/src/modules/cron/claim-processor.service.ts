@@ -85,6 +85,21 @@ export class ClaimProcessorService {
   }
 
   /**
+   * Every 10 minutes: expire OPEN/PENDING_DEPOSIT claims past their expires_at (set at creation
+   * only where the caller opted in, e.g. PayoutsService's 4h default) — "die out" for anything
+   * created but never actually funded.
+   */
+  @Cron('0 */10 * * * *')
+  async handleExpireStaleClaims() {
+    if (!this.isAutoProcessClaimsEnabled()) return;
+    try {
+      await this.claimsService.expireStaleClaims();
+    } catch (e: any) {
+      this.logger.error('[handleExpireStaleClaims] Error:', e?.message);
+    }
+  }
+
+  /**
    * Process all pending claims
    */
   async processPendingClaims(): Promise<ProcessingResult[]> {

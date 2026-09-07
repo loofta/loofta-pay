@@ -19,8 +19,8 @@ class UpdateBrandingDto {
 
 /**
  * Self-serve counterpart to admin-integrators.controller.ts — any logged-in Loofta user can mint
- * their own live (mainnet) API key here (scoped to payment_links:create only), no admin
- * provisioning needed. See IntegratorsService.provisionSelfServe.
+ * their own live (mainnet) API key here, scoped to SELF_SERVE_SCOPES (payment_links:create and
+ * payouts:create), no admin provisioning needed. See IntegratorsService.provisionSelfServe.
  */
 @ApiTags('integrators')
 @Controller('integrators/self-serve')

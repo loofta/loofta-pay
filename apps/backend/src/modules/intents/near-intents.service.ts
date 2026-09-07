@@ -153,6 +153,18 @@ export class NearIntentsService implements OnModuleInit {
   }
 
   /**
+   * Find a token by symbol on one of the given chain names (case-insensitive). Used to resolve a
+   * fixed funding-source key (e.g. "usdc_base") to the exact tokenId/decimals NEAR Intents
+   * expects, without hardcoding a contract address that could go stale.
+   */
+  async findToken(symbol: string, chainCandidates: string[]): Promise<NearToken | undefined> {
+    const tokens = await this.getTokens();
+    const sym = symbol.toUpperCase();
+    const candidates = chainCandidates.map((c) => c.toLowerCase());
+    return tokens.find((t) => t.symbol.toUpperCase() === sym && candidates.includes(t.chain.toLowerCase()));
+  }
+
+  /**
    * Get Defuse asset ID for a token
    */
   async getDefuseAssetId(symbol: string, chain: string): Promise<string> {

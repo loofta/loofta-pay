@@ -1,11 +1,28 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { ClaimsService } from '@/modules/claims/claims.service';
+import { DepositService } from '@/modules/claims/deposit.service';
+import { NearIntentsService } from '@/modules/intents/near-intents.service';
 import type { AuthenticatedIntegrator } from '@/modules/integrators/integrators.service';
-import { CreatePayoutDto } from './dto/create-payout.dto';
+import { CreatePayoutDto, PayoutFundingSource } from './dto/create-payout.dto';
+
+// Fixed symbol/chain pair NEAR Intents needs looked up for each supported funding_source. Chain
+// candidates list handles the possibility NEAR's token list names a chain differently than we'd
+// guess (e.g. Stellar as "xlm" instead of "stellar").
+const FUNDING_SOURCE_TOKENS: Record<PayoutFundingSource, { symbol: string; chains: string[] }> = {
+  usdt_ton: { symbol: 'USDT', chains: ['ton'] },
+  usdc_base: { symbol: 'USDC', chains: ['base'] },
+  usdc_stellar: { symbol: 'USDC', chains: ['stellar', 'xlm'] },
+};
+
+const PAYOUT_EXPIRY_MS = 4 * 60 * 60 * 1000;
 
 @Injectable()
 export class PayoutsService {
-  constructor(private readonly claimsService: ClaimsService) {}
+  constructor(
+    private readonly claimsService: ClaimsService,
+    private readonly depositService: DepositService,
+    private readonly nearIntentsService: NearIntentsService,
+  ) {}
 
   /**
    * Creates a claim addressed to the given recipient with the calling integrator's owner as
@@ -30,10 +47,16 @@ export class PayoutsService {
     payment_id: string;
     short_id: string | null;
     claim_link: string;
-    unsigned_transaction: string;
-    transaction_version: 'legacy' | 'v0';
     is_private: boolean;
+    unsigned_transaction?: string;
+    transaction_version?: 'legacy' | 'v0';
+    send_to?: 'base' | 'ephemeral';
     fee_amount_usdc?: number;
+    funding_source?: PayoutFundingSource;
+    deposit_address?: string;
+    deposit_memo?: string | null;
+    deposit_amount?: string;
+    deposit_deadline?: string;
   }> {
     if (!integrator.ownerUserId) {
       // Should be unreachable — only self-serve integrators carry the payouts:create scope
@@ -41,7 +64,13 @@ export class PayoutsService {
       // sender is safe to fall back to if it somehow isn't set.
       throw new BadRequestException('This API key has no owner to pay out on behalf of.');
     }
-    if (!dto.sender_wallet?.trim()) {
+    if (dto.funding_source && dto.sender_wallet?.trim()) {
+      throw new BadRequestException('Pass either sender_wallet or funding_source, not both.');
+    }
+    if (dto.funding_source && !dto.refund_wallet?.trim()) {
+      throw new BadRequestException('refund_wallet is required when funding_source is set.');
+    }
+    if (!dto.funding_source && !dto.sender_wallet?.trim()) {
       throw new BadRequestException('sender_wallet is required.');
     }
 
@@ -52,6 +81,10 @@ export class PayoutsService {
       userId: senderUserId,
       isPrivate,
       description: dto.message,
+      // Unsettled payouts (never signed, or never funded) die out on their own rather than
+      // sitting open forever — ClaimProcessorService.handleExpireStaleClaims sweeps these every
+      // 10 minutes. Already-funded claims (PRIVATE_TRANSFER_PENDING/SUCCESS) are untouched.
+      expiresAt: new Date(Date.now() + PAYOUT_EXPIRY_MS).toISOString(),
     };
 
     let created: { id: string; short_id: string | null; link: string };
@@ -85,26 +118,75 @@ export class PayoutsService {
         throw new BadRequestException(`Unsupported recipient_type: ${dto.recipient_type}`);
     }
 
+    if (dto.funding_source) {
+      // Cross-chain funding: same claim, same burner routing and EXACT_OUTPUT gross-up the
+      // in-app "pay claim from another chain" flow already uses (DepositService.requestDeposit)
+      // — so the caller sends the source token to a deposit address instead of signing a Solana
+      // transaction, and the existing near-intents-withdrawals reconciliation sweeps it to the
+      // recipient once it lands, same as any other cross-chain claim payment.
+      const { symbol, chains } = FUNDING_SOURCE_TOKENS[dto.funding_source];
+      const token = await this.nearIntentsService.findToken(symbol, chains);
+      if (!token) {
+        throw new BadRequestException(`${dto.funding_source} is temporarily unavailable — no route found.`);
+      }
+
+      const deposit = await this.depositService.requestDeposit({
+        claimId: created.id,
+        fromToken: {
+          tokenId: token.tokenId!,
+          symbol: token.symbol,
+          chain: token.chain,
+          decimals: token.decimals,
+        },
+        amount: String(dto.amount),
+        refundAddress: dto.refund_wallet!.trim(),
+        isPrivate,
+      });
+
+      if (!deposit.depositAddress) {
+        throw new BadRequestException('Failed to prepare a deposit address for this funding_source.');
+      }
+
+      return {
+        payment_id: created.id,
+        short_id: created.short_id,
+        claim_link: created.link,
+        is_private: isPrivate,
+        funding_source: dto.funding_source,
+        deposit_address: deposit.depositAddress,
+        deposit_memo: deposit.memo ?? null,
+        deposit_amount: deposit.minAmountInFormatted,
+        deposit_deadline: deposit.deadline,
+      };
+    }
+
+    const senderWallet = dto.sender_wallet!.trim();
+
     if (isPrivate) {
-      const built = await this.claimsService.buildPrivateTransferForPayer(created.id, senderUserId, dto.sender_wallet.trim());
+      const built = await this.claimsService.buildPrivateTransferForPayer(created.id, senderUserId, senderWallet);
       return {
         payment_id: created.id,
         short_id: created.short_id,
         claim_link: created.link,
         unsigned_transaction: built.transactionBase64,
         transaction_version: built.version,
+        // MagicBlock private transfers can require broadcasting to its ephemeral rollup RPC
+        // rather than base Solana — callers signing and sending this themselves need to know
+        // which, or the signed tx silently goes nowhere.
+        send_to: built.sendTo,
         is_private: true,
         fee_amount_usdc: built.feeAmountUsdc,
       };
     }
 
-    const built = await this.claimsService.buildPublicTransferForPayer(created.id, senderUserId, dto.sender_wallet.trim());
+    const built = await this.claimsService.buildPublicTransferForPayer(created.id, senderUserId, senderWallet);
     return {
       payment_id: created.id,
       short_id: created.short_id,
       claim_link: created.link,
       unsigned_transaction: built.transactionBase64,
       transaction_version: built.version,
+      send_to: 'base',
       is_private: false,
     };
   }

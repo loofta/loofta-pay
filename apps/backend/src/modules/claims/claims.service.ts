@@ -203,7 +203,7 @@ export class ClaimsService {
    * If user does not exist: create "burner" claim with PENDING_USERNAME so they can claim later when they sign up with that username.
    */
   async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string }> {
-    const { username, amount, userId, isPrivate = false, description, cluster, treatUnregisteredAsTwitter } = dto;
+    const { username, amount, userId, isPrivate = false, description, cluster, treatUnregisteredAsTwitter, expiresAt } = dto;
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
     // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
@@ -243,6 +243,7 @@ export class ClaimsService {
           is_devnet: isDevnet,
           is_private: isPrivate,
           short_id: generateShortId(),
+          expires_at: expiresAt ?? null,
           ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
         })
         .select('id, short_id')
@@ -288,6 +289,7 @@ export class ClaimsService {
         is_private: isPrivate,
         recipient_was_unregistered: true,
         short_id: generateShortId(),
+        expires_at: expiresAt ?? null,
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id, short_id')
@@ -310,7 +312,7 @@ export class ClaimsService {
    * otherwise fall back to a pending burner claim they can claim once they connect that handle.
    */
   async createFromSocial(dto: CreateClaimFromSocialDto): Promise<{ id: string; short_id: string | null; link: string }> {
-    const { platform, handle, amount, userId, isPrivate = false, description, cluster } = dto;
+    const { platform, handle, amount, userId, isPrivate = false, description, cluster, expiresAt } = dto;
     const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
     const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
     // Strip a trailing Discord discriminator (e.g. "username#0") — senders no longer need to type one.
@@ -351,6 +353,7 @@ export class ClaimsService {
           is_devnet: isDevnet,
           is_private: isPrivate,
           short_id: generateShortId(),
+          expires_at: expiresAt ?? null,
           ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
         })
         .select('id, short_id')
@@ -392,6 +395,7 @@ export class ClaimsService {
         is_private: isPrivate,
         recipient_was_unregistered: true,
         short_id: generateShortId(),
+        expires_at: expiresAt ?? null,
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id, short_id')
@@ -786,7 +790,7 @@ export class ClaimsService {
    * Create a claim from email. If user exists, use their wallet. If not, create with PENDING_EMAIL so they can claim by signing in later.
    */
   async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; short_id: string | null; link: string }> {
-    const { email, amount, userId, isPrivate = false, description, cluster } = dto;
+    const { email, amount, userId, isPrivate = false, description, cluster, expiresAt } = dto;
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
     // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
@@ -824,6 +828,7 @@ export class ClaimsService {
           is_devnet: isDevnet,
           is_private: isPrivate,
           short_id: generateShortId(),
+          expires_at: expiresAt ?? null,
           ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
         })
         .select('id, short_id')
@@ -865,6 +870,7 @@ export class ClaimsService {
         is_private: isPrivate,
         recipient_was_unregistered: true,
         short_id: generateShortId(),
+        expires_at: expiresAt ?? null,
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
       })
       .select('id, short_id')
@@ -883,16 +889,20 @@ export class ClaimsService {
 
   /**
    * Genuinely public, pre-auth summary — used by claim pages (e.g. the standalone Loofta Link
-   * app) to show "you're about to claim $X" BEFORE the visitor logs in. Deliberately returns
-   * only fields that reveal nothing about the recipient's identity (unlike findOne, which
-   * requires auth precisely because it exposes recipient/creator details) — no recipient_*,
-   * no created_by, nothing to mask.
+   * app) to show "you're about to claim $X" BEFORE the visitor logs in, and by DepositService to
+   * look up a claim's payment-mechanics fields before its payer has signed in as its creator or
+   * recipient (anyone can be about to pay a public payment link). Deliberately returns only
+   * fields that reveal nothing about the recipient's identity (unlike findOne, which requires
+   * auth precisely because it exposes recipient/creator details) — no recipient_*, no created_by,
+   * nothing to mask. to_chain/is_private are payment mechanics, not identity, so safe to include.
    */
   async findPublicSummary(idOrShortId: string): Promise<{
     id: string;
     short_id: string | null;
     amount: string;
     to_symbol: string | null;
+    to_chain: string | null;
+    is_private: boolean;
     description: string | null;
     status: string;
   }> {
@@ -907,6 +917,8 @@ export class ClaimsService {
       short_id: (row.short_id as string) ?? null,
       amount: String(row.amount),
       to_symbol: (row.to_symbol as string) ?? 'USDC',
+      to_chain: (row.to_chain as string) ?? null,
+      is_private: row.is_private === true,
       description: (row.description as string) ?? null,
       status: String(row.status),
     };
@@ -2179,6 +2191,30 @@ export class ClaimsService {
    *  delegate here so this file's existing call sites don't all need touching. */
   private guardAtaSponsorship(walletAddress: string, mint: string, context: string): Promise<boolean> {
     return guardAtaSponsorship(this.supabaseService, walletAddress, mint, context, this.emailService);
+  }
+
+  /**
+   * Cron backstop expiring claims that were never settled within their `expires_at` window (set
+   * at creation only where the caller opted in — e.g. PayoutsService's 4h default; most in-app
+   * "Send" claims leave expires_at null and are unaffected). Only OPEN (never signed/funded) and
+   * PENDING_DEPOSIT (deposit address issued, nothing ever arrived) are eligible — anything past
+   * that point has already received funds and isn't "unsettled" anymore, even if slow to sweep.
+   */
+  async expireStaleClaims(): Promise<number> {
+    const { data, error } = await this.supabaseService.payments
+      .update({ status: 'EXPIRED' })
+      .in('status', ['OPEN', 'PENDING_DEPOSIT'])
+      .lt('expires_at', new Date().toISOString())
+      .select('id');
+    if (error) {
+      this.logger.error(`expireStaleClaims: failed to expire claims: ${error.message}`);
+      return 0;
+    }
+    const count = data?.length ?? 0;
+    if (count > 0) {
+      this.logger.log(`expireStaleClaims: expired ${count} unsettled claim(s) past their expiry`);
+    }
+    return count;
   }
 
   /**

@@ -153,6 +153,10 @@ export class IntegratorsService {
       for (const key of existing.keys) {
         await this.revokeKey(key.id);
       }
+      // Re-sync scopes to the current SELF_SERVE_SCOPES — an integrator row provisioned before a
+      // scope was added (e.g. payouts:create) would otherwise stay stuck on its original scopes
+      // forever, since minting a new key never touches this row's own scopes column.
+      await this.syncSelfServeScopes(existing.id);
       const { rawKey, keyPrefix } = await this.mintAdditionalKey(existing.id, false);
       return { integratorId: existing.id, rawKey, keyPrefix };
     }
@@ -210,7 +214,23 @@ export class IntegratorsService {
     for (const key of existing.keys) {
       await this.revokeKey(key.id);
     }
+    await this.syncSelfServeScopes(existing.id);
     return this.mintAdditionalKey(existing.id, false);
+  }
+
+  /**
+   * Resyncs a self-serve integrator's scopes column to the current SELF_SERVE_SCOPES. Scopes live
+   * on the integrator row, not the key, so minting a new key alone never picks up a scope added
+   * after that row was first provisioned (e.g. payouts:create landing after a user's integrator
+   * already existed) — call this whenever (re)provisioning a self-serve key.
+   */
+  private async syncSelfServeScopes(integratorId: string): Promise<void> {
+    const { error } = await this.supabase.integrators
+      .update({ scopes: SELF_SERVE_SCOPES })
+      .eq('id', integratorId);
+    if (error) {
+      this.logger.error(`Failed to sync self-serve scopes for integrator ${integratorId}: ${error.message}`);
+    }
   }
 
   /** Ownership-checked revoke — a self-serve caller may only revoke keys on their own integrator. */

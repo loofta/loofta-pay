@@ -4,6 +4,9 @@ import { IsNumber, IsOptional, IsString, IsBoolean, IsIn, IsNotEmpty, Min, Max, 
 export const PAYOUT_RECIPIENT_TYPES = ['email', 'username', 'twitter', 'discord', 'github', 'telegram'] as const;
 export type PayoutRecipientType = (typeof PAYOUT_RECIPIENT_TYPES)[number];
 
+export const PAYOUT_FUNDING_SOURCES = ['usdt_ton', 'usdc_base', 'usdc_stellar'] as const;
+export type PayoutFundingSource = (typeof PAYOUT_FUNDING_SOURCES)[number];
+
 export class CreatePayoutDto {
   @ApiProperty({ description: 'Amount in USD the recipient should receive. $1 minimum if public (the default), $5 minimum if private.', example: 25 })
   @IsNumber()
@@ -22,10 +25,26 @@ export class CreatePayoutDto {
   @MaxLength(320)
   recipient_identifier: string;
 
-  @ApiProperty({ description: 'Your own Solana wallet — pays gas and signs the returned transaction. Never touched by Loofta.', example: '5dCT...BKuq' })
+  @ApiPropertyOptional({ description: 'Your own Solana wallet — pays gas and signs the returned transaction. Required unless funding_source is set. Never touched by Loofta.', example: '5dCT...BKuq' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  sender_wallet: string;
+  sender_wallet?: string;
+
+  @ApiPropertyOptional({
+    description: 'Fund this payout from a wallet on another chain instead of signing a Solana transaction. When set, omit sender_wallet — the response returns a deposit address and the exact amount to send there instead of an unsigned transaction. refund_wallet is required alongside this.',
+    enum: PAYOUT_FUNDING_SOURCES,
+    example: 'usdc_base',
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(PAYOUT_FUNDING_SOURCES)
+  funding_source?: PayoutFundingSource;
+
+  @ApiPropertyOptional({ description: 'Your address on the funding_source chain, used to refund you if the deposit can\'t be completed. Required when funding_source is set.', example: 'EQC...abcd' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  refund_wallet?: string;
 
   @ApiPropertyOptional({ description: 'Message the recipient sees on the claim page' })
   @IsOptional()

@@ -11,11 +11,11 @@ const PRODUCT_NAME = "Loofta Demo Tee";
 const PRODUCT_DESCRIPTION = "100% cotton. Not a real product — every purchase here just proves out a real checkout link.";
 
 export function TryIt({ onNavigate }: { onNavigate: (slug: string) => void }) {
-  // Picks up whatever key ApiKeySetup last generated this session — same sessionStorage slot,
-  // read once on mount. Still editable here: someone may paste in a key generated elsewhere.
+  // Picks up whatever key ApiKeySetup last generated — same localStorage slot, read once on
+  // mount. Still editable here: someone may paste in a key generated elsewhere.
   const [apiKey, setApiKey] = useState(() => {
     if (typeof window === "undefined") return "";
-    return window.sessionStorage.getItem(RAW_KEY_STORAGE_KEY) ?? "";
+    return window.localStorage.getItem(RAW_KEY_STORAGE_KEY) ?? "";
   });
 
   const [amount, setAmount] = useState("25");

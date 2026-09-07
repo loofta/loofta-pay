@@ -45,18 +45,19 @@ export function ApiKeySetup({ onNavigate }: { onNavigate: (slug: string) => void
   const [minting, setMinting] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   // Raw key is never retrievable from the server after creation — this is only ever a client-side
-  // convenience so navigating between docs sections, or reloading this page, doesn't force a
-  // destructive re-generate (which revokes the previous key) just to use Try It again.
-  // sessionStorage, not localStorage, so it still clears itself the moment the tab/browser closes.
+  // convenience so navigating between docs sections, reloading, or coming back in a new tab
+  // tomorrow doesn't force a destructive re-generate (which revokes the previous key) just to use
+  // Try It again. localStorage rather than sessionStorage — a self-serve dev key someone is
+  // actively testing against is worth surviving a closed tab; they can still revoke it above.
   const [rawKey, setRawKeyState] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
-    return window.sessionStorage.getItem(RAW_KEY_STORAGE_KEY);
+    return window.localStorage.getItem(RAW_KEY_STORAGE_KEY);
   });
   const setRawKey = useCallback((key: string | null) => {
     setRawKeyState(key);
     if (typeof window === "undefined") return;
-    if (key) window.sessionStorage.setItem(RAW_KEY_STORAGE_KEY, key);
-    else window.sessionStorage.removeItem(RAW_KEY_STORAGE_KEY);
+    if (key) window.localStorage.setItem(RAW_KEY_STORAGE_KEY, key);
+    else window.localStorage.removeItem(RAW_KEY_STORAGE_KEY);
   }, []);
 
   const [brandName, setBrandName] = useState("");

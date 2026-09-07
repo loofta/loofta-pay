@@ -63,8 +63,11 @@ export class DepositService {
       throw new BadRequestException('Missing required fields');
     }
 
-    // Get claim details (masked for display) and raw for recipient_address / claim_burner_address (pending claims use burner)
-    const claim = await this.claimsService.findOne(claimId);
+    // Get claim details (public/masked — the payer funding this deposit is neither the claim's
+    // creator nor its recipient, same as anyone paying a public payment link, so findOne's
+    // creator-or-recipient ACL would wrongly reject them) and raw for recipient_address /
+    // claim_burner_address (pending claims use burner).
+    const claim = await this.claimsService.findPublicSummary(claimId);
     const rawClaim = await this.claimsService.findOneRaw(claimId);
 
     // Enforce private payment if claim requires it

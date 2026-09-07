@@ -175,6 +175,7 @@ Response:
   "claim_link": "https://pay.loofta.xyz/c/aB3xK9pQ",
   "unsigned_transaction": "AQAAAAAAAAAAAAAAAAAAAAAA...",
   "transaction_version": "legacy",
+  "send_to": "base",
   "is_private": false
 }
 \`\`\`
@@ -184,19 +185,29 @@ Fields:
 - \`amount\` (required): USD, $10,000 maximum, $1 minimum ($5 if \`is_private\` is \`true\`).
 - \`recipient_type\` (required): \`email\`, \`username\`, \`twitter\`, \`discord\`, \`github\`, or \`telegram\`.
 - \`recipient_identifier\` (required): the email/username/handle matching \`recipient_type\`.
-- \`sender_wallet\` (required): the caller's own Solana wallet public key — pays gas and signs the
-  returned transaction. Loofta never holds this wallet's key.
+- \`sender_wallet\` (required unless \`funding_source\` is set): the caller's own Solana wallet
+  public key — pays gas and signs the returned transaction. Loofta never holds this wallet's key.
+- \`funding_source\` (optional): pay from another chain instead — \`usdt_ton\`, \`usdc_base\`, or
+  \`usdc_stellar\`. Pass this instead of \`sender_wallet\`; requires \`refund_wallet\`. See below.
+- \`refund_wallet\` (required when \`funding_source\` is set): your address on the \`funding_source\`
+  chain, used to refund you if the deposit can't complete.
 - \`message\` (optional): shown to the recipient on their claim page, 500 chars max.
 - \`is_private\` (optional): defaults to \`false\`. \`true\` shields the amount and sender wallet
-  on-chain — a MagicBlock private transfer, ~10 bps + $0.20 flat gas on top of \`amount\`.
+  on-chain — a MagicBlock private transfer, ~10 bps + $0.20 flat gas on top of \`amount\`. Requires
+  \`amount\` to be at least $5.
 
 Sign and broadcast \`unsigned_transaction\` yourself — \`transaction_version\` tells you whether to
-deserialize it as a legacy \`Transaction\` or \`VersionedTransaction\`:
+deserialize it as a legacy \`Transaction\` or \`VersionedTransaction\`, and \`send_to\` tells you which
+RPC to broadcast to (a private transfer can require MagicBlock's \`"ephemeral"\` rollup RPC instead
+of \`"base"\` Solana):
 
 \`\`\`ts
 import { Connection, Transaction, VersionedTransaction, Keypair } from "@solana/web3.js";
 
-const connection = new Connection("https://api.mainnet-beta.solana.com");
+const rpcUrl = send_to === "ephemeral"
+  ? "https://mainnet-tee.magicblock.app"
+  : "https://api.mainnet-beta.solana.com";
+const connection = new Connection(rpcUrl);
 const senderKeypair = Keypair.fromSecretKey(/* your own key, never sent to Loofta */);
 
 const raw = Buffer.from(unsigned_transaction, "base64");
@@ -212,6 +223,48 @@ The recipient sees the payout waiting at \`claim_link\` the moment the transacti
 claim/burner mechanics as every other Loofta payment. An unregistered recipient claims by signing
 in with the same email/handle it was sent to.
 
+### Funding from another chain
+
+Pass \`funding_source\` instead of \`sender_wallet\` to skip the Solana transaction entirely:
+
+\`\`\`bash
+curl -X POST https://api.loofta.xyz/payouts \\
+  -H "Authorization: Bearer $LOOFTA_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "amount": 25,
+    "recipient_type": "email",
+    "recipient_identifier": "alice@example.com",
+    "funding_source": "usdc_base",
+    "refund_wallet": "0xYourBaseAddress..."
+  }'
+\`\`\`
+
+Response:
+
+\`\`\`json
+{
+  "payment_id": "b3f1...e02a",
+  "short_id": "aB3xK9pQ",
+  "claim_link": "https://pay.loofta.xyz/c/aB3xK9pQ",
+  "is_private": false,
+  "funding_source": "usdc_base",
+  "deposit_address": "0x9f2c...4a1b",
+  "deposit_memo": null,
+  "deposit_amount": "25.081234",
+  "deposit_deadline": "2026-09-07T12:34:56.000Z"
+}
+\`\`\`
+
+Send exactly \`deposit_amount\` of the \`funding_source\` token to \`deposit_address\` (include
+\`deposit_memo\` if present) before \`deposit_deadline\`. Alice sees the payout at \`claim_link\` once
+the deposit is confirmed and swept — there's nothing to sign or broadcast on this path.
+
+A payout that's never funded (unsigned_transaction never signed and broadcast, or nothing ever
+sent to deposit_address) auto-expires 4 hours after creation, after which \`claim_link\` no longer
+accepts payment. An already-funded payout is unaffected regardless of how long the recipient
+takes to claim it.
+
 ## Constraints to respect
 
 - One payment link = one fixed amount, one transaction. There is no "open amount" / pay-what-you-want
@@ -220,9 +273,9 @@ in with the same email/handle it was sent to.
   privately and adds a fee to their total — you still net exactly \`amount\` either way. Don't
   assume privacy or add your own fee expecting to net more.
 - \`/payouts\` is single-recipient only — there is no batch/multi-recipient payout endpoint.
-- \`/payouts\` never signs or broadcasts anything itself — you must sign \`unsigned_transaction\`
-  with \`sender_wallet\`'s own key and submit it. Don't expect the funds to move just from calling
-  the endpoint.
+- \`/payouts\` never signs or broadcasts anything itself — with \`sender_wallet\`, you must sign
+  \`unsigned_transaction\` with that key and submit it; with \`funding_source\`, you must actually
+  send the token to \`deposit_address\`. Don't expect funds to move just from calling the endpoint.
 - No sandbox/test mode — every key is live. Don't build a "test mode" flag expecting one to exist.
 - Full reference: https://pay.loofta.xyz/docs
 `;
