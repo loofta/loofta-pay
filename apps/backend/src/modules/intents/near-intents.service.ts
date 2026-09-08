@@ -156,12 +156,20 @@ export class NearIntentsService implements OnModuleInit {
    * Find a token by symbol on one of the given chain names (case-insensitive). Used to resolve a
    * fixed funding-source key (e.g. "usdc_base") to the exact tokenId/decimals NEAR Intents
    * expects, without hardcoding a contract address that could go stale.
+   *
+   * Some chains (TON confirmed) list more than one token for the same symbol/chain pair — a
+   * plain "nep141:*.omft.near" asset alongside a "nep245:*" multi-token from a bridge like HOT's
+   * omni-bridge. The nep245 kind represents a balance already inside that bridge's own contract
+   * and rejects the ORIGIN_CHAIN/SIMPLE deposit-address flow getDepositQuote always uses here
+   * ("Bad Request - Invalid input data") — every other chain in this codebase only ever sees
+   * nep141 tokens, so prefer one explicitly rather than taking array order on faith.
    */
   async findToken(symbol: string, chainCandidates: string[]): Promise<NearToken | undefined> {
     const tokens = await this.getTokens();
     const sym = symbol.toUpperCase();
     const candidates = chainCandidates.map((c) => c.toLowerCase());
-    return tokens.find((t) => t.symbol.toUpperCase() === sym && candidates.includes(t.chain.toLowerCase()));
+    const matches = tokens.filter((t) => t.symbol.toUpperCase() === sym && candidates.includes(t.chain.toLowerCase()));
+    return matches.find((t) => t.tokenId?.startsWith('nep141:')) ?? matches[0];
   }
 
   /**
