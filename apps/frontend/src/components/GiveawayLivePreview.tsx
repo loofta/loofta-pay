@@ -9,6 +9,12 @@ import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { FormattedText } from "@/components/FormattedText";
 
+// Same two destinations every other "contact us" surface in the app points to (see
+// apps/frontend/src/app/docs/sections/Whitelabel.tsx, apps/frontend/src/app/partners/PartnersContent.tsx)
+// — just a subject line specific to this upsell.
+const WHITELABEL_CONTACT_HREF = "mailto:hello@loofta.xyz?subject=" + encodeURIComponent("Whitelabel giveaways");
+const WHITELABEL_TELEGRAM_HREF = "https://t.me/looftaxyz";
+
 function CountUp({ value, prefix = "", className }: { value: number; prefix?: string; className?: string }) {
   const [disp, setDisp] = useState(value);
   const prevRef = useRef(value);
@@ -222,6 +228,23 @@ export function GiveawayLivePreview({
             </span>
           )}
         </div>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
+        <p className="text-sm font-medium text-white mb-1">Want this on your own brand?</p>
+        <p className="text-sm text-slate-400 mb-2.5">
+          We can whitelabel the giveaway page for your project — your domain, your logo, no Loofta branding.
+        </p>
+        <p className="text-sm text-slate-400">
+          <a href={WHITELABEL_TELEGRAM_HREF} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:underline">
+            Message us on Telegram
+          </a>{" "}
+          or{" "}
+          <a href={WHITELABEL_CONTACT_HREF} className="text-orange-400 hover:underline">
+            email us
+          </a>
+          .
+        </p>
       </div>
     </div>
   );
