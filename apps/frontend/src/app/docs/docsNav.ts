@@ -39,6 +39,9 @@ export const DOCS_NAV: DocsNavSection[] = [
   },
   {
     section: "Send payments",
-    pages: [{ slug: "send-payments", title: "Pay a recipient" }],
+    pages: [
+      { slug: "send-payments", title: "Pay a recipient" },
+      { slug: "whitelabel", title: "Whitelabel the claim page" },
+    ],
   },
 ];

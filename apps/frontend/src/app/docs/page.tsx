@@ -12,6 +12,7 @@ import { CheckoutPage } from "./sections/CheckoutPage";
 import { CodeExamples } from "./sections/CodeExamples";
 import { AgentSkill } from "./sections/AgentSkill";
 import { SendPayments } from "./sections/SendPayments";
+import { Whitelabel } from "./sections/Whitelabel";
 import { ApiKeySetup } from "./sections/ApiKeySetup";
 import { TryIt } from "./sections/TryIt";
 
@@ -52,6 +53,8 @@ function DocsBody() {
         return <AgentSkill />;
       case "send-payments":
         return <SendPayments onNavigate={navigate} />;
+      case "whitelabel":
+        return <Whitelabel onNavigate={navigate} />;
       default:
         return <Intro onNavigate={navigate} />;
     }

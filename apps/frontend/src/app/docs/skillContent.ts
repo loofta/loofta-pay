@@ -260,10 +260,26 @@ Send exactly \`deposit_amount\` of the \`funding_source\` token to \`deposit_add
 \`deposit_memo\` if present) before \`deposit_deadline\`. Alice sees the payout at \`claim_link\` once
 the deposit is confirmed and swept — there's nothing to sign or broadcast on this path.
 
+\`deposit_note\` (only present for \`usdt_ton\`): every TON deposit address is brand new with zero
+TON balance. Most wallets attach enough gas automatically on a normal send, but a jetton transfer
+sent with too little forward gas can land on-chain and never register as a deposit — confirmed
+failure mode is a gas-starved notification message on the TON side, not a lost payment, but it
+needs manual recovery. Surface this field to whoever is actually sending the funds.
+
 A payout that's never funded (unsigned_transaction never signed and broadcast, or nothing ever
-sent to deposit_address) auto-expires 4 hours after creation, after which \`claim_link\` no longer
-accepts payment. An already-funded payout is unaffected regardless of how long the recipient
-takes to claim it.
+sent to deposit_address) auto-expires — 4 hours after creation for the \`sender_wallet\` path;
+for \`funding_source\`, the deposit address's own bridge-quote deadline instead (often a few days,
+never less than 4 hours), so the claim doesn't die before the address stops being watched. After
+expiry \`claim_link\` no longer accepts payment. An already-funded payout is unaffected regardless
+of how long the recipient takes to claim it.
+
+### Whitelabeling the claim page
+
+By default \`claim_link\` points to a Loofta-branded page at \`pay.loofta.xyz\`. Putting that page
+on your own domain with your own branding (no Loofta name visible to the recipient) is not
+self-serve. It's configured on-demand per integrator. Have the user email hello@loofta.xyz with
+the domain they want and their expected volume; don't imply this can be turned on via an API call
+or dashboard toggle.
 
 ## Constraints to respect
 

@@ -7,7 +7,7 @@ import {
   useSignTransaction as usePrivySolanaSignTransaction,
 } from "@privy-io/react-auth/solana";
 import { Connection } from "@solana/web3.js";
-import { Loader2, ExternalLink, KeyRound } from "lucide-react";
+import { Loader2, ExternalLink, KeyRound, Copy, Check } from "lucide-react";
 import { DocsCodeBlock } from "../DocsCodeBlock";
 import { RAW_KEY_STORAGE_KEY } from "./ApiKeySetup";
 import { createPayoutWithKey, PAYOUT_RECIPIENT_TYPES, type PayoutRecipientType, type PayoutFundingSource } from "@/services/api/payouts";
@@ -40,6 +40,8 @@ const RECIPIENT_LABELS: Record<PayoutRecipientType, { label: string; placeholder
 };
 
 const PRIVATE_MIN_USD = 5;
+const CUSTOM_INTEGRATION_HREF = "mailto:hello@loofta.xyz?subject=" + encodeURIComponent("Custom payout integration");
+const TELEGRAM_HREF = "https://t.me/looftaxyz";
 
 type PayNowPhase =
   | { kind: "idle" }
@@ -47,8 +49,26 @@ type PayNowPhase =
   | { kind: "awaiting_signature" }
   | { kind: "broadcasting" }
   | { kind: "done_signed"; claimLink: string; signature: string; rawResponse: string }
-  | { kind: "done_deposit"; claimLink: string; depositAddress: string; depositMemo: string | null; depositAmount?: string; depositDeadline?: string; token: string; rawResponse: string }
+  | { kind: "done_deposit"; claimLink: string; depositAddress: string; depositMemo: string | null; depositAmount?: string; depositDeadline?: string; depositNote?: string; token: string; rawResponse: string }
   | { kind: "error"; message: string };
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
+      className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+      aria-label="Copy"
+    >
+      {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+    </button>
+  );
+}
 
 function TryPayNow() {
   const { login, authenticated, user } = usePrivy();
@@ -141,6 +161,7 @@ function TryPayNow() {
           depositMemo: created.deposit_memo ?? null,
           depositAmount: created.deposit_amount,
           depositDeadline: created.deposit_deadline,
+          depositNote: created.deposit_note,
           token: selectedNetwork.token,
           rawResponse: JSON.stringify(created, null, 2),
         });
@@ -327,6 +348,7 @@ function TryPayNow() {
             >
               {phase.claimLink}
             </a>
+            <CopyButton text={phase.claimLink} />
             <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
           </div>
           <p className="text-base text-slate-400">
@@ -351,12 +373,18 @@ function TryPayNow() {
           </p>
           <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
             <code className="flex-1 min-w-0 truncate text-base text-slate-300">{phase.depositAddress}</code>
+            <CopyButton text={phase.depositAddress} />
           </div>
           {phase.depositMemo && (
             <p className="text-base text-slate-400">Memo: <code className="text-slate-300">{phase.depositMemo}</code></p>
           )}
           {phase.depositDeadline && (
             <p className="text-base text-slate-400">Deadline: {new Date(phase.depositDeadline).toLocaleString()}</p>
+          )}
+          {phase.depositNote && (
+            <p className="text-base text-amber-200/90 bg-amber-500/10 border border-amber-400/20 rounded-lg px-3 py-2">
+              {phase.depositNote}
+            </p>
           )}
           <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
             <a
@@ -367,6 +395,7 @@ function TryPayNow() {
             >
               {phase.claimLink}
             </a>
+            <CopyButton text={phase.claimLink} />
             <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
           </div>
         </div>
@@ -385,6 +414,20 @@ export function SendPayments({ onNavigate }: { onNavigate: (slug: string) => voi
   return (
     <article>
       <h1 className="text-3xl font-medium text-slate-100 mb-3">Send payments</h1>
+      <p className="text-base text-slate-400 leading-relaxed mb-3">
+        Pay anyone by identity, no wallet address needed on either side:
+      </p>
+      <ul className="list-disc list-inside space-y-2 text-base text-slate-300 mb-4">
+        <li><strong className="text-slate-100 font-medium">Community members</strong> — Discord or Telegram handle.</li>
+        <li><strong className="text-slate-100 font-medium">Contributors</strong> — GitHub username or email.</li>
+        <li><strong className="text-slate-100 font-medium">Creators</strong> — X handle. TikTok and Instagram are coming.</li>
+        <li><strong className="text-slate-100 font-medium">Collaborators, freelancers, bounty winners</strong> — email or username.</li>
+        <li><strong className="text-slate-100 font-medium">One or many</strong> — pay one person with this endpoint, or batch up to 10 recipients in a single signature with multi-send.</li>
+      </ul>
+      <p className="text-base text-slate-400 leading-relaxed mb-6">
+        Recipients don&apos;t need a wallet ready to go either. They claim straight to a wallet
+        Loofta sets up for them on the spot, or, in Nigeria, straight to a bank account instead.
+      </p>
       <p className="text-base text-slate-400 leading-relaxed mb-6">
         <code className="text-orange-300">POST /payouts</code> pays a recipient — by email,
         username, or social handle — from the API key owner's own account. The counterpart to{" "}
@@ -395,6 +438,21 @@ export function SendPayments({ onNavigate }: { onNavigate: (slug: string) => voi
         unsigned transaction, you sign it with your own wallet. Loofta never holds or moves your
         funds on your behalf.
       </p>
+
+      <div className="rounded-xl border border-white/10 bg-white/5 p-4 mb-8">
+        <p className="text-slate-300 text-base">
+          Need a specific SPL token, a recurring payout schedule, funds released only when a
+          condition is met, or a custom integration into your own systems?{" "}
+          <a href={TELEGRAM_HREF} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:underline">
+            Message us on Telegram
+          </a>{" "}
+          or{" "}
+          <a href={CUSTOM_INTEGRATION_HREF} className="text-orange-400 hover:underline">
+            email us
+          </a>{" "}
+          and we&apos;ll build it with you.
+        </p>
+      </div>
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Try it — pay someone now</h2>
       <p className="text-base text-slate-400 mb-4">
@@ -484,10 +542,13 @@ export function SendPayments({ onNavigate }: { onNavigate: (slug: string) => voi
         </tbody>
       </table>
       <p className="text-base text-slate-400 mb-6">
-        A payout that never gets funded — <code>unsigned_transaction</code> never signed and
-        broadcast, or nothing ever sent to <code>deposit_address</code> — auto-expires 4 hours
-        after creation. Once expired, <code>claim_link</code> no longer accepts payment. A payout
-        that has already been funded is unaffected, however long the recipient takes to claim it.
+        A payout that never gets funded auto-expires — <code>unsigned_transaction</code> never
+        signed and broadcast expires 4 hours after creation; nothing ever sent to a{" "}
+        <code>deposit_address</code> expires whenever that deposit address's own bridge quote does
+        (often a few days, never less than 4 hours), since the claim shouldn't die before the
+        address stops being watched. Once expired, <code>claim_link</code> no longer accepts
+        payment. A payout that has already been funded is unaffected, however long the recipient
+        takes to claim it.
       </p>
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Response</h2>
@@ -579,6 +640,26 @@ const signature = await connection.sendRawTransaction(tx.serialize());`}
         <code>deposit_deadline</code>. Alice sees the payout at <code>claim_link</code> once the
         deposit is confirmed and swept — there's nothing left for you to sign or broadcast.
       </p>
+      <p className="text-base text-amber-300/90 mb-6">
+        <code className="text-amber-200">deposit_note</code> (only present for{" "}
+        <code>usdt_ton</code>): every TON deposit address is brand new and holds zero TON. Most
+        wallets attach enough gas automatically when you use their normal send flow, but a jetton
+        transfer sent with too little forward gas can land on-chain and still never register as a
+        deposit — the confirmed failure mode is a gas-starved notification message, not a lost
+        payment, but it needs manual recovery either way. Read this field and pass it through to
+        whoever's actually sending the funds.
+      </p>
+
+      <div className="rounded-xl border border-white/10 bg-white/5 p-4 mb-4">
+        <p className="text-slate-300 text-base">
+          Want your recipient landing on your own branded page instead of{" "}
+          <code>pay.loofta.xyz</code>?{" "}
+          <button type="button" onClick={() => onNavigate("whitelabel")} className="text-orange-400 hover:underline">
+            Whitelabel the claim page
+          </button>
+          . It&apos;s set up on-demand, contact us to turn it on.
+        </p>
+      </div>
 
       <div className="rounded-xl border border-white/10 bg-white/5 p-4">
         <p className="text-slate-300 text-base">
