@@ -63,6 +63,12 @@ const BRIDGE_STALL_TIMEOUT_MS = 20 * 60_000;
 // started right at the wire could still be mid-bridge when the round is drawn, buying a ticket
 // that can never win. Reopens automatically once Megapot's API reports the next round.
 const DRAW_PURCHASE_CUTOFF_MS = 5 * 60_000;
+// A ticket that never captured round_id/draw_time at purchase time (see checkDailyResultsInner)
+// is invisible to both staleness checks below it — draws are daily, so once a ticket has sat in
+// 'active' this long with no round info at all, its round has certainly already drawn and it's
+// safe to resolve from on-chain NFT metadata alone. 25h = 24h round + margin for the exact
+// purchase-to-draw offset being unknown when draw_time was never captured.
+const ORPHANED_ACTIVE_TICKET_MS = 25 * 60 * 60_000;
 // Per-purchase fee: flat component + proportional component, calibrated to break even against
 // the REAL Sol→Base Li.Fi cost (live-quoted, not assumed) plus a thin buffer for quote
 // volatility — this fee only needs to cover bridging, not be a profit center (the referral
@@ -1067,6 +1073,35 @@ export class LotteryService {
 
     const claimedGift = { ...gift, status: 'claimed', claimed_by_user_id: claimantPrivyUserId };
     return this.purchaseGiftTickets(claimedGift, claimantPrivyUserId);
+  }
+
+  /**
+   * Admin override: assign an abandoned gift (its named recipient never claimed it) to a chosen
+   * account instead. Same atomic claim + purchase as claimGift, minus isGiftRecipient — that check
+   * exists to stop a stranger from claiming someone else's gift, not to stop an admin from
+   * reclaiming one nobody ever will.
+   */
+  async adminClaimGift(giftId: string, targetUserId: string): Promise<{ ticketId: string; numTickets: number }> {
+    const db = this.supabase.getClient();
+    const { data: gift } = await db.from('lottery_gifts').select('*').eq('id', giftId).maybeSingle();
+    if (!gift) throw new NotFoundException('Gift not found');
+    if (gift.status !== 'unclaimed') throw new BadRequestException(`Gift ${giftId} is ${gift.status}, not unclaimed`);
+
+    const { data: claimedRows, error: claimError } = await db
+      .from('lottery_gifts')
+      .update({ status: 'claimed', claimed_at: new Date().toISOString(), claimed_by_user_id: targetUserId })
+      .eq('id', gift.id)
+      .eq('status', 'unclaimed')
+      .select('id');
+    if (claimError) throw new Error(`adminClaimGift failed: ${claimError.message}`);
+    if (!claimedRows?.length) throw new BadRequestException('This gift has already been claimed');
+
+    const shareId = gift.short_id || gift.claim_token;
+    await db.storage.from('gift-og').remove([`v1/${shareId}.png`]).catch(() => {});
+    this.prewarmGiftOg(`https://pay.loofta.xyz/gift/${shareId}`);
+
+    const claimedGift = { ...gift, status: 'claimed', claimed_by_user_id: targetUserId };
+    return this.purchaseGiftTickets(claimedGift, targetUserId);
   }
 
   /**
@@ -2938,7 +2973,11 @@ export class LotteryService {
     const activeRoundId = await this.megapot.getActiveRound().then(r => r?.id ?? null).catch(() => null);
     const tickets = activeTickets.filter((t) =>
       (t.draw_time && new Date(t.draw_time) < new Date())
-      || (t.round_id && activeRoundId && t.round_id !== activeRoundId));
+      || (t.round_id && activeRoundId && t.round_id !== activeRoundId)
+      // Neither check above can ever fire for a ticket that captured NO round info at purchase
+      // time (round_id and draw_time both null) — that used to strand it 'active' forever. Sweep
+      // it once it's unambiguously past any possible draw for its round.
+      || (!t.draw_time && !t.round_id && new Date(t.created_at).getTime() < Date.now() - ORPHANED_ACTIVE_TICKET_MS));
 
     if (!tickets.length) {
       this.logger.log('checkDailyResults: no expired active tickets');
