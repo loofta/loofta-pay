@@ -3,6 +3,7 @@ import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { SupabaseService } from '@/database/supabase.service';
 import { XVerificationService } from './x-verification.service';
 import { GiveawaysService } from './giveaways.service';
+import { continentForCountry } from './country-continent';
 import {
   Giveaway,
   GiveawayStatus,
@@ -89,12 +90,15 @@ export class GiveawayEntriesService {
     const minFollowers = giveaway.eligibility?.min_followers;
     const minAgeDays = giveaway.eligibility?.min_account_age_days;
     const verifiedOnly = giveaway.eligibility?.verified_only === true;
+    const requiredCountries = giveaway.eligibility?.required_countries ?? [];
+    const requiredContinents = giveaway.eligibility?.required_continents ?? [];
+    const hasGeoRequirement = requiredCountries.length > 0 || requiredContinents.length > 0;
     let xUserId = account.id;
     let xHandle = account.username;
     let avatarUrl = account.profileImageUrl;
     let eligibilitySnapshot: Record<string, unknown> = {};
 
-    if (typeof minFollowers === 'number' || typeof minAgeDays === 'number' || verifiedOnly) {
+    if (typeof minFollowers === 'number' || typeof minAgeDays === 'number' || verifiedOnly || hasGeoRequirement) {
       const profile = await this.xVerification.resolveXProfile(account.username);
       if (!profile) {
         throw new BadRequestException('Could not verify your X account right now. Please try again shortly.');
@@ -105,6 +109,20 @@ export class GiveawayEntriesService {
       // no longer fetches profile_image_url from X at all, see its doc comment.
       eligibilitySnapshot = { followers_count: profile.followersCount, account_created_at: profile.createdAt, verified: profile.verified };
 
+      // Country is a separate Sorsa call (/about, not /info) — only pay for it when the giveaway
+      // actually gates on region, same "don't pay for a check nobody asked for" rule as the
+      // follower/age/verified checks above.
+      let country: string | null = null;
+      if (hasGeoRequirement) {
+        country = await this.xVerification.resolveXCountry(account.username);
+        if (!country) {
+          throw new BadRequestException("Could not verify your account's region right now. Please try again shortly.");
+        }
+        eligibilitySnapshot = { ...eligibilitySnapshot, country };
+      }
+      const continent = country ? continentForCountry(country) : null;
+      const failsGeo = hasGeoRequirement && !requiredCountries.includes(country!) && !(continent && requiredContinents.includes(continent));
+
       const failReason =
         typeof minFollowers === 'number' && profile.followersCount < minFollowers
           ? `This giveaway requires at least ${minFollowers} X followers`
@@ -112,7 +130,9 @@ export class GiveawayEntriesService {
             ? `This giveaway requires an X account at least ${minAgeDays} days old`
             : verifiedOnly && !profile.verified
               ? 'This giveaway requires a verified X account'
-              : null;
+              : failsGeo
+                ? `This giveaway is only open to entrants in: ${[...requiredCountries, ...requiredContinents].join(', ')}`
+                : null;
       if (failReason) {
         await this.insertEntryRow(giveawayId, userId, GiveawayEntryStatus.DISQUALIFIED, { xUserId, xHandle, avatarUrl, eligibilitySnapshot });
         throw new ForbiddenException(failReason);

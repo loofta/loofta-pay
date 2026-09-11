@@ -82,6 +82,11 @@ export interface GiveawayEligibility {
   min_followers?: number;
   min_account_age_days?: number;
   verified_only?: boolean;
+  /** Entrant's X account country (per Sorsa's /about endpoint) must be one of these, OR its
+   *  continent must be in required_continents — the two lists are OR'd together, not AND'd. */
+  required_countries?: string[];
+  /** Entrant's X account country must fall in one of these continents — see required_countries. */
+  required_continents?: string[];
 }
 
 export interface Giveaway {

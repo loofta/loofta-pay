@@ -88,6 +88,20 @@ export class GiveawayEligibilityDto {
   @IsOptional()
   @IsBoolean()
   verified_only?: boolean;
+
+  @ApiPropertyOptional({ type: [String], description: "Only these countries (Sorsa's /about country names, e.g. \"United States\") may enter. OR'd with required_continents — either match qualifies." })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(50)
+  required_countries?: string[];
+
+  @ApiPropertyOptional({ type: [String], description: 'Only these continents may enter, e.g. ["Africa"] allows any African country. ORed with required_countries.' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(6)
+  required_continents?: string[];
 }
 
 export class CreateGiveawayDto {

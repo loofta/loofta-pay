@@ -257,7 +257,7 @@ function taskDisplayTitle(task: PublicTask): string {
 interface PublicGiveaway {
   id: string; title: string; description: string | null; logo_url: string | null; project_name: string | null; short_id: string | null;
   winner_count: number; selection_mode: string; prize_amount_usd: string; reward_type?: "usdc" | "megapot_ticket"; entries_close_at: string;
-  eligibility: { min_followers?: number; min_account_age_days?: number; verified_only?: boolean };
+  eligibility: { min_followers?: number; min_account_age_days?: number; verified_only?: boolean; required_countries?: string[]; required_continents?: string[] };
   status: string; burner_address: string | null; mint: string | null; is_devnet: boolean;
   funding_required_usd: string | null; funding_confirmed_usd: string; entry_count: number;
   entry_snapshot_hash: string | null; vrf_randomness: string | null; vrf_fulfilled_at: string | null; vrf_request_slot: number | null; draw_request_pda: string | null;
@@ -1419,12 +1419,16 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               );
             })()}
 
-          {(giveaway.eligibility?.min_followers || giveaway.eligibility?.min_account_age_days || giveaway.eligibility?.verified_only) && (
+          {(giveaway.eligibility?.min_followers || giveaway.eligibility?.min_account_age_days || giveaway.eligibility?.verified_only
+            || giveaway.eligibility?.required_countries?.length || giveaway.eligibility?.required_continents?.length) && (
             <p className="text-base text-slate-500 mb-3">
               To enter: linked X account
               {giveaway.eligibility?.min_followers ? `, ${giveaway.eligibility.min_followers}+ followers` : ""}
               {giveaway.eligibility?.min_account_age_days ? `, account ${giveaway.eligibility.min_account_age_days}+ days old` : ""}
               {giveaway.eligibility?.verified_only ? ", verified badge" : ""}
+              {[...(giveaway.eligibility?.required_continents ?? []), ...(giveaway.eligibility?.required_countries ?? [])].length > 0
+                ? `, must be in ${[...(giveaway.eligibility?.required_continents ?? []), ...(giveaway.eligibility?.required_countries ?? [])].join(" or ")}`
+                : ""}
             </p>
           )}
 

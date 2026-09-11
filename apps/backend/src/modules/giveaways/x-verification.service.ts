@@ -92,6 +92,7 @@ export class XVerificationService {
   private readonly logger = new Logger(XVerificationService.name);
   private sorsaApiKey: string | null = null;
   private readonly profileCache = new Map<string, { profile: XProfile; expiresAt: number }>();
+  private readonly countryCache = new Map<string, { country: string; expiresAt: number }>();
   private dailyCallCount = 0;
   private dailyCallCountDate = '';
   private readonly dailyCallCap: number;
@@ -266,6 +267,40 @@ export class XVerificationService {
     }
   }
 
+  /** Country-gated giveaways ("required_countries"/"required_continents" in GiveawayEligibility)
+   *  resolve this once per entry attempt, same two-tier cache shape as resolveXProfile above and
+   *  for the same reason (redeploys wiping a process-local-only cache). Sorsa's /about endpoint
+   *  returns a plain country name string (e.g. "United States"), "Unknown" when it can't determine
+   *  one, or nothing at all on a lookup failure — both of the latter two return null here so the
+   *  caller treats them as "couldn't verify, try again" rather than a silent pass/fail. */
+  async resolveXCountry(handle: string): Promise<string | null> {
+    if (!this.sorsaApiKey) return null;
+    const cleanHandle = handle.replace(/^@/, '').trim();
+    const cacheKey = cleanHandle.toLowerCase();
+    const memCached = this.countryCache.get(cacheKey);
+    if (memCached && memCached.expiresAt > Date.now()) return memCached.country;
+
+    const redisKey = `xverify:country:${cacheKey}`;
+    const redisCached = await this.redis.get(redisKey);
+    if (redisCached) {
+      this.countryCache.set(cacheKey, { country: redisCached, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
+      return redisCached;
+    }
+
+    try {
+      await this.consumeDailyCapOrThrow(`resolveXCountry:${cleanHandle}`);
+      const result = await this.sorsaRequest<{ country?: string }>('GET', '/about', { username: cleanHandle });
+      const country = result?.country && result.country !== 'Unknown' ? result.country : null;
+      if (!country) return null;
+      this.countryCache.set(cacheKey, { country, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
+      await this.redis.set(redisKey, country, PROFILE_CACHE_TTL_MS / 1000);
+      return country;
+    } catch (e) {
+      this.logger.warn(`[XVerification] resolveXCountry(${cleanHandle}) failed: ${describeXApiError(e)}`);
+      return null;
+    }
+  }
+
   private extractTweetId(target: string): string | null {
     const match = target.match(/status(?:es)?\/(\d+)/);
     if (match) return match[1];
@@ -308,23 +343,33 @@ export class XVerificationService {
     return { commented: !!res?.commented, text: res?.tweet?.full_text ?? null };
   }
 
+  /** Whitespace- and Unicode-insensitive equality for x_post's exact-content check — collapses
+   *  every run of whitespace (spaces, tabs, and line breaks alike — `\s` matches all of them) down
+   *  to a single space and trims the ends, so an entrant who added an extra space, a trailing
+   *  newline, or line-wrapped the post differently than the creator's original still matches. NFC
+   *  normalization is needed on top of that because two visually-identical strings (accented
+   *  letters, or emoji with/without an explicit variation selector) can be different Unicode code
+   *  point sequences depending on the keyboard/picker that produced them — comparing raw code
+   *  points would wrongly reject a real match. Not a substring/contains check on purpose: this task
+   *  type is "post this exact text," not "mention these words" (that's x_comment). */
+  private normalizeForExactMatch(s: string): string {
+    return s.normalize('NFC').trim().replace(/\s+/g, ' ');
+  }
+
   /** x_post has no target tweet to check against (it's a brand-new original post, not a reply/
    *  retweet of one) — unlike checkRetweetedOrQuoted/checkCommented, this searches the entrant's
    *  OWN recent posts for an exact match instead. `from:{handle}` + order=latest surfaces their
    *  newest posts first; a genuine just-published post is expected on the first page, so this is
    *  a single bounded call with no cursor follow-up — same "no pagination" rule as every other
-   *  check-* method here (Sorsa's next_cursor doesn't reliably signal "no more results"). Exact
-   *  match (trimmed, whitespace-collapsed) rather than a substring/contains check — this task type
-   *  is specifically "post this exact text," not "mention these words." */
+   *  check-* method here (Sorsa's next_cursor doesn't reliably signal "no more results"). */
   private async checkPostedExactly(handle: string, requiredText: string): Promise<boolean> {
     await this.consumeDailyCapOrThrow(`search-tweets:${handle}`);
     const res = await this.sorsaRequest<{ tweets?: Array<{ full_text?: string }> }>('POST', '/search-tweets', {
       query: `from:${handle}`,
       order: 'latest',
     });
-    const normalize = (s: string) => s.trim().replace(/\s+/g, ' ');
-    const target = normalize(requiredText);
-    return (res?.tweets ?? []).some((t) => !!t.full_text && normalize(t.full_text) === target);
+    const target = this.normalizeForExactMatch(requiredText);
+    return (res?.tweets ?? []).some((t) => !!t.full_text && this.normalizeForExactMatch(t.full_text) === target);
   }
 
   /** Called once per open/entries-closed giveaway by the cron (see runFinalXVerificationSweep) or

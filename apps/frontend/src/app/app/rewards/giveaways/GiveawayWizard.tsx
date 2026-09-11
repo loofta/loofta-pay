@@ -1,23 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Mail, Plus, X, Calendar as CalendarGlyph, Check, ImagePlus } from "lucide-react";
+import { ArrowLeft, Mail, Plus, X, Calendar as CalendarGlyph, Check, ImagePlus, Smile, ChevronDown } from "lucide-react";
+import EmojiPicker, { EmojiClickData, Theme } from "emoji-picker-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePrivy, useLinkAccount } from "@privy-io/react-auth";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/components/ui/use-toast";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { LogoCropModal } from "@/components/LogoCropModal";
 import { GiveawayLivePreview, type PreviewTask } from "@/components/GiveawayLivePreview";
+import { CONTINENTS, COUNTRIES, type Continent } from "@/lib/countries";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import posthog from "posthog-js";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
@@ -58,8 +62,8 @@ function nearest(options: number[], target: number): number {
 // comment/bookmark, independently toggled) rather than a single task_type — matches how a
 // creator actually thinks about it ("do these things to this post"), and expands into one
 // backend task row per checked action at submit time (see expandTaskRow).
-type TaskCategory = "engage" | "x_follow" | "x_post" | "telegram_join" | "discord_join" | "visit_link" | "custom";
-type BackendTaskType = "x_follow" | "x_retweet" | "x_like" | "x_comment" | "x_bookmark" | "x_post" | "telegram_join" | "discord_join" | "visit_link" | "custom";
+type TaskCategory = "engage" | "x_follow" | "x_post" | "telegram_join" | "discord_join" | "custom";
+type BackendTaskType = "x_follow" | "x_retweet" | "x_like" | "x_comment" | "x_bookmark" | "x_post" | "telegram_join" | "discord_join" | "custom";
 
 const CATEGORY_LABELS: Record<TaskCategory, string> = {
   engage: "Engage with a post",
@@ -67,7 +71,6 @@ const CATEGORY_LABELS: Record<TaskCategory, string> = {
   x_post: "Post on X",
   telegram_join: "Join Telegram",
   discord_join: "Join Discord",
-  visit_link: "Visit a link",
   custom: "Custom task",
 };
 
@@ -79,7 +82,6 @@ const CATEGORY_ICONS: Record<TaskCategory, string> = {
   x_post: "✍️",
   telegram_join: "✈️",
   discord_join: "🎮",
-  visit_link: "🔗",
   custom: "✨",
 };
 
@@ -89,19 +91,24 @@ const CATEGORY_TARGET_LABELS: Record<TaskCategory, string> = {
   x_post: "Exact text they must post",
   telegram_join: "Telegram channel/group link",
   discord_join: "Discord invite link",
-  visit_link: "Link URL",
   custom: "Link (optional) — e.g. https://twitch.tv/yourstream",
 };
 
 /** Categories nothing can auto-verify — completion is always self-reported and reviewed by the
  *  creator/admin. These are the only ones offered a "require proof" toggle: the auto_api
  *  categories (follow, x_post, and RT/like/comment under engage) are checked against the real X
- *  API, so asking for a screenshot on top of that would be redundant. */
-const SELF_REPORT_CATEGORIES = new Set<TaskCategory>(["telegram_join", "discord_join", "visit_link", "custom"]);
+ *  API, so asking for a screenshot on top of that would be redundant. "Visit a link" was folded
+ *  into "custom" (2026-09-11) — the two were functionally identical (a link + free-text
+ *  description, both self-reported), so custom's own title/link fields already cover it, with
+ *  "Join waitlist" / "Create an account" now just examples in custom's placeholder instead of a
+ *  separate category. Existing giveaways with an already-saved visit_link task keep rendering
+ *  fine (backend/entity support wasn't removed) — collapseTasksToRows below folds one into a
+ *  custom row if a creator ever reopens that giveaway to edit it. */
+const SELF_REPORT_CATEGORIES = new Set<TaskCategory>(["telegram_join", "discord_join", "custom"]);
 
 /** Bookmark has no real verification path — X has no public "who bookmarked this tweet"
  *  endpoint (bookmarks are private per-user data), unlike retweet/like which do. Always
- *  self-reported + reviewed, same as telegram/discord/waitlist/create-account. */
+ *  self-reported + reviewed, same as telegram/discord/custom. */
 const ENGAGE_ACTIONS = [
   { key: "retweet" as const, label: "Retweet", auto: true },
   { key: "like" as const, label: "Like", auto: true },
@@ -137,7 +144,10 @@ function newRow(): TaskRow {
 
 function rowIsValid(row: TaskRow): boolean {
   if (row.category === "custom") return row.title.trim().length > 0;
-  if (row.category === "x_post") return row.requiredText.trim().length > 0;
+  // requiredText defaults to "" via newRow(), but a draft persisted to localStorage before this
+  // field existed won't have it on older rows at all — guard against undefined rather than crash
+  // the instant someone switches an old row to this category.
+  if (row.category === "x_post") return (row.requiredText ?? "").trim().length > 0;
   if (!row.target.trim()) return false;
   if (row.category === "engage") return row.engage.retweet || row.engage.like || row.engage.comment || row.engage.bookmark;
   return true;
@@ -153,11 +163,10 @@ function expandTaskRow(row: TaskRow): Array<{ task_type: BackendTaskType; config
     return [{ task_type: "custom", config }];
   }
   if (row.category === "x_post") {
-    return [{ task_type: "x_post", config: { required_text: row.requiredText.trim() } }];
+    return [{ task_type: "x_post", config: { required_text: (row.requiredText ?? "").trim() } }];
   }
   if (row.category !== "engage") {
     const config: Record<string, unknown> = { target: row.target.trim() };
-    if (row.category === "visit_link" && row.instructions.trim()) config.instructions = row.instructions.trim();
     if (SELF_REPORT_CATEGORIES.has(row.category)) config.require_proof = row.requireProof;
     return [{ task_type: row.category, config }];
   }
@@ -215,6 +224,21 @@ function collapseTasksToRows(tasks: Array<{ task_type: string; config: Record<st
         target: hasTitle ? target : "",
         title: hasTitle ? t.config.title : target,
         instructions: t.config?.instructions ?? "",
+        requiredText: "",
+        requireProof: !!t.config?.require_proof,
+        engage: { retweet: false, like: false, comment: false, bookmark: false },
+      });
+    } else if (t.task_type === "visit_link") {
+      // "Visit a link" was folded into "custom" (2026-09-11) — no longer a selectable category,
+      // but an older giveaway can still have one saved. Editing it collapses it straight into a
+      // custom row (its old `instructions` becomes the title, since custom has no separate
+      // instructions field), so it saves back out as "custom" from then on.
+      rows.push({
+        id: crypto.randomUUID(),
+        category: "custom",
+        target,
+        title: t.config?.instructions || "Visit a link",
+        instructions: "",
         requiredText: "",
         requireProof: !!t.config?.require_proof,
         engage: { retweet: false, like: false, comment: false, bookmark: false },
@@ -429,6 +453,129 @@ function FieldLabel({ children, optional }: { children: ReactNode; optional?: bo
   );
 }
 
+/** Plain-text field (with an emoji picker) for x_post's required_text — deliberately not
+ *  RichTextEditor: X posts have no markdown, so a bold/italic/link/preview toolbar would offer
+ *  formatting controls that do nothing once actually posted. Emoji insertion is the same
+ *  insert-at-cursor pattern RichTextEditor.tsx uses, just without the rest of its toolbar. */
+function RequiredTextField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+
+  const insertAtCursor = useCallback((text: string) => {
+    const el = textareaRef.current;
+    if (!el) {
+      onChange(value + text);
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const next = value.slice(0, start) + text + value.slice(end);
+    const cursor = start + text.length;
+    onChange(next);
+    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(cursor, cursor); });
+  }, [value, onChange]);
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
+      <div className="flex items-center justify-between px-2 py-1.5 border-b border-white/10">
+        <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+              aria-label="Add emoji"
+            >
+              <Smile className="w-4 h-4" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0 border-white/10 overflow-hidden" align="start">
+            <EmojiPicker
+              theme={Theme.DARK}
+              onEmojiClick={(emoji: EmojiClickData) => { insertAtCursor(emoji.emoji); setEmojiOpen(false); }}
+            />
+          </PopoverContent>
+        </Popover>
+        <span className="text-sm text-slate-500">{value.length}/280</span>
+      </div>
+      <Textarea
+        ref={textareaRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={CATEGORY_TARGET_LABELS.x_post}
+        maxLength={280}
+        rows={3}
+        className="border-0 rounded-none bg-transparent focus-visible:ring-0 resize-none text-base md:text-base"
+      />
+    </div>
+  );
+}
+
+/** Searchable multi-select for eligibility's required_countries — same Command+Popover combobox
+ *  building blocks as BankCombobox/TokenCombobox elsewhere in the app, except it stays open
+ *  across picks (toggling a checkmark) instead of closing after one selection, and shows every
+ *  picked country as a removable chip below the trigger. */
+function CountryMultiSelect({
+  selected,
+  onAdd,
+  onRemove,
+}: {
+  selected: string[];
+  onAdd: (country: string) => void;
+  onRemove: (country: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button type="button" role="combobox" aria-expanded={open} className={`${inputClass} w-full flex items-center justify-between px-3`}>
+            <span className={selected.length ? "" : "text-slate-500"}>
+              {selected.length ? `${selected.length} countr${selected.length === 1 ? "y" : "ies"} selected` : "Add specific countries…"}
+            </span>
+            <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0 bg-[#17171b] border-white/15">
+          <Command className="bg-transparent text-white">
+            <CommandInput placeholder="Search countries…" className="text-white placeholder:text-slate-500" />
+            <CommandList className="max-h-64">
+              <CommandEmpty className="py-6 text-center text-base text-slate-400">No country found.</CommandEmpty>
+              <CommandGroup>
+                {COUNTRIES.map((country) => (
+                  <CommandItem
+                    key={country}
+                    value={country}
+                    onSelect={() => (selected.includes(country) ? onRemove(country) : onAdd(country))}
+                    className="text-white data-[selected=true]:bg-white/10 data-[selected=true]:text-white"
+                  >
+                    <span className="flex-1 truncate">{country}</span>
+                    <Check className={`h-4 w-4 shrink-0 ${selected.includes(country) ? "opacity-100" : "opacity-0"}`} />
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {selected.map((country) => (
+            <button
+              key={country}
+              type="button"
+              onClick={() => onRemove(country)}
+              className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] px-2.5 py-1 text-sm text-slate-200 hover:bg-white/[0.1] transition-colors"
+            >
+              {country}
+              <X className="w-3 h-3" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SELECTION_MODE_LABELS: Record<"random" | "first_come" | "manual", string> = {
   random: "Random",
   first_come: "First come",
@@ -454,6 +601,8 @@ interface GiveawayDraft {
   minFollowers: string;
   minAccountAgeDays: string;
   verifiedOnly: boolean;
+  requiredCountries: string[];
+  requiredContinents: string[];
   tasks: TaskRow[];
 }
 
@@ -472,6 +621,8 @@ function defaultDraft(): GiveawayDraft {
     minFollowers: "",
     minAccountAgeDays: "",
     verifiedOnly: false,
+    requiredCountries: [],
+    requiredContinents: [],
     tasks: [newRow()],
   };
 }
@@ -487,7 +638,13 @@ interface RemoteGiveaway {
   prize_amount_usd: string;
   reward_type?: "usdc" | "megapot_ticket";
   entries_close_at: string;
-  eligibility: { min_followers?: number; min_account_age_days?: number; verified_only?: boolean };
+  eligibility: {
+    min_followers?: number;
+    min_account_age_days?: number;
+    verified_only?: boolean;
+    required_countries?: string[];
+    required_continents?: string[];
+  };
   status: string;
   tasks: Array<{ task_type: string; config: Record<string, any> }>;
 }
@@ -508,6 +665,8 @@ function draftFromRemote(g: RemoteGiveaway): GiveawayDraft {
     minFollowers: g.eligibility?.min_followers != null ? String(g.eligibility.min_followers) : "",
     minAccountAgeDays: g.eligibility?.min_account_age_days != null ? String(g.eligibility.min_account_age_days) : "",
     verifiedOnly: g.eligibility?.verified_only === true,
+    requiredCountries: g.eligibility?.required_countries ?? [],
+    requiredContinents: g.eligibility?.required_continents ?? [],
     tasks: collapseTasksToRows(g.tasks ?? []),
   };
 }
@@ -590,7 +749,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     gcTime: Infinity,
     retry: false,
   });
-  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks } = draft;
+  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, requiredCountries, requiredContinents, tasks } = draft;
   const prizeAmount = winnerCount > 0 ? totalPool / winnerCount : 0;
   const validWinnerCounts = useMemo(() => divisorsUpTo(totalPool, MAX_WINNERS), [totalPool]);
 
@@ -652,6 +811,19 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   const setMinFollowers = useCallback((v: string) => updateDraft({ minFollowers: v }), [updateDraft]);
   const setMinAccountAgeDays = useCallback((v: string) => updateDraft({ minAccountAgeDays: v }), [updateDraft]);
   const setVerifiedOnly = useCallback((v: boolean) => updateDraft({ verifiedOnly: v }), [updateDraft]);
+  const toggleContinent = useCallback((continent: Continent) => {
+    updateDraft((prev) => ({
+      requiredContinents: prev.requiredContinents.includes(continent)
+        ? prev.requiredContinents.filter((c) => c !== continent)
+        : [...prev.requiredContinents, continent],
+    }));
+  }, [updateDraft]);
+  const addRequiredCountry = useCallback((country: string) => {
+    updateDraft((prev) => (prev.requiredCountries.includes(country) ? prev : { requiredCountries: [...prev.requiredCountries, country] }));
+  }, [updateDraft]);
+  const removeRequiredCountry = useCallback((country: string) => {
+    updateDraft((prev) => ({ requiredCountries: prev.requiredCountries.filter((c) => c !== country) }));
+  }, [updateDraft]);
 
   const effectiveMinPool = createAsAdmin ? ADMIN_MIN_TOTAL_POOL : MIN_TOTAL_POOL;
   // Split in two so dragging the slider doesn't re-snap winnerCount on every intermediate tick
@@ -822,6 +994,8 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
             ...(minFollowers ? { min_followers: Number(minFollowers) } : {}),
             ...(minAccountAgeDays ? { min_account_age_days: Number(minAccountAgeDays) } : {}),
             ...(verifiedOnly ? { verified_only: true } : {}),
+            ...(requiredCountries.length ? { required_countries: requiredCountries } : {}),
+            ...(requiredContinents.length ? { required_continents: requiredContinents } : {}),
           },
           tasks: tasks.flatMap(expandTaskRow),
           ...(mode === "create" ? { is_official: createAsAdmin } : {}),
@@ -853,7 +1027,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     } finally {
       setSubmitting(false);
     }
-  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft, queryClient]);
+  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, requiredCountries, requiredContinents, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft, queryClient]);
 
   const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
@@ -1153,7 +1327,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                                     <Input
                                       value={task.title}
                                       onChange={(e) => setTaskTitle(task.id, e.target.value)}
-                                      placeholder="Task title — e.g. Join the stream"
+                                      placeholder="Task title — e.g. Join the stream, Join waitlist, Create an account"
                                       className={inputClass}
                                     />
                                     <Input
@@ -1165,13 +1339,9 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                                   </>
                                 ) : task.category === "x_post" ? (
                                   <>
-                                    <textarea
-                                      value={task.requiredText}
-                                      onChange={(e) => setTaskRequiredText(task.id, e.target.value)}
-                                      placeholder={CATEGORY_TARGET_LABELS.x_post}
-                                      maxLength={280}
-                                      rows={3}
-                                      className={`${inputClass} h-auto py-2.5 resize-none`}
+                                    <RequiredTextField
+                                      value={task.requiredText ?? ""}
+                                      onChange={(v) => setTaskRequiredText(task.id, v)}
                                     />
                                     <p className="text-sm text-slate-500">
                                       Entrants get a one-click pre-filled post with this exact text — verified automatically against X.
@@ -1182,15 +1352,6 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                                     value={task.target}
                                     onChange={(e) => setTaskTarget(task.id, e.target.value)}
                                     placeholder={CATEGORY_TARGET_LABELS[task.category]}
-                                    className={inputClass}
-                                  />
-                                )}
-
-                                {task.category === "visit_link" && (
-                                  <Input
-                                    value={task.instructions}
-                                    onChange={(e) => setTaskInstructions(task.id, e.target.value)}
-                                    placeholder="Instructions (optional) — e.g. Join waitlist, Create an account"
                                     className={inputClass}
                                   />
                                 )}
@@ -1297,6 +1458,32 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                               <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${verifiedOnly ? "left-[18px]" : "left-0.5"}`} />
                             </span>
                           </button>
+
+                          <div>
+                            <FieldLabel optional>Continents</FieldLabel>
+                            <div className="flex flex-wrap gap-2">
+                              {CONTINENTS.map((continent) => (
+                                <button
+                                  key={continent}
+                                  type="button"
+                                  onClick={() => toggleContinent(continent)}
+                                  className={`rounded-full px-3.5 py-1.5 text-base font-medium border transition-all ${
+                                    requiredContinents.includes(continent) ? "border-[#FF7A2A] text-white" : "border-white/15 text-slate-400 hover:bg-white/[0.06]"
+                                  }`}
+                                >
+                                  {continent}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div>
+                            <FieldLabel optional>Specific countries</FieldLabel>
+                            <CountryMultiSelect selected={requiredCountries} onAdd={addRequiredCountry} onRemove={removeRequiredCountry} />
+                            <p className="text-sm text-slate-500 mt-1.5">
+                              Entrants qualify if their X account&apos;s region matches either a selected continent or a selected country.
+                            </p>
+                          </div>
                         </>
                       )}
 
@@ -1379,6 +1566,8 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                   entriesCloseAt={entriesCloseAt}
                   minFollowers={minFollowers}
                   verifiedOnly={verifiedOnly}
+                  requiredCountries={requiredCountries}
+                  requiredContinents={requiredContinents}
                   isOfficial={mode === "create" && createAsAdmin}
                   tasks={previewTasks}
                   pulse={previewPulse}

@@ -33,10 +33,7 @@ export default function GiveawaysPage() {
         <div className="relative max-w-3xl mx-auto px-4 md:px-8 pt-24 md:pt-32">
           {/* Hero */}
           <div className="mb-20">
-            <span className={`inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-sm font-medium text-white mb-8 ${BRAND_GRADIENT} ${BRAND_SHADOW}`}>
-              <span className="h-1.5 w-1.5 rounded-full bg-white/70" />
-              Provably random, on-chain draw
-            </span>
+
 
             <h1 className="font-display text-[clamp(2.4rem,5vw,3.75rem)] font-medium leading-[1.05] tracking-[-0.03em] text-white mb-6">
               Run a giveaway<br />for your project

@@ -66,6 +66,18 @@ export class AdminEditGiveawayDto {
   @IsBoolean()
   verified_only?: boolean;
 
+  @ApiPropertyOptional({ type: [String], description: "Only these countries (Sorsa's /about country names) may enter. OR'd with required_continents." })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  required_countries?: string[];
+
+  @ApiPropertyOptional({ type: [String], description: "Only these continents may enter. OR'd with required_countries." })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  required_continents?: string[];
+
   @ApiPropertyOptional({ type: [AdminEditGiveawayTaskDto], description: 'Per-task config updates by task id — target/instructions/comment_requirement only.' })
   @IsOptional()
   @IsArray()
