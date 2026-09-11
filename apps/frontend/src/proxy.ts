@@ -40,6 +40,14 @@ export function proxy(request: NextRequest) {
   const isLocalhost =
     hostname === "localhost" || hostname.startsWith("localhost:");
 
+  // /megapot only exists inside the app itself (src/app/app/megapot) — it's not a marketing
+  // page, but blog posts and other marketing copy link to it as if it were one. On the real
+  // marketing domain that 404s, so bounce it to the real app route instead. Localhost already
+  // resolves this correctly via the generic app-path rewrite below.
+  if (!isAppDomain && !isLocalhost && (pathname === "/megapot" || pathname.startsWith("/megapot/"))) {
+    return NextResponse.redirect(new URL(`${pathname}${request.nextUrl.search}`, "https://pay.loofta.xyz"));
+  }
+
   // On localhost, / clashes with the app shell — push it to /home instead
   if (isLocalhost && pathname === "/") {
     return NextResponse.redirect(new URL("/home", request.url));

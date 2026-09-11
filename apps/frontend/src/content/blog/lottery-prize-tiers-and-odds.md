@@ -2,6 +2,8 @@
 title: "Lottery Prize Tiers and Odds: What You Can Actually Win"
 description: "Loofta's lottery pays out in tiers based on how many numbers you match, not just jackpot-or-nothing. Here's how the tiers work and what to expect."
 publishedAt: "2026-08-08"
+ctaLabel: "Try Megapot"
+ctaHref: "/megapot"
 ---
 
 There's no strategy that changes your odds in Megapot's draw, matching numbers is chance, not skill. What you can control is understanding what you're actually playing for, since Megapot doesn't pay out on an all-or-nothing basis.
@@ -14,7 +16,7 @@ The practical effect: most outcomes aren't a total loss. You're far more likely 
 
 ## Where to see current numbers
 
-There's no published fixed combinatorial odds table (something like "1 in X million") the way some traditional lotteries have, and Megapot's jackpot itself changes round to round based on ticket volume. The honest answer is: check the live numbers in the app before you buy, rather than trusting a number from an article that may be out of date by the time you read it. [See the current Megapot round on Loofta](https://loofta.xyz/megapot).
+There's no published fixed combinatorial odds table (something like "1 in X million") the way some traditional lotteries have, and Megapot's jackpot itself changes round to round based on ticket volume. The honest answer is: check the live numbers in the app before you buy, rather than trusting a number from an article that may be out of date by the time you read it. [See the current Megapot round on Loofta](/megapot).
 
 ## The one real lever you have
 

@@ -2,6 +2,8 @@
 title: "How Does a Crypto Lottery Work?"
 description: "A plain-English breakdown of how crypto lotteries work: buying tickets, how draws are decided, and how winners get paid out."
 publishedAt: "2026-08-06"
+ctaLabel: "Try Megapot"
+ctaHref: "/megapot"
 ---
 
 A crypto lottery works like any lottery at its core: you buy a ticket, a draw happens on a schedule, and a prize gets paid out to whoever matches the winning numbers. What changes is how the parts underneath work.
@@ -33,4 +35,4 @@ One detail worth knowing if you're a Loofta user on Solana: Megapot's contracts 
 
 Crypto lotteries are still lotteries: the odds favor the house over any individual ticket, and rules on age and eligible countries apply just like a regular platform's terms of service. Treat it as entertainment you're paying for, not an investment, and check what's allowed where you live before you buy in.
 
-Want to see how it works in practice? [Try Megapot on Loofta](https://loofta.xyz/megapot).
+Want to see how it works in practice? [Try Megapot on Loofta](/megapot).

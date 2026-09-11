@@ -2,6 +2,8 @@
 title: "Crypto Lottery vs Traditional Lottery: Key Differences"
 description: "How crypto lotteries like Loofta's compare to state and national lotteries on access, transparency, fees, and payout speed."
 publishedAt: "2026-08-09"
+ctaLabel: "Try Megapot"
+ctaHref: "/megapot"
 ---
 
 State and national lotteries have been around for decades, crypto lotteries are the newer version of the same idea, built on different rails. Here's where they actually differ.
@@ -28,4 +30,4 @@ The odds still favor the house over any individual ticket, that's true of every 
 
 ## Bottom line
 
-Crypto lotteries trade the biggest possible jackpots for more access, more transparency, and faster payouts. Which one's "better" depends on what you're optimizing for. If you want to see the daily-draw version in action, [try Megapot through Loofta](https://loofta.xyz/megapot).
+Crypto lotteries trade the biggest possible jackpots for more access, more transparency, and faster payouts. Which one's "better" depends on what you're optimizing for. If you want to see the daily-draw version in action, [try Megapot through Loofta](/megapot).

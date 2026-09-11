@@ -2,6 +2,8 @@
 title: "How Loofta's Daily USDC Lottery Works"
 description: "Loofta runs a daily USDC lottery. Here's how ticket pricing, prize tiers, and draws work, and how to play it from a Solana wallet."
 publishedAt: "2026-08-07"
+ctaLabel: "Try Megapot"
+ctaHref: "/megapot"
 ---
 
 Megapot, the licensed protocol Loofta integrates with, runs a daily USDC draw. Instead of buying a physical ticket or picking numbers at a kiosk, you buy an on-chain ticket through Loofta, and Megapot's daily draw decides who wins.
@@ -33,6 +35,6 @@ The result is that you never have to hold Base ETH, set up a second wallet, or m
 
 ## Is it worth playing?
 
-That's a personal call, and it comes down to the same thing any lottery does: you're paying for the entertainment of a chance at a large payout, with the odds structurally favoring the house. If that trade-off appeals to you and it's legal where you are, [Megapot, through Loofta](https://loofta.xyz/megapot) is the fastest way to try it from a Solana wallet.
+That's a personal call, and it comes down to the same thing any lottery does: you're paying for the entertainment of a chance at a large payout, with the odds structurally favoring the house. If that trade-off appeals to you and it's legal where you are, [Megapot, through Loofta](/megapot) is the fastest way to try it from a Solana wallet.
 
 For more on what to expect from the odds and prize tiers, see [Lottery Prize Tiers and Odds: What You Can Actually Win](/blog/lottery-prize-tiers-and-odds).

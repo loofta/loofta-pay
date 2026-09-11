@@ -2,6 +2,8 @@
 title: "Is a Crypto Lottery Legal? What to Know Before You Play"
 description: "Crypto lottery legality depends on where you live. Here's what generally determines it and what to check before you buy a ticket."
 publishedAt: "2026-08-10"
+ctaLabel: "Try Megapot"
+ctaHref: "/megapot"
 ---
 
 This isn't legal advice, and it can't be: lottery and gambling law varies by country, and often by state or province within a country, and it changes over time. What follows is general context to help you know what to check, not a substitute for checking it.

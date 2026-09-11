@@ -2,6 +2,8 @@
 title: "How to Run a Giveaway on Loofta"
 description: "Fund a prize pool, set an entry rule, and let Loofta pick winners with a verifiable on-chain draw. Here's how giveaways work and how to launch one for your project."
 publishedAt: "2026-09-11"
+ctaLabel: "Start a giveaway"
+ctaHref: "/giveaways"
 ---
 
 If you're a creator, a freelancer building an audience, or a small team trying to get more eyes on your project, a giveaway is one of the fastest ways to do it. Loofta lets you run one without touching a spreadsheet, a random number generator you have to trust, or a manual payout at the end.

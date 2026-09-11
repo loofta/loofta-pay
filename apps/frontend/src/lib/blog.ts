@@ -7,6 +7,10 @@ import matter from "gray-matter";
 //   description: string  — meta description, ~150-160 chars, also used as the index card summary
 //   publishedAt: string  — "YYYY-MM-DD", gates visibility (see isPublished below)
 //   canonical:   string  — optional, defaults to /blog/{slug}
+//   ctaLabel:    string  — optional, end-of-post CTA button text; defaults to "Try Loofta"
+//   ctaHref:     string  — optional, end-of-post CTA button target; defaults to the app root.
+//     Use a topic-specific destination when the post is about a specific feature, e.g.
+//     "/giveaways" for giveaway posts, "/megapot" for lottery posts.
 // The slug is always the filename without ".md".
 
 const BLOG_DIR = path.join(process.cwd(), "src/content/blog");
@@ -17,6 +21,8 @@ export interface BlogPostMeta {
   description: string;
   publishedAt: string;
   canonical: string;
+  ctaLabel?: string;
+  ctaHref?: string;
 }
 
 export interface BlogPost {
@@ -47,6 +53,8 @@ function readPost(slug: string): BlogPost | null {
     description: data.description,
     publishedAt: data.publishedAt,
     canonical: data.canonical ?? `/blog/${slug}`,
+    ctaLabel: data.ctaLabel,
+    ctaHref: data.ctaHref,
   };
   return { meta, content };
 }

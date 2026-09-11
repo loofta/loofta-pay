@@ -61,10 +61,10 @@ export default function BlogPostContent({
           </div>
 
           <a
-            href={APP_URL}
+            href={meta.ctaHref ?? APP_URL}
             className={`mt-8 inline-flex items-center gap-2 rounded-full px-6 py-3 text-[15px] font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] ${BRAND_GRADIENT} ${BRAND_SHADOW}`}
           >
-            Try Loofta
+            {meta.ctaLabel ?? "Try Loofta"}
             <span className="text-white/70">→</span>
           </a>
         </article>
