@@ -16,6 +16,22 @@ const FUNDING_SOURCE_TOKENS: Record<PayoutFundingSource, { symbol: string; chain
 
 const PAYOUT_EXPIRY_MS = 4 * 60 * 60 * 1000;
 
+// Surfaced verbatim as deposit_note for the affected funding_source — a warning worth putting in
+// the API response itself, not just docs, since integrators calling this programmatically often
+// never read prose docs. TON specifically: NEAR Intents/HOT's bridge always hands out a brand-new,
+// zero-balance deposit account for USDT-TON. Confirmed against a real stuck deposit (2026-09-09):
+// the USDT jetton itself landed correctly, but the jetton wallet's transfer_notification message
+// to that account aborted on-chain with cskip_no_gas (the account had ~0 TON, and the sending
+// wallet's jetton transfer attached ~0 forward gas) — so NEAR Intents' indexer, which relies on
+// that notification, never saw the deposit despite the funds genuinely being there. This is a
+// TON/jetton-transfer gas nuance the sender's own wallet controls, not something this API can fix
+// server-side (we never touch or construct the sender's TON transaction).
+const DEPOSIT_NOTE_TON = 'This deposit address has never received funds before. Make sure your ' +
+  'wallet attaches enough TON for gas when sending the USDT jetton transfer (most wallets do this ' +
+  'automatically when you use their normal send flow) — if the transfer arrives with too little ' +
+  'attached gas, the deposit can silently fail to register even though the tokens technically land ' +
+  "on-chain, since it depends on a gas-funded notification message succeeding.";
+
 @Injectable()
 export class PayoutsService {
   constructor(
@@ -57,6 +73,7 @@ export class PayoutsService {
     deposit_memo?: string | null;
     deposit_amount?: string;
     deposit_deadline?: string;
+    deposit_note?: string;
   }> {
     if (!integrator.ownerUserId) {
       // Should be unreachable — only self-serve integrators carry the payouts:create scope
@@ -157,6 +174,7 @@ export class PayoutsService {
         deposit_memo: deposit.memo ?? null,
         deposit_amount: deposit.minAmountInFormatted,
         deposit_deadline: deposit.deadline,
+        deposit_note: dto.funding_source === 'usdt_ton' ? DEPOSIT_NOTE_TON : undefined,
       };
     }
 

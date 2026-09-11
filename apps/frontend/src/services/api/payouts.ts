@@ -24,6 +24,7 @@ export interface CreatedPayout {
   deposit_memo?: string | null;
   deposit_amount?: string;
   deposit_deadline?: string;
+  deposit_note?: string;
 }
 
 export async function createPayoutWithKey(

@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OneClickService, QuoteRequest, OpenAPI } from '@defuse-protocol/one-click-sdk-typescript';
+import { Address as TonAddress } from '@ton/core';
 import { SupabaseService } from '@/database/supabase.service';
 
 export interface NearToken {
@@ -17,6 +18,11 @@ export interface NearToken {
 
 export interface QuoteResult {
   depositAddress?: string;
+  /** Human-readable form of depositAddress for showing to a payer (currently only differs from
+   * depositAddress for TON — see getDepositQuote). depositAddress itself must stay exactly what
+   * 1Click issued: their own /v0/status endpoint does an exact string match and 404s on any
+   * other encoding of the same account, even one that resolves to the identical on-chain address. */
+  depositAddressDisplay?: string;
   memo?: string | null;
   deadline?: string;
   timeEstimate?: number;
@@ -105,6 +111,27 @@ export class NearIntentsService implements OnModuleInit {
   getRefundAddress(chain: string): string {
     const key = String(chain || '').toLowerCase();
     return REFUND_ADDRESSES[key] || '0x0000000000000000000000000000000000000000';
+  }
+
+  /**
+   * 1Click/HOT's omni-bridge returns TON deposit addresses as a bare 64-hex-char account id
+   * (workchain 0 implied, no checksum) — not the "UQ.../EQ..." user-friendly format every TON
+   * wallet actually expects to send to (confirmed against a real quote: a raw hex string handed
+   * to a user looks nothing like a TON address and isn't directly usable). Converts to
+   * bounceable mainnet friendly format; falls back to the raw value untouched if it's already
+   * friendly or doesn't parse as a 32-byte hash, so a format we don't recognize is never dropped.
+   */
+  private toTonFriendlyAddress(raw: string): string {
+    try {
+      if (TonAddress.isFriendly(raw)) return raw;
+      const hex = raw.includes(':') ? raw.split(':').pop()! : raw;
+      if (!/^[0-9a-fA-F]{64}$/.test(hex)) return raw;
+      const address = new TonAddress(0, Buffer.from(hex, 'hex'));
+      return address.toString({ bounceable: true, urlSafe: true, testOnly: false });
+    } catch (e: any) {
+      this.logger.warn(`toTonFriendlyAddress: failed to convert "${raw}" — returning raw value. ${e?.message}`);
+      return raw;
+    }
   }
 
   /**
@@ -287,12 +314,14 @@ export class NearIntentsService implements OnModuleInit {
     const atomicIn = toAtomic(amount, fromToken.decimals);
 
     try {
+      // See getDepositQuote for why nep245 (multi-token/bridge) origins need INTENTS instead.
+      const originIsMultiToken = fromToken.tokenId.startsWith('nep245:');
       const req = this.attachAppFees({
         dry: true,
         swapType: QuoteRequest.swapType.EXACT_INPUT,
         slippageTolerance: slippageBps,
         originAsset: fromToken.tokenId,
-        depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
+        depositType: originIsMultiToken ? QuoteRequest.depositType.INTENTS : QuoteRequest.depositType.ORIGIN_CHAIN,
         destinationAsset: toToken.tokenId,
         amount: atomicIn,
         refundTo: this.getRefundAddress(fromToken.chain),
@@ -375,10 +404,16 @@ export class NearIntentsService implements OnModuleInit {
     const amount = useExactOutput ? atomicOut : atomicIn;
     const refundTo = refundAddress || this.getRefundAddress(fromToken.chain);
 
-    // Use SIMPLE deposit mode with ORIGIN_CHAIN deposit type (matches working example)
+    // Use SIMPLE deposit mode with ORIGIN_CHAIN deposit type (matches working example) — except
+    // a "nep245:" originAsset (a multi-token from a bridge like HOT's omni-bridge, confirmed on
+    // several chains including TON) rejects ORIGIN_CHAIN with "Quoting for this pair is not
+    // available"; INTENTS is the depositType that actually returns a deposit address for those.
+    // Verified directly against the live 1Click API for TON USDT — ORIGIN_CHAIN 400s regardless
+    // of amount/pair, INTENTS returns a signed quote with a real depositAddress.
     const sameChain = fromToken.chain.toLowerCase() === toToken.chain.toLowerCase();
+    const originIsMultiToken = fromToken.tokenId.startsWith('nep245:');
     let req: any;
-    
+
     try {
       const baseReq = {
         dry: false,
@@ -386,7 +421,7 @@ export class NearIntentsService implements OnModuleInit {
         depositMode: 'SIMPLE',
         slippageTolerance: 100,
         originAsset: fromToken.tokenId,
-        depositType: QuoteRequest.depositType.ORIGIN_CHAIN,
+        depositType: originIsMultiToken ? QuoteRequest.depositType.INTENTS : QuoteRequest.depositType.ORIGIN_CHAIN,
         destinationAsset: toToken.tokenId,
         amount: amount,
         refundTo,
@@ -407,9 +442,23 @@ export class NearIntentsService implements OnModuleInit {
 
       const raw = await OneClickService.getQuote(req);
       const q = (raw as any)?.quote || raw || {};
+      // depositAddress MUST stay exactly what 1Click issued — their own /v0/status endpoint
+      // (getExecutionStatus) does an exact string match on this value and 404s on any other
+      // encoding of the same on-chain account (verified directly: querying /v0/status with the
+      // "EQ..." friendly form of a raw TON deposit address 1Click itself returned gets
+      // "Deposit address ... not found", even though it's the identical account). A prior version
+      // of this method converted depositAddress itself to the TON-friendly format, which broke
+      // status polling for every TON deposit silently — the deposit landed on-chain but
+      // ClaimProcessorService could never detect it. depositAddressDisplay is the only place that
+      // conversion belongs; it's for showing to a payer, never for storage or status lookups.
+      const rawDepositAddress: string | undefined = q?.depositAddress || q?.address;
+      const depositAddressDisplay = rawDepositAddress && fromToken.chain.toLowerCase() === 'ton'
+        ? this.toTonFriendlyAddress(rawDepositAddress)
+        : rawDepositAddress;
 
       return {
-        depositAddress: q?.depositAddress || q?.address,
+        depositAddress: rawDepositAddress,
+        depositAddressDisplay,
         memo: q?.memo ?? null,
         deadline: q?.deadline,
         timeEstimate: q?.timeEstimate,
@@ -419,14 +468,17 @@ export class NearIntentsService implements OnModuleInit {
         raw,
       };
     } catch (error: any) {
-      this.logger.error('Deposit quote error:', error?.message);
-      this.logger.error('Error details:', {
-        message: error?.message,
-        body: error?.body,
-        response: error?.response,
-        status: error?.status,
-      });
-      this.logger.error('Request that failed:', JSON.stringify(req, null, 2));
+      // Logger.error's 2nd positional arg is treated as a log "context" label, not a value to
+      // print — passing the details object there silently dropped it, hiding the one thing that
+      // actually explains a failure: the upstream API's own error body (e.g. 1Click returning
+      // `{"message":"Quoting for this pair is not available"}` on a 400). Serialize everything
+      // into the message string itself so it's actually visible in logs.
+      const status = error?.status ?? error?.response?.status;
+      const body = error?.body ?? error?.response?.data ?? error?.response?.body;
+      this.logger.error(
+        `Deposit quote error: status=${status ?? 'n/a'} message=${error?.message ?? 'n/a'} body=${JSON.stringify(body)}`,
+      );
+      this.logger.error(`Request that failed: ${JSON.stringify(req, null, 2)}`);
       throw error;
     }
   }

@@ -257,16 +257,23 @@ export class DepositService {
         }
       }
 
-      // Gross-up EXACT_OUTPUT so the burner receives requested_amount + Loofta fee + MagicBlock gas.
-      // At claim time the backend sweeps requested_amount to recipient via private PER transfer,
-      // and the remainder (fee + gas) is swept as dust to the fee-payer wallet.
+      // Gross-up EXACT_OUTPUT so the burner receives requested_amount + Loofta fee (+ MagicBlock
+      // gas, private claims only). At claim time the backend sweeps requested_amount to recipient
+      // — via a private PER transfer for private claims, a plain public SPL transfer otherwise
+      // (see ClaimsService.sweepClaimBurnerToWallet) — and the remainder is swept as dust to the
+      // fee-payer wallet. A public claim's recipient is exposed regardless, so there's no privacy
+      // gained by paying MagicBlock's gas for it — only cost, and a disproportionate one on small
+      // payouts (SOL gas is a flat cost that doesn't scale down with the amount).
       if (isDestSolana) {
-        const solPriceUsd = await fetchSolPriceUsd();
         const looftaFeeHuman = amountOutHuman * CROSS_CHAIN_LOOFTA_FEE_BPS / 10_000;
-        const gasFeeHuman = solPriceUsd != null ? MAGICBLOCK_MIN_SENDER_SOL * solPriceUsd / (destPrice || 1) : 0; // in dest token units
+        let gasFeeHuman = 0;
+        if (isPrivate) {
+          const solPriceUsd = await fetchSolPriceUsd();
+          gasFeeHuman = solPriceUsd != null ? MAGICBLOCK_MIN_SENDER_SOL * solPriceUsd / (destPrice || 1) : 0; // in dest token units
+        }
         amountOutHuman = amountOutHuman + looftaFeeHuman + gasFeeHuman;
         this.logger.log(
-          `[Deposit] Fee gross-up: loofta=${looftaFeeHuman.toFixed(6)} gas=${gasFeeHuman.toFixed(6)} solPrice=$${solPriceUsd} → grossedAmountOut=${amountOutHuman.toFixed(6)} ${claim.to_symbol}`,
+          `[Deposit] Fee gross-up: loofta=${looftaFeeHuman.toFixed(6)} gas=${gasFeeHuman.toFixed(6)} (isPrivate=${!!isPrivate}) → grossedAmountOut=${amountOutHuman.toFixed(6)} ${claim.to_symbol}`,
         );
       }
       
@@ -320,11 +327,16 @@ export class DepositService {
         toChain: claim.to_chain,
       });
 
-      // Save payment info to claim (what token/chain is being used to pay)
+      // Save payment info to claim (what token/chain is being used to pay). expiresAt pushes the
+      // claim's own expiry out to match this NEAR Intents deposit address's real validity window
+      // (often ~3 days) rather than leaving it at whatever shorter default it was created with
+      // (e.g. payouts' 4h) — updateStatus only ever extends, never shortens, so this is a no-op
+      // for claims whose existing expiry is already later (payment links default to 7 days).
       await this.claimsService.updateStatus(claim.id, 'PENDING_DEPOSIT', {
         paidWithToken: fromToken.symbol,
         paidWithChain: originChain,
         isPrivate: isPrivate || false,
+        expiresAt: quoteResult.deadline,
       });
 
       // Round up minimum amount to avoid INCOMPLETE_DEPOSIT
@@ -335,7 +347,9 @@ export class DepositService {
       }
 
       return {
-        depositAddress: quoteResult.depositAddress,
+        // depositAddressDisplay (friendly TON format) when present — this is what the payer
+        // actually sends to, never the raw form createIntent stored above for status polling.
+        depositAddress: quoteResult.depositAddressDisplay || quoteResult.depositAddress,
         memo: quoteResult.memo,
         deadline: quoteResult.deadline,
         timeEstimate: quoteResult.timeEstimate,
@@ -344,7 +358,14 @@ export class DepositService {
         minAmountInFormatted,
       };
     } catch (error: any) {
-      this.logger.error('[Deposit] Quote error:', error?.message);
+      // error.message on the 1Click SDK's ApiError is usually just generic HTTP status text
+      // ("Bad Request") — the actual reason ("Quoting for this pair is not available", etc.)
+      // lives in error.body.message. Surface that everywhere so a failure is diagnosable from
+      // this log line alone, instead of needing to reproduce the request by hand.
+      const upstreamMessage = error?.body?.message || error?.response?.data?.message;
+      this.logger.error(
+        `[Deposit] Quote error: status=${error?.status ?? 'n/a'} message=${error?.message ?? 'n/a'} upstream=${upstreamMessage ?? 'n/a'} body=${JSON.stringify(error?.body)}`,
+      );
 
       // Check if it's a validation error we should pass through
       if (error?.response?.code) {
@@ -352,7 +373,7 @@ export class DepositService {
       }
 
       throw new BadRequestException({
-        message: error?.message || 'Failed to prepare deposit',
+        message: upstreamMessage || error?.message || 'Failed to prepare deposit',
         code: 'QUOTE_FAILED',
       });
     }

@@ -2299,13 +2299,19 @@ export class ClaimsService {
       const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
       const { conn, claimMint } = this.resolveClaimNetwork(claim);
 
-      // Cross-chain payments (e.g. ETH/BTC → Solana via NEAR Intents) land in the burner
-      // and must be privately forwarded to the recipient via MagicBlock PER transfer.
+      // Cross-chain payments (e.g. ETH/BTC → Solana via NEAR Intents) land in the burner. Only
+      // claims that actually asked for privacy need the MagicBlock PER transfer here — a public
+      // claim's recipient is exposed anyway once they claim it, so forcing every cross-chain
+      // delivery through MagicBlock regardless of is_private just meant every cross-chain payer
+      // had to prepay real SOL gas (MAGICBLOCK_MIN_SENDER_SOL, grossed into the deposit amount in
+      // deposit.service.ts) for privacy nobody asked for. The plain SPL branch below already
+      // handles burner→recipient delivery with zero burner SOL needed (SolanaSponsorService's fee
+      // payer covers ATA creation and tx fees) — same path giveaways/PAJ Naira claims use today.
       // `await` (not a bare `return`) is required here — a returned-but-unawaited promise's
       // rejection bypasses this function's own try/catch entirely and reaches the caller as a
       // raw, unwrapped error instead of a clean BadRequestException (a real bug this once was).
       const isCrossChain = await this.isCrossChainPayment(claimId);
-      if (isCrossChain) {
+      if (isCrossChain && claim.is_private === true) {
         const result = await this.sweepClaimBurnerPrivately(claimId, claim, destination, burnerKeypair, conn, { feeOnSender: true });
         return { ...result, deliveredPrivately: true };
       }
@@ -2387,15 +2393,21 @@ export class ClaimsService {
             );
           }
         }
-        // Loofta fee ("claim in Naira" only, for now) — split the sweep into two transfer
-        // instructions in the same transaction/signature rather than asking PAJ to deduct
-        // anything: PAJ pays out 100% of whatever lands at `destination`. The fee payer's own
-        // wallet doubles as the protocol-fee collector (same wallet as platformFeeAccount
-        // elsewhere) — its USDC ATA is expected to already exist (see magicblock-private-transfer.ts)
-        // but we create it if missing anyway, cheap insurance against a broadcast-time failure.
+        // Loofta fee — split the sweep into two transfer instructions in the same
+        // transaction/signature. Two sources: an explicit opts.looftaFeeUsdc ("claim in Naira",
+        // where PAJ must receive 100% of `destination`'s balance and the fee comes out
+        // separately), or — new — a cross-chain claim's own deposit gross-up (the payer sent
+        // target + CROSS_CHAIN_LOOFTA_FEE_BPS, see deposit.service.ts) landing in the burner as
+        // dust above `expectedUnits`; without capturing it here that dust would just go to the
+        // recipient as an unintended bonus instead of to Loofta. The fee payer's own wallet
+        // doubles as the protocol-fee collector (same wallet as platformFeeAccount elsewhere) —
+        // its USDC ATA is expected to already exist (see magicblock-private-transfer.ts) but we
+        // create it if missing anyway, cheap insurance against a broadcast-time failure.
         const looftaFeeUnits = feePayerKp && opts?.looftaFeeUsdc
           ? BigInt(Math.round(opts.looftaFeeUsdc * 1_000_000))
-          : BigInt(0);
+          : feePayerKp && isCrossChain && balance > expectedUnits
+            ? balance - expectedUnits
+            : BigInt(0);
         const netUnits = balance - looftaFeeUnits;
         if (looftaFeeUnits > BigInt(0) && feePayerKp) {
           const feeAta = await getAssociatedTokenAddress(claimMint, feePayerKp.publicKey);
@@ -2427,9 +2439,24 @@ export class ClaimsService {
           throw new Error('Network fee sponsorship is temporarily unavailable');
         }
         this.logger.log(
-          `Claim ${claimId}: [SWEEP] direct SPL burner->recipient ${balance} base units (burner ${burnerKeypair.publicKey.toBase58().slice(0, 8)} → ${destination.slice(0, 8)}) feePayer=${feePayerPubkey.toBase58().slice(0, 8)} sol=${feePayerSolBalance}`,
+          `Claim ${claimId}: [SWEEP] direct SPL burner->recipient balance=${balance} expected=${expectedUnits} looftaFeeUnits=${looftaFeeUnits} netUnits=${netUnits} (looftaFeeUnits+netUnits=${looftaFeeUnits + netUnits}, must equal balance) isCrossChain=${isCrossChain} instructions=${sweepTx.instructions.length} ` +
+            `(burner ${burnerKeypair.publicKey.toBase58().slice(0, 8)} → ${destination.slice(0, 8)}) feePayer=${feePayerPubkey.toBase58().slice(0, 8)} sol=${feePayerSolBalance}`,
         );
-        const sig = await this.sendAndConfirmWithRebuild(conn, sweepTx, feePayerPubkey, sweepSigners, `sweep-${claimId.slice(0, 8)}`);
+        let sig: string;
+        try {
+          sig = await this.sendAndConfirmWithRebuild(conn, sweepTx, feePayerPubkey, sweepSigners, `sweep-${claimId.slice(0, 8)}`);
+        } catch (sweepErr: any) {
+          // Log full sweep math right alongside the on-chain failure — balance/expected/fee/net
+          // are only in scope here, not in the outer catch below, so without this an
+          // InstructionError like Custom:1 (SPL Token InsufficientFunds) is undiagnosable after
+          // the fact (real incident: repeated "Transaction failed on-chain" reports with no way
+          // to tell whether it was a stale balance read, a concurrent double-sweep, or a genuine
+          // math bug in the fee/dust split above).
+          this.logger.error(
+            `Claim ${claimId}: [SWEEP] on-chain failure — balance=${balance} expected=${expectedUnits} looftaFeeUnits=${looftaFeeUnits} netUnits=${netUnits} isCrossChain=${isCrossChain} error=${sweepErr?.message ?? sweepErr}`,
+          );
+          throw sweepErr;
+        }
         this.logger.log(
           `Claim ${claimId}: [MONEY] ✅ swept ${balance} base-units USDC (${(Number(balance) / 1_000_000).toFixed(6)} USDC) burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} -> recipient=${destination.slice(0, 8)} tx=${sig}`,
         );
@@ -3117,6 +3144,11 @@ export class ClaimsService {
     /** Set when this claim was delivered via "claim in Naira" — which default PAJ Cash bank
      * account it was swept to and the Loofta fee taken on that sweep. payments-only column. */
     nairaClaim?: { bankAccountId: string; feeAmountUsdc: number };
+    /** ISO timestamp. Only ever extends expires_at, never shortens it — see updateData.expires_at
+     * below. Used by DepositService to push a cross-chain claim's expiry out to match its NEAR
+     * Intents deposit quote's own deadline (often days), instead of leaving it at whatever
+     * shorter default the claim was created with. */
+    expiresAt?: string;
   }, createdByUserId?: string): Promise<Claim> {
     // Ownership check. createdByUserId is only ever passed by an authenticated HTTP request (see
     // ClaimsController.updateStatus) — internal/cron callers (solana-tx-verifier, claim-processor,
@@ -3216,6 +3248,16 @@ export class ClaimsService {
     if (extra?.nairaClaim) {
       updateData.naira_claim_bank_account_id = extra.nairaClaim.bankAccountId;
       updateData.naira_claim_fee_usdc = extra.nairaClaim.feeAmountUsdc;
+    }
+
+    // Only ever extends — never shortens — expires_at, and only takes effect if the new value is
+    // actually later than whatever's already stored (including null, i.e. no expiry yet).
+    if (extra?.expiresAt) {
+      const result = await this.fetchRawRow(id);
+      const currentExpiresAt = result?.row?.expires_at as string | null | undefined;
+      if (!currentExpiresAt || new Date(extra.expiresAt) > new Date(currentExpiresAt)) {
+        updateData.expires_at = extra.expiresAt;
+      }
     }
 
     const { error } = await this.updateRow(id, updateData);
