@@ -584,7 +584,7 @@ function BusinessSection() {
   const bullets = [
     "Payouts to email, social handle or bank, no wallet required",
     "150+ settlement tokens with automatic swaps",
-    "Built-in rewards to drive activation and retention",
+    "Run giveaways with an escrow-funded, on-chain draw to grow your audience",
     "Drop-in SDK & hosted checkout, live in a day",
   ];
 
@@ -632,6 +632,13 @@ function BusinessSection() {
                 Read more
               </Link>
             </div>
+            <a
+              href="/giveaways"
+              className={`mt-6 inline-flex items-center gap-2 font-grotesk text-base font-medium ${INK_2} underline decoration-white/30 underline-offset-4 transition-colors hover:text-white`}
+            >
+              Or launch a giveaway to grow your audience
+              <ArrowRight className="h-4 w-4" strokeWidth={2} />
+            </a>
           </motion.div>
 
           <motion.div
