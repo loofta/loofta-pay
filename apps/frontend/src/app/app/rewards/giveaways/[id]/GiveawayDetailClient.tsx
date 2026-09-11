@@ -136,6 +136,7 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   x_like: "Like the post",
   x_comment: "Comment on the post",
   x_bookmark: "Bookmark the post",
+  x_post: "Post on X",
   telegram_join: "Join Telegram",
   discord_join: "Join Discord",
   visit_link: "Visit the link",
@@ -148,6 +149,7 @@ const TASK_TYPE_ICON: Record<string, typeof Repeat2> = {
   x_like: Heart,
   x_comment: MessageCircle,
   x_bookmark: Bookmark,
+  x_post: Twitter,
   telegram_join: Send,
   discord_join: MessageSquare,
   visit_link: Link2,
@@ -193,8 +195,11 @@ const ENGAGE_ACTION_LABELS: Record<string, string> = {
   x_bookmark: "Bookmark",
 };
 
-/** Turns a task's raw target (a handle for x_follow, a bare or full URL for everything else) into a real clickable href. */
-function taskTargetHref(target: string, taskType: string): string {
+/** Turns a task's raw target (a handle for x_follow, a bare or full URL for everything else) into
+ *  a real clickable href. x_post has no target at all — it builds a pre-filled x.com/intent/tweet
+ *  link from required_text instead, so the entrant never has to type the required content by hand. */
+function taskTargetHref(target: string, taskType: string, requiredText?: string): string {
+  if (taskType === "x_post") return `https://x.com/intent/tweet?text=${encodeURIComponent(requiredText ?? "")}`;
   const t = target.trim();
   if (taskType === "x_follow") return `https://x.com/${t.replace(/^@/, "")}`;
   return /^https?:\/\//i.test(t) ? t : `https://${t}`;
@@ -204,6 +209,7 @@ function taskTargetHref(target: string, taskType: string): string {
  *  without double-prefixing if it was ever stored with one. Everything else displays as-is. */
 function taskTargetDisplay(target: string, taskType: string): string {
   if (taskType === "x_follow") return `@${target.trim().replace(/^@/, "")}`;
+  if (taskType === "x_post") return "Open pre-filled post";
   return target;
 }
 
@@ -216,7 +222,7 @@ const taskLinkClass = "block text-base font-normal mt-2 truncate hover:underline
 // accent-colored prize amounts and links on this page.
 const taskActionButtonClass = "rounded-lg bg-white/10 text-white text-base font-semibold hover:bg-white/20 transition-colors disabled:opacity-40 disabled:hover:bg-white/10";
 
-type PublicTask = { id: string; task_type: string; config: { target?: string; comment_requirement?: string; instructions?: string; title?: string; require_proof?: boolean }; order_index: number; verification_mode: string };
+type PublicTask = { id: string; task_type: string; config: { target?: string; comment_requirement?: string; instructions?: string; title?: string; require_proof?: boolean; required_text?: string }; order_index: number; verification_mode: string };
 type TaskDisplayGroup = { kind: "engage"; target: string; tasks: PublicTask[] } | { kind: "single"; task: PublicTask };
 
 /** Groups engage-type tasks that share the same tweet URL into one display card; everything else
@@ -1204,7 +1210,8 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                     // description in `target` — that's not a real URL, so render it as plain text
                     // instead of a broken link. New-format custom tasks (with a title) use `target`
                     // as the actual accompanying link.
-                    const showTargetAsLink = task.config?.target && (!isCustom || hasStructuredTitle);
+                    const showTargetAsLink =
+                      task.task_type === "x_post" ? !!task.config?.required_text : task.config?.target && (!isCustom || hasStructuredTitle);
                     const showTargetAsText = isCustom && !hasStructuredTitle && task.config?.target;
                     const requiresProof = !!task.config?.require_proof && task.verification_mode !== "auto_api";
                     const proofText = taskProofText[task.id] ?? "";
@@ -1246,17 +1253,17 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                         {isOpen && (
                           <div className="px-3 pb-3 pt-3 border-t border-white/[0.06] space-y-2.5 animate-in fade-in slide-in-from-top-1 duration-200">
                             {showTargetAsLink && !showUnifiedActions && !showProofFlow && (
-                              <a href={taskTargetHref(task.config.target as string, task.task_type)} target="_blank" rel="noopener noreferrer" className={taskLinkClass} style={{ color: ACCENT }}>
+                              <a href={taskTargetHref(task.config.target as string, task.task_type, task.config.required_text)} target="_blank" rel="noopener noreferrer" className={taskLinkClass} style={{ color: ACCENT }}>
                                 {taskTargetDisplay(task.config.target as string, task.task_type)}
                               </a>
                             )}
                             {showTargetAsText && (
                               <p className="text-base text-slate-300">{task.config.target}</p>
                             )}
-                            {(task.config?.comment_requirement || task.config?.instructions) && (
+                            {(task.config?.comment_requirement || task.config?.instructions || task.config?.required_text) && (
                               <p className="text-base text-slate-300 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-                                <span className="font-medium text-white">Instructions: </span>
-                                {task.config.comment_requirement || task.config.instructions}
+                                <span className="font-medium text-white">{task.task_type === "x_post" ? "Post this exactly: " : "Instructions: "}</span>
+                                {task.config.comment_requirement || task.config.instructions || task.config.required_text}
                               </p>
                             )}
                             {myEntry && status !== "verified" && (
@@ -1271,12 +1278,12 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                                     <div>
                                       <p className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-1.5">1. Do the task</p>
                                       <a
-                                        href={taskTargetHref(task.config.target as string, task.task_type)}
+                                        href={taskTargetHref(task.config.target as string, task.task_type, task.config.required_text)}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className={`w-full flex items-center justify-center gap-1.5 px-4 py-2.5 ${taskActionButtonClass}`}
                                       >
-                                        Open the link <ExternalLink className="w-4 h-4" />
+                                        {task.task_type === "x_post" ? "Compose post" : "Open the link"} <ExternalLink className="w-4 h-4" />
                                       </a>
                                     </div>
                                   )}
@@ -1342,12 +1349,12 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                                 <div className="flex items-center gap-2">
                                   {showTargetAsLink && (
                                     <a
-                                      href={taskTargetHref(task.config.target as string, task.task_type)}
+                                      href={taskTargetHref(task.config.target as string, task.task_type, task.config.required_text)}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       className={`flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 ${taskActionButtonClass}`}
                                     >
-                                      {task.task_type === "x_follow" ? "Open profile" : "Open the link"} <ExternalLink className="w-4 h-4" />
+                                      {task.task_type === "x_follow" ? "Open profile" : task.task_type === "x_post" ? "Compose post" : "Open the link"} <ExternalLink className="w-4 h-4" />
                                     </a>
                                   )}
                                   <button

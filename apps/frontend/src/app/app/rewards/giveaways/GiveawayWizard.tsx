@@ -58,12 +58,13 @@ function nearest(options: number[], target: number): number {
 // comment/bookmark, independently toggled) rather than a single task_type — matches how a
 // creator actually thinks about it ("do these things to this post"), and expands into one
 // backend task row per checked action at submit time (see expandTaskRow).
-type TaskCategory = "engage" | "x_follow" | "telegram_join" | "discord_join" | "visit_link" | "custom";
-type BackendTaskType = "x_follow" | "x_retweet" | "x_like" | "x_comment" | "x_bookmark" | "telegram_join" | "discord_join" | "visit_link" | "custom";
+type TaskCategory = "engage" | "x_follow" | "x_post" | "telegram_join" | "discord_join" | "visit_link" | "custom";
+type BackendTaskType = "x_follow" | "x_retweet" | "x_like" | "x_comment" | "x_bookmark" | "x_post" | "telegram_join" | "discord_join" | "visit_link" | "custom";
 
 const CATEGORY_LABELS: Record<TaskCategory, string> = {
   engage: "Engage with a post",
   x_follow: "Follow on X",
+  x_post: "Post on X",
   telegram_join: "Join Telegram",
   discord_join: "Join Discord",
   visit_link: "Visit a link",
@@ -75,6 +76,7 @@ const CATEGORY_LABELS: Record<TaskCategory, string> = {
 const CATEGORY_ICONS: Record<TaskCategory, string> = {
   engage: "💬",
   x_follow: "𝕏",
+  x_post: "✍️",
   telegram_join: "✈️",
   discord_join: "🎮",
   visit_link: "🔗",
@@ -84,6 +86,7 @@ const CATEGORY_ICONS: Record<TaskCategory, string> = {
 const CATEGORY_TARGET_LABELS: Record<TaskCategory, string> = {
   engage: "Tweet URL",
   x_follow: "X handle to follow (e.g. loofta)",
+  x_post: "Exact text they must post",
   telegram_join: "Telegram channel/group link",
   discord_join: "Discord invite link",
   visit_link: "Link URL",
@@ -92,8 +95,8 @@ const CATEGORY_TARGET_LABELS: Record<TaskCategory, string> = {
 
 /** Categories nothing can auto-verify — completion is always self-reported and reviewed by the
  *  creator/admin. These are the only ones offered a "require proof" toggle: the auto_api
- *  categories (follow, and RT/like/comment under engage) are checked against the real X API, so
- *  asking for a screenshot on top of that would be redundant. */
+ *  categories (follow, x_post, and RT/like/comment under engage) are checked against the real X
+ *  API, so asking for a screenshot on top of that would be redundant. */
 const SELF_REPORT_CATEGORIES = new Set<TaskCategory>(["telegram_join", "discord_join", "visit_link", "custom"]);
 
 /** Bookmark has no real verification path — X has no public "who bookmarked this tweet"
@@ -113,6 +116,8 @@ interface TaskRow {
   /** custom tasks only — the short title shown to the entrant (e.g. "Join the stream"); `target` is the accompanying link, optional. */
   title: string;
   instructions: string;
+  /** x_post only — the exact text the entrant must post as a new tweet. */
+  requiredText: string;
   requireProof: boolean;
   engage: { retweet: boolean; like: boolean; comment: boolean; bookmark: boolean };
 }
@@ -124,6 +129,7 @@ function newRow(): TaskRow {
     target: "",
     title: "",
     instructions: "",
+    requiredText: "",
     requireProof: false,
     engage: { retweet: true, like: false, comment: false, bookmark: false },
   };
@@ -131,6 +137,7 @@ function newRow(): TaskRow {
 
 function rowIsValid(row: TaskRow): boolean {
   if (row.category === "custom") return row.title.trim().length > 0;
+  if (row.category === "x_post") return row.requiredText.trim().length > 0;
   if (!row.target.trim()) return false;
   if (row.category === "engage") return row.engage.retweet || row.engage.like || row.engage.comment || row.engage.bookmark;
   return true;
@@ -144,6 +151,9 @@ function expandTaskRow(row: TaskRow): Array<{ task_type: BackendTaskType; config
     if (row.target.trim()) config.target = row.target.trim();
     config.require_proof = row.requireProof;
     return [{ task_type: "custom", config }];
+  }
+  if (row.category === "x_post") {
+    return [{ task_type: "x_post", config: { required_text: row.requiredText.trim() } }];
   }
   if (row.category !== "engage") {
     const config: Record<string, unknown> = { target: row.target.trim() };
@@ -174,7 +184,7 @@ function collapseTasksToRows(tasks: Array<{ task_type: string; config: Record<st
     if (ENGAGE_TYPES.has(t.task_type)) {
       let row = engageByTarget.get(target);
       if (!row) {
-        row = { id: crypto.randomUUID(), category: "engage", target, title: "", instructions: "", requireProof: false, engage: { retweet: false, like: false, comment: false, bookmark: false } };
+        row = { id: crypto.randomUUID(), category: "engage", target, title: "", instructions: "", requiredText: "", requireProof: false, engage: { retweet: false, like: false, comment: false, bookmark: false } };
         engageByTarget.set(target, row);
         rows.push(row);
       }
@@ -205,7 +215,19 @@ function collapseTasksToRows(tasks: Array<{ task_type: string; config: Record<st
         target: hasTitle ? target : "",
         title: hasTitle ? t.config.title : target,
         instructions: t.config?.instructions ?? "",
+        requiredText: "",
         requireProof: !!t.config?.require_proof,
+        engage: { retweet: false, like: false, comment: false, bookmark: false },
+      });
+    } else if (t.task_type === "x_post") {
+      rows.push({
+        id: crypto.randomUUID(),
+        category: "x_post",
+        target: "",
+        title: "",
+        instructions: "",
+        requiredText: t.config?.required_text ?? "",
+        requireProof: false,
         engage: { retweet: false, like: false, comment: false, bookmark: false },
       });
     } else {
@@ -215,6 +237,7 @@ function collapseTasksToRows(tasks: Array<{ task_type: string; config: Record<st
         target,
         title: "",
         instructions: t.config?.instructions ?? "",
+        requiredText: "",
         requireProof: !!t.config?.require_proof,
         engage: { retweet: false, like: false, comment: false, bookmark: false },
       });
@@ -682,6 +705,9 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   const setTaskInstructions = useCallback((id: string, instructions: string) => {
     updateDraft((prev) => ({ tasks: prev.tasks.map((r) => (r.id === id ? { ...r, instructions } : r)) }));
   }, [updateDraft]);
+  const setTaskRequiredText = useCallback((id: string, requiredText: string) => {
+    updateDraft((prev) => ({ tasks: prev.tasks.map((r) => (r.id === id ? { ...r, requiredText } : r)) }));
+  }, [updateDraft]);
   const toggleEngageAction = useCallback((id: string, action: keyof TaskRow["engage"]) => {
     updateDraft((prev) => ({
       tasks: prev.tasks.map((r) => (r.id === id ? { ...r, engage: { ...r.engage, [action]: !r.engage[action] } } : r)),
@@ -1136,6 +1162,20 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                                       placeholder={CATEGORY_TARGET_LABELS.custom}
                                       className={inputClass}
                                     />
+                                  </>
+                                ) : task.category === "x_post" ? (
+                                  <>
+                                    <textarea
+                                      value={task.requiredText}
+                                      onChange={(e) => setTaskRequiredText(task.id, e.target.value)}
+                                      placeholder={CATEGORY_TARGET_LABELS.x_post}
+                                      maxLength={280}
+                                      rows={3}
+                                      className={`${inputClass} h-auto py-2.5 resize-none`}
+                                    />
+                                    <p className="text-sm text-slate-500">
+                                      Entrants get a one-click pre-filled post with this exact text — verified automatically against X.
+                                    </p>
                                   </>
                                 ) : (
                                   <Input

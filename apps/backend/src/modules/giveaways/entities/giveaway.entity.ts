@@ -31,6 +31,13 @@ export enum GiveawayTaskType {
   X_RETWEET = 'x_retweet',
   X_LIKE = 'x_like',
   X_COMMENT = 'x_comment',
+  // A brand-new original post (not a reply/retweet/quote of an existing tweet) containing exact
+  // required text — config.required_text is also used to build a pre-filled x.com/intent/tweet
+  // link so the entrant doesn't have to type anything. Unlike x_retweet/x_comment (which check
+  // against a target tweet the creator supplies), this has no target tweet to check — it's
+  // verified via Sorsa's /search-tweets (`from:{handle}`, latest order) against the entrant's own
+  // recent posts instead. See XVerificationService.checkPostedExactly.
+  X_POST = 'x_post',
   // No public X API endpoint exposes "who bookmarked this tweet" (bookmarks are private to each
   // user) — unlike retweet/like/follow, this can never move to auto_api. Always self-report.
   X_BOOKMARK = 'x_bookmark',
@@ -64,6 +71,7 @@ export const GIVEAWAY_TASK_VERIFICATION_MODE: Record<GiveawayTaskType, GiveawayT
   [GiveawayTaskType.X_LIKE]: GiveawayTaskVerificationMode.SELF_REPORT,
   [GiveawayTaskType.X_COMMENT]: GiveawayTaskVerificationMode.AUTO_API,
   [GiveawayTaskType.X_BOOKMARK]: GiveawayTaskVerificationMode.SELF_REPORT,
+  [GiveawayTaskType.X_POST]: GiveawayTaskVerificationMode.AUTO_API,
   [GiveawayTaskType.TELEGRAM_JOIN]: GiveawayTaskVerificationMode.SELF_REPORT,
   [GiveawayTaskType.DISCORD_JOIN]: GiveawayTaskVerificationMode.SELF_REPORT,
   [GiveawayTaskType.VISIT_LINK]: GiveawayTaskVerificationMode.SELF_REPORT,

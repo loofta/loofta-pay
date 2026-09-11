@@ -36,6 +36,12 @@ export class GiveawayTaskConfigDto {
   @MaxLength(500)
   comment_requirement?: string;
 
+  @ApiPropertyOptional({ description: 'x_post tasks only — the exact text the entrant must post as a brand-new tweet (not a reply/retweet). Also used to generate a pre-filled x.com/intent/tweet link.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(280)
+  required_text?: string;
+
   @ApiPropertyOptional({ description: 'Free-text instructions for visit_link tasks, e.g. "Join waitlist" or "Create an account".' })
   @IsOptional()
   @IsString()

@@ -78,7 +78,7 @@ const DEFAULT_DAILY_CALL_CAP = 300;
  * direct X API v2 on 2026-08-16 after repeated cost incidents.
  *
  * Checks each pending entrant individually against Sorsa's per-user verification endpoints
- * (/check-retweet, /check-quoted, /check-follow, /check-comment) rather than paginating a tweet's
+ * (/check-retweet, /check-quoted, /check-follow, /check-comment, /search-tweets) rather than paginating a tweet's
  * full retweeter/follower list and checking membership locally. The list-pagination design (used
  * here for about two hours on 2026-08-16) was replaced after it burned 87 raw requests checking a
  * single retweet in one real test — Sorsa's next_cursor doesn't reliably signal "no more results,"
@@ -308,6 +308,25 @@ export class XVerificationService {
     return { commented: !!res?.commented, text: res?.tweet?.full_text ?? null };
   }
 
+  /** x_post has no target tweet to check against (it's a brand-new original post, not a reply/
+   *  retweet of one) — unlike checkRetweetedOrQuoted/checkCommented, this searches the entrant's
+   *  OWN recent posts for an exact match instead. `from:{handle}` + order=latest surfaces their
+   *  newest posts first; a genuine just-published post is expected on the first page, so this is
+   *  a single bounded call with no cursor follow-up — same "no pagination" rule as every other
+   *  check-* method here (Sorsa's next_cursor doesn't reliably signal "no more results"). Exact
+   *  match (trimmed, whitespace-collapsed) rather than a substring/contains check — this task type
+   *  is specifically "post this exact text," not "mention these words." */
+  private async checkPostedExactly(handle: string, requiredText: string): Promise<boolean> {
+    await this.consumeDailyCapOrThrow(`search-tweets:${handle}`);
+    const res = await this.sorsaRequest<{ tweets?: Array<{ full_text?: string }> }>('POST', '/search-tweets', {
+      query: `from:${handle}`,
+      order: 'latest',
+    });
+    const normalize = (s: string) => s.trim().replace(/\s+/g, ' ');
+    const target = normalize(requiredText);
+    return (res?.tweets ?? []).some((t) => !!t.full_text && normalize(t.full_text) === target);
+  }
+
   /** Called once per open/entries-closed giveaway by the cron (see runFinalXVerificationSweep) or
    *  once per click (submitTaskCompletion, with a single-entry `pending`). Checks each entrant
    *  individually against Sorsa — bounded, one (or two, for x_comment's text match) request per
@@ -320,8 +339,7 @@ export class XVerificationService {
     pending: Array<{ completion: GiveawayTaskCompletion; entry: GiveawayEntry }>,
   ): Promise<void> {
     if (!this.sorsaApiKey || pending.length === 0) return;
-    const config = task.config as { target?: string; comment_requirement?: string };
-    if (!config.target) return;
+    const config = task.config as { target?: string; comment_requirement?: string; required_text?: string };
 
     // X_LIKE/X_BOOKMARK are SELF_REPORT (see GIVEAWAY_TASK_VERIFICATION_MODE) — there is no live X
     // API call that can resolve them (Like Lookup always returns empty on this app's tier; bookmarks
@@ -336,13 +354,23 @@ export class XVerificationService {
       return;
     }
 
-    if (task.task_type !== GiveawayTaskType.X_RETWEET && task.task_type !== GiveawayTaskType.X_FOLLOW && task.task_type !== GiveawayTaskType.X_COMMENT) {
+    const isXPost = task.task_type === GiveawayTaskType.X_POST;
+    if (
+      task.task_type !== GiveawayTaskType.X_RETWEET &&
+      task.task_type !== GiveawayTaskType.X_FOLLOW &&
+      task.task_type !== GiveawayTaskType.X_COMMENT &&
+      !isXPost
+    ) {
       return; // not an X task
     }
+    // x_post has no target tweet at all (it's a new original post, not a reply/retweet of one) —
+    // it's gated on required_text instead of config.target, which every other X task type here
+    // requires.
+    if (isXPost ? !config.required_text : !config.target) return;
 
-    const tweetId = task.task_type !== GiveawayTaskType.X_FOLLOW ? this.extractTweetId(config.target) : null;
-    const targetHandle = task.task_type === GiveawayTaskType.X_FOLLOW ? this.extractHandle(config.target) : null;
-    if (task.task_type !== GiveawayTaskType.X_FOLLOW && !tweetId) {
+    const tweetId = !isXPost && task.task_type !== GiveawayTaskType.X_FOLLOW ? this.extractTweetId(config.target!) : null;
+    const targetHandle = task.task_type === GiveawayTaskType.X_FOLLOW ? this.extractHandle(config.target!) : null;
+    if (!isXPost && task.task_type !== GiveawayTaskType.X_FOLLOW && !tweetId) {
       const reason = `Could not parse tweet id from target "${config.target}"`;
       this.logger.warn(`[XVerification] ${giveaway.id} task ${task.id} (${task.task_type}): ${reason}`);
       await this.markAll(pending.map((p) => p.completion.id), GiveawayTaskCompletionStatus.API_ERROR, { error: reason });
@@ -358,6 +386,8 @@ export class XVerificationService {
           ok = await this.checkRetweetedOrQuoted(tweetId!, entry.x_user_id);
         } else if (task.task_type === GiveawayTaskType.X_FOLLOW) {
           ok = await this.checkFollows(targetHandle!, entry.x_user_id);
+        } else if (isXPost) {
+          ok = await this.checkPostedExactly(entry.x_handle, config.required_text!);
         } else {
           const { commented, text } = await this.checkCommented(tweetId!, entry.x_user_id);
           ok = commented && (!config.comment_requirement || !!text?.toLowerCase().includes(config.comment_requirement.toLowerCase()));
