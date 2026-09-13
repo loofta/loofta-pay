@@ -33,7 +33,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.borderStrong,
     borderRadius: radius.lg,
-    paddingVertical: space[3],
+    // Matches PrimaryButton's paddingVertical/font size so the two are the same height when
+    // paired side by side (Cancel/Connect, Cancel/Confirm) — see GhostButton usages.
+    paddingVertical: space[5],
     paddingHorizontal: space[4],
     alignItems: 'center',
     justifyContent: 'center',
@@ -41,6 +43,6 @@ const styles = StyleSheet.create({
     gap: space[2],
   },
   disabled: { opacity: 0.35 },
-  label: { color: color.fg2, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 14 },
+  label: { color: color.fg2, fontFamily: FONT_BODY_SEMIBOLD, fontSize: 16 },
   labelDanger: { color: color.brandOrange },
 });

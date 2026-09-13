@@ -2,15 +2,14 @@ import { usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
 import { ChevronDown, ChevronRight, ChevronUp, Gift, Shuffle, X } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, AppState, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, AppState, Modal, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { AuthGate } from '../../components/AuthGate';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { GhostButton } from '../../components/ui/GhostButton';
-import { Card } from '../../components/ui/Card';
 import { CountdownTile } from '../../components/ui/CountdownTile';
 import { GradientText } from '../../components/ui/GradientText';
-import { buyTickets, cancelTicket, confirmBuy, getDashboard, getTicketStatus, type TicketStatus } from '../../lib/api/lottery';
-import { fmt, mbFee, totalCost, TICKET_PRICE_USDC } from '../../lib/lottery/fees';
+import { buyTickets, buyTicketsPublic, cancelTicket, confirmBuy, getDashboard, getTicketStatus, type TicketStatus } from '../../lib/api/lottery';
+import { fmt, mbFee, publicTotalCost, totalCost, TICKET_PRICE_USDC } from '../../lib/lottery/fees';
 import { connectSeekerWallet, signAndSendTransactionWithSeeker } from '../../lib/wallet/mwa';
 import { useBalances } from '../../lib/wallet/BalanceProvider';
 import { updateCachedSkrDomain } from '../../lib/storage/seekerIdentity';
@@ -29,7 +28,7 @@ function MysteryPackBanner() {
   const router = useRouter();
   const { t } = useTranslation();
   return (
-    <TouchableOpacity style={styles.packBanner} onPress={() => router.push('/mystery-pack')} activeOpacity={0.85}>
+    <TouchableOpacity style={styles.packBanner} onPress={() => router.push('/pack')} activeOpacity={0.85}>
       <View style={styles.packBannerIcon}>
         <Gift size={22} color={color.fg} />
       </View>
@@ -276,6 +275,9 @@ function BuyScreenInner() {
   };
 
   const [numTickets, setNumTicketsRaw] = useState(5);
+  // Defaults to true — matches this screen's original always-private behavior. MagicBlock's fee
+  // (see mbFee) only applies to the private route; public skips it entirely (publicTotalCost).
+  const [sendPrivately, setSendPrivately] = useState(true);
   const [tickets, setTickets] = useState<TicketNumbers[]>(() => Array.from({ length: 5 }, randomTicket));
   const [chooseOpen, setChooseOpen] = useState(false);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -419,7 +421,7 @@ function BuyScreenInner() {
     return () => clearTimeout(t);
   }, [isRunning, step]);
 
-  const cost = totalCost(numTickets);
+  const cost = sendPrivately ? totalCost(numTickets) : publicTotalCost(numTickets);
 
   const resetBuy = () => {
     setStep('idle');
@@ -445,8 +447,10 @@ function BuyScreenInner() {
       void updateCachedSkrDomain(label);
       accessToken = await getAccessToken();
 
-      // Only the MagicBlock private transfer to sign now — no separate Loofta fee tx.
-      const { ticketId, txBase64 } = await buyTickets(numTickets, base58Address, accessToken);
+      // Only the transfer to sign now — no separate Loofta fee tx, private or public.
+      const { ticketId, txBase64 } = sendPrivately
+        ? await buyTickets(numTickets, base58Address, accessToken)
+        : await buyTicketsPublic(numTickets, base58Address, accessToken);
       createdTicketId = ticketId;
       signAttempted = true;
       const signature = await signAndSendTransactionWithSeeker(txBase64);
@@ -564,7 +568,22 @@ function BuyScreenInner() {
 
       <View style={styles.card}>
         <ScrollView contentContainerStyle={styles.cardScroll} showsVerticalScrollIndicator={false}>
-          <Text style={styles.formTitle}>{t.buyTicketsPrivately}</Text>
+          <Text style={styles.formTitle}>{sendPrivately ? t.buyTicketsPrivately : t.buyTicketsPublicly}</Text>
+
+          <TouchableOpacity
+            style={styles.privacyToggle}
+            onPress={() => setSendPrivately((v) => !v)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.privacyToggleLabel}>{t.sendPrivatelyToggle}</Text>
+            <Switch
+              value={sendPrivately}
+              onValueChange={setSendPrivately}
+              trackColor={{ true: color.brandOrange, false: color.borderStrong }}
+              thumbColor={color.fg}
+              style={styles.privacyToggleSwitch}
+            />
+          </TouchableOpacity>
 
           {/* Ticket count */}
           <View>
@@ -595,7 +614,7 @@ function BuyScreenInner() {
 
           {/* Choose numbers (cosmetic preview only — see comment near TicketNumbers above) */}
           {numTickets <= NUMBER_PICKER_LIMIT ? (
-            <Card style={styles.chooseCard}>
+            <View style={styles.chooseCard}>
               <TouchableOpacity style={styles.chooseHeader} onPress={() => setChooseOpen((o) => !o)}>
                 <Text style={styles.chooseHeaderText}>{t.chooseNumbers}</Text>
                 {chooseOpen ? <ChevronUp size={18} color={color.fg3} /> : <ChevronDown size={18} color={color.fg3} />}
@@ -603,7 +622,7 @@ function BuyScreenInner() {
               {chooseOpen && (
                 <View style={styles.chooseBody}>
                   <TouchableOpacity style={styles.shuffleAllButton} onPress={() => setTickets(tickets.map(() => randomTicket()))}>
-                    <Shuffle size={14} color={color.fg2} />
+                    <Shuffle size={16} color={color.fg2} />
                     <Text style={styles.shuffleAllText}>{t.shuffleAll}</Text>
                   </TouchableOpacity>
                   <View style={styles.ticketList}>
@@ -634,7 +653,7 @@ function BuyScreenInner() {
                   <Text style={styles.chooseHint}>{t.tapRowToEdit}</Text>
                 </View>
               )}
-            </Card>
+            </View>
           ) : (
             <View style={styles.field}>
               <Shuffle size={16} color={color.fg2} style={{ marginRight: 8 }} />
@@ -648,10 +667,12 @@ function BuyScreenInner() {
               <Text style={styles.feeLabel}>{t.ticketCount(numTickets)}</Text>
               <Text style={styles.feeValue}>{fmt(base, localeTag)}</Text>
             </View>
-            <View style={styles.feeRow}>
-              <Text style={styles.feeLabel}>{t.privateTransferFee}</Text>
-              <Text style={styles.feeValue}>{fmt(mbFee(base), localeTag)}</Text>
-            </View>
+            {sendPrivately && (
+              <View style={styles.feeRow}>
+                <Text style={styles.feeLabel}>{t.privateTransferFee}</Text>
+                <Text style={styles.feeValue}>{fmt(mbFee(base), localeTag)}</Text>
+              </View>
+            )}
             <View style={[styles.feeRow, styles.feeTotalRow]}>
               <Text style={styles.feeTotalLabel}>{t.total}</Text>
               <Text style={styles.feeTotalValue}>{fmt(cost, localeTag)}</Text>
@@ -662,7 +683,7 @@ function BuyScreenInner() {
         <View style={styles.cardFooter}>
           {step === 'error' && stepError ? <Text style={styles.error}>{stepError}</Text> : null}
           <PrimaryButton onPress={handleBuy} label={t.payButton(fmt(cost, localeTag))} />
-          <Text style={styles.shieldedNote}>{t.shieldedNote}</Text>
+          <Text style={styles.shieldedNote}>{sendPrivately ? t.shieldedNote : t.publicTransferNote}</Text>
         </View>
       </View>
 
@@ -862,6 +883,16 @@ const styles = StyleSheet.create({
   cardFooter: { padding: space[5], paddingTop: space[2], gap: 10 },
 
   formTitle: { color: color.fg, fontSize: 22, fontFamily: FONT_TITLE_SEMIBOLD },
+  privacyToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: space[2],
+  },
+  privacyToggleLabel: { color: color.fg2, fontSize: 17, fontFamily: FONT_BODY_MEDIUM },
+  // RN's Switch has no width prop — scaleX on the native track is the standard way to widen it
+  // without also making it taller (scaleY stays 1).
+  privacyToggleSwitch: { transform: [{ scaleX: 1.25 }, { scaleY: 1.1 }] },
   shieldedNote: { color: color.fg3, fontSize: 12, fontFamily: FONT_BODY, textAlign: 'center', marginTop: 2 },
   sectionTitle: { color: '#e2e8f0', fontSize: 17, fontFamily: FONT_BODY_SEMIBOLD },
 
@@ -887,22 +918,33 @@ const styles = StyleSheet.create({
   stepperButtonText: { color: '#e2e8f0', fontSize: 24 },
   stepperValue: { flex: 1, textAlign: 'center', color: color.fg, fontSize: 22, fontFamily: FONT_BODY_BOLD },
 
-  // Choose numbers
-  chooseCard: { padding: 0 },
+  // Choose numbers — a subtly-raised well (surface3, no border) inside the already-bordered
+  // parent card, matching the field/stepper pattern elsewhere on this screen, instead of a
+  // second bordered Card stacked directly on top of the first (looked like a card-in-a-card).
+  chooseCard: { backgroundColor: color.surface3, borderRadius: radius.lg, overflow: 'hidden' },
   chooseHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space[4], paddingVertical: space[4] },
-  chooseHeaderText: { color: color.fg, fontSize: 16, fontFamily: FONT_BODY_SEMIBOLD },
+  chooseHeaderText: { color: color.fg, fontSize: 17, fontFamily: FONT_BODY_SEMIBOLD },
   chooseBody: { paddingHorizontal: space[4], paddingBottom: space[4], gap: space[3], borderTopWidth: 1, borderTopColor: color.borderSofter, paddingTop: space[3] },
-  shuffleAllButton: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.md, paddingHorizontal: space[3], paddingVertical: space[2] },
-  shuffleAllText: { color: color.fg2, fontSize: 13, fontFamily: FONT_BODY_MEDIUM },
-  ticketList: { borderWidth: 1, borderColor: color.borderSofter, borderRadius: radius.md, overflow: 'hidden' },
+  shuffleAllButton: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.md, paddingHorizontal: space[3], paddingVertical: space[2] + 2 },
+  shuffleAllText: { color: color.fg2, fontSize: 15, fontFamily: FONT_BODY_MEDIUM },
+  ticketList: { borderRadius: radius.md, overflow: 'hidden' },
   ticketRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: space[3], paddingHorizontal: space[3], borderBottomWidth: 1, borderBottomColor: color.borderSofter },
   ticketRowNumbers: { flex: 1, flexDirection: 'row', alignItems: 'center', flexWrap: 'nowrap', gap: 6 },
-  numberBubbleSmall: { width: 28, height: 28, borderRadius: radius.pill, backgroundColor: color.surface3, alignItems: 'center', justifyContent: 'center' },
-  numberBubbleSmallText: { color: color.fg, fontSize: 13, fontFamily: FONT_BODY_BOLD },
-  bonusBubbleSmall: { width: 28, height: 28, borderRadius: radius.pill, backgroundColor: color.fg, alignItems: 'center', justifyContent: 'center', marginLeft: 6 },
-  bonusBubbleSmallText: { color: color.bgInk, fontSize: 13, fontFamily: FONT_BODY_BOLD },
-  addTicketButton: { alignItems: 'center', paddingVertical: space[3], borderWidth: 1, borderColor: color.borderSofter, borderRadius: radius.md },
-  addTicketButtonText: { color: color.fg2, fontSize: 14, fontFamily: FONT_BODY_MEDIUM },
+  numberBubbleSmall: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.pill,
+    backgroundColor: color.surface1,
+    borderWidth: 1,
+    borderColor: color.borderSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  numberBubbleSmallText: { color: color.fg, fontSize: 15, fontFamily: FONT_BODY_BOLD },
+  bonusBubbleSmall: { width: 34, height: 34, borderRadius: radius.pill, backgroundColor: color.fg, alignItems: 'center', justifyContent: 'center', marginLeft: 6 },
+  bonusBubbleSmallText: { color: color.bgInk, fontSize: 15, fontFamily: FONT_BODY_BOLD },
+  addTicketButton: { alignItems: 'center', paddingVertical: space[3] + 2, borderWidth: 1, borderColor: color.borderSofter, borderRadius: radius.md },
+  addTicketButtonText: { color: color.fg2, fontSize: 16, fontFamily: FONT_BODY_MEDIUM },
   chooseHint: { color: color.fg4, fontSize: 12, fontFamily: FONT_BODY, textAlign: 'center' },
 
   feeCard: {
@@ -934,9 +976,9 @@ const styles = StyleSheet.create({
   pickerBody: { padding: space[5], gap: space[5] },
   pickerSectionLabel: { color: '#e2e8f0', fontSize: 14, fontFamily: FONT_BODY_SEMIBOLD, marginBottom: 10 },
   numberGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  numberBubble: { width: 44, height: 44, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: color.surface3, borderWidth: 1, borderColor: color.borderSoft },
+  numberBubble: { width: 50, height: 50, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: color.surface3, borderWidth: 1, borderColor: color.borderSoft },
   numberBubbleActive: { backgroundColor: color.brandOrange, borderColor: color.brandOrange },
-  numberBubbleText: { color: '#cbd5e1', fontSize: 15, fontFamily: FONT_BODY_SEMIBOLD },
+  numberBubbleText: { color: '#cbd5e1', fontSize: 19, fontFamily: FONT_BODY_SEMIBOLD },
   numberBubbleTextActive: { color: color.fg },
   pickerFooter: { padding: space[5], gap: 8, borderTopWidth: 1, borderTopColor: color.borderSofter },
   pickerCancel: { alignItems: 'center', paddingVertical: 10 },

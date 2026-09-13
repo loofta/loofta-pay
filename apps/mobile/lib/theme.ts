@@ -1,5 +1,5 @@
 /**
- * loofta^pot design tokens — ported verbatim from the design spec. Single source of truth for
+ * looftapot design tokens — ported verbatim from the design spec. Single source of truth for
  * color/radius/space; components should read from here instead of ad-hoc hex strings.
  */
 export const color = {

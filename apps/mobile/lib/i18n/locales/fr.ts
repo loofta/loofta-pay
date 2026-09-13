@@ -14,6 +14,7 @@ const fr: Translations = {
 
   // ── Tab bar ────────────────────────────────────────────────────────────
   tabBuy: 'Acheter',
+  tabPack: 'Pack',
   tabRedeem: 'Encaisser',
   tabHistory: 'Historique',
   tabSettings: 'Réglages',
@@ -28,7 +29,7 @@ const fr: Translations = {
   splashBadge: '🔒 Protégé et privé',
 
   // ── Wallet connect sheet ───────────────────────────────────────────────
-  walletConnectTitle: 'loofta^pot souhaite se connecter',
+  walletConnectTitle: 'looftapot souhaite se connecter',
   walletConnectYourWallet: 'Votre portefeuille Seeker',
 
   // ── How to play modal ──────────────────────────────────────────────────
@@ -228,6 +229,9 @@ const fr: Translations = {
   checkBackSoon: 'Revenez bientôt pour voir si vous avez gagné 🤞',
   buyMoreTickets: "Acheter d'autres tickets",
   buyTicketsPrivately: 'Acheter des tickets en privé',
+  buyTicketsPublicly: 'Acheter des tickets',
+  sendPrivatelyToggle: 'Envoyer en privé',
+  publicTransferNote: 'Envoyé on-chain — non protégé.',
   ticketsFieldLabel: 'Tickets',
   chooseNumbers: 'Choisir les numéros',
   shuffleAll: 'Tout mélanger',
@@ -251,7 +255,6 @@ const fr: Translations = {
   // ── Mystery Pack ────────────────────────────────────────────────────────
   mysteryPackBannerTitle: 'Pack Mystère',
   mysteryPackBannerSubtitle: "Ouvrez un pack, gagnez jusqu'à 100 tickets",
-  mysteryPackTitle: 'Pack Mystère',
   mysteryPackTapToOpen: "Touchez le pack pour l'ouvrir",
   mysteryPackAlwaysWin: 'Vous gagnez toujours au moins 1 ticket',
   mysteryPackDemo: 'DÉMO',

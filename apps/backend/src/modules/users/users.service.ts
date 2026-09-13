@@ -182,9 +182,9 @@ export class UsersService {
 
     // Mobile's Seeker login (useSeekerLogin.ts) is wallet-only — no email/Twitter — and passes
     // wallet_client_type: 'seed_vault' / connector_type: 'solana_mobile_wallet_adapter' to Privy
-    // at SIWS login, which echoes them back on the linked wallet account. There's no login-method
-    // column on app_users, so this is encoded into the username itself (loo-skr-xxxxxx) to keep
-    // Seeker users identifiable without a schema change.
+    // at SIWS login, which echoes them back on the linked wallet account. Persisted on
+    // app_users.is_seeker_wallet (also still encoded into the loo-skr-xxxxxx username fallback
+    // below, kept for display purposes).
     const walletAccount = accounts.find((a: any) => a.type === 'wallet');
     const isSeekerWallet = !!walletAccount && (
       walletAccount.wallet_client_type === 'seed_vault' || walletAccount.connector_type === 'solana_mobile_wallet_adapter'
@@ -203,6 +203,7 @@ export class UsersService {
         username: twitterHandle ?? looUsername,
         twitter_username: twitterHandle,
         loo_username: looUsername,
+        is_seeker_wallet: isSeekerWallet,
         // New users are born on mainnet — no ATA migration needed.
         ata_migrated_mainnet: true,
         ata_migrated_devnet: true,

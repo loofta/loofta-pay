@@ -14,6 +14,7 @@ const zh: Translations = {
 
   // ── Tab bar ────────────────────────────────────────────────────────────
   tabBuy: '购买',
+  tabPack: '盲盒',
   tabRedeem: '兑换',
   tabHistory: '历史',
   tabSettings: '设置',
@@ -28,7 +29,7 @@ const zh: Translations = {
   splashBadge: '🔒 隐私保护，安全私密',
 
   // ── Wallet connect sheet ───────────────────────────────────────────────
-  walletConnectTitle: 'loofta^pot 请求连接',
+  walletConnectTitle: 'looftapot 请求连接',
   walletConnectYourWallet: '你的 Seeker 钱包',
 
   // ── How to play modal ──────────────────────────────────────────────────
@@ -212,6 +213,9 @@ const zh: Translations = {
   checkBackSoon: '稍后回来看看你是否中奖了 🤞',
   buyMoreTickets: '继续购买彩票',
   buyTicketsPrivately: '私密购买彩票',
+  buyTicketsPublicly: '购买彩票',
+  sendPrivatelyToggle: '私密发送',
+  publicTransferNote: '链上发送——不受保护。',
   ticketsFieldLabel: '彩票数量',
   chooseNumbers: '选择号码',
   shuffleAll: '全部随机',
@@ -233,7 +237,6 @@ const zh: Translations = {
   // ── Mystery Pack ────────────────────────────────────────────────────────
   mysteryPackBannerTitle: '神秘包',
   mysteryPackBannerSubtitle: '开启神秘包，最多可赢 100 张彩票',
-  mysteryPackTitle: '神秘包',
   mysteryPackTapToOpen: '点击神秘包开启',
   mysteryPackAlwaysWin: '你至少能赢得 1 张彩票',
   mysteryPackDemo: '演示',

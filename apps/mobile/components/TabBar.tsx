@@ -1,5 +1,5 @@
 import { TabTrigger, type TabTriggerSlotProps } from 'expo-router/ui';
-import { Award, Clock, Settings, Ticket, type LucideIcon } from 'lucide-react-native';
+import { Award, Clock, Gift, Settings, Ticket, type LucideIcon } from 'lucide-react-native';
 import { forwardRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +32,7 @@ export function TabBar() {
   const { t } = useTranslation();
   const tabItems: { name: string; label: string; icon: LucideIcon }[] = [
     { name: 'buy', label: t.tabBuy, icon: Ticket },
+    { name: 'pack', label: t.tabPack, icon: Gift },
     { name: 'redeem', label: t.tabRedeem, icon: Award },
     { name: 'history', label: t.tabHistory, icon: Clock },
     { name: 'profile', label: t.tabSettings, icon: Settings },

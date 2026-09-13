@@ -1,7 +1,7 @@
 /**
  * Source-of-truth dictionary — every other locale is typed against `Translations` (see below),
  * so a missing/mistyped key or function signature in any other locale file is a compile error.
- * Brand/product terms are never translated: loofta^pot, POT, Megapot, MagicBlock, Seeker,
+ * Brand/product terms are never translated: looftapot, Megapot, MagicBlock, Seeker,
  * Seed Vault, USDC, SOL.
  */
 const en = {
@@ -17,6 +17,7 @@ const en = {
 
   // ── Tab bar ────────────────────────────────────────────────────────────
   tabBuy: 'Buy',
+  tabPack: 'Pack',
   tabRedeem: 'Redeem',
   tabHistory: 'History',
   tabSettings: 'Settings',
@@ -31,7 +32,7 @@ const en = {
   splashBadge: '🔒 Shielded & private',
 
   // ── Wallet connect sheet ───────────────────────────────────────────────
-  walletConnectTitle: 'loofta^pot wants to connect',
+  walletConnectTitle: 'looftapot wants to connect',
   walletConnectYourWallet: 'Your Seeker wallet',
 
   // ── How to play modal ──────────────────────────────────────────────────
@@ -218,6 +219,9 @@ const en = {
   checkBackSoon: "Check back soon to see if you've won 🤞",
   buyMoreTickets: 'Buy more tickets',
   buyTicketsPrivately: 'Buy tickets privately',
+  buyTicketsPublicly: 'Buy tickets',
+  sendPrivatelyToggle: 'Send privately',
+  publicTransferNote: 'Sent on-chain — not shielded.',
   ticketsFieldLabel: 'Tickets',
   chooseNumbers: 'Choose numbers',
   shuffleAll: 'Shuffle all',
@@ -240,7 +244,6 @@ const en = {
   // ── Mystery Pack ────────────────────────────────────────────────────────
   mysteryPackBannerTitle: 'Mystery Pack',
   mysteryPackBannerSubtitle: 'Open a pack, win up to 100 tickets',
-  mysteryPackTitle: 'Mystery Pack',
   mysteryPackTapToOpen: 'Tap the pack to open',
   mysteryPackAlwaysWin: 'You always win at least 1 ticket',
   mysteryPackDemo: 'DEMO',

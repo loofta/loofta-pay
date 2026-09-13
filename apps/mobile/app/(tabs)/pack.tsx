@@ -1,20 +1,24 @@
 // Mystery Pack — $2 real-money pack, always wins 1-100 Megapot tickets. Ported from
 // apps/frontend/src/app/app/megapot/packs/page.tsx, adapted to this app's own primitives: MWA
 // signing (lib/wallet/mwa.ts) instead of Privy's embedded-wallet signer, and a plain PrimaryButton
-// pay CTA instead of the web's custom slide-to-pay drag gesture. The pack-opening visual itself
-// is MegapotPackGL — a REAL WebGL scene (expo-gl + three.js), ported directly from the desktop
-// MegapotPack.tsx rather than a flat/faked approximation. See that component's header comment.
+// pay CTA instead of the web's custom slide-to-pay drag gesture. The pack-opening visual is
+// MysteryPackOpening — a flat/2D react-native-svg + reanimated approximation, not the desktop's
+// real WebGL scene: the GL version (expo-gl + three.js + Skia-baked textures, see git history for
+// MegapotPackGL/megapotPackTextures.tsx) always rendered at full PBR quality with no adaptive
+// downgrade and produced unacceptable jank on real devices, so it was dropped in favor of this.
+//
+// Lives as its own tab (not a pushed modal route, see git history for the prior app/mystery-pack.tsx)
+// so it's directly reachable from the tab bar alongside Buy/Redeem/History/Settings.
 import { usePrivy } from '@privy-io/expo';
-import { useRouter } from 'expo-router';
 import { Info, X } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import MegapotPackGL from '../components/MegapotPackGL';
-import { PrimaryButton } from '../components/ui/PrimaryButton';
-import { GhostButton } from '../components/ui/GhostButton';
-import { Card } from '../components/ui/Card';
-import { AuthGate } from '../components/AuthGate';
+import MysteryPackOpening from '../../components/MysteryPackOpening';
+import { PrimaryButton } from '../../components/ui/PrimaryButton';
+import { GhostButton } from '../../components/ui/GhostButton';
+import { Card } from '../../components/ui/Card';
+import { AuthGate } from '../../components/AuthGate';
 import {
   buildPackPaymentTx,
   demoOpenPack,
@@ -25,14 +29,15 @@ import {
   type PackConfig,
   type PackOpenResult,
   type PackRarity,
-} from '../lib/api/pack';
-import { fmt } from '../lib/lottery/fees';
-import { connectSeekerWallet, signAndSendTransactionWithSeeker } from '../lib/wallet/mwa';
-import { useBalances } from '../lib/wallet/BalanceProvider';
-import { useTranslation } from '../lib/i18n/LanguageProvider';
-import type { Translations } from '../lib/i18n/locales';
-import { color, radius, space } from '../lib/theme';
-import { FONT_BODY, FONT_BODY_MEDIUM, FONT_BODY_SEMIBOLD, FONT_TITLE_SEMIBOLD } from '../lib/fonts';
+} from '../../lib/api/pack';
+import { fmt } from '../../lib/lottery/fees';
+import { getCachedPackConfig, setCachedPackConfig } from '../../lib/storage/packConfigCache';
+import { connectSeekerWallet, signAndSendTransactionWithSeeker } from '../../lib/wallet/mwa';
+import { useBalances } from '../../lib/wallet/BalanceProvider';
+import { useTranslation } from '../../lib/i18n/LanguageProvider';
+import type { Translations } from '../../lib/i18n/locales';
+import { color, radius, space } from '../../lib/theme';
+import { FONT_BODY, FONT_BODY_MEDIUM, FONT_BODY_SEMIBOLD, FONT_TITLE_SEMIBOLD } from '../../lib/fonts';
 
 const FALLBACK_PRICE_USDC = 2;
 const RARITY_ORDER: PackRarity[] = ['common', 'uncommon', 'rare', 'epic'];
@@ -104,14 +109,12 @@ function OddsModal({
 
 function MysteryPackInner() {
   const { getAccessToken } = usePrivy();
-  const router = useRouter();
   const { t, localeTag } = useTranslation();
   const { usdcBalance, balancesLoaded, refreshBalances } = useBalances();
   const insets = useSafeAreaInsets();
 
   const [config, setConfig] = useState<PackConfig | null>(null);
   const [dailyLimitReached, setDailyLimitReached] = useState<boolean | null>(null);
-  const [loaded, setLoaded] = useState(false);
 
   const [paid, setPaid] = useState(false);
   const [paymentTxHash, setPaymentTxHash] = useState<string | null>(null);
@@ -140,18 +143,23 @@ function MysteryPackInner() {
 
   useEffect(() => {
     (async () => {
+      // Cache-first: paint the last known config immediately (same pattern as BalanceProvider)
+      // instead of sitting on FALLBACK_PRICE_USDC until the network call below resolves. Pending
+      // payment / daily limit are never cached — always fetched live, they're real money state.
+      const cached = await getCachedPackConfig();
+      if (cached) setConfig(cached);
+
       try {
         const accessToken = await getAccessToken();
         const [cfg, pending] = await Promise.all([getPackConfig(accessToken), getPendingPackPayment(accessToken)]);
         setConfig(cfg);
+        void setCachedPackConfig(cfg);
         if (pending.paymentTxHash) {
           setPaymentTxHash(pending.paymentTxHash);
           setPaid(true);
         }
       } catch {
-        // config stays null — the pay control below falls back to FALLBACK_PRICE_USDC
-      } finally {
-        setLoaded(true);
+        // config falls back to the cached value above, or FALLBACK_PRICE_USDC if there was none
       }
       refreshStatus();
     })();
@@ -226,6 +234,13 @@ function MysteryPackInner() {
     setOpenCount((n) => n + 1);
   }, []);
 
+  // A tab, not a pushed modal — "Done" just returns to the pay gate instead of router.back()ing
+  // out of a screen with nothing behind it in the tab's own stack.
+  const handleDone = useCallback(() => {
+    setResult(null);
+    setOpenCount((n) => n + 1);
+  }, []);
+
   const idleSubtitle = demoMode ? t.mysteryPackDemoSubtitle : t.mysteryPackAlwaysWin;
 
   return (
@@ -249,14 +264,15 @@ function MysteryPackInner() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <MegapotPackGL key={openCount} canOpen={paid} resolveOpen={resolveOpen} onOpened={handleOpened} onError={setOpenError} />
-
-        {paid && (
-          <View style={styles.hud}>
-            <Text style={styles.hudTitle}>{t.mysteryPackTapToOpen}</Text>
-            <Text style={styles.hudSubtitle}>{idleSubtitle}</Text>
-          </View>
-        )}
+        <MysteryPackOpening
+          key={openCount}
+          canOpen={paid}
+          resolveOpen={resolveOpen}
+          onOpened={handleOpened}
+          onError={setOpenError}
+          idleLabel={paid ? t.mysteryPackTapToOpen : undefined}
+          idleSubtitle={paid ? idleSubtitle : undefined}
+        />
 
         {openError && <Text style={styles.errorText}>{openError}</Text>}
       </ScrollView>
@@ -264,7 +280,10 @@ function MysteryPackInner() {
       {/* Not inside the ScrollView — the CTA (pay gate or result actions) stays pinned to the
           bottom of the screen regardless of scroll position or content height above it. */}
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, space[4]) }]}>
-        {!paid && !result && loaded && (
+        {/* Shown immediately with FALLBACK_PRICE_USDC rather than waiting on getPackConfig's
+            round trip — a Pay button that's briefly showing the fallback price beats a blank
+            footer while the network call is in flight. */}
+        {!paid && !result && (
           <Card style={styles.gateCard}>
             {insufficientBalance ? (
               <View style={styles.gateMessage}>
@@ -301,7 +320,7 @@ function MysteryPackInner() {
             <Text style={styles.resultSubtitle}>{t.mysteryPackAddedToDraw}</Text>
             <View style={styles.resultActions}>
               <PrimaryButton label={t.mysteryPackOpenAnother} onPress={handleOpenAnother} />
-              <GhostButton label={t.mysteryPackDone} onPress={() => router.back()} />
+              <GhostButton label={t.mysteryPackDone} onPress={handleDone} />
             </View>
           </Card>
         )}
@@ -312,7 +331,7 @@ function MysteryPackInner() {
   );
 }
 
-export default function MysteryPackScreen() {
+export default function PackScreen() {
   return (
     <AuthGate>
       <MysteryPackInner />
@@ -324,9 +343,6 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bgInk },
   topRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space[5], paddingTop: space[3], gap: space[2] },
   content: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: space[5], gap: space[5] },
-  hud: { alignItems: 'center', gap: 4 },
-  hudTitle: { color: color.fg, fontFamily: FONT_TITLE_SEMIBOLD, fontSize: 16 },
-  hudSubtitle: { color: color.fg3, fontFamily: FONT_BODY_MEDIUM, fontSize: 14 },
   oddsButton: {
     flexDirection: 'row',
     alignItems: 'center',

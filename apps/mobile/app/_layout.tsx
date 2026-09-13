@@ -70,17 +70,6 @@ function AppShell() {
             headerTitleStyle: { fontFamily: FONT_TITLE },
           }}
         />
-        <Stack.Screen
-          name="mystery-pack"
-          options={{
-            headerShown: true,
-            presentation: 'modal',
-            title: t.mysteryPackTitle,
-            headerStyle: { backgroundColor: '#0f0f12' },
-            headerTintColor: '#fff',
-            headerTitleStyle: { fontFamily: FONT_TITLE },
-          }}
-        />
       </Stack>
       {showIntro && <AnimatedSplash onFinish={() => setShowIntro(false)} />}
     </>

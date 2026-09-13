@@ -14,6 +14,7 @@ const id: Translations = {
 
   // ── Tab bar ────────────────────────────────────────────────────────────
   tabBuy: 'Beli',
+  tabPack: 'Paket',
   tabRedeem: 'Tukarkan',
   tabHistory: 'Riwayat',
   tabSettings: 'Pengaturan',
@@ -28,7 +29,7 @@ const id: Translations = {
   splashBadge: '🔒 Aman dan privat',
 
   // ── Wallet connect sheet ───────────────────────────────────────────────
-  walletConnectTitle: 'loofta^pot ingin terhubung',
+  walletConnectTitle: 'looftapot ingin terhubung',
   walletConnectYourWallet: 'Dompet Seeker Anda',
 
   // ── How to play modal ──────────────────────────────────────────────────
@@ -225,6 +226,9 @@ const id: Translations = {
   checkBackSoon: 'Cek lagi nanti untuk lihat apakah Anda menang 🤞',
   buyMoreTickets: 'Beli tiket lagi',
   buyTicketsPrivately: 'Beli tiket secara privat',
+  buyTicketsPublicly: 'Beli tiket',
+  sendPrivatelyToggle: 'Kirim secara privat',
+  publicTransferNote: 'Dikirim on-chain — tidak terlindungi.',
   ticketsFieldLabel: 'Tiket',
   chooseNumbers: 'Pilih nomor',
   shuffleAll: 'Acak semua',
@@ -246,7 +250,6 @@ const id: Translations = {
   // ── Mystery Pack ────────────────────────────────────────────────────────
   mysteryPackBannerTitle: 'Paket Misteri',
   mysteryPackBannerSubtitle: 'Buka paket, menangkan hingga 100 tiket',
-  mysteryPackTitle: 'Paket Misteri',
   mysteryPackTapToOpen: 'Ketuk paket untuk membuka',
   mysteryPackAlwaysWin: 'Kamu selalu menang minimal 1 tiket',
   mysteryPackDemo: 'DEMO',

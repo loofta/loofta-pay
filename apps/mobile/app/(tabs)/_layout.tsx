@@ -19,10 +19,16 @@ export default function TabsLayout() {
       <Tabs style={styles.root}>
         <Header />
         <View style={styles.content}>
-          <TabSlot />
+          {/* detachInactiveScreens defaults to true on Android/iOS (expo-router/ui's TabSlot),
+              which detaches each tab's native view hierarchy on blur and re-attaches it on
+              refocus — a visible pop-in delay on every switch even though the 5 tabs' own JS
+              state/effects already stay mounted regardless. Disabled: keeping 5 lightweight
+              screens natively attached is a non-issue, and switching feels instant this way. */}
+          <TabSlot detachInactiveScreens={false} />
         </View>
         <TabList style={styles.hidden}>
           <TabTrigger name="buy" href="/" />
+          <TabTrigger name="pack" href="/pack" />
           <TabTrigger name="redeem" href="/redeem" />
           <TabTrigger name="history" href="/history" />
           <TabTrigger name="profile" href="/profile" />
