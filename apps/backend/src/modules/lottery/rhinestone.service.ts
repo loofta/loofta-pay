@@ -10,6 +10,15 @@ const USDC_BASE: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const MEGAPOT_RANDOM_BUYER: Address = '0xb9560b43b91dE2c1DaF5dfbb76b2CFcDaFc13aBd';
 const MEGAPOT_JACKPOT: Address = '0x3bAe643002069dBCbcd62B1A4eb4C4A397d042a2';
 
+// JackpotRandomTicketBuyer picks each ticket's numbers on-chain via TicketPicker.pickAuto, which
+// rebuilds and Fisher-Yates shuffles the ENTIRE ball range per ticket (FisherYatesWithRejection.sol)
+// — gas scales as ticket count × ball range, not just ticket count. A single large quick-pick buy
+// (e.g. 50 tickets) can exceed the tx/sponsorship gas ceiling even though nothing in this contract
+// or Rhinestone enforces a count limit — it just silently reverts every retry. Real incident: a
+// user's two 50-ticket buys both failed this way and had to be rescued (Sept 2026). Chunk into
+// separate transactions so a big order degrades to "slower" instead of "fails outright."
+const MAX_TICKETS_PER_BUY_TX = 10;
+
 const JACKPOT_CLAIM_ABI = [
   {
     name: 'claimWinnings',
@@ -109,34 +118,45 @@ export class RhinestoneService {
     splits?: bigint[];
   }): Promise<void> {
     const { companionPrivateKey, numTickets, recipient, sourceId, referrers = [], splits = [] } = opts;
-    const cost = BigInt(numTickets * 1_000_000);
-
     const account = await this.getAccount(companionPrivateKey);
-    this.logger.log(`Rhinestone: buying ${numTickets} ticket(s) from ${account.getAddress()}`);
 
-    const approveData = encodeFunctionData({
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [MEGAPOT_RANDOM_BUYER, cost],
-    });
+    // See MAX_TICKETS_PER_BUY_TX above — split into multiple sponsored transactions of at most
+    // that many tickets each, so gas for the on-chain random ball generation can't compound past
+    // the point where the whole buy fails. Sequential (not parallel): each chunk spends real USDC
+    // out of the companion's balance, and later chunks would race the earlier ones' approvals.
+    let remaining = numTickets;
+    while (remaining > 0) {
+      const chunk = Math.min(remaining, MAX_TICKETS_PER_BUY_TX);
+      const cost = BigInt(chunk * 1_000_000);
 
-    const buyData = encodeFunctionData({
-      abi: RANDOM_BUYER_ABI,
-      functionName: 'buyTickets',
-      args: [BigInt(numTickets), recipient, referrers, splits, sourceId],
-    });
+      const approveData = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [MEGAPOT_RANDOM_BUYER, cost],
+      });
 
-    const result = await account.sendTransaction({
-      chain: base,
-      calls: [
-        { to: USDC_BASE, data: approveData },
-        { to: MEGAPOT_RANDOM_BUYER, data: buyData },
-      ],
-      sponsored: true,
-    });
+      const buyData = encodeFunctionData({
+        abi: RANDOM_BUYER_ABI,
+        functionName: 'buyTickets',
+        args: [BigInt(chunk), recipient, referrers, splits, sourceId],
+      });
 
-    const status = await account.waitForExecution(result);
-    this.logger.log(`Rhinestone buy complete: ${safeJson(status)}`);
+      this.logger.log(`Rhinestone: buying ${chunk} ticket(s) (${numTickets - remaining + chunk}/${numTickets} total) from ${account.getAddress()}`);
+
+      const result = await account.sendTransaction({
+        chain: base,
+        calls: [
+          { to: USDC_BASE, data: approveData },
+          { to: MEGAPOT_RANDOM_BUYER, data: buyData },
+        ],
+        sponsored: true,
+      });
+
+      const status = await account.waitForExecution(result);
+      this.logger.log(`Rhinestone buy complete (${chunk} ticket(s)): ${safeJson(status)}`);
+
+      remaining -= chunk;
+    }
   }
 
   /**

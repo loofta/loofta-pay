@@ -1097,7 +1097,12 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
     if (pollingStartedRef.current) return;
     const inFlight = activeTickets.find(t =>
       ["sent", "bridging", "buying"].includes(t.status) &&
-      t.id !== suppressedTicketIdRef.current
+      t.id !== suppressedTicketIdRef.current &&
+      // Same TTL as the localStorage-resume path above — without this, a purchase that's been
+      // genuinely wedged (backend never reaches a terminal status) re-shows "Payment confirmed"
+      // on every page load / dashboard refetch forever, since dismissing via "Got it" only clears
+      // local state, not the ticket's actual non-terminal status server-side.
+      Date.now() - new Date(t.createdAt).getTime() <= TICKET_STORAGE_TTL_MS
     );
     if (!inFlight) return;
     pollingStartedRef.current = true;
@@ -1374,7 +1379,12 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   // dismissible confirmation for (see PurchaseConfirmedModal / steps "confirmed" and "checking").
   const isRunning = !["idle", "confirmed", "checking", "done", "error"].includes(step);
 
-  function resetBuy() { setStep("idle"); setStepError(""); setStepErrorIsBalance(false); pollingStartedRef.current = false; }
+  function resetBuy() {
+    // Suppress this ticket so dismissing "Payment confirmed" doesn't immediately re-show it on
+    // the next dashboard refetch (60s) while it's still within the cross-device-restore TTL above.
+    if (activeTicketIdRef.current) suppressedTicketIdRef.current = activeTicketIdRef.current;
+    setStep("idle"); setStepError(""); setStepErrorIsBalance(false); pollingStartedRef.current = false;
+  }
 
   function startNewPayment() {
     stopPoll();
