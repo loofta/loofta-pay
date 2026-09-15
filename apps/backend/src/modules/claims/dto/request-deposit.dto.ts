@@ -66,4 +66,9 @@ export class RequestDepositDto {
   @IsString()
   @MaxLength(100)
   recipientSolanaAddress?: string;
+
+  // Server-side only — stripped from request body by ValidationPipe whitelist. Skips both
+  // Loofta's own cross-chain fee and NEAR's app fee for this deposit — see PayoutsService's
+  // gram_ton funding_source.
+  waiveFees?: boolean;
 }

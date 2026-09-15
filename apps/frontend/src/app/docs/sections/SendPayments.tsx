@@ -22,13 +22,13 @@ type NetworkOption = "solana" | "base" | "ton" | "stellar";
 // Solana transaction with your own wallet right here, the other three return a deposit address
 // instead (see funding_source in the payouts DTO). Fixed 1:1 token-per-network today, so picking
 // either dropdown keeps the other in sync rather than allowing invalid combinations.
-const NETWORKS: { value: NetworkOption; label: string; token: "USDC" | "USDT"; fundingSource?: PayoutFundingSource }[] = [
+const NETWORKS: { value: NetworkOption; label: string; token: "USDC" | "GRAM"; fundingSource?: PayoutFundingSource }[] = [
   { value: "solana", label: "Solana", token: "USDC" },
   { value: "base", label: "Base", token: "USDC", fundingSource: "usdc_base" },
-  { value: "ton", label: "TON", token: "USDT", fundingSource: "usdt_ton" },
+  { value: "ton", label: "TON", token: "GRAM", fundingSource: "gram_ton" },
   { value: "stellar", label: "Stellar", token: "USDC", fundingSource: "usdc_stellar" },
 ];
-const TOKENS = ["USDC", "USDT"] as const;
+const TOKENS = ["USDC", "GRAM"] as const;
 
 const RECIPIENT_LABELS: Record<PayoutRecipientType, { label: string; placeholder: string; type: string }> = {
   email: { label: "Recipient email", placeholder: "alice@example.com", type: "email" },
@@ -519,9 +519,11 @@ export function SendPayments({ onNavigate }: { onNavigate: (slug: string) => voi
             <td className="py-2 pr-4"><code>funding_source</code></td>
             <td className="py-2 pr-4 text-slate-400">string, optional</td>
             <td className="py-2 text-slate-400">
-              Fund from another chain instead of signing a Solana transaction: <code>usdt_ton</code>, <code>usdc_base</code>,
+              Fund from another chain instead of signing a Solana transaction: <code>gram_ton</code>, <code>usdc_base</code>,
               or <code>usdc_stellar</code>. Pass this instead of <code>sender_wallet</code> — the response gives you a
               deposit address and the exact amount to send there for an exact-output delivery. Requires <code>refund_wallet</code>.
+              <code>gram_ton</code> pays with native TON coin (labeled <code>GRAM</code> in most bridge APIs, TON&apos;s
+              original pre-launch name) rather than a USDT jetton, and never has Loofta&apos;s cross-chain fee applied.
             </td>
           </tr>
           <tr className="border-b border-white/5">
@@ -605,8 +607,8 @@ const signature = await connection.sendRawTransaction(tx.serialize());`}
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Funding from another chain</h2>
       <p className="text-base text-slate-400 mb-3">
         Pass <code>funding_source</code> instead of <code>sender_wallet</code> to skip the Solana
-        transaction entirely — you'll get a deposit address to send USDT/USDC to on the chain you
-        actually hold funds on:
+        transaction entirely — you'll get a deposit address to send GRAM (native TON)/USDC to on
+        the chain you actually hold funds on:
       </p>
       <DocsCodeBlock
         label="POST /payouts"
@@ -617,8 +619,8 @@ const signature = await connection.sendRawTransaction(tx.serialize());`}
     "amount": 25,
     "recipient_type": "email",
     "recipient_identifier": "alice@example.com",
-    "funding_source": "usdc_base",
-    "refund_wallet": "0xYourBaseAddress..."
+    "funding_source": "gram_ton",
+    "refund_wallet": "UQYourTonAddress..."
   }'`}
       />
       <DocsCodeBlock
@@ -627,10 +629,10 @@ const signature = await connection.sendRawTransaction(tx.serialize());`}
   "short_id": "aB3xK9pQ",
   "claim_link": "https://pay.loofta.xyz/c/aB3xK9pQ",
   "is_private": false,
-  "funding_source": "usdc_base",
-  "deposit_address": "0x9f2c...4a1b",
+  "funding_source": "gram_ton",
+  "deposit_address": "EQC9f2c...4a1b",
   "deposit_memo": null,
-  "deposit_amount": "25.081234",
+  "deposit_amount": "18.652031",
   "deposit_deadline": "2026-09-07T12:34:56.000Z"
 }`}
       />
@@ -640,14 +642,11 @@ const signature = await connection.sendRawTransaction(tx.serialize());`}
         <code>deposit_deadline</code>. Alice sees the payout at <code>claim_link</code> once the
         deposit is confirmed and swept — there's nothing left for you to sign or broadcast.
       </p>
-      <p className="text-base text-amber-300/90 mb-6">
-        <code className="text-amber-200">deposit_note</code> (only present for{" "}
-        <code>usdt_ton</code>): every TON deposit address is brand new and holds zero TON. Most
-        wallets attach enough gas automatically when you use their normal send flow, but a jetton
-        transfer sent with too little forward gas can land on-chain and still never register as a
-        deposit — the confirmed failure mode is a gas-starved notification message, not a lost
-        payment, but it needs manual recovery either way. Read this field and pass it through to
-        whoever's actually sending the funds.
+      <p className="text-base text-slate-400 mb-6">
+        <code className="text-orange-300">gram_ton</code> pays with native TON coin rather than a
+        USDT jetton — a plain value transfer, so there's no jetton-wallet notification step that
+        can fail from insufficient gas the way a jetton transfer's can. It's also fee-free: Loofta
+        never adds its own cross-chain fee on top for this route.
       </p>
 
       <div className="rounded-xl border border-white/10 bg-white/5 p-4 mb-4">

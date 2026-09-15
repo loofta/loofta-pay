@@ -187,8 +187,9 @@ Fields:
 - \`recipient_identifier\` (required): the email/username/handle matching \`recipient_type\`.
 - \`sender_wallet\` (required unless \`funding_source\` is set): the caller's own Solana wallet
   public key — pays gas and signs the returned transaction. Loofta never holds this wallet's key.
-- \`funding_source\` (optional): pay from another chain instead — \`usdt_ton\`, \`usdc_base\`, or
-  \`usdc_stellar\`. Pass this instead of \`sender_wallet\`; requires \`refund_wallet\`. See below.
+- \`funding_source\` (optional): pay from another chain instead — \`gram_ton\` (native TON coin),
+  \`usdc_base\`, or \`usdc_stellar\`. Pass this instead of \`sender_wallet\`; requires
+  \`refund_wallet\`. See below.
 - \`refund_wallet\` (required when \`funding_source\` is set): your address on the \`funding_source\`
   chain, used to refund you if the deposit can't complete.
 - \`message\` (optional): shown to the recipient on their claim page, 500 chars max.
@@ -235,8 +236,8 @@ curl -X POST https://api.loofta.xyz/payouts \\
     "amount": 25,
     "recipient_type": "email",
     "recipient_identifier": "alice@example.com",
-    "funding_source": "usdc_base",
-    "refund_wallet": "0xYourBaseAddress..."
+    "funding_source": "gram_ton",
+    "refund_wallet": "UQYourTonAddress..."
   }'
 \`\`\`
 
@@ -248,10 +249,10 @@ Response:
   "short_id": "aB3xK9pQ",
   "claim_link": "https://pay.loofta.xyz/c/aB3xK9pQ",
   "is_private": false,
-  "funding_source": "usdc_base",
-  "deposit_address": "0x9f2c...4a1b",
+  "funding_source": "gram_ton",
+  "deposit_address": "EQC9f2c...4a1b",
   "deposit_memo": null,
-  "deposit_amount": "25.081234",
+  "deposit_amount": "18.652031",
   "deposit_deadline": "2026-09-07T12:34:56.000Z"
 }
 \`\`\`
@@ -260,11 +261,12 @@ Send exactly \`deposit_amount\` of the \`funding_source\` token to \`deposit_add
 \`deposit_memo\` if present) before \`deposit_deadline\`. Alice sees the payout at \`claim_link\` once
 the deposit is confirmed and swept — there's nothing to sign or broadcast on this path.
 
-\`deposit_note\` (only present for \`usdt_ton\`): every TON deposit address is brand new with zero
-TON balance. Most wallets attach enough gas automatically on a normal send, but a jetton transfer
-sent with too little forward gas can land on-chain and never register as a deposit — confirmed
-failure mode is a gas-starved notification message on the TON side, not a lost payment, but it
-needs manual recovery. Surface this field to whoever is actually sending the funds.
+\`gram_ton\` pays with native TON coin (most bridge APIs, including NEAR Intents, label it \`GRAM\` —
+TON's original pre-launch name) rather than a USDT jetton — a plain value transfer, so there's no
+jetton-wallet notification step that can fail from insufficient gas the way a jetton transfer's
+can. It's also fee-free: Loofta never adds its own cross-chain fee on top of this route. NEAR
+Intents/HOT's own bridge fee (the gap between \`amount\` and \`deposit_amount\`) still applies —
+that's real, unavoidable bridging cost on their side, not something either of us controls.
 
 A payout that's never funded (unsigned_transaction never signed and broadcast, or nothing ever
 sent to deposit_address) auto-expires — 4 hours after creation for the \`sender_wallet\` path;

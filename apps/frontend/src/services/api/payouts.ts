@@ -8,7 +8,7 @@ import { fetchApi } from './client';
 export type PayoutRecipientType = 'email' | 'username' | 'twitter' | 'discord' | 'github' | 'telegram';
 export const PAYOUT_RECIPIENT_TYPES: PayoutRecipientType[] = ['email', 'username', 'twitter', 'discord', 'github', 'telegram'];
 
-export type PayoutFundingSource = 'usdt_ton' | 'usdc_base' | 'usdc_stellar';
+export type PayoutFundingSource = 'gram_ton' | 'usdc_base' | 'usdc_stellar';
 
 export interface CreatedPayout {
   payment_id: string;

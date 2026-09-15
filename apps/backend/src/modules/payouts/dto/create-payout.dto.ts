@@ -4,7 +4,10 @@ import { IsNumber, IsOptional, IsString, IsBoolean, IsIn, IsNotEmpty, Min, Max, 
 export const PAYOUT_RECIPIENT_TYPES = ['email', 'username', 'twitter', 'discord', 'github', 'telegram'] as const;
 export type PayoutRecipientType = (typeof PAYOUT_RECIPIENT_TYPES)[number];
 
-export const PAYOUT_FUNDING_SOURCES = ['usdt_ton', 'usdc_base', 'usdc_stellar'] as const;
+// gram_ton pays with native TON coin (NEAR Intents/most bridges label it "GRAM", TON's original
+// pre-launch name) rather than the USDT jetton — a plain value transfer needs no jetton-wallet
+// "notify" step, sidestepping the gas-starved-notification failure the USDT route was prone to.
+export const PAYOUT_FUNDING_SOURCES = ['gram_ton', 'usdc_base', 'usdc_stellar'] as const;
 export type PayoutFundingSource = (typeof PAYOUT_FUNDING_SOURCES)[number];
 
 export class CreatePayoutDto {

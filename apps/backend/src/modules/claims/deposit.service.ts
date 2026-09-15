@@ -56,7 +56,7 @@ export class DepositService {
    * Request deposit address for a claim payment
    */
   async requestDeposit(dto: RequestDepositDto): Promise<DepositResult> {
-    const { claimId, fromToken, amount, userAddress, refundAddress, orgReferral, isPrivate, recipientSolanaAddress } = dto;
+    const { claimId, fromToken, amount, userAddress, refundAddress, orgReferral, isPrivate, recipientSolanaAddress, waiveFees } = dto;
 
     // Validate input
     if (!claimId || !fromToken?.tokenId || fromToken.decimals === undefined || !amount) {
@@ -95,7 +95,7 @@ export class DepositService {
     }
 
     // Cross-chain: use Near Intents (pass rawClaim so we have recipient_address for quote/burner logic)
-    return this.handleCrossChainDeposit(claim, rawClaim, fromToken, amount, userAddress, refundAddress, orgReferral, isPrivate, recipientSolanaAddress);
+    return this.handleCrossChainDeposit(claim, rawClaim, fromToken, amount, userAddress, refundAddress, orgReferral, isPrivate, recipientSolanaAddress, waiveFees);
   }
 
   /**
@@ -175,6 +175,7 @@ export class DepositService {
     orgReferral?: string,
     isPrivate?: boolean,
     recipientSolanaAddress?: string,
+    waiveFees?: boolean,
   ): Promise<DepositResult> {
     const originChain = String(fromToken.chain || '').toLowerCase();
     const destChain = String(claim.to_chain || '').toLowerCase();
@@ -265,7 +266,7 @@ export class DepositService {
       // gained by paying MagicBlock's gas for it — only cost, and a disproportionate one on small
       // payouts (SOL gas is a flat cost that doesn't scale down with the amount).
       if (isDestSolana) {
-        const looftaFeeHuman = amountOutHuman * CROSS_CHAIN_LOOFTA_FEE_BPS / 10_000;
+        const looftaFeeHuman = waiveFees ? 0 : amountOutHuman * CROSS_CHAIN_LOOFTA_FEE_BPS / 10_000;
         let gasFeeHuman = 0;
         if (isPrivate) {
           const solPriceUsd = await fetchSolPriceUsd();
@@ -273,7 +274,7 @@ export class DepositService {
         }
         amountOutHuman = amountOutHuman + looftaFeeHuman + gasFeeHuman;
         this.logger.log(
-          `[Deposit] Fee gross-up: loofta=${looftaFeeHuman.toFixed(6)} gas=${gasFeeHuman.toFixed(6)} (isPrivate=${!!isPrivate}) → grossedAmountOut=${amountOutHuman.toFixed(6)} ${claim.to_symbol}`,
+          `[Deposit] Fee gross-up: loofta=${looftaFeeHuman.toFixed(6)} gas=${gasFeeHuman.toFixed(6)} (isPrivate=${!!isPrivate}, waiveFees=${!!waiveFees}) → grossedAmountOut=${amountOutHuman.toFixed(6)} ${claim.to_symbol}`,
         );
       }
       
@@ -306,6 +307,7 @@ export class DepositService {
         refundAddress: refundAddress || userAddress,
         useIntentsMode,
         referral: orgReferral || 'loofta',
+        skipAppFees: waiveFees,
       });
 
       if (!quoteResult.depositAddress) {

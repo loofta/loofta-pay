@@ -7,30 +7,23 @@ import { CreatePayoutDto, PayoutFundingSource } from './dto/create-payout.dto';
 
 // Fixed symbol/chain pair NEAR Intents needs looked up for each supported funding_source. Chain
 // candidates list handles the possibility NEAR's token list names a chain differently than we'd
-// guess (e.g. Stellar as "xlm" instead of "stellar").
+// guess (e.g. Stellar as "xlm" instead of "stellar"). gram_ton uses native TON coin (NEAR
+// Intents' own token list labels it "GRAM") rather than the USDT jetton — a plain native-coin
+// transfer just credits the destination's balance directly, with no jetton-wallet "notify" step
+// to fail on insufficient gas, which is what made the USDT route unreliable (real stuck deposit,
+// 2026-09-09: funds landed but the notify aborted with cskip_no_gas, so it never registered).
 const FUNDING_SOURCE_TOKENS: Record<PayoutFundingSource, { symbol: string; chains: string[] }> = {
-  usdt_ton: { symbol: 'USDT', chains: ['ton'] },
+  gram_ton: { symbol: 'GRAM', chains: ['ton'] },
   usdc_base: { symbol: 'USDC', chains: ['base'] },
   usdc_stellar: { symbol: 'USDC', chains: ['stellar', 'xlm'] },
 };
 
 const PAYOUT_EXPIRY_MS = 4 * 60 * 60 * 1000;
 
-// Surfaced verbatim as deposit_note for the affected funding_source — a warning worth putting in
-// the API response itself, not just docs, since integrators calling this programmatically often
-// never read prose docs. TON specifically: NEAR Intents/HOT's bridge always hands out a brand-new,
-// zero-balance deposit account for USDT-TON. Confirmed against a real stuck deposit (2026-09-09):
-// the USDT jetton itself landed correctly, but the jetton wallet's transfer_notification message
-// to that account aborted on-chain with cskip_no_gas (the account had ~0 TON, and the sending
-// wallet's jetton transfer attached ~0 forward gas) — so NEAR Intents' indexer, which relies on
-// that notification, never saw the deposit despite the funds genuinely being there. This is a
-// TON/jetton-transfer gas nuance the sender's own wallet controls, not something this API can fix
-// server-side (we never touch or construct the sender's TON transaction).
-const DEPOSIT_NOTE_TON = 'This deposit address has never received funds before. Make sure your ' +
-  'wallet attaches enough TON for gas when sending the USDT jetton transfer (most wallets do this ' +
-  'automatically when you use their normal send flow) — if the transfer arrives with too little ' +
-  'attached gas, the deposit can silently fail to register even though the tokens technically land ' +
-  "on-chain, since it depends on a gas-funded notification message succeeding.";
+// gram_ton waives both Loofta's own cross-chain fee and the NEAR app fee — bridging TON already
+// carries real, unavoidable overhead (HOT's bridge/relayer costs), so adding our own fee on top
+// only makes an already-expensive route worse. usdc_base/usdc_stellar are unaffected.
+const FEE_FREE_FUNDING_SOURCES: PayoutFundingSource[] = ['gram_ton'];
 
 @Injectable()
 export class PayoutsService {
@@ -73,7 +66,6 @@ export class PayoutsService {
     deposit_memo?: string | null;
     deposit_amount?: string;
     deposit_deadline?: string;
-    deposit_note?: string;
   }> {
     if (!integrator.ownerUserId) {
       // Should be unreachable — only self-serve integrators carry the payouts:create scope
@@ -158,6 +150,7 @@ export class PayoutsService {
         amount: String(dto.amount),
         refundAddress: dto.refund_wallet!.trim(),
         isPrivate,
+        waiveFees: FEE_FREE_FUNDING_SOURCES.includes(dto.funding_source),
       });
 
       if (!deposit.depositAddress) {
@@ -174,7 +167,6 @@ export class PayoutsService {
         deposit_memo: deposit.memo ?? null,
         deposit_amount: deposit.minAmountInFormatted,
         deposit_deadline: deposit.deadline,
-        deposit_note: dto.funding_source === 'usdt_ton' ? DEPOSIT_NOTE_TON : undefined,
       };
     }
 
