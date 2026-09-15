@@ -53,6 +53,7 @@
     "@solana/web3.js": "^1.95.8",
     "@supabase/supabase-js": "^2.87.3",
     "@ton/core": "0.63.1",
+    "@ton/crypto": "3.3.0",
     "@zkp2p/cash": "0.4.8",
     "@zkp2p/sdk": "^0.4.3",
     "bn.js": "^5.2.1",
