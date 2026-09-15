@@ -40,6 +40,20 @@ export function proxy(request: NextRequest) {
   const isLocalhost =
     hostname === "localhost" || hostname.startsWith("localhost:");
 
+  // "Loofta Earn" (Our Nest auto-invest) is a separate product surface, not a tab inside the
+  // main app — its own domain, its own minimal header (app/nest-earn/layout.tsx), no AppShell
+  // chrome. Every path on this domain maps under /nest-earn, preserving the sub-path (e.g.
+  // nest.loofta.xyz/settings -> /nest-earn/settings) — same pattern as the app-domain rewrite
+  // below. Was previously collapsing everything to exactly /nest-earn, which silently broke any
+  // second page (e.g. /settings) added under this domain.
+  const isNestEarnDomain = hostname === "nest.loofta.xyz" || hostname.startsWith("nest.");
+  if (isNestEarnDomain) {
+    if (pathname.startsWith("/nest-earn")) return NextResponse.next();
+    const nestEarnPathname = `/nest-earn${pathname === "/" ? "" : pathname}`;
+    return NextResponse.rewrite(new URL(nestEarnPathname, request.url));
+  }
+  const isNestEarnPath = pathname === "/nest-earn" || pathname.startsWith("/nest-earn/");
+
   // /megapot only exists inside the app itself (src/app/app/megapot) — it's not a marketing
   // page, but blog posts and other marketing copy link to it as if it were one. On the real
   // marketing domain that 404s, so bounce it to the real app route instead. Localhost already
@@ -80,7 +94,8 @@ export function proxy(request: NextRequest) {
   const isLocalAppPath =
     isLocalhost &&
     !isMarketingPath(pathname) &&
-    !pathname.startsWith("/app");
+    !pathname.startsWith("/app") &&
+    !isNestEarnPath;
 
   // App-only kill switch: set MAINTENANCE_MODE=true on Railway/Vercel to rewrite the
   // app (pay.loofta.xyz, or its localhost equivalent) to the maintenance screen. Marketing

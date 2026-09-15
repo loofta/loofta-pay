@@ -1,0 +1,115 @@
+"use client";
+import NestHero from "./NestHero";
+// import "./nest-splash.css";  // or import it once in layout.tsx
+
+const EVENTS = [
+  { outlet: "CNBC", domain: "cnbc.com", date: "Aug 19", move: "+61%", up: true, co: "Moderna", cat: "Positive late-stage cancer-vaccine results with Merck." },
+  { outlet: "Reuters", domain: "reuters.com", date: "Jun 1", move: "+36%", up: true, co: "Hewlett Packard Enterprise", cat: "Strong AI-driven revenue and sharply higher growth guidance." },
+  { outlet: "CNBC", domain: "cnbc.com", date: "Jul 29", move: "+15%", up: true, co: "Microsoft", cat: "Revenue and Azure growth exceeded expectations." },
+  { outlet: "Reuters", domain: "reuters.com", date: "Jan 27", move: "\u221220%", up: false, co: "UnitedHealth", cat: "Weak Medicare Advantage reimbursement proposal." },
+];
+const PRESS = [
+  ["Reuters", "reuters.com"], ["CNBC", "cnbc.com"], ["Bloomberg", "bloomberg.com"],
+  ["Financial Times", "ft.com"], ["WSJ", "wsj.com"], ["AP", "apnews.com"],
+] as const;
+const fav = (d: string) => `https://www.google.com/s2/favicons?domain=${d}&sz=64`;
+
+export default function NestSplashPage({ onSignIn }: { onSignIn?: () => void }) {
+  return (
+    <div className="ns-root" style={{ minHeight: "100vh" }}>
+      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "28px 64px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+          <img src="/logo/loofta.svg" alt="loofta" style={{ height: 24, display: "block" }} />
+          <span className="ns-serif" style={{ fontStyle: "italic", color: "var(--accent)", fontSize: 17, lineHeight: 1 }}>Nest</span>
+        </div>
+        <nav style={{ display: "flex", gap: 36 }}>
+          <a href="#how" style={{ fontSize: 15, color: "var(--ink2)" }}>How it works</a>
+          <a href="#ledger" style={{ fontSize: 15, color: "var(--ink2)" }}>The ledger</a>
+          <a href="#pricing" style={{ fontSize: 15, color: "var(--ink2)" }}>Pricing</a>
+        </nav>
+        <button className="ns-btn" style={{ padding: "11px 26px", fontSize: 15 }} onClick={onSignIn}>Sign in</button>
+      </header>
+
+      <div className="ns-hero" style={{ padding: "10px 64px 0" }}>
+        <div>
+          <h1 className="ns-serif" style={{ fontSize: 96, lineHeight: 1, letterSpacing: "-.01em", margin: "0 0 22px" }}>
+            Grow your <em style={{ fontStyle: "italic", color: "var(--accent)" }}>nest.</em>
+          </h1>
+          <p style={{ fontSize: 19, lineHeight: 1.65, color: "var(--ink2)", maxWidth: 460, margin: "0 0 34px" }}>
+            A basket of stocks built from your profile — watched around the clock and quietly rebalanced when real events move the market.
+          </p>
+          <button className="ns-btn" style={{ padding: "17px 42px", fontSize: 17 }} onClick={onSignIn}>Sign in to start nesting →</button>
+        </div>
+        <NestHero />
+      </div>
+
+      <section id="ledger" style={{ padding: "30px 64px 0" }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 18 }}>
+          <div className="ns-serif" style={{ fontSize: 26 }}>Rebalanced on real headlines</div>
+          <div style={{ fontSize: 13, color: "var(--ink3)" }}>The Event Ledger — every headline that moved your nest, on the record</div>
+        </div>
+        <div className="ns-grid4">
+          {EVENTS.map(e => (
+            <article key={e.co} className="ns-card" style={{ padding: "22px 24px" }}>
+              <div className="ns-outlet"><img src={fav(e.domain)} alt={e.outlet} />{e.outlet} · {e.date}</div>
+              <div className={`ns-move ${e.up ? "ns-up" : "ns-down"}`} style={{ fontSize: 46, margin: "16px 0 4px" }}>{e.move}</div>
+              <div style={{ fontWeight: 600, fontSize: 16 }}>{e.co}</div>
+              <p style={{ fontSize: 13.5, lineHeight: 1.5, color: "var(--ink2)", margin: "6px 0 0" }}>{e.cat}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <div style={{ marginTop: 44, background: "var(--paper2)", borderTop: "1px solid var(--line2)", padding: "18px 64px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
+        <span style={{ fontSize: 13, color: "var(--ink3)" }}>Watching the wires, around the clock</span>
+        <div className="ns-press">
+          {PRESS.map(([name, domain]) => (
+            <span key={domain} className="ns-p"><img src={fav(domain)} alt="" />{name}</span>
+          ))}
+        </div>
+      </div>
+
+      <section id="how" style={{ padding: "64px 64px 0" }}>
+        <div className="ns-serif" style={{ fontSize: 44, marginBottom: 10 }}>How it works</div>
+        <p style={{ fontSize: 16, color: "var(--ink2)", margin: "0 0 34px", maxWidth: 560 }}>Three steps, then your nest looks after itself.</p>
+        <div className="ns-grid3">
+          {[
+            ["01", "Tell us about you", "A short conversation about your goals, horizon and appetite for risk. That's your investor profile."],
+            ["02", "Get your nest", "We build a basket of tokenized stocks weighted to your profile. Every egg is a position; its size is its weight."],
+            ["03", "We watch the news", "Our AI reads the wires around the clock. When a real event moves the market, your nest quietly rebalances — and it goes on the ledger."],
+          ].map(([n, t, d]) => (
+            <div key={n} className="ns-card" style={{ padding: "30px 30px 34px" }}>
+              <div className="ns-serif" style={{ fontSize: 56, color: "var(--accent)", lineHeight: 1 }}>{n}</div>
+              <div style={{ fontWeight: 600, fontSize: 19, margin: "14px 0 8px" }}>{t}</div>
+              <p style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink2)", margin: 0 }}>{d}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="pricing" style={{ padding: "64px 64px 56px" }}>
+        <div className="ns-pricing">
+          <div>
+            <div className="ns-serif" style={{ fontSize: 44, marginBottom: 10 }}>Pricing</div>
+            <div className="ns-serif" style={{ fontSize: 88, lineHeight: 1, color: "var(--accent)" }}>Free.</div>
+            <p style={{ fontSize: 16, lineHeight: 1.65, color: "var(--ink2)", margin: "16px 0 0", maxWidth: 420 }}>
+              No management fee. No performance fee. No fee to rebalance — the news does that, not you.
+            </p>
+          </div>
+          <div className="ns-card" style={{ padding: "30px 34px" }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", borderBottom: "1px solid var(--line2)", paddingBottom: 16 }}>
+              <span style={{ fontWeight: 600, fontSize: 16 }}>Deposits</span><span className="ns-serif" style={{ fontSize: 28 }}>0.20%</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", borderBottom: "1px solid var(--line2)", padding: "16px 0" }}>
+              <span style={{ fontWeight: 600, fontSize: 16 }}>Withdrawals</span><span className="ns-serif" style={{ fontSize: 28 }}>0.20%</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "16px 0 0" }}>
+              <span style={{ fontWeight: 600, fontSize: 16 }}>Everything else</span><span className="ns-serif" style={{ fontSize: 28, color: "var(--accent)" }}>0</span>
+            </div>
+            <p style={{ fontSize: 12.5, color: "var(--ink3)", margin: "18px 0 0", lineHeight: 1.55 }}>20 bps in, 20 bps out. That's the whole bill.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}

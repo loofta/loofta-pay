@@ -22,6 +22,14 @@ export function getMainnetSolanaRpcUrl(configService: ConfigService): string {
   return 'https://api.mainnet-beta.solana.com';
 }
 
+/** Devnet RPC: HELIUS_API_KEY devnet endpoint if set, else the public devnet RPC (fine for the
+ *  low-volume, no-real-money paths that use this — Nest's devnet-demo deposit only). */
+export function getDevnetSolanaRpcUrl(configService: ConfigService): string {
+  const helius = configService.get<string>('HELIUS_API_KEY') || process.env.HELIUS_API_KEY;
+  if (helius) return `https://devnet.helius-rpc.com/?api-key=${helius}`;
+  return 'https://api.devnet.solana.com';
+}
+
 /**
  * True when backend env targets Solana devnet or testnet (non-mainnet).
  * Matches frontend NEXT_PUBLIC_SOLANA_CLUSTER / SOLANA_RPC_URL heuristics.

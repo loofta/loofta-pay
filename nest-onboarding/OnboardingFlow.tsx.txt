@@ -1,0 +1,145 @@
+"use client";
+import { useState } from "react";
+
+export type OnboardingAnswers = {
+  goal?: string; horizon?: string; drop?: string; persona?: string; control?: string;
+  themes: string[]; rules?: string; monthlyLimit?: string; avoid: string[];
+};
+
+const QUESTIONS = [
+  { key: "goal", kicker: "1 of 5 · What’s the goal?", title: "Why are you here?", options: ["Grow my money", "Save for something big", "Build my future", "Make some extra income", "I’m just exploring"] },
+  { key: "horizon", kicker: "2 of 5 · How long can your money stay invested?", title: "When might you need this money?", options: ["Soon", "In a few years", "5+ years", "I don’t know yet"], helper: "Longer timelines usually give your money more time to recover from market drops." },
+  { key: "drop", kicker: "3 of 5 · What happens when markets get messy?", title: "Your portfolio drops 20%. What do you do?", options: ["I’m selling", "I’m selling a little", "I’m waiting it out", "I’m buying more", "I need help deciding"] },
+  { key: "persona", kicker: "4 of 5 · Pick your money personality", title: "Which feels most like you?", options: ["Keep it steady", "Find the middle ground", "Play the long game", "I can handle big swings", "Still figuring it out"] },
+  { key: "control", kicker: "5 of 5 · How much control do you want?", title: "What should Nest handle?", options: ["Just show me ideas", "Give me suggestions", "Suggest changes and ask first", "Handle the routine stuff within my rules"] },
+] as const;
+
+const VIBES: Record<string, [string, string]> = {
+  "Keep it steady": ["Steady Era", "Stability comes first. Your nest leans on dependable names and keeps the swings small."],
+  "Find the middle ground": ["Balanced Builder", "You want your money to grow, but you don’t want every market dip to become your problem."],
+  "Play the long game": ["Long-Term Mode", "Focused on future wealth. Your nest is built to sit tight and compound."],
+  "I can handle big swings": ["Big Swing Energy", "Comfortable with volatility. Your nest takes bigger positions where the upside lives."],
+  "Still figuring it out": ["Still Figuring It Out", "Start simple and learn as you go. Your nest stays easy to read and easy to change."],
+};
+
+const THEMES = ["Tech", "Healthcare", "Global companies", "Clean energy", "Dividend stocks", "I’m open"];
+const RULES = ["Always ask me first", "Ask me before bigger moves"];
+const AVOID = ["Tobacco", "Weapons", "Gambling", "Fossil fuels", "Specific companies", "Nothing for now"];
+const PROGRESS = [0, 10, 28, 46, 64, 82, 100, 100];
+
+export default function OnboardingFlow({ onComplete, logoSrc = "/logo/loofta.svg" }: { onComplete?: (a: OnboardingAnswers) => void; logoSrc?: string }) {
+  const [step, setStep] = useState(0);
+  const [a, setA] = useState<OnboardingAnswers>({ themes: [], avoid: [] });
+  const go = (n: number) => { setStep(n); if (typeof window !== "undefined") window.scrollTo(0, 0); };
+  const pick = (key: string, value: string, next: number) => {
+    setA(p => ({ ...p, [key]: value }));
+    setTimeout(() => go(next), 350);
+  };
+  const toggle = (key: "themes" | "avoid", value: string) =>
+    setA(p => ({ ...p, [key]: p[key].includes(value) ? p[key].filter(x => x !== value) : [...p[key], value] }));
+  const vibe = VIBES[a.persona ?? ""] ?? VIBES["Find the middle ground"];
+  const pct = PROGRESS[step];
+
+  return (
+    <div className="nob">
+      <header className="nob-header">
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 5 }}>
+          <img src={logoSrc} alt="loofta" style={{ height: 20, display: "block" }} />
+          <span className="nob-serif" style={{ fontStyle: "italic", color: "var(--accent)", fontSize: 14, lineHeight: 1 }}>Nest</span>
+        </div>
+        <span style={{ fontSize: 13, color: "var(--ink3)" }}>{step === 0 ? "About 60 seconds" : step >= 6 ? "Done ✨" : `${pct}%`}</span>
+      </header>
+      <div className="nob-wrap">
+        <div className="nob-bar"><i style={{ width: `${pct}%` }} /></div>
+
+        {step === 0 && (
+          <section className="nob-step">
+            <div className="nob-kicker">Welcome to your nest</div>
+            <h1>Let’s find your investing vibe.</h1>
+            <p className="nob-sub">Five quick questions. No finance-speak. No wrong answers.</p>
+            <button className="nob-btn" onClick={() => go(1)}>Start the vibe check</button>
+          </section>
+        )}
+
+        {step >= 1 && step <= 5 && (() => {
+          const q = QUESTIONS[step - 1];
+          return (
+            <section className="nob-step" key={q.key}>
+              <button className="nob-back" onClick={() => go(step - 1)}>← Back</button>
+              <div className="nob-kicker">{q.kicker}</div>
+              <h1>{q.title}</h1>
+              <div className="nob-opts">
+                {q.options.map(o => (
+                  <button key={o} className={`nob-opt${(a as any)[q.key] === o ? " sel" : ""}`} onClick={() => pick(q.key, o, step + 1)}>
+                    <span className="nob-dot" />{o}
+                  </button>
+                ))}
+              </div>
+              {"helper" in q && q.helper && <p className="nob-helper">{q.helper}</p>}
+            </section>
+          );
+        })()}
+
+        {step === 6 && (
+          <section className="nob-step">
+            <div className="nob-kicker">Your investing vibe</div>
+            <h1>{vibe[0]}</h1>
+            <p className="nob-sub">{vibe[1]}</p>
+            <div className="nob-card">
+              <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--ink3)", marginBottom: 12 }}>Your starter setup</div>
+              <ul className="nob-setup" style={{ margin: 0, paddingLeft: 20 }}>
+                <li>Diversified investments</li>
+                <li>A balance of growth and stability</li>
+                <li>Simple explanations</li>
+                <li>Suggestions before anything important happens</li>
+              </ul>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginTop: 30 }}>
+              <button className="nob-btn" onClick={() => go(7)}>See my starter portfolio</button>
+              <button className="nob-ghost" onClick={() => go(1)}>That doesn’t sound like me</button>
+            </div>
+          </section>
+        )}
+
+        {step === 7 && (
+          <section className="nob-step">
+            <div className="nob-kicker">Optional — skip anytime</div>
+            <h1>Want to make this more you?</h1>
+            <p className="nob-sub">Your nest already works. This just tunes it.</p>
+
+            <div className="nob-secthead">Personalize your portfolio</div>
+            <p className="nob-sectsub">Pick anything you care about:</p>
+            <div className="nob-chips">
+              {THEMES.map(t => <button key={t} className={`nob-chip${a.themes.includes(t) ? " sel" : ""}`} onClick={() => toggle("themes", t)}>{t}</button>)}
+            </div>
+
+            <div className="nob-secthead">Set your boundaries</div>
+            <p className="nob-sectsub">If Nest automates anything, what are the rules?</p>
+            <div className="nob-opts">
+              {RULES.map(r => (
+                <button key={r} className={`nob-opt${a.rules === r ? " sel" : ""}`} onClick={() => setA(p => ({ ...p, rules: r }))}>
+                  <span className="nob-dot" />{r}
+                </button>
+              ))}
+              <button className={`nob-opt${a.rules === "limit" ? " sel" : ""}`} onClick={() => setA(p => ({ ...p, rules: "limit" }))}>
+                <span className="nob-dot" /><span>Stay under a monthly limit of&nbsp;</span>
+                <input type="text" placeholder="$500" value={a.monthlyLimit ?? ""} onClick={e => e.stopPropagation()} onChange={e => setA(p => ({ ...p, rules: "limit", monthlyLimit: e.target.value }))} />
+              </button>
+            </div>
+
+            <div className="nob-secthead">Avoid list</div>
+            <p className="nob-sectsub">Anything you want to skip?</p>
+            <div className="nob-chips">
+              {AVOID.map(t => <button key={t} className={`nob-chip${a.avoid.includes(t) ? " sel" : ""}`} onClick={() => toggle("avoid", t)}>{t}</button>)}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginTop: 40 }}>
+              <button className="nob-btn" onClick={() => onComplete?.(a)}>Build my nest</button>
+              <button className="nob-ghost" onClick={() => onComplete?.(a)}>Skip for now</button>
+            </div>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}

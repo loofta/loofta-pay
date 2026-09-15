@@ -33,6 +33,7 @@ import { PrivateBalanceModule } from './modules/private-balance/private-balance.
 import { PajCashModule } from './modules/paj-cash/paj-cash.module';
 import { UserDepositsModule } from './modules/user-deposits/user-deposits.module';
 import { GiveawaysModule } from './modules/giveaways/giveaways.module';
+import { NestModule as NestFeatureModule } from './modules/nest/nest.module';
 import { MarketingModule } from './modules/marketing/marketing.module';
 import { PaymentLinksModule } from './modules/payment-links/payment-links.module';
 import { PayoutsModule } from './modules/payouts/payouts.module';
@@ -113,6 +114,7 @@ import { PayoutsModule } from './modules/payouts/payouts.module';
     PrivateBalanceModule,
     PajCashModule,
     UserDepositsModule,
+    NestFeatureModule,
     GiveawaysModule,
     MarketingModule,
     PaymentLinksModule,
