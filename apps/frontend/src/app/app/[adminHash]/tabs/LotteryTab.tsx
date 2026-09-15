@@ -63,6 +63,10 @@ export function LotteryTab({
   expandedId: string | null;
   setExpandedId: (id: string | null) => void;
 }) {
+  // Collapsed by default — the gift form + gifts list otherwise push the tickets table (the thing
+  // admins usually land here to check) far down the page, requiring a scroll past both every time.
+  const [giftSectionOpen, setGiftSectionOpen] = React.useState(false);
+
   return (
     <div className="space-y-3">
       {/* Top-line stats */}
@@ -81,52 +85,65 @@ export function LotteryTab({
         </div>
       </div>
 
-      {/* Gift a Megapot ticket */}
+      {/* Gift a Megapot ticket — foldable, see giftSectionOpen above */}
       <div className="rounded-xl border border-gray-800 p-4 space-y-3">
-        <div className="text-base font-semibold text-gray-200">Gift a Megapot ticket</div>
-        <div className="flex flex-wrap gap-2">
-          <div className="relative flex-1 min-w-[220px]">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
-              {giftIdentifierInput.includes("@") && giftIdentifierInput.includes(".")
-                ? <Mail className="w-4 h-4" /> : <AtSign className="w-4 h-4" />}
-            </span>
-            <Input
-              placeholder="Email, X handle, or Loofta username"
-              value={giftIdentifierInput}
-              onChange={(e) => setGiftIdentifierInput(e.target.value.replace(/^@+/, ""))}
-              className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm pl-9 w-full"
-            />
-          </div>
-          <Input
-            type="number"
-            min={1}
-            max={100}
-            value={giftNumTicketsInput}
-            onChange={(e) => setGiftNumTicketsInput(e.target.value)}
-            className="bg-gray-900 border-gray-700 text-gray-100 text-base md:text-sm w-24"
-          />
-        </div>
-        <Textarea
-          placeholder="Optional note to include in the email…"
-          value={giftNoteInput}
-          onChange={(e) => setGiftNoteInput(e.target.value)}
-          className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm min-h-[60px]"
-        />
-        <Button
-          size="sm"
-          onClick={createGiftTicket}
-          disabled={gifting || !giftIdentifierInput.trim()}
-          className="bg-teal-700 hover:bg-teal-600 text-white"
+        <button
+          type="button"
+          onClick={() => setGiftSectionOpen(!giftSectionOpen)}
+          className="w-full flex items-center justify-between text-left"
         >
-          {gifting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Gift ticket(s)"}
-        </Button>
-        {lastGiftLink && (
-          <div className="flex items-center gap-2 text-base md:text-sm text-gray-400">
-            <span className="truncate">{lastGiftLink}</span>
-            <button type="button" onClick={() => copyText(lastGiftLink)} title="Copy" className="shrink-0">
-              <Copy className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          <span className="text-base font-semibold text-gray-200">
+            Gifts{giftsLoaded && giftsData.length > 0 ? ` (${giftsData.length})` : ""}
+          </span>
+          {giftSectionOpen ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
+        </button>
+        {giftSectionOpen && (
+          <>
+            <div className="flex flex-wrap gap-2">
+              <div className="relative flex-1 min-w-[220px]">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
+                  {giftIdentifierInput.includes("@") && giftIdentifierInput.includes(".")
+                    ? <Mail className="w-4 h-4" /> : <AtSign className="w-4 h-4" />}
+                </span>
+                <Input
+                  placeholder="Email, X handle, or Loofta username"
+                  value={giftIdentifierInput}
+                  onChange={(e) => setGiftIdentifierInput(e.target.value.replace(/^@+/, ""))}
+                  className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm pl-9 w-full"
+                />
+              </div>
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                value={giftNumTicketsInput}
+                onChange={(e) => setGiftNumTicketsInput(e.target.value)}
+                className="bg-gray-900 border-gray-700 text-gray-100 text-base md:text-sm w-24"
+              />
+            </div>
+            <Textarea
+              placeholder="Optional note to include in the email…"
+              value={giftNoteInput}
+              onChange={(e) => setGiftNoteInput(e.target.value)}
+              className="bg-gray-900 border-gray-700 text-gray-100 placeholder:text-gray-600 text-base md:text-sm min-h-[60px]"
+            />
+            <Button
+              size="sm"
+              onClick={createGiftTicket}
+              disabled={gifting || !giftIdentifierInput.trim()}
+              className="bg-teal-700 hover:bg-teal-600 text-white"
+            >
+              {gifting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Gift ticket(s)"}
+            </Button>
+            {lastGiftLink && (
+              <div className="flex items-center gap-2 text-base md:text-sm text-gray-400">
+                <span className="truncate">{lastGiftLink}</span>
+                <button type="button" onClick={() => copyText(lastGiftLink)} title="Copy" className="shrink-0">
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -230,8 +247,8 @@ export function LotteryTab({
         )}
       </div>
 
-      {/* Gifts list */}
-      {giftsLoaded && giftsData.length > 0 && (
+      {/* Gifts list — folds together with the gift form above, same giftSectionOpen toggle */}
+      {giftSectionOpen && giftsLoaded && giftsData.length > 0 && (
         <div className="overflow-x-auto rounded-xl border border-gray-800">
           <table className="w-full text-base text-gray-300">
             <thead>
