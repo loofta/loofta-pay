@@ -900,6 +900,63 @@ export class LotteryService {
   }
 
   /**
+   * Public, read-only feed of the gifts one allowlisted sender has sent, newest first. Powers
+   * "who got gifted" walls on partner sites (Lottopad's shillers page reads @lottopad777's gifts).
+   * Only senders listed in PUBLIC_GIFT_FEED_SENDERS (comma-separated handles) are exposed, and only
+   * what a stranger may see: handle recipients by handle, email recipients masked, no note, no claim
+   * token or link, no tx hashes. Asking for any other sender returns 404, not their data.
+   */
+  async getPublicGiftsBySender(senderRaw: string, limit: number): Promise<{
+    sender: string;
+    gifts: { giftId: string; createdAt: string; numTickets: number; recipientType: 'email' | 'handle'; recipient: string; status: 'unclaimed' | 'claimed'; claimedAt: string | null; claimUrl: string | null }[];
+    total: number;
+    totalTickets: number;
+  }> {
+    const normalize = (h: string) => h.replace(/^@/, '').trim().toLowerCase();
+    const sender = normalize(senderRaw);
+    const allowed = (this.config.get<string>('PUBLIC_GIFT_FEED_SENDERS') ?? '').split(',').map(normalize).filter(Boolean);
+    if (!sender || !allowed.includes(sender)) throw new NotFoundException('No public gift feed for this sender');
+    const db = this.supabase.getClient();
+    // `sender` is safe to interpolate into the filter: it must equal an operator-configured allowlist entry.
+    const { data: user } = await db
+      .from('app_users')
+      .select('privy_user_id')
+      .or(`username.ilike.${sender},twitter_username.ilike.${sender}`)
+      .maybeSingle();
+    if (!user?.privy_user_id) return { sender, gifts: [], total: 0, totalTickets: 0 };
+    const { data: gifts, count } = await db
+      .from('lottery_gifts')
+      .select('id, created_at, num_tickets, recipient_type, recipient_identifier, status, claimed_at, short_id', { count: 'exact' })
+      .eq('created_by_user_id', user.privy_user_id)
+      .in('status', ['unclaimed', 'claimed'])
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    const { data: allTickets } = await db
+      .from('lottery_gifts')
+      .select('num_tickets')
+      .eq('created_by_user_id', user.privy_user_id)
+      .in('status', ['unclaimed', 'claimed']);
+    const maskEmail = (email: string) => { const [local, domain] = email.split('@'); return `${local.slice(0, 1)}***@${domain ?? ''}`; };
+    return {
+      sender,
+      gifts: (gifts ?? []).map(g => ({
+        giftId: g.id,
+        createdAt: g.created_at,
+        numTickets: g.num_tickets,
+        recipientType: g.recipient_type,
+        recipient: g.recipient_type === 'handle' ? g.recipient_identifier : maskEmail(g.recipient_identifier),
+        status: g.status,
+        claimedAt: g.claimed_at,
+        // The share link is fine to publish: claiming still requires logging in as the recipient
+        // (isGiftRecipient). Never fall back to claim_token here -- that is the secret.
+        claimUrl: g.short_id ? `https://pay.loofta.xyz/gift/${g.short_id}` : null,
+      })),
+      total: count ?? 0,
+      totalTickets: (allTickets ?? []).reduce((sum, g) => sum + (g.num_tickets ?? 0), 0),
+    };
+  }
+
+  /**
    * Gifts sent TO this user that they haven't claimed yet — powers the "you have an unclaimed
    * gift" toast, same idea as the unclaimed-payment nudge. Reuses isGiftRecipient (the exact
    * identity check getGiftPublic/claimGift already use) rather than re-deriving matching rules,

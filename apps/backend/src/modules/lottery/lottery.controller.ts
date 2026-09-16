@@ -10,13 +10,15 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  Header,
   BadRequestException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { IsNumber, IsString, IsIn, IsArray, IsOptional, IsInt, Min, Max, ArrayMinSize, ArrayMaxSize, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
-import { AuthGuard, Public, OptionalAuthGuard } from '@/common/guards';
+import { AuthGuard, Public, OptionalAuthGuard, RateLimitGuard } from '@/common/guards';
+import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { LotteryService, InitiatePurchaseResult, InitiatePublicPurchaseResult, LotteryDashboard, LotteryTicketSummary } from './lottery.service';
 import { PrizeTiersSnapshot } from './megapot.service';
 import { LifiService } from './lifi.service';
@@ -459,6 +461,17 @@ export class LotteryController {
   @ApiOperation({ summary: 'Gifts sent to the current user that they have not claimed yet — powers the unclaimed-gift toast' })
   async myUnclaimedGifts(@Request() req: any) {
     return this.lottery.getMyUnclaimedGifts(req.user.id);
+  }
+
+  @Get('public-gifts/:sender')
+  @Public()
+  @UseGuards(RateLimitGuard)
+  @RateLimit(120, 60, 'lottery:public-gifts', 'ip')
+  @Header('Cache-Control', 'public, max-age=30')
+  @ApiOperation({ summary: 'Public feed of gifts sent by an allowlisted sender (PUBLIC_GIFT_FEED_SENDERS) — powers partner "who got gifted" walls' })
+  async publicGiftsBySender(@Param('sender') sender: string, @Query('limit') limitRaw: string) {
+    const limit = Math.min(200, Math.max(1, parseInt(limitRaw, 10) || 100));
+    return this.lottery.getPublicGiftsBySender(sender, limit);
   }
 
   @Post('my-gifts/:giftId/recipient')
