@@ -64,8 +64,14 @@ interface Entry {
 }
 
 /** A winner's prize claim link — /c/[id] for a usdc giveaway, /gift/[shortId] (already claimed,
- *  real Megapot ticket numbers) for a megapot_ticket one. Null until the payout lands. */
+ *  real Megapot ticket numbers) for a megapot_ticket one. Null until the payout lands.
+ *
+ *  Requires payout_status === "succeeded" before trusting either id field — an admin reversing a
+ *  draw (giveaway un-completed, reward_type changed, entry reset back to entered) can otherwise
+ *  leave a stale claim_payment_id/claim_gift_id sitting on the entry with nothing backing it,
+ *  which would surface a dead claim link pointing at a payment/gift that's no longer valid. */
 function claimPath(entry: Entry): string | null {
+  if (entry.payout_status !== "succeeded") return null;
   if (entry.claim_gift_id && entry.claim_gift_short_id) return `/gift/${entry.claim_gift_short_id}`;
   if (entry.claim_payment_id) return `/c/${entry.claim_payment_id}`;
   return null;
