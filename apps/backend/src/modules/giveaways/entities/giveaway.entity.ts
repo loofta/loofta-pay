@@ -87,6 +87,10 @@ export interface GiveawayEligibility {
   required_countries?: string[];
   /** Entrant's X account country must fall in one of these continents — see required_countries. */
   required_continents?: string[];
+  /** Entrant's X account country must NOT be one of these — checked after required_countries/
+   *  required_continents, so a country can be excluded even if its continent would otherwise
+   *  qualify. Not shown to entrants anywhere (pre- or post-entry) — see GiveawayEntriesService.enter. */
+  excluded_countries?: string[];
 }
 
 export interface Giveaway {

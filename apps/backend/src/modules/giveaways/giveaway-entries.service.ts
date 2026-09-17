@@ -92,7 +92,9 @@ export class GiveawayEntriesService {
     const verifiedOnly = giveaway.eligibility?.verified_only === true;
     const requiredCountries = giveaway.eligibility?.required_countries ?? [];
     const requiredContinents = giveaway.eligibility?.required_continents ?? [];
-    const hasGeoRequirement = requiredCountries.length > 0 || requiredContinents.length > 0;
+    const excludedCountries = giveaway.eligibility?.excluded_countries ?? [];
+    const hasInclusionGeoRequirement = requiredCountries.length > 0 || requiredContinents.length > 0;
+    const hasGeoRequirement = hasInclusionGeoRequirement || excludedCountries.length > 0;
     let xUserId = account.id;
     let xHandle = account.username;
     let avatarUrl = account.profileImageUrl;
@@ -121,7 +123,9 @@ export class GiveawayEntriesService {
         eligibilitySnapshot = { ...eligibilitySnapshot, country };
       }
       const continent = country ? continentForCountry(country) : null;
-      const failsGeo = hasGeoRequirement && !requiredCountries.includes(country!) && !(continent && requiredContinents.includes(continent));
+      const failsInclusionGeo = hasInclusionGeoRequirement && !requiredCountries.includes(country!) && !(continent && requiredContinents.includes(continent));
+      const failsExclusionGeo = excludedCountries.includes(country!);
+      const failsGeo = failsInclusionGeo || failsExclusionGeo;
 
       const failReason =
         typeof minFollowers === 'number' && profile.followersCount < minFollowers
@@ -130,8 +134,12 @@ export class GiveawayEntriesService {
             ? `This giveaway requires an X account at least ${minAgeDays} days old`
             : verifiedOnly && !profile.verified
               ? 'This giveaway requires a verified X account'
+              // Deliberately generic, unlike the other reasons above — naming the required/excluded
+              // countries here would let anyone reconstruct the exact list by probing from different
+              // regions, which is exactly what hiding it from the entry-requirements text (see
+              // GiveawayDetailClient) is meant to prevent.
               : failsGeo
-                ? `This giveaway is only open to entrants in: ${[...requiredCountries, ...requiredContinents].join(', ')}`
+                ? "This giveaway isn't available in your region"
                 : null;
       if (failReason) {
         await this.insertEntryRow(giveawayId, userId, GiveawayEntryStatus.DISQUALIFIED, { xUserId, xHandle, avatarUrl, eligibilitySnapshot });

@@ -102,6 +102,13 @@ export class GiveawayEligibilityDto {
   @IsString({ each: true })
   @ArrayMaxSize(6)
   required_continents?: string[];
+
+  @ApiPropertyOptional({ type: [String], description: "Entrants from these countries (Sorsa's /about country names) can't enter, even if required_countries/required_continents would otherwise qualify them." })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(50)
+  excluded_countries?: string[];
 }
 
 export class CreateGiveawayDto {

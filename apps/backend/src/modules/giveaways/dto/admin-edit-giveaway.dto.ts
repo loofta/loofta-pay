@@ -78,6 +78,12 @@ export class AdminEditGiveawayDto {
   @IsString({ each: true })
   required_continents?: string[];
 
+  @ApiPropertyOptional({ type: [String], description: "Entrants from these countries can't enter, even if required_countries/required_continents would otherwise qualify them." })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  excluded_countries?: string[];
+
   @ApiPropertyOptional({ type: [AdminEditGiveawayTaskDto], description: 'Per-task config updates by task id — target/instructions/comment_requirement only.' })
   @IsOptional()
   @IsArray()

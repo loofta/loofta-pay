@@ -598,7 +598,8 @@ export class GiveawaysService {
       dto.min_account_age_days !== undefined ||
       dto.verified_only !== undefined ||
       dto.required_countries !== undefined ||
-      dto.required_continents !== undefined
+      dto.required_continents !== undefined ||
+      dto.excluded_countries !== undefined
     ) {
       update.eligibility = {
         ...giveaway.eligibility,
@@ -607,6 +608,7 @@ export class GiveawaysService {
         ...(dto.verified_only !== undefined ? { verified_only: dto.verified_only } : {}),
         ...(dto.required_countries !== undefined ? { required_countries: dto.required_countries } : {}),
         ...(dto.required_continents !== undefined ? { required_continents: dto.required_continents } : {}),
+        ...(dto.excluded_countries !== undefined ? { excluded_countries: dto.excluded_countries } : {}),
       };
     }
     if (Object.keys(update).length === 0 && !dto.tasks?.length && !dto.delete_task_ids?.length && !dto.new_tasks?.length) {

@@ -77,8 +77,6 @@ export interface GiveawayLivePreviewProps {
   entriesCloseAt: string;
   minFollowers: string;
   verifiedOnly: boolean;
-  requiredCountries?: string[];
-  requiredContinents?: string[];
   isOfficial: boolean;
   tasks: PreviewTask[];
   pulse?: boolean;
@@ -96,8 +94,6 @@ export function GiveawayLivePreview({
   entriesCloseAt,
   minFollowers,
   verifiedOnly,
-  requiredCountries = [],
-  requiredContinents = [],
   isOfficial,
   tasks,
   pulse,
@@ -221,12 +217,6 @@ export function GiveawayLivePreview({
           <span className="rounded-full border border-white/10 px-2.5 py-1 text-sm text-slate-500">Linked X account</span>
           {minFollowers && <span className="rounded-full border border-white/10 px-2.5 py-1 text-sm text-slate-500">{minFollowers}+ followers</span>}
           {verifiedOnly && <span className="rounded-full border border-white/10 px-2.5 py-1 text-sm text-slate-500">Verified X account</span>}
-          {[...requiredContinents, ...requiredCountries].length > 0 && (
-            <span className="rounded-full border border-white/10 px-2.5 py-1 text-sm text-slate-500">
-              {[...requiredContinents, ...requiredCountries].slice(0, 2).join(", ")}
-              {[...requiredContinents, ...requiredCountries].length > 2 ? ` +${[...requiredContinents, ...requiredCountries].length - 2} more` : ""}
-            </span>
-          )}
         </div>
       </div>
 

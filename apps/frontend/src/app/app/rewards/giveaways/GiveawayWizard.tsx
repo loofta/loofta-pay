@@ -605,6 +605,7 @@ interface GiveawayDraft {
   verifiedOnly: boolean;
   requiredCountries: string[];
   requiredContinents: string[];
+  excludedCountries: string[];
   tasks: TaskRow[];
 }
 
@@ -625,6 +626,7 @@ function defaultDraft(): GiveawayDraft {
     verifiedOnly: false,
     requiredCountries: [],
     requiredContinents: [],
+    excludedCountries: [],
     tasks: [newRow()],
   };
 }
@@ -646,6 +648,7 @@ interface RemoteGiveaway {
     verified_only?: boolean;
     required_countries?: string[];
     required_continents?: string[];
+    excluded_countries?: string[];
   };
   status: string;
   tasks: Array<{ task_type: string; config: Record<string, any> }>;
@@ -669,6 +672,7 @@ function draftFromRemote(g: RemoteGiveaway): GiveawayDraft {
     verifiedOnly: g.eligibility?.verified_only === true,
     requiredCountries: g.eligibility?.required_countries ?? [],
     requiredContinents: g.eligibility?.required_continents ?? [],
+    excludedCountries: g.eligibility?.excluded_countries ?? [],
     tasks: collapseTasksToRows(g.tasks ?? []),
   };
 }
@@ -751,7 +755,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     gcTime: Infinity,
     retry: false,
   });
-  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, requiredCountries, requiredContinents, tasks } = draft;
+  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, requiredCountries, requiredContinents, excludedCountries, tasks } = draft;
   const prizeAmount = winnerCount > 0 ? totalPool / winnerCount : 0;
   const validWinnerCounts = useMemo(() => divisorsUpTo(totalPool, MAX_WINNERS), [totalPool]);
 
@@ -825,6 +829,12 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   }, [updateDraft]);
   const removeRequiredCountry = useCallback((country: string) => {
     updateDraft((prev) => ({ requiredCountries: prev.requiredCountries.filter((c) => c !== country) }));
+  }, [updateDraft]);
+  const addExcludedCountry = useCallback((country: string) => {
+    updateDraft((prev) => (prev.excludedCountries.includes(country) ? prev : { excludedCountries: [...prev.excludedCountries, country] }));
+  }, [updateDraft]);
+  const removeExcludedCountry = useCallback((country: string) => {
+    updateDraft((prev) => ({ excludedCountries: prev.excludedCountries.filter((c) => c !== country) }));
   }, [updateDraft]);
 
   const effectiveMinPool = createAsAdmin ? ADMIN_MIN_TOTAL_POOL : MIN_TOTAL_POOL;
@@ -998,6 +1008,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
             ...(verifiedOnly ? { verified_only: true } : {}),
             ...(requiredCountries.length ? { required_countries: requiredCountries } : {}),
             ...(requiredContinents.length ? { required_continents: requiredContinents } : {}),
+            ...(excludedCountries.length ? { excluded_countries: excludedCountries } : {}),
           },
           tasks: tasks.flatMap(expandTaskRow),
           ...(mode === "create" ? { is_official: createAsAdmin } : {}),
@@ -1029,7 +1040,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     } finally {
       setSubmitting(false);
     }
-  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, requiredCountries, requiredContinents, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft, queryClient]);
+  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, requiredCountries, requiredContinents, excludedCountries, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft, queryClient]);
 
   const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
@@ -1486,6 +1497,14 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                               Entrants qualify if their X account&apos;s region matches either a selected continent or a selected country.
                             </p>
                           </div>
+
+                          <div>
+                            <FieldLabel optional>Exclude countries</FieldLabel>
+                            <CountryMultiSelect selected={excludedCountries} onAdd={addExcludedCountry} onRemove={removeExcludedCountry} />
+                            <p className="text-sm text-slate-500 mt-1.5">
+                              Entrants from these countries can&apos;t enter, even if they&apos;d otherwise qualify. Not shown to entrants — they just won&apos;t be able to enter.
+                            </p>
+                          </div>
                         </>
                       )}
 
@@ -1568,8 +1587,6 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                   entriesCloseAt={entriesCloseAt}
                   minFollowers={minFollowers}
                   verifiedOnly={verifiedOnly}
-                  requiredCountries={requiredCountries}
-                  requiredContinents={requiredContinents}
                   isOfficial={mode === "create" && createAsAdmin}
                   tasks={previewTasks}
                   pulse={previewPulse}
