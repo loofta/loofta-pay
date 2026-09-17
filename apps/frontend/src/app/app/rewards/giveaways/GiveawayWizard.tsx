@@ -388,7 +388,8 @@ function toLocalInputValue(date: Date): string {
 
 function DateTimePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
-  const selectedDate = value ? new Date(value) : undefined;
+  const parsedDate = value ? new Date(value) : undefined;
+  const selectedDate = parsedDate && !isNaN(parsedDate.getTime()) ? parsedDate : undefined;
   const timeValue = selectedDate
     ? `${String(selectedDate.getHours()).padStart(2, "0")}:${String(selectedDate.getMinutes()).padStart(2, "0")}`
     : "12:00";
@@ -403,6 +404,7 @@ function DateTimePicker({ value, onChange }: { value: string; onChange: (v: stri
 
   const setTimePart = (time: string) => {
     const [h, m] = time.split(":").map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return;
     const next = new Date(selectedDate ?? new Date());
     next.setHours(h, m, 0, 0);
     onChange(toLocalInputValue(next));
