@@ -1419,16 +1419,12 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               );
             })()}
 
-          {(giveaway.eligibility?.min_followers || giveaway.eligibility?.min_account_age_days || giveaway.eligibility?.verified_only
-            || giveaway.eligibility?.required_countries?.length || giveaway.eligibility?.required_continents?.length) && (
+          {(giveaway.eligibility?.min_followers || giveaway.eligibility?.min_account_age_days || giveaway.eligibility?.verified_only) && (
             <p className="text-base text-slate-500 mb-3">
               To enter: linked X account
               {giveaway.eligibility?.min_followers ? `, ${giveaway.eligibility.min_followers}+ followers` : ""}
               {giveaway.eligibility?.min_account_age_days ? `, account ${giveaway.eligibility.min_account_age_days}+ days old` : ""}
               {giveaway.eligibility?.verified_only ? ", verified badge" : ""}
-              {[...(giveaway.eligibility?.required_continents ?? []), ...(giveaway.eligibility?.required_countries ?? [])].length > 0
-                ? `, must be in ${[...(giveaway.eligibility?.required_continents ?? []), ...(giveaway.eligibility?.required_countries ?? [])].join(" or ")}`
-                : ""}
             </p>
           )}
 
