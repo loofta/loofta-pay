@@ -1,19 +1,28 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Connection, Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
-import { createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, getAssociatedTokenAddress } from '@solana/spl-token';
+import { createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
 import bs58 from 'bs58';
 import { SupabaseService } from '@/database/supabase.service';
 import { getMainnetSolanaRpcUrl, getDevnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { ledgerUserId } from './nest-ledger-id';
 
 const MAINNET_USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
-// Widely-used community devnet USDC-alike (6 decimals) — no real value, exists purely so a
-// demo deposit looks and behaves like the real one without needing actual money.
-const DEVNET_USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+// Nest-specific devnet USDC-alike (6 decimals, no real value) — deliberately its own mint, NOT
+// '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU' (the devnet USDC used by claims/send-payment/
+// private-balance/giveaways elsewhere in this codebase). That shared mint has a thin treasury
+// balance (~$130) and an authority we don't control; this one's mint authority is the mint
+// account itself, so supply can be topped up on demand. Safe to diverge here — Nest's
+// devnet-demo ledger is already fully isolated (separate `:devnet-demo` suffix, own transaction
+// signing, never routed through the shared sponsor endpoint/mint whitelist).
+const DEVNET_USDC_MINT = new PublicKey('Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr');
 const MIN_DEPOSIT_USDC = 5;
 const MAX_DEPOSIT_USDC = 5000;
 const MAX_DEVNET_DEPOSIT_USDC = 1_000_000; // free money — cap is just to keep numbers sane on screen
+// One-time grant so a fresh wallet has something to deposit with. Treasury holds ~3,000 of this
+// mint (2026-09-16) — top up its ATA (5dCTWJj277c41ex92RFxSRUa8ckU4EAurWftDRASBKuq) directly, or
+// mint more (its mint authority is itself), if this ever needs to go higher.
+const DEVNET_FAUCET_USDC = 500;
 
 interface NetworkCtx {
   network: 'mainnet' | 'devnet';
@@ -154,5 +163,48 @@ export class NestDepositService {
 
   async confirmDevnetDeposit(userId: string, userSolanaAddress: string, txHash: string, amountUsdc: number): Promise<{ creditedUsd: number }> {
     return this.verifyAndCredit(this.devnetCtx(), ledgerUserId(userId, true), userSolanaAddress, txHash, amountUsdc);
+  }
+
+  /**
+   * The devnet deposit flow (above) transfers devnet USDC OUT of the user's own wallet — but a
+   * fresh embedded wallet has none, so that transfer always fails with nothing to test the
+   * "deposit" step against. This is the missing piece: our treasury genuinely holds devnet USDC
+   * (and SOL for fees) on devnet, so it can grant a one-time amount directly to the user's own
+   * wallet first — a real on-chain transfer, not a faked ledger credit — after which the normal
+   * deposit flow works for real. Treasury is both fee payer and sender, so the user doesn't need
+   * to sign anything or hold any SOL themselves.
+   */
+  async fundDevnetFaucet(userSolanaAddress: string): Promise<{ txHash: string; amountUsdc: number }> {
+    const ctx = this.devnetCtx();
+    const treasuryKeypair = this.getTreasuryKeypair();
+    const userPubkey = new PublicKey(userSolanaAddress);
+    const userAta = await getAssociatedTokenAddress(ctx.usdcMint, userPubkey);
+    const treasuryAta = await getAssociatedTokenAddress(ctx.usdcMint, treasuryKeypair.publicKey);
+
+    // One-time grant per wallet — otherwise repeated clicks would just keep pumping free demo
+    // money into the same wallet, slowly draining the treasury's small devnet USDC supply for
+    // no reason.
+    try {
+      const existing = await getAccount(ctx.connection, userAta);
+      if (existing.amount > 0n) {
+        throw new BadRequestException('This wallet already has devnet USDC — no need to fund it again');
+      }
+    } catch (e) {
+      if (e instanceof BadRequestException) throw e;
+      // ATA doesn't exist yet, which is the expected case for a fresh wallet — fall through.
+    }
+
+    const instructions: TransactionInstruction[] = [
+      createAssociatedTokenAccountIdempotentInstruction(treasuryKeypair.publicKey, userAta, userPubkey, ctx.usdcMint),
+      createTransferInstruction(treasuryAta, userAta, treasuryKeypair.publicKey, Math.round(DEVNET_FAUCET_USDC * 1_000_000)),
+    ];
+    const { blockhash } = await ctx.connection.getLatestBlockhash();
+    const message = new TransactionMessage({ payerKey: treasuryKeypair.publicKey, recentBlockhash: blockhash, instructions }).compileToV0Message();
+    const tx = new VersionedTransaction(message);
+    tx.sign([treasuryKeypair]);
+    const txHash = await ctx.connection.sendTransaction(tx);
+    await ctx.connection.confirmTransaction(txHash, 'confirmed');
+    this.logger.log(`fundDevnetFaucet: sent ${DEVNET_FAUCET_USDC} devnet USDC to ${userSolanaAddress} (${txHash})`);
+    return { txHash, amountUsdc: DEVNET_FAUCET_USDC };
   }
 }

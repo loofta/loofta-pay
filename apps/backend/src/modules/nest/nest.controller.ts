@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { AuthGuard, Public } from '@/common/guards';
-import { NestService, NestPortfolio, NestProfile, NestTradeView } from './nest.service';
+import { NestService, NestPortfolio, NestProfile, NestTradeView, NestLedgerEvent } from './nest.service';
 import { NestDepositService } from './nest-deposit.service';
+import { NestRebalanceService } from './nest-rebalance.service';
 import { XStocksService } from './xstocks.service';
 import { ledgerUserId } from './nest-ledger-id';
 
@@ -56,13 +57,21 @@ class BuildDevnetDepositTxDto {
   amountUsdc: number;
 }
 
+class FaucetDevnetDto {
+  @IsString()
+  userSolanaAddress: string;
+}
+
 @ApiTags('nest')
 @Controller('nest')
 @UseGuards(AuthGuard)
 export class NestController {
+  private readonly logger = new Logger(NestController.name);
+
   constructor(
     private readonly nest: NestService,
     private readonly deposits: NestDepositService,
+    private readonly rebalance: NestRebalanceService,
     private readonly xstocks: XStocksService,
     private readonly config: ConfigService,
   ) {}
@@ -106,6 +115,12 @@ export class NestController {
     return this.nest.getHistory(ledgerUserId(req.user.id, demo === 'true'));
   }
 
+  @Get('ledger')
+  @ApiOperation({ summary: 'The caller\'s own real trades (one per recently-traded symbol) paired with the most recent real elfa-sourced X post about that ticker. ?demo=true reads the devnet-demo ledger.' })
+  async getLedger(@Request() req: any, @Query('demo') demo?: string): Promise<NestLedgerEvent[]> {
+    return this.nest.getLedger(ledgerUserId(req.user.id, demo === 'true'));
+  }
+
   @Post('deposit/pay-tx')
   @ApiOperation({ summary: 'Build the real mainnet USDC deposit transfer for the caller to sign client-side (gas + treasury ATA rent sponsored)' })
   async buildDepositTx(@Body() dto: BuildDepositTxDto): Promise<{ txBase64: string }> {
@@ -119,6 +134,12 @@ export class NestController {
     return this.deposits.confirmDeposit(req.user.id, dto.userSolanaAddress, dto.txHash, dto.amountUsdc);
   }
 
+  @Post('deposit/devnet/faucet')
+  @ApiOperation({ summary: 'One-time treasury-funded devnet-USDC grant to the caller\'s own wallet — a fresh wallet has none, so this is what the deposit step actually transfers. Real on-chain transfer, devnet only, no real value.' })
+  async faucetDevnetUsdc(@Body() dto: FaucetDevnetDto): Promise<{ txHash: string; amountUsdc: number }> {
+    return this.deposits.fundDevnetFaucet(dto.userSolanaAddress);
+  }
+
   @Post('deposit/devnet/pay-tx')
   @ApiOperation({ summary: 'Build a FREE devnet-USDC deposit transfer (no real value) for the caller to sign — lets anyone try Nest with zero financial risk' })
   async buildDevnetDepositTx(@Body() dto: BuildDevnetDepositTxDto): Promise<{ txBase64: string }> {
@@ -127,8 +148,18 @@ export class NestController {
   }
 
   @Post('deposit/devnet/confirm')
-  @ApiOperation({ summary: 'Verify the signed devnet deposit and credit the devnet-demo ledger only — never the real one' })
+  @ApiOperation({ summary: 'Verify the signed devnet deposit, credit the devnet-demo ledger, and immediately run that account\'s rebalance so the basket is built without waiting for the (production-only, once-daily) cron' })
   async confirmDevnetDeposit(@Body() dto: ConfirmDepositDto, @Request() req: any): Promise<{ creditedUsd: number }> {
-    return this.deposits.confirmDevnetDeposit(req.user.id, dto.userSolanaAddress, dto.txHash, dto.amountUsdc);
+    const result = await this.deposits.confirmDevnetDeposit(req.user.id, dto.userSolanaAddress, dto.txHash, dto.amountUsdc);
+    // Devnet-demo only, scoped to this one caller — the real daily cron (nest-cron.service.ts)
+    // is production-gated and once-daily, so without this a fresh deposit would just sit as cash
+    // until whenever that next runs (or never, on a local dev instance). A rebalance failure here
+    // shouldn't fail the deposit itself — the money's already safely credited either way.
+    try {
+      await this.rebalance.runDemoRebalanceForUser(ledgerUserId(req.user.id, true));
+    } catch (e: any) {
+      this.logger.error(`post-deposit runDemoRebalanceForUser failed: ${e.message}`);
+    }
+    return result;
   }
 }

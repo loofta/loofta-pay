@@ -64,7 +64,11 @@ export async function fetchApi<T>(
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      return {} as T;
+      // NestJS sends a body-less, content-type-less response for a controller returning `null`
+      // (verified against the exact @nestjs/core version this backend uses — it does the same
+      // for `undefined`). `{}` here used to read as a truthy "profile exists" to every caller
+      // expecting `T | null`, e.g. getNestProfile — always mean "no content" for our own API.
+      return null as T;
     }
 
     const data = await response.json();

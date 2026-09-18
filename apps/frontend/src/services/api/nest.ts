@@ -56,6 +56,23 @@ export interface NestTradeView {
   createdAt: string;
 }
 
+export interface NestElfaPost {
+  link: string;
+  username: string;
+  likeCount: number;
+  mentionedAt: string;
+}
+
+export interface NestLedgerEvent {
+  symbol: string;
+  name: string;
+  side: 'buy' | 'sell';
+  usdValue: number;
+  reason: string | null;
+  createdAt: string;
+  post: NestElfaPost | null;
+}
+
 interface AuthOpts {
   userId?: string;
   accessToken?: string | null;
@@ -87,12 +104,24 @@ export async function getNestHistory(opts: AuthOpts, demo = false): Promise<Nest
   return fetchApi<NestTradeView[]>(`/nest/history${demo ? '?demo=true' : ''}`, opts);
 }
 
+export async function getNestLedger(opts: AuthOpts, demo = false): Promise<NestLedgerEvent[]> {
+  return fetchApi<NestLedgerEvent[]>(`/nest/ledger${demo ? '?demo=true' : ''}`, opts);
+}
+
 export async function buildNestDepositTx(userSolanaAddress: string, amountUsdc: number, opts: AuthOpts): Promise<{ txBase64: string }> {
   return fetchApi<{ txBase64: string }>('/nest/deposit/pay-tx', { method: 'POST', body: JSON.stringify({ userSolanaAddress, amountUsdc }), ...opts });
 }
 
 export async function confirmNestDeposit(userSolanaAddress: string, txHash: string, amountUsdc: number, opts: AuthOpts): Promise<{ creditedUsd: number }> {
   return fetchApi<{ creditedUsd: number }>('/nest/deposit/confirm', { method: 'POST', body: JSON.stringify({ userSolanaAddress, txHash, amountUsdc }), ...opts });
+}
+
+/** One-time treasury-funded devnet-USDC grant to the caller's own wallet — a fresh embedded
+ *  wallet holds none, so this is what the devnet deposit transfer actually moves. Real on-chain
+ *  transfer, devnet only. Throws (message includes "already has devnet USDC") if already funded
+ *  — callers should treat that as a no-op success, not an error. */
+export async function faucetNestDevnetUsdc(userSolanaAddress: string, opts: AuthOpts): Promise<{ txHash: string; amountUsdc: number }> {
+  return fetchApi<{ txHash: string; amountUsdc: number }>('/nest/deposit/devnet/faucet', { method: 'POST', body: JSON.stringify({ userSolanaAddress }), ...opts });
 }
 
 /** Free devnet USDC (no real value) — same on-chain-verify pattern as the real deposit, just

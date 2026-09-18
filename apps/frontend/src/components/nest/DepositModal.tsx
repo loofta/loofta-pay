@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { buildNestDevnetDepositTx, confirmNestDevnetDeposit } from "@/services/api/nest";
+import { buildNestDevnetDepositTx, confirmNestDevnetDeposit, faucetNestDevnetUsdc } from "@/services/api/nest";
 
 type Method = "devnet" | "crypto" | "card";
 
@@ -49,6 +49,14 @@ export function DepositModal({
     setError(null);
     try {
       const accessToken = await getAccessToken();
+      // A fresh embedded wallet holds no devnet USDC, so the transfer below would always fail
+      // with nothing to send — grant it some first. No-ops (throws a recognizable message we
+      // swallow) once the wallet already has some, so this is safe to call on every attempt.
+      try {
+        await faucetNestDevnetUsdc(embeddedSolAddress, { userId, accessToken });
+      } catch (faucetErr: any) {
+        if (!(faucetErr?.message ?? "").toLowerCase().includes("already has devnet usdc")) throw faucetErr;
+      }
       const { txBase64 } = await buildNestDevnetDepositTx(embeddedSolAddress, amountUsdc, { userId, accessToken });
       const txBytes = Buffer.from(txBase64, "base64");
       const { signature: sigBytes } = await signAndSendTransaction({

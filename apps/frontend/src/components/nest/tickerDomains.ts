@@ -5,7 +5,9 @@
 export const TICKER_DOMAIN: Record<string, string> = {
   AAPLx: "apple.com",
   MSFTx: "microsoft.com",
-  GOOGLx: "abc.xyz",
+  // abc.xyz's favicon is a 16x16 JPEG — pixelates badly once scaled up on the egg texture.
+  // google.com's is a proper 128x128 PNG and is the more universally recognized mark anyway.
+  GOOGLx: "google.com",
   AMZNx: "amazon.com",
   METAx: "meta.com",
   NVDAx: "nvidia.com",

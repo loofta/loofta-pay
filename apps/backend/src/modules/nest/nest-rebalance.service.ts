@@ -326,34 +326,85 @@ export class NestRebalanceService {
     // regardless of the global liveTrading flag.
     for (const profile of demoProfiles) {
       const holdings = holdingsByUser.get(profile.userId) ?? [];
-      const navUsd = holdings.reduce((sum, h) => sum + h.units * (h.symbol === 'USD' ? 1 : prices.get(h.symbol) ?? h.avgCostUsd), 0);
-      if (navUsd <= 0) continue;
-
-      const targetWeights = this.computeTargetWeights(profile, universe, sentiment);
-      const cfg = RISK_CONFIG[profile.riskTolerance];
-      const currentBySymbol = new Map(holdings.filter(h => h.symbol !== 'USD').map(h => [h.symbol, h.units * (prices.get(h.symbol) ?? h.avgCostUsd)]));
-      const allSymbols = new Set([...targetWeights.keys(), ...currentBySymbol.keys()]);
-
-      let remainingTurnover = navUsd * cfg.maxDailyTurnoverPct;
-      for (const symbol of allSymbols) {
-        const price = prices.get(symbol);
-        if (!price) continue;
-        const targetUsd = (targetWeights.get(symbol) ?? 0) * navUsd;
-        const currentUsd = currentBySymbol.get(symbol) ?? 0;
-        let deltaUsd = targetUsd - currentUsd;
-        if (Math.abs(deltaUsd) < MIN_USER_TRADE_USD) continue;
-        const cappedAbs = Math.min(Math.abs(deltaUsd), Math.max(remainingTurnover, 0));
-        if (cappedAbs < MIN_USER_TRADE_USD) continue;
-        deltaUsd = Math.sign(deltaUsd) * cappedAbs;
-        remainingTurnover -= cappedAbs;
-
-        const unitsDelta = deltaUsd / price;
-        await this.applyFillToUser(profile.userId, symbol, unitsDelta, price, deltaUsd, sentiment.get(symbol)?.score ?? 0, null, false);
-        affectedUsers.add(profile.userId);
-      }
+      await this.processDemoProfile(profile, holdings, universe, sentiment, prices);
+      affectedUsers.add(profile.userId);
     }
 
     await this.writeNavSnapshots(profiles.map(p => p.userId), universe, prices, nowIso.slice(0, 10));
+  }
+
+  private async processDemoProfile(
+    profile: UserProfile,
+    holdings: HoldingRow[],
+    universe: NestUniverseAsset[],
+    sentiment: Map<string, { score: number }>,
+    prices: Map<string, number>,
+  ): Promise<void> {
+    const navUsd = holdings.reduce((sum, h) => sum + h.units * (h.symbol === 'USD' ? 1 : prices.get(h.symbol) ?? h.avgCostUsd), 0);
+    if (navUsd <= 0) return;
+
+    const targetWeights = this.computeTargetWeights(profile, universe, sentiment);
+    const currentBySymbol = new Map(holdings.filter(h => h.symbol !== 'USD').map(h => [h.symbol, h.units * (prices.get(h.symbol) ?? h.avgCostUsd)]));
+    const allSymbols = new Set([...targetWeights.keys(), ...currentBySymbol.keys()]);
+
+    // maxDailyTurnoverPct is a real-money safety brake (ease a large deposit in gradually
+    // instead of committing it all in one rebalance) — on a small demo deposit it shrinks to a
+    // few dollars, so only the single highest-scored symbol gets any allocation before the
+    // budget runs out, and the "basket" is just one ticker. No real capital is at risk here, so
+    // demo profiles skip the cap entirely and build their full target basket in one pass.
+    let remainingTurnover = navUsd;
+    for (const symbol of allSymbols) {
+      const price = prices.get(symbol);
+      if (!price) continue;
+      const targetUsd = (targetWeights.get(symbol) ?? 0) * navUsd;
+      const currentUsd = currentBySymbol.get(symbol) ?? 0;
+      let deltaUsd = targetUsd - currentUsd;
+      if (Math.abs(deltaUsd) < MIN_USER_TRADE_USD) continue;
+      const cappedAbs = Math.min(Math.abs(deltaUsd), Math.max(remainingTurnover, 0));
+      if (cappedAbs < MIN_USER_TRADE_USD) continue;
+      deltaUsd = Math.sign(deltaUsd) * cappedAbs;
+      remainingTurnover -= cappedAbs;
+
+      const unitsDelta = deltaUsd / price;
+      await this.applyFillToUser(profile.userId, symbol, unitsDelta, price, deltaUsd, sentiment.get(symbol)?.score ?? 0, null, false);
+    }
+  }
+
+  /**
+   * Manual, single-user trigger for the devnet-demo path only — the real daily cron
+   * (nest-cron.service.ts) is disabled outside production and only fires once a day, so without
+   * this there's no way to see a fresh deposit actually turn into a basket while testing. Scoped
+   * tightly on purpose: only ever touches the caller's own demo ledger (never real profiles,
+   * never live trading, never other users) — safe to expose to any authenticated caller.
+   */
+  async runDemoRebalanceForUser(demoLedgerUserId: string): Promise<{ ran: boolean }> {
+    const db = this.supabase.getClient();
+    const universe = await this.xstocks.getUniverse();
+    if (universe.length === 0) throw new Error('Nest universe is empty (Backed API unreachable?) — try again shortly');
+
+    const { data: profileRow, error: profileErr } = await db
+      .from('nest_profiles')
+      .select('user_id, risk_tolerance, interest_tags')
+      .eq('user_id', demoLedgerUserId)
+      .maybeSingle();
+    if (profileErr) throw new Error(`load profile: ${profileErr.message}`);
+    if (!profileRow) return { ran: false };
+
+    await this.elfa.refreshCache(universe);
+    const sentiment = await this.elfa.getCachedScores(universe.map(a => a.symbol));
+    const prices = await this.xstocks.getPrices(universe.map(a => a.symbol));
+
+    const { data: holdingRows, error: holdingsErr } = await db
+      .from('nest_holdings')
+      .select('symbol, units, avg_cost_usd')
+      .eq('user_id', demoLedgerUserId);
+    if (holdingsErr) throw new Error(`load holdings: ${holdingsErr.message}`);
+    const holdings: HoldingRow[] = (holdingRows ?? []).map(r => ({ userId: demoLedgerUserId, symbol: r.symbol, units: Number(r.units), avgCostUsd: Number(r.avg_cost_usd) }));
+
+    const profile: UserProfile = { userId: demoLedgerUserId, riskTolerance: profileRow.risk_tolerance, interestTags: profileRow.interest_tags ?? [] };
+    await this.processDemoProfile(profile, holdings, universe, sentiment, prices);
+    await this.writeNavSnapshots([demoLedgerUserId], universe, prices, new Date().toISOString().slice(0, 10));
+    return { ran: true };
   }
 
   private async applyFillToUser(

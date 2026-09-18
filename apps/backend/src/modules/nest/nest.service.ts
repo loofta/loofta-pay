@@ -1,6 +1,7 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 import { XStocksService } from './xstocks.service';
+import { ElfaService, ElfaPost } from './elfa.service';
 
 export type NestRiskTolerance = 'conservative' | 'balanced' | 'aggressive';
 
@@ -42,6 +43,16 @@ export interface NestTradeView {
   createdAt: string;
 }
 
+export interface NestLedgerEvent {
+  symbol: string;
+  name: string;
+  side: 'buy' | 'sell';
+  usdValue: number;
+  reason: string | null;
+  createdAt: string;
+  post: ElfaPost | null;
+}
+
 const VALID_RISK: NestRiskTolerance[] = ['conservative', 'balanced', 'aggressive'];
 
 @Injectable()
@@ -51,6 +62,7 @@ export class NestService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly xstocks: XStocksService,
+    private readonly elfa: ElfaService,
   ) {}
 
   async getProfile(userId: string): Promise<NestProfile | null> {
@@ -91,7 +103,10 @@ export class NestService {
 
     const universe = await this.xstocks.getUniverse();
     const nameBySymbol = new Map(universe.map(a => [a.symbol, a.name]));
-    const symbols = (holdingsRows ?? []).map(r => r.symbol);
+    // 'USD' is the cash holding a deposit credits before the next rebalance buys anything with
+    // it (see nest-deposit.service.ts's verifyAndCredit) — not a real xStock ticker, so it has
+    // no price to look up and is always worth exactly its own unit count.
+    const symbols = (holdingsRows ?? []).map(r => r.symbol).filter(s => s !== 'USD');
     const prices = await this.xstocks.getPrices(symbols);
 
     let totalValueUsd = 0;
@@ -99,14 +114,14 @@ export class NestService {
     const holdings: NestHoldingView[] = (holdingsRows ?? []).map(row => {
       const units = Number(row.units);
       const avgCostUsd = Number(row.avg_cost_usd);
-      const currentPrice = prices.get(row.symbol) ?? null;
+      const currentPrice = row.symbol === 'USD' ? 1 : prices.get(row.symbol) ?? null;
       const valueUsd = currentPrice !== null ? units * currentPrice : null;
       const costUsd = units * avgCostUsd;
       if (valueUsd !== null) totalValueUsd += valueUsd;
       totalCostUsd += costUsd;
       return {
         symbol: row.symbol,
-        name: nameBySymbol.get(row.symbol) ?? row.symbol,
+        name: row.symbol === 'USD' ? 'Cash' : nameBySymbol.get(row.symbol) ?? row.symbol,
         units,
         avgCostUsd,
         currentPrice,
@@ -145,6 +160,43 @@ export class NestService {
       reason: r.reason,
       txSignature: r.tx_signature,
       createdAt: r.created_at,
+    }));
+  }
+
+  /** Powers the "Rebalanced on real headlines" ledger with real data end to end: the caller's
+   *  own actual trades (most recent per symbol, real $ amounts and real elfa-score reasons —
+   *  see nest-rebalance.service.ts), each paired with the most recent real X post elfa has
+   *  indexed for that ticker (link + author + engagement — a real post to click through to, not
+   *  a fabricated headline; see ElfaService.getRecentPost for why). */
+  async getLedger(userId: string, limit = 4): Promise<NestLedgerEvent[]> {
+    const trades = await this.getHistory(userId, 30);
+    const seenSymbols = new Set<string>();
+    const distinct: NestTradeView[] = [];
+    for (const t of trades) {
+      if (seenSymbols.has(t.symbol)) continue;
+      seenSymbols.add(t.symbol);
+      distinct.push(t);
+      if (distinct.length >= limit) break;
+    }
+    if (distinct.length === 0) return [];
+
+    const universe = await this.xstocks.getUniverse();
+    const bySymbol = new Map(universe.map(a => [a.symbol, a]));
+    const posts = await Promise.all(
+      distinct.map(t => {
+        const asset = bySymbol.get(t.symbol);
+        return asset ? this.elfa.getRecentPost(asset.underlyingSymbol) : Promise.resolve(null);
+      }),
+    );
+
+    return distinct.map((t, i) => ({
+      symbol: t.symbol,
+      name: bySymbol.get(t.symbol)?.name ?? t.symbol,
+      side: t.side,
+      usdValue: t.usdValue,
+      reason: t.reason,
+      createdAt: t.createdAt,
+      post: posts[i],
     }));
   }
 }

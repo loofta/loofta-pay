@@ -12,6 +12,13 @@ export interface SentimentResult {
   rawMentions: number;
 }
 
+export interface ElfaPost {
+  link: string;
+  username: string;
+  likeCount: number;
+  mentionedAt: string;
+}
+
 /**
  * A real anomaly z-score of mention velocity, not a guessed sentiment field. elfa's flagship
  * endpoint (`/v2/aggregations/trending-tokens`) is scoped to crypto assets — it won't recognize a
@@ -74,6 +81,33 @@ export class ElfaService {
     const baselineRatePerDay = baselineTotal / BASELINE_DAYS;
     const z = (recentTotal - baselineRatePerDay) / Math.sqrt(Math.max(baselineRatePerDay, 0.5));
     return { score: Math.tanh(z / 10), rawMentions: recentTotal };
+  }
+
+  /** Most recent real X post elfa has indexed mentioning this ticker — link + author + engagement,
+   *  verified live (2026-09-16): `/v2/data/token-news` returns actual posts (tweetId, link,
+   *  account, engagement counts), NOT article/headline text, so this surfaces the real post
+   *  itself (link out) rather than inventing a paraphrased "headline" elfa never gave us. Never
+   *  throws — null means "nothing to show," not an error. */
+  async getRecentPost(ticker: string): Promise<ElfaPost | null> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) return null;
+    try {
+      const params = new URLSearchParams({ coinTicker: ticker, pageSize: '1' });
+      const res = await fetch(`${ELFA_API_BASE}/v2/data/token-news?${params.toString()}`, { headers: { 'x-elfa-api-key': apiKey } });
+      if (!res.ok) return null;
+      const body = await res.json();
+      const post = body?.data?.[0];
+      if (!post?.link) return null;
+      return {
+        link: post.link,
+        username: post.account?.username ?? 'unknown',
+        likeCount: Number(post.likeCount) || 0,
+        mentionedAt: post.mentionedAt,
+      };
+    } catch (e: any) {
+      this.logger.warn(`getRecentPost(${ticker}) failed: ${e.message}`);
+      return null;
+    }
   }
 
   /** Refreshes the shared nest_sentiment_scores cache for the given universe. No-ops (leaves the

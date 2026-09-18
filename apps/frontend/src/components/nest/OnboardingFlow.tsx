@@ -132,10 +132,12 @@ export function OnboardingFlow({
   universe,
   onComplete,
   submitting,
+  dark = false,
 }: {
   universe: NestUniverseAsset[];
   onComplete: (riskTolerance: NestRiskTolerance, interestTags: string[], displayName: string) => void;
   submitting: boolean;
+  dark?: boolean;
 }) {
   const [step, setStep] = useState(0);
   const [a, setA] = useState<Answers>({ themes: [] });
@@ -160,7 +162,7 @@ export function OnboardingFlow({
   const finish = () => onComplete(PERSONA_RISK[persona], a.themes, a.name ?? "");
 
   return (
-    <div className="nob">
+    <div className={dark ? "nob nob-dark" : "nob"}>
       <div className="nob-wrap">
         <div className="nob-bar">
           <i style={{ width: `${pct}%` }} />

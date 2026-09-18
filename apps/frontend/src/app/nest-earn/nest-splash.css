@@ -1,6 +1,7 @@
 /* Loofta Nest splash — tokens + shared styles */
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500;600&display=swap');
-.ns-root{--paper:#faf7f2;--paper2:#f1ece3;--ink:#23211c;--ink2:#6b6558;--ink3:#9a9285;--line:rgba(35,33,28,.12);--line2:rgba(35,33,28,.07);--accent:oklch(0.45 0.05 165);--up:oklch(0.55 0.09 160);--down:oklch(0.58 0.1 30);--serif:'Instrument Serif',serif;--sans:'Instrument Sans',sans-serif;background:var(--paper);color:var(--ink);font-family:var(--sans)}
+.ns-root{--paper:#faf7f2;--paper2:#f1ece3;--ink:#23211c;--ink2:#6b6558;--ink3:#9a9285;--line:rgba(35,33,28,.12);--line2:rgba(35,33,28,.07);--accent:oklch(0.45 0.05 165);--up:oklch(0.55 0.09 160);--down:oklch(0.58 0.1 30);--serif:'Instrument Serif',serif;--sans:'Instrument Sans',sans-serif;--page-pad:64px;background:var(--paper);color:var(--ink);font-family:var(--sans);overflow-x:hidden}
+@media(max-width:640px){.ns-root{--page-pad:18px}}
 .ns-dark{--paper:#101613;--paper2:#0b100d;--ink:#f2f5f2;--ink2:#a8b5ad;--ink3:#6f7d75;--line:rgba(255,255,255,.14);--line2:rgba(255,255,255,.08);--accent:#4ade80;--up:#4ade80;--down:#e07a5f}
 .ns-root a{color:var(--accent);text-decoration:none}
 .ns-serif{font-family:var(--serif);font-weight:400}
@@ -24,4 +25,24 @@
 .ns-grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
 .ns-hero{display:grid;grid-template-columns:1fr 1.05fr;align-items:center;gap:12px}
 .ns-pricing{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:start}
-@media(max-width:900px){.ns-grid3,.ns-grid4,.ns-hero,.ns-pricing{grid-template-columns:1fr}.ns-hero h1{font-size:56px !important}}
+@media(max-width:900px){.ns-grid3,.ns-grid4,.ns-hero,.ns-pricing{grid-template-columns:1fr}.ns-hero h1{font-size:56px !important;line-height:1.1 !important}}
+
+.ns-nav-desktop{display:flex;align-items:center;gap:28px}
+.ns-header-actions{display:flex;align-items:center;gap:14px}
+.ns-burger{display:none;background:none;border:none;cursor:pointer;padding:8px;margin:-8px;color:var(--ink)}
+.ns-mobile-menu{position:fixed;inset:0;z-index:70;background:var(--paper);display:flex;flex-direction:column;animation:nsMenuIn .22s cubic-bezier(.22,1,.36,1)}
+@keyframes nsMenuIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.ns-mobile-menu-head{display:flex;align-items:center;justify-content:space-between;padding:22px var(--page-pad)}
+.ns-mobile-menu nav{display:flex;flex-direction:column;padding:8px var(--page-pad) 24px}
+.ns-mobile-menu nav a,.ns-mobile-menu .ns-mobile-link{display:block;width:100%;text-align:left;font-family:var(--serif);font-size:28px;padding:18px 0;border-bottom:1px solid var(--line2);color:var(--ink);background:none;border-left:none;border-right:none;border-top:none;cursor:pointer}
+.ns-mobile-menu .ns-btn{margin:6px var(--page-pad) 0;justify-content:center;padding:16px 30px;font-size:16px}
+
+@media(max-width:640px){
+  .ns-nav-desktop,.ns-header-actions>.ns-btn,.ns-header-actions>div{display:none}
+  .ns-burger{display:flex}
+  header{padding:20px var(--page-pad) !important}
+  .ns-card{border-radius:14px}
+  .ns-grid3,.ns-grid4{gap:12px}
+  .ns-hero{gap:22px}
+  .ns-press{gap:16px}
+}

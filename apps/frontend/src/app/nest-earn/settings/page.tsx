@@ -75,7 +75,7 @@ export default function NestSettingsPage() {
 
   return (
     <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "28px 64px" }}>
+      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "28px var(--page-pad)" }}>
         <Link href="/nest-earn" style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
           <NestLogo dark={dark} />
           <span className="ns-serif" style={{ fontStyle: "italic", color: "var(--accent)", fontSize: 17, lineHeight: 1 }}>Nest</span>
