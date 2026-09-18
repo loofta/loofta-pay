@@ -5417,6 +5417,46 @@ export class LotteryService {
   }
 
   /**
+   * Round lookup for the ticket a play-again creates. A single silently-swallowed failure here
+   * used to leave round_id NULL, which then made the NFT scan unscoped (see attachPlayAgainNfts).
+   */
+  private async getActiveRoundForPlayAgain(): Promise<{ roundId: string | null; drawTime: string | null }> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const round = await this.megapot.getActiveRound();
+        if (round?.id) return { roundId: String(round.id), drawTime: round.drawTime ?? null };
+      } catch {}
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    this.logger.warn('play-again: getActiveRound failed 3x — new ticket gets round_id NULL; NFT attach will rely on prior-ticket exclusion only');
+    return { roundId: null, drawTime: null };
+  }
+
+  /**
+   * Play-again reuses the companion, so unlike a fresh purchase its mint scan can see MORE than
+   * one purchase. Real incident: round_id was NULL, the scan came back unscoped, and the previous
+   * round's already-claimed winning NFTs were adopted into the new ticket — which double-counted
+   * the win and made every later claim revert with TokenDoesNotExist. Never adopt an NFT that
+   * already belongs to the ticket(s) just played, regardless of round scoping.
+   */
+  private async attachPlayAgainNfts(newTicketId: string, companion: Address, roundId: string | null, priorNftIds: string[]): Promise<void> {
+    const prior = new Set(priorNftIds);
+    const { tokenIds, ticketNumbers } = await this.megapot.getTicketNumbersFromNft(companion, roundId ?? undefined);
+    const fresh = tokenIds
+      .map((id, i) => ({ id, numbers: ticketNumbers[i] }))
+      .filter(t => !prior.has(t.id));
+    if (fresh.length !== tokenIds.length) {
+      this.logger.warn(`play-again ${newTicketId}: excluded ${tokenIds.length - fresh.length} NFT(s) already on the played ticket(s)`);
+    }
+    if (!fresh.length) return;
+    await this.supabase.getClient().from('lottery_tickets').update({
+      ticket_numbers: fresh.map(t => t.numbers),
+      ticket_nft_ids: fresh.map(t => t.id),
+      updated_at: new Date().toISOString(),
+    }).eq('id', newTicketId);
+  }
+
+  /**
    * "Play again" — claim winnings from a won ticket and immediately reinvest them into new Megapot
    * tickets on Base. Rounds UP to the next whole ticket (funding the <$1 gap from the fee wallet),
    * so the user keeps playing instead of leaving change. Returns the new ticket ID and count.
@@ -5519,8 +5559,7 @@ export class LotteryService {
     // Step 4: mark old ticket as withdrawn, create new active ticket record
     await db.from('lottery_tickets').update({ status: 'withdrawn', updated_at: new Date().toISOString() }).eq('id', ticket.id);
 
-    let roundId: string | null = null, drawTime: string | null = null;
-    try { const round = await this.megapot.getActiveRound(); roundId = round?.id ?? null; drawTime = round?.drawTime ?? null; } catch {}
+    const { roundId, drawTime } = await this.getActiveRoundForPlayAgain();
 
     const { data: newTicket, error } = await db
       .from('lottery_tickets')
@@ -5540,15 +5579,7 @@ export class LotteryService {
     if (error || !newTicket) throw new Error(`Failed to create new ticket record: ${error?.message}`);
 
     // Non-blocking: fetch new NFT numbers
-    this.megapot.getTicketNumbersFromNft(ticket.companion_address as Address, roundId ?? undefined)
-      .then(async ({ tokenIds, ticketNumbers }) => {
-        if (!tokenIds.length) return;
-        await db.from('lottery_tickets').update({
-          ticket_numbers: ticketNumbers,
-          ticket_nft_ids: tokenIds,
-          updated_at: new Date().toISOString(),
-        }).eq('id', newTicket.id);
-      })
+    this.attachPlayAgainNfts(newTicket.id, ticket.companion_address as Address, roundId, ticket.ticket_nft_ids ?? [])
       .catch(e => this.logger.warn(`playAgain: NFT number fetch for new ticket: ${e.message}`));
 
     this.logger.log(`playAgain ${opts.ticketId}: done — new ticket ${newTicket.id}, ${numTickets} tickets for round ${roundId}`);
@@ -5706,8 +5737,7 @@ export class LotteryService {
     const consolidatedIds = consolidated.map(c => c.ticket.id);
     await db.from('lottery_tickets').update({ status: 'withdrawn', updated_at: new Date().toISOString() }).in('id', consolidatedIds);
 
-    let roundId: string | null = null, drawTime: string | null = null;
-    try { const round = await this.megapot.getActiveRound(); roundId = round?.id ?? null; drawTime = round?.drawTime ?? null; } catch {}
+    const { roundId, drawTime } = await this.getActiveRoundForPlayAgain();
 
     const { data: newTicket, error } = await db
       .from('lottery_tickets')
@@ -5726,15 +5756,8 @@ export class LotteryService {
 
     if (error || !newTicket) throw new Error(`Failed to create new ticket record: ${error?.message}`);
 
-    this.megapot.getTicketNumbersFromNft(leadAddress, roundId ?? undefined)
-      .then(async ({ tokenIds, ticketNumbers }) => {
-        if (!tokenIds.length) return;
-        await db.from('lottery_tickets').update({
-          ticket_numbers: ticketNumbers,
-          ticket_nft_ids: tokenIds,
-          updated_at: new Date().toISOString(),
-        }).eq('id', newTicket.id);
-      })
+    const priorNftIds = consolidated.flatMap(c => (c.ticket.ticket_nft_ids ?? []) as string[]);
+    this.attachPlayAgainNfts(newTicket.id, leadAddress, roundId, priorNftIds)
       .catch(e => this.logger.warn(`playAgainBatch: NFT number fetch for new ticket: ${e.message}`));
 
     this.logger.log(`playAgainBatch: done — new ticket ${newTicket.id}, ${numTickets} tickets for round ${roundId} (consolidated ${consolidatedIds.length}/${tickets.length} tickets)`);
