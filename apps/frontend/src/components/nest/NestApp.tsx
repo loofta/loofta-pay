@@ -434,7 +434,7 @@ export default function NestApp() {
           </div>
           <div className="ns-grid4">
             {MARKET_EVENTS.map(e => (
-              <article key={e.co} className="ns-card" style={{ padding: "22px 24px" }}>
+              <article key={e.co} className="ns-card" style={{ padding: "var(--card-pad)" }}>
                 <div className="ns-outlet">
                   <img src={fav(e.domain)} alt={e.outlet} />
                   {e.outlet} · {e.date}
@@ -460,14 +460,14 @@ export default function NestApp() {
           </div>
         </div>
 
-        <section id="how" style={{ padding: "64px var(--page-pad) 0" }}>
+        <section id="how" style={{ padding: "var(--section-pad) var(--page-pad) 0" }}>
           {/* Illustrative, not a rigorous backtest: real move-% from the 4 events in the Event
               Ledger above, comparing a basket that ignores news to one that tilted 2x into the
               two highest-sentiment names the day before each move. Translated into a concrete
               dollar example (not "+9.5pp") because that's what "what would I win" actually means
               to someone who isn't fluent in percentage-point jargon. Leads before the 3-step
               explanation — a concrete payoff is a stronger opener than an abstract process. */}
-          <div className="ns-card" style={{ marginBottom: 24, padding: "26px 30px" }}>
+          <div className="ns-card" style={{ marginBottom: 24, padding: "var(--card-pad-lg)" }}>
             <div className="ns-serif" style={{ fontSize: 32, marginBottom: 4 }}>If you'd put in $1,000 before these 4 events</div>
             <p style={{ fontSize: 13.5, color: "var(--ink3)", marginBottom: 20, maxWidth: 620 }}>
               A simple example using the 4 real events above.
@@ -500,7 +500,7 @@ export default function NestApp() {
               ["02", "Get your nest", "We build a basket of tokenized stocks weighted to your profile. Every egg is a position; its size is its weight."],
               ["03", "We watch the news", "Our AI reads social sentiment around the clock. When a real event moves the market, your nest quietly rebalances — and it goes on the ledger."],
             ].map(([n, t, d]) => (
-              <div key={n} className="ns-card" style={{ padding: "30px 30px 34px" }}>
+              <div key={n} className="ns-card" style={{ padding: "var(--card-pad-lg)" }}>
                 <div className="ns-serif" style={{ fontSize: 56, color: "var(--accent)", lineHeight: 1 }}>{n}</div>
                 <div style={{ fontWeight: 600, fontSize: 19, margin: "14px 0 8px" }}>{t}</div>
                 <p style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--ink2)", margin: 0 }}>{d}</p>
@@ -513,8 +513,8 @@ export default function NestApp() {
             our rebalance only checks that signal once a day (nest-rebalance.service.ts runs on a
             daily cron) — say "once a day", not "in real time", to avoid the same overclaim
             already caught and fixed elsewhere on this page (pricing section, "reads the wires"). */}
-        <section id="elfa" style={{ padding: "56px var(--page-pad) 0" }}>
-          <div className="ns-card ns-hero" style={{ padding: "36px 40px", gap: 40 }}>
+        <section id="elfa" style={{ padding: "var(--section-pad) var(--page-pad) 0" }}>
+          <div className="ns-card ns-hero" style={{ padding: "var(--card-pad-lg)", gap: "clamp(22px, 5vw, 40px)" }}>
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
                 <img src={fav("elfa.ai")} alt="" style={{ width: 28, height: 28, borderRadius: 8 }} />
@@ -646,7 +646,7 @@ export default function NestApp() {
         </div>
 
         <section style={{ marginTop: 40 }}>
-          <div className="ns-card" style={{ padding: "22px 24px", marginBottom: 18 }}>
+          <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
             <div className="ns-serif" style={{ fontSize: 22, marginBottom: 4 }}>Basket</div>
             {basketExplanation && (
               <p style={{ fontSize: 13, lineHeight: 1.5, color: "var(--ink3)", margin: "0 0 14px", maxWidth: 620 }}>{basketExplanation}</p>
@@ -654,27 +654,27 @@ export default function NestApp() {
             <HoldingsBreakdown holdings={portfolio?.holdings ?? []} totalValueUsd={portfolio?.totalValueUsd ?? 0} />
           </div>
 
-          <div className="ns-card" style={{ padding: "22px 24px", marginBottom: 18 }}>
+          <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
             <div className="ns-serif" style={{ fontSize: 22, marginBottom: 12 }}>What the AI bought / sold on your behalf</div>
             <TradeHistoryList trades={history} />
           </div>
 
           {/* Least interesting day-to-day early on (barely any NAV history yet) — moved last so
               the more active sections (basket, trades) lead instead. */}
-          <div className="ns-card" style={{ padding: "22px 24px", marginBottom: 18 }}>
+          <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
             <div className="ns-serif" style={{ fontSize: 22, marginBottom: 12 }}>Performance</div>
             <NavChart points={portfolio?.navHistory ?? []} />
           </div>
         </section>
       </div>
 
-      <section id="ledger" style={{ padding: "40px var(--page-pad) 64px" }}>
+      <section id="ledger" style={{ padding: "40px var(--page-pad) var(--section-pad)" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
           <div className="ns-serif" style={{ fontSize: 26 }}>Rebalanced on real headlines</div>
           <div style={{ fontSize: 13, color: "var(--ink3)" }}>Your own trades, each paired with the real elfa-sourced X post behind it</div>
         </div>
         {ledger.length === 0 ? (
-          <div className="ns-card" style={{ padding: "22px 24px" }}>
+          <div className="ns-card" style={{ padding: "var(--card-pad)" }}>
             <p style={{ fontSize: 14, color: "var(--ink3)" }}>No rebalances yet — this fills in after your first one runs, shortly after you deposit.</p>
           </div>
         ) : (
@@ -682,7 +682,7 @@ export default function NestApp() {
             {ledger.map(e => {
               const up = e.side === "buy";
               return (
-                <article key={`${e.symbol}-${e.createdAt}`} className="ns-card" style={{ padding: "22px 24px" }}>
+                <article key={`${e.symbol}-${e.createdAt}`} className="ns-card" style={{ padding: "var(--card-pad)" }}>
                   <div className="ns-outlet">
                     <img src={fav(tickerDomain(e.symbol))} alt={e.symbol} />
                     {e.post ? `@${e.post.username} on X` : "elfa.ai"} · {new Date(e.createdAt).toLocaleDateString()}

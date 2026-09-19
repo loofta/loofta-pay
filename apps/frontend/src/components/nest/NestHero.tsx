@@ -39,7 +39,12 @@ export default function NestHero({ stocks = DEFAULT_STOCKS, height = 470, labelS
     const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
     const range = (a: number, b: number) => a + (b - a) * rnd();
 
-    const w = wrap.clientWidth, h = height;
+    // On a narrow (phone) column a fixed-height canvas is mostly empty space above and below the
+    // nest, because fitCamera dollies out to keep it in frame. Cap the height to the design
+    // aspect (620/470) instead so the nest fills the frame; the wrapper div follows suit.
+    const heightFor = (width: number) => Math.min(height, Math.round(width / (620 / 470)));
+    const w = wrap.clientWidth, h = heightFor(w);
+    wrap.style.height = `${h}px`;
     // Camera framing was tuned for the kit's ~1.3 (620/470) desktop aspect ratio. On mobile,
     // .ns-hero collapses to a single narrow column, so the raw width/height ratio drops well
     // below that (often <0.9) — with a fixed FOV, a narrower aspect shrinks the horizontal
@@ -298,8 +303,10 @@ export default function NestHero({ stocks = DEFAULT_STOCKS, height = 470, labelS
     const resizeObserver = new ResizeObserver(entries => {
       const cw = entries[0]?.contentRect.width;
       if (!cw || cw === renderer.domElement.clientWidth) return;
-      fitCamera(cw, height);
-      renderer.setSize(cw, height, false);
+      const ch = heightFor(cw);
+      wrap.style.height = `${ch}px`;
+      fitCamera(cw, ch);
+      renderer.setSize(cw, ch, false);
     });
     resizeObserver.observe(wrap);
 

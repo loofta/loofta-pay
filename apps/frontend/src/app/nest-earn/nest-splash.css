@@ -1,7 +1,10 @@
 /* Loofta Nest splash — tokens + shared styles */
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500;600&display=swap');
-.ns-root{--paper:#faf7f2;--paper2:#f1ece3;--ink:#23211c;--ink2:#6b6558;--ink3:#9a9285;--line:rgba(35,33,28,.12);--line2:rgba(35,33,28,.07);--accent:oklch(0.45 0.05 165);--up:oklch(0.55 0.09 160);--down:oklch(0.58 0.1 30);--serif:'Instrument Serif',serif;--sans:'Instrument Sans',sans-serif;--page-pad:64px;background:var(--paper);color:var(--ink);font-family:var(--sans);overflow-x:hidden}
-@media(max-width:640px){.ns-root{--page-pad:18px}}
+.ns-root{--paper:#faf7f2;--paper2:#f1ece3;--ink:#23211c;--ink2:#6b6558;--ink3:#9a9285;--line:rgba(35,33,28,.12);--line2:rgba(35,33,28,.07);--accent:oklch(0.45 0.05 165);--up:oklch(0.55 0.09 160);--down:oklch(0.58 0.1 30);--serif:'Instrument Serif',serif;--sans:'Instrument Sans',sans-serif;--page-pad:64px;--card-pad:22px 24px;--card-pad-lg:30px 32px;--section-pad:64px;background:var(--paper);color:var(--ink);font-family:var(--sans);overflow-x:hidden}
+/* Card/section paddings are inline in the TSX (so a plain .ns-card media rule can't beat them);
+   they read these vars instead, which is what lets the same card breathe on desktop and sit
+   tight on a phone. */
+@media(max-width:640px){.ns-root{--page-pad:16px;--card-pad:16px 16px;--card-pad-lg:20px 18px;--section-pad:40px}}
 .ns-dark{--paper:#101613;--paper2:#0b100d;--ink:#f2f5f2;--ink2:#a8b5ad;--ink3:#6f7d75;--line:rgba(255,255,255,.14);--line2:rgba(255,255,255,.08);--accent:#4ade80;--up:#4ade80;--down:#e07a5f}
 .ns-root a{color:var(--accent);text-decoration:none}
 .ns-serif{font-family:var(--serif);font-weight:400}

@@ -114,7 +114,7 @@ export default function NestSettingsPage() {
             <div style={{ marginBottom: 28 }}>
               <p style={{ fontWeight: 600, fontSize: 15, marginBottom: 12 }}>Your investing vibe</p>
               {retaking ? (
-                <div className="ns-card" style={{ padding: "20px 22px" }}>
+                <div className="ns-card" style={{ padding: "var(--card-pad)" }}>
                   <VibeQuiz
                     onDone={p => {
                       setPersona(p);
@@ -123,7 +123,7 @@ export default function NestSettingsPage() {
                   />
                 </div>
               ) : (
-                <div className="ns-card" style={{ padding: "18px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+                <div className="ns-card" style={{ padding: "var(--card-pad)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
                   <div>
                     <p style={{ fontWeight: 600, fontSize: 15 }}>{VIBES[persona][0]}</p>
                     <p style={{ fontSize: 13, color: "var(--ink3)", marginTop: 3 }}>{VIBES[persona][1]}</p>
