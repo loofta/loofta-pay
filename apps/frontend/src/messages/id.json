@@ -59,6 +59,11 @@
     "refreshList": "Segarkan daftar",
     "search": "Cari",
     "sendAgain": "Kirim lagi",
+    "claimAllTitle": "Klaim semua {count} yang belum diklaim",
+    "claimAllProgress": "Mengklaim {current} dari {total}…",
+    "claimAllRetry": "Coba lagi {count} yang gagal",
+    "claimAllFailedBadge": "Gagal",
+    "claimAllClaimingBadge": "Mengklaim…",
     "status": {
       "SUCCESS": "Dibayar",
       "PRIVATE_TRANSFER_PENDING": "Belum diklaim",
@@ -76,6 +81,8 @@
     "amountWaiting": "${amount} menunggu Anda.",
     "claimOne": "Klaim",
     "claimMany": "Klaim semua",
+    "claimingProgress": "Mengklaim {current} dari {total}…",
+    "retryFailed": "Coba lagi {count} yang gagal",
     "dismiss": "Tutup"
   },
   "UnclaimedGiftToast": {

@@ -58,6 +58,11 @@
     "refreshList": "सूची रिफ्रेश करें",
     "search": "खोजें",
     "sendAgain": "फिर से भेजें",
+    "claimAllTitle": "सभी {count} अनक्लेम्ड क्लेम करें",
+    "claimAllProgress": "{total} में से {current} क्लेम हो रहा है…",
+    "claimAllRetry": "{count} विफल पुनः प्रयास करें",
+    "claimAllFailedBadge": "विफल",
+    "claimAllClaimingBadge": "क्लेम हो रहा है…",
     "status": {
       "SUCCESS": "भुगतान हुआ",
       "PRIVATE_TRANSFER_PENDING": "अनक्लेम्ड",
@@ -75,6 +80,8 @@
     "amountWaiting": "${amount} आपका इंतज़ार कर रहे हैं।",
     "claimOne": "क्लेम करें",
     "claimMany": "सभी क्लेम करें",
+    "claimingProgress": "{total} में से {current} क्लेम हो रहा है…",
+    "retryFailed": "{count} विफल पुनः प्रयास करें",
     "dismiss": "बंद करें"
   },
   "UnclaimedGiftToast": {

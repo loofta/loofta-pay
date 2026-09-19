@@ -59,6 +59,11 @@
     "refreshList": "刷新列表",
     "search": "搜索",
     "sendAgain": "再次发送",
+    "claimAllTitle": "领取全部 {count} 笔未领取",
+    "claimAllProgress": "正在领取第 {current} 笔，共 {total} 笔…",
+    "claimAllRetry": "重试 {count} 笔失败",
+    "claimAllFailedBadge": "失败",
+    "claimAllClaimingBadge": "领取中…",
     "status": {
       "SUCCESS": "已付款",
       "PRIVATE_TRANSFER_PENDING": "未认领",
@@ -76,6 +81,8 @@
     "amountWaiting": "${amount} 等待您领取。",
     "claimOne": "领取",
     "claimMany": "全部领取",
+    "claimingProgress": "正在领取第 {current} 笔，共 {total} 笔…",
+    "retryFailed": "重试 {count} 笔失败",
     "dismiss": "关闭"
   },
   "UnclaimedGiftToast": {

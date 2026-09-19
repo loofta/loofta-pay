@@ -11,6 +11,7 @@ import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
 import { ArrowDown, ArrowUp, Repeat } from "lucide-react";
 import { useTranslations, useLocale } from "next-intl";
 import { PrivacyGlyph } from "@/components/PrivacyGlyph";
+import { useBulkClaim } from "@/hooks/useBulkClaim";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
@@ -238,6 +239,7 @@ export default function HistoryPage() {
   const { authenticated, userId } = useAuth();
   const { login: privyLogin, getAccessToken } = usePrivy();
   const networkMode = useAuthStore((s) => s.networkMode);
+  const { start: startBulkClaim, statuses: bulkClaimStatuses, isRunning: bulkClaimRunning } = useBulkClaim();
 
   const getStatusLabel = (status: string): string => {
     const key = String(status || "").toUpperCase() as StatusKey;
@@ -310,6 +312,17 @@ export default function HistoryPage() {
     });
     return list;
   }, [sent, received]);
+
+  // Received payments funded but not yet swept to the recipient's wallet — same signal the
+  // "Unclaimed" sort above relies on, kept as its own list so a "Claim all" action can target
+  // exactly these without re-deriving it from allPayments' mixed sent/received shape.
+  const unclaimedReceived = useMemo(
+    () =>
+      received.filter(
+        (claim) => String(claim.status).toUpperCase() === "PRIVATE_TRANSFER_PENDING" && !!claim.paid_at,
+      ),
+    [received],
+  );
 
   const filteredPayments = useMemo(() => {
     let list = allPayments;
@@ -488,6 +501,39 @@ export default function HistoryPage() {
                     className="w-full mb-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-slate-500 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-white/20"
                   />
                 )}
+                {unclaimedReceived.length > 1 && (() => {
+                  const failed = unclaimedReceived.filter((c) => bulkClaimStatuses.get(c.id) === "failed");
+                  const hasRunOnce = bulkClaimStatuses.size > 0 && !bulkClaimRunning;
+                  const showRetry = hasRunOnce && failed.length > 0;
+                  const settledCount = unclaimedReceived.filter((c) => {
+                    const s = bulkClaimStatuses.get(c.id);
+                    return s === "success" || s === "failed";
+                  }).length;
+                  const activeBatchSize = bulkClaimRunning ? bulkClaimStatuses.size : unclaimedReceived.length;
+                  const currentStep = Math.min(settledCount + 1, activeBatchSize);
+                  return (
+                    <button
+                      type="button"
+                      disabled={bulkClaimRunning}
+                      onClick={() =>
+                        void startBulkClaim(
+                          (showRetry ? failed : unclaimedReceived).map((c) => ({
+                            id: c.id,
+                            short_id: c.short_id ?? null,
+                            amount: c.amount,
+                          })),
+                        )
+                      }
+                      className="mb-3 w-full flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-base font-medium bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 transition-opacity disabled:opacity-60"
+                    >
+                      {bulkClaimRunning
+                        ? t('claimAllProgress', { current: currentStep, total: activeBatchSize })
+                        : showRetry
+                          ? t('claimAllRetry', { count: failed.length })
+                          : t('claimAllTitle', { count: unclaimedReceived.length })}
+                    </button>
+                  );
+                })()}
                 {allPayments.length === 0 ? (
                   <p className="text-slate-500 text-base">{t('noPayments')}</p>
                 ) : filteredPayments.length === 0 ? (
@@ -522,6 +568,23 @@ export default function HistoryPage() {
                             sendAgainTarget.platform ? `&platform=${sendAgainTarget.platform}` : ""
                           }`
                         : null;
+                      // Overlays the row's normal status badge while a "Claim all" run is touching
+                      // this specific claim, so progress is visible per-row and not just on the bar.
+                      const bulkClaimStatus = type === "received" ? bulkClaimStatuses.get(claim.id) : undefined;
+                      const statusBadgeClass = bulkClaimStatus
+                        ? bulkClaimStatus === "success"
+                          ? getStatusBadgeClass("SUCCESS")
+                          : bulkClaimStatus === "failed"
+                            ? getStatusBadgeClass("EXPIRED")
+                            : "bg-blue-500/20 text-blue-400 border-blue-500/30"
+                        : getStatusBadgeClass(claim.status || "");
+                      const statusBadgeLabel = bulkClaimStatus
+                        ? bulkClaimStatus === "success"
+                          ? getStatusLabel("SUCCESS")
+                          : bulkClaimStatus === "failed"
+                            ? t('claimAllFailedBadge')
+                            : t('claimAllClaimingBadge')
+                        : getStatusLabel(claim.status || "");
                       return (
                         <li key={`${type}-${claim.id}`} className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
                           <Link
@@ -569,9 +632,9 @@ export default function HistoryPage() {
                                 })}
                               </span>
                               <span
-                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${getStatusBadgeClass(claim.status || "")}`}
+                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${statusBadgeClass}`}
                               >
-                                {getStatusLabel(claim.status || "")}
+                                {statusBadgeLabel}
                               </span>
                             </div>
                           </Link>

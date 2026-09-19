@@ -59,6 +59,11 @@
     "refreshList": "Liste aktualisieren",
     "search": "Suchen",
     "sendAgain": "Erneut senden",
+    "claimAllTitle": "Alle {count} nicht beanspruchten einlösen",
+    "claimAllProgress": "Beanspruche {current} von {total}…",
+    "claimAllRetry": "{count} fehlgeschlagene erneut versuchen",
+    "claimAllFailedBadge": "Fehlgeschlagen",
+    "claimAllClaimingBadge": "Wird beansprucht…",
     "status": {
       "SUCCESS": "Bezahlt",
       "PRIVATE_TRANSFER_PENDING": "Nicht beansprucht",
@@ -76,6 +81,8 @@
     "amountWaiting": "${amount} warten auf Sie.",
     "claimOne": "Beanspruchen",
     "claimMany": "Beanspruchen",
+    "claimingProgress": "Beanspruche {current} von {total}…",
+    "retryFailed": "{count} fehlgeschlagene erneut versuchen",
     "dismiss": "Schließen"
   },
   "UnclaimedGiftToast": {

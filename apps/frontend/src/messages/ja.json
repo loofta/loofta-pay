@@ -59,6 +59,11 @@
     "refreshList": "リストを更新",
     "search": "検索",
     "sendAgain": "再送信",
+    "claimAllTitle": "未受け取りの{count}件をすべて受け取る",
+    "claimAllProgress": "{total}件中{current}件を受け取り中…",
+    "claimAllRetry": "失敗した{count}件を再試行",
+    "claimAllFailedBadge": "失敗",
+    "claimAllClaimingBadge": "受け取り中…",
     "status": {
       "SUCCESS": "支払済み",
       "PRIVATE_TRANSFER_PENDING": "未請求",
@@ -76,6 +81,8 @@
     "amountWaiting": "${amount} が受け取り待ちです。",
     "claimOne": "受け取る",
     "claimMany": "すべて受け取る",
+    "claimingProgress": "{total}件中{current}件を受け取り中…",
+    "retryFailed": "失敗した{count}件を再試行",
     "dismiss": "閉じる"
   },
   "UnclaimedGiftToast": {

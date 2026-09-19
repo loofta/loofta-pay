@@ -59,6 +59,11 @@
     "refreshList": "I-refresh ang listahan",
     "search": "Maghanap",
     "sendAgain": "Ipadala ulit",
+    "claimAllTitle": "Kunin lahat ng {count} na hindi pa nakukuha",
+    "claimAllProgress": "Kinukuha ang {current} sa {total}…",
+    "claimAllRetry": "Subukan muli ang {count} na nabigo",
+    "claimAllFailedBadge": "Nabigo",
+    "claimAllClaimingBadge": "Kinukuha…",
     "status": {
       "SUCCESS": "Nabayaran",
       "PRIVATE_TRANSFER_PENDING": "Hindi pa nire-claim",
@@ -76,6 +81,8 @@
     "amountWaiting": "Naghihintay ang ${amount} sa'yo.",
     "claimOne": "Kunin ito",
     "claimMany": "Kunin ang mga ito",
+    "claimingProgress": "Kinukuha ang {current} sa {total}…",
+    "retryFailed": "Subukan muli ang {count} na nabigo",
     "dismiss": "Isara"
   },
   "UnclaimedGiftToast": {

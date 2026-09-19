@@ -59,6 +59,11 @@
     "refreshList": "Refresh list",
     "search": "Search",
     "sendAgain": "Send again",
+    "claimAllTitle": "Claim all {count} unclaimed",
+    "claimAllProgress": "Claiming {current} of {total}…",
+    "claimAllRetry": "Retry {count} failed",
+    "claimAllFailedBadge": "Failed",
+    "claimAllClaimingBadge": "Claiming…",
     "status": {
       "SUCCESS": "Paid",
       "PRIVATE_TRANSFER_PENDING": "Unclaimed",
@@ -76,6 +81,8 @@
     "amountWaiting": "${amount} waiting for you to claim.",
     "claimOne": "Claim it",
     "claimMany": "Claim them",
+    "claimingProgress": "Claiming {current} of {total}…",
+    "retryFailed": "Retry {count} failed",
     "dismiss": "Dismiss"
   },
   "UnclaimedGiftToast": {

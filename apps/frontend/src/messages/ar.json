@@ -59,6 +59,11 @@
     "refreshList": "تحديث القائمة",
     "search": "بحث",
     "sendAgain": "إرسال مرة أخرى",
+    "claimAllTitle": "المطالبة بجميع {count} غير المطالَب بها",
+    "claimAllProgress": "جارٍ المطالبة بـ {current} من {total}…",
+    "claimAllRetry": "إعادة محاولة {count} فشلت",
+    "claimAllFailedBadge": "فشل",
+    "claimAllClaimingBadge": "جارٍ المطالبة…",
     "status": {
       "SUCCESS": "مدفوع",
       "PRIVATE_TRANSFER_PENDING": "لم يُطالَب به",
@@ -76,6 +81,8 @@
     "amountWaiting": "${amount} في انتظارك.",
     "claimOne": "المطالبة",
     "claimMany": "المطالبة بالكل",
+    "claimingProgress": "جارٍ المطالبة بـ {current} من {total}…",
+    "retryFailed": "إعادة محاولة {count} فشلت",
     "dismiss": "إغلاق"
   },
   "UnclaimedGiftToast": {

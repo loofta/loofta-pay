@@ -59,6 +59,11 @@
     "refreshList": "Atualizar lista",
     "search": "Buscar",
     "sendAgain": "Enviar novamente",
+    "claimAllTitle": "Resgatar todos os {count} não resgatados",
+    "claimAllProgress": "Resgatando {current} de {total}…",
+    "claimAllRetry": "Tentar novamente {count} com falha",
+    "claimAllFailedBadge": "Falhou",
+    "claimAllClaimingBadge": "Resgatando…",
     "status": {
       "SUCCESS": "Pago",
       "PRIVATE_TRANSFER_PENDING": "Não resgatado",
@@ -76,6 +81,8 @@
     "amountWaiting": "${amount} esperando por você.",
     "claimOne": "Resgatar",
     "claimMany": "Resgatar",
+    "claimingProgress": "Resgatando {current} de {total}…",
+    "retryFailed": "Tentar novamente {count} com falha",
     "dismiss": "Fechar"
   },
   "UnclaimedGiftToast": {

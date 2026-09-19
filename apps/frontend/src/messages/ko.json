@@ -59,6 +59,11 @@
     "refreshList": "목록 새로고침",
     "search": "검색",
     "sendAgain": "다시 보내기",
+    "claimAllTitle": "미수령 {count}건 모두 받기",
+    "claimAllProgress": "{total}건 중 {current}건 수령 중…",
+    "claimAllRetry": "실패한 {count}건 재시도",
+    "claimAllFailedBadge": "실패",
+    "claimAllClaimingBadge": "수령 중…",
     "status": {
       "SUCCESS": "결제됨",
       "PRIVATE_TRANSFER_PENDING": "미청구",
@@ -76,6 +81,8 @@
     "amountWaiting": "${amount}가 당신을 기다리고 있습니다.",
     "claimOne": "받기",
     "claimMany": "모두 받기",
+    "claimingProgress": "{total}건 중 {current}건 수령 중…",
+    "retryFailed": "실패한 {count}건 재시도",
     "dismiss": "닫기"
   },
   "UnclaimedGiftToast": {

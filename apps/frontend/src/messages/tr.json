@@ -59,6 +59,11 @@
     "refreshList": "Listeyi yenile",
     "search": "Ara",
     "sendAgain": "Tekrar gönder",
+    "claimAllTitle": "{count} talep edilmemişin tümünü talep et",
+    "claimAllProgress": "{current}/{total} talep ediliyor…",
+    "claimAllRetry": "{count} başarısızı yeniden dene",
+    "claimAllFailedBadge": "Başarısız",
+    "claimAllClaimingBadge": "Talep ediliyor…",
     "status": {
       "SUCCESS": "Ödendi",
       "PRIVATE_TRANSFER_PENDING": "Talep edilmedi",
@@ -76,6 +81,8 @@
     "amountWaiting": "${amount} sizi bekliyor.",
     "claimOne": "Talep et",
     "claimMany": "Talep et",
+    "claimingProgress": "{current}/{total} talep ediliyor…",
+    "retryFailed": "{count} başarısızı yeniden dene",
     "dismiss": "Kapat"
   },
   "UnclaimedGiftToast": {

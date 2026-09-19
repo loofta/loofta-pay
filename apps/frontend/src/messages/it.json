@@ -59,6 +59,11 @@
     "refreshList": "Aggiorna lista",
     "search": "Cerca",
     "sendAgain": "Invia di nuovo",
+    "claimAllTitle": "Riscuoti tutti i {count} non riscossi",
+    "claimAllProgress": "Riscossione {current} di {total}…",
+    "claimAllRetry": "Riprova {count} non riuscite",
+    "claimAllFailedBadge": "Non riuscito",
+    "claimAllClaimingBadge": "Riscossione…",
     "status": {
       "SUCCESS": "Pagato",
       "PRIVATE_TRANSFER_PENDING": "Non reclamato",
@@ -76,6 +81,8 @@
     "amountWaiting": "${amount} ti stanno aspettando.",
     "claimOne": "Riscuoti",
     "claimMany": "Riscuoti",
+    "claimingProgress": "Riscossione {current} di {total}…",
+    "retryFailed": "Riprova {count} non riuscite",
     "dismiss": "Chiudi"
   },
   "UnclaimedGiftToast": {

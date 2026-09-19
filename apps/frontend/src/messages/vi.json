@@ -59,6 +59,11 @@
     "refreshList": "Làm mới danh sách",
     "search": "Tìm kiếm",
     "sendAgain": "Gửi lại",
+    "claimAllTitle": "Nhận tất cả {count} khoản chưa nhận",
+    "claimAllProgress": "Đang nhận {current}/{total}…",
+    "claimAllRetry": "Thử lại {count} lượt thất bại",
+    "claimAllFailedBadge": "Thất bại",
+    "claimAllClaimingBadge": "Đang nhận…",
     "status": {
       "SUCCESS": "Đã thanh toán",
       "PRIVATE_TRANSFER_PENDING": "Chưa nhận",
@@ -76,6 +81,8 @@
     "amountWaiting": "${amount} đang chờ bạn.",
     "claimOne": "Nhận ngay",
     "claimMany": "Nhận tất cả",
+    "claimingProgress": "Đang nhận {current}/{total}…",
+    "retryFailed": "Thử lại {count} lượt thất bại",
     "dismiss": "Đóng"
   },
   "UnclaimedGiftToast": {
