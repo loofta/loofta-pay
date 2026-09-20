@@ -9,6 +9,25 @@ export interface NestProfile {
   displayName: string | null;
   riskTolerance: NestRiskTolerance;
   interestTags: string[];
+  goalUsd: number | null;
+}
+
+export interface NestDepositView {
+  amountUsdc: number;
+  network: 'mainnet' | 'devnet';
+  txHash: string;
+  createdAt: string;
+}
+
+/** Weekly deposit streak. `alive` means the current week hasn't been missed yet (a week with
+ *  no deposit only breaks the streak once it's over). One skipped week per rolling 4 is
+ *  forgiven ("warm egg") — the forgiveness, not the counter, is what keeps people from quitting
+ *  after one miss. */
+export interface NestStreak {
+  weeks: number;
+  alive: boolean;
+  freezeUsed: boolean;
+  depositedThisWeek: boolean;
 }
 
 export interface NestHoldingView {
@@ -29,6 +48,8 @@ export interface NestPortfolio {
   pnlUsd: number;
   pnlPct: number;
   navHistory: Array<{ date: string; totalValueUsd: number; totalCostUsd: number }>;
+  /** False when every price is a last-known quote (markets closed / issuer feed down). */
+  quotesLive: boolean;
 }
 
 export interface NestTradeView {
@@ -67,13 +88,13 @@ export class NestService {
 
   async getProfile(userId: string): Promise<NestProfile | null> {
     const db = this.supabase.getClient();
-    const { data, error } = await db.from('nest_profiles').select('display_name, risk_tolerance, interest_tags').eq('user_id', userId).maybeSingle();
+    const { data, error } = await db.from('nest_profiles').select('display_name, risk_tolerance, interest_tags, goal_usd').eq('user_id', userId).maybeSingle();
     if (error) throw new Error(`getProfile: ${error.message}`);
     if (!data) return null;
-    return { displayName: data.display_name, riskTolerance: data.risk_tolerance, interestTags: data.interest_tags ?? [] };
+    return { displayName: data.display_name, riskTolerance: data.risk_tolerance, interestTags: data.interest_tags ?? [], goalUsd: data.goal_usd === null ? null : Number(data.goal_usd) };
   }
 
-  async upsertProfile(userId: string, riskTolerance: string, interestTags: string[], displayName?: string | null): Promise<NestProfile> {
+  async upsertProfile(userId: string, riskTolerance: string, interestTags: string[], displayName?: string | null, goalUsd?: number | null): Promise<NestProfile> {
     if (!VALID_RISK.includes(riskTolerance as NestRiskTolerance)) {
       throw new BadRequestException(`riskTolerance must be one of ${VALID_RISK.join(', ')}`);
     }
@@ -81,21 +102,64 @@ export class NestService {
     // initial, header) renders forever; treat an empty/whitespace-only value as "not set" rather
     // than persisting a blank string.
     const cleanedName = displayName?.trim().slice(0, 40) || null;
+    const cleanedGoal = goalUsd !== undefined && goalUsd !== null && Number.isFinite(goalUsd) && goalUsd > 0 ? Math.round(goalUsd * 100) / 100 : null;
     const db = this.supabase.getClient();
-    const { error } = await db
-      .from('nest_profiles')
-      .upsert(
-        { user_id: userId, display_name: cleanedName, risk_tolerance: riskTolerance, interest_tags: interestTags, updated_at: new Date().toISOString() },
-        { onConflict: 'user_id' },
-      );
+    // goal_usd is only written when the caller sent one — an onboarding/settings save that
+    // doesn't mention the goal must not wipe an existing one.
+    const row: Record<string, unknown> = { user_id: userId, display_name: cleanedName, risk_tolerance: riskTolerance, interest_tags: interestTags, updated_at: new Date().toISOString() };
+    if (goalUsd !== undefined) row.goal_usd = cleanedGoal;
+    const { data, error } = await db.from('nest_profiles').upsert(row, { onConflict: 'user_id' }).select('goal_usd').single();
     if (error) throw new Error(`upsertProfile: ${error.message}`);
-    return { displayName: cleanedName, riskTolerance: riskTolerance as NestRiskTolerance, interestTags };
+    return { displayName: cleanedName, riskTolerance: riskTolerance as NestRiskTolerance, interestTags, goalUsd: data?.goal_usd === null || data?.goal_usd === undefined ? null : Number(data.goal_usd) };
+  }
+
+  async getDeposits(userId: string): Promise<NestDepositView[]> {
+    const db = this.supabase.getClient();
+    const { data, error } = await db.from('nest_deposits').select('amount_usdc, network, tx_hash, created_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(200);
+    if (error) throw new Error(`getDeposits: ${error.message}`);
+    return (data ?? []).map(r => ({ amountUsdc: Number(r.amount_usdc), network: r.network, txHash: r.tx_hash, createdAt: r.created_at }));
+  }
+
+  async getStreak(userId: string): Promise<NestStreak> {
+    const deposits = await this.getDeposits(userId);
+    const WEEK_MS = 7 * 24 * 60 * 60_000;
+    // Week index relative to a fixed Monday epoch (1970-01-05 was a Monday), UTC.
+    const weekOf = (t: number) => Math.floor((t - 4 * 24 * 60 * 60_000) / WEEK_MS);
+    const thisWeek = weekOf(Date.now());
+    const weeks = new Set(deposits.map(d => weekOf(new Date(d.createdAt).getTime())));
+    const depositedThisWeek = weeks.has(thisWeek);
+
+    // Walk back from the most recent completed-or-current week with a deposit, allowing one
+    // skipped week per rolling 4 (the "warm egg" freeze).
+    let cursor = depositedThisWeek ? thisWeek : thisWeek - 1;
+    let count = 0;
+    let freezeUsed = false;
+    let lastFreezeAt: number | null = null;
+    while (true) {
+      if (weeks.has(cursor)) {
+        count++;
+        cursor--;
+        continue;
+      }
+      const canFreeze = count > 0 && (lastFreezeAt === null || lastFreezeAt - cursor >= 4);
+      if (canFreeze && weeks.has(cursor - 1)) {
+        freezeUsed = true;
+        lastFreezeAt = cursor;
+        cursor--;
+        continue;
+      }
+      break;
+    }
+    const alive = count > 0;
+    return { weeks: count, alive, freezeUsed, depositedThisWeek };
   }
 
   async getPortfolio(userId: string): Promise<NestPortfolio> {
     const db = this.supabase.getClient();
     const [{ data: holdingsRows, error: holdingsErr }, { data: navRows, error: navErr }] = await Promise.all([
-      db.from('nest_holdings').select('symbol, units, avg_cost_usd').eq('user_id', userId).gt('units', 0),
+      // neq, not gt: a negative USD row (cash overdrawn by a past rebalance bug) must still count
+      // against total value rather than silently disappearing from the dashboard.
+      db.from('nest_holdings').select('symbol, units, avg_cost_usd').eq('user_id', userId).neq('units', 0),
       db.from('nest_nav_snapshots').select('snapshot_date, total_value_usd, total_cost_usd').eq('user_id', userId).order('snapshot_date', { ascending: true }).limit(365),
     ]);
     if (holdingsErr) throw new Error(`getPortfolio holdings: ${holdingsErr.message}`);
@@ -107,17 +171,22 @@ export class NestService {
     // it (see nest-deposit.service.ts's verifyAndCredit) — not a real xStock ticker, so it has
     // no price to look up and is always worth exactly its own unit count.
     const symbols = (holdingsRows ?? []).map(r => r.symbol).filter(s => s !== 'USD');
-    const prices = await this.xstocks.getPrices(symbols);
+    const { prices, live: quotesLive } = await this.xstocks.getPricesWithMeta(symbols);
 
     let totalValueUsd = 0;
     let totalCostUsd = 0;
     const holdings: NestHoldingView[] = (holdingsRows ?? []).map(row => {
       const units = Number(row.units);
       const avgCostUsd = Number(row.avg_cost_usd);
-      const currentPrice = row.symbol === 'USD' ? 1 : prices.get(row.symbol) ?? null;
-      const valueUsd = currentPrice !== null ? units * currentPrice : null;
+      const livePrice = prices.get(row.symbol);
+      const currentPrice = row.symbol === 'USD' ? 1 : livePrice && livePrice > 0 ? livePrice : null;
+      // A position whose live quote failed on this call is still worth roughly what it cost —
+      // valuing it at $0 while still counting its cost manufactured a phantom -30% on the
+      // dashboard whenever a few Backed price calls were rate-limited. currentPrice stays null so
+      // the UI can flag "quote unavailable" without the total collapsing.
+      const valueUsd = units * (currentPrice ?? avgCostUsd);
       const costUsd = units * avgCostUsd;
-      if (valueUsd !== null) totalValueUsd += valueUsd;
+      totalValueUsd += valueUsd;
       totalCostUsd += costUsd;
       return {
         symbol: row.symbol,
@@ -126,8 +195,8 @@ export class NestService {
         avgCostUsd,
         currentPrice,
         valueUsd,
-        pnlUsd: valueUsd !== null ? valueUsd - costUsd : null,
-        pnlPct: valueUsd !== null && costUsd > 0 ? (valueUsd - costUsd) / costUsd : null,
+        pnlUsd: valueUsd - costUsd,
+        pnlPct: costUsd > 0 ? (valueUsd - costUsd) / costUsd : null,
       };
     });
 
@@ -138,6 +207,7 @@ export class NestService {
       pnlUsd: totalValueUsd - totalCostUsd,
       pnlPct: totalCostUsd > 0 ? (totalValueUsd - totalCostUsd) / totalCostUsd : 0,
       navHistory: (navRows ?? []).map(r => ({ date: r.snapshot_date, totalValueUsd: Number(r.total_value_usd), totalCostUsd: Number(r.total_cost_usd) })),
+      quotesLive: symbols.length === 0 ? true : quotesLive,
     };
   }
 
@@ -185,7 +255,7 @@ export class NestService {
     const posts = await Promise.all(
       distinct.map(t => {
         const asset = bySymbol.get(t.symbol);
-        return asset ? this.elfa.getRecentPost(asset.underlyingSymbol) : Promise.resolve(null);
+        return asset ? this.elfa.getRecentPost(asset.symbol, asset.name, asset.underlyingSymbol) : Promise.resolve(null);
       }),
     );
 

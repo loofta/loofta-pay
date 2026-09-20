@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import Link from "next/link";
-import { getNestProfile, getNestUniverse, upsertNestProfile, type NestUniverseAsset } from "@/services/api/nest";
+import { getNestProfile, getNestUniverse, upsertNestProfile, getNestDeposits, type NestUniverseAsset, type NestDepositView } from "@/services/api/nest";
 import { VIBES, PERSONA_RISK, RISK_PERSONA, TAG_LABELS, VibeQuiz, type Persona } from "@/components/nest/OnboardingFlow";
 import { NestLogo } from "@/components/nest/NestLogo";
 import { NestFooter } from "@/components/nest/NestFooter";
@@ -23,6 +23,8 @@ export default function NestSettingsPage() {
   const [dark, toggleDark] = useNestDarkMode();
   const [universe, setUniverse] = useState<NestUniverseAsset[]>([]);
   const [name, setName] = useState("");
+  const [goal, setGoal] = useState("");
+  const [deposits, setDeposits] = useState<NestDepositView[]>([]);
   const [persona, setPersona] = useState<Persona>("Find the middle ground");
   const [themes, setThemes] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -41,9 +43,11 @@ export default function NestSettingsPage() {
       const profile = await getNestProfile({ userId: user?.id, accessToken }, true).catch(() => null);
       if (profile) {
         setName(profile.displayName ?? "");
+        setGoal(profile.goalUsd ? String(profile.goalUsd) : "");
         setPersona(RISK_PERSONA[profile.riskTolerance]);
         setThemes(profile.interestTags);
       }
+      getNestDeposits({ userId: user?.id, accessToken }, true).then(setDeposits).catch(() => setDeposits([]));
       setLoaded(true);
     })();
   }, [authenticated, getAccessToken, user?.id]);
@@ -55,7 +59,8 @@ export default function NestSettingsPage() {
     setSaved(false);
     try {
       const accessToken = await getAccessToken();
-      await upsertNestProfile(PERSONA_RISK[persona], themes, name.trim() || null, { userId: user?.id, accessToken }, true);
+      const goalNum = Number(goal);
+      await upsertNestProfile(PERSONA_RISK[persona], themes, name.trim() || null, { userId: user?.id, accessToken }, true, goal.trim() === "" ? null : Number.isFinite(goalNum) && goalNum > 0 ? goalNum : undefined);
       setSaved(true);
     } finally {
       setSaving(false);
@@ -107,8 +112,25 @@ export default function NestSettingsPage() {
                 onChange={e => setName(e.target.value)}
                 maxLength={40}
                 placeholder="e.g. Alex"
-                style={{ width: "100%", maxWidth: 320, fontSize: 16, padding: "12px 16px", borderRadius: 10, border: "1px solid var(--line)", background: "#fff", color: "var(--ink)" }}
+                style={{ width: "100%", maxWidth: 320, fontSize: 16, padding: "12px 16px", borderRadius: 10, border: "1px solid var(--line)", background: "var(--paper)", color: "var(--ink)" }}
               />
+            </div>
+
+            <div id="goal" style={{ marginBottom: 28 }}>
+              <p style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Nest goal</p>
+              <p style={{ fontSize: 13, color: "var(--ink3)", marginBottom: 12 }}>A dollar target for what you'll put in. The egg on your dashboard cracks at 25/50/75/100% funded — measured on deposits, never on the market.</p>
+              <div style={{ position: "relative", maxWidth: 320 }}>
+                <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "var(--ink3)", fontSize: 16 }}>$</span>
+                <input
+                  type="number"
+                  min={1}
+                  step={50}
+                  value={goal}
+                  onChange={e => setGoal(e.target.value)}
+                  placeholder="e.g. 1000"
+                  style={{ width: "100%", fontSize: 16, padding: "12px 16px 12px 28px", borderRadius: 10, border: "1px solid var(--line)", background: "var(--paper)", color: "var(--ink)" }}
+                />
+              </div>
             </div>
 
             <div style={{ marginBottom: 28 }}>
@@ -167,6 +189,32 @@ export default function NestSettingsPage() {
             <button className="ns-btn" style={{ width: "100%", justifyContent: "center", padding: "16px", fontSize: 16, opacity: saving ? 0.6 : 1 }} onClick={save} disabled={saving}>
               {saving ? "Saving…" : saved ? "Saved ✓" : "Save changes"}
             </button>
+
+            <div style={{ marginTop: 40 }}>
+              <p style={{ fontWeight: 600, fontSize: 15, marginBottom: 12 }}>Deposit history</p>
+              {deposits.length === 0 ? (
+                <p style={{ fontSize: 14, color: "var(--ink3)" }}>No deposits yet.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {deposits.map(d => (
+                    <div key={d.txHash} className="ns-card" style={{ padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 600 }}>${d.amountUsdc.toFixed(2)}</div>
+                        <div style={{ fontSize: 12, color: "var(--ink3)" }}>{new Date(d.createdAt).toLocaleString()} · {d.network}</div>
+                      </div>
+                      <a
+                        href={`https://solscan.io/tx/${d.txHash}${d.network === "devnet" ? "?cluster=devnet" : ""}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ fontSize: 13, whiteSpace: "nowrap" }}
+                      >
+                        View tx →
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>

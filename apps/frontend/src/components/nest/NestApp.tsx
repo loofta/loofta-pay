@@ -31,6 +31,10 @@ import {
   getNestPortfolio,
   getNestHistory,
   getNestLedger,
+  getNestDeposits,
+  getNestStreak,
+  type NestDepositView,
+  type NestStreak,
   type NestConfig,
   type NestUniverseAsset,
   type NestProfile,
@@ -52,6 +56,11 @@ import { useNestDarkMode, nestRootClass } from "@/components/nest/useNestDarkMod
 import { NestFooter } from "@/components/nest/NestFooter";
 import { NestLoader } from "@/components/nest/NestLoader";
 import { NestBuildingAnimation } from "@/components/nest/NestBuildingAnimation";
+import { CategoryRing } from "@/components/nest/CategoryRing";
+import { WhatMovedCard } from "@/components/nest/WhatMovedCard";
+import { NestGoalProgress } from "@/components/nest/NestGoalProgress";
+import { NestLessons } from "@/components/nest/NestLessons";
+import { NestJournal, nestLevel } from "@/components/nest/NestJournal";
 
 const DepositModal = dynamic(() => import("@/components/nest/DepositModal").then(m => ({ default: m.DepositModal })), { ssr: false });
 // Touches WebGL — client-only, lazy-loaded, same convention as MegapotPack's 3D scene.
@@ -79,7 +88,7 @@ const NEST_DEMO_MODE = true;
 function ElfaFlowDiagram() {
   const steps: Array<{ icon: typeof MessageCircle; label: string; sub: string }> = [
     { icon: MessageCircle, label: "Millions of posts on X", sub: "Every account, every day" },
-    { icon: Zap, label: "elfa flags a spike", sub: "Unusual buzz, before the headlines" },
+    { icon: Zap, label: "Elfa flags a spike", sub: "Unusual buzz, before the headlines" },
     { icon: PieChart, label: "Your Nest rebalances", sub: "Leans harder into what's real" },
   ];
   return (
@@ -324,6 +333,9 @@ export default function NestApp() {
   const [portfolio, setPortfolio] = useState<NestPortfolio | null>(null);
   const [history, setHistory] = useState<NestTradeView[]>([]);
   const [ledger, setLedger] = useState<NestLedgerEvent[]>([]);
+  const [deposits, setDeposits] = useState<NestDepositView[]>([]);
+  const [streak, setStreak] = useState<NestStreak | null>(null);
+  const [tab, setTab] = useState<"overview" | "history" | "news">("overview");
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [showDeposit, setShowDeposit] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -336,16 +348,20 @@ export default function NestApp() {
     try {
       const accessToken = await getAccessToken();
       const opts = { userId: user?.id, accessToken };
-      const [p, portfolioData, historyData, ledgerData] = await Promise.all([
+      const [p, portfolioData, historyData, ledgerData, depositsData, streakData] = await Promise.all([
         getNestProfile(opts, NEST_DEMO_MODE),
         getNestPortfolio(opts, NEST_DEMO_MODE),
         getNestHistory(opts, NEST_DEMO_MODE),
         getNestLedger(opts, NEST_DEMO_MODE),
+        getNestDeposits(opts, NEST_DEMO_MODE).catch(() => [] as NestDepositView[]),
+        getNestStreak(opts, NEST_DEMO_MODE).catch(() => null),
       ]);
       setProfile(p);
       setPortfolio(portfolioData);
       setHistory(historyData);
       setLedger(ledgerData);
+      setDeposits(depositsData);
+      setStreak(streakData);
     } catch (e: any) {
       setLoadError(e.message ?? "Failed to load your Nest");
     }
@@ -403,7 +419,7 @@ export default function NestApp() {
     if (!profile) return null;
     const tags = profile.interestTags.length > 0 ? profile.interestTags.map(t => TAG_LABELS[t] ?? t).join(", ") : "the full universe";
     const persona = RISK_PERSONA[profile.riskTolerance];
-    return `Picked from ${tags}, sized for your "${persona}" risk pick — then weighted daily using elfa.ai: names with real, unusual X buzz right now get tilted higher, capped so no single pick can dominate the basket.`;
+    return `Picked from ${tags}, sized for your "${persona}" risk pick — then weighted daily using Elfa: names with real, unusual X buzz right now get tilted higher, capped so no single pick can dominate the basket.`;
   }, [profile]);
 
   // --- Not signed in: the splash, replicated from nest-splash/page.tsx.txt ---
@@ -518,11 +534,11 @@ export default function NestApp() {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
                 <img src={fav("elfa.ai")} alt="" style={{ width: 28, height: 28, borderRadius: 8 }} />
-                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink3)", textTransform: "uppercase", letterSpacing: ".06em" }}>Powered by elfa.ai</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink3)", textTransform: "uppercase", letterSpacing: ".06em" }}>Powered by Elfa</span>
               </div>
               <div className="ns-serif" style={{ fontSize: 32, marginBottom: 12 }}>The signal behind your Nest</div>
               <p style={{ fontSize: 15, lineHeight: 1.65, color: "var(--ink2)" }}>
-                elfa.ai watches X around the clock — including the accounts that break financial news first, often faster than traditional headlines — for when the buzz around a company suddenly spikes. Once a day, your Nest checks that signal for every stock in your basket and leans a little harder into the ones getting real, unusual attention.
+                Elfa watches X around the clock — including the accounts that break financial news first, often faster than traditional headlines — for when the buzz around a company suddenly spikes. Once a day, your Nest checks that signal for every stock in your basket and leans a little harder into the ones getting real, unusual attention.
               </p>
             </div>
             <ElfaFlowDiagram />
@@ -622,20 +638,35 @@ export default function NestApp() {
         )}
         {loadError && <p style={{ color: "var(--down)", marginBottom: 16 }}>{loadError}</p>}
 
-        {displayName && (
-          <p className="ns-serif" style={{ fontSize: 22, marginTop: 24, marginBottom: -4 }}>
-            Welcome back, {displayName}.
-          </p>
-        )}
+        {(() => {
+          const level = nestLevel(deposits, (portfolio?.holdings ?? []).filter(h => h.symbol !== "USD" && (h.valueUsd ?? 0) > 0).length);
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 24, marginBottom: -4 }}>
+              {displayName && <p className="ns-serif" style={{ fontSize: 22, margin: 0 }}>Welcome back, {displayName}.</p>}
+              <span
+                title={level.hint}
+                style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", padding: "4px 10px", borderRadius: 9999, border: "1px solid var(--line)", color: "var(--accent)" }}
+              >
+                {level.name}
+                {level.next ? ` · next: ${level.next}` : ""}
+              </span>
+            </div>
+          );
+        })()}
 
         <div className="ns-hero" style={{ marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 13, color: "var(--ink3)", textTransform: "uppercase", letterSpacing: ".06em" }}>Total value</div>
             <div className="ns-serif" style={{ fontSize: "clamp(40px, 11vw, 72px)", lineHeight: 1, margin: "6px 0 8px" }}>${(portfolio?.totalValueUsd ?? 0).toFixed(2)}</div>
             {portfolio && (
-              <div className={`ns-move ${pnlUp ? "ns-up" : "ns-down"}`} style={{ fontSize: 22, marginBottom: 24 }}>
-                {pnlUp ? "+" : ""}
-                {(portfolio.pnlPct * 100).toFixed(2)}%
+              <div style={{ marginBottom: 24 }}>
+                <div className={`ns-move ${pnlUp ? "ns-up" : "ns-down"}`} style={{ fontSize: 22 }}>
+                  {pnlUp ? "+" : ""}
+                  {(portfolio.pnlPct * 100).toFixed(2)}%
+                </div>
+                {!portfolio.quotesLive && portfolio.holdings.some(h => h.symbol !== "USD") && (
+                  <div style={{ fontSize: 12.5, color: "var(--ink3)", marginTop: 4 }}>Markets closed — as of last close. Live quotes resume at the open.</div>
+                )}
               </div>
             )}
             <button className="ns-btn" style={{ padding: "15px 34px", fontSize: 16 }} onClick={() => setShowDeposit(true)}>
@@ -645,33 +676,89 @@ export default function NestApp() {
           <NestHero height={380} />
         </div>
 
-        <section style={{ marginTop: 40 }}>
-          <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
-            <div className="ns-serif" style={{ fontSize: 22, marginBottom: 4 }}>Basket</div>
-            {basketExplanation && (
-              <p style={{ fontSize: 13, lineHeight: 1.5, color: "var(--ink3)", margin: "0 0 14px", maxWidth: 620 }}>{basketExplanation}</p>
-            )}
-            <HoldingsBreakdown holdings={portfolio?.holdings ?? []} totalValueUsd={portfolio?.totalValueUsd ?? 0} />
-          </div>
+        <NestGoalProgress
+          goalUsd={profile?.goalUsd ?? null}
+          depositedUsd={deposits.reduce((s, d) => s + d.amountUsdc, 0)}
+          streak={streak}
+          onSetGoal={() => { window.location.href = "/nest-earn/settings#goal"; }}
+        />
 
-          <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
-            <div className="ns-serif" style={{ fontSize: 22, marginBottom: 12 }}>What the AI bought / sold on your behalf</div>
-            <TradeHistoryList trades={history} />
-          </div>
+        {/* Mobile-native tabs: the dashboard is one screen per concern, not one long scroll. */}
+        <div role="tablist" style={{ display: "flex", gap: 6, marginBottom: 18, borderBottom: "1px solid var(--line2)" }}>
+          {([["overview", "Overview"], ["history", "History"], ["news", "News"]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => setTab(key)}
+              style={{
+                background: "none",
+                border: "none",
+                borderBottom: `2px solid ${tab === key ? "var(--accent)" : "transparent"}`,
+                marginBottom: -1,
+                padding: "10px 14px",
+                fontSize: 15,
+                fontWeight: tab === key ? 600 : 500,
+                color: tab === key ? "var(--ink)" : "var(--ink3)",
+                cursor: "pointer",
+              }}
+            >
+              {label}
+              {key === "history" && history.length > 0 ? ` · ${history.length}` : ""}
+            </button>
+          ))}
+        </div>
 
-          {/* Least interesting day-to-day early on (barely any NAV history yet) — moved last so
-              the more active sections (basket, trades) lead instead. */}
-          <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
-            <div className="ns-serif" style={{ fontSize: 22, marginBottom: 12 }}>Performance</div>
-            <NavChart points={portfolio?.navHistory ?? []} />
-          </div>
-        </section>
+        {tab === "overview" && (
+          <section>
+            <WhatMovedCard holdings={portfolio?.holdings ?? []} ledger={ledger} history={history} totalValueUsd={portfolio?.totalValueUsd ?? 0} quotesLive={portfolio?.quotesLive ?? true} />
+
+            <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
+              <div className="ns-serif" style={{ fontSize: 22, marginBottom: 12 }}>Performance</div>
+              <NavChart points={portfolio?.navHistory ?? []} />
+            </div>
+
+            <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
+              <div className="ns-serif" style={{ fontSize: 22, marginBottom: 4 }}>Your nest, by category</div>
+              {basketExplanation && (
+                <p style={{ fontSize: 13, lineHeight: 1.5, color: "var(--ink3)", margin: "0 0 16px", maxWidth: 620 }}>{basketExplanation}</p>
+              )}
+              <CategoryRing holdings={portfolio?.holdings ?? []} universe={universe} totalValueUsd={portfolio?.totalValueUsd ?? 0} />
+            </div>
+
+            <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
+              <div className="ns-serif" style={{ fontSize: 22, marginBottom: 12 }}>Every position</div>
+              <HoldingsBreakdown holdings={portfolio?.holdings ?? []} totalValueUsd={portfolio?.totalValueUsd ?? 0} />
+            </div>
+
+            <NestLessons
+              categories={[...new Set(
+                (portfolio?.holdings ?? [])
+                  .filter(h => h.symbol !== "USD" && (h.valueUsd ?? 0) > 0)
+                  .map(h => universe.find(a => a.symbol === h.symbol)?.tags[0])
+                  .filter((t): t is string => !!t),
+              )]}
+            />
+
+            <NestJournal deposits={deposits} history={history} streak={streak} />
+          </section>
+        )}
+
+        {tab === "history" && (
+          <section>
+            <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
+              <div className="ns-serif" style={{ fontSize: 22, marginBottom: 12 }}>What the AI bought / sold on your behalf</div>
+              <TradeHistoryList trades={history} />
+            </div>
+          </section>
+        )}
       </div>
 
-      <section id="ledger" style={{ padding: "40px var(--page-pad) var(--section-pad)" }}>
+      {tab === "news" && (
+      <section id="ledger" style={{ padding: "0 var(--page-pad) var(--section-pad)", maxWidth: 1100, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
           <div className="ns-serif" style={{ fontSize: 26 }}>Rebalanced on real headlines</div>
-          <div style={{ fontSize: 13, color: "var(--ink3)" }}>Your own trades, each paired with the real elfa-sourced X post behind it</div>
+          <div style={{ fontSize: 13, color: "var(--ink3)" }}>Your own trades, each paired with the real Elfa-sourced X post behind it</div>
         </div>
         {ledger.length === 0 ? (
           <div className="ns-card" style={{ padding: "var(--card-pad)" }}>
@@ -685,7 +772,7 @@ export default function NestApp() {
                 <article key={`${e.symbol}-${e.createdAt}`} className="ns-card" style={{ padding: "var(--card-pad)" }}>
                   <div className="ns-outlet">
                     <img src={fav(tickerDomain(e.symbol))} alt={e.symbol} />
-                    {e.post ? `@${e.post.username} on X` : "elfa.ai"} · {new Date(e.createdAt).toLocaleDateString()}
+                    {e.post ? `@${e.post.username} on X` : "Elfa"} · {new Date(e.createdAt).toLocaleDateString()}
                   </div>
                   <div className={`ns-move ${up ? "ns-up" : "ns-down"}`} style={{ fontSize: 40, margin: "16px 0 4px" }}>
                     {up ? "+" : "−"}${e.usdValue.toFixed(2)}
@@ -693,18 +780,19 @@ export default function NestApp() {
                   <div style={{ fontWeight: 600, fontSize: 16 }}>{e.name}</div>
                   {e.post ? (
                     <a href={e.post.link} target="_blank" rel="noreferrer" style={{ display: "block", fontSize: 13.5, color: "var(--ink2)", margin: "6px 0 0" }}>
-                      {e.post.likeCount.toLocaleString()} likes on the real post that moved this →
+                      See the X post behind this{e.post.likeCount > 0 ? ` (${e.post.likeCount.toLocaleString()} likes)` : ""} →
                     </a>
                   ) : (
                     <p style={{ fontSize: 13.5, lineHeight: 1.5, color: "var(--ink3)", margin: "6px 0 0" }}>No recent X post found for this ticker.</p>
                   )}
-                  <AiActionRow up={up} action={(e.reason ?? "").replace("[SIMULATED] ", "")} />
+                  <AiActionRow up={up} action={(e.reason ?? "").replace("[SIMULATED] ", "").replace("elfa score", "Elfa score")} />
                 </article>
               );
             })}
           </div>
         )}
       </section>
+      )}
 
       <NestFooter dark={dark} onToggleDark={toggleDark} />
 

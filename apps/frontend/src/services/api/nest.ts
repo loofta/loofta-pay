@@ -22,6 +22,21 @@ export interface NestProfile {
   displayName: string | null;
   riskTolerance: NestRiskTolerance;
   interestTags: string[];
+  goalUsd: number | null;
+}
+
+export interface NestDepositView {
+  amountUsdc: number;
+  network: 'mainnet' | 'devnet';
+  txHash: string;
+  createdAt: string;
+}
+
+export interface NestStreak {
+  weeks: number;
+  alive: boolean;
+  freezeUsed: boolean;
+  depositedThisWeek: boolean;
 }
 
 export interface NestHoldingView {
@@ -42,6 +57,8 @@ export interface NestPortfolio {
   pnlUsd: number;
   pnlPct: number;
   navHistory: Array<{ date: string; totalValueUsd: number; totalCostUsd: number }>;
+  /** False when every price is a last-known quote (markets closed / issuer feed down). */
+  quotesLive: boolean;
 }
 
 export interface NestTradeView {
@@ -92,8 +109,17 @@ export async function getNestProfile(opts: AuthOpts, demo = false): Promise<Nest
   return fetchApi<NestProfile | null>(`/nest/profile${demo ? '?demo=true' : ''}`, opts);
 }
 
-export async function upsertNestProfile(riskTolerance: NestRiskTolerance, interestTags: string[], displayName: string | null, opts: AuthOpts, demo = false): Promise<NestProfile> {
-  return fetchApi<NestProfile>('/nest/profile', { method: 'POST', body: JSON.stringify({ riskTolerance, interestTags, displayName: displayName ?? undefined, demo }), ...opts });
+/** `goalUsd` is only sent when explicitly passed — an undefined goal leaves the stored one alone. */
+export async function upsertNestProfile(riskTolerance: NestRiskTolerance, interestTags: string[], displayName: string | null, opts: AuthOpts, demo = false, goalUsd?: number | null): Promise<NestProfile> {
+  return fetchApi<NestProfile>('/nest/profile', { method: 'POST', body: JSON.stringify({ riskTolerance, interestTags, displayName: displayName ?? undefined, demo, ...(goalUsd !== undefined ? { goalUsd } : {}) }), ...opts });
+}
+
+export async function getNestDeposits(opts: AuthOpts, demo = false): Promise<NestDepositView[]> {
+  return fetchApi<NestDepositView[]>(`/nest/deposits${demo ? '?demo=true' : ''}`, opts);
+}
+
+export async function getNestStreak(opts: AuthOpts, demo = false): Promise<NestStreak> {
+  return fetchApi<NestStreak>(`/nest/streak${demo ? '?demo=true' : ''}`, opts);
 }
 
 export async function getNestPortfolio(opts: AuthOpts, demo = false): Promise<NestPortfolio> {

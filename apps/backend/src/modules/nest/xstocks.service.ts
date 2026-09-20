@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getMint, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
+import { SupabaseService } from '@/database/supabase.service';
 
 /**
  * Backed Finance's public catalog (`api.backed.fi/api/v2/public/assets`, paginated, no API key)
@@ -41,9 +42,9 @@ export const NEST_UNIVERSE_ALLOWLIST: NestUniverseEntry[] = [
   { symbol: 'MRNAx', underlyingSymbol: 'MRNA', name: 'Moderna', tags: ['healthcare'] },
   { symbol: 'UBERx', underlyingSymbol: 'UBER', name: 'Uber', tags: ['consumer'] },
   { symbol: 'ABNBx', underlyingSymbol: 'ABNB', name: 'Airbnb', tags: ['consumer'] },
-  { symbol: 'SNAPx', underlyingSymbol: 'SNAP', name: 'Snap', tags: ['consumer'] },
-  { symbol: 'SPOTx', underlyingSymbol: 'SPOT', name: 'Spotify', tags: ['consumer'] },
-  { symbol: 'SHOPx', underlyingSymbol: 'SHOP', name: 'Shopify', tags: ['consumer', 'creator-economy'] },
+  // SNAPx / SPOTx / SHOPx were listed here but are not in Backed's catalog at all (checked
+  // against all 928 catalog entries, 2026-09-20) — they warned "unavailable" every cycle and
+  // could never be bought. Re-add only if Backed actually lists them.
   { symbol: 'RBLXx', underlyingSymbol: 'RBLX', name: 'Roblox', tags: ['consumer', 'gaming'] },
   { symbol: 'COINx', underlyingSymbol: 'COIN', name: 'Coinbase', tags: ['crypto-adjacent'] },
   { symbol: 'HOODx', underlyingSymbol: 'HOOD', name: 'Robinhood', tags: ['crypto-adjacent'] },
@@ -164,7 +165,10 @@ export class XStocksService {
   // since a wrong assumption here means every trade is sized off by whatever power-of-10 is wrong.
   private readonly connection: Connection;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly supabase: SupabaseService,
+  ) {
     this.connection = new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
   }
 
@@ -227,8 +231,11 @@ export class XStocksService {
     const res = await fetch(`${BACKED_API_BASE}/assets/${symbol}/price-data`);
     if (!res.ok) return null;
     const body = await res.json();
+    // Outside trading hours Backed answers {"quote": null} — and Number(null) is 0, which is
+    // finite, so this used to return a "price" of $0 for every symbol all weekend (valuing every
+    // position at nothing). Anything <= 0 is "no quote", never a quote.
     const price = Number(body.quote);
-    return Number.isFinite(price) ? price : null;
+    return Number.isFinite(price) && price > 0 ? price : null;
   }
 
   /** Batches every Backpack-sourced symbol into one Jupiter price/v3 call. Prefers `stockData`'s
@@ -247,7 +254,7 @@ export class XStocksService {
       for (const entry of entries) {
         const data = body[entry.solanaMint];
         const price = Number(data?.stockData?.price ?? data?.usdPrice);
-        if (Number.isFinite(price)) out.set(entry.symbol, price);
+        if (Number.isFinite(price) && price > 0) out.set(entry.symbol, price);
       }
     } catch (e: any) {
       this.logger.warn(`fetchBackpackPrices failed: ${e.message}`);
@@ -271,21 +278,60 @@ export class XStocksService {
   }
 
   async getPrices(symbols: string[]): Promise<Map<string, number>> {
+    return (await this.getPricesWithMeta(symbols)).prices;
+  }
+
+  /** `live` is false when NO symbol got a fresh issuer quote this call (weekend / after hours /
+   *  upstream outage) and every price came from the last-known store — the dashboard uses it to
+   *  say "as of last close" instead of presenting flat 0.0% moves as live. */
+  async getPricesWithMeta(symbols: string[]): Promise<{ prices: Map<string, number>; live: boolean }> {
     const out = new Map<string, number>();
     const backpackSymbols = symbols.filter(s => BACKPACK_SYMBOLS.has(s));
     const backedSymbols = symbols.filter(s => !BACKPACK_SYMBOLS.has(s));
 
-    const [backpackPrices] = await Promise.all([
-      this.fetchBackpackPrices(backpackSymbols),
-      ...backedSymbols.map(async sym => {
-        const p = await this.getPrice(sym);
-        if (p !== null) out.set(sym, p);
-      }),
-    ]);
+    // Backed calls go out in small batches rather than ~85 at once — a full-universe burst was
+    // intermittently getting some of them rejected, and every symbol that missed a quote was
+    // then valued at $0 downstream (see getPortfolio's cost fallback for the other half of that).
+    const BATCH = 10;
+    const backedFetch = (async () => {
+      for (let i = 0; i < backedSymbols.length; i += BATCH) {
+        await Promise.all(
+          backedSymbols.slice(i, i + BATCH).map(async sym => {
+            const p = await this.getPrice(sym);
+            if (p !== null) out.set(sym, p);
+          }),
+        );
+      }
+    })();
+    const [backpackPrices] = await Promise.all([this.fetchBackpackPrices(backpackSymbols), backedFetch]);
     for (const [sym, price] of backpackPrices) {
       out.set(sym, price);
       this.priceCache.set(sym, { price, loadedAt: Date.now() });
     }
-    return out;
+
+    // Persist what we got and backfill what we didn't from the last real quote on record.
+    // Backed's price-data returns {"quote":null} for every symbol outside trading hours, and the
+    // in-memory cache doesn't survive a restart — without this, a weekend or post-deploy load
+    // had no price for anything (see migration 20260920100000_create_nest_prices.sql).
+    const db = this.supabase.getClient();
+    const missing = symbols.filter(s => !out.has(s));
+    // Anything in `out` at this point came from a fresh Backed/Jupiter quote (the in-memory
+    // cache only ever holds fresh quotes too) — nothing has been backfilled from the DB yet.
+    const live = out.size > 0;
+    if (out.size > 0) {
+      const rows = [...out].filter(([, price]) => price > 0).map(([symbol, price]) => ({ symbol, price_usd: price, quoted_at: new Date().toISOString() }));
+      db.from('nest_prices').upsert(rows, { onConflict: 'symbol' }).then(({ error }) => {
+        if (error) this.logger.warn(`nest_prices upsert: ${error.message}`);
+      });
+    }
+    if (missing.length > 0) {
+      const { data, error } = await db.from('nest_prices').select('symbol, price_usd').in('symbol', missing);
+      if (error) this.logger.warn(`nest_prices read: ${error.message}`);
+      for (const row of data ?? []) {
+        const price = Number(row.price_usd);
+        if (Number.isFinite(price) && price > 0) out.set(row.symbol, price);
+      }
+    }
+    return { prices: out, live };
   }
 }

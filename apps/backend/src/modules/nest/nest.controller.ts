@@ -3,7 +3,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { AuthGuard, Public } from '@/common/guards';
-import { NestService, NestPortfolio, NestProfile, NestTradeView, NestLedgerEvent } from './nest.service';
+import { NestService, NestPortfolio, NestProfile, NestTradeView, NestLedgerEvent, NestDepositView, NestStreak } from './nest.service';
 import { NestDepositService } from './nest-deposit.service';
 import { NestRebalanceService } from './nest-rebalance.service';
 import { XStocksService } from './xstocks.service';
@@ -20,6 +20,12 @@ class UpsertProfileDto {
   @IsOptional()
   @IsString()
   displayName?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(100_000_000)
+  goalUsd?: number | null;
 
   @IsOptional()
   @IsBoolean()
@@ -100,7 +106,19 @@ export class NestController {
   @Post('profile')
   @ApiOperation({ summary: 'Create or update risk tolerance + interest tags — next daily rebalance picks this up. Pass demo:true to set up the devnet-demo profile instead of the real one.' })
   async upsertProfile(@Body() dto: UpsertProfileDto, @Request() req: any): Promise<NestProfile> {
-    return this.nest.upsertProfile(ledgerUserId(req.user.id, !!dto.demo), dto.riskTolerance, dto.interestTags, dto.displayName);
+    return this.nest.upsertProfile(ledgerUserId(req.user.id, !!dto.demo), dto.riskTolerance, dto.interestTags, dto.displayName, dto.goalUsd);
+  }
+
+  @Get('deposits')
+  @ApiOperation({ summary: "Caller's deposit history, most recent first. ?demo=true reads the devnet-demo ledger." })
+  async getDeposits(@Request() req: any, @Query('demo') demo?: string): Promise<NestDepositView[]> {
+    return this.nest.getDeposits(ledgerUserId(req.user.id, demo === 'true'));
+  }
+
+  @Get('streak')
+  @ApiOperation({ summary: 'Weekly deposit streak (with one forgiven skip per rolling 4 weeks). ?demo=true reads the devnet-demo ledger.' })
+  async getStreak(@Request() req: any, @Query('demo') demo?: string): Promise<NestStreak> {
+    return this.nest.getStreak(ledgerUserId(req.user.id, demo === 'true'));
   }
 
   @Get('portfolio')

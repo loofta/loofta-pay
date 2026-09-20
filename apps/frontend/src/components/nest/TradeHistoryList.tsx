@@ -29,7 +29,7 @@ export function TradeHistoryList({ trades }: { trades: NestTradeView[] }) {
               </div>
               {trade.reason && (
                 <p style={{ marginTop: 3, fontSize: 12, color: "var(--ink3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {trade.reason.replace("[SIMULATED] ", "")}
+                  {trade.reason.replace("[SIMULATED] ", "").replace("elfa score", "Elfa score")}
                 </p>
               )}
             </div>
