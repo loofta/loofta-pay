@@ -7,7 +7,8 @@
     "builder": "swc",
     "typeCheck": false,
     "assets": [
-      { "include": "modules/giveaways/idl/**/*.json", "outDir": "dist", "watchAssets": true }
+      { "include": "modules/giveaways/idl/**/*.json", "outDir": "dist", "watchAssets": true },
+      { "include": "modules/nest/*.json", "outDir": "dist", "watchAssets": true }
     ],
     "plugins": [
       {

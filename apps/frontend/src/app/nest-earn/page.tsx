@@ -1,4 +1,8 @@
-// Standalone "Loofta Earn" surface (nest.loofta.xyz in prod, see proxy.ts). Same NestApp
-// component as the in-shell /app/nest route — see components/nest/NestApp.tsx for the header
-// comment explaining why this isn't duplicated logic.
-export { default } from "@/components/nest/NestApp";
+// Home for the standalone "Loofta Nest" surface (nest.loofta.xyz in prod, see proxy.ts): the
+// marketing splash with How it works / The ledger. The nest itself lives at /nest-earn/app —
+// signing in here sends you there (see NestApp's mode="home" handling).
+import NestApp from "@/components/nest/NestApp";
+
+export default function NestHomePage() {
+  return <NestApp mode="home" />;
+}

@@ -2,7 +2,7 @@ import { NestLogo } from "@/components/nest/NestLogo";
 
 export function NestFooter({ dark, onToggleDark }: { dark: boolean; onToggleDark: () => void }) {
   return (
-    <footer style={{ borderTop: "1px solid var(--line2)", marginTop: 56, padding: "32px var(--page-pad)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
+    <footer style={{ borderTop: "1px solid var(--line2)", marginTop: 56, padding: "32px var(--page-pad)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16, flexShrink: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <NestLogo height={18} dark={dark} />
         <span style={{ fontSize: 13, color: "var(--ink3)" }}>© {new Date().getFullYear()} Loofta Nest</span>

@@ -64,6 +64,30 @@ export interface NestTradeView {
   createdAt: string;
 }
 
+/** Written by scripts/nest-backtest/run.ts into backtest-summary.json (committed next to this
+ *  file); served read-only by GET /nest/backtest. Returns are decimals, drawdown negative. */
+export interface NestBacktestStats {
+  grossReturn: number;
+  netReturn: number;
+  annualizedVol: number;
+  maxDrawdown: number;
+  avgWeeklyTurnover: number;
+}
+
+export interface NestBacktestSummary {
+  generatedAt: string;
+  periodStart: string;
+  periodEnd: string;
+  weeks: number;
+  universeSize: number;
+  startingUsd: number;
+  strategy: NestBacktestStats;
+  strategyHysteresis: NestBacktestStats;
+  equalWeight: NestBacktestStats;
+  placebo: { shuffles: number; netReturnP05: number; netReturnP50: number; netReturnP95: number; realPercentile: number };
+  caveats: string[];
+}
+
 export interface NestLedgerEvent {
   symbol: string;
   name: string;

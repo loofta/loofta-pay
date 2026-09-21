@@ -1,11 +1,14 @@
-import { Body, Controller, Get, Logger, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Logger, NotFoundException, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { AuthGuard, Public } from '@/common/guards';
-import { NestService, NestPortfolio, NestProfile, NestTradeView, NestLedgerEvent, NestDepositView, NestStreak } from './nest.service';
+import { NestService, NestPortfolio, NestProfile, NestTradeView, NestLedgerEvent, NestDepositView, NestStreak, NestBacktestSummary } from './nest.service';
 import { NestDepositService } from './nest-deposit.service';
 import { NestRebalanceService } from './nest-rebalance.service';
+import { NestSocialService, NestRoundups, NestFlock } from './nest-social.service';
 import { XStocksService } from './xstocks.service';
 import { ledgerUserId } from './nest-ledger-id';
 
@@ -68,6 +71,40 @@ class FaucetDevnetDto {
   userSolanaAddress: string;
 }
 
+class SetRoundupsDto {
+  @IsOptional()
+  @IsIn([1, 5])
+  unit?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  demo?: boolean;
+}
+
+class DemoFlagDto {
+  @IsOptional()
+  @IsBoolean()
+  demo?: boolean;
+}
+
+class FlockVisibilityDto {
+  @IsBoolean()
+  isPublic: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  demo?: boolean;
+}
+
+class FlockUsernameDto {
+  @IsString()
+  username: string;
+
+  @IsOptional()
+  @IsBoolean()
+  demo?: boolean;
+}
+
 @ApiTags('nest')
 @Controller('nest')
 @UseGuards(AuthGuard)
@@ -78,15 +115,84 @@ export class NestController {
     private readonly nest: NestService,
     private readonly deposits: NestDepositService,
     private readonly rebalance: NestRebalanceService,
+    private readonly social: NestSocialService,
     private readonly xstocks: XStocksService,
     private readonly config: ConfigService,
   ) {}
+
+  // ---- Crumbs (round-ups) ---------------------------------------------------------------------
+
+  @Get('roundups')
+  @ApiOperation({ summary: 'Pending round-up "crumbs" from payments the caller has sent since they last fed the nest. ?demo=true reads the devnet-demo profile.' })
+  async getRoundups(@Request() req: any, @Query('demo') demo?: string): Promise<NestRoundups> {
+    return this.social.getRoundups(req.user.id, ledgerUserId(req.user.id, demo === 'true'));
+  }
+
+  @Post('roundups')
+  @ApiOperation({ summary: 'Turn round-ups on (unit 1 or 5) or off (unit null). Enabling starts counting from now.' })
+  async setRoundups(@Body() dto: SetRoundupsDto, @Request() req: any): Promise<NestRoundups> {
+    return this.social.setRoundups(req.user.id, ledgerUserId(req.user.id, !!dto.demo), dto.unit ?? null);
+  }
+
+  @Post('roundups/sweep')
+  @ApiOperation({ summary: 'Mark pending crumbs as fed — call after the crumbs-prefilled deposit confirms.' })
+  async sweepRoundups(@Body() dto: DemoFlagDto, @Request() req: any): Promise<NestRoundups> {
+    return this.social.sweepRoundups(req.user.id, ledgerUserId(req.user.id, !!dto.demo));
+  }
+
+  // ---- Flock ----------------------------------------------------------------------------------
+
+  @Get('flock')
+  @ApiOperation({ summary: 'Nests the caller follows (category %, level, streak — never balances), plus their own visibility and kudos.' })
+  async getFlock(@Request() req: any, @Query('demo') demo?: string): Promise<NestFlock> {
+    return this.social.getFlock(req.user.id, demo === 'true');
+  }
+
+  @Post('flock/visibility')
+  @ApiOperation({ summary: 'Opt the caller\'s nest in/out of being followable.' })
+  async setFlockVisibility(@Body() dto: FlockVisibilityDto, @Request() req: any): Promise<{ isPublic: boolean }> {
+    return this.social.setPublic(ledgerUserId(req.user.id, !!dto.demo), dto.isPublic);
+  }
+
+  @Post('flock/follow')
+  @ApiOperation({ summary: 'Follow a Loofta user\'s nest by username (they must have opted in).' })
+  async followNest(@Body() dto: FlockUsernameDto, @Request() req: any): Promise<{ ok: true }> {
+    return this.social.follow(req.user.id, dto.username, !!dto.demo);
+  }
+
+  @Post('flock/unfollow')
+  @ApiOperation({ summary: 'Stop following a nest.' })
+  async unfollowNest(@Body() dto: FlockUsernameDto, @Request() req: any): Promise<{ ok: true }> {
+    return this.social.unfollow(req.user.id, dto.username);
+  }
+
+  @Post('flock/kudos')
+  @ApiOperation({ summary: 'Send one kudos per day to a nest you follow.' })
+  async sendKudos(@Body() dto: FlockUsernameDto, @Request() req: any): Promise<{ ok: true }> {
+    return this.social.kudos(req.user.id, dto.username, !!dto.demo);
+  }
 
   @Get('config')
   @Public()
   @ApiOperation({ summary: 'Whether Nest is currently executing real trades or simulating — drives the "Demo Mode" banner on the frontend' })
   async getConfig(): Promise<{ liveTrading: boolean }> {
     return { liveTrading: this.config.get<string>('NEST_LIVE_TRADING') === 'true' };
+  }
+
+  @Get('backtest')
+  @Public()
+  @ApiOperation({ summary: 'Latest committed backtest summary (scripts/nest-backtest) — historical, not a forecast. 404 until a run has been committed.' })
+  getBacktest(): NestBacktestSummary {
+    // ts-node/--watch runs from src/, the prod build from dist/ (nest-cli copies modules/nest/*.json
+    // there) — check both, plus a cwd-relative path for anything that runs from the repo root.
+    const candidates = [
+      join(__dirname, 'backtest-summary.json'),
+      join(process.cwd(), 'src/modules/nest/backtest-summary.json'),
+      join(process.cwd(), 'apps/backend/src/modules/nest/backtest-summary.json'),
+    ];
+    const file = candidates.find(p => existsSync(p));
+    if (!file) throw new NotFoundException('No backtest summary committed yet');
+    return JSON.parse(readFileSync(file, 'utf8')) as NestBacktestSummary;
   }
 
   @Get('universe')

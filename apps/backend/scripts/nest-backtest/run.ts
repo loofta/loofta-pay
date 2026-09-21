@@ -55,6 +55,8 @@ const RISK_CONFIG: Record<RiskTolerance, RiskConfig> = {
   aggressive: { maxPositions: 25, maxWeightPerPosition: 0.3, maxDailyTurnoverPct: 0.2, cashFloorPct: 0 },
 };
 const SENTIMENT_TILT_STRENGTH = 0.6;
+// A held symbol is only dropped once it falls below rank maxPositions × this (see computeTargetWeights).
+const HYSTERESIS_BAND = 1.5;
 const MIN_USER_TRADE_USD = 2;
 const TIER: RiskTolerance = 'balanced';
 
@@ -65,16 +67,26 @@ interface UniverseAsset {
   tags: string[];
 }
 
-/** Exact copy of NestRebalanceService.computeTargetWeights (profile = balanced, no interest tags). */
-function computeTargetWeights(riskTolerance: RiskTolerance, interestTags: string[], universe: UniverseAsset[], sentiment: Map<string, { score: number }>): Map<string, number> {
+/** Exact copy of NestRebalanceService.computeTargetWeights (profile = balanced, no interest tags).
+ *  `held` = symbols currently held with units > 0. Pass an empty set to get the pre-hysteresis
+ *  allocator (a held name then gets no protection, which is exactly what the old code did). */
+function computeTargetWeights(riskTolerance: RiskTolerance, interestTags: string[], universe: UniverseAsset[], sentiment: Map<string, { score: number }>, held: Set<string> = new Set()): Map<string, number> {
   const cfg = RISK_CONFIG[riskTolerance];
   const candidates = interestTags.length > 0 ? universe.filter(a => a.tags.some(t => interestTags.includes(t))) : universe;
   if (candidates.length === 0) return new Map();
 
-  const scored = candidates
-    .map(a => ({ symbol: a.symbol, score: sentiment.get(a.symbol)?.score ?? 0 }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, cfg.maxPositions);
+  const ranked = candidates.map(a => ({ symbol: a.symbol, score: sentiment.get(a.symbol)?.score ?? 0 })).sort((a, b) => b.score - a.score);
+  // Turnover hysteresis: a name already held keeps its seat while it's anywhere in the top 1.5×N.
+  const keepRank = Math.ceil(cfg.maxPositions * HYSTERESIS_BAND);
+  const selected: typeof ranked = [];
+  ranked.forEach((s, i) => {
+    if (held.has(s.symbol) && i < keepRank) selected.push(s);
+  });
+  for (const s of ranked) {
+    if (selected.length >= cfg.maxPositions) break;
+    if (!selected.some(x => x.symbol === s.symbol)) selected.push(s);
+  }
+  const scored = selected.sort((a, b) => b.score - a.score).slice(0, cfg.maxPositions);
 
   const raw = scored.map(s => ({ symbol: s.symbol, w: 1 + Math.max(s.score, 0) * SENTIMENT_TILT_STRENGTH }));
   const rawSum = raw.reduce((sum, r) => sum + r.w, 0);
@@ -108,7 +120,7 @@ const SUBSET_UNDERLYINGS = [
   'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'ORCL', 'NFLX', // big-tech / ai
   'AVGO', 'AMD', 'QCOM', // semis
   'PLTR', 'COIN', 'HOOD', 'MSTR', 'CRCL', // ai / crypto-adjacent
-  'UBER', 'SHOP', 'RBLX', 'WMT', 'DIS', // consumer
+  'UBER', 'MCD', 'RBLX', 'WMT', 'DIS', // consumer (MCD replaced SHOP on 2026-09-21: SHOPx was removed from the allowlist)
   'JPM', 'V', 'GS', // finance
   'UNH', 'LLY', // healthcare
   'TSLA', // ev
@@ -269,6 +281,16 @@ async function elfaKeyStatus(apiKey: string): Promise<any> {
   }
 }
 
+/** Global pacer: Elfa allows 60 requests/minute per key. ~57/min leaves headroom for the live cron. */
+const MIN_REQUEST_SPACING_MS = 1050;
+let nextSlotAt = 0;
+async function paced(): Promise<void> {
+  const now = Date.now();
+  const slot = Math.max(now, nextSlotAt);
+  nextSlotAt = slot + MIN_REQUEST_SPACING_MS;
+  if (slot > now) await sleep(slot - now);
+}
+
 class ElfaClient {
   private cache: ElfaCache = readJson<ElfaCache>(ELFA_CACHE, {});
   private dirty = 0;
@@ -315,6 +337,7 @@ class ElfaClient {
     for (let attempt = 0; attempt < 6; attempt++) {
       let res: Response;
       try {
+        await paced();
         res = await fetch(url, { headers: { 'x-elfa-api-key': this.apiKey } });
       } catch (e: any) {
         await sleep(1500 * (attempt + 1));
@@ -411,7 +434,8 @@ interface Frame {
   px: Record<string, number[]>; // ticker -> close per date index
 }
 
-function simulate(frame: Frame, universe: UniverseAsset[], weightsAt: (rebalanceNo: number) => Map<string, number>, opts: { turnoverCap?: number } = {}): SimResult {
+type WeightsAt = (rebalanceNo: number, held: Set<string>) => Map<string, number>;
+function simulate(frame: Frame, universe: UniverseAsset[], weightsAt: WeightsAt, opts: { turnoverCap?: number } = {}): SimResult {
   const { dates, rebalanceIdx, px } = frame;
   const bySymbol = new Map(universe.map(a => [a.symbol, a.underlyingSymbol]));
   const units = new Map<string, number>();
@@ -427,7 +451,8 @@ function simulate(frame: Frame, universe: UniverseAsset[], weightsAt: (rebalance
     const k = rebalanceSet.get(d);
     if (k !== undefined) {
       const nav = cash + [...units].reduce((s, [sym, u]) => s + u * price(sym), 0);
-      const target = weightsAt(k);
+      const held = new Set([...units].filter(([, u]) => u > 0).map(([sym]) => sym));
+      const target = weightsAt(k, held);
       const current = new Map([...units].map(([sym, u]) => [sym, u * price(sym)]));
       const symbols = new Set([...target.keys(), ...current.keys()]);
       const deltas: Array<{ symbol: string; deltaUsd: number }> = [];
@@ -586,24 +611,28 @@ async function main() {
   const ew = simulate(frame, universe, () => ewWeights, simOpts);
 
   const canRunTilt = scoredWeeks === weekEnds.length; // require full data for an honest comparison
-  let tilt: SimResult | null = null;
+  let tilt: SimResult | null = null; // pre-hysteresis allocator (held set ignored)
+  let tiltHyst: SimResult | null = null; // current live allocator (HYSTERESIS_BAND = 1.5)
   let selectionOnly: SimResult | null = null;
-  let placebo: number[] = [];
-  let placeboGross: number[] = [];
+  const placebo: number[] = []; // net returns, no hysteresis
+  const placeboGross: number[] = [];
+  const placeboHyst: number[] = []; // net returns, with hysteresis
+  const placeboHystGross: number[] = [];
   if (canRunTilt) {
     tilt = simulate(frame, universe, k => computeTargetWeights(TIER, [], universe, scores[k]), simOpts);
-    // Decomposition: top-15-by-attention but equal-weighted (isolates selection from sizing).
+    tiltHyst = simulate(frame, universe, (k, held) => computeTargetWeights(TIER, [], universe, scores[k], held), simOpts);
+    // Decomposition: top-15-by-attention but equal-weighted (isolates selection from sizing), no hysteresis.
     selectionOnly = simulate(
       frame,
       universe,
       k => {
         const flat = new Map([...scores[k]].map(([sym, s]) => [sym, { score: s.score > 0 ? 1e-9 : s.score }])); // keep ranking, kill tilt
-        const w = computeTargetWeights(TIER, [], universe, flat);
-        return w;
+        return computeTargetWeights(TIER, [], universe, flat);
       },
       simOpts,
     );
-    // Placebo: shuffle the score vector across symbols independently at each rebalance.
+    // Placebo: shuffle the score vector across symbols independently at each rebalance. The same
+    // shuffled scores feed both allocator variants so the two placebo distributions are paired.
     const rng = mulberry32(42);
     for (let s = 0; s < SHUFFLES; s++) {
       const shuffled = scores.map(m => {
@@ -618,6 +647,9 @@ async function main() {
       const r = simulate(frame, universe, k => computeTargetWeights(TIER, [], universe, shuffled[k]), simOpts);
       placebo.push(r.navDailyNet[r.navDailyNet.length - 1] / START_USD - 1);
       placeboGross.push(r.navDaily[r.navDaily.length - 1] / START_USD - 1);
+      const rh = simulate(frame, universe, (k, held) => computeTargetWeights(TIER, [], universe, shuffled[k], held), simOpts);
+      placeboHyst.push(rh.navDailyNet[rh.navDailyNet.length - 1] / START_USD - 1);
+      placeboHystGross.push(rh.navDaily[rh.navDaily.length - 1] / START_USD - 1);
       if ((s + 1) % 50 === 0) log(`placebo: ${s + 1}/${SHUFFLES}`);
     }
   } else {
@@ -632,8 +664,21 @@ async function main() {
     totalCostUsd: r.totalCostUsd,
   });
   const percentile = (x: number, dist: number[]) => (dist.length ? dist.filter(v => v < x).length / dist.length : null);
-  const sorted = [...placebo].sort((a, b) => a - b);
-  const q = (p: number) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] : null);
+  const quantiles = (dist: number[]) => {
+    const sorted = [...dist].sort((a, b) => a - b);
+    const q = (p: number) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] : null);
+    return { p05: q(0.05), p25: q(0.25), p50: q(0.5), p75: q(0.75), p95: q(0.95), mean: mean(dist) };
+  };
+  const placeboBlock = (real: SimResult, dist: number[], distGross: number[]) => ({
+    shuffles: SHUFFLES,
+    realNetReturn: metrics(real.navDailyNet).totalReturn,
+    realGrossReturn: metrics(real.navDaily).totalReturn,
+    percentileOfRealNet: percentile(metrics(real.navDailyNet).totalReturn, dist),
+    percentileOfRealGross: percentile(metrics(real.navDaily).totalReturn, distGross),
+    netDistribution: quantiles(dist),
+    equalWeightNetReturn: metrics(ew.navDailyNet).totalReturn,
+    percentileOfEqualWeightNet: percentile(metrics(ew.navDailyNet).totalReturn, dist),
+  });
 
   const out = {
     generatedAt: new Date().toISOString(),
@@ -650,37 +695,77 @@ async function main() {
     },
     equalWeight: summarize(ew),
     attentionTilt: tilt ? summarize(tilt) : null,
+    attentionTiltHysteresis: tiltHyst ? summarize(tiltHyst) : null,
     selectionOnlyEqualWeighted: selectionOnly ? summarize(selectionOnly) : null,
-    placebo: tilt
-      ? {
-          shuffles: SHUFFLES,
-          realNetReturn: metrics(tilt.navDailyNet).totalReturn,
-          realGrossReturn: metrics(tilt.navDaily).totalReturn,
-          percentileOfRealNet: percentile(metrics(tilt.navDailyNet).totalReturn, placebo),
-          percentileOfRealGross: percentile(metrics(tilt.navDaily).totalReturn, placeboGross),
-          netDistribution: { p05: q(0.05), p25: q(0.25), p50: q(0.5), p75: q(0.75), p95: q(0.95), mean: mean(placebo) },
-          equalWeightNetReturn: metrics(ew.navDailyNet).totalReturn,
-          percentileOfEqualWeightNet: percentile(metrics(ew.navDailyNet).totalReturn, placebo),
-        }
-      : null,
+    placebo: tilt ? placeboBlock(tilt, placebo, placeboGross) : null,
+    placeboHysteresis: tiltHyst ? placeboBlock(tiltHyst, placeboHyst, placeboHystGross) : null,
+    scoresPerWeek: weekEnds.map((d, k) => ({ date: d, scores: Object.fromEntries([...scores[k]].map(([s, v]) => [s, +v.score.toFixed(4)])) })),
     navSeries: {
       dates,
       equalWeightNet: ew.navDailyNet.map(v => +v.toFixed(2)),
       attentionTiltNet: tilt?.navDailyNet.map(v => +v.toFixed(2)) ?? null,
+      attentionTiltHysteresisNet: tiltHyst?.navDailyNet.map(v => +v.toFixed(2)) ?? null,
     },
   };
   const file = path.join(RESULTS_DIR, SYNTHETIC ? 'results-synthetic.json' : 'results.json');
   fs.writeFileSync(file, JSON.stringify(out, null, 2));
+
+  // App-servable summary (real mode only, never from synthetic scores). Shape is a contract with the
+  // Nest module; keep the field names stable.
+  if (!SYNTHETIC && tilt && tiltHyst && out.placeboHysteresis) {
+    const block = (s: ReturnType<typeof summarize>) => ({
+      grossReturn: +s.gross.totalReturn.toFixed(4),
+      netReturn: +s.net.totalReturn.toFixed(4),
+      annualizedVol: +s.net.annualizedVol.toFixed(4),
+      maxDrawdown: +s.net.maxDrawdown.toFixed(4),
+      avgWeeklyTurnover: +s.avgWeeklyTurnover.toFixed(4),
+    });
+    const ph = out.placeboHysteresis;
+    const summary = {
+      generatedAt: out.generatedAt,
+      periodStart: dates[0],
+      periodEnd: dates[dates.length - 1],
+      weeks: WEEKS,
+      universeSize: universe.length,
+      startingUsd: START_USD,
+      strategy: block(out.attentionTilt!),
+      strategyHysteresis: block(out.attentionTiltHysteresis!),
+      equalWeight: block(out.equalWeight),
+      placebo: {
+        shuffles: SHUFFLES,
+        netReturnP05: +ph.netDistribution.p05!.toFixed(4),
+        netReturnP50: +ph.netDistribution.p50!.toFixed(4),
+        netReturnP95: +ph.netDistribution.p95!.toFixed(4),
+        realPercentile: +ph.percentileOfRealNet!.toFixed(3),
+      },
+      caveats: [
+        `${universe.length} of the ~90 allowlisted names; index ETFs excluded`,
+        'Weekly full rebalance, not the live engine\'s daily 10%-capped cadence',
+        'Underlying US stock adjusted closes (Yahoo Finance), not xStock token prices on Solana',
+        'Costs assume 0.5% of one-way traded notional per rebalance (Jupiter swap + slippage)',
+        'Universe curated 2026-09-15 with hindsight: survivorship bias',
+        'One 26-week window; placebo band shows how wide pure noise is at this sample size',
+        'Placebo percentile refers to the hysteresis (current live) allocator',
+      ],
+    };
+    const summaryFile = path.join(HERE, '..', '..', 'src', 'modules', 'nest', 'backtest-summary.json');
+    fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 2) + '\n');
+    log(`summary: wrote ${summaryFile}`);
+  }
 
   const line = (label: string, s: ReturnType<typeof summarize>) =>
     `${label.padEnd(34)} gross ${pct(s.gross.totalReturn).padStart(8)}  net ${pct(s.net.totalReturn).padStart(8)}  vol ${pct(s.net.annualizedVol).padStart(7)}  maxDD ${pct(s.net.maxDrawdown).padStart(8)}  turnover/wk ${pct(s.avgWeeklyTurnover).padStart(7)}  costs $${s.totalCostUsd.toFixed(0)}`;
   console.log('');
   console.log(`=== ${out.mode} — ${dates[0]} to ${dates[dates.length - 1]}, ${universe.length} names, ${WEEKS} weeks, $${START_USD} start ===`);
   console.log(line('Equal-weight (95% invested)', out.equalWeight));
-  if (out.attentionTilt) console.log(line('Attention tilt (live allocator)', out.attentionTilt));
+  if (out.attentionTilt) console.log(line('Attention tilt, no hysteresis', out.attentionTilt));
+  if (out.attentionTiltHysteresis) console.log(line('Attention tilt + hysteresis (live)', out.attentionTiltHysteresis));
   if (out.selectionOnlyEqualWeighted) console.log(line('Top-15 by attention, equal-wt', out.selectionOnlyEqualWeighted));
-  if (out.placebo) {
-    console.log(`Placebo (${SHUFFLES} shuffles, net): real tilt at percentile ${(out.placebo.percentileOfRealNet! * 100).toFixed(0)}; shuffled net p05/p50/p95 = ${pct(out.placebo.netDistribution.p05!)} / ${pct(out.placebo.netDistribution.p50!)} / ${pct(out.placebo.netDistribution.p95!)}`);
+  const placeboLine = (label: string, p: NonNullable<typeof out.placebo>) =>
+    `${label}: real at percentile ${(p.percentileOfRealNet! * 100).toFixed(0)} (gross pct ${(p.percentileOfRealGross! * 100).toFixed(0)}); shuffled net p05/p50/p95 = ${pct(p.netDistribution.p05!)} / ${pct(p.netDistribution.p50!)} / ${pct(p.netDistribution.p95!)}; equal-weight at pct ${(p.percentileOfEqualWeightNet! * 100).toFixed(0)}`;
+  if (out.placebo && out.placeboHysteresis) {
+    console.log(placeboLine(`Placebo no-hyst (${SHUFFLES})`, out.placebo));
+    console.log(placeboLine(`Placebo hyst    (${SHUFFLES})`, out.placeboHysteresis));
   } else {
     console.log(`Attention tilt: NOT COMPUTED. Elfa coverage ${scoredWeeks}/${weekEnds.length} weeks; quotaExhausted=${elfa.status.monthlyQuotaExhausted}, fetched=${elfa.status.fetched}, cached=${elfa.status.fromCache}, failed=${elfa.status.failed}`);
   }

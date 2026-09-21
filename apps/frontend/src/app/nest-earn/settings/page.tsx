@@ -9,7 +9,7 @@
 import { useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import Link from "next/link";
-import { getNestProfile, getNestUniverse, upsertNestProfile, getNestDeposits, type NestUniverseAsset, type NestDepositView } from "@/services/api/nest";
+import { getNestProfile, getNestUniverse, upsertNestProfile, getNestDeposits, getNestRoundups, setNestRoundups, type NestUniverseAsset, type NestDepositView, type NestRoundups } from "@/services/api/nest";
 import { VIBES, PERSONA_RISK, RISK_PERSONA, TAG_LABELS, VibeQuiz, type Persona } from "@/components/nest/OnboardingFlow";
 import { NestLogo } from "@/components/nest/NestLogo";
 import { NestFooter } from "@/components/nest/NestFooter";
@@ -25,6 +25,8 @@ export default function NestSettingsPage() {
   const [name, setName] = useState("");
   const [goal, setGoal] = useState("");
   const [deposits, setDeposits] = useState<NestDepositView[]>([]);
+  const [roundups, setRoundups] = useState<NestRoundups | null>(null);
+  const [roundupsBusy, setRoundupsBusy] = useState(false);
   const [persona, setPersona] = useState<Persona>("Find the middle ground");
   const [themes, setThemes] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -48,6 +50,7 @@ export default function NestSettingsPage() {
         setThemes(profile.interestTags);
       }
       getNestDeposits({ userId: user?.id, accessToken }, true).then(setDeposits).catch(() => setDeposits([]));
+      getNestRoundups({ userId: user?.id, accessToken }, true).then(setRoundups).catch(() => setRoundups(null));
       setLoaded(true);
     })();
   }, [authenticated, getAccessToken, user?.id]);
@@ -69,6 +72,16 @@ export default function NestSettingsPage() {
 
   const availableTags = [...new Set(universe.flatMap(u => u.tags))];
 
+  const chooseRoundups = async (unit: number | null) => {
+    setRoundupsBusy(true);
+    try {
+      const accessToken = await getAccessToken();
+      setRoundups(await setNestRoundups(unit, { userId: user?.id, accessToken }, true));
+    } finally {
+      setRoundupsBusy(false);
+    }
+  };
+
   if (!authenticated) {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
@@ -81,7 +94,7 @@ export default function NestSettingsPage() {
   return (
     <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "28px var(--page-pad)" }}>
-        <Link href="/nest-earn" style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+        <Link href="/nest-earn/app" style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
           <NestLogo dark={dark} />
           <span className="ns-serif" style={{ fontStyle: "italic", color: "var(--accent)", fontSize: 17, lineHeight: 1 }}>Nest</span>
         </Link>
@@ -94,7 +107,7 @@ export default function NestSettingsPage() {
       </header>
 
       <div style={{ maxWidth: 560, margin: "0 auto", padding: "8px 24px 80px" }}>
-        <Link href="/nest-earn" style={{ fontSize: 14, color: "var(--ink3)" }}>← Back to your nest</Link>
+        <Link href="/nest-earn/app" style={{ fontSize: 14, color: "var(--ink3)" }}>← Back to your nest</Link>
         <div className="ns-serif" style={{ fontSize: 40, marginTop: 16 }}>Your nest settings</div>
         <p style={{ fontSize: 15, color: "var(--ink2)", marginTop: 8, marginBottom: 32 }}>
           Change your vibe or what you're into — it's picked up on the next daily rebalance.
@@ -131,6 +144,33 @@ export default function NestSettingsPage() {
                   style={{ width: "100%", fontSize: 16, padding: "12px 16px 12px 28px", borderRadius: 10, border: "1px solid var(--line)", background: "var(--paper)", color: "var(--ink)" }}
                 />
               </div>
+            </div>
+
+            <div id="roundups" style={{ marginBottom: 28 }}>
+              <p style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Crumbs (round-ups)</p>
+              <p style={{ fontSize: 13, color: "var(--ink3)", marginBottom: 12 }}>
+                Round each payment you send through Loofta up to the next $1 or $5. The spare change shows up on your dashboard as crumbs; you feed it to the nest with one tap — nothing moves on its own.
+              </p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {([[null, "Off"], [1, "Round up to $1"], [5, "Round up to $5"]] as const).map(([unit, label]) => {
+                  const active = (roundups?.unit ?? null) === unit;
+                  return (
+                    <button
+                      key={label}
+                      disabled={roundupsBusy || !roundups}
+                      onClick={() => chooseRoundups(unit)}
+                      style={{ borderRadius: 9999, padding: "9px 16px", fontSize: 14, cursor: "pointer", border: `1px solid ${active ? "var(--accent)" : "var(--line)"}`, background: active ? "color-mix(in oklch, var(--accent) 12%, transparent)" : "transparent", color: active ? "var(--accent)" : "var(--ink2)" }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {roundups?.enabled && (
+                <p style={{ fontSize: 13, color: "var(--ink3)", marginTop: 10 }}>
+                  ${roundups.pendingUsd.toFixed(2)} in crumbs from {roundups.paymentCount} payment{roundups.paymentCount === 1 ? "" : "s"} waiting on your dashboard.
+                </p>
+              )}
             </div>
 
             <div style={{ marginBottom: 28 }}>

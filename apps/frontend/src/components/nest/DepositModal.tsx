@@ -21,6 +21,8 @@ export function DepositModal({
   embeddedSolAddress,
   getAccessToken,
   userId,
+  initialAmount,
+  intro,
 }: {
   onClose: () => void;
   onDeposited: () => void;
@@ -28,10 +30,13 @@ export function DepositModal({
   embeddedSolAddress: string;
   getAccessToken: () => Promise<string | null>;
   userId?: string;
+  /** Prefills the amount — used by "feed the nest" with pending round-up crumbs. */
+  initialAmount?: number;
+  intro?: string;
 }) {
   const { signAndSendTransaction } = useSignAndSendTransaction();
   const [method, setMethod] = useState<Method>("devnet");
-  const [amount, setAmount] = useState("100");
+  const [amount, setAmount] = useState(initialAmount && initialAmount >= 1 ? initialAmount.toFixed(2) : "100");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,7 +87,7 @@ export function DepositModal({
     <div className="ns-root" style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(20,18,14,.45)", padding: 16 }}>
       <div className="ns-card" style={{ width: "100%", maxWidth: 420, padding: 22 }}>
         <div className="ns-serif" style={{ fontSize: 24 }}>Deposit into your Nest</div>
-        <p style={{ marginTop: 6, fontSize: 14, color: "var(--ink2)" }}>Free devnet USDC for this pilot — no real money involved yet.</p>
+        <p style={{ marginTop: 6, fontSize: 14, color: "var(--ink2)" }}>{intro ?? "Free devnet USDC for this pilot — no real money involved yet."}</p>
 
         <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 8 }}>
           <MethodTile

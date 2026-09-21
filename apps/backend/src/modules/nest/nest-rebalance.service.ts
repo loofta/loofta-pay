@@ -480,10 +480,18 @@ export class NestRebalanceService {
     const cashUnits = cashRow ? Number(cashRow.units) : 0;
     const newCashUnits = cashUnits - usdValue; // buy consumes cash, sell replenishes it (usdValue is signed)
 
-    // null = no cached Elfa row for this symbol (never fetched, or the fetch failed) — say so,
-    // rather than printing "0.00" as if the signal were measured and flat.
-    const signal = sentimentScore === null ? 'no Elfa signal yet' : `Elfa score ${sentimentScore.toFixed(2)}`;
-    const reason = `${liveTrading ? '' : '[SIMULATED] '}rebalance: ${signal}, ${side} $${Math.abs(usdValue).toFixed(2)}`;
+    // User-facing, in the product's own voice: no provider name, no raw score. The attention
+    // z-score is bucketed into words (>= +0.15 rising, <= -0.15 cooling, else steady); null =
+    // no measured signal for this symbol yet (never "0.00", which reads as measured-and-flat).
+    const amount = `$${Math.abs(usdValue).toFixed(2)}`;
+    const verb = side === 'buy' ? 'Added' : 'Trimmed';
+    const why =
+      sentimentScore === null
+        ? side === 'buy' ? 'starting position, no attention signal yet' : 'rebalancing to target, no attention signal yet'
+        : sentimentScore >= 0.15 ? 'attention rising'
+        : sentimentScore <= -0.15 ? 'attention cooling'
+        : 'steady attention, rebalancing to target';
+    const reason = `${liveTrading ? '' : '[SIMULATED] '}${verb} ${amount} — ${why}`;
 
     await db.from('nest_holdings').upsert({ user_id: userId, symbol, units: newUnits, avg_cost_usd: newAvgCost, updated_at: new Date().toISOString() }, { onConflict: 'user_id,symbol' });
     await db.from('nest_holdings').upsert({ user_id: userId, symbol: 'USD', units: newCashUnits, avg_cost_usd: 1, updated_at: new Date().toISOString() }, { onConflict: 'user_id,symbol' });

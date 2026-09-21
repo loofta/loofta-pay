@@ -18,7 +18,7 @@
 // Ledger (Reuters/CNBC/Bloomberg) rather than the kit's fuller list, but the "reads the wires"
 // framing itself is still aspirational, not literal.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TrendingUp, TrendingDown, MessageCircle, Zap, PieChart, Menu, X } from "lucide-react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets } from "@privy-io/react-auth/solana";
@@ -26,6 +26,8 @@ import dynamic from "next/dynamic";
 import {
   getNestConfig,
   getNestUniverse,
+  getNestBacktest,
+  type NestBacktestSummary,
   getNestProfile,
   upsertNestProfile,
   getNestPortfolio,
@@ -33,8 +35,17 @@ import {
   getNestLedger,
   getNestDeposits,
   getNestStreak,
+  getNestRoundups,
+  sweepNestRoundups,
+  getNestFlock,
+  setNestFlockPublic,
+  followNest,
+  unfollowNest,
+  sendNestKudos,
   type NestDepositView,
   type NestStreak,
+  type NestRoundups,
+  type NestFlock,
   type NestConfig,
   type NestUniverseAsset,
   type NestProfile,
@@ -61,6 +72,10 @@ import { WhatMovedCard } from "@/components/nest/WhatMovedCard";
 import { NestGoalProgress } from "@/components/nest/NestGoalProgress";
 import { NestLessons } from "@/components/nest/NestLessons";
 import { NestJournal, nestLevel } from "@/components/nest/NestJournal";
+import { CrumbsCard } from "@/components/nest/CrumbsCard";
+import { humanizeReason } from "@/components/nest/nestCopy";
+import { ProjectionCard } from "@/components/nest/ProjectionCard";
+import { FlockPanel } from "@/components/nest/FlockPanel";
 
 const DepositModal = dynamic(() => import("@/components/nest/DepositModal").then(m => ({ default: m.DepositModal })), { ssr: false });
 // Touches WebGL — client-only, lazy-loaded, same convention as MegapotPack's 3D scene.
@@ -88,7 +103,7 @@ const NEST_DEMO_MODE = true;
 function ElfaFlowDiagram() {
   const steps: Array<{ icon: typeof MessageCircle; label: string; sub: string }> = [
     { icon: MessageCircle, label: "Millions of posts on X", sub: "Every account, every day" },
-    { icon: Zap, label: "Elfa flags a spike", sub: "Unusual buzz, before the headlines" },
+    { icon: Zap, label: "Your Nest spots the spike", sub: "Unusual buzz, before the headlines" },
     { icon: PieChart, label: "Your Nest rebalances", sub: "Leans harder into what's real" },
   ];
   return (
@@ -203,7 +218,10 @@ function UserMenu({ displayName, email, onLogout }: { displayName: string | null
   );
 }
 
+/** `variant="home"` is the marketing page (How it works / The ledger anchors); `variant="app"`
+ *  is the signed-in nest at /nest-earn/app — no marketing links, logo goes back to the app. */
 function Header({
+  variant,
   authenticated,
   displayName,
   email,
@@ -211,6 +229,7 @@ function Header({
   onSignIn,
   onLogout,
 }: {
+  variant: "home" | "app";
   authenticated: boolean;
   displayName: string | null;
   email: string | null;
@@ -220,18 +239,35 @@ function Header({
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const closeMobile = () => setMobileOpen(false);
+  const home = variant === "home";
+  const logoHref = home ? "/nest-earn" : "/nest-earn/app";
 
   return (
     <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "28px var(--page-pad)" }}>
-      <a href="/nest-earn" style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+      <a href={logoHref} style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
         <NestLogo dark={dark} />
         <span className="ns-serif" style={{ fontStyle: "italic", color: "var(--accent)", fontSize: 17, lineHeight: 1 }}>Nest</span>
       </a>
       <nav className="ns-nav-desktop">
-        <a href="#how" style={{ fontSize: 15, color: "var(--ink2)" }}>How it works</a>
-        <a href="#ledger" style={{ fontSize: 15, color: "var(--ink2)" }}>The ledger</a>
+        {home ? (
+          <>
+            <a href="#how" style={{ fontSize: 15, color: "var(--ink2)" }}>How it works</a>
+            <a href="#ledger" style={{ fontSize: 15, color: "var(--ink2)" }}>The ledger</a>
+          </>
+        ) : (
+          <a href="/nest-earn" style={{ fontSize: 15, color: "var(--ink2)" }}>Home</a>
+        )}
       </nav>
       <div className="ns-header-actions">
+        {home && authenticated && (
+          <button
+            className="ns-btn"
+            style={{ padding: "11px 26px", fontSize: 15 }}
+            onClick={() => { window.location.href = "/nest-earn/app"; }}
+          >
+            Open my nest →
+          </button>
+        )}
         {authenticated ? (
           <UserMenu displayName={displayName} email={email} onLogout={onLogout} />
         ) : (
@@ -247,7 +283,7 @@ function Header({
       {mobileOpen && (
         <div className="ns-mobile-menu">
           <div className="ns-mobile-menu-head">
-            <a href="/nest-earn" style={{ display: "flex", alignItems: "flex-start", gap: 6 }} onClick={closeMobile}>
+            <a href={logoHref} style={{ display: "flex", alignItems: "flex-start", gap: 6 }} onClick={closeMobile}>
               <NestLogo dark={dark} />
               <span className="ns-serif" style={{ fontStyle: "italic", color: "var(--accent)", fontSize: 17, lineHeight: 1 }}>Nest</span>
             </a>
@@ -256,8 +292,15 @@ function Header({
             </button>
           </div>
           <nav>
-            <a href="#how" onClick={closeMobile}>How it works</a>
-            <a href="#ledger" onClick={closeMobile}>The ledger</a>
+            {home ? (
+              <>
+                <a href="#how" onClick={closeMobile}>How it works</a>
+                <a href="#ledger" onClick={closeMobile}>The ledger</a>
+                {authenticated && <a href="/nest-earn/app" onClick={closeMobile}>Open my nest →</a>}
+              </>
+            ) : (
+              <a href="/nest-earn" onClick={closeMobile}>Home</a>
+            )}
             {authenticated && <a href="/nest-earn/settings" onClick={closeMobile}>Settings</a>}
           </nav>
           {authenticated ? (
@@ -313,12 +356,23 @@ function buildStocksFromHoldings(holdings: NestPortfolio["holdings"]): NestStock
   });
 }
 
-export default function NestApp() {
+/** `mode="home"` (/nest-earn): the marketing splash, for everyone — signed-in users get an
+ *  "Open my nest" link and are sent to the app right after signing in here. `mode="app"`
+ *  (/nest-earn/app): the nest itself — onboarding, dashboard, tabs. */
+export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   const { user, authenticated, login: privyLogin, logout, getAccessToken } = usePrivy();
   // Nest-only restriction: email sign-in only, no Twitter/Discord/GitHub — the global Privy
   // config in AuthProvider.tsx (used by the main pay.loofta.xyz app) is untouched; `login()`
   // accepts a per-call `loginMethods` override for exactly this kind of scoped restriction.
-  const login = () => privyLogin({ loginMethods: ["email"] });
+  const loginStartedHere = useRef(false);
+  const login = () => {
+    loginStartedHere.current = true;
+    privyLogin({ loginMethods: ["email"] });
+  };
+  // Signing in from the home page lands you in the app, not on the same marketing page.
+  useEffect(() => {
+    if (mode === "home" && authenticated && loginStartedHere.current) window.location.assign("/nest-earn/app");
+  }, [mode, authenticated]);
   const [dark, toggleDark] = useNestDarkMode();
   const { wallets } = useWallets();
 
@@ -335,7 +389,15 @@ export default function NestApp() {
   const [ledger, setLedger] = useState<NestLedgerEvent[]>([]);
   const [deposits, setDeposits] = useState<NestDepositView[]>([]);
   const [streak, setStreak] = useState<NestStreak | null>(null);
-  const [tab, setTab] = useState<"overview" | "history" | "news">("overview");
+  const [roundups, setRoundups] = useState<NestRoundups | null>(null);
+  const [flock, setFlock] = useState<NestFlock | null>(null);
+  const [flockBusy, setFlockBusy] = useState(false);
+  // Set when the deposit modal was opened from the crumbs card, so the pending crumbs are marked
+  // as fed once that specific deposit confirms (and not after an unrelated deposit).
+  const [crumbsDeposit, setCrumbsDeposit] = useState<number | null>(null);
+  const [tab, setTab] = useState<"overview" | "history" | "news" | "flock">("overview");
+  const [showLevelHint, setShowLevelHint] = useState(false);
+  const [backtest, setBacktest] = useState<NestBacktestSummary | null>(null);
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [showDeposit, setShowDeposit] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -362,6 +424,9 @@ export default function NestApp() {
       setLedger(ledgerData);
       setDeposits(depositsData);
       setStreak(streakData);
+      // Social bits are non-critical: never let them block or fail the main load.
+      getNestRoundups(opts, NEST_DEMO_MODE).then(setRoundups).catch(() => setRoundups(null));
+      getNestFlock(opts, NEST_DEMO_MODE).then(setFlock).catch(() => setFlock(null));
     } catch (e: any) {
       setLoadError(e.message ?? "Failed to load your Nest");
     }
@@ -370,6 +435,7 @@ export default function NestApp() {
   useEffect(() => {
     getNestConfig().then(setConfig).catch(() => setConfig({ liveTrading: false }));
     getNestUniverse().then(setUniverse).catch(() => setUniverse([]));
+    getNestBacktest().then(setBacktest);
   }, []);
 
   useEffect(() => {
@@ -392,8 +458,29 @@ export default function NestApp() {
   };
 
   const handleDeposited = () => {
+    if (crumbsDeposit !== null) {
+      setCrumbsDeposit(null);
+      getAccessToken()
+        .then(accessToken => sweepNestRoundups({ userId: user?.id, accessToken }, NEST_DEMO_MODE))
+        .then(setRoundups)
+        .catch(() => {});
+    }
     loadAuthedData();
     if (postOnboarding === "deposit") setPostOnboarding("building");
+  };
+
+  const flockAction = async (fn: (accessToken: string | null) => Promise<unknown>): Promise<string | null> => {
+    setFlockBusy(true);
+    try {
+      const accessToken = await getAccessToken();
+      await fn(accessToken);
+      setFlock(await getNestFlock({ userId: user?.id, accessToken }, NEST_DEMO_MODE));
+      return null;
+    } catch (e: any) {
+      return e?.message ?? "Something went wrong";
+    } finally {
+      setFlockBusy(false);
+    }
   };
 
   const heroStocks = useMemo(() => {
@@ -419,14 +506,14 @@ export default function NestApp() {
     if (!profile) return null;
     const tags = profile.interestTags.length > 0 ? profile.interestTags.map(t => TAG_LABELS[t] ?? t).join(", ") : "the full universe";
     const persona = RISK_PERSONA[profile.riskTolerance];
-    return `Picked from ${tags}, sized for your "${persona}" risk pick — then weighted daily using Elfa: names with real, unusual X buzz right now get tilted higher, capped so no single pick can dominate the basket.`;
+    return `Picked from ${tags}, sized for your "${persona}" risk pick — then weighted daily by our attention signal: names getting real, unusual buzz on X right now get tilted higher, capped so no single pick can dominate the basket.`;
   }, [profile]);
 
-  // --- Not signed in: the splash, replicated from nest-splash/page.tsx.txt ---
-  if (!authenticated) {
+  // --- Home (/nest-earn): the splash, replicated from nest-splash/page.tsx.txt — for everyone ---
+  if (mode === "home") {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-        <Header authenticated={false} displayName={null} email={null} dark={dark} onSignIn={login} onLogout={logout} />
+        <Header variant="home" authenticated={authenticated} displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
 
         <div className="ns-hero" style={{ padding: "10px var(--page-pad) 0" }}>
           <div>
@@ -436,9 +523,19 @@ export default function NestApp() {
             <p style={{ fontSize: 19, lineHeight: 1.65, color: "var(--ink2)", maxWidth: 460, margin: "0 0 34px" }}>
               A basket of stocks built from your profile — watched around the clock and quietly rebalanced when real events move the market.
             </p>
-            <button className="ns-btn" style={{ padding: "17px 42px", fontSize: 17 }} onClick={login}>
-              Start nesting →
-            </button>
+            {authenticated ? (
+              <button
+                className="ns-btn"
+                style={{ padding: "17px 42px", fontSize: 17 }}
+                onClick={() => { window.location.href = "/nest-earn/app"; }}
+              >
+                Open my nest →
+              </button>
+            ) : (
+              <button className="ns-btn" style={{ padding: "17px 42px", fontSize: 17 }} onClick={login}>
+                Start nesting →
+              </button>
+            )}
           </div>
           <NestHero />
         </div>
@@ -534,12 +631,13 @@ export default function NestApp() {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
                 <img src={fav("elfa.ai")} alt="" style={{ width: 28, height: 28, borderRadius: 8 }} />
-                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink3)", textTransform: "uppercase", letterSpacing: ".06em" }}>Powered by Elfa</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink3)", textTransform: "uppercase", letterSpacing: ".06em" }}>Our signal</span>
               </div>
               <div className="ns-serif" style={{ fontSize: 32, marginBottom: 12 }}>The signal behind your Nest</div>
               <p style={{ fontSize: 15, lineHeight: 1.65, color: "var(--ink2)" }}>
-                Elfa watches X around the clock — including the accounts that break financial news first, often faster than traditional headlines — for when the buzz around a company suddenly spikes. Once a day, your Nest checks that signal for every stock in your basket and leans a little harder into the ones getting real, unusual attention.
+                Your Nest watches X around the clock — including the accounts that break financial news first, often faster than traditional headlines — for when the buzz around a company suddenly spikes. Once a day it checks that signal for every stock in your basket and leans a little harder into the ones getting real, unusual attention.
               </p>
+              <p style={{ fontSize: 12, color: "var(--ink3)", marginTop: 10 }}>X mention data via Elfa.</p>
             </div>
             <ElfaFlowDiagram />
           </div>
@@ -550,11 +648,26 @@ export default function NestApp() {
     );
   }
 
-  // --- Signed in ---
+  // --- App (/nest-earn/app) ---
+  if (!authenticated) {
+    return (
+      <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
+        <Header variant="app" authenticated={false} displayName={null} email={null} dark={dark} onSignIn={login} onLogout={logout} />
+        <div style={{ minHeight: "60vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: "40px var(--page-pad)", textAlign: "center" }}>
+          <div className="ns-serif" style={{ fontSize: 32 }}>Sign in to open your nest</div>
+          <p style={{ fontSize: 15, color: "var(--ink2)", maxWidth: 380 }}>Email only — no passwords, no wallet setup.</p>
+          <button className="ns-btn" style={{ padding: "15px 34px", fontSize: 16 }} onClick={login}>Sign in</button>
+          <a href="/nest-earn" style={{ fontSize: 13, color: "var(--ink3)" }}>What is Nest?</a>
+        </div>
+        <NestFooter dark={dark} onToggleDark={toggleDark} />
+      </div>
+    );
+  }
+
   if (profile === undefined) {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-        <Header authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
+        <Header variant="app" authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
         {loadError ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "80px 64px" }}>
             <p style={{ color: "var(--down)" }}>{loadError}</p>
@@ -572,7 +685,7 @@ export default function NestApp() {
   if (profile === null) {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-        <Header authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
+        <Header variant="app" authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
         <OnboardingFlow universe={universe} onComplete={handleCreateProfile} submitting={creatingProfile} dark={dark} />
         <NestFooter dark={dark} onToggleDark={toggleDark} />
       </div>
@@ -581,7 +694,12 @@ export default function NestApp() {
 
   const depositModal = showDeposit && (
     <DepositModal
-      onClose={() => setShowDeposit(false)}
+      onClose={() => {
+        setShowDeposit(false);
+        setCrumbsDeposit(null);
+      }}
+      initialAmount={crumbsDeposit ?? undefined}
+      intro={crumbsDeposit !== null ? `Feeding $${crumbsDeposit.toFixed(2)} of round-up crumbs to your nest.` : undefined}
       onDeposited={handleDeposited}
       embeddedWallet={embeddedWallet}
       embeddedSolAddress={embeddedSolAddress}
@@ -593,7 +711,7 @@ export default function NestApp() {
   if (postOnboarding === "deposit") {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-        <Header authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
+        <Header variant="app" authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
         <div style={{ minHeight: "70vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: "40px var(--page-pad)", textAlign: "center" }}>
           <div className="ns-serif" style={{ fontSize: 34 }}>{displayName ? `${displayName}, let's` : "Let's"} fund your nest</div>
           <p style={{ fontSize: 15, color: "var(--ink2)", maxWidth: 420 }}>
@@ -615,7 +733,7 @@ export default function NestApp() {
   if (postOnboarding === "building") {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-        <Header authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
+        <Header variant="app" authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
         <NestBuildingAnimation tickers={previewTickers} explanation={basketExplanation} onDone={() => setPostOnboarding(null)} />
       </div>
     );
@@ -625,7 +743,7 @@ export default function NestApp() {
 
   return (
     <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-      <Header authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
+      <Header variant="app" authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
 
       <div style={{ padding: "0 var(--page-pad)", maxWidth: 1100, margin: "0 auto" }}>
         {NEST_DEMO_MODE && (
@@ -641,15 +759,23 @@ export default function NestApp() {
         {(() => {
           const level = nestLevel(deposits, (portfolio?.holdings ?? []).filter(h => h.symbol !== "USD" && (h.valueUsd ?? 0) > 0).length);
           return (
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 24, marginBottom: -4 }}>
-              {displayName && <p className="ns-serif" style={{ fontSize: 22, margin: 0 }}>Welcome back, {displayName}.</p>}
-              <span
-                title={level.hint}
-                style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", padding: "4px 10px", borderRadius: 9999, border: "1px solid var(--line)", color: "var(--accent)" }}
-              >
-                {level.name}
-                {level.next ? ` · next: ${level.next}` : ""}
-              </span>
+            <div style={{ marginTop: 24, marginBottom: -4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                {displayName && <p className="ns-serif" style={{ fontSize: 22, margin: 0 }}>Welcome back, {displayName}.</p>}
+                <button
+                  onClick={() => setShowLevelHint(v => !v)}
+                  aria-expanded={showLevelHint}
+                  style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", padding: "4px 10px", borderRadius: 9999, border: "1px solid var(--line)", color: "var(--accent)", background: "transparent", cursor: "pointer" }}
+                >
+                  Nest level: {level.name}
+                </button>
+              </div>
+              {showLevelHint && (
+                <p style={{ fontSize: 13, color: "var(--ink3)", margin: "8px 0 0", maxWidth: 560, lineHeight: 1.5 }}>
+                  Levels are earned by feeding the nest and sticking with it — never by returns. Egg → Hatchling (first deposit) → Fledgling ($200 funded, 2 weeks) → Flyer ($1,000, 8 weeks, 10 positions).
+                  {level.next ? ` Next: ${level.next} — ${level.hint}` : ` ${level.hint}`}
+                </p>
+              )}
             </div>
           );
         })()}
@@ -685,7 +811,7 @@ export default function NestApp() {
 
         {/* Mobile-native tabs: the dashboard is one screen per concern, not one long scroll. */}
         <div role="tablist" style={{ display: "flex", gap: 6, marginBottom: 18, borderBottom: "1px solid var(--line2)" }}>
-          {([["overview", "Overview"], ["history", "History"], ["news", "News"]] as const).map(([key, label]) => (
+          {([["overview", "Overview"], ["history", "History"], ["news", "News"], ["flock", "Flock"]] as const).map(([key, label]) => (
             <button
               key={key}
               role="tab"
@@ -709,14 +835,35 @@ export default function NestApp() {
           ))}
         </div>
 
+        {tab === "flock" && (
+          <FlockPanel
+            flock={flock}
+            busy={flockBusy}
+            onSetPublic={isPublic => void flockAction(t => setNestFlockPublic(isPublic, { userId: user?.id, accessToken: t }, NEST_DEMO_MODE))}
+            onFollow={username => flockAction(t => followNest(username, { userId: user?.id, accessToken: t }))}
+            onUnfollow={username => void flockAction(t => unfollowNest(username, { userId: user?.id, accessToken: t }))}
+            onKudos={username => void flockAction(t => sendNestKudos(username, { userId: user?.id, accessToken: t }))}
+          />
+        )}
+
         {tab === "overview" && (
           <section>
+            <CrumbsCard
+              roundups={roundups}
+              onFeed={amount => {
+                setCrumbsDeposit(amount);
+                setShowDeposit(true);
+              }}
+              onEnable={() => { window.location.href = "/nest-earn/settings#roundups"; }}
+            />
             <WhatMovedCard holdings={portfolio?.holdings ?? []} ledger={ledger} history={history} totalValueUsd={portfolio?.totalValueUsd ?? 0} quotesLive={portfolio?.quotesLive ?? true} />
 
             <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
               <div className="ns-serif" style={{ fontSize: 22, marginBottom: 12 }}>Performance</div>
               <NavChart points={portfolio?.navHistory ?? []} />
             </div>
+
+            <ProjectionCard summary={backtest} />
 
             <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
               <div className="ns-serif" style={{ fontSize: 22, marginBottom: 4 }}>Your nest, by category</div>
@@ -758,7 +905,7 @@ export default function NestApp() {
       <section id="ledger" style={{ padding: "0 var(--page-pad) var(--section-pad)", maxWidth: 1100, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
           <div className="ns-serif" style={{ fontSize: 26 }}>Rebalanced on real headlines</div>
-          <div style={{ fontSize: 13, color: "var(--ink3)" }}>Your own trades, each paired with the real Elfa-sourced X post behind it</div>
+          <div style={{ fontSize: 13, color: "var(--ink3)" }}>Your own trades, each paired with the X post behind it</div>
         </div>
         {ledger.length === 0 ? (
           <div className="ns-card" style={{ padding: "var(--card-pad)" }}>
@@ -772,7 +919,7 @@ export default function NestApp() {
                 <article key={`${e.symbol}-${e.createdAt}`} className="ns-card" style={{ padding: "var(--card-pad)" }}>
                   <div className="ns-outlet">
                     <img src={fav(tickerDomain(e.symbol))} alt={e.symbol} />
-                    {e.post ? `@${e.post.username} on X` : "Elfa"} · {new Date(e.createdAt).toLocaleDateString()}
+                    {e.post ? `@${e.post.username} on X` : "Your Nest"} · {new Date(e.createdAt).toLocaleDateString()}
                   </div>
                   <div className={`ns-move ${up ? "ns-up" : "ns-down"}`} style={{ fontSize: 40, margin: "16px 0 4px" }}>
                     {up ? "+" : "−"}${e.usdValue.toFixed(2)}
@@ -785,7 +932,7 @@ export default function NestApp() {
                   ) : (
                     <p style={{ fontSize: 13.5, lineHeight: 1.5, color: "var(--ink3)", margin: "6px 0 0" }}>No recent X post found for this ticker.</p>
                   )}
-                  <AiActionRow up={up} action={(e.reason ?? "").replace("[SIMULATED] ", "").replace("elfa score", "Elfa score")} />
+                  <AiActionRow up={up} action={humanizeReason(e.reason, e.side, e.usdValue)} />
                 </article>
               );
             })}

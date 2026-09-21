@@ -3,12 +3,9 @@
 import type { NestHoldingView, NestLedgerEvent, NestTradeView } from "@/services/api/nest";
 import { fav } from "@/components/nest/marketEvents";
 import { tickerDomain } from "@/components/nest/tickerDomains";
+import { humanizeReason } from "@/components/nest/nestCopy";
 
 const MIN_MOVE_PCT = 0.05; // below this, nothing "moved" — say so rather than showing +0.0%
-
-function cleanReason(reason: string | null): string {
-  return (reason ?? "").replace("[SIMULATED] ", "").replace("rebalance: ", "").replace("elfa score", "Elfa score");
-}
 
 /**
  * One story card a day: the position that moved most, what the engine did about it, and the
@@ -67,9 +64,7 @@ export function WhatMovedCard({
         </div>
         {trade ? (
           <p style={{ fontSize: 13.5, color: "var(--ink2)", margin: "6px 0 0", lineHeight: 1.5 }}>
-            {hasMove ? `Engine ${trade.side === "buy" ? "added" : "trimmed"} $${trade.usdValue.toFixed(2)} on ` : `$${trade.usdValue.toFixed(2)} on `}
-            {new Date(trade.createdAt).toLocaleDateString()}
-            {trade.reason ? ` — ${cleanReason(trade.reason)}` : ""}
+            {humanizeReason(trade.reason, trade.side, trade.usdValue)} · {new Date(trade.createdAt).toLocaleDateString()}
             {post && (
               <>
                 {" · "}

@@ -6,6 +6,11 @@
    tight on a phone. */
 @media(max-width:640px){.ns-root{--page-pad:16px;--card-pad:16px 16px;--card-pad-lg:20px 18px;--section-pad:40px}}
 .ns-dark{--paper:#101613;--paper2:#0b100d;--ink:#f2f5f2;--ink2:#a8b5ad;--ink3:#6f7d75;--line:rgba(255,255,255,.14);--line2:rgba(255,255,255,.08);--accent:#4ade80;--up:#4ade80;--down:#e07a5f}
+/* Every Nest screen is at least the viewport tall with the footer pinned to the bottom, so a
+   short page (Settings while loading, the sign-in gate) doesn't leave the footer floating
+   mid-screen. NestFooter carries its own top padding since margin-top:auto swallows a margin. */
+.ns-root{min-height:100vh;display:flex;flex-direction:column}
+.ns-root>footer{margin-top:auto !important}
 .ns-root a{color:var(--accent);text-decoration:none}
 .ns-serif{font-family:var(--serif);font-weight:400}
 .ns-btn{display:inline-flex;align-items:center;gap:10px;background:var(--accent);color:var(--paper);font-family:var(--sans);font-weight:500;border-radius:9999px;border:none;cursor:pointer;box-shadow:0 10px 30px -12px oklch(0.45 0.05 165/.5)}

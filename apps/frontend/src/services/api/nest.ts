@@ -103,6 +103,38 @@ export async function getNestUniverse(): Promise<NestUniverseAsset[]> {
   return fetchApi<NestUniverseAsset[]>('/nest/universe');
 }
 
+export interface NestBacktestStats {
+  grossReturn: number;
+  netReturn: number;
+  annualizedVol: number;
+  maxDrawdown: number;
+  avgWeeklyTurnover: number;
+}
+
+/** Historical simulation of the engine over a past window — never a forecast. */
+export interface NestBacktestSummary {
+  generatedAt: string;
+  periodStart: string;
+  periodEnd: string;
+  weeks: number;
+  universeSize: number;
+  startingUsd: number;
+  strategy: NestBacktestStats;
+  strategyHysteresis: NestBacktestStats;
+  equalWeight: NestBacktestStats;
+  placebo: { shuffles: number; netReturnP05: number; netReturnP50: number; netReturnP95: number; realPercentile: number };
+  caveats: string[];
+}
+
+/** Public; resolves null (not an error) until a backtest has been committed. */
+export async function getNestBacktest(): Promise<NestBacktestSummary | null> {
+  try {
+    return await fetchApi<NestBacktestSummary>('/nest/backtest');
+  } catch {
+    return null;
+  }
+}
+
 /** `demo: true` reads/writes the free devnet-USDC demo ledger instead of the real one — a
  *  completely separate identity server-side (see nest-ledger-id.ts), never mixed with real money. */
 export async function getNestProfile(opts: AuthOpts, demo = false): Promise<NestProfile | null> {
@@ -120,6 +152,71 @@ export async function getNestDeposits(opts: AuthOpts, demo = false): Promise<Nes
 
 export async function getNestStreak(opts: AuthOpts, demo = false): Promise<NestStreak> {
   return fetchApi<NestStreak>(`/nest/streak${demo ? '?demo=true' : ''}`, opts);
+}
+
+// ---- Crumbs (round-ups) --------------------------------------------------------------------
+
+export interface NestRoundups {
+  enabled: boolean;
+  unit: number | null;
+  pendingUsd: number;
+  paymentCount: number;
+  since: string | null;
+}
+
+export async function getNestRoundups(opts: AuthOpts, demo = false): Promise<NestRoundups> {
+  return fetchApi<NestRoundups>(`/nest/roundups${demo ? '?demo=true' : ''}`, opts);
+}
+
+/** `unit` null turns round-ups off; 1 or 5 rounds each sent payment up to the next $1 / $5. */
+export async function setNestRoundups(unit: number | null, opts: AuthOpts, demo = false): Promise<NestRoundups> {
+  return fetchApi<NestRoundups>('/nest/roundups', { method: 'POST', body: JSON.stringify({ unit, demo }), ...opts });
+}
+
+/** Call after a crumbs-prefilled deposit confirms — marks the pending crumbs as fed. */
+export async function sweepNestRoundups(opts: AuthOpts, demo = false): Promise<NestRoundups> {
+  return fetchApi<NestRoundups>('/nest/roundups/sweep', { method: 'POST', body: JSON.stringify({ demo }), ...opts });
+}
+
+// ---- Flock -----------------------------------------------------------------------------------
+
+export interface FlockMember {
+  username: string;
+  displayName: string | null;
+  level: string;
+  streakWeeks: number;
+  /** Category allocation as fractions of the nest — never dollar amounts, never returns. */
+  categories: Array<{ label: string; weight: number }>;
+  kudosSentToday: boolean;
+  kudosReceived: number;
+}
+
+export interface NestFlock {
+  isPublic: boolean;
+  username: string | null;
+  following: FlockMember[];
+  followers: number;
+  kudosReceived: number;
+}
+
+export async function getNestFlock(opts: AuthOpts, demo = false): Promise<NestFlock> {
+  return fetchApi<NestFlock>(`/nest/flock${demo ? '?demo=true' : ''}`, opts);
+}
+
+export async function setNestFlockPublic(isPublic: boolean, opts: AuthOpts, demo = false): Promise<{ isPublic: boolean }> {
+  return fetchApi<{ isPublic: boolean }>('/nest/flock/visibility', { method: 'POST', body: JSON.stringify({ isPublic, demo }), ...opts });
+}
+
+export async function followNest(username: string, opts: AuthOpts): Promise<{ ok: true }> {
+  return fetchApi<{ ok: true }>('/nest/flock/follow', { method: 'POST', body: JSON.stringify({ username }), ...opts });
+}
+
+export async function unfollowNest(username: string, opts: AuthOpts): Promise<{ ok: true }> {
+  return fetchApi<{ ok: true }>('/nest/flock/unfollow', { method: 'POST', body: JSON.stringify({ username }), ...opts });
+}
+
+export async function sendNestKudos(username: string, opts: AuthOpts): Promise<{ ok: true }> {
+  return fetchApi<{ ok: true }>('/nest/flock/kudos', { method: 'POST', body: JSON.stringify({ username }), ...opts });
 }
 
 export async function getNestPortfolio(opts: AuthOpts, demo = false): Promise<NestPortfolio> {

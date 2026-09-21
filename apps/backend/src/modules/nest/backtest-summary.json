@@ -1,0 +1,45 @@
+{
+  "generatedAt": "2026-09-21T03:59:24.988Z",
+  "periodStart": "2026-03-20",
+  "periodEnd": "2026-09-18",
+  "weeks": 26,
+  "universeSize": 30,
+  "startingUsd": 10000,
+  "strategy": {
+    "grossReturn": 0.1187,
+    "netReturn": 0.0436,
+    "annualizedVol": 0.2487,
+    "maxDrawdown": -0.1863,
+    "avgWeeklyTurnover": 0.5167
+  },
+  "strategyHysteresis": {
+    "grossReturn": 0.1921,
+    "netReturn": 0.1537,
+    "annualizedVol": 0.2357,
+    "maxDrawdown": -0.118,
+    "avgWeeklyTurnover": 0.2652
+  },
+  "equalWeight": {
+    "grossReturn": 0.1882,
+    "netReturn": 0.1859,
+    "annualizedVol": 0.2078,
+    "maxDrawdown": -0.1005,
+    "avgWeeklyTurnover": 0.0217
+  },
+  "placebo": {
+    "shuffles": 200,
+    "netReturnP05": 0.0486,
+    "netReturnP50": 0.137,
+    "netReturnP95": 0.251,
+    "realPercentile": 0.585
+  },
+  "caveats": [
+    "30 of the ~90 allowlisted names; index ETFs excluded",
+    "Weekly full rebalance, not the live engine's daily 10%-capped cadence",
+    "Underlying US stock adjusted closes (Yahoo Finance), not xStock token prices on Solana",
+    "Costs assume 0.5% of one-way traded notional per rebalance (Jupiter swap + slippage)",
+    "Universe curated 2026-09-15 with hindsight: survivorship bias",
+    "One 26-week window; placebo band shows how wide pure noise is at this sample size",
+    "Placebo percentile refers to the hysteresis (current live) allocator"
+  ]
+}
