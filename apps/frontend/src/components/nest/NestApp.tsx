@@ -940,7 +940,13 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
         {tab === "overview" && (
           <section>
             {suggestions.map(s => (
-              <SuggestionCard key={s.id} suggestion={s} onAccept={handleAcceptSuggestion} onDismiss={handleDismissSuggestion} />
+              <SuggestionCard
+                key={s.id}
+                suggestion={s}
+                name={universe.find(u => u.symbol === s.symbol)?.name}
+                onAccept={handleAcceptSuggestion}
+                onDismiss={handleDismissSuggestion}
+              />
             ))}
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: suggestions.length > 0 ? 0 : 12 }}>
               <button

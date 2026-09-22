@@ -191,8 +191,10 @@ export class NestSuggestionsService {
         // should be" instead, which is the same fact in words someone can picture.
         const size =
           overweight && ratio >= 1.5
-            ? `${ratio.toFixed(1)}x the size it should be`
-            : `${Math.round((Math.abs(deltaUsd) / targetUsd) * 100)}% ${overweight ? 'above' : 'below'} its target share`;
+            ? `has grown to ${ratio.toFixed(1)}x the size it should be`
+            : overweight
+              ? `is ${Math.round((Math.abs(deltaUsd) / targetUsd) * 100)}% bigger than it should be`
+              : `is ${Math.round((Math.abs(deltaUsd) / targetUsd) * 100)}% smaller than it should be`;
         const price = prices.get(symbol);
         const prior = priorPrices.get(symbol);
         return {
@@ -204,7 +206,7 @@ export class NestSuggestionsService {
           // The real recent move, for context — not the drift figure, which would render as a
           // price move it isn't. Small or zero here is exactly what "no news, just drift" means.
           move_pct: price && prior ? Math.round(((price - prior) / prior) * 10000) / 10000 : 0,
-          reason: `${nameOf.get(symbol) ?? symbol} is ${size} in your nest. No news behind it — your mix just drifted as prices moved.`,
+          reason: `${nameOf.get(symbol) ?? symbol} ${size} in your nest, after prices moved. There's no news behind this one.`,
           source_links: [],
           expires_at: new Date(Date.now() + SUGGESTION_TTL_HOURS * 60 * 60_000).toISOString(),
         };
