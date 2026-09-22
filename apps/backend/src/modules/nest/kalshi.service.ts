@@ -59,13 +59,17 @@ export class KalshiService {
   }
 
   /** Series whose title plausibly refers to this company — first significant word of its display
-   *  name (e.g. "apple", "tesla"), word-boundary matched. A soft, best-effort link, not a hard
+   *  name (e.g. "apple", "tesla"), matched as a whole word. A soft, best-effort link, not a hard
    *  guarantee of relevance — good enough for "here's a related market," reviewed by the user
-   *  themselves before they act on it. */
+   *  themselves before they act on it.
+   *
+   *  The closing \b matters: a prefix match on "intel" also hits "Intellia Therapeutics", which
+   *  surfaced an FDA drug-approval market under Intel (observed live, 2026-09-22). Whole-word
+   *  matching keeps "Intel Corporation" and drops "Intellia". */
   private matchSeries(allSeries: RawKalshiSeries[], companyName: string): RawKalshiSeries[] {
     const key = companyName.toLowerCase().split(/\s+/)[0].replace(/[^a-z]/g, '');
     if (key.length < 3) return [];
-    const re = new RegExp(`\\b${key}`, 'i');
+    const re = new RegExp(`\\b${key}\\b`, 'i');
     return allSeries.filter(s => re.test(s.title) || re.test(s.ticker)).slice(0, MAX_SERIES_PER_COMPANY);
   }
 
@@ -81,26 +85,33 @@ export class KalshiService {
       const allSeries = await this.loadFinancialsSeries();
       const matched = this.matchSeries(allSeries, companyName);
       for (const series of matched) {
-        const res = await fetch(`${KALSHI_API_BASE}/markets?series_ticker=${series.ticker}&status=open&limit=5`);
+        const res = await fetch(`${KALSHI_API_BASE}/markets?series_ticker=${series.ticker}&status=open&limit=20`);
         if (!res.ok) continue;
         const body: any = await res.json();
-        for (const m of body?.markets ?? []) {
+        const markets: KalshiMarketView[] = (body?.markets ?? []).map((m: any) => {
           const yesPrice = Number(m.yes_bid_dollars);
-          out.push({
+          return {
             ticker: m.ticker,
             title: m.title || series.title,
             yesPrice: Number.isFinite(yesPrice) ? yesPrice : null,
             closeTime: m.close_time ?? null,
             url: `https://kalshi.com/markets/${series.ticker.toLowerCase()}`,
-          });
-        }
+          };
+        });
+        if (markets.length === 0) continue;
+        // One market per series, not the whole threshold ladder. A series like "Meta ad
+        // impressions growth" lists the same question at 8%/18%/20%/22%, and showing all four is
+        // noise — worse, the extremes (95% yes, 2% yes) are effectively settled and carry no
+        // information. Pick the one the crowd is least sure about, which is the only genuinely
+        // interesting cut of that question.
+        const best = markets.reduce((a, b) => (Math.abs((a.yesPrice ?? 0.5) - 0.5) <= Math.abs((b.yesPrice ?? 0.5) - 0.5) ? a : b));
+        out.push(best);
       }
     } catch (e: any) {
       this.logger.warn(`getMarketsForCompany(${underlyingSymbol}) failed: ${e.message}`);
     }
-    // Highest open interest / most active first would need another field per market; volume via
-    // liquidity isn't reliably present on every market, so this stays creation-order for now —
-    // fine for a "here's a related market" list of at most 4.
+    // Most-uncertain first across series, same reasoning as the per-series pick above.
+    out.sort((a, b) => Math.abs((a.yesPrice ?? 0.5) - 0.5) - Math.abs((b.yesPrice ?? 0.5) - 0.5));
     const trimmed = out.slice(0, MAX_MARKETS_RETURNED);
     this.marketsCache.set(underlyingSymbol, { fetchedAt: Date.now(), markets: trimmed });
     return trimmed;

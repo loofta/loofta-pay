@@ -51,6 +51,7 @@ import {
   acceptNestSuggestion,
   dismissNestSuggestion,
   runNestSuggestionScan,
+  getKalshiForHoldings,
   type NestDepositView,
   type NestStreak,
   type NestRoundups,
@@ -63,6 +64,7 @@ import {
   type NestLedgerEvent,
   type NestRiskTolerance,
   type NestSuggestion,
+  type KalshiMarket,
 } from "@/services/api/nest";
 import { OnboardingFlow, TAG_LABELS, RISK_PERSONA } from "@/components/nest/OnboardingFlow";
 import { NavChart } from "@/components/nest/NavChart";
@@ -87,6 +89,7 @@ import { humanizeReason } from "@/components/nest/nestCopy";
 import { ProjectionCard } from "@/components/nest/ProjectionCard";
 import { FlockPanel } from "@/components/nest/FlockPanel";
 import { SuggestionCard } from "@/components/nest/SuggestionCard";
+import { PredictionMarketsCard } from "@/components/nest/PredictionMarketsCard";
 
 const DepositModal = dynamic(() => import("@/components/nest/DepositModal").then(m => ({ default: m.DepositModal })), { ssr: false });
 // Touches WebGL — client-only, lazy-loaded, same convention as MegapotPack's 3D scene.
@@ -429,6 +432,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   const [roundups, setRoundups] = useState<NestRoundups | null>(null);
   const [flock, setFlock] = useState<NestFlock | null>(null);
   const [suggestions, setSuggestions] = useState<NestSuggestion[]>([]);
+  const [kalshiMarkets, setKalshiMarkets] = useState<Array<KalshiMarket & { symbol: string }>>([]);
   const [flockBusy, setFlockBusy] = useState(false);
   // Set when the deposit modal was opened from the crumbs card, so the pending crumbs are marked
   // as fed once that specific deposit confirms (and not after an unrelated deposit).
@@ -466,6 +470,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
       getNestRoundups(opts, NEST_DEMO_MODE).then(setRoundups).catch(() => setRoundups(null));
       getNestFlock(opts, NEST_DEMO_MODE).then(setFlock).catch(() => setFlock(null));
       getNestSuggestions(opts, NEST_DEMO_MODE).then(setSuggestions).catch(() => setSuggestions([]));
+      getKalshiForHoldings(opts, NEST_DEMO_MODE).then(setKalshiMarkets).catch(() => setKalshiMarkets([]));
     } catch (e: any) {
       setLoadError(e.message ?? "Failed to load your Nest");
     }
@@ -946,6 +951,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
                 {scanning ? "Checking for news…" : "Check for news now"}
               </button>
             </div>
+            <PredictionMarketsCard markets={kalshiMarkets} />
             <CrumbsCard
               roundups={roundups}
               onFeed={amount => {

@@ -157,6 +157,21 @@ export class NestController {
     return { ok: true };
   }
 
+  @Get('kalshi')
+  @ApiOperation({ summary: "Live Kalshi prediction markets across the companies the caller actually holds — event-shaped (CEO changes, KPI/earnings, product launches), never a price-direction bet and never Loofta's own view. ?demo=true reads the devnet-demo ledger." })
+  async getKalshiForHoldings(@Request() req: any, @Query('demo') demo?: string): Promise<Array<KalshiMarketView & { symbol: string }>> {
+    const ledgerId = ledgerUserId(req.user.id, demo === 'true');
+    const [universe, holdings] = await Promise.all([this.xstocks.getUniverse(), this.nest.getPortfolio(ledgerId)]);
+    const held = holdings.holdings.filter(h => h.symbol !== 'USD' && (h.valueUsd ?? 0) > 0).map(h => h.symbol);
+    const assets = universe.filter(a => held.includes(a.symbol)).slice(0, 8); // cap fan-out per request
+    const out: Array<KalshiMarketView & { symbol: string }> = [];
+    for (const asset of assets) {
+      const markets = await this.kalshi.getMarketsForCompany(asset.name, asset.underlyingSymbol);
+      for (const m of markets.slice(0, 2)) out.push({ ...m, symbol: asset.symbol });
+    }
+    return out;
+  }
+
   @Get('kalshi/:symbol')
   @Public()
   @ApiOperation({ summary: 'Live, real Kalshi prediction markets on this company (CEO changes, KPI/earnings, product launches — event-shaped, never a price-direction bet) — never Loofta\'s own view, just a link to a real market. Same for every caller, so no auth needed.' })

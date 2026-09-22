@@ -5,16 +5,26 @@ import { ElfaService } from './elfa.service';
 import { NestRebalanceService } from './nest-rebalance.service';
 import { NestRiskTolerance } from './nest.service';
 
-// A single-day move at least this large on an xStock is not normal noise for a liquid large-cap
-// — it's the kind of thing a hack/lawsuit/major announcement produces, which is exactly the
-// "big news" case this feature targets (see the 2026-09-21 pivot away from using attention/
-// sentiment volume as a trading signal — RESULTS.md). Detection is price-based and objective;
-// Elfa is only used afterward, to explain a move that has already happened.
-const BIG_MOVE_THRESHOLD = 0.07;
+// A single-day move this large on a liquid large-cap is worth explaining — it's usually a real
+// catalyst (earnings, guidance, a lawsuit, a hack), which is the "big news" case this feature
+// targets. Deliberately NOT set higher: measured against the live universe on 2026-09-22, the
+// largest move across all 88 names was 3.07%, so a 7% bar (the first cut) would have shown a
+// user nothing on all but a handful of days a year. Detection is price-based and objective;
+// Elfa is only used afterward, to explain a move that has already happened (see the 2026-09-21
+// pivot away from using attention volume as a trading signal — RESULTS.md).
+const BIG_MOVE_THRESHOLD = 0.03;
 // How far back to look for the news behind a detected move — a move can lag the triggering
 // event by up to a couple of days once it works through order flow.
 const EVENT_LOOKBACK_DAYS = 3;
 const SUGGESTION_TTL_HOURS = 48;
+
+// Drift suggestions: a position can need attention without any news at all — equal weight decays
+// as prices move, and "your NVDA is a fifth bigger than it should be" is an honest, actionable
+// insight on a quiet day. Only surfaced when the gap is both proportionally meaningful and worth
+// a trade in dollar terms, capped per user so a broadly-drifted basket doesn't become a wall.
+const DRIFT_THRESHOLD = 0.2;
+const MIN_SUGGESTION_USD = 2;
+const MAX_DRIFT_SUGGESTIONS_PER_USER = 3;
 
 export interface NestSuggestionView {
   id: string;
@@ -56,10 +66,12 @@ export class NestSuggestionsService {
   ) {}
 
   /**
-   * Cron entry point. For every symbol that moved >= BIG_MOVE_THRESHOLD since its last stored
-   * close, find every user actually holding it, work out whether they're now overweight
-   * (trim) or underweight (buy the dip) versus their own target, and insert one suggestion per
-   * (user, event) — deduped so a re-scan before expiry never spams a second row for the same move.
+   * Cron entry point, two passes. First: every symbol that moved >= BIG_MOVE_THRESHOLD since its
+   * last stored close becomes a news-backed suggestion for the users holding it. Second: quiet-day
+   * drift — positions that have wandered far enough from their target weight to be worth acting
+   * on even with no news at all. Both are deduped per (user, event) so a re-scan before expiry
+   * never spams a second row, and drift never doubles up on a symbol that already has a live
+   * suggestion today.
    */
   async scanForEvents(): Promise<void> {
     const universe = await this.xstocks.getUniverse();
@@ -79,8 +91,7 @@ export class NestSuggestionsService {
       const movePct = (price - prior) / prior;
       if (Math.abs(movePct) >= BIG_MOVE_THRESHOLD) movers.push({ asset, price, movePct });
     }
-    if (movers.length === 0) return;
-    this.logger.log(`scanForEvents: ${movers.length} big move(s) — ${movers.map(m => `${m.asset.symbol} ${(m.movePct * 100).toFixed(1)}%`).join(', ')}`);
+    this.logger.log(`scanForEvents: ${movers.length} move(s) over ${(BIG_MOVE_THRESHOLD * 100).toFixed(0)}%${movers.length ? ` — ${movers.map(m => `${m.asset.symbol} ${(m.movePct * 100).toFixed(1)}%`).join(', ')}` : ''}`);
 
     const db = this.supabase.getClient();
     const today = new Date().toISOString().slice(0, 10);
@@ -121,6 +132,88 @@ export class NestSuggestionsService {
 
       const { error } = await db.from('nest_suggestions').upsert(rows, { onConflict: 'user_id,event_key', ignoreDuplicates: true });
       if (error) this.logger.error(`insert suggestions(${asset.symbol}): ${error.message}`);
+    }
+
+    await this.scanForDrift(universe, currentPrices, priorPrices, today).catch(e => this.logger.error(`scanForDrift: ${e.message}`));
+  }
+
+  /**
+   * Quiet-day insights: equal weight decays as prices move, so a position can be well off target
+   * with no news behind it at all. Surfaces the largest genuine gaps per user — proportionally
+   * meaningful (DRIFT_THRESHOLD) and worth trading in dollars (MIN_SUGGESTION_USD) — capped at
+   * MAX_DRIFT_SUGGESTIONS_PER_USER so a broadly-drifted basket doesn't turn into a wall of cards.
+   * A symbol that already has a live suggestion today is skipped rather than double-surfaced.
+   */
+  private async scanForDrift(universe: NestUniverseAsset[], prices: Map<string, number>, priorPrices: Map<string, number>, today: string): Promise<void> {
+    const db = this.supabase.getClient();
+    const { data: profileRows, error } = await db.from('nest_profiles').select('user_id, risk_tolerance, interest_tags');
+    if (error) {
+      this.logger.error(`scanForDrift profiles: ${error.message}`);
+      return;
+    }
+    const nameOf = new Map(universe.map(a => [a.symbol, a.name]));
+
+    for (const profile of profileRows ?? []) {
+      const { data: holdingRows } = await db.from('nest_holdings').select('symbol, units, avg_cost_usd').eq('user_id', profile.user_id);
+      const holdings = (holdingRows ?? []).map(h => ({ symbol: h.symbol, units: Number(h.units), avgCostUsd: Number(h.avg_cost_usd) }));
+      const navUsd = holdings.reduce((sum, h) => sum + h.units * (h.symbol === 'USD' ? 1 : prices.get(h.symbol) ?? h.avgCostUsd), 0);
+      if (navUsd <= 0) continue;
+
+      const valueOf = (symbol: string) => {
+        const h = holdings.find(x => x.symbol === symbol);
+        return h ? h.units * (prices.get(symbol) ?? h.avgCostUsd) : 0;
+      };
+      const targets = this.rebalance.computeTargetWeights(
+        { userId: profile.user_id, riskTolerance: profile.risk_tolerance, interestTags: profile.interest_tags ?? [] },
+        universe,
+      );
+
+      // Symbols already carrying a live suggestion today — don't surface the same name twice.
+      const { data: pending } = await db.from('nest_suggestions').select('symbol').eq('user_id', profile.user_id).eq('status', 'pending');
+      const alreadySuggested = new Set((pending ?? []).map(p => p.symbol));
+
+      const candidates: Array<{ symbol: string; deltaUsd: number }> = [];
+      for (const [symbol, weight] of targets) {
+        if (alreadySuggested.has(symbol) || !prices.has(symbol)) continue;
+        const targetUsd = weight * navUsd;
+        const deltaUsd = targetUsd - valueOf(symbol);
+        if (Math.abs(deltaUsd) < MIN_SUGGESTION_USD || targetUsd <= 0) continue;
+        if (Math.abs(deltaUsd) / targetUsd < DRIFT_THRESHOLD) continue;
+        candidates.push({ symbol, deltaUsd });
+      }
+      candidates.sort((a, b) => Math.abs(b.deltaUsd) - Math.abs(a.deltaUsd));
+
+      const rows = candidates.slice(0, MAX_DRIFT_SUGGESTIONS_PER_USER).map(({ symbol, deltaUsd }) => {
+        const overweight = deltaUsd < 0;
+        const targetUsd = targets.get(symbol)! * navUsd;
+        const ratio = valueOf(symbol) / targetUsd;
+        // Past ~1.5x, "250% above target" reads like a broken number — say "3.5x the size it
+        // should be" instead, which is the same fact in words someone can picture.
+        const size =
+          overweight && ratio >= 1.5
+            ? `${ratio.toFixed(1)}x the size it should be`
+            : `${Math.round((Math.abs(deltaUsd) / targetUsd) * 100)}% ${overweight ? 'above' : 'below'} its target share`;
+        const price = prices.get(symbol);
+        const prior = priorPrices.get(symbol);
+        return {
+          user_id: profile.user_id,
+          symbol,
+          event_key: `${symbol}:drift:${today}`,
+          action: overweight ? 'trim' : 'buy_dip',
+          delta_usd: Math.round(deltaUsd * 100) / 100,
+          // The real recent move, for context — not the drift figure, which would render as a
+          // price move it isn't. Small or zero here is exactly what "no news, just drift" means.
+          move_pct: price && prior ? Math.round(((price - prior) / prior) * 10000) / 10000 : 0,
+          reason: `${nameOf.get(symbol) ?? symbol} is ${size} in your nest. No news behind it — your mix just drifted as prices moved.`,
+          source_links: [],
+          expires_at: new Date(Date.now() + SUGGESTION_TTL_HOURS * 60 * 60_000).toISOString(),
+        };
+      });
+      if (rows.length === 0) continue;
+
+      const { error: insertErr } = await db.from('nest_suggestions').upsert(rows, { onConflict: 'user_id,event_key', ignoreDuplicates: true });
+      if (insertErr) this.logger.error(`insert drift suggestions(${profile.user_id}): ${insertErr.message}`);
+      else this.logger.log(`scanForDrift: ${rows.length} suggestion(s) for ${profile.user_id}`);
     }
   }
 

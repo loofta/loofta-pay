@@ -275,6 +275,15 @@ export async function getKalshiMarkets(symbol: string): Promise<KalshiMarket[]> 
   }
 }
 
+/** Live Kalshi markets across every company the caller actually holds. */
+export async function getKalshiForHoldings(opts: AuthOpts, demo = false): Promise<Array<KalshiMarket & { symbol: string }>> {
+  try {
+    return await fetchApi<Array<KalshiMarket & { symbol: string }>>(`/nest/kalshi${demo ? '?demo=true' : ''}`, opts);
+  } catch {
+    return [];
+  }
+}
+
 export async function getNestPortfolio(opts: AuthOpts, demo = false): Promise<NestPortfolio> {
   return fetchApi<NestPortfolio>(`/nest/portfolio${demo ? '?demo=true' : ''}`, opts);
 }
