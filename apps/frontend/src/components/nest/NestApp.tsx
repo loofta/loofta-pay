@@ -51,7 +51,7 @@ import {
   acceptNestSuggestion,
   dismissNestSuggestion,
   runNestSuggestionScan,
-  getKalshiForHoldings,
+  getPredictionsForHoldings,
   type NestDepositView,
   type NestStreak,
   type NestRoundups,
@@ -64,7 +64,7 @@ import {
   type NestLedgerEvent,
   type NestRiskTolerance,
   type NestSuggestion,
-  type KalshiMarket,
+  type PredictionMarket,
 } from "@/services/api/nest";
 import { OnboardingFlow, TAG_LABELS, RISK_PERSONA } from "@/components/nest/OnboardingFlow";
 import { NavChart } from "@/components/nest/NavChart";
@@ -432,7 +432,8 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   const [roundups, setRoundups] = useState<NestRoundups | null>(null);
   const [flock, setFlock] = useState<NestFlock | null>(null);
   const [suggestions, setSuggestions] = useState<NestSuggestion[]>([]);
-  const [kalshiMarkets, setKalshiMarkets] = useState<Array<KalshiMarket & { symbol: string }>>([]);
+  const [suggestionError, setSuggestionError] = useState<string | null>(null);
+  const [predictionMarkets, setPredictionMarkets] = useState<PredictionMarket[]>([]);
   const [flockBusy, setFlockBusy] = useState(false);
   // Set when the deposit modal was opened from the crumbs card, so the pending crumbs are marked
   // as fed once that specific deposit confirms (and not after an unrelated deposit).
@@ -470,7 +471,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
       getNestRoundups(opts, NEST_DEMO_MODE).then(setRoundups).catch(() => setRoundups(null));
       getNestFlock(opts, NEST_DEMO_MODE).then(setFlock).catch(() => setFlock(null));
       getNestSuggestions(opts, NEST_DEMO_MODE).then(setSuggestions).catch(() => setSuggestions([]));
-      getKalshiForHoldings(opts, NEST_DEMO_MODE).then(setKalshiMarkets).catch(() => setKalshiMarkets([]));
+      getPredictionsForHoldings(opts, NEST_DEMO_MODE).then(setPredictionMarkets).catch(() => setPredictionMarkets([]));
     } catch (e: any) {
       setLoadError(e.message ?? "Failed to load your Nest");
     }
@@ -482,39 +483,35 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
     setSuggestions(fresh);
   }, [getAccessToken, user?.id]);
 
-  // Optimistic remove-on-action, refreshed properly on the next full load — accept/dismiss are
-  // rare, deliberate clicks, not worth a full loadAuthedData() round-trip just to update one list.
-  // On failure the list IS refetched: the usual cause is a card that went stale under an open page
-  // (expired, or acted on elsewhere), and silently leaving the dead card on screen invites the
-  // user to keep clicking something that can never succeed. The error still propagates so the card
-  // can say what happened.
-  const handleAcceptSuggestion = useCallback(
-    async (id: string) => {
-      const opts = { userId: user?.id, accessToken: await getAccessToken() };
-      try {
-        await acceptNestSuggestion(id, opts, NEST_DEMO_MODE);
-      } catch (e) {
-        await refreshSuggestions();
-        throw e;
-      }
+  // Optimistic: the card goes the instant it's tapped, because from the user's side the decision
+  // is already made — waiting on a round-trip behind a "Working…" spinner makes a deliberate
+  // choice feel like it might not have registered. The request runs behind it; if it actually
+  // fails the list is refetched (so state is truthful, not guessed) and the reason surfaces in a
+  // banner where it's still visible after the card is gone.
+  const runSuggestionAction = useCallback(
+    async (id: string, run: (opts: { userId?: string; accessToken: string | null }) => Promise<unknown>, onDone?: () => void) => {
+      setSuggestionError(null);
       setSuggestions(prev => prev.filter(s => s.id !== id));
-      loadAuthedData(); // holdings/history/portfolio all just changed
+      try {
+        const opts = { userId: user?.id, accessToken: await getAccessToken() };
+        await run(opts);
+        onDone?.();
+      } catch (e: any) {
+        await refreshSuggestions();
+        setSuggestionError(e?.message ?? "That didn't go through — nothing was changed.");
+      }
     },
-    [getAccessToken, user?.id, loadAuthedData, refreshSuggestions],
+    [getAccessToken, user?.id, refreshSuggestions],
+  );
+
+  const handleAcceptSuggestion = useCallback(
+    (id: string) => runSuggestionAction(id, opts => acceptNestSuggestion(id, opts, NEST_DEMO_MODE), () => loadAuthedData()),
+    [runSuggestionAction, loadAuthedData],
   );
 
   const handleDismissSuggestion = useCallback(
-    async (id: string) => {
-      const opts = { userId: user?.id, accessToken: await getAccessToken() };
-      try {
-        await dismissNestSuggestion(id, opts, NEST_DEMO_MODE);
-      } catch (e) {
-        await refreshSuggestions();
-        throw e;
-      }
-      setSuggestions(prev => prev.filter(s => s.id !== id));
-    },
-    [getAccessToken, user?.id, refreshSuggestions],
+    (id: string) => runSuggestionAction(id, opts => dismissNestSuggestion(id, opts, NEST_DEMO_MODE)),
+    [runSuggestionAction],
   );
 
   const [scanning, setScanning] = useState(false);
@@ -959,6 +956,20 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
 
         {tab === "overview" && (
           <section>
+            {suggestionError && (
+              <div
+                className="ns-card"
+                style={{ padding: "12px 16px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10, borderColor: "color-mix(in oklch, var(--down) 40%, var(--line))" }}
+              >
+                <span style={{ flex: 1, fontSize: 13.5, color: "var(--ink2)", lineHeight: 1.45 }}>{suggestionError}</span>
+                <button
+                  onClick={() => setSuggestionError(null)}
+                  style={{ background: "none", border: "none", color: "var(--ink3)", fontSize: 13, cursor: "pointer", flexShrink: 0 }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
             {suggestions.map(s => (
               <SuggestionCard
                 key={s.id}
@@ -977,7 +988,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
                 {scanning ? "Checking for news…" : "Check for news now"}
               </button>
             </div>
-            <PredictionMarketsCard markets={kalshiMarkets} />
+            <PredictionMarketsCard markets={predictionMarkets} />
             <CrumbsCard
               roundups={roundups}
               onFeed={amount => {

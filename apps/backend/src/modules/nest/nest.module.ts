@@ -10,11 +10,12 @@ import { ElfaService } from './elfa.service';
 import { NestSocialService } from './nest-social.service';
 import { NestSuggestionsService } from './nest-suggestions.service';
 import { KalshiService } from './kalshi.service';
+import { PredictionMarketsService } from './prediction-markets.service';
 
 @Module({
   imports: [DatabaseModule],
   controllers: [NestController],
-  providers: [NestService, NestDepositService, NestRebalanceService, NestCronService, XStocksService, ElfaService, NestSocialService, NestSuggestionsService, KalshiService],
+  providers: [NestService, NestDepositService, NestRebalanceService, NestCronService, XStocksService, ElfaService, NestSocialService, NestSuggestionsService, KalshiService, PredictionMarketsService],
   exports: [NestService, XStocksService],
 })
 export class NestModule {}

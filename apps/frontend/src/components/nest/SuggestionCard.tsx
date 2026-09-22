@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type NestSuggestion } from "@/services/api/nest";
 import { fav } from "@/components/nest/marketEvents";
 import { tickerDomain } from "@/components/nest/tickerDomains";
@@ -33,7 +33,8 @@ export function SuggestionCard({
   onDismiss: (id: string) => Promise<void>;
 }) {
   const [busy, setBusy] = useState<"accept" | "dismiss" | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [armed, setArmed] = useState(false);
+  const armTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const up = suggestion.movePct >= 0;
   // A drift suggestion carries no meaningful price move — labelling it "MOVED +0.5%" makes it
   // look like news when it explicitly isn't. Anything under the detector's own bar is drift.
@@ -42,21 +43,30 @@ export function SuggestionCard({
   const label = name ?? suggestion.symbol.replace(/x$/, "");
   const amount = `$${Math.abs(suggestion.deltaUsd).toFixed(2)}`;
 
-  // A card can go stale under an open page — the suggestion expires, or gets acted on in another
-  // tab — and the id it holds stops existing. Surface that in the card instead of letting the
-  // rejection escape into a full-page runtime error; the parent refreshes the list underneath, so
-  // the dead card clears itself on the next render.
-  const act = async (which: "accept" | "dismiss") => {
+  // The parent removes this card optimistically the moment either handler fires, and owns both
+  // rollback and the error message (they have to outlive the card). Neither handler rejects, so
+  // there's nothing to catch here — `busy` only covers the frame before this unmounts.
+  const act = (which: "accept" | "dismiss") => {
     setBusy(which);
-    setError(null);
-    try {
-      await (which === "accept" ? onAccept(suggestion.id) : onDismiss(suggestion.id));
-    } catch (e: any) {
-      setError(e?.message ?? "Something went wrong — try again.");
-    } finally {
-      setBusy(null);
-    }
+    void (which === "accept" ? onAccept(suggestion.id) : onDismiss(suggestion.id));
   };
+
+  // Buying and selling now happen the instant they're tapped, with no round-trip to wait on —
+  // which makes a stray tap expensive. So the trade arms first and commits on a second tap,
+  // disarming itself after a few seconds. Two deliberate taps, still no modal and no spinner.
+  const onTradeTap = () => {
+    if (armed) {
+      setArmed(false);
+      if (armTimer.current) clearTimeout(armTimer.current);
+      act("accept");
+      return;
+    }
+    setArmed(true);
+    if (armTimer.current) clearTimeout(armTimer.current);
+    armTimer.current = setTimeout(() => setArmed(false), 4000);
+  };
+
+  useEffect(() => () => { if (armTimer.current) clearTimeout(armTimer.current); }, []);
 
   return (
     <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 12, display: "flex", gap: 14, alignItems: "flex-start" }}>
@@ -101,23 +111,27 @@ export function SuggestionCard({
           <button
             className="ns-btn"
             disabled={busy !== null}
-            onClick={() => act("accept")}
+            onClick={onTradeTap}
             style={{ padding: "9px 18px", fontSize: 14, opacity: busy === "accept" ? 0.6 : 1 }}
           >
-            {busy === "accept" ? "Working…" : `${isSell ? "Sell" : "Buy"} ${amount}`}
+            {armed ? `Tap again to ${isSell ? "sell" : "buy"}` : `${isSell ? "Sell" : "Buy"} ${amount}`}
           </button>
           <button
             disabled={busy !== null}
-            onClick={() => act("dismiss")}
+            onClick={() => {
+              if (armed) {
+                setArmed(false);
+                if (armTimer.current) clearTimeout(armTimer.current);
+                return;
+              }
+              act("dismiss");
+            }}
             style={{ background: "none", border: "1px solid var(--line)", borderRadius: 9999, padding: "9px 16px", fontSize: 14, color: "var(--ink3)", cursor: busy ? "default" : "pointer" }}
           >
-            {busy === "dismiss" ? "…" : "Not now"}
+            {armed ? "Cancel" : "Not now"}
           </button>
         </div>
 
-        {error && (
-          <p style={{ fontSize: 12.5, color: "var(--down)", margin: "8px 0 0", lineHeight: 1.45 }}>{error}</p>
-        )}
       </div>
     </div>
   );

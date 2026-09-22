@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { PredictionMarket, PredictionMarketProvider, PredictionVenue } from './prediction-market.types';
 
 const KALSHI_API_BASE = 'https://api.elections.kalshi.com/trade-api/v2';
 // Corporate-event market series (CEO changes, KPI/earnings, product launches, M&A) don't come
@@ -31,7 +32,13 @@ interface RawKalshiSeries {
  * no API key needed (Kalshi's market/series data is unauthenticated).
  */
 @Injectable()
-export class KalshiService {
+export class KalshiService implements PredictionMarketProvider {
+  readonly venue: PredictionVenue = 'kalshi';
+  // Kalshi is a CFTC-regulated exchange: an order needs the user's own KYC'd, funded account
+  // signed with their own credentials, so all we can honestly offer is a link out. DFlow's
+  // tokenized version of these same markets is what would flip this to true.
+  readonly tradeable = false;
+
   private readonly logger = new Logger(KalshiService.name);
   private seriesCache: { fetchedAt: number; series: RawKalshiSeries[] } | null = null;
   private readonly marketsCache = new Map<string, { fetchedAt: number; markets: KalshiMarketView[] }>();
@@ -115,5 +122,20 @@ export class KalshiService {
     const trimmed = out.slice(0, MAX_MARKETS_RETURNED);
     this.marketsCache.set(underlyingSymbol, { fetchedAt: Date.now(), markets: trimmed });
     return trimmed;
+  }
+
+  /** PredictionMarketProvider surface — the venue-agnostic shape the UI actually renders. */
+  async listForCompany(companyName: string, underlyingSymbol: string): Promise<PredictionMarket[]> {
+    const markets = await this.getMarketsForCompany(companyName, underlyingSymbol);
+    return markets.map(m => ({
+      id: `${this.venue}:${m.ticker}`,
+      venue: this.venue,
+      symbol: null, // filled in by the aggregator, which knows which holding this came from
+      question: m.title,
+      yesPrice: m.yesPrice,
+      closeTime: m.closeTime,
+      tradeable: this.tradeable,
+      url: m.url,
+    }));
   }
 }

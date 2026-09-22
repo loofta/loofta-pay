@@ -256,29 +256,36 @@ export async function runNestSuggestionScan(opts: AuthOpts): Promise<{ ran: true
   return fetchApi<{ ran: true }>('/nest/suggestions/scan', { method: 'POST', ...opts });
 }
 
-export interface KalshiMarket {
-  ticker: string;
-  title: string;
+export type PredictionVenue = "kalshi" | "dflow" | "polymarket";
+
+/** One prediction market, whichever venue it came from. `tradeable` is the only difference the
+ *  UI acts on: true means a position can be taken in-app, false means we can only hand off to
+ *  the venue (Kalshi needs the user's own regulated account; DFlow's tokenized version of the
+ *  same markets would be tradeable). */
+export interface PredictionMarket {
+  id: string;
+  venue: PredictionVenue;
+  symbol: string | null;
+  question: string;
   yesPrice: number | null;
   closeTime: string | null;
+  tradeable: boolean;
   url: string;
 }
 
-/** Real, live Kalshi prediction markets on this company — event-shaped (CEO changes, KPI/
- *  earnings, product launches), never a price-direction bet, and never Loofta's own view. Public
- *  endpoint, no auth. */
-export async function getKalshiMarkets(symbol: string): Promise<KalshiMarket[]> {
+/** Markets across every company the caller holds, across every venue. */
+export async function getPredictionsForHoldings(opts: AuthOpts, demo = false): Promise<PredictionMarket[]> {
   try {
-    return await fetchApi<KalshiMarket[]>(`/nest/kalshi/${symbol}`);
+    return await fetchApi<PredictionMarket[]>(`/nest/predictions${demo ? "?demo=true" : ""}`, opts);
   } catch {
     return [];
   }
 }
 
-/** Live Kalshi markets across every company the caller actually holds. */
-export async function getKalshiForHoldings(opts: AuthOpts, demo = false): Promise<Array<KalshiMarket & { symbol: string }>> {
+/** Markets for one company. Public, no auth. */
+export async function getPredictionsForSymbol(symbol: string): Promise<PredictionMarket[]> {
   try {
-    return await fetchApi<Array<KalshiMarket & { symbol: string }>>(`/nest/kalshi${demo ? '?demo=true' : ''}`, opts);
+    return await fetchApi<PredictionMarket[]>(`/nest/predictions/${symbol}`);
   } catch {
     return [];
   }

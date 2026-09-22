@@ -1,34 +1,43 @@
 "use client";
 
-import type { KalshiMarket } from "@/services/api/nest";
+import type { PredictionMarket } from "@/services/api/nest";
 import { fav } from "@/components/nest/marketEvents";
 import { tickerDomain } from "@/components/nest/tickerDomains";
 
+const VENUE_LABELS: Record<PredictionMarket["venue"], string> = {
+  kalshi: "Kalshi",
+  dflow: "DFlow",
+  polymarket: "Polymarket",
+};
+const venueLabel = (v: PredictionMarket["venue"]) => VENUE_LABELS[v] ?? v;
+
 /**
- * Live, real Kalshi markets on the companies someone actually holds — CEO changes, earnings/KPI
- * targets, product launches. Event-shaped, never a price-direction bet: Kalshi has no per-stock
- * up/down contract (checked against their live API, 2026-09-21), and we don't invent one.
+ * Live markets on the companies someone actually holds — CEO changes, earnings/KPI targets,
+ * product launches. Event-shaped, never a price-direction bet.
+ *
+ * Venue-agnostic by design: the card renders from PredictionMarket and never knows who's behind
+ * it. The user always sees the same Yes/No with the same split bar; the only thing that changes
+ * is what a tap does, driven by `tradeable`. Kalshi can only ever hand off (regulated exchange,
+ * the order needs the user's own account), while a tokenized venue like DFlow settles to an SPL
+ * token in the wallet they already have — so the same card can become a real in-app bet without
+ * the UI changing shape. The footer says which it is, before the tap.
  *
  * Standalone rather than nested inside a suggestion card: markets are interesting on a quiet day
  * too, and burying them behind "did a suggestion fire?" meant they were invisible almost always.
- *
- * Yes/No are links to Kalshi, NOT order buttons, and are labelled so that's obvious before the
- * tap. Placing a real order needs the user's own KYC'd, funded Kalshi account authenticated with
- * their own API credentials — so an in-app amount field and a Yes button would be theatre unless
- * there's an actual partner arrangement with Kalshi behind it. The odds are Kalshi's own live
- * pricing, never a Loofta view.
+ * The odds are the venue's own live pricing, never a Loofta view.
  */
-export function PredictionMarketsCard({ markets }: { markets: Array<KalshiMarket & { symbol: string }> }) {
+export function PredictionMarketsCard({ markets }: { markets: PredictionMarket[] }) {
   if (markets.length === 0) return null;
+  const venues = `Live odds from ${[...new Set(markets.map(m => venueLabel(m.venue)))].join(", ")}`;
 
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 4 }}>
         <div className="ns-serif" style={{ fontSize: 22 }}>Markets on your companies</div>
-        <div style={{ fontSize: 12, color: "var(--ink3)" }}>Live odds from Kalshi</div>
+        <div style={{ fontSize: 12, color: "var(--ink3)" }}>{venues}</div>
       </div>
       <p style={{ fontSize: 13, color: "var(--ink3)", margin: "0 0 14px", maxWidth: 640 }}>
-        Real money is behind these odds — they're what other people are betting, not our forecast. Tap a side to open it on Kalshi, where the trading actually happens.
+        Real money is behind these odds — they're what other people are betting, not our forecast.
       </p>
 
       <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
@@ -37,11 +46,11 @@ export function PredictionMarketsCard({ markets }: { markets: Array<KalshiMarket
           const no = 100 - yes;
           const closes = m.closeTime ? new Date(m.closeTime) : null;
           return (
-            <div key={`${m.symbol}-${m.ticker}`} className="ns-card" style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 11 }}>
+            <div key={m.id} className="ns-card" style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 11 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                <img src={fav(tickerDomain(m.symbol))} alt="" style={{ width: 20, height: 20, borderRadius: 5, flexShrink: 0 }} />
+                <img src={fav(tickerDomain(m.symbol ?? ""))} alt="" style={{ width: 20, height: 20, borderRadius: 5, flexShrink: 0 }} />
                 <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--ink3)" }}>
-                  {m.symbol.replace(/x$/, "")}
+                  {(m.symbol ?? "").replace(/x$/, "")}
                 </span>
                 {closes && (
                   <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--ink3)" }}>
@@ -50,7 +59,7 @@ export function PredictionMarketsCard({ markets }: { markets: Array<KalshiMarket
                 )}
               </div>
 
-              <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.4 }}>{m.title}</div>
+              <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.4 }}>{m.question}</div>
 
               {/* Horizontal yes/no split — the shape of the crowd's view at a glance, which a bare
                   "38%" doesn't give you. */}
@@ -104,7 +113,9 @@ export function PredictionMarketsCard({ markets }: { markets: Array<KalshiMarket
                 </a>
               </div>
 
-              <div style={{ fontSize: 11, color: "var(--ink3)", textAlign: "center" }}>Opens on Kalshi to place a bet</div>
+              <div style={{ fontSize: 11, color: "var(--ink3)", textAlign: "center" }}>
+                {m.tradeable ? "Place a bet without leaving" : `Opens on ${venueLabel(m.venue)} to place a bet`}
+              </div>
             </div>
           );
         })}
