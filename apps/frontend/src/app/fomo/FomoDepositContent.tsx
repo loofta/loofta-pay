@@ -571,7 +571,15 @@ function PayCard() {
 
         {/* Privacy + summary + pay */}
         <div className="px-6 sm:px-7 pt-5 pb-6 space-y-4">
-          <IncognitoModeToggle checked={isPrivate} onCheckedChange={setIsPrivate} onLabel="Deposit privately" offLabel="Deposit privately" />
+          {/* The shared toggle labels at text-sm; this page's floor is text-base. Overridden here
+              rather than in the component so the other surfaces using it are left alone. */}
+          <IncognitoModeToggle
+            checked={isPrivate}
+            onCheckedChange={setIsPrivate}
+            onLabel="Deposit privately"
+            offLabel="Deposit privately"
+            className="py-2.5 [&>span]:text-base"
+          />
           <AnimatePresence initial={false}>
             {isPrivate && (
               <motion.div
