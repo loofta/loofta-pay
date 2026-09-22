@@ -8,6 +8,18 @@ import { PredictionMarket, PredictionMarketProvider } from './prediction-market.
 const MAX_COMPANIES = 8;
 const MAX_PER_COMPANY = 2;
 
+// Product call (2026-09-22): only surface markets a user can actually take a position on from
+// inside the app. A card that just bounces someone to an exchange they have no account on isn't
+// a feature, it's an ad — so a venue that can't be traded here contributes nothing and the
+// section simply doesn't render.
+//
+// This currently hides everything, because the only registered venue is Kalshi and a CFTC
+// exchange can't be traded through a third party. It's a filter rather than deleting the Kalshi
+// provider because DFlow serves the *same Kalshi markets* tokenized as SPL tokens on Solana —
+// tradeable from the wallet users already have. When that key lands, this filter stops hiding
+// anything and Kalshi stays as the reference implementation of the interface.
+const TRADEABLE_ONLY = true;
+
 /**
  * The single place the rest of the app asks "what can my user bet on?", across every venue.
  * Callers get PredictionMarket objects and never learn which venue answered — that's what lets
@@ -53,6 +65,7 @@ export class PredictionMarketsService {
     const out: PredictionMarket[] = [];
     for (const asset of assets) {
       for (const provider of this.providers) {
+        if (TRADEABLE_ONLY && !provider.tradeable) continue;
         const markets = await provider.listForCompany(asset.name, asset.underlyingSymbol).catch(e => {
           this.logger.warn(`${provider.venue}.listForCompany(${asset.symbol}): ${e.message}`);
           return [] as PredictionMarket[];
@@ -75,6 +88,7 @@ export class PredictionMarketsService {
     if (!asset) return [];
     const out: PredictionMarket[] = [];
     for (const provider of this.providers) {
+      if (TRADEABLE_ONLY && !provider.tradeable) continue;
       const markets = await provider.listForCompany(asset.name, asset.underlyingSymbol).catch(() => [] as PredictionMarket[]);
       for (const m of markets) out.push({ ...m, symbol: asset.symbol });
     }
