@@ -19,8 +19,8 @@ import {
 } from "@/components/SolanaWalletConnect";
 import { buildUSDCTransferTransaction, sendSignedUSDCTransfer } from "@/services/solanaTransfer";
 import {
-  buildMagicBlockPrivateTransferWithLooftaFee,
-  totalWithLooftaPrivateFee,
+  buildMagicBlockPrivateTransferNoFee,
+  totalWithMagicBlockPrivateFee,
   MAGICBLOCK_MAX_SPLIT,
   MAGICBLOCK_MAX_DELAY_MS,
 } from "@/services/magicblockPrivateTransfer";
@@ -36,7 +36,7 @@ const MIN_USD = 1;
 const easeBrand = [0.16, 1, 0.3, 1] as const;
 const FOCUS_RING =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#111114]";
-const CARD_LABEL = "text-sm font-medium uppercase tracking-[0.18em] text-slate-500";
+const CARD_LABEL = "text-base font-medium uppercase tracking-[0.18em] text-slate-500";
 const MAX_DELAY_MIN = MAGICBLOCK_MAX_DELAY_MS / 60_000;
 // shadcn Slider is themed with light shadcn tokens; recolor track/range/thumb for the dark card.
 const SLIDER_DARK =
@@ -212,7 +212,7 @@ function PayPanel({
 
   const short = publicKey ? `${publicKey.toBase58().slice(0, 4)}…${publicKey.toBase58().slice(-4)}` : "";
   const ready = !blocker && !!recipientAddress && connected && !!publicKey && !!signTransaction && status === "idle";
-  const total = isPrivate ? totalWithLooftaPrivateFee(amountUsd) : amountUsd;
+  const total = isPrivate ? totalWithMagicBlockPrivateFee(amountUsd) : amountUsd;
 
   const handlePay = async () => {
     if (!publicKey || !signTransaction || !recipientAddress) return;
@@ -223,11 +223,10 @@ function PayPanel({
       let signature: string;
       if (isPrivate) {
         // No memo on purpose: a handle in the memo would undo the point of the private transfer.
-        const tx = await buildMagicBlockPrivateTransferWithLooftaFee({
+        const tx = await buildMagicBlockPrivateTransferNoFee({
           from: publicKey.toBase58(),
           to: recipientAddress,
           amountUSDC: amountUsd,
-          connection,
           split,
           maxDelayMs,
         });
@@ -320,13 +319,13 @@ function PayPanel({
         <div className="flex items-center justify-between gap-3 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
           <span className="flex items-center gap-2 min-w-0">
             <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" aria-hidden />
-            <span className="text-sm font-mono text-slate-300 truncate">{short}</span>
+            <span className="text-base font-mono text-slate-300 truncate">{short}</span>
           </span>
           <button
             type="button"
             onClick={() => void disconnect()}
             disabled={status !== "idle"}
-            className={`shrink-0 rounded-lg px-2 py-1.5 text-sm text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors disabled:opacity-50 ${FOCUS_RING}`}
+            className={`shrink-0 rounded-lg px-2 py-1.5 text-base text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors disabled:opacity-50 ${FOCUS_RING}`}
           >
             Disconnect
           </button>
@@ -352,16 +351,16 @@ function PayPanel({
           </GradientActionButton>
 
           {status !== "idle" && (
-            <ol className="flex items-center justify-center gap-4 text-sm" aria-live="polite">
+            <ol className="flex items-center justify-center gap-4 text-base" aria-live="polite">
               {STATUS_STEPS.map((s, i) => {
                 const activeIndex = STATUS_STEPS.findIndex((x) => x.key === status);
                 const state = i < activeIndex ? "done" : i === activeIndex ? "active" : "todo";
                 return (
                   <li key={s.key} className="flex items-center gap-1.5">
                     {state === "done" ? (
-                      <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden />
+                      <Check className="h-4 w-4 text-emerald-400" aria-hidden />
                     ) : state === "active" ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-400" aria-hidden />
+                      <Loader2 className="h-4 w-4 animate-spin text-orange-400" aria-hidden />
                     ) : (
                       <span className="h-1.5 w-1.5 rounded-full bg-white/20" aria-hidden />
                     )}
@@ -445,7 +444,7 @@ function PayCard() {
         : !resolution?.resolvable
           ? "This username can't be paid yet"
           : null;
-  const total = isPrivate ? totalWithLooftaPrivateFee(amountNum) : amountNum;
+  const total = isPrivate ? totalWithMagicBlockPrivateFee(amountNum) : amountNum;
 
   return (
     <div className="relative">
@@ -455,7 +454,7 @@ function PayCard() {
         <div className="px-6 sm:px-7 pt-6 pb-7">
           <div className="flex items-center justify-between mb-6">
             <span className={CARD_LABEL}>Amount</span>
-            <span className="text-sm text-slate-500">on Solana</span>
+            <span className="text-base text-slate-500">on Solana</span>
           </div>
           <AmountInput
             id="fomo-amount"
@@ -470,7 +469,7 @@ function PayCard() {
             aria-label="Amount in USD"
           />
           {amountNum > 0 && !amountValid && (
-            <p className="text-sm text-amber-400 mt-2">Min. amount is ${MIN_USD}</p>
+            <p className="text-base text-amber-400 mt-2">Min. amount is ${MIN_USD}</p>
           )}
         </div>
 
@@ -513,8 +512,8 @@ function PayCard() {
                     <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
                       <span className="h-10 w-10 rounded-full bg-white/10 animate-pulse shrink-0" aria-hidden />
                       <div className="flex-1 space-y-1.5">
-                        <span className="block h-3.5 w-28 rounded bg-white/10 animate-pulse" />
-                        <span className="block h-3 w-20 rounded bg-white/10 animate-pulse" />
+                        <span className="block h-4 w-28 rounded bg-white/10 animate-pulse" />
+                        <span className="block h-3.5 w-20 rounded bg-white/10 animate-pulse" />
                       </div>
                       <span className="sr-only">Looking up @{cleanHandle}</span>
                     </div>
@@ -531,7 +530,7 @@ function PayCard() {
                       )}
                       <div className="min-w-0 flex-1">
                         <p className="text-slate-100 text-base font-medium truncate">{resolution.displayName || `@${cleanHandle}`}</p>
-                        <p className="text-slate-400 text-sm truncate">@{cleanHandle} · wallet verified</p>
+                        <p className="text-slate-400 text-base truncate">@{cleanHandle} · wallet verified</p>
                       </div>
                       <Check className="h-5 w-5 text-emerald-400 shrink-0" aria-hidden />
                     </div>
@@ -547,10 +546,10 @@ function PayCard() {
                         </span>
                         <div className="min-w-0 flex-1">
                           <p className="text-slate-200 text-base font-medium truncate">@{cleanHandle}</p>
-                          <p className="text-slate-500 text-sm">No verified wallet yet</p>
+                          <p className="text-slate-500 text-base">No verified wallet yet</p>
                         </div>
                       </div>
-                      <p className="mt-3 text-sm leading-[1.55] text-slate-400">
+                      <p className="mt-3 text-base leading-[1.55] text-slate-400">
                         Fomo only publishes a wallet once an account has traded, and it can take a while to
                         show up. You can still pay them through Loofta, they choose how to receive it.{" "}
                         <Link
@@ -584,10 +583,10 @@ function PayCard() {
                 className="overflow-hidden"
               >
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 space-y-5">
-                  <p className="text-sm leading-[1.5] text-slate-400">
+                  <p className="text-base leading-[1.5] text-slate-400">
                     MagicBlock hides the link between your wallet and theirs on-chain. Split the amount and
-                    spread it over time to make it harder to trace. Gasless: you don&apos;t need SOL, the fee
-                    is taken in USDC.
+                    spread it over time to make it harder to trace. Gasless: you don&apos;t need SOL, MagicBlock
+                    takes its fee in USDC. Loofta takes nothing.
                   </p>
 
                   <div>
@@ -608,7 +607,7 @@ function PayCard() {
                       className={SLIDER_DARK}
                     />
                     {amountValid && split > 1 && (
-                      <p className="mt-2 text-sm text-slate-500 tabular-nums">
+                      <p className="mt-2 text-base text-slate-500 tabular-nums">
                         About ${(amountNum / split).toFixed(2)} per part
                       </p>
                     )}
@@ -631,7 +630,7 @@ function PayCard() {
                       aria-label="Maximum delivery delay in minutes"
                       className={SLIDER_DARK}
                     />
-                    <p className="mt-2 text-sm text-slate-500">
+                    <p className="mt-2 text-base text-slate-500">
                       {delayMin === 0
                         ? "Every part is delivered right away."
                         : `Each part lands at a random moment within ${delayMin} ${delayMin === 1 ? "minute" : "minutes"}.`}
@@ -658,7 +657,7 @@ function PayCard() {
               )}
               <div className="flex items-center justify-between gap-4">
                 <dt className="text-slate-400">Fee</dt>
-                <dd className="text-slate-100">{isPrivate ? `$${(total - amountNum).toFixed(2)} in USDC, gasless` : "Network fee in SOL, from your wallet"}</dd>
+                <dd className="text-slate-100">{isPrivate ? `$${(total - amountNum).toFixed(2)} to MagicBlock, gasless` : "Network fee in SOL, from your wallet"}</dd>
               </div>
               <div className="flex items-center justify-between gap-4 pt-2 border-t border-white/[0.07]">
                 <dt className="text-slate-300 font-medium">You pay</dt>
@@ -685,8 +684,8 @@ function PayCard() {
             />
           </SolanaWalletConnectProvider>
 
-          <p className="flex items-center justify-center gap-1.5 text-sm text-slate-500">
-            <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
+          <p className="flex items-center justify-center gap-1.5 text-base text-slate-500">
+            <ShieldCheck className="h-4 w-4" aria-hidden />
             Your wallet signs. Funds go straight to theirs.
           </p>
         </div>
@@ -828,7 +827,7 @@ export default function FomoDepositContent() {
 
               <div className="hidden lg:block w-72">
                 <div className="rounded-2xl border border-white/10 bg-[#16161a] p-5 space-y-4 shadow-[0_30px_80px_-30px_rgba(0,0,0,0.7)]">
-                  <p className="text-sm text-slate-500">Send to</p>
+                  <p className="text-base text-slate-500">Send to</p>
                   <div className="flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-3 py-2.5 text-slate-100 text-lg">
                     <SocialPlatformIcon platform="twitter" className="h-4 w-4 text-slate-400" />
                     <span>@yourdesigner</span>
@@ -840,7 +839,7 @@ export default function FomoDepositContent() {
                   <div className={`h-11 rounded-2xl flex items-center justify-center text-base font-semibold text-white ${BRAND_GRADIENT}`} aria-hidden>
                     Send
                   </div>
-                  <p className="text-sm text-slate-500 text-center">They claim it when they&apos;re ready</p>
+                  <p className="text-base text-slate-500 text-center">They claim it when they&apos;re ready</p>
                 </div>
               </div>
             </div>

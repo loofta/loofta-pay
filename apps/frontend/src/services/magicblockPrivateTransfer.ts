@@ -52,6 +52,12 @@ export function totalWithLooftaPrivateFee(amountUsd: number): number {
   return amountUsd + amountUsd * (bps / 10_000) + MAGICBLOCK_GASLESS_FEE_FLAT_USD;
 }
 
+/** Same, for flows that take no Loofta cut at all (see buildMagicBlockPrivateTransferNoFee): just
+ *  the amount plus MagicBlock's own gasless relay fee, which their API collects itself. */
+export function totalWithMagicBlockPrivateFee(amountUsd: number): number {
+  return amountUsd + amountUsd * (MAGICBLOCK_GASLESS_FEE_BPS / 10_000) + MAGICBLOCK_GASLESS_FEE_FLAT_USD;
+}
+
 interface MagicBlockTransferResponse {
   kind: string;
   version: "legacy" | "v0";
@@ -129,6 +135,25 @@ async function buildMagicBlockPrivateTransfer(params: {
     throw new Error(message);
   }
   return data as MagicBlockTransferResponse;
+}
+
+/**
+ * MagicBlock's private transfer exactly as their API builds it, with nothing appended: no Loofta
+ * instruction, so no Loofta fee wallet is needed or used. MagicBlock's own sponsor pays the SOL
+ * network fee (`gasless: true`) and collects its own relay fee (10bps + $0.20) in USDC from the
+ * payer inside the same transaction, so the payer's wallet covers everything and Loofta funds
+ * nothing. Use this wherever Loofta isn't taking a cut; use the WithLooftaFee variant below only
+ * where it is.
+ */
+export async function buildMagicBlockPrivateTransferNoFee(params: {
+  from: string;
+  to: string;
+  amountUSDC: number;
+  memo?: string;
+} & MagicBlockPrivacyOptions): Promise<Transaction | VersionedTransaction> {
+  const built = await buildMagicBlockPrivateTransfer(params);
+  const rawBytes = Buffer.from(built.transactionBase64, "base64");
+  return built.version === "v0" ? VersionedTransaction.deserialize(rawBytes) : Transaction.from(rawBytes);
 }
 
 /** A dedicated fee-collection wallet, distinct from SolanaSponsorService's fee-payer/gas-sponsor
