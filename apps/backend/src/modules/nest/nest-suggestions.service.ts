@@ -292,7 +292,7 @@ export class NestSuggestionsService {
     const db = this.supabase.getClient();
     const { data: suggestion, error } = await db.from('nest_suggestions').select('*').eq('id', id).eq('user_id', ledgerUserId).eq('status', 'pending').maybeSingle();
     if (error) throw new Error(`accept: ${error.message}`);
-    if (!suggestion) throw new NotFoundException('Suggestion not found or already resolved');
+    if (!suggestion) throw new NotFoundException('This suggestion is no longer available — it expired, or it was already acted on. Your list has been refreshed.');
 
     const [universe, profileRow, holdingRow] = await Promise.all([
       this.xstocks.getUniverse(),
@@ -329,6 +329,6 @@ export class NestSuggestionsService {
       .eq('status', 'pending')
       .select('id');
     if (error) throw new Error(`dismiss: ${error.message}`);
-    if (!data?.length) throw new NotFoundException('Suggestion not found or already resolved');
+    if (!data?.length) throw new NotFoundException('This suggestion is no longer available — it expired, or it was already acted on. Your list has been refreshed.');
   }
 }

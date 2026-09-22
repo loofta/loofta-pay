@@ -33,6 +33,7 @@ export function SuggestionCard({
   onDismiss: (id: string) => Promise<void>;
 }) {
   const [busy, setBusy] = useState<"accept" | "dismiss" | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const up = suggestion.movePct >= 0;
   // A drift suggestion carries no meaningful price move — labelling it "MOVED +0.5%" makes it
   // look like news when it explicitly isn't. Anything under the detector's own bar is drift.
@@ -41,10 +42,17 @@ export function SuggestionCard({
   const label = name ?? suggestion.symbol.replace(/x$/, "");
   const amount = `$${Math.abs(suggestion.deltaUsd).toFixed(2)}`;
 
+  // A card can go stale under an open page — the suggestion expires, or gets acted on in another
+  // tab — and the id it holds stops existing. Surface that in the card instead of letting the
+  // rejection escape into a full-page runtime error; the parent refreshes the list underneath, so
+  // the dead card clears itself on the next render.
   const act = async (which: "accept" | "dismiss") => {
     setBusy(which);
+    setError(null);
     try {
       await (which === "accept" ? onAccept(suggestion.id) : onDismiss(suggestion.id));
+    } catch (e: any) {
+      setError(e?.message ?? "Something went wrong — try again.");
     } finally {
       setBusy(null);
     }
@@ -106,6 +114,10 @@ export function SuggestionCard({
             {busy === "dismiss" ? "…" : "Not now"}
           </button>
         </div>
+
+        {error && (
+          <p style={{ fontSize: 12.5, color: "var(--down)", margin: "8px 0 0", lineHeight: 1.45 }}>{error}</p>
+        )}
       </div>
     </div>
   );

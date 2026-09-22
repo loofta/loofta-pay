@@ -476,25 +476,45 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
     }
   }, [getAccessToken, user?.id]);
 
+  const refreshSuggestions = useCallback(async () => {
+    const opts = { userId: user?.id, accessToken: await getAccessToken() };
+    const fresh = await getNestSuggestions(opts, NEST_DEMO_MODE).catch(() => [] as NestSuggestion[]);
+    setSuggestions(fresh);
+  }, [getAccessToken, user?.id]);
+
   // Optimistic remove-on-action, refreshed properly on the next full load — accept/dismiss are
   // rare, deliberate clicks, not worth a full loadAuthedData() round-trip just to update one list.
+  // On failure the list IS refetched: the usual cause is a card that went stale under an open page
+  // (expired, or acted on elsewhere), and silently leaving the dead card on screen invites the
+  // user to keep clicking something that can never succeed. The error still propagates so the card
+  // can say what happened.
   const handleAcceptSuggestion = useCallback(
     async (id: string) => {
       const opts = { userId: user?.id, accessToken: await getAccessToken() };
-      await acceptNestSuggestion(id, opts, NEST_DEMO_MODE);
+      try {
+        await acceptNestSuggestion(id, opts, NEST_DEMO_MODE);
+      } catch (e) {
+        await refreshSuggestions();
+        throw e;
+      }
       setSuggestions(prev => prev.filter(s => s.id !== id));
       loadAuthedData(); // holdings/history/portfolio all just changed
     },
-    [getAccessToken, user?.id, loadAuthedData],
+    [getAccessToken, user?.id, loadAuthedData, refreshSuggestions],
   );
 
   const handleDismissSuggestion = useCallback(
     async (id: string) => {
       const opts = { userId: user?.id, accessToken: await getAccessToken() };
-      await dismissNestSuggestion(id, opts, NEST_DEMO_MODE);
+      try {
+        await dismissNestSuggestion(id, opts, NEST_DEMO_MODE);
+      } catch (e) {
+        await refreshSuggestions();
+        throw e;
+      }
       setSuggestions(prev => prev.filter(s => s.id !== id));
     },
-    [getAccessToken, user?.id],
+    [getAccessToken, user?.id, refreshSuggestions],
   );
 
   const [scanning, setScanning] = useState(false);
