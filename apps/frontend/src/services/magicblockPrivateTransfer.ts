@@ -64,12 +64,27 @@ interface MagicBlockTransferResponse {
   validator: string;
 }
 
+/** Timing-obfuscation knobs MagicBlock accepts on private transfers. Both default to "off"
+ *  (single transfer, no delay) because checkout needs one prompt confirmation; flows that want
+ *  graph-analysis resistance (e.g. the /fomo private deposit) opt in explicitly. */
+export interface MagicBlockPrivacyOptions {
+  /** Split into N sub-transfers, 1–15. */
+  split?: number;
+  /** Upper bound of the random delivery delay in ms, ≤ 600_000 (10 min). */
+  maxDelayMs?: number;
+}
+
+export const MAGICBLOCK_MAX_SPLIT = 15;
+export const MAGICBLOCK_MAX_DELAY_MS = 600_000;
+
 async function buildMagicBlockPrivateTransfer(params: {
   from: string;
   to: string;
   amountUSDC: number;
   memo?: string;
-}): Promise<MagicBlockTransferResponse> {
+} & MagicBlockPrivacyOptions): Promise<MagicBlockTransferResponse> {
+  const split = Math.min(MAGICBLOCK_MAX_SPLIT, Math.max(1, Math.round(params.split ?? 1)));
+  const maxDelayMs = Math.min(MAGICBLOCK_MAX_DELAY_MS, Math.max(0, Math.round(params.maxDelayMs ?? 0)));
   const amount = Math.round(params.amountUSDC * 10 ** USDC_DECIMALS);
   if (amount <= 0) throw new Error("Amount must be greater than 0");
 
@@ -90,11 +105,11 @@ async function buildMagicBlockPrivateTransfer(params: {
       initAtasIfMissing: true,
       initVaultIfMissing: true,
       idempotent: true,
-      // No timing-obfuscation delay or splitting — checkout needs a prompt, single confirmation,
-      // not graph-analysis resistance over time.
+      // Defaults to no delay and no splitting (checkout needs a prompt, single confirmation);
+      // callers opt into timing obfuscation via MagicBlockPrivacyOptions.
       minDelayMs: "0",
-      maxDelayMs: "0",
-      split: 1,
+      maxDelayMs: String(maxDelayMs),
+      split,
       // MagicBlock's own configured sponsor pays the SOL network fee and automatically prepends
       // its relay-fee token transfer (its 10bps + $0.20 cut) to its own sponsor ATA — none of that
       // is Loofta's to build or collect. Loofta's separate 10bps below is appended on top of
@@ -142,7 +157,7 @@ export async function buildMagicBlockPrivateTransferWithLooftaFee(params: {
   amountUSDC: number;
   memo?: string;
   connection: Connection;
-}): Promise<Transaction | VersionedTransaction> {
+} & MagicBlockPrivacyOptions): Promise<Transaction | VersionedTransaction> {
   const feeWallet = looftaFeeWalletAddress();
   const built = await buildMagicBlockPrivateTransfer(params);
   const rawBytes = Buffer.from(built.transactionBase64, "base64");

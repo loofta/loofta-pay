@@ -18,6 +18,10 @@ interface AmountInputProps {
   className?: string;
   id?: string;
   "aria-label"?: string;
+  /** Font-size range the field scales between as digits are added. Defaults suit BalanceModal;
+   *  hero-sized fields (e.g. the /fomo pay card) pass larger values. */
+  maxFontPx?: number;
+  minFontPx?: number;
 }
 
 /** Same sanitize logic as the send page's amount field (apps/frontend/src/app/app/page.tsx) —
@@ -40,9 +44,7 @@ function sanitizeAmount(raw: string, maxDecimals: number): string {
   return p[0] || "";
 }
 
-function computeFontPx(chars: number) {
-  const maxPx = 36;
-  const minPx = 18;
+function computeFontPx(chars: number, maxPx: number, minPx: number) {
   const startChars = 6;
   const stepPerChar = 3;
   const delta = Math.max(0, chars - startChars) * stepPerChar;
@@ -55,14 +57,14 @@ function computeFontPx(chars: number) {
  */
 export function AmountInput({
   value, onChange, dark, prefix, suffix, placeholder = "0", maxDecimals = 6,
-  disabled, autoFocus, className, id, ...rest
+  disabled, autoFocus, className, id, maxFontPx = 36, minFontPx = 18, ...rest
 }: AmountInputProps) {
   const mirrorRef = useRef<HTMLSpanElement | null>(null);
   const [inputWidthPx, setInputWidthPx] = useState(0);
 
   const displayValue = value && value.length > 0 ? value : placeholder;
   const charCount = displayValue.replace(/[^0-9.]/g, "").length || 1;
-  const fontPx = computeFontPx(charCount);
+  const fontPx = computeFontPx(charCount, maxFontPx, minFontPx);
   const affixFontPx = Math.max(13, Math.round(fontPx * 0.55));
   const gapPx = 6;
 

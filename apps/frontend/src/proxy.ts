@@ -80,6 +80,7 @@ export function proxy(request: NextRequest) {
     "/pay-with-email",
     "/giveaways",
     "/partners",
+    "/fomo",
     "/guides/send-crypto-privately",
     "/vs/paypal",
     "/usdc-to-ngn",
