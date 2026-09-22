@@ -469,7 +469,14 @@ export class NestRebalanceService {
       }
     }
     await this.applyFillToUser(ledgerUserId, symbol, deltaUsd / fillPrice, fillPrice, deltaUsd, txSignature, liveTrading, 'You accepted a suggestion');
-    await this.writeNavSnapshots([ledgerUserId], universe, prices, new Date().toISOString().slice(0, 10));
+    // Snapshot NAV against prices for the user's WHOLE basket, not just the one symbol traded.
+    // `prices` above holds a single quote, and writeNavSnapshots values anything missing from the
+    // map at cost — so reusing it here would stamp a snapshot where every other position is
+    // frozen at its purchase price, quietly corrupting the performance chart on every accepted
+    // suggestion.
+    const { data: rows } = await this.supabase.getClient().from('nest_holdings').select('symbol').eq('user_id', ledgerUserId).neq('symbol', 'USD');
+    const navPrices = await this.xstocks.getPrices([...new Set((rows ?? []).map(r => r.symbol))]);
+    await this.writeNavSnapshots([ledgerUserId], universe, navPrices, new Date().toISOString().slice(0, 10));
   }
 
   private async applyFillToUser(
