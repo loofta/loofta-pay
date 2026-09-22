@@ -6,7 +6,6 @@ import bs58 from 'bs58';
 import { SupabaseService } from '@/database/supabase.service';
 import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { XStocksService, NestUniverseAsset } from './xstocks.service';
-import { ElfaService } from './elfa.service';
 import { NestRiskTolerance } from './nest.service';
 import { isDemoLedgerUserId } from './nest-ledger-id';
 
@@ -14,23 +13,16 @@ const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const JUPITER_API_BASE = 'https://api.jup.ag/swap/v2';
 
 interface RiskConfig {
-  maxPositions: number;
-  maxWeightPerPosition: number;
+  maxWeightPerPosition: number; // only binds when interest tags narrow the basket to a handful of names
   maxDailyTurnoverPct: number; // fraction of a user's own NAV that can move in one rebalance tick
   cashFloorPct: number; // fraction always left as uninvested "USD" cash
 }
 
 const RISK_CONFIG: Record<NestRiskTolerance, RiskConfig> = {
-  conservative: { maxPositions: 8, maxWeightPerPosition: 0.15, maxDailyTurnoverPct: 0.05, cashFloorPct: 0.1 },
-  balanced: { maxPositions: 15, maxWeightPerPosition: 0.2, maxDailyTurnoverPct: 0.1, cashFloorPct: 0.05 },
-  aggressive: { maxPositions: 25, maxWeightPerPosition: 0.3, maxDailyTurnoverPct: 0.2, cashFloorPct: 0 },
+  conservative: { maxWeightPerPosition: 0.15, maxDailyTurnoverPct: 0.05, cashFloorPct: 0.1 },
+  balanced: { maxWeightPerPosition: 0.2, maxDailyTurnoverPct: 0.1, cashFloorPct: 0.05 },
+  aggressive: { maxWeightPerPosition: 0.3, maxDailyTurnoverPct: 0.2, cashFloorPct: 0 },
 };
-
-// How strongly a positive elfa signal tilts weight above the equal-weight baseline. 0 would make
-// this a pure interest-tag index fund; 1 would let sentiment dominate position sizing entirely.
-const SENTIMENT_TILT_STRENGTH = 0.6;
-// A held symbol is only dropped once it falls below rank maxPositions × this (see computeTargetWeights).
-const HYSTERESIS_BAND = 1.5;
 
 const MIN_USER_TRADE_USD = 2; // skip a per-user delta smaller than this — not worth a ledger row
 const MIN_NET_TRADE_USD = 5; // skip an aggregate (netted-across-users) trade smaller than this
@@ -57,7 +49,6 @@ export class NestRebalanceService {
     private readonly supabase: SupabaseService,
     private readonly config: ConfigService,
     private readonly xstocks: XStocksService,
-    private readonly elfa: ElfaService,
   ) {}
 
   private isLiveTrading(): boolean {
@@ -69,39 +60,33 @@ export class NestRebalanceService {
     return Number.isFinite(raw) && raw > 0 ? raw : 500;
   }
 
-  /** Target weight per symbol for one profile, given the shared sentiment cache. Filters the
-   *  universe to the profile's interest tags (untagged profile = whole universe), ranks by
-   *  sentiment, keeps the top N for this risk tier, tilts weight by sentiment, caps any single
-   *  position, and reserves a risk-tier cash floor. Deterministic and side-effect free so it can
-   *  be unit tested and reused for the onboarding "preview my basket" endpoint later. */
-  computeTargetWeights(profile: UserProfile, universe: NestUniverseAsset[], sentiment: Map<string, { score: number }>, held: Set<string> = new Set()): Map<string, number> {
+  /** Target weight per symbol for one profile: equal-weight across every symbol matching the
+   *  profile's interest tags (untagged profile = whole universe), capped at the risk tier's
+   *  per-position ceiling, with the risk tier's cash floor held back.
+   *
+   *  Previously this ranked candidates by an Elfa attention/mention-volume score, tilted weight
+   *  toward high scorers, and used a hysteresis band to limit churn from rank-flicker. A 26-week
+   *  backtest against real Elfa data (scripts/nest-backtest, RESULTS.md, 2026-09-21) showed that
+   *  approach — with hysteresis, the best version of it — still lost to plain equal-weight by 3.2
+   *  points net, and sat at only the 59th percentile of a 200-shuffle placebo test (statistically
+   *  indistinguishable from noise). A second variant, ranking by attention for SELECTION only
+   *  (equal-weighted within the top pick), also lost to full equal-weight by ~11 points. Elfa's
+   *  own guidance (asked directly, 2026-09-21) confirms mention-volume on individual equities is
+   *  a reactive/retail-attention signal, not a validated alpha signal, and recommends shipping
+   *  equal-weight as the default policy with social data used only as a risk/event monitoring
+   *  layer — not as a portfolio-weight input. Deterministic and side-effect free so it can be
+   *  unit tested and reused for the onboarding "preview my basket" endpoint later. */
+  computeTargetWeights(profile: UserProfile, universe: NestUniverseAsset[]): Map<string, number> {
     const cfg = RISK_CONFIG[profile.riskTolerance];
     const candidates = profile.interestTags.length > 0 ? universe.filter(a => a.tags.some(t => profile.interestTags.includes(t))) : universe;
     if (candidates.length === 0) return new Map();
 
-    const ranked = candidates.map(a => ({ symbol: a.symbol, score: sentiment.get(a.symbol)?.score ?? 0 })).sort((a, b) => b.score - a.score);
-    // Turnover hysteresis: a name already held keeps its seat while it's anywhere in the top
-    // 1.5×N, not just the top N. Without this, a symbol ranking 16th one day and 15th the next
-    // gets sold and rebought — the backtest (scripts/nest-backtest) put that churn at ~50% of NAV
-    // a week, ~7-8 points of cost over 6 months, before any signal edge could show.
-    const keepRank = Math.ceil(cfg.maxPositions * HYSTERESIS_BAND);
-    const selected: typeof ranked = [];
-    ranked.forEach((s, i) => {
-      if (held.has(s.symbol) && i < keepRank) selected.push(s);
-    });
-    for (const s of ranked) {
-      if (selected.length >= cfg.maxPositions) break;
-      if (!selected.some(x => x.symbol === s.symbol)) selected.push(s);
-    }
-    const scored = selected.sort((a, b) => b.score - a.score).slice(0, cfg.maxPositions);
-
-    const raw = scored.map(s => ({ symbol: s.symbol, w: 1 + Math.max(s.score, 0) * SENTIMENT_TILT_STRENGTH }));
-    const rawSum = raw.reduce((sum, r) => sum + r.w, 0);
     const investableFraction = 1 - cfg.cashFloorPct;
+    const equalWeight = investableFraction / candidates.length;
 
     const weights = new Map<string, number>();
-    for (const r of raw) {
-      weights.set(r.symbol, Math.min((r.w / rawSum) * investableFraction, cfg.maxWeightPerPosition));
+    for (const a of candidates) {
+      weights.set(a.symbol, Math.min(equalWeight, cfg.maxWeightPerPosition));
     }
     // Capping can leave weights summing to less than investableFraction — the shortfall simply
     // stays uninvested as extra cash rather than being redistributed, which is a safe (if not
@@ -181,10 +166,14 @@ export class NestRebalanceService {
   }
 
   /**
-   * Daily rebalance: refresh sentiment, compute each opted-in user's target basket, net every
-   * user's delta for the same symbol into one treasury-level trade (minimizes swap count/fees vs.
-   * trading per-user), execute (or simulate) it, then fan the fill back out into each user's own
-   * ledger proportional to their share of that symbol's net delta.
+   * Daily cash-deployment pass, NOT auto-rebalancing (2026-09-21 pivot): computes each opted-in
+   * user's equal-weight target basket and buys toward it with whatever idle cash they have — a
+   * fresh deposit becomes a basket — but never sells an existing position to correct drift from
+   * a price move. Nets every user's buy for the same symbol into one treasury-level trade
+   * (minimizes swap count/fees vs. trading per-user), executes (or simulates) it, then fans the
+   * fill back out into each user's own ledger proportional to their share of that symbol's net
+   * delta. Trimming an overweight position only ever happens through an explicitly accepted
+   * suggestion (nest-suggestions.service.ts).
    */
   async runDailyRebalance(): Promise<void> {
     if (this.running) {
@@ -207,8 +196,6 @@ export class NestRebalanceService {
       return;
     }
 
-    await this.elfa.refreshCache(universe);
-    const sentiment = await this.elfa.getCachedScores(universe.map(a => a.symbol));
     const prices = await this.xstocks.getPrices(universe.map(a => a.symbol));
 
     const liveTrading = this.isLiveTrading();
@@ -267,22 +254,24 @@ export class NestRebalanceService {
       const navUsd = holdings.reduce((sum, h) => sum + h.units * (h.symbol === 'USD' ? 1 : prices.get(h.symbol) ?? h.avgCostUsd), 0);
       if (navUsd <= 0) continue; // never deposited — nothing to allocate yet
 
-      const targetWeights = this.computeTargetWeights(profile, universe, sentiment, new Set(holdings.filter(h => h.symbol !== 'USD' && h.units > 0).map(h => h.symbol)));
+      const targetWeights = this.computeTargetWeights(profile, universe);
       const cfg = RISK_CONFIG[profile.riskTolerance];
       const turnoverCapUsd = navUsd * cfg.maxDailyTurnoverPct;
 
       const currentBySymbol = new Map(holdings.filter(h => h.symbol !== 'USD').map(h => [h.symbol, h.units * (prices.get(h.symbol) ?? h.avgCostUsd)]));
       const allSymbols = new Set([...targetWeights.keys(), ...currentBySymbol.keys()]);
 
-      // Sells before buys, and buys never exceed the cash on hand plus what this pass's sells
-      // free up — same overdraw guard as the demo path (processDemoProfile), applied per user
-      // before the deltas are netted across users.
+      // Buy-only: this daily pass deploys idle cash toward target (a fresh deposit becomes a
+      // basket), it never sells an existing position to correct drift from a price move — that's
+      // exactly the "auto-rebalancing" the 2026-09-21 pivot removed. Trimming an overweight
+      // position now only ever happens through an explicitly accepted suggestion
+      // (nest-suggestions.service.ts, NestRebalanceService.executeSingleTrade) — never silently.
       let cashUsd = holdings.find(h => h.symbol === 'USD')?.units ?? 0;
       const userDeltas: Array<{ symbol: string; deltaUsd: number }> = [];
       for (const symbol of allSymbols) {
         if (!prices.has(symbol)) continue;
         const deltaUsd = (targetWeights.get(symbol) ?? 0) * navUsd - (currentBySymbol.get(symbol) ?? 0);
-        if (Math.abs(deltaUsd) >= MIN_USER_TRADE_USD) userDeltas.push({ symbol, deltaUsd });
+        if (deltaUsd >= MIN_USER_TRADE_USD) userDeltas.push({ symbol, deltaUsd });
       }
       userDeltas.sort((a, b) => a.deltaUsd - b.deltaUsd);
 
@@ -339,7 +328,7 @@ export class NestRebalanceService {
         const userDeltaUsd = deltaUsd * scale;
         if (Math.abs(userDeltaUsd) < MIN_USER_TRADE_USD) continue;
         const unitsDelta = userDeltaUsd / fillPrice;
-        await this.applyFillToUser(userId, symbol, unitsDelta, fillPrice, userDeltaUsd, sentiment.get(symbol)?.score ?? null, txSignature, liveTrading);
+        await this.applyFillToUser(userId, symbol, unitsDelta, fillPrice, userDeltaUsd, txSignature, liveTrading);
         affectedUsers.add(userId);
       }
     }
@@ -349,7 +338,7 @@ export class NestRebalanceService {
     // regardless of the global liveTrading flag.
     for (const profile of demoProfiles) {
       const holdings = holdingsByUser.get(profile.userId) ?? [];
-      await this.processDemoProfile(profile, holdings, universe, sentiment, prices);
+      await this.processDemoProfile(profile, holdings, universe, prices);
       affectedUsers.add(profile.userId);
     }
 
@@ -360,32 +349,29 @@ export class NestRebalanceService {
     profile: UserProfile,
     holdings: HoldingRow[],
     universe: NestUniverseAsset[],
-    sentiment: Map<string, { score: number }>,
     prices: Map<string, number>,
   ): Promise<void> {
     const navUsd = holdings.reduce((sum, h) => sum + h.units * (h.symbol === 'USD' ? 1 : prices.get(h.symbol) ?? h.avgCostUsd), 0);
     if (navUsd <= 0) return;
 
-    const targetWeights = this.computeTargetWeights(profile, universe, sentiment, new Set(holdings.filter(h => h.symbol !== 'USD' && h.units > 0).map(h => h.symbol)));
+    const targetWeights = this.computeTargetWeights(profile, universe);
     const currentBySymbol = new Map(holdings.filter(h => h.symbol !== 'USD').map(h => [h.symbol, h.units * (prices.get(h.symbol) ?? h.avgCostUsd)]));
     const allSymbols = new Set([...targetWeights.keys(), ...currentBySymbol.keys()]);
 
-    // maxDailyTurnoverPct is a real-money safety brake (ease a large deposit in gradually
-    // instead of committing it all in one rebalance) — on a small demo deposit it shrinks to a
-    // few dollars, so only the single highest-scored symbol gets any allocation before the
-    // budget runs out, and the "basket" is just one ticker. No real capital is at risk here, so
-    // demo profiles skip the cap entirely and build their full target basket in one pass.
-    // Sells first, then buys clamped to the cash actually on hand. Buys and sells used to share
-    // one loop in Set insertion order (target symbols first), so a long buy list spent cash the
-    // later sells hadn't freed yet and drove the USD row negative. Symbols with no live quote
-    // still count in NAV (at cost) but are never traded this pass.
+    // Buy-only, same as the real-user path above: this daily pass deploys idle cash toward
+    // target (a fresh deposit becomes a basket), it never sells an existing position to correct
+    // drift — that's the "auto-rebalancing" the 2026-09-21 pivot removed. Trimming an overweight
+    // demo position only happens through an accepted suggestion. maxDailyTurnoverPct (a
+    // real-money safety brake) is skipped for demo profiles since no real capital is at risk —
+    // the full buy list fills in one pass. Symbols with no live quote still count in NAV (at
+    // cost) but are never traded this pass.
     let cashUsd = holdings.find(h => h.symbol === 'USD')?.units ?? 0;
     const deltas: Array<{ symbol: string; deltaUsd: number; price: number }> = [];
     for (const symbol of allSymbols) {
       const price = prices.get(symbol);
       if (!price) continue;
       const deltaUsd = (targetWeights.get(symbol) ?? 0) * navUsd - (currentBySymbol.get(symbol) ?? 0);
-      if (Math.abs(deltaUsd) >= MIN_USER_TRADE_USD) deltas.push({ symbol, deltaUsd, price });
+      if (deltaUsd >= MIN_USER_TRADE_USD) deltas.push({ symbol, deltaUsd, price });
     }
     deltas.sort((a, b) => a.deltaUsd - b.deltaUsd);
 
@@ -400,7 +386,7 @@ export class NestRebalanceService {
         const sellUsd = Math.min(currentUsd, -cashUsd);
         if (sellUsd < MIN_USER_TRADE_USD) continue;
         const price = prices.get(symbol)!;
-        await this.applyFillToUser(profile.userId, symbol, -sellUsd / price, price, -sellUsd, sentiment.get(symbol)?.score ?? null, null, false);
+        await this.applyFillToUser(profile.userId, symbol, -sellUsd / price, price, -sellUsd, null, false);
         currentBySymbol.set(symbol, currentUsd - sellUsd);
         cashUsd += sellUsd;
         const d = deltas.find(x => x.symbol === symbol);
@@ -413,7 +399,7 @@ export class NestRebalanceService {
       if (tradeUsd > 0) tradeUsd = Math.min(tradeUsd, Math.max(cashUsd, 0));
       if (Math.abs(tradeUsd) < MIN_USER_TRADE_USD) continue;
       cashUsd -= tradeUsd;
-      await this.applyFillToUser(profile.userId, symbol, tradeUsd / price, price, tradeUsd, sentiment.get(symbol)?.score ?? null, null, false);
+      await this.applyFillToUser(profile.userId, symbol, tradeUsd / price, price, tradeUsd, null, false);
     }
   }
 
@@ -437,8 +423,6 @@ export class NestRebalanceService {
     if (profileErr) throw new Error(`load profile: ${profileErr.message}`);
     if (!profileRow) return { ran: false };
 
-    await this.elfa.refreshCache(universe);
-    const sentiment = await this.elfa.getCachedScores(universe.map(a => a.symbol));
     const prices = await this.xstocks.getPrices(universe.map(a => a.symbol));
 
     const { data: holdingRows, error: holdingsErr } = await db
@@ -449,9 +433,43 @@ export class NestRebalanceService {
     const holdings: HoldingRow[] = (holdingRows ?? []).map(r => ({ userId: demoLedgerUserId, symbol: r.symbol, units: Number(r.units), avgCostUsd: Number(r.avg_cost_usd) }));
 
     const profile: UserProfile = { userId: demoLedgerUserId, riskTolerance: profileRow.risk_tolerance, interestTags: profileRow.interest_tags ?? [] };
-    await this.processDemoProfile(profile, holdings, universe, sentiment, prices);
+    await this.processDemoProfile(profile, holdings, universe, prices);
     await this.writeNavSnapshots([demoLedgerUserId], universe, prices, new Date().toISOString().slice(0, 10));
     return { ran: true };
+  }
+
+  /**
+   * Execute exactly one accepted suggestion (nest-suggestions.service.ts) — a single user, single
+   * symbol, user-approved trade. Mirrors doRun's real-trade branch (treasury swap for a real user
+   * when live, simulated fill otherwise) but scoped to one action instead of the daily netted
+   * batch, since this only ever fires from an explicit user click, never a cron.
+   */
+  async executeSingleTrade(ledgerUserId: string, symbol: string, deltaUsd: number): Promise<void> {
+    if (Math.abs(deltaUsd) < MIN_USER_TRADE_USD) throw new Error(`Trade too small ($${deltaUsd.toFixed(2)}) — already at target`);
+    const universe = await this.xstocks.getUniverse();
+    const asset = universe.find(a => a.symbol === symbol);
+    if (!asset) throw new Error(`Unknown symbol ${symbol}`);
+    const prices = await this.xstocks.getPrices([symbol]);
+    const price = prices.get(symbol);
+    if (!price) throw new Error(`No live price for ${symbol} — try again shortly`);
+
+    const isDemo = isDemoLedgerUserId(ledgerUserId);
+    const liveTrading = !isDemo && this.isLiveTrading();
+    let fillPrice = price;
+    let txSignature: string | null = null;
+    if (liveTrading) {
+      if (deltaUsd > 0) {
+        const { outAmountAtomic } = await this.executeTreasurySwap(USDC_MINT, asset.solanaMint, BigInt(Math.round(deltaUsd * 1_000_000)));
+        const outUnits = Number(outAmountAtomic) / 10 ** asset.decimals;
+        fillPrice = outUnits > 0 ? deltaUsd / outUnits : price;
+        txSignature = 'pending';
+      } else {
+        const unitsToSell = Math.abs(deltaUsd) / price;
+        await this.executeTreasurySwap(asset.solanaMint, USDC_MINT, BigInt(Math.round(unitsToSell * 10 ** asset.decimals)));
+      }
+    }
+    await this.applyFillToUser(ledgerUserId, symbol, deltaUsd / fillPrice, fillPrice, deltaUsd, txSignature, liveTrading, 'You accepted a suggestion');
+    await this.writeNavSnapshots([ledgerUserId], universe, prices, new Date().toISOString().slice(0, 10));
   }
 
   private async applyFillToUser(
@@ -460,9 +478,9 @@ export class NestRebalanceService {
     unitsDelta: number,
     fillPrice: number,
     usdValue: number,
-    sentimentScore: number | null,
     txSignature: string | null,
     liveTrading: boolean,
+    whyOverride?: string,
   ): Promise<void> {
     const db = this.supabase.getClient();
     const side: 'buy' | 'sell' = unitsDelta >= 0 ? 'buy' : 'sell';
@@ -480,17 +498,13 @@ export class NestRebalanceService {
     const cashUnits = cashRow ? Number(cashRow.units) : 0;
     const newCashUnits = cashUnits - usdValue; // buy consumes cash, sell replenishes it (usdValue is signed)
 
-    // User-facing, in the product's own voice: no provider name, no raw score. The attention
-    // z-score is bucketed into words (>= +0.15 rising, <= -0.15 cooling, else steady); null =
-    // no measured signal for this symbol yet (never "0.00", which reads as measured-and-flat).
+    // Equal-weight allocator (see computeTargetWeights) — the trade happened because this
+    // symbol's weight drifted from target (price move, deposit, or a tag/risk-profile change),
+    // never because of an attention/sentiment score. Say that plainly rather than implying a
+    // signal-driven "why" that no longer exists.
     const amount = `$${Math.abs(usdValue).toFixed(2)}`;
     const verb = side === 'buy' ? 'Added' : 'Trimmed';
-    const why =
-      sentimentScore === null
-        ? side === 'buy' ? 'starting position, no attention signal yet' : 'rebalancing to target, no attention signal yet'
-        : sentimentScore >= 0.15 ? 'attention rising'
-        : sentimentScore <= -0.15 ? 'attention cooling'
-        : 'steady attention, rebalancing to target';
+    const why = whyOverride ?? (prevUnits === 0 && side === 'buy' ? 'starting position' : 'rebalancing to target mix');
     const reason = `${liveTrading ? '' : '[SIMULATED] '}${verb} ${amount} — ${why}`;
 
     await db.from('nest_holdings').upsert({ user_id: userId, symbol, units: newUnits, avg_cost_usd: newAvgCost, updated_at: new Date().toISOString() }, { onConflict: 'user_id,symbol' });

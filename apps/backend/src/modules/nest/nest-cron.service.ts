@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { isCronEnabled } from '@/common/cron-gate';
 import { NestRebalanceService } from './nest-rebalance.service';
+import { NestSuggestionsService } from './nest-suggestions.service';
 
 @Injectable()
 export class NestCronService {
@@ -10,6 +11,7 @@ export class NestCronService {
 
   constructor(
     private readonly rebalance: NestRebalanceService,
+    private readonly suggestions: NestSuggestionsService,
     private readonly config: ConfigService,
   ) {
     if (!this.isProd) {
@@ -28,5 +30,14 @@ export class NestCronService {
   async dailyRebalance(): Promise<void> {
     if (!this.isProd) return;
     await this.rebalance.runDailyRebalance().catch(e => this.logger.error(`runDailyRebalance: ${e.message}`));
+  }
+
+  /** Hourly, not daily: catching a big move promptly is the point of "suggest what to do about
+   *  real news" — cheap most hours (just a price check) since the slow Elfa event-summary call
+   *  only fires for symbols that actually crossed the move threshold, see nest-suggestions.service.ts. */
+  @Cron(CronExpression.EVERY_HOUR)
+  async scanForSuggestions(): Promise<void> {
+    if (!this.isProd) return;
+    await this.suggestions.scanForEvents().catch(e => this.logger.error(`scanForEvents: ${e.message}`));
   }
 }

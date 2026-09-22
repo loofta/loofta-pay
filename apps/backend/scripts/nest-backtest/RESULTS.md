@@ -114,3 +114,15 @@ dropped for missing prices: all 30 returned 251 daily rows from Yahoo Finance.
    market the attention tilt as an outperformance mechanism based on this data, and if a real
    answer matters, extend the test to 1-2+ years and/or the full ~90-name universe before drawing
    further conclusions.
+
+## Decision (2026-09-21)
+
+A follow-up direction-aware variant (event-summary + bullish/bearish classification, not just raw
+mention volume) was tested on a partial sample and showed the same pattern — still trailing
+equal-weight. Asked directly, Elfa's own team confirmed mention-volume on individual equities is a
+reactive attention signal, not a validated alpha signal, and recommended shipping equal-weight as
+the default policy with social data used only for risk/event monitoring, not position sizing. The
+live engine (`nest-rebalance.service.ts`) now ships plain equal-weight across each user's
+tag-filtered universe — the numbers in the "Equal-weight" row above are what it actually runs.
+`backtest-summary.json` was updated to reflect this (`liveStrategy` = equal-weight,
+`rejectedTilt`/`rejectedTiltNoHysteresis` = the tested-and-not-shipped variants above).

@@ -119,10 +119,15 @@ export interface NestBacktestSummary {
   weeks: number;
   universeSize: number;
   startingUsd: number;
-  strategy: NestBacktestStats;
-  strategyHysteresis: NestBacktestStats;
-  equalWeight: NestBacktestStats;
+  /** What the live engine actually runs: equal-weight across the tag-filtered universe. */
+  liveStrategy: NestBacktestStats;
+  /** Attention-tilt + turnover hysteresis — tested, lost to liveStrategy, not shipped. */
+  rejectedTilt: NestBacktestStats;
+  /** Attention-tilt with no hysteresis — the pre-fix allocator, kept for context only. */
+  rejectedTiltNoHysteresis: NestBacktestStats;
+  /** Percentile refers to rejectedTilt vs. 200 shuffles of the same signal, not liveStrategy. */
   placebo: { shuffles: number; netReturnP05: number; netReturnP50: number; netReturnP95: number; realPercentile: number };
+  verdict: string;
   caveats: string[];
 }
 
@@ -217,6 +222,57 @@ export async function unfollowNest(username: string, opts: AuthOpts): Promise<{ 
 
 export async function sendNestKudos(username: string, opts: AuthOpts): Promise<{ ok: true }> {
   return fetchApi<{ ok: true }>('/nest/flock/kudos', { method: 'POST', body: JSON.stringify({ username }), ...opts });
+}
+
+export interface NestSuggestion {
+  id: string;
+  symbol: string;
+  action: 'trim' | 'buy_dip';
+  deltaUsd: number;
+  movePct: number;
+  reason: string;
+  sourceLinks: string[];
+  createdAt: string;
+  expiresAt: string;
+}
+
+/** Pending suggested actions from a real, large price move — never auto-executed; the user
+ *  explicitly accepts or dismisses each one. */
+export async function getNestSuggestions(opts: AuthOpts, demo = false): Promise<NestSuggestion[]> {
+  return fetchApi<NestSuggestion[]>(`/nest/suggestions${demo ? '?demo=true' : ''}`, opts);
+}
+
+export async function acceptNestSuggestion(id: string, opts: AuthOpts, demo = false): Promise<{ executed: boolean }> {
+  return fetchApi<{ executed: boolean }>(`/nest/suggestions/${id}/accept${demo ? '?demo=true' : ''}`, { method: 'POST', ...opts });
+}
+
+export async function dismissNestSuggestion(id: string, opts: AuthOpts, demo = false): Promise<{ ok: true }> {
+  return fetchApi<{ ok: true }>(`/nest/suggestions/${id}/dismiss${demo ? '?demo=true' : ''}`, { method: 'POST', ...opts });
+}
+
+/** Manual trigger — the real scan only runs hourly in production. Testing/dev convenience; safe
+ *  to call any time (reads prices/news, never trades). */
+export async function runNestSuggestionScan(opts: AuthOpts): Promise<{ ran: true }> {
+  return fetchApi<{ ran: true }>('/nest/suggestions/scan', { method: 'POST', ...opts });
+}
+
+export interface KalshiMarket {
+  ticker: string;
+  title: string;
+  yesPrice: number | null;
+  closeTime: string | null;
+  url: string;
+}
+
+/** Real, live Kalshi prediction markets on this company — event-shaped (CEO changes, KPI/
+ *  earnings, product launches), never a price-direction bet, and never Loofta's own view. Public
+ *  endpoint, no auth. */
+export async function getKalshiMarkets(symbol: string): Promise<KalshiMarket[]> {
+  try {
+    return await fetchApi<KalshiMarket[]>(`/nest/kalshi/${symbol}`);
+  } catch {
+    return [];
+  }
 }
 
 export async function getNestPortfolio(opts: AuthOpts, demo = false): Promise<NestPortfolio> {

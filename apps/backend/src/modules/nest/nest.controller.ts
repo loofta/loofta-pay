@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Logger, NotFoundException, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Logger, NotFoundException, Param, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
@@ -9,6 +9,8 @@ import { NestService, NestPortfolio, NestProfile, NestTradeView, NestLedgerEvent
 import { NestDepositService } from './nest-deposit.service';
 import { NestRebalanceService } from './nest-rebalance.service';
 import { NestSocialService, NestRoundups, NestFlock } from './nest-social.service';
+import { NestSuggestionsService, NestSuggestionView } from './nest-suggestions.service';
+import { KalshiService, KalshiMarketView } from './kalshi.service';
 import { XStocksService } from './xstocks.service';
 import { ledgerUserId } from './nest-ledger-id';
 
@@ -116,9 +118,54 @@ export class NestController {
     private readonly deposits: NestDepositService,
     private readonly rebalance: NestRebalanceService,
     private readonly social: NestSocialService,
+    private readonly suggestions: NestSuggestionsService,
+    private readonly kalshi: KalshiService,
     private readonly xstocks: XStocksService,
     private readonly config: ConfigService,
   ) {}
+
+  // ---- Suggestions (event-triggered, user-approved — never auto-executed) --------------------
+
+  /** Manual trigger — the real cron (nest-cron.service.ts) only fires in production, so without
+   *  this there's no way to test the scan on a local dev instance. Safe to expose to any
+   *  authenticated caller: it only reads prices and Elfa event data and writes suggestion rows,
+   *  never trades. Note: the very first scan on a fresh instance can't find any movers — there's
+   *  no prior day's price on record yet to compare against (see nest-suggestions.service.ts). */
+  @Post('suggestions/scan')
+  @ApiOperation({ summary: 'Manually run the suggestion-detection scan now, instead of waiting for the hourly (production-only) cron. Testing/dev convenience.' })
+  async runSuggestionScan(): Promise<{ ran: true }> {
+    await this.suggestions.scanForEvents();
+    return { ran: true };
+  }
+
+  @Get('suggestions')
+  @ApiOperation({ summary: "Pending suggested actions (e.g. \"trim TSLA back to target\") from a real, large price move — never auto-executed. ?demo=true reads the devnet-demo ledger." })
+  async getSuggestions(@Request() req: any, @Query('demo') demo?: string): Promise<NestSuggestionView[]> {
+    return this.suggestions.listForUser(ledgerUserId(req.user.id, demo === 'true'));
+  }
+
+  @Post('suggestions/:id/accept')
+  @ApiOperation({ summary: 'Execute one suggested action — the only way this feature ever trades. Recomputes the amount fresh at accept-time.' })
+  async acceptSuggestion(@Param('id') id: string, @Request() req: any, @Query('demo') demo?: string): Promise<{ executed: boolean }> {
+    return this.suggestions.accept(ledgerUserId(req.user.id, demo === 'true'), id);
+  }
+
+  @Post('suggestions/:id/dismiss')
+  @ApiOperation({ summary: 'Dismiss a suggestion without acting on it.' })
+  async dismissSuggestion(@Param('id') id: string, @Request() req: any, @Query('demo') demo?: string): Promise<{ ok: true }> {
+    await this.suggestions.dismiss(ledgerUserId(req.user.id, demo === 'true'), id);
+    return { ok: true };
+  }
+
+  @Get('kalshi/:symbol')
+  @Public()
+  @ApiOperation({ summary: 'Live, real Kalshi prediction markets on this company (CEO changes, KPI/earnings, product launches — event-shaped, never a price-direction bet) — never Loofta\'s own view, just a link to a real market. Same for every caller, so no auth needed.' })
+  async getKalshiMarkets(@Param('symbol') symbol: string): Promise<KalshiMarketView[]> {
+    const universe = await this.xstocks.getUniverse();
+    const asset = universe.find(a => a.symbol === symbol);
+    if (!asset) return [];
+    return this.kalshi.getMarketsForCompany(asset.name, asset.underlyingSymbol);
+  }
 
   // ---- Crumbs (round-ups) ---------------------------------------------------------------------
 

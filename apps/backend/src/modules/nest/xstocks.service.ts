@@ -334,4 +334,42 @@ export class XStocksService {
     }
     return { prices: out, live };
   }
+
+  /** Append-only, one row per symbol per UTC day (idempotent — upserts today's row rather than
+   *  erroring on a re-run). Unlike `nest_prices` (latest-only, overwritten in place), this is the
+   *  "yesterday's close" the event-suggestion scan needs to detect a big move, and doubles as the
+   *  start of a real historical dataset for strategy R&D instead of the backtest script's ad-hoc
+   *  local JSON cache. */
+  async recordPriceHistory(prices: Map<string, number>): Promise<void> {
+    const today = new Date().toISOString().slice(0, 10);
+    const rows = [...prices].filter(([, price]) => price > 0).map(([symbol, price]) => ({ symbol, day: today, price_usd: price }));
+    if (rows.length === 0) return;
+    const { error } = await this.supabase.getClient().from('nest_price_history').upsert(rows, { onConflict: 'symbol,day' });
+    if (error) this.logger.warn(`recordPriceHistory: ${error.message}`);
+  }
+
+  /** Most recent stored close strictly before today, per symbol — the baseline a fresh live quote
+   *  is compared against to detect a big move. */
+  async getPriorPrices(symbols: string[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (symbols.length === 0) return out;
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('nest_price_history')
+      .select('symbol, day, price_usd')
+      .in('symbol', symbols)
+      .lt('day', today)
+      .order('day', { ascending: false });
+    if (error) {
+      this.logger.warn(`getPriorPrices: ${error.message}`);
+      return out;
+    }
+    for (const row of data ?? []) {
+      if (out.has(row.symbol)) continue; // first row per symbol, thanks to the descending order
+      const price = Number(row.price_usd);
+      if (Number.isFinite(price) && price > 0) out.set(row.symbol, price);
+    }
+    return out;
+  }
 }

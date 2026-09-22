@@ -721,6 +721,11 @@ async function main() {
       avgWeeklyTurnover: +s.avgWeeklyTurnover.toFixed(4),
     });
     const ph = out.placeboHysteresis;
+    // The live engine ships plain equal-weight (see nest-rebalance.service.ts,
+    // 2026-09-21 pivot) — attention-tilting, even with hysteresis, lost to equal-weight and
+    // landed at only the 59th placebo percentile (statistically noise), confirmed by Elfa's own
+    // team when asked directly. The tilt variants are kept here as the rejected experiment, not
+    // the live strategy.
     const summary = {
       generatedAt: out.generatedAt,
       periodStart: dates[0],
@@ -728,9 +733,9 @@ async function main() {
       weeks: WEEKS,
       universeSize: universe.length,
       startingUsd: START_USD,
-      strategy: block(out.attentionTilt!),
-      strategyHysteresis: block(out.attentionTiltHysteresis!),
-      equalWeight: block(out.equalWeight),
+      liveStrategy: block(out.equalWeight),
+      rejectedTilt: block(out.attentionTiltHysteresis!),
+      rejectedTiltNoHysteresis: block(out.attentionTilt!),
       placebo: {
         shuffles: SHUFFLES,
         netReturnP05: +ph.netDistribution.p05!.toFixed(4),
@@ -738,6 +743,13 @@ async function main() {
         netReturnP95: +ph.netDistribution.p95!.toFixed(4),
         realPercentile: +ph.percentileOfRealNet!.toFixed(3),
       },
+      verdict:
+        "We tested weighting positions by Elfa's social-attention signal on each stock. With turnover controls, it returned " +
+        `${pct(block(out.attentionTiltHysteresis!).netReturn)} net over this window vs. equal-weight's ${pct(block(out.equalWeight).netReturn)}, ` +
+        `landing at only the ${Math.round(+ph.percentileOfRealNet!.toFixed(3) * 100)}th percentile of a ${SHUFFLES}-shuffle randomness test ` +
+        "(statistically indistinguishable from noise). Elfa's own team, asked directly, confirmed mention-volume on individual equities " +
+        'is a reactive attention signal, not a validated return predictor. The live engine holds an equal-weighted basket instead; ' +
+        'attention data is still shown as context, not used to size trades.',
       caveats: [
         `${universe.length} of the ~90 allowlisted names; index ETFs excluded`,
         'Weekly full rebalance, not the live engine\'s daily 10%-capped cadence',
@@ -745,7 +757,7 @@ async function main() {
         'Costs assume 0.5% of one-way traded notional per rebalance (Jupiter swap + slippage)',
         'Universe curated 2026-09-15 with hindsight: survivorship bias',
         'One 26-week window; placebo band shows how wide pure noise is at this sample size',
-        'Placebo percentile refers to the hysteresis (current live) allocator',
+        'Placebo percentile refers to the rejected hysteresis-tilt allocator, not the live equal-weight strategy',
       ],
     };
     const summaryFile = path.join(HERE, '..', '..', 'src', 'modules', 'nest', 'backtest-summary.json');

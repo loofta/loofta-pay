@@ -81,10 +81,15 @@ export interface NestBacktestSummary {
   weeks: number;
   universeSize: number;
   startingUsd: number;
-  strategy: NestBacktestStats;
-  strategyHysteresis: NestBacktestStats;
-  equalWeight: NestBacktestStats;
+  /** What the live engine actually runs: equal-weight across the tag-filtered universe. */
+  liveStrategy: NestBacktestStats;
+  /** Attention-tilt + turnover hysteresis — tested, lost to liveStrategy, not shipped. */
+  rejectedTilt: NestBacktestStats;
+  /** Attention-tilt with no hysteresis — the pre-fix allocator, kept for context only. */
+  rejectedTiltNoHysteresis: NestBacktestStats;
+  /** Percentile refers to rejectedTilt vs. 200 shuffles of the same signal, not liveStrategy. */
   placebo: { shuffles: number; netReturnP05: number; netReturnP50: number; netReturnP95: number; realPercentile: number };
+  verdict: string;
   caveats: string[];
 }
 

@@ -31,7 +31,7 @@ export const MARKET_EVENTS: MarketEvent[] = [
     ticker: "MRNAx",
     domainCo: "modernatx.com",
     cat: "Positive late-stage cancer-vaccine results with Merck.",
-    action: "Increased weight — mention spike flagged before the move",
+    action: "Trimmed back to target weight — profit locked in, spread across the basket",
   },
   {
     outlet: "Reuters",
@@ -44,7 +44,7 @@ export const MARKET_EVENTS: MarketEvent[] = [
     ticker: "HPEx",
     domainCo: "hpe.com",
     cat: "Strong AI-driven revenue and sharply higher growth guidance.",
-    action: "Increased weight — guidance beat picked up early",
+    action: "Trimmed back to target weight",
   },
   {
     outlet: "CNBC",
@@ -57,7 +57,7 @@ export const MARKET_EVENTS: MarketEvent[] = [
     ticker: "MSFTx",
     domainCo: "microsoft.com",
     cat: "Revenue and Azure growth exceeded expectations.",
-    action: "Increased weight — Azure momentum flagged",
+    action: "Trimmed back to target weight",
   },
   {
     outlet: "Reuters",
@@ -70,7 +70,7 @@ export const MARKET_EVENTS: MarketEvent[] = [
     ticker: "UNHx",
     domainCo: "unitedhealthgroup.com",
     cat: "Weak Medicare Advantage reimbursement proposal.",
-    action: "Reduced weight — negative guidance flagged, exposure cut",
+    action: "Bought back up to target weight — the dip, not a reason to sell",
   },
 ];
 

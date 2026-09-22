@@ -6,7 +6,11 @@
 // (ns-root/.ns-card/.ns-btn/.ns-serif, warm "paper" palette) into the authenticated onboarding
 // and dashboard views, which the kit itself doesn't cover (it's a marketing splash only). Profile
 // (risk tolerance + interests) drives a daily server-side rebalance across a curated xStocks
-// basket, tilted by an elfa.ai social-sentiment signal — see apps/backend/src/modules/nest/*.
+// basket, equal-weighted across the tag-filtered universe — see apps/backend/src/modules/nest/*.
+// (2026-09-21: previously tilted by an elfa.ai social-sentiment signal; backtested against real
+// data, that tilt lost to plain equal-weight and showed no statistical edge, so it was dropped
+// from the live allocator. Elfa data is still shown as context around holdings, not used to size
+// trades — see nest-rebalance.service.ts and scripts/nest-backtest/RESULTS.md.)
 //
 // The kit's Pricing section (20bps in/out) was removed — nothing in the backend charged it, and
 // it didn't match how real robo-advisors price (recurring % of AUM, not a per-transaction fee).
@@ -22,6 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TrendingUp, TrendingDown, MessageCircle, Zap, PieChart, Menu, X } from "lucide-react";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets } from "@privy-io/react-auth/solana";
+import { useAuth } from "@/hooks/useAuth";
 import dynamic from "next/dynamic";
 import {
   getNestConfig,
@@ -42,6 +47,10 @@ import {
   followNest,
   unfollowNest,
   sendNestKudos,
+  getNestSuggestions,
+  acceptNestSuggestion,
+  dismissNestSuggestion,
+  runNestSuggestionScan,
   type NestDepositView,
   type NestStreak,
   type NestRoundups,
@@ -53,6 +62,7 @@ import {
   type NestTradeView,
   type NestLedgerEvent,
   type NestRiskTolerance,
+  type NestSuggestion,
 } from "@/services/api/nest";
 import { OnboardingFlow, TAG_LABELS, RISK_PERSONA } from "@/components/nest/OnboardingFlow";
 import { NavChart } from "@/components/nest/NavChart";
@@ -76,6 +86,7 @@ import { CrumbsCard } from "@/components/nest/CrumbsCard";
 import { humanizeReason } from "@/components/nest/nestCopy";
 import { ProjectionCard } from "@/components/nest/ProjectionCard";
 import { FlockPanel } from "@/components/nest/FlockPanel";
+import { SuggestionCard } from "@/components/nest/SuggestionCard";
 
 const DepositModal = dynamic(() => import("@/components/nest/DepositModal").then(m => ({ default: m.DepositModal })), { ssr: false });
 // Touches WebGL — client-only, lazy-loaded, same convention as MegapotPack's 3D scene.
@@ -96,15 +107,16 @@ const NEST_DEMO_MODE = true;
  *  showing the price move but not the action, despite the section being titled "Rebalanced on
  *  real headlines." Icon direction (up/down) reuses the same status colors as the price-move
  *  figure above it, rather than introducing a third color meaning on the same card. */
-/** Visual for "how the elfa signal actually works" — a simple 3-node vertical pipeline (X posts
- *  → elfa flags a spike → your Nest rebalances) rather than a chart, since a mention-count
- *  chart would need the viewer to already understand z-scores to read it. This just shows the
- *  mechanism. */
+/** Visual for "what the attention signal is actually for" — a simple 3-node vertical pipeline (X
+ *  posts → your Nest tracks the buzz → shown as context, not a trading trigger) rather than a
+ *  chart, since a mention-count chart would need the viewer to already understand z-scores to
+ *  read it. Deliberately does NOT end on "so we buy more" — we backtested that and it lost to
+ *  just holding an equal-weighted basket (see RESULTS.md); this signal is monitoring only now. */
 function ElfaFlowDiagram() {
   const steps: Array<{ icon: typeof MessageCircle; label: string; sub: string }> = [
     { icon: MessageCircle, label: "Millions of posts on X", sub: "Every account, every day" },
-    { icon: Zap, label: "Your Nest spots the spike", sub: "Unusual buzz, before the headlines" },
-    { icon: PieChart, label: "Your Nest rebalances", sub: "Leans harder into what's real" },
+    { icon: Zap, label: "Your Nest tracks the buzz", sub: "Unusual attention, before the headlines" },
+    { icon: PieChart, label: "Shown next to your holdings", sub: "Context on what's moving — not a reason to buy more" },
   ];
   return (
     <div style={{ position: "relative", paddingLeft: 4, marginLeft: "auto", width: "fit-content" }}>
@@ -141,6 +153,8 @@ function ElfaFlowDiagram() {
   );
 }
 
+/** "What the engine did", not "AI action" — the allocator is deterministic equal-weight
+ *  rebalancing (nest-rebalance.service.ts), and calling that an AI decision oversells it. */
 function AiActionRow({ up, action }: { up: boolean; action: string }) {
   const color = up ? "var(--up)" : "var(--down)";
   const Icon = up ? TrendingUp : TrendingDown;
@@ -161,7 +175,7 @@ function AiActionRow({ up, action }: { up: boolean; action: string }) {
         <Icon size={14} color={color} strokeWidth={2.5} />
       </div>
       <div>
-        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".07em", textTransform: "uppercase", color: "var(--ink3)" }}>AI action</div>
+        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: ".07em", textTransform: "uppercase", color: "var(--ink3)" }}>What the engine did</div>
         <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)", marginTop: 1 }}>{action}</div>
       </div>
     </div>
@@ -223,6 +237,7 @@ function UserMenu({ displayName, email, onLogout }: { displayName: string | null
 function Header({
   variant,
   authenticated,
+  authKnown,
   displayName,
   email,
   dark,
@@ -231,6 +246,10 @@ function Header({
 }: {
   variant: "home" | "app";
   authenticated: boolean;
+  // False for the first client render (before the mount effect below flips it) — `authenticated`
+  // itself can't be trusted to paint yet at that point (see the `mounted` comment in NestApp),
+  // so every authed/unauthed decision here waits on this instead of just `authenticated`.
+  authKnown: boolean;
   displayName: string | null;
   email: string | null;
   dark: boolean;
@@ -259,7 +278,7 @@ function Header({
         )}
       </nav>
       <div className="ns-header-actions">
-        {home && authenticated && (
+        {authKnown && home && authenticated && (
           <button
             className="ns-btn"
             style={{ padding: "11px 26px", fontSize: 15 }}
@@ -268,7 +287,9 @@ function Header({
             Open my nest →
           </button>
         )}
-        {authenticated ? (
+        {!authKnown ? (
+          <div style={{ width: 36, height: 36, borderRadius: "50%", background: "var(--line2)" }} />
+        ) : authenticated ? (
           <UserMenu displayName={displayName} email={email} onLogout={onLogout} />
         ) : (
           <button className="ns-btn" style={{ padding: "11px 26px", fontSize: 15 }} onClick={onSignIn}>
@@ -360,7 +381,23 @@ function buildStocksFromHoldings(holdings: NestPortfolio["holdings"]): NestStock
  *  "Open my nest" link and are sent to the app right after signing in here. `mode="app"`
  *  (/nest-earn/app): the nest itself — onboarding, dashboard, tabs. */
 export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
-  const { user, authenticated, login: privyLogin, logout, getAccessToken } = usePrivy();
+  const { user } = usePrivy();
+  // useAuth() (not usePrivy() directly) — it serves `authenticated` from the persisted
+  // loofta.auth.v1 zustand store while Privy is still initializing on reload, so this page (and
+  // the header CTA) render the signed-in state immediately instead of flashing "Sign in" /
+  // "Start nesting" for the beat before Privy rehydrates. Same cache the main pay.loofta.xyz app
+  // uses — one Privy session, one cache, valid across both surfaces. `ready` (real Privy
+  // readiness, not the cached guess) still gates loadAuthedData below.
+  const { ready, authenticated, login: privyLogin, logout, getAccessToken } = useAuth();
+  // The cached `authenticated` above still can't paint on the very first render: this page is
+  // server-rendered with no localStorage, so React requires that first client render to match
+  // the server's (logged-out) output or it throws a hydration-mismatch away. The cached value
+  // only becomes safe to show once we're past that first paint — flip `mounted` true in an
+  // effect (fires right after mount, before the user can really perceive it) and gate every
+  // authed/unauthed branch on it so nobody sees a confidently-wrong "Start nesting"/"Sign in"
+  // painted from the SSR default before flipping to the real state.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   // Nest-only restriction: email sign-in only, no Twitter/Discord/GitHub — the global Privy
   // config in AuthProvider.tsx (used by the main pay.loofta.xyz app) is untouched; `login()`
   // accepts a per-call `loginMethods` override for exactly this kind of scoped restriction.
@@ -391,11 +428,12 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   const [streak, setStreak] = useState<NestStreak | null>(null);
   const [roundups, setRoundups] = useState<NestRoundups | null>(null);
   const [flock, setFlock] = useState<NestFlock | null>(null);
+  const [suggestions, setSuggestions] = useState<NestSuggestion[]>([]);
   const [flockBusy, setFlockBusy] = useState(false);
   // Set when the deposit modal was opened from the crumbs card, so the pending crumbs are marked
   // as fed once that specific deposit confirms (and not after an unrelated deposit).
   const [crumbsDeposit, setCrumbsDeposit] = useState<number | null>(null);
-  const [tab, setTab] = useState<"overview" | "history" | "news" | "flock">("overview");
+  const [tab, setTab] = useState<"overview" | "portfolio" | "history" | "news" | "flock">("overview");
   const [showLevelHint, setShowLevelHint] = useState(false);
   const [backtest, setBacktest] = useState<NestBacktestSummary | null>(null);
   const [creatingProfile, setCreatingProfile] = useState(false);
@@ -427,8 +465,43 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
       // Social bits are non-critical: never let them block or fail the main load.
       getNestRoundups(opts, NEST_DEMO_MODE).then(setRoundups).catch(() => setRoundups(null));
       getNestFlock(opts, NEST_DEMO_MODE).then(setFlock).catch(() => setFlock(null));
+      getNestSuggestions(opts, NEST_DEMO_MODE).then(setSuggestions).catch(() => setSuggestions([]));
     } catch (e: any) {
       setLoadError(e.message ?? "Failed to load your Nest");
+    }
+  }, [getAccessToken, user?.id]);
+
+  // Optimistic remove-on-action, refreshed properly on the next full load — accept/dismiss are
+  // rare, deliberate clicks, not worth a full loadAuthedData() round-trip just to update one list.
+  const handleAcceptSuggestion = useCallback(
+    async (id: string) => {
+      const opts = { userId: user?.id, accessToken: await getAccessToken() };
+      await acceptNestSuggestion(id, opts, NEST_DEMO_MODE);
+      setSuggestions(prev => prev.filter(s => s.id !== id));
+      loadAuthedData(); // holdings/history/portfolio all just changed
+    },
+    [getAccessToken, user?.id, loadAuthedData],
+  );
+
+  const handleDismissSuggestion = useCallback(
+    async (id: string) => {
+      const opts = { userId: user?.id, accessToken: await getAccessToken() };
+      await dismissNestSuggestion(id, opts, NEST_DEMO_MODE);
+      setSuggestions(prev => prev.filter(s => s.id !== id));
+    },
+    [getAccessToken, user?.id],
+  );
+
+  const [scanning, setScanning] = useState(false);
+  const handleScanNow = useCallback(async () => {
+    setScanning(true);
+    try {
+      const opts = { userId: user?.id, accessToken: await getAccessToken() };
+      await runNestSuggestionScan(opts);
+      const fresh = await getNestSuggestions(opts, NEST_DEMO_MODE);
+      setSuggestions(fresh);
+    } finally {
+      setScanning(false);
     }
   }, [getAccessToken, user?.id]);
 
@@ -439,9 +512,12 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   }, []);
 
   useEffect(() => {
-    if (!authenticated) return;
+    // Gated on real Privy `ready`, not the cached `authenticated` guess: getAccessToken() isn't
+    // reliable before Privy actually initializes, so firing this on the optimistic value alone
+    // would 401 and surface a false "Failed to load your Nest" right after a reload.
+    if (!ready || !authenticated) return;
     loadAuthedData();
-  }, [authenticated, loadAuthedData]);
+  }, [ready, authenticated, loadAuthedData]);
 
   const handleCreateProfile = async (riskTolerance: NestRiskTolerance, interestTags: string[], displayName: string) => {
     setCreatingProfile(true);
@@ -500,20 +576,20 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
 
   // Answers the "how did you pick these / how are they weighted" question directly, tying the
   // basket back to the actual onboarding answers (interestTags/riskTolerance) and naming the
-  // real mechanism (elfa sentiment tilt, computeTargetWeights in nest-rebalance.service.ts) —
-  // rather than leaving the selection logic invisible.
+  // real mechanism (equal weight, computeTargetWeights in nest-rebalance.service.ts) — rather
+  // than leaving the selection logic invisible.
   const basketExplanation = useMemo(() => {
     if (!profile) return null;
     const tags = profile.interestTags.length > 0 ? profile.interestTags.map(t => TAG_LABELS[t] ?? t).join(", ") : "the full universe";
     const persona = RISK_PERSONA[profile.riskTolerance];
-    return `Picked from ${tags}, sized for your "${persona}" risk pick — then weighted daily by our attention signal: names getting real, unusual buzz on X right now get tilted higher, capped so no single pick can dominate the basket.`;
+    return `Picked from ${tags}, sized for your "${persona}" risk pick — then split evenly across every name, capped so no single pick can dominate the basket. Checked daily and traded back to that even split.`;
   }, [profile]);
 
   // --- Home (/nest-earn): the splash, replicated from nest-splash/page.tsx.txt — for everyone ---
   if (mode === "home") {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-        <Header variant="home" authenticated={authenticated} displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
+        <Header variant="home" authenticated={authenticated} authKnown={mounted} displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
 
         <div className="ns-hero" style={{ padding: "10px var(--page-pad) 0" }}>
           <div>
@@ -521,9 +597,16 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
               Grow your <em style={{ fontStyle: "italic", color: "var(--accent)" }}>nest.</em>
             </h1>
             <p style={{ fontSize: 19, lineHeight: 1.65, color: "var(--ink2)", maxWidth: 460, margin: "0 0 34px" }}>
-              A basket of stocks built from your profile — watched around the clock and quietly rebalanced when real events move the market.
+              An equal-weighted basket of stocks built from your profile — checked daily and quietly kept in balance, so no single move takes over your nest.
             </p>
-            {authenticated ? (
+            {!mounted ? (
+              // Neutral placeholder until we're past the first client render (see the `mounted`
+              // comment above) — never guess "Start nesting" here, since that's exactly the
+              // wrong-then-right flash a returning signed-in user was seeing.
+              <button className="ns-btn" style={{ padding: "17px 42px", fontSize: 17, opacity: 0.5 }} disabled>
+                Loading…
+              </button>
+            ) : authenticated ? (
               <button
                 className="ns-btn"
                 style={{ padding: "17px 42px", fontSize: 17 }}
@@ -542,8 +625,8 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
 
         <section id="ledger" style={{ padding: "30px var(--page-pad) 0" }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
-            <div className="ns-serif" style={{ fontSize: 26 }}>Rebalanced on real headlines</div>
-            <div style={{ fontSize: 13, color: "var(--ink3)" }}>The Event Ledger — every headline that moved your nest, on the record</div>
+            <div className="ns-serif" style={{ fontSize: 26 }}>No chasing the news</div>
+            <div style={{ fontSize: 13, color: "var(--ink3)" }}>The Event Ledger — real headlines, and what your nest actually did about them</div>
           </div>
           <div className="ns-grid4">
             {MARKET_EVENTS.map(e => (
@@ -574,34 +657,23 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
         </div>
 
         <section id="how" style={{ padding: "var(--section-pad) var(--page-pad) 0" }}>
-          {/* Illustrative, not a rigorous backtest: real move-% from the 4 events in the Event
-              Ledger above, comparing a basket that ignores news to one that tilted 2x into the
-              two highest-sentiment names the day before each move. Translated into a concrete
-              dollar example (not "+9.5pp") because that's what "what would I win" actually means
-              to someone who isn't fluent in percentage-point jargon. Leads before the 3-step
-              explanation — a concrete payoff is a stronger opener than an abstract process. */}
+          {/* Real committed backtest (scripts/nest-backtest/RESULTS.md, 2026-09-21), not a
+              fabricated example: 26 weeks, 30 names, equal-weight, after 0.5% round-trip trading
+              costs — this is exactly what the live engine runs. We also tested tilting weight
+              toward high-attention names; it lost to this number and showed no statistical edge,
+              so it isn't what powers the basket. */}
           <div className="ns-card" style={{ marginBottom: 24, padding: "var(--card-pad-lg)" }}>
-            <div className="ns-serif" style={{ fontSize: 32, marginBottom: 4 }}>If you'd put in $1,000 before these 4 events</div>
+            <div className="ns-serif" style={{ fontSize: 32, marginBottom: 4 }}>If you'd put in $1,000 on March 20</div>
             <p style={{ fontSize: 13.5, color: "var(--ink3)", marginBottom: 20, maxWidth: 620 }}>
-              A simple example using the 4 real events above.
+              A real replay of the engine over the following 26 weeks, on 30 names, after trading costs. This is what happened — not a forecast.
             </p>
-            <div style={{ display: "flex", gap: 32, flexWrap: "wrap", alignItems: "baseline", marginBottom: 20 }}>
-              <div>
-                <div style={{ fontSize: 12, color: "var(--ink3)" }}>A basket that ignores the news</div>
-                <div className="ns-serif" style={{ fontSize: 36 }}>$1,230</div>
-                <div style={{ fontSize: 13, color: "var(--ink3)" }}>+$230</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 12, color: "var(--ink3)" }}>Your Nest (reacts to real events)</div>
-                <div className="ns-serif ns-up" style={{ fontSize: 36 }}>$1,332</div>
-                <div style={{ fontSize: 13, color: "var(--ink3)" }}>+$332</div>
-              </div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 12, color: "var(--ink3)" }}>Your Nest — equal-weighted, rebalanced weekly</div>
+              <div className="ns-serif ns-up" style={{ fontSize: 36 }}>$1,186</div>
+              <div style={{ fontSize: 13, color: "var(--ink3)" }}>+$186 · worst dip -10.1% along the way</div>
             </div>
-            <div style={{ borderTop: "1px solid var(--line2)", paddingTop: 16, display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
-              <span className="ns-serif ns-up" style={{ fontSize: 28 }}>44% more profit</span>
-              <span style={{ fontSize: 14, color: "var(--ink2)" }}>
-                — $332 vs. $230 in gains, just from tilting toward the names sentiment was already flagging, before the price moved.
-              </span>
+            <div style={{ borderTop: "1px solid var(--line2)", paddingTop: 16, fontSize: 14, color: "var(--ink2)", lineHeight: 1.55 }}>
+              Look at the 4 events below: Moderna and HPE ran up, so the basket trimmed them back to target instead of chasing; UnitedHealth dropped, so it bought the dip back to target instead of selling into fear. Staying diversified did the work — no news-reaction trading required.
             </div>
           </div>
 
@@ -611,7 +683,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
             {[
               ["01", "Tell us about you", "A short conversation about your goals, horizon and appetite for risk. That's your investor profile."],
               ["02", "Get your nest", "We build a basket of tokenized stocks weighted to your profile. Every egg is a position; its size is its weight."],
-              ["03", "We watch the news", "Our AI reads social sentiment around the clock. When a real event moves the market, your nest quietly rebalances — and it goes on the ledger."],
+              ["03", "We suggest, you decide", "Every day we check each position against its target weight. When a real event moves one a lot, we surface exactly what we'd do — trim the winner, or buy the dip — with the news behind it. You accept it or dismiss it. Nothing trades without you."],
             ].map(([n, t, d]) => (
               <div key={n} className="ns-card" style={{ padding: "var(--card-pad-lg)" }}>
                 <div className="ns-serif" style={{ fontSize: 56, color: "var(--accent)", lineHeight: 1 }}>{n}</div>
@@ -622,20 +694,20 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
           </div>
         </section>
 
-        {/* Consumer-friendly, and honest about cadence: elfa tracks mentions continuously, but
-            our rebalance only checks that signal once a day (nest-rebalance.service.ts runs on a
-            daily cron) — say "once a day", not "in real time", to avoid the same overclaim
-            already caught and fixed elsewhere on this page (pricing section, "reads the wires"). */}
+        {/* Honest about what the attention signal is FOR, not just its cadence: we tested tilting
+            weight by it (with real X mention data) and it lost to plain equal-weight, statistically
+            indistinguishable from noise — see scripts/nest-backtest/RESULTS.md. So it's monitoring
+            context now, never phrased as something that changes what's held. */}
         <section id="elfa" style={{ padding: "var(--section-pad) var(--page-pad) 0" }}>
           <div className="ns-card ns-hero" style={{ padding: "var(--card-pad-lg)", gap: "clamp(22px, 5vw, 40px)" }}>
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
                 <img src={fav("elfa.ai")} alt="" style={{ width: 28, height: 28, borderRadius: 8 }} />
-                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink3)", textTransform: "uppercase", letterSpacing: ".06em" }}>Our signal</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink3)", textTransform: "uppercase", letterSpacing: ".06em" }}>Context, not a trigger</span>
               </div>
-              <div className="ns-serif" style={{ fontSize: 32, marginBottom: 12 }}>The signal behind your Nest</div>
+              <div className="ns-serif" style={{ fontSize: 32, marginBottom: 12 }}>Why we watch the buzz</div>
               <p style={{ fontSize: 15, lineHeight: 1.65, color: "var(--ink2)" }}>
-                Your Nest watches X around the clock — including the accounts that break financial news first, often faster than traditional headlines — for when the buzz around a company suddenly spikes. Once a day it checks that signal for every stock in your basket and leans a little harder into the ones getting real, unusual attention.
+                Your Nest watches X around the clock — including the accounts that break financial news first — for when the buzz around a company suddenly spikes. We show that next to your holdings so you know what's happening and why. We tested using it to size trades and it didn't hold up against a plain equal-weighted basket, so it doesn't move your money — it just keeps you informed.
               </p>
               <p style={{ fontSize: 12, color: "var(--ink3)", marginTop: 10 }}>X mention data via Elfa.</p>
             </div>
@@ -649,10 +721,22 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   }
 
   // --- App (/nest-earn/app) ---
+  if (!mounted) {
+    // Same first-render constraint as the home page's hero: don't decide sign-in-vs-dashboard
+    // before we're past the mismatch-prone first client render, or a signed-in user reloading
+    // this page flashes the "Sign in to open your nest" screen instead of their dashboard.
+    return (
+      <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
+        <Header variant="app" authenticated={false} authKnown={false} displayName={null} email={null} dark={dark} onSignIn={login} onLogout={logout} />
+        <NestLoader />
+      </div>
+    );
+  }
+
   if (!authenticated) {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-        <Header variant="app" authenticated={false} displayName={null} email={null} dark={dark} onSignIn={login} onLogout={logout} />
+        <Header variant="app" authenticated={false} authKnown={mounted} displayName={null} email={null} dark={dark} onSignIn={login} onLogout={logout} />
         <div style={{ minHeight: "60vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: "40px var(--page-pad)", textAlign: "center" }}>
           <div className="ns-serif" style={{ fontSize: 32 }}>Sign in to open your nest</div>
           <p style={{ fontSize: 15, color: "var(--ink2)", maxWidth: 380 }}>Email only — no passwords, no wallet setup.</p>
@@ -667,7 +751,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   if (profile === undefined) {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-        <Header variant="app" authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
+        <Header variant="app" authenticated authKnown={mounted} displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
         {loadError ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "80px 64px" }}>
             <p style={{ color: "var(--down)" }}>{loadError}</p>
@@ -685,7 +769,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   if (profile === null) {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-        <Header variant="app" authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
+        <Header variant="app" authenticated authKnown={mounted} displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
         <OnboardingFlow universe={universe} onComplete={handleCreateProfile} submitting={creatingProfile} dark={dark} />
         <NestFooter dark={dark} onToggleDark={toggleDark} />
       </div>
@@ -711,11 +795,11 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   if (postOnboarding === "deposit") {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-        <Header variant="app" authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
+        <Header variant="app" authenticated authKnown={mounted} displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
         <div style={{ minHeight: "70vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: "40px var(--page-pad)", textAlign: "center" }}>
           <div className="ns-serif" style={{ fontSize: 34 }}>{displayName ? `${displayName}, let's` : "Let's"} fund your nest</div>
           <p style={{ fontSize: 15, color: "var(--ink2)", maxWidth: 420 }}>
-            Deposit to start your basket — your first rebalance runs shortly after, picking weights from real sentiment data.
+            Deposit to start your basket — your first rebalance runs shortly after, splitting your deposit evenly across your picks.
           </p>
           <button className="ns-btn" style={{ padding: "16px 36px", fontSize: 16 }} onClick={() => setShowDeposit(true)}>
             Deposit now
@@ -733,7 +817,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   if (postOnboarding === "building") {
     return (
       <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-        <Header variant="app" authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
+        <Header variant="app" authenticated authKnown={mounted} displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
         <NestBuildingAnimation tickers={previewTickers} explanation={basketExplanation} onDone={() => setPostOnboarding(null)} />
       </div>
     );
@@ -743,14 +827,14 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
 
   return (
     <div className={nestRootClass(dark)} style={{ minHeight: "100vh" }}>
-      <Header variant="app" authenticated displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
+      <Header variant="app" authenticated authKnown={mounted} displayName={displayName} email={email} dark={dark} onSignIn={login} onLogout={logout} />
 
       <div style={{ padding: "0 var(--page-pad)", maxWidth: 1100, margin: "0 auto" }}>
         {NEST_DEMO_MODE && (
           <div className="ns-card" style={{ padding: "14px 20px", marginBottom: 24, borderColor: "var(--accent)" }}>
             <span style={{ fontWeight: 600 }}>Devnet Demo.</span>{" "}
             <span style={{ color: "var(--ink2)" }}>
-              Funded with free devnet USDC — real prices and real sentiment data drive the rebalance, but nothing here is real money.
+              Funded with free devnet USDC — real prices drive the rebalance, but nothing here is real money.
             </span>
           </div>
         )}
@@ -810,8 +894,8 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
         />
 
         {/* Mobile-native tabs: the dashboard is one screen per concern, not one long scroll. */}
-        <div role="tablist" style={{ display: "flex", gap: 6, marginBottom: 18, borderBottom: "1px solid var(--line2)" }}>
-          {([["overview", "Overview"], ["history", "History"], ["news", "News"], ["flock", "Flock"]] as const).map(([key, label]) => (
+        <div role="tablist" style={{ display: "flex", gap: 6, marginBottom: 18, borderBottom: "1px solid var(--line2)", overflowX: "auto", scrollbarWidth: "none" }}>
+          {([["overview", "Overview"], ["portfolio", "Portfolio"], ["history", "History"], ["news", "News"], ["flock", "Flock"]] as const).map(([key, label]) => (
             <button
               key={key}
               role="tab"
@@ -827,6 +911,8 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
                 fontWeight: tab === key ? 600 : 500,
                 color: tab === key ? "var(--ink)" : "var(--ink3)",
                 cursor: "pointer",
+                flexShrink: 0,
+                whiteSpace: "nowrap",
               }}
             >
               {label}
@@ -848,6 +934,18 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
 
         {tab === "overview" && (
           <section>
+            {suggestions.map(s => (
+              <SuggestionCard key={s.id} suggestion={s} onAccept={handleAcceptSuggestion} onDismiss={handleDismissSuggestion} />
+            ))}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: suggestions.length > 0 ? 0 : 12 }}>
+              <button
+                onClick={handleScanNow}
+                disabled={scanning}
+                style={{ background: "none", border: "none", color: "var(--ink3)", fontSize: 12, cursor: scanning ? "default" : "pointer", padding: "2px 0" }}
+              >
+                {scanning ? "Checking for news…" : "Check for news now"}
+              </button>
+            </div>
             <CrumbsCard
               roundups={roundups}
               onFeed={amount => {
@@ -862,9 +960,11 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
               <div className="ns-serif" style={{ fontSize: 22, marginBottom: 12 }}>Performance</div>
               <NavChart points={portfolio?.navHistory ?? []} />
             </div>
+          </section>
+        )}
 
-            <ProjectionCard summary={backtest} />
-
+        {tab === "portfolio" && (
+          <section>
             <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
               <div className="ns-serif" style={{ fontSize: 22, marginBottom: 4 }}>Your nest, by category</div>
               {basketExplanation && (
@@ -887,7 +987,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
               )]}
             />
 
-            <NestJournal deposits={deposits} history={history} streak={streak} />
+            <ProjectionCard summary={backtest} />
           </section>
         )}
 
@@ -897,6 +997,8 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
               <div className="ns-serif" style={{ fontSize: 22, marginBottom: 12 }}>What the AI bought / sold on your behalf</div>
               <TradeHistoryList trades={history} />
             </div>
+
+            <NestJournal deposits={deposits} history={history} streak={streak} />
           </section>
         )}
       </div>
@@ -904,8 +1006,8 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
       {tab === "news" && (
       <section id="ledger" style={{ padding: "0 var(--page-pad) var(--section-pad)", maxWidth: 1100, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 18 }}>
-          <div className="ns-serif" style={{ fontSize: 26 }}>Rebalanced on real headlines</div>
-          <div style={{ fontSize: 13, color: "var(--ink3)" }}>Your own trades, each paired with the X post behind it</div>
+          <div className="ns-serif" style={{ fontSize: 26 }}>What's happening around your nest</div>
+          <div style={{ fontSize: 13, color: "var(--ink3)" }}>Your own trades, with the X post about that company for context</div>
         </div>
         {ledger.length === 0 ? (
           <div className="ns-card" style={{ padding: "var(--card-pad)" }}>

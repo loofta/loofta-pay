@@ -5,26 +5,26 @@
   "weeks": 26,
   "universeSize": 30,
   "startingUsd": 10000,
-  "strategy": {
-    "grossReturn": 0.1187,
-    "netReturn": 0.0436,
-    "annualizedVol": 0.2487,
-    "maxDrawdown": -0.1863,
-    "avgWeeklyTurnover": 0.5167
+  "liveStrategy": {
+    "grossReturn": 0.1882,
+    "netReturn": 0.1859,
+    "annualizedVol": 0.2078,
+    "maxDrawdown": -0.1005,
+    "avgWeeklyTurnover": 0.0217
   },
-  "strategyHysteresis": {
+  "rejectedTilt": {
     "grossReturn": 0.1921,
     "netReturn": 0.1537,
     "annualizedVol": 0.2357,
     "maxDrawdown": -0.118,
     "avgWeeklyTurnover": 0.2652
   },
-  "equalWeight": {
-    "grossReturn": 0.1882,
-    "netReturn": 0.1859,
-    "annualizedVol": 0.2078,
-    "maxDrawdown": -0.1005,
-    "avgWeeklyTurnover": 0.0217
+  "rejectedTiltNoHysteresis": {
+    "grossReturn": 0.1187,
+    "netReturn": 0.0436,
+    "annualizedVol": 0.2487,
+    "maxDrawdown": -0.1863,
+    "avgWeeklyTurnover": 0.5167
   },
   "placebo": {
     "shuffles": 200,
@@ -33,6 +33,7 @@
     "netReturnP95": 0.251,
     "realPercentile": 0.585
   },
+  "verdict": "We tested weighting positions by Elfa's social-attention signal on each stock. With turnover controls, it returned +15.4% net over this window vs. equal-weight's +18.6%, landing at only the 59th percentile of a 200-shuffle randomness test (statistically indistinguishable from noise). Elfa's own team, asked directly, confirmed mention-volume on individual equities is a reactive attention signal, not a validated return predictor. The live engine holds an equal-weighted basket instead; attention data is still shown as context, not used to size trades.",
   "caveats": [
     "30 of the ~90 allowlisted names; index ETFs excluded",
     "Weekly full rebalance, not the live engine's daily 10%-capped cadence",
@@ -40,6 +41,6 @@
     "Costs assume 0.5% of one-way traded notional per rebalance (Jupiter swap + slippage)",
     "Universe curated 2026-09-15 with hindsight: survivorship bias",
     "One 26-week window; placebo band shows how wide pure noise is at this sample size",
-    "Placebo percentile refers to the hysteresis (current live) allocator"
+    "Placebo percentile refers to the rejected hysteresis-tilt allocator, not the live equal-weight strategy"
   ]
 }

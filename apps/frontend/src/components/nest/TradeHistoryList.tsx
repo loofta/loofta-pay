@@ -6,9 +6,9 @@ import { humanizeReason, isSimulated } from "@/components/nest/nestCopy";
 
 const PAGE_SIZE = 10;
 
-/** "What the AI bought/sold on your behalf" feed — each row states the reason (sentiment score,
- *  target weight) the rebalance engine recorded, not just the raw fill, so it reads as a decision
- *  log rather than an opaque transaction list. */
+/** "What the engine bought/sold on your behalf" feed — each row states the reason the rebalance
+ *  engine recorded (starting position, or rebalancing back to target weight), not just the raw
+ *  fill, so it reads as a decision log rather than an opaque transaction list. */
 export function TradeHistoryList({ trades }: { trades: NestTradeView[] }) {
   const [page, setPage] = useState(0);
   const pageCount = Math.ceil(trades.length / PAGE_SIZE);

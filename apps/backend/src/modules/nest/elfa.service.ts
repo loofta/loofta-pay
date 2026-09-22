@@ -28,6 +28,11 @@ export interface ElfaPost {
   mentionedAt: string;
 }
 
+export interface ElfaEventSummary {
+  summary: string;
+  sourceLinks: string[];
+}
+
 interface UniverseAssetLike {
   symbol: string;
   name: string;
@@ -207,6 +212,36 @@ export class ElfaService {
       return out;
     } catch (e: any) {
       this.logger.warn(`getRecentPost(${ticker}) failed: ${e.message}`);
+      return null;
+    }
+  }
+
+  // ---- event detection (suggestions) -----------------------------------------------------------
+
+  /** Real event-summary clusters for one symbol since `sinceUnix` — the human-readable "why"
+   *  behind a big price move, for the suggestion feature (nest-suggestions.service.ts). Never a
+   *  prediction and never used to size or select trades — detection is price-move-based; this
+   *  just explains a move that already happened (see nest-rebalance.service.ts's equal-weight
+   *  pivot for why attention/event data was dropped as a trading input). This endpoint does live
+   *  server-side clustering per query (10-55s typical, occasional transient 503 — "upstream model
+   *  declined") so it must only ever be called from the suggestion-scan cron, never a user-facing
+   *  request. Returns the most-sourced cluster, or null if Elfa has nothing (never throws). */
+  async getRecentEventSummary(name: string, ticker: string, sinceUnix: number): Promise<ElfaEventSummary | null> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) return null;
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const params = new URLSearchParams({ keywords: `${name},${ticker}`, from: String(sinceUnix), to: String(now), limit: '5' });
+      const res = await this.callElfa(`${ELFA_API_BASE}/v2/data/event-summary?${params.toString()}`, apiKey);
+      if (!res || !res.ok) return null;
+      const body = await res.json();
+      const events: any[] = body?.success === true && Array.isArray(body?.data) ? body.data : [];
+      if (events.length === 0) return null;
+      const best = events.reduce((top, e) => ((e.sourceLinks?.length ?? 0) > (top.sourceLinks?.length ?? 0) ? e : top), events[0]);
+      if (!best?.summary) return null;
+      return { summary: String(best.summary), sourceLinks: Array.isArray(best.sourceLinks) ? best.sourceLinks.slice(0, 3) : [] };
+    } catch (e: any) {
+      this.logger.warn(`getRecentEventSummary(${ticker}) failed: ${e.message}`);
       return null;
     }
   }

@@ -8,9 +8,10 @@ import { humanizeReason } from "@/components/nest/nestCopy";
 const MIN_MOVE_PCT = 0.05; // below this, nothing "moved" — say so rather than showing +0.0%
 
 /**
- * One story card a day: the position that moved most, what the engine did about it, and the
- * Elfa-surfaced post behind it. Explains why the engine acted — deliberately no buy/sell button
- * and no "top movers" list (attention nudges drive herding; the signal stays inside the engine).
+ * One story card a day: the position that moved most, what the engine did about it (always
+ * rebalancing back to target weight, never a reaction to buzz), and the Elfa-surfaced post as
+ * context for the move. Deliberately no buy/sell button and no "top movers" list (a ranked list
+ * would nudge herding; a signal that doesn't drive trades shouldn't drive attention either).
  * When nothing has moved (markets closed, or quotes not live) it shows the latest engine action
  * instead of a meaningless "+0.0%".
  */
