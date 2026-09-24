@@ -19,6 +19,10 @@ interface BankComboboxProps {
 /** Searchable bank picker for PAJ Cash — filters as you type instead of scrolling a long <select>. */
 export function BankCombobox({ dark, banks, value, onChange, placeholder = "Select your bank…", disabled }: BankComboboxProps) {
   const [open, setOpen] = React.useState(false);
+  const sortedBanks = React.useMemo(
+    () => [...banks].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" })),
+    [banks],
+  );
   const selected = React.useMemo(() => banks.find((b) => b.id === value) ?? null, [banks, value]);
 
   return (
@@ -66,7 +70,7 @@ export function BankCombobox({ dark, banks, value, onChange, placeholder = "Sele
               No bank found.
             </CommandEmpty>
             <CommandGroup>
-              {banks.map((bank) => (
+              {sortedBanks.map((bank) => (
                 <CommandItem
                   key={bank.id}
                   value={bank.name}
