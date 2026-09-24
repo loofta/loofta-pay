@@ -255,10 +255,12 @@ function Hero() {
         <div>
           <div className="mb-6">
             <h1 className={`m-0 font-display text-[clamp(46px,5.4vw,86px)] font-medium leading-[1.02] tracking-[-0.035em] ${INK}`}>
-              {revealWords("Send USDC to any")}
+              {revealWords("Send USDC to")}
               <br />
-              {revealWords("email or @handle", {
-                delayOffset: 0.22,
+              {revealWords("anyone with an", { delayOffset: 0.22 })}
+              <br />
+              {revealWords("email or @handle.", {
+                delayOffset: 0.44,
                 className: "italic text-[#FF6A00]",
               })}
             </h1>
@@ -267,9 +269,10 @@ function Hero() {
           <motion.p
             {...fadeUp}
             transition={{ ...fadeUp.transition, delay: 0.08 }}
-            className={`mb-9 font-grotesk text-base font-normal ${INK_2}`}
+            className={`mb-9 max-w-[540px] font-grotesk text-[clamp(19px,2.1vw,25px)] font-normal leading-[1.5] ${INK_2}`}
           >
-            Works with Telegram, X, GitHub &amp; Discord
+            Just type an email address or social handle and send, they claim it whenever
+            they&apos;re ready, in 150+ tokens or straight to their bank.
           </motion.p>
 
           <motion.div
