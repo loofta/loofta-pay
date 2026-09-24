@@ -42,6 +42,7 @@ export class KalshiService implements PredictionMarketProvider {
   private readonly logger = new Logger(KalshiService.name);
   private seriesCache: { fetchedAt: number; series: RawKalshiSeries[] } | null = null;
   private readonly marketsCache = new Map<string, { fetchedAt: number; markets: KalshiMarketView[] }>();
+  private readonly seriesMarketsCache = new Map<string, { fetchedAt: number; markets: PredictionMarket[] }>();
 
   private async loadFinancialsSeries(): Promise<RawKalshiSeries[]> {
     if (this.seriesCache && Date.now() - this.seriesCache.fetchedAt < SERIES_CACHE_TTL_MS) return this.seriesCache.series;
@@ -122,6 +123,46 @@ export class KalshiService implements PredictionMarketProvider {
     const trimmed = out.slice(0, MAX_MARKETS_RETURNED);
     this.marketsCache.set(underlyingSymbol, { fetchedAt: Date.now(), markets: trimmed });
     return trimmed;
+  }
+
+  /**
+   * Every open market in one named Kalshi series, as venue-agnostic PredictionMarkets. For series
+   * we already know by ticker (e.g. KXIPOOPENAI), where the fuzzy company-name match in
+   * getMarketsForCompany would be guessing at something we can just look up.
+   *
+   * IPO series are a ladder of "before <date>" strikes on one event. The question is built from the
+   * venue's own `yes_sub_title` ("Before Mar 1, 2027") and its rules wording ("confirms an IPO"),
+   * so the date in the question is the venue's, never one we computed from close_time (which lands
+   * the evening before the strike date in ET).
+   */
+  async getSeriesMarkets(seriesTicker: string, companyName: string): Promise<PredictionMarket[]> {
+    const cached = this.seriesMarketsCache.get(seriesTicker);
+    if (cached && Date.now() - cached.fetchedAt < MARKETS_CACHE_TTL_MS) return cached.markets;
+    try {
+      const res = await fetch(`${KALSHI_API_BASE}/markets?series_ticker=${seriesTicker}&status=open&limit=50`);
+      if (!res.ok) return cached?.markets ?? [];
+      const body: any = await res.json();
+      const markets: PredictionMarket[] = [];
+      for (const m of body?.markets ?? []) {
+        const yesPrice = Number(m.yes_bid_dollars);
+        const sub: string | undefined = m.yes_sub_title;
+        markets.push({
+          id: `${this.venue}:${m.ticker}`,
+          venue: this.venue,
+          symbol: null,
+          question: sub ? `Will ${companyName} confirm an IPO ${sub.charAt(0).toLowerCase()}${sub.slice(1)}?` : m.title,
+          yesPrice: Number.isFinite(yesPrice) ? yesPrice : null,
+          closeTime: m.close_time ?? null,
+          tradeable: this.tradeable,
+          url: `https://kalshi.com/markets/${seriesTicker.toLowerCase()}`,
+        });
+      }
+      this.seriesMarketsCache.set(seriesTicker, { fetchedAt: Date.now(), markets });
+      return markets;
+    } catch (e: any) {
+      this.logger.warn(`getSeriesMarkets(${seriesTicker}) failed: ${e.message}`);
+      return cached?.markets ?? [];
+    }
   }
 
   /** PredictionMarketProvider surface — the venue-agnostic shape the UI actually renders. */

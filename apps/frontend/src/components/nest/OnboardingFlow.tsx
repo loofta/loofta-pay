@@ -79,6 +79,7 @@ interface Answers {
   drop?: string;
   persona?: Persona;
   themes: string[];
+  preIpo?: boolean;
 }
 
 /**
@@ -135,7 +136,7 @@ export function OnboardingFlow({
   dark = false,
 }: {
   universe: NestUniverseAsset[];
-  onComplete: (riskTolerance: NestRiskTolerance, interestTags: string[], displayName: string) => void;
+  onComplete: (riskTolerance: NestRiskTolerance, interestTags: string[], displayName: string, wantsPreIpo: boolean) => void;
   submitting: boolean;
   dark?: boolean;
 }) {
@@ -159,7 +160,7 @@ export function OnboardingFlow({
   const vibe = VIBES[persona];
   const pct = PROGRESS[step];
 
-  const finish = () => onComplete(PERSONA_RISK[persona], a.themes, a.name ?? "");
+  const finish = () => onComplete(PERSONA_RISK[persona], a.themes, a.name ?? "", !!a.preIpo);
 
   return (
     <div className={dark ? "nob nob-dark" : "nob"}>
@@ -249,9 +250,8 @@ export function OnboardingFlow({
             <div className="nob-card">
               <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--ink3)", marginBottom: 12 }}>Your starter setup</div>
               <ul className="nob-setup" style={{ margin: 0, paddingLeft: 20 }}>
-                <li>A basket built around your picks</li>
-                <li>Automatic daily rebalancing</li>
-                <li>Tilted toward names with real momentum</li>
+                <li>A basket built around your picks, split equally</li>
+                <li>Suggestions when something big happens, only acted on if you say yes</li>
                 <li>Every move logged on the ledger</li>
               </ul>
             </div>
@@ -276,6 +276,18 @@ export function OnboardingFlow({
                   {TAG_LABELS[tag] ?? tag}
                 </button>
               ))}
+            </div>
+
+            {/* Deliberately NOT in `themes`: themes become interestTags, which filter what the
+                rebalance engine buys, and no pre-IPO token is in that universe. Saved as a tag it
+                would match nothing and leave a chosen-only-this user with an empty basket. It is a
+                side choice that only decides which tab they land on. */}
+            <div className="nob-secthead" style={{ marginTop: 28 }}>Something extra</div>
+            <p className="nob-sectsub">Some big companies, like OpenAI, Anthropic and SpaceX, aren't on the stock market yet. That is called pre-IPO, and normally only big investors can own a piece. We'll show you what tokens tracking them cost. It's just to look at, your nest stays the same.</p>
+            <div className="nob-chips">
+              <button className={`nob-chip${a.preIpo ? " sel" : ""}`} onClick={() => setA(p => ({ ...p, preIpo: !p.preIpo }))}>
+                Companies not on the stock market yet
+              </button>
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginTop: 40 }}>

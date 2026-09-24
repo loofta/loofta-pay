@@ -2,23 +2,18 @@ import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 import { XStocksService } from './xstocks.service';
 import { KalshiService } from './kalshi.service';
+import { PreStocksService } from './prestocks.service';
 import { PredictionMarket, PredictionMarketProvider } from './prediction-market.types';
 
 // Fan-out caps: one dashboard load shouldn't turn into dozens of upstream calls.
 const MAX_COMPANIES = 8;
 const MAX_PER_COMPANY = 2;
 
-// Product call (2026-09-22): only surface markets a user can actually take a position on from
-// inside the app. A card that just bounces someone to an exchange they have no account on isn't
-// a feature, it's an ad — so a venue that can't be traded here contributes nothing and the
-// section simply doesn't render.
-//
-// This currently hides everything, because the only registered venue is Kalshi and a CFTC
-// exchange can't be traded through a third party. It's a filter rather than deleting the Kalshi
-// provider because DFlow serves the *same Kalshi markets* tokenized as SPL tokens on Solana —
-// tradeable from the wallet users already have. When that key lands, this filter stops hiding
-// anything and Kalshi stays as the reference implementation of the interface.
-const TRADEABLE_ONLY = true;
+// Was TRADEABLE_ONLY (2026-09-22), hiding every venue that could only be linked out to. Dropped
+// 2026-09-23 now that betting happens in-app as a practice bet (PredictionBetsService): the
+// market data is real and the position is simulated, so "can this venue take a real order from
+// us" no longer decides whether a question is worth showing. `tradeable` is still carried on
+// each market — it's what a real-money path (DFlow's tokenized Kalshi markets) would switch on.
 
 /**
  * The single place the rest of the app asks "what can my user bet on?", across every venue.
@@ -38,6 +33,7 @@ export class PredictionMarketsService {
     private readonly supabase: SupabaseService,
     private readonly xstocks: XStocksService,
     kalshi: KalshiService,
+    private readonly prestocks: PreStocksService,
   ) {
     // Order matters only for presentation: tradeable venues should lead once one exists, since
     // "you can act on this here" beats "open this elsewhere".
@@ -65,7 +61,6 @@ export class PredictionMarketsService {
     const out: PredictionMarket[] = [];
     for (const asset of assets) {
       for (const provider of this.providers) {
-        if (TRADEABLE_ONLY && !provider.tradeable) continue;
         const markets = await provider.listForCompany(asset.name, asset.underlyingSymbol).catch(e => {
           this.logger.warn(`${provider.venue}.listForCompany(${asset.symbol}): ${e.message}`);
           return [] as PredictionMarket[];
@@ -81,6 +76,42 @@ export class PredictionMarketsService {
     return out;
   }
 
+  /**
+   * One market by its venue-qualified id. This is how a bet gets its price: the stake comes from
+   * the client but the odds never do, so a stale card or a tampered request can't lock in a price
+   * that was never on offer.
+   *
+   * Ids look like "kalshi:KXMETA-26OCTHEAD-69000", and the venue prefix picks the provider. No
+   * venue offers a per-id lookup yet, so this searches a company's market list — which is why
+   * `symbolHint` matters: with it, one company is checked, without it every name in the universe
+   * is, which on a cold cache is ~88 upstream round trips. The hint only narrows the search; it
+   * can't influence the price, which always comes from the provider.
+   */
+  async findById(marketId: string, symbolHint?: string | null): Promise<PredictionMarket | null> {
+    const venue = marketId.split(':')[0];
+    const provider = this.providers.find(p => p.venue === venue);
+    if (!provider) return null;
+
+    // Pre-IPO companies aren't in the xStocks universe; their markets are looked up by the fixed
+    // Kalshi series they belong to. The hint only picks which lookup runs, never the price.
+    if (symbolHint && this.prestocks.hasMarketSeries(symbolHint)) {
+      const hit = await this.prestocks.findMarket(symbolHint, marketId);
+      if (hit) return hit;
+    }
+
+    const universe = await this.xstocks.getUniverse();
+    const hinted = symbolHint ? universe.filter(a => a.symbol === symbolHint) : [];
+    // Hinted company first, then everything else as a fallback for a stale or missing hint.
+    const search = [...hinted, ...universe.filter(a => a.symbol !== symbolHint)];
+
+    for (const asset of search) {
+      const markets = await provider.listForCompany(asset.name, asset.underlyingSymbol).catch(() => [] as PredictionMarket[]);
+      const hit = markets.find(m => m.id === marketId);
+      if (hit) return { ...hit, symbol: asset.symbol };
+    }
+    return null;
+  }
+
   /** Markets for one company, by xStock symbol. */
   async listForSymbol(symbol: string): Promise<PredictionMarket[]> {
     const universe = await this.xstocks.getUniverse();
@@ -88,10 +119,10 @@ export class PredictionMarketsService {
     if (!asset) return [];
     const out: PredictionMarket[] = [];
     for (const provider of this.providers) {
-      if (TRADEABLE_ONLY && !provider.tradeable) continue;
       const markets = await provider.listForCompany(asset.name, asset.underlyingSymbol).catch(() => [] as PredictionMarket[]);
       for (const m of markets) out.push({ ...m, symbol: asset.symbol });
     }
     return out;
   }
 }
+

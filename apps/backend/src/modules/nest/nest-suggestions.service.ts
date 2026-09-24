@@ -19,12 +19,35 @@ const EVENT_LOOKBACK_DAYS = 3;
 const SUGGESTION_TTL_HOURS = 48;
 
 // Drift suggestions: a position can need attention without any news at all — equal weight decays
-// as prices move, and "your NVDA is a fifth bigger than it should be" is an honest, actionable
-// insight on a quiet day. Only surfaced when the gap is both proportionally meaningful and worth
-// a trade in dollar terms, capped per user so a broadly-drifted basket doesn't become a wall.
-const DRIFT_THRESHOLD = 0.2;
+// as prices move, and "your NVDA is a quarter bigger than it should be" is an honest, actionable
+// insight on a quiet day.
+//
+// How far off target a position must sit before it's worth a card. 0.2 was too tight to be
+// useful: in an equal-weight book of ~20 names, individual stocks routinely move a few percent a
+// day against each other, so a fifth off target is ordinary noise and the same names re-tripped
+// it every single day. 0.25 is the standard "5/25" rebalancing band, and the backtest is the real
+// argument for widening rather than narrowing — the allocator that churned (51.7% weekly turnover,
+// $801 of costs) lost by 14 points, while the equal-weight one that won rebalanced weekly and
+// turned over 2.17%. Suggesting trades faster than that is optimising toward the losing side.
+const DRIFT_THRESHOLD = 0.25;
+// And once a name has been raised, leave it alone for a fortnight whatever the user did with it.
+// Without this there's no memory: dismissing a card just means seeing it again tomorrow.
+const DRIFT_COOLDOWN_DAYS = 14;
+// Per-symbol memory isn't enough on its own. A book of ~20 oversized positions would simply cycle
+// a different name every day for three weeks, which still reads as "why do I have something to
+// sell every single day". Drift is housekeeping, not news: it gets one turn a week per user, and
+// the 3-card ceiling then makes that at most three chores a week. A real >=3% move with news
+// behind it still surfaces same-day, because that one is genuinely time-sensitive.
+const DRIFT_USER_COOLDOWN_DAYS = 7;
+const DRIFT_SUGGESTIONS_ENABLED = false;
 const MIN_SUGGESTION_USD = 2;
-const MAX_DRIFT_SUGGESTIONS_PER_USER = 3;
+
+// Hard ceiling on how many suggestions a user has live at once, across BOTH passes. Capping the
+// drift pass alone wasn't enough: news moves stacked on top with no limit of their own, and since
+// every card lives for 48h while the scan runs hourly, one account reached 35 pending — a wall
+// nobody reads, on a nest worth under $100. Fewer, larger, genuinely worth-acting-on cards beat
+// an inbox.
+const MAX_PENDING_SUGGESTIONS_PER_USER = 3;
 
 export interface NestSuggestionView {
   id: string;
@@ -44,6 +67,7 @@ interface CandidateUser {
   interestTags: string[];
   navUsd: number;
   symbolValueUsd: number;
+  heldSymbols: Set<string>;
 }
 
 /**
@@ -97,7 +121,28 @@ export class NestSuggestionsService {
     const today = new Date().toISOString().slice(0, 10);
 
     for (const { asset, price, movePct } of movers) {
-      const holders = await this.holdersOf(asset.symbol, price);
+      const allHolders = await this.holdersOf(asset.symbol, price);
+      if (allHolders.length === 0) continue;
+
+      // Don't double-card a symbol: a holder who already has a live suggestion for this symbol
+      // today (e.g. a drift card from an earlier hourly run) doesn't need a second one just
+      // because it also crossed the news-move bar this hour.
+      const { data: existingForSymbol } = await db
+        .from('nest_suggestions')
+        .select('user_id')
+        .eq('symbol', asset.symbol)
+        .eq('status', 'pending')
+        .in(
+          'user_id',
+          allHolders.map(h => h.ledgerUserId),
+        );
+      const alreadyHasSuggestion = new Set((existingForSymbol ?? []).map(r => r.user_id));
+      // Also drop anyone already at the ceiling: news moves used to stack on top of drift with no
+      // limit of their own, which is how an account reached 35 live cards.
+      const withSlots = await Promise.all(
+        allHolders.map(async h => ({ h, free: (await this.slotsRemaining(h.ledgerUserId)).slots > 0 })),
+      );
+      const holders = withSlots.filter(x => x.free && !alreadyHasSuggestion.has(x.h.ledgerUserId)).map(x => x.h);
       if (holders.length === 0) continue;
 
       // One event-summary call per moving symbol, not per holder.
@@ -112,7 +157,7 @@ export class NestSuggestionsService {
 
       const rows = holders
         .map(h => {
-          const targetWeights = this.rebalance.computeTargetWeights({ userId: h.ledgerUserId, riskTolerance: h.riskTolerance, interestTags: h.interestTags }, universe);
+          const targetWeights = this.rebalance.computeTargetWeights({ userId: h.ledgerUserId, riskTolerance: h.riskTolerance, interestTags: h.interestTags }, universe, h.navUsd, h.heldSymbols);
           const targetUsd = (targetWeights.get(asset.symbol) ?? 0) * h.navUsd;
           return { h, deltaUsd: targetUsd - h.symbolValueUsd };
         })
@@ -134,14 +179,36 @@ export class NestSuggestionsService {
       if (error) this.logger.error(`insert suggestions(${asset.symbol}): ${error.message}`);
     }
 
-    await this.scanForDrift(universe, currentPrices, priorPrices, today).catch(e => this.logger.error(`scanForDrift: ${e.message}`));
+    // Drift nudging is OFF (2026-09-24). It was added to fill quiet days when the news bar found
+    // nothing, and in practice it turned the product into a daily "sell a bit of X" chore that
+    // felt like auto-rebalancing by another name — the opposite of what was asked for. The nest
+    // is built equal-weight once, then held; only a real news move on a held name surfaces a
+    // card. The pass is kept (not deleted) because the maths and the tests for it are sound —
+    // it just shouldn't run unattended.
+    if (DRIFT_SUGGESTIONS_ENABLED) {
+      await this.scanForDrift(universe, currentPrices, priorPrices, today).catch(e => this.logger.error(`scanForDrift: ${e.message}`));
+    }
+  }
+
+  /** How many more suggestions this user can be shown, across both passes. Counting what's
+   *  already pending is the whole point: without it an hourly scan tops up the cap every hour
+   *  instead of holding a ceiling. */
+  private async slotsRemaining(ledgerUserId: string): Promise<{ slots: number; takenSymbols: Set<string> }> {
+    const { data } = await this.supabase
+      .getClient()
+      .from('nest_suggestions')
+      .select('symbol')
+      .eq('user_id', ledgerUserId)
+      .eq('status', 'pending');
+    const rows = data ?? [];
+    return { slots: Math.max(0, MAX_PENDING_SUGGESTIONS_PER_USER - rows.length), takenSymbols: new Set(rows.map(r => r.symbol)) };
   }
 
   /**
    * Quiet-day insights: equal weight decays as prices move, so a position can be well off target
    * with no news behind it at all. Surfaces the largest genuine gaps per user — proportionally
    * meaningful (DRIFT_THRESHOLD) and worth trading in dollars (MIN_SUGGESTION_USD) — capped at
-   * MAX_DRIFT_SUGGESTIONS_PER_USER so a broadly-drifted basket doesn't turn into a wall of cards.
+   * MAX_PENDING_SUGGESTIONS_PER_USER so a broadly-drifted basket doesn't turn into a wall of cards.
    * A symbol that already has a live suggestion today is skipped rather than double-surfaced.
    */
   private async scanForDrift(universe: NestUniverseAsset[], prices: Map<string, number>, priorPrices: Map<string, number>, today: string): Promise<void> {
@@ -166,11 +233,29 @@ export class NestSuggestionsService {
       const targets = this.rebalance.computeTargetWeights(
         { userId: profile.user_id, riskTolerance: profile.risk_tolerance, interestTags: profile.interest_tags ?? [] },
         universe,
+        navUsd,
+        new Set(holdings.filter(h => h.symbol !== 'USD' && h.units > 0).map(h => h.symbol)),
       );
 
-      // Symbols already carrying a live suggestion today — don't surface the same name twice.
-      const { data: pending } = await db.from('nest_suggestions').select('symbol').eq('user_id', profile.user_id).eq('status', 'pending');
-      const alreadySuggested = new Set((pending ?? []).map(p => p.symbol));
+      // One ceiling shared with the news pass, counting everything already live for this user.
+      const { slots: driftSlotsRemaining, takenSymbols: alreadySuggested } = await this.slotsRemaining(profile.user_id);
+      if (driftSlotsRemaining === 0) continue;
+
+      // Names raised recently are off the table regardless of what happened to that card —
+      // accepted, dismissed or expired. A dismissal has to mean something, and a position that
+      // was just rebalanced will sit near target for a while anyway.
+      const cooldownSince = new Date(Date.now() - DRIFT_COOLDOWN_DAYS * 86400_000).toISOString();
+      const { data: recent } = await db
+        .from('nest_suggestions')
+        .select('symbol, created_at')
+        .eq('user_id', profile.user_id)
+        .like('event_key', '%:drift:%')
+        .gte('created_at', cooldownSince);
+      for (const r of recent ?? []) alreadySuggested.add(r.symbol);
+
+      // One drift turn per user per week, whatever the symbols were.
+      const userCooldownSince = Date.now() - DRIFT_USER_COOLDOWN_DAYS * 86400_000;
+      if ((recent ?? []).some(r => new Date(r.created_at).getTime() >= userCooldownSince)) continue;
 
       const candidates: Array<{ symbol: string; deltaUsd: number }> = [];
       for (const [symbol, weight] of targets) {
@@ -183,7 +268,7 @@ export class NestSuggestionsService {
       }
       candidates.sort((a, b) => Math.abs(b.deltaUsd) - Math.abs(a.deltaUsd));
 
-      const rows = candidates.slice(0, MAX_DRIFT_SUGGESTIONS_PER_USER).map(({ symbol, deltaUsd }) => {
+      const rows = candidates.slice(0, driftSlotsRemaining).map(({ symbol, deltaUsd }) => {
         const overweight = deltaUsd < 0;
         const targetUsd = targets.get(symbol)! * navUsd;
         const ratio = valueOf(symbol) / targetUsd;
@@ -258,7 +343,14 @@ export class NestSuggestionsService {
       const navUsd = holdings.reduce((sum, h) => sum + h.units * (h.symbol === 'USD' ? 1 : priceMap.get(h.symbol) ?? h.avgCostUsd), 0);
       if (!(navUsd > 0)) continue;
       const symbolValueUsd = holdings.filter(h => h.symbol === symbol).reduce((sum, h) => sum + h.units * price, 0);
-      out.push({ ledgerUserId: userId, riskTolerance: profile.risk_tolerance, interestTags: profile.interest_tags ?? [], navUsd, symbolValueUsd });
+      out.push({
+        ledgerUserId: userId,
+        riskTolerance: profile.risk_tolerance,
+        interestTags: profile.interest_tags ?? [],
+        navUsd,
+        symbolValueUsd,
+        heldSymbols: new Set(holdings.filter(h => h.symbol !== 'USD' && h.units > 0).map(h => h.symbol)),
+      });
     }
     return out;
   }
@@ -304,7 +396,7 @@ export class NestSuggestionsService {
     const holdings = holdingRow.data ?? [];
     const prices = await this.xstocks.getPrices(holdings.map((h: any) => h.symbol));
     const navUsd = holdings.reduce((sum: number, h: any) => sum + Number(h.units) * (h.symbol === 'USD' ? 1 : prices.get(h.symbol) ?? Number(h.avg_cost_usd)), 0);
-    const targetWeights = this.rebalance.computeTargetWeights({ userId: ledgerUserId, riskTolerance: profileRow.risk_tolerance, interestTags: profileRow.interest_tags ?? [] }, universe);
+    const targetWeights = this.rebalance.computeTargetWeights({ userId: ledgerUserId, riskTolerance: profileRow.risk_tolerance, interestTags: profileRow.interest_tags ?? [] }, universe, navUsd, new Set(holdings.filter((h: any) => h.symbol !== 'USD' && Number(h.units) > 0).map((h: any) => h.symbol)));
     const symbolHolding = holdings.find((h: any) => h.symbol === suggestion.symbol);
     const currentUsd = symbolHolding ? Number(symbolHolding.units) * (prices.get(suggestion.symbol) ?? Number(symbolHolding.avg_cost_usd)) : 0;
     const freshDeltaUsd = (targetWeights.get(suggestion.symbol) ?? 0) * navUsd - currentUsd;

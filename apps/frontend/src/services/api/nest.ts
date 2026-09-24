@@ -291,6 +291,87 @@ export async function getPredictionsForSymbol(symbol: string): Promise<Predictio
   }
 }
 
+export interface NestPredictionBet {
+  id: string;
+  marketId: string;
+  venue: string;
+  symbol: string | null;
+  question: string;
+  side: "yes" | "no";
+  stakeUsd: number;
+  /** Price of the chosen side when the bet was placed, 0-1. */
+  price: number;
+  /** Total returned if this side wins — stake included, not profit on top. */
+  payoutUsd: number;
+  status: "active" | "won" | "lost" | "void";
+  closesAt: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+/** Practice bets: real market questions and live odds, simulated position. No money moves and
+ *  nothing is placed on any exchange — the record lives only in our own table. */
+export async function getNestBets(opts: AuthOpts, demo = false): Promise<NestPredictionBet[]> {
+  try {
+    return await fetchApi<NestPredictionBet[]>(`/nest/predictions/bets${demo ? "?demo=true" : ""}`, opts);
+  } catch {
+    return [];
+  }
+}
+
+/** `symbol` only narrows the server's market lookup; the price is always read live from the
+ *  venue, never taken from here. */
+export async function placeNestBet(
+  marketId: string,
+  side: "yes" | "no",
+  stakeUsd: number,
+  symbol: string | null,
+  opts: AuthOpts,
+  demo = false,
+): Promise<NestPredictionBet> {
+  return fetchApi<NestPredictionBet>("/nest/predictions/bets", {
+    method: "POST",
+    body: JSON.stringify({ marketId, side, stakeUsd, symbol: symbol ?? undefined, demo }),
+    ...opts,
+  });
+}
+
+export async function cancelNestBet(id: string, opts: AuthOpts, demo = false): Promise<{ ok: true }> {
+  return fetchApi<{ ok: true }>(`/nest/predictions/bets/${id}/cancel${demo ? "?demo=true" : ""}`, { method: "POST", ...opts });
+}
+
+/** One PreStocks pre-IPO token: its reference (mark) price vs the price it trades at, and Kalshi's
+ *  IPO-timing market for the company when one exists. */
+export interface PreIpoAsset {
+  symbol: string;
+  name: string;
+  blurb: string;
+  logoUrl: string;
+  url: string;
+  mint: string;
+  markPriceUsd: number;
+  tokenPriceUsd: number;
+  /** Token vs mark in percent; positive means the token trades above the reference price. */
+  premiumPct: number;
+  valuationUsd: number;
+  impliedValuationUsd: number;
+  market: PredictionMarket | null;
+}
+
+export interface PreIpoBasket {
+  assets: PreIpoAsset[];
+  fetchedAt: string;
+}
+
+/** The PreStocks pre-IPO basket. Public, no auth. */
+export async function getPreIpoBasket(): Promise<PreIpoBasket | null> {
+  try {
+    return await fetchApi<PreIpoBasket>("/nest/pre-ipo");
+  } catch {
+    return null;
+  }
+}
+
 export async function getNestPortfolio(opts: AuthOpts, demo = false): Promise<NestPortfolio> {
   return fetchApi<NestPortfolio>(`/nest/portfolio${demo ? '?demo=true' : ''}`, opts);
 }

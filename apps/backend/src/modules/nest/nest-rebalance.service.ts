@@ -24,6 +24,13 @@ const RISK_CONFIG: Record<NestRiskTolerance, RiskConfig> = {
   aggressive: { maxWeightPerPosition: 0.3, maxDailyTurnoverPct: 0.2, cashFloorPct: 0 },
 };
 
+// Don't slice capital thinner than this per name: a position worth less than a few multiples of
+// MIN_USER_TRADE_USD can't be rebalanced at all (a 25% drift on a $5 position is $1.25, under the
+// minimum trade), so it just sits there as un-actionable dust. MIN_POSITIONS keeps a small
+// account diversified rather than collapsing it into one or two names.
+const MIN_POSITION_USD = 10;
+const MIN_POSITIONS = 5;
+
 const MIN_USER_TRADE_USD = 2; // skip a per-user delta smaller than this — not worth a ledger row
 const MIN_NET_TRADE_USD = 5; // skip an aggregate (netted-across-users) trade smaller than this
 
@@ -75,17 +82,44 @@ export class NestRebalanceService {
    *  a reactive/retail-attention signal, not a validated alpha signal, and recommends shipping
    *  equal-weight as the default policy with social data used only as a risk/event monitoring
    *  layer — not as a portfolio-weight input. Deterministic and side-effect free so it can be
-   *  unit tested and reused for the onboarding "preview my basket" endpoint later. */
-  computeTargetWeights(profile: UserProfile, universe: NestUniverseAsset[]): Map<string, number> {
+   *  unit tested and reused for the onboarding "preview my basket" endpoint later.
+   *
+   *  HOW MANY names, not just which: the first cut of this spread NAV across every tag-matching
+   *  candidate, which is right at the size the backtest ran ($10,000 over 30 names = $333 each)
+   *  and wrong at pilot size. Measured on live accounts 2026-09-24: a $98.90 nest targeted 49
+   *  names at $2.02 each while holding 19 at $5.21, so every single position read as "2.6x too
+   *  big" forever — not drift, just a denominator the account could never fill. Selling didn't
+   *  fix it either; it converted holdings into cash that bought more $2 slivers, converging on
+   *  positions below the $2 minimum trade size and therefore too small to ever rebalance.
+   *
+   *  So the count scales with capital: enough names that each is worth at least
+   *  MIN_POSITION_USD, floored at MIN_POSITIONS for diversification and ceilinged by the
+   *  candidate list. A large account still converges on the full, backtested basket.
+   *
+   *  `held` keeps the selection stable when the count is smaller than the candidate list —
+   *  names already owned keep their place, so a shrinking target doesn't churn the book for the
+   *  sake of it. That's turnover control, not a signal: which names fill the remaining slots is
+   *  the universe's own fixed order, never a ranking. */
+  computeTargetWeights(profile: UserProfile, universe: NestUniverseAsset[], navUsd = 0, held: Set<string> = new Set()): Map<string, number> {
     const cfg = RISK_CONFIG[profile.riskTolerance];
     const candidates = profile.interestTags.length > 0 ? universe.filter(a => a.tags.some(t => profile.interestTags.includes(t))) : universe;
     if (candidates.length === 0) return new Map();
 
+    // navUsd 0 (callers that only want the shape of the basket) keeps the old behaviour: every
+    // candidate, equally weighted.
+    const affordable = navUsd > 0 ? Math.floor(navUsd / MIN_POSITION_USD) : candidates.length;
+    const count = Math.max(MIN_POSITIONS, Math.min(candidates.length, affordable));
+
+    // Held names first so the basket doesn't reshuffle every time the count moves, then the rest
+    // in the universe's own order.
+    const ordered = [...candidates.filter(a => held.has(a.symbol)), ...candidates.filter(a => !held.has(a.symbol))];
+    const selected = ordered.slice(0, count);
+
     const investableFraction = 1 - cfg.cashFloorPct;
-    const equalWeight = investableFraction / candidates.length;
+    const equalWeight = investableFraction / selected.length;
 
     const weights = new Map<string, number>();
-    for (const a of candidates) {
+    for (const a of selected) {
       weights.set(a.symbol, Math.min(equalWeight, cfg.maxWeightPerPosition));
     }
     // Capping can leave weights summing to less than investableFraction — the shortfall simply
@@ -254,7 +288,12 @@ export class NestRebalanceService {
       const navUsd = holdings.reduce((sum, h) => sum + h.units * (h.symbol === 'USD' ? 1 : prices.get(h.symbol) ?? h.avgCostUsd), 0);
       if (navUsd <= 0) continue; // never deposited — nothing to allocate yet
 
-      const targetWeights = this.computeTargetWeights(profile, universe);
+      const targetWeights = this.computeTargetWeights(
+        profile,
+        universe,
+        navUsd,
+        new Set(holdings.filter(h => h.symbol !== 'USD' && h.units > 0).map(h => h.symbol)),
+      );
       const cfg = RISK_CONFIG[profile.riskTolerance];
       const turnoverCapUsd = navUsd * cfg.maxDailyTurnoverPct;
 
@@ -354,7 +393,12 @@ export class NestRebalanceService {
     const navUsd = holdings.reduce((sum, h) => sum + h.units * (h.symbol === 'USD' ? 1 : prices.get(h.symbol) ?? h.avgCostUsd), 0);
     if (navUsd <= 0) return;
 
-    const targetWeights = this.computeTargetWeights(profile, universe);
+    const targetWeights = this.computeTargetWeights(
+      profile,
+      universe,
+      navUsd,
+      new Set(holdings.filter(h => h.symbol !== 'USD' && h.units > 0).map(h => h.symbol)),
+    );
     const currentBySymbol = new Map(holdings.filter(h => h.symbol !== 'USD').map(h => [h.symbol, h.units * (prices.get(h.symbol) ?? h.avgCostUsd)]));
     const allSymbols = new Set([...targetWeights.keys(), ...currentBySymbol.keys()]);
 

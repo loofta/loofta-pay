@@ -52,6 +52,10 @@ import {
   dismissNestSuggestion,
   runNestSuggestionScan,
   getPredictionsForHoldings,
+  getPreIpoBasket,
+  getNestBets,
+  placeNestBet,
+  cancelNestBet,
   type NestDepositView,
   type NestStreak,
   type NestRoundups,
@@ -65,6 +69,8 @@ import {
   type NestRiskTolerance,
   type NestSuggestion,
   type PredictionMarket,
+  type PreIpoBasket as PreIpoBasketData,
+  type NestPredictionBet,
 } from "@/services/api/nest";
 import { OnboardingFlow, TAG_LABELS, RISK_PERSONA } from "@/components/nest/OnboardingFlow";
 import { NavChart } from "@/components/nest/NavChart";
@@ -90,6 +96,7 @@ import { ProjectionCard } from "@/components/nest/ProjectionCard";
 import { FlockPanel } from "@/components/nest/FlockPanel";
 import { SuggestionCard } from "@/components/nest/SuggestionCard";
 import { PredictionMarketsCard } from "@/components/nest/PredictionMarketsCard";
+import { PreIpoBasket } from "@/components/nest/PreIpoBasket";
 
 const DepositModal = dynamic(() => import("@/components/nest/DepositModal").then(m => ({ default: m.DepositModal })), { ssr: false });
 // Touches WebGL — client-only, lazy-loaded, same convention as MegapotPack's 3D scene.
@@ -434,11 +441,13 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   const [suggestions, setSuggestions] = useState<NestSuggestion[]>([]);
   const [suggestionError, setSuggestionError] = useState<string | null>(null);
   const [predictionMarkets, setPredictionMarkets] = useState<PredictionMarket[]>([]);
+  const [predictionBets, setPredictionBets] = useState<NestPredictionBet[]>([]);
+  const [preIpo, setPreIpo] = useState<PreIpoBasketData | null>(null);
   const [flockBusy, setFlockBusy] = useState(false);
   // Set when the deposit modal was opened from the crumbs card, so the pending crumbs are marked
   // as fed once that specific deposit confirms (and not after an unrelated deposit).
   const [crumbsDeposit, setCrumbsDeposit] = useState<number | null>(null);
-  const [tab, setTab] = useState<"overview" | "portfolio" | "history" | "news" | "flock">("overview");
+  const [tab, setTab] = useState<"overview" | "portfolio" | "history" | "news" | "markets" | "flock">("overview");
   const [showLevelHint, setShowLevelHint] = useState(false);
   const [backtest, setBacktest] = useState<NestBacktestSummary | null>(null);
   const [creatingProfile, setCreatingProfile] = useState(false);
@@ -472,6 +481,8 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
       getNestFlock(opts, NEST_DEMO_MODE).then(setFlock).catch(() => setFlock(null));
       getNestSuggestions(opts, NEST_DEMO_MODE).then(setSuggestions).catch(() => setSuggestions([]));
       getPredictionsForHoldings(opts, NEST_DEMO_MODE).then(setPredictionMarkets).catch(() => setPredictionMarkets([]));
+      getNestBets(opts, NEST_DEMO_MODE).then(setPredictionBets).catch(() => setPredictionBets([]));
+      getPreIpoBasket().then(setPreIpo);
     } catch (e: any) {
       setLoadError(e.message ?? "Failed to load your Nest");
     }
@@ -488,6 +499,37 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   // choice feel like it might not have registered. The request runs behind it; if it actually
   // fails the list is refetched (so state is truthful, not guessed) and the reason surfaces in a
   // banner where it's still visible after the card is gone.
+  // Optimistic like the suggestion cards: the position appears the moment a side is tapped. The
+  // server is authoritative on price (it reads the live market), so the real row replaces this
+  // one on response; a failure rolls back to whatever the server says is actually there.
+  const handlePlaceBet = useCallback(
+    async (market: PredictionMarket, side: "yes" | "no", stakeUsd: number) => {
+      const opts = { userId: user?.id, accessToken: await getAccessToken() };
+      try {
+        const saved = await placeNestBet(market.id, side, stakeUsd, market.symbol, opts, NEST_DEMO_MODE);
+        setPredictionBets(prev => [saved, ...prev.filter(b => b.id !== saved.id)]);
+      } catch {
+        const fresh = await getNestBets(opts, NEST_DEMO_MODE).catch(() => [] as NestPredictionBet[]);
+        setPredictionBets(fresh);
+      }
+    },
+    [getAccessToken, user?.id],
+  );
+
+  const handleCancelBet = useCallback(
+    async (betId: string) => {
+      const opts = { userId: user?.id, accessToken: await getAccessToken() };
+      setPredictionBets(prev => prev.filter(b => b.id !== betId));
+      try {
+        await cancelNestBet(betId, opts, NEST_DEMO_MODE);
+      } catch {
+        const fresh = await getNestBets(opts, NEST_DEMO_MODE).catch(() => [] as NestPredictionBet[]);
+        setPredictionBets(fresh);
+      }
+    },
+    [getAccessToken, user?.id],
+  );
+
   const runSuggestionAction = useCallback(
     async (id: string, run: (opts: { userId?: string; accessToken: string | null }) => Promise<unknown>, onDone?: () => void) => {
       setSuggestionError(null);
@@ -541,12 +583,13 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
     loadAuthedData();
   }, [ready, authenticated, loadAuthedData]);
 
-  const handleCreateProfile = async (riskTolerance: NestRiskTolerance, interestTags: string[], displayName: string) => {
+  const handleCreateProfile = async (riskTolerance: NestRiskTolerance, interestTags: string[], displayName: string, wantsPreIpo: boolean) => {
     setCreatingProfile(true);
     try {
       const accessToken = await getAccessToken();
       const created = await upsertNestProfile(riskTolerance, interestTags, displayName || null, { userId: user?.id, accessToken }, NEST_DEMO_MODE);
       setProfile(created);
+      if (wantsPreIpo) setTab("markets");
       setPostOnboarding("deposit");
     } catch (e: any) {
       setLoadError(e.message ?? "Could not create your Nest profile");
@@ -821,7 +864,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
         <div style={{ minHeight: "70vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: "40px var(--page-pad)", textAlign: "center" }}>
           <div className="ns-serif" style={{ fontSize: 34 }}>{displayName ? `${displayName}, let's` : "Let's"} fund your nest</div>
           <p style={{ fontSize: 15, color: "var(--ink2)", maxWidth: 420 }}>
-            Deposit to start your basket — your first rebalance runs shortly after, splitting your deposit evenly across your picks.
+            Deposit to start your basket. Your nest is built shortly after, splitting your deposit evenly across your picks.
           </p>
           <button className="ns-btn" style={{ padding: "16px 36px", fontSize: 16 }} onClick={() => setShowDeposit(true)}>
             Deposit now
@@ -917,7 +960,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
 
         {/* Mobile-native tabs: the dashboard is one screen per concern, not one long scroll. */}
         <div role="tablist" style={{ display: "flex", gap: 6, marginBottom: 18, borderBottom: "1px solid var(--line2)", overflowX: "auto", scrollbarWidth: "none" }}>
-          {([["overview", "Overview"], ["portfolio", "Portfolio"], ["history", "History"], ["news", "News"], ["flock", "Flock"]] as const).map(([key, label]) => (
+          {([["overview", "Overview"], ["portfolio", "Portfolio"], ["history", "History"], ["markets", "Markets"], ["news", "News"], ["flock", "Flock"]] as const).map(([key, label]) => (
             <button
               key={key}
               role="tab"
@@ -942,6 +985,17 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
             </button>
           ))}
         </div>
+
+        {/* Both betting surfaces in one place: they share the same practice-bet mechanic, and
+            splitting "call it on a company you hold" from "call it on a company going public"
+            across two tabs made each look thinner than it is — while leaving Overview to carry a
+            horizontal market rail on top of everything else. */}
+        {tab === "markets" && (
+          <section>
+            <PredictionMarketsCard markets={predictionMarkets} bets={predictionBets} onPlace={handlePlaceBet} onCancel={handleCancelBet} />
+            <PreIpoBasket assets={preIpo?.assets ?? []} bets={predictionBets} onPlace={handlePlaceBet} onCancel={handleCancelBet} />
+          </section>
+        )}
 
         {tab === "flock" && (
           <FlockPanel
@@ -988,15 +1042,6 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
                 {scanning ? "Checking for news…" : "Check for news now"}
               </button>
             </div>
-            <PredictionMarketsCard markets={predictionMarkets} />
-            <CrumbsCard
-              roundups={roundups}
-              onFeed={amount => {
-                setCrumbsDeposit(amount);
-                setShowDeposit(true);
-              }}
-              onEnable={() => { window.location.href = "/nest-earn/settings#roundups"; }}
-            />
             <WhatMovedCard holdings={portfolio?.holdings ?? []} ledger={ledger} history={history} totalValueUsd={portfolio?.totalValueUsd ?? 0} quotesLive={portfolio?.quotesLive ?? true} />
 
             <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
@@ -1008,6 +1053,14 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
 
         {tab === "portfolio" && (
           <section>
+            <CrumbsCard
+              roundups={roundups}
+              onFeed={amount => {
+                setCrumbsDeposit(amount);
+                setShowDeposit(true);
+              }}
+              onEnable={() => { window.location.href = "/nest-earn/settings#roundups"; }}
+            />
             <div className="ns-card" style={{ padding: "var(--card-pad)", marginBottom: 18 }}>
               <div className="ns-serif" style={{ fontSize: 22, marginBottom: 4 }}>Your nest, by category</div>
               {basketExplanation && (

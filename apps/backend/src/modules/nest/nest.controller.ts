@@ -12,6 +12,8 @@ import { NestSocialService, NestRoundups, NestFlock } from './nest-social.servic
 import { NestSuggestionsService, NestSuggestionView } from './nest-suggestions.service';
 import { PredictionMarketsService } from './prediction-markets.service';
 import { PredictionMarket } from './prediction-market.types';
+import { PredictionBetsService, NestPredictionBet } from './prediction-bets.service';
+import { PreStocksService, PreIpoResponse } from './prestocks.service';
 import { XStocksService } from './xstocks.service';
 import { ledgerUserId } from './nest-ledger-id';
 
@@ -99,6 +101,29 @@ class FlockVisibilityDto {
   demo?: boolean;
 }
 
+class PlaceBetDto {
+  @IsString()
+  marketId: string;
+
+  @IsIn(['yes', 'no'])
+  side: 'yes' | 'no';
+
+  @IsNumber()
+  @Min(1)
+  @Max(100)
+  stakeUsd: number;
+
+  /** Narrows the market lookup to one company — see PredictionMarketsService.findById. Never
+   *  influences the price, which always comes from the provider. */
+  @IsOptional()
+  @IsString()
+  symbol?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  demo?: boolean;
+}
+
 class FlockUsernameDto {
   @IsString()
   username: string;
@@ -121,7 +146,9 @@ export class NestController {
     private readonly social: NestSocialService,
     private readonly suggestions: NestSuggestionsService,
     private readonly predictions: PredictionMarketsService,
+    private readonly bets: PredictionBetsService,
     private readonly xstocks: XStocksService,
+    private readonly prestocks: PreStocksService,
     private readonly config: ConfigService,
   ) {}
 
@@ -164,11 +191,39 @@ export class NestController {
     return this.predictions.listForUser(ledgerUserId(req.user.id, demo === 'true'));
   }
 
+  @Get('predictions/bets')
+  @ApiOperation({ summary: "The caller's practice bets. Real market questions and odds, simulated position — no money moves and nothing is placed on any exchange. ?demo=true reads the devnet-demo ledger." })
+  async getBets(@Request() req: any, @Query('demo') demo?: string): Promise<NestPredictionBet[]> {
+    return this.bets.listForUser(ledgerUserId(req.user.id, demo === 'true'));
+  }
+
+  @Post('predictions/bets')
+  @ApiOperation({ summary: 'Place (or top up) a practice bet on a real market. The stake comes from the caller; the price is always read live from the venue.' })
+  async placeBet(@Body() dto: PlaceBetDto, @Request() req: any): Promise<NestPredictionBet> {
+    return this.bets.place(ledgerUserId(req.user.id, !!dto.demo), dto.marketId, dto.side, dto.stakeUsd, dto.symbol ?? null);
+  }
+
+  @Post('predictions/bets/:id/cancel')
+  @ApiOperation({ summary: 'Close an open practice bet before its market settles.' })
+  async cancelBet(@Param('id') id: string, @Request() req: any, @Query('demo') demo?: string): Promise<{ ok: true }> {
+    await this.bets.cancel(ledgerUserId(req.user.id, demo === 'true'), id);
+    return { ok: true };
+  }
+
+  // Declared AFTER the literal predictions/* routes above: Nest matches in declaration order, so
+  // a wildcard first would swallow /predictions/bets as symbol="bets".
   @Get('predictions/:symbol')
   @Public()
   @ApiOperation({ summary: 'Live prediction markets on one company, across every venue. Same for every caller, so no auth needed.' })
   async getPredictionsForSymbol(@Param('symbol') symbol: string): Promise<PredictionMarket[]> {
     return this.predictions.listForSymbol(symbol);
+  }
+
+  @Get('pre-ipo')
+  @Public()
+  @ApiOperation({ summary: 'PreStocks pre-IPO tokens with mark vs token price and, where Kalshi lists one, an IPO-timing market per company. Same for every caller, so no auth needed.' })
+  async getPreIpo(): Promise<PreIpoResponse> {
+    return this.prestocks.getBasket();
   }
 
   @Get('universe')
