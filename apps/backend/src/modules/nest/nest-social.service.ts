@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { SupabaseService } from '@/database/supabase.service';
 import { NestService } from './nest.service';
 import { XStocksService } from './xstocks.service';
-import { ledgerUserId } from './nest-ledger-id';
+import { ledgerUserId, isDemoLedgerUserId, realUserIdOf } from './nest-ledger-id';
 
 export interface NestRoundups {
   enabled: boolean;
@@ -26,11 +26,18 @@ export interface NestFlock {
   isPublic: boolean;
   username: string | null;
   following: FlockMember[];
+  /** Public nests the caller doesn't follow yet — so the tab is never an empty room. */
+  suggested: FlockMember[];
   followers: number;
   kudosReceived: number;
 }
 
 const ROUNDUP_UNITS = [1, 5];
+/** Showcase nests seeded so the flock has someone to follow before real friends join. They live
+ *  only in nest_* tables (no app_users row) under ids `nest-demo:<handle>`; the handle doubles
+ *  as their username. Holdings are simulated like every other demo-ledger position. */
+const SEED_PREFIX = 'nest-demo:';
+const MAX_SUGGESTED = 6;
 const MAX_ROUNDUP_PAYMENTS = 500;
 
 // Mirrors nestLevel() on the frontend — tenure + funding + positions, never returns.
@@ -112,9 +119,19 @@ export class NestSocialService {
   private async userByUsername(username: string): Promise<{ privyUserId: string; username: string }> {
     const clean = username.trim().replace(/^@/, '').toLowerCase();
     if (!clean) throw new BadRequestException('username required');
-    const { data } = await this.supabase.getClient().from('app_users').select('privy_user_id, username').ilike('username', clean).maybeSingle();
-    if (!data?.privy_user_id) throw new NotFoundException(`No Loofta user @${clean}`);
-    return { privyUserId: data.privy_user_id, username: data.username };
+    const db = this.supabase.getClient();
+    const { data } = await db.from('app_users').select('privy_user_id, username').ilike('username', clean).maybeSingle();
+    if (data?.privy_user_id) return { privyUserId: data.privy_user_id, username: data.username };
+    // Showcase nests (see SEED_PREFIX) have no Loofta account; their handle is the id itself.
+    const seedId = `${SEED_PREFIX}${clean}`;
+    const { count } = await db.from('nest_profiles').select('*', { count: 'exact', head: true }).in('user_id', [seedId, ledgerUserId(seedId, true)]);
+    if (count) return { privyUserId: seedId, username: clean };
+    throw new NotFoundException(`No Loofta user @${clean}`);
+  }
+
+  /** Display handle for a real user id: their Loofta username, or the seed handle for showcase nests. */
+  private handleOf(realUserId: string, usernameOf: Map<string, string>): string {
+    return usernameOf.get(realUserId) ?? (realUserId.startsWith(SEED_PREFIX) ? realUserId.slice(SEED_PREFIX.length) : realUserId);
   }
 
   private async isPublic(ledgerId: string): Promise<boolean> {
@@ -171,24 +188,39 @@ export class NestSocialService {
   async getFlock(realUserId: string, demo: boolean): Promise<NestFlock> {
     const db = this.supabase.getClient();
     const today = new Date().toISOString().slice(0, 10);
-    const [{ data: me }, isPublic, { data: follows }, { count: followers }, { count: kudosReceived }] = await Promise.all([
+    const [{ data: me }, isPublic, { data: follows }, { count: followers }, { count: kudosReceived }, { data: publicRows }] = await Promise.all([
       db.from('app_users').select('username').eq('privy_user_id', realUserId).maybeSingle(),
       this.isPublic(ledgerUserId(realUserId, demo)),
       db.from('nest_flock_follows').select('followee_user_id').eq('follower_user_id', realUserId),
       db.from('nest_flock_follows').select('*', { count: 'exact', head: true }).eq('followee_user_id', realUserId),
       db.from('nest_flock_kudos').select('*', { count: 'exact', head: true }).eq('to_user_id', realUserId),
+      db.from('nest_profiles').select('user_id').eq('flock_public', true).order('created_at', { ascending: false }).limit(50),
     ]);
     const ids = (follows ?? []).map(f => f.followee_user_id);
-    const { data: users } = ids.length ? await db.from('app_users').select('privy_user_id, username').in('privy_user_id', ids) : { data: [] as any[] };
+    // Public nests on the caller's ledger (real or demo) that they don't follow yet, seeds first
+    // so the tab has faces on day one. Ledger ids are mapped back to the real id follows are keyed by.
+    const followed = new Set(ids);
+    const candidateIds = (publicRows ?? [])
+      .map(r => r.user_id as string)
+      .filter(id => isDemoLedgerUserId(id) === demo)
+      .map(realUserIdOf)
+      .filter(id => id !== realUserId && !followed.has(id))
+      .sort((a, b) => Number(b.startsWith(SEED_PREFIX)) - Number(a.startsWith(SEED_PREFIX)))
+      .slice(0, MAX_SUGGESTED);
+    const allIds = [...ids, ...candidateIds];
+    const { data: users } = allIds.length ? await db.from('app_users').select('privy_user_id, username').in('privy_user_id', allIds) : { data: [] as any[] };
     const usernameOf = new Map((users ?? []).map(u => [u.privy_user_id, u.username as string]));
-    const members = await Promise.all(ids.map(id => this.memberView(realUserId, id, usernameOf.get(id) ?? id, demo, today).catch(e => {
-      this.logger.warn(`flock memberView(${id}): ${e.message}`);
-      return null;
-    })));
+    const view = (id: string) =>
+      this.memberView(realUserId, id, this.handleOf(id, usernameOf), demo, today).catch(e => {
+        this.logger.warn(`flock memberView(${id}): ${e.message}`);
+        return null;
+      });
+    const [members, suggested] = await Promise.all([Promise.all(ids.map(view)), Promise.all(candidateIds.map(view))]);
     return {
       isPublic,
       username: me?.username ?? null,
       following: members.filter((m): m is FlockMember => m !== null),
+      suggested: suggested.filter((m): m is FlockMember => m !== null),
       followers: followers ?? 0,
       kudosReceived: kudosReceived ?? 0,
     };

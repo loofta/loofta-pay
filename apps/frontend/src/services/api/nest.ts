@@ -200,6 +200,8 @@ export interface NestFlock {
   isPublic: boolean;
   username: string | null;
   following: FlockMember[];
+  /** Public nests you don't follow yet. */
+  suggested: FlockMember[];
   followers: number;
   kudosReceived: number;
 }

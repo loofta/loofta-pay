@@ -14,3 +14,8 @@ export function ledgerUserId(userId: string, demo: boolean): string {
 export function isDemoLedgerUserId(userId: string): boolean {
   return userId.endsWith(DEMO_SUFFIX);
 }
+
+/** The real user id a ledger id belongs to (strips the demo suffix if present). */
+export function realUserIdOf(ledgerUserId: string): string {
+  return isDemoLedgerUserId(ledgerUserId) ? ledgerUserId.slice(0, -DEMO_SUFFIX.length) : ledgerUserId;
+}

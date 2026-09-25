@@ -55,6 +55,34 @@ function MemberCard({ m, onKudos, onUnfollow, busy }: { m: FlockMember; onKudos:
   );
 }
 
+function SuggestedCard({ m, onFollow, busy }: { m: FlockMember; onFollow: () => void; busy: boolean }) {
+  const top = m.categories.slice(0, 3);
+  return (
+    <div className="ns-card" style={{ padding: "var(--card-pad)", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.displayName ?? `@${m.username}`}</div>
+          <div style={{ fontSize: 13, color: "var(--ink3)" }}>@{m.username} · {m.level}</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", height: 8, borderRadius: 999, overflow: "hidden", background: "var(--paper2)" }}>
+        {m.categories.map((c, i) => (
+          <span key={c.label} title={`${TAG_LABELS[c.label] ?? c.label} ${(c.weight * 100).toFixed(0)}%`} style={{ width: `${c.weight * 100}%`, background: BAR_COLORS[i % BAR_COLORS.length] }} />
+        ))}
+      </div>
+      <div style={{ fontSize: 13, color: "var(--ink2)", lineHeight: 1.4 }}>
+        {top.length > 0 ? top.map(c => `${TAG_LABELS[c.label] ?? c.label} ${(c.weight * 100).toFixed(0)}%`).join(" · ") : "Nest not built yet"}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: "auto" }}>
+        <span style={{ fontSize: 12.5, color: "var(--ink3)" }}>{m.streakWeeks > 0 ? `${m.streakWeeks}-week streak` : "No streak yet"}</span>
+        <button className="ns-btn" disabled={busy} onClick={onFollow} style={{ padding: "7px 16px", fontSize: 13 }}>
+          Follow
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * The flock: people you follow, as category shares + level + streak. Deliberately no balances,
  * no returns, no ranking, no copy button — the research is unambiguous that those raise
@@ -131,16 +159,37 @@ export function FlockPanel({
         {error && <p style={{ fontSize: 13, color: "var(--down)", margin: "8px 0 0" }}>{error}</p>}
       </div>
 
+      {flock.suggested.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>Nests to follow</div>
+            <span style={{ fontSize: 12.5, color: "var(--ink3)" }}>Theme mix, level and streak. Never balances.</span>
+          </div>
+          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
+            {flock.suggested.map(m => (
+              <SuggestedCard key={m.username} m={m} busy={busy} onFollow={() => void onFollow(m.username).then(err => err && setError(err))} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {flock.following.length === 0 ? (
         <div className="ns-card" style={{ padding: "var(--card-pad)" }}>
-          <p style={{ fontSize: 14, color: "var(--ink3)" }}>No nests followed yet. Ask a friend for their Loofta username — they need to make their nest visible first.</p>
+          <p style={{ fontSize: 14, color: "var(--ink3)" }}>
+            {flock.suggested.length > 0
+              ? "You're not following anyone yet. Pick a nest above, or ask a friend for their Loofta username."
+              : "No nests followed yet. Ask a friend for their Loofta username — they need to make their nest visible first."}
+          </p>
         </div>
       ) : (
-        <div style={{ display: "grid", gap: 14 }}>
-          {flock.following.map(m => (
-            <MemberCard key={m.username} m={m} busy={busy} onKudos={() => onKudos(m.username)} onUnfollow={() => onUnfollow(m.username)} />
-          ))}
-        </div>
+        <>
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>Following</div>
+          <div style={{ display: "grid", gap: 14 }}>
+            {flock.following.map(m => (
+              <MemberCard key={m.username} m={m} busy={busy} onKudos={() => onKudos(m.username)} onUnfollow={() => onUnfollow(m.username)} />
+            ))}
+          </div>
+        </>
       )}
     </section>
   );
