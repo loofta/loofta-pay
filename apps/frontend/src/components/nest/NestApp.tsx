@@ -662,7 +662,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
               Grow your <em style={{ fontStyle: "italic", color: "var(--accent)" }}>nest.</em>
             </h1>
             <p style={{ fontSize: 19, lineHeight: 1.65, color: "var(--ink2)", maxWidth: 460, margin: "0 0 34px" }}>
-              An equal-weighted basket of stocks built from your profile — checked daily and quietly kept in balance, so no single move takes over your nest.
+              A basket of real stocks around what you're into. When news moves one, we tell you what we'd do. You decide.
             </p>
             {!mounted ? (
               // Neutral placeholder until we're past the first client render (see the `mounted`
@@ -733,7 +733,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
               A real replay of the engine over the following 26 weeks, on 30 names, after trading costs. This is what happened — not a forecast.
             </p>
             <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 12, color: "var(--ink3)" }}>Your Nest — equal-weighted, rebalanced weekly</div>
+              <div style={{ fontSize: 12, color: "var(--ink3)" }}>Your Nest, split evenly</div>
               <div className="ns-serif ns-up" style={{ fontSize: 36 }}>$1,186</div>
               <div style={{ fontSize: 13, color: "var(--ink3)" }}>+$186 · worst dip -10.1% along the way</div>
             </div>
@@ -748,7 +748,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
             {[
               ["01", "Tell us about you", "A short conversation about your goals, horizon and appetite for risk. That's your investor profile."],
               ["02", "Get your nest", "We build a basket of tokenized stocks weighted to your profile. Every egg is a position; its size is its weight."],
-              ["03", "We suggest, you decide", "Every day we check each position against its target weight. When a real event moves one a lot, we surface exactly what we'd do — trim the winner, or buy the dip — with the news behind it. You accept it or dismiss it. Nothing trades without you."],
+              ["03", "We suggest, you decide", "When real news moves one of your stocks a lot, we show you what we'd do, trim the winner or buy the dip, with the headline behind it. You accept it or dismiss it. Nothing trades without you."],
             ].map(([n, t, d]) => (
               <div key={n} className="ns-card" style={{ padding: "var(--card-pad-lg)" }}>
                 <div className="ns-serif" style={{ fontSize: 56, color: "var(--accent)", lineHeight: 1 }}>{n}</div>
