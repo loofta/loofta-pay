@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { ClaimsService } from '../claims/claims.service';
 import { StatusService } from '../intents/status.service';
 import { RedisService } from '@/redis/redis.service';
+import { isCronEnabled } from '@/common/cron-gate';
 
 export interface ProcessingResult {
   claimId: string;
@@ -39,6 +40,7 @@ export class ClaimProcessorService {
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
+    if (!isCronEnabled(this.configService)) return;
     if (!this.isAutoProcessClaimsEnabled()) {
       return;
     }
@@ -52,6 +54,7 @@ export class ClaimProcessorService {
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async handleBurnerSweepRetries() {
+    if (!isCronEnabled(this.configService)) return;
     if (this.isSweeping) {
       this.logger.debug('[handleBurnerSweepRetries] Previous sweep still running, skipping');
       return;
@@ -72,6 +75,7 @@ export class ClaimProcessorService {
    */
   @Cron('0 */10 * * * *')
   async handleBurnerRentReclaim() {
+    if (!isCronEnabled(this.configService)) return;
     if (!this.isAutoProcessClaimsEnabled()) return;
     if (this.isReclaiming) return;
     this.isReclaiming = true;
@@ -91,6 +95,7 @@ export class ClaimProcessorService {
    */
   @Cron('0 */10 * * * *')
   async handleExpireStaleClaims() {
+    if (!isCronEnabled(this.configService)) return;
     if (!this.isAutoProcessClaimsEnabled()) return;
     try {
       await this.claimsService.expireStaleClaims();

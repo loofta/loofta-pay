@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { RedisService } from '@/redis/redis.service';
 import { SupabaseService } from '@/database/supabase.service';
+import { isCronEnabled } from '@/common/cron-gate';
 import { createPublicClient, http, formatEther, formatUnits, erc20Abi, Address } from 'viem';
 import { mainnet, base, optimism, arbitrum, polygon } from 'viem/chains';
 
@@ -115,6 +116,7 @@ export class SwapProcessorService {
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async handleCron() {
+    if (!isCronEnabled(this.configService)) return;
     const autoProcess = this.configService.get<string>('AUTO_PROCESS_SWAPS', 'true');
     if (autoProcess !== 'true') {
       return;
@@ -127,6 +129,7 @@ export class SwapProcessorService {
    */
   @Cron(CronExpression.EVERY_HOUR)
   async expireOpenPayments() {
+    if (!isCronEnabled(this.configService)) return;
     try {
       const { error } = await this.supabaseService.payments
         .update({ status: 'EXPIRED' })
