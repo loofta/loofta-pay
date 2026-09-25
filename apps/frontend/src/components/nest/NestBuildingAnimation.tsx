@@ -99,7 +99,7 @@ export function NestBuildingAnimation({ tickers, explanation, onDone }: { ticker
           {ready ? "Your nest is taking shape" : "Adding your picks to the nest…"}
         </div>
         <p style={{ fontSize: 14, color: "var(--ink3)", marginTop: 6, maxWidth: 420 }}>
-          {explanation ?? "These are the names your first rebalance will lean into — it runs shortly after your deposit lands."}
+          {explanation ?? "These are the names your nest will hold. It's built shortly after your deposit lands."}
         </p>
       </div>
 
