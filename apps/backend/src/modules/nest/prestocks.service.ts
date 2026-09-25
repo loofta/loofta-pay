@@ -125,7 +125,9 @@ export class PreStocksService {
         symbol: t.symbol,
         name: this.displayName(t),
         blurb: (t.description ?? '').split('\n')[0].trim(),
-        logoUrl: t.image,
+        // prestocks.com 301s its www host to the apex; hand the browser the final URL so the CSP
+        // allowlist and the image request agree.
+        logoUrl: (t.image ?? '').replace('https://www.prestocks.com/', 'https://prestocks.com/'),
         url: t.external_url,
         mint: t.contract_address,
         markPriceUsd: Number(t.markPrice),
