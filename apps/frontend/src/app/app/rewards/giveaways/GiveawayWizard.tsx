@@ -143,7 +143,7 @@ function newRow(): TaskRow {
 }
 
 function rowIsValid(row: TaskRow): boolean {
-  if (row.category === "custom") return row.title.trim().length > 0;
+  if (row.category === "custom") return (row.title ?? "").trim().length > 0;
   // requiredText defaults to "" via newRow(), but a draft persisted to localStorage before this
   // field existed won't have it on older rows at all — guard against undefined rather than crash
   // the instant someone switches an old row to this category.
@@ -157,7 +157,7 @@ function rowIsValid(row: TaskRow): boolean {
  *  actions checked becomes 3 separate task rows server-side, each independently verifiable. */
 function expandTaskRow(row: TaskRow): Array<{ task_type: BackendTaskType; config: Record<string, unknown> }> {
   if (row.category === "custom") {
-    const config: Record<string, unknown> = { title: row.title.trim() };
+    const config: Record<string, unknown> = { title: (row.title ?? "").trim() };
     if (row.target.trim()) config.target = row.target.trim();
     config.require_proof = row.requireProof;
     return [{ task_type: "custom", config }];
@@ -686,7 +686,17 @@ async function loadDraft(
   if (typeof window !== "undefined") {
     try {
       const raw = window.localStorage.getItem(storageKey);
-      if (raw) return { ...defaultDraft(), ...JSON.parse(raw) };
+      if (raw) {
+        const parsed = { ...defaultDraft(), ...JSON.parse(raw) } as GiveawayDraft;
+        // Rows persisted before newer fields (title, requiredText, ...) existed lack them, and
+        // string methods on undefined crash the render — backfill every row from newRow().
+        const tasks = Array.isArray(parsed.tasks) && parsed.tasks.length > 0 ? parsed.tasks : [newRow()];
+        parsed.tasks = tasks.map((r) => {
+          const base = newRow();
+          return { ...base, ...r, engage: { ...base.engage, ...(r?.engage ?? {}) } };
+        });
+        return parsed;
+      }
     } catch {
       // corrupt cache entry — fall through
     }
@@ -949,7 +959,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
         .filter(rowIsValid)
         .map((row) => ({
           icon: CATEGORY_ICONS[row.category],
-          label: row.category === "custom" ? row.title.trim() || "Custom task" : CATEGORY_LABELS[row.category],
+          label: row.category === "custom" ? (row.title ?? "").trim() || "Custom task" : CATEGORY_LABELS[row.category],
         })),
     [tasks],
   );
