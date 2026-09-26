@@ -2364,12 +2364,16 @@ export function ClaimPayView({
               <div className="text-right text-sm text-slate-500">${netUsd.toFixed(2)} USDC after fees</div>
             </div>
 
-            <div className="flex flex-col-reverse sm:flex-row gap-2 mt-2">
+          </div>
+
+          {/* Mobile: pinned to the bottom like the main claim CTA */}
+          <div className="shrink-0 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] bg-[#0f0f12]/95 border-t border-white/10 sm:border-0 sm:bg-transparent sm:p-0 sm:mt-2">
+            <div className="flex flex-col-reverse sm:flex-row gap-2">
               <button
                 type="button"
                 onClick={() => setNairaClaimConfirmOpen(false)}
                 disabled={claimActionDisabled}
-                className="flex-1 h-12 rounded-xl text-base font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+                className="flex-1 h-14 sm:h-12 rounded-xl text-lg sm:text-base font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-40"
               >
                 Cancel
               </button>
@@ -2381,7 +2385,7 @@ export function ClaimPayView({
                   claimAsRecipientMutation.mutate({ claimToNaira: true });
                 }}
                 disabled={claimActionDisabled || nairaQuote == null}
-                className="flex-1 h-12 rounded-xl text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
+                className="flex-1 h-14 sm:h-12 rounded-xl text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
               >
                 Confirm & claim
               </button>
