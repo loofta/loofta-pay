@@ -7,7 +7,6 @@ import { MinimalHeader } from "./MinimalHeader";
 import { UserSync } from "./UserSync";
 import dynamic from "next/dynamic";
 const UpdateJun26Modal = dynamic(() => import("@/components/UpdateJun26Modal").then(m => ({ default: m.UpdateJun26Modal })), { ssr: false });
-const MainnetLaunchCelebration = dynamic(() => import("@/components/MainnetLaunchCelebration").then(m => ({ default: m.MainnetLaunchCelebration })), { ssr: false });
 import { usePathname } from "next/navigation";
 import { useUpdateJun26 } from "@/hooks/useUpdateJun26";
 import { useUnclaimedPaymentToast } from "@/hooks/useUnclaimedPaymentToast";
@@ -23,7 +22,7 @@ import { FreeSpinToast } from "@/components/FreeSpinToast";
 
 function ShellContent({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { show: updateShow, resolved: updateResolved } = useUpdateJun26();
+  const { show: updateShow } = useUpdateJun26();
   const { unclaimed, dismiss: dismissUnclaimed } = useUnclaimedPaymentToast();
   const { showAddEmail, addEmail, linking: addingEmail, error: addEmailError, dismiss: dismissAddEmail } = useAddEmailToast();
   const { showTerminalPromo, dismiss: dismissTerminalPromo } = useTerminalPromoToast();
@@ -56,7 +55,6 @@ function ShellContent({ children }: { children: ReactNode }) {
       {/* Checkout is meant to feel like a self-contained payment page (Stripe-style) — none of
           these promo/update overlays belong on top of someone else's embedded payment flow. */}
       {!isCheckoutPage && <UpdateJun26Modal show={updateShow} />}
-      {!isCheckoutPage && <MainnetLaunchCelebration blockedByUpdate={!updateResolved || updateShow} />}
       {!isCheckoutPage && (unclaimed || unclaimedGifts || (hasFreeSpin && !isImmersivePage) || showAddEmail || showTerminalPromo) && (
         <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:bottom-4 z-[100] sm:max-w-sm flex flex-col-reverse gap-3">
           {unclaimed && <UnclaimedPaymentToast payments={unclaimed} onDismiss={dismissUnclaimed} />}
