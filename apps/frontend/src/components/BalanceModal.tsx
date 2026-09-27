@@ -155,6 +155,15 @@ const ATA_SETUP_FEE_FALLBACK_USDC = 0.2;
 /** Server-enforced floor for a private withdrawal (BuildPrivateWithdrawalDto @Min(1)). Mirrored
  *  client-side so a sub-minimum amount is caught in the form rather than by the API. */
 const PRIVATE_WITHDRAW_MIN_USDC = 1;
+/** Private withdrawals use MagicBlock's exactOut mode: the typed amount is what lands at the
+ *  destination, and MagicBlock's own bps + Loofta's platform bps + its flat ~$0.21 relay fee
+ *  (see resolveMagicblockRelayFeeUsdc on the backend) are ALL debited from the sender ON TOP of
+ *  that — never out of it. Letting the form default/allow the full wallet balance as the amount
+ *  therefore always overdraws the sender by the fee, and MagicBlock's build endpoint doesn't
+ *  balance-check, so the failure only ever surfaces as an opaque on-chain "insufficient funds"
+ *  once the wallet broadcasts. Reserve a conservative flat buffer so the max offered here always
+ *  leaves room for that on-top debit. */
+const PRIVATE_WITHDRAW_FEE_HEADROOM_USDC = 0.3;
 const PEER_LOG = "[Peer Offramp]";
 const PEER_SESSION_KEY = "loofta_peer_session";
 const PRIVATE_DEPOSIT_SESSION_KEY = "loofta_private_deposit_id";
@@ -2140,6 +2149,20 @@ export function BalanceModal({
   }, [open, spendableBalance]);
 
   const withdrawAmountNum = parseFloat(withdrawAmount) || 0;
+
+  // Private withdrawals debit the sender for amount + fees ON TOP (MagicBlock exactOut) — see
+  // PRIVATE_WITHDRAW_FEE_HEADROOM_USDC. This is the real max the form should ever offer/allow.
+  const privateWithdrawMaxUsdc = Math.max(0, spendableBalance - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC);
+
+  // Private-relay debits amount + fees on top of the sender's balance (see
+  // PRIVATE_WITHDRAW_FEE_HEADROOM_USDC) — the generic "default to full balance" effect above
+  // doesn't know that, so re-clamp whenever this method becomes active or the max shifts.
+  useEffect(() => {
+    if (withdrawMethod === "private-relay" && withdrawAmountNum > privateWithdrawMaxUsdc) {
+      setWithdrawAmount(privateWithdrawMaxUsdc > 0 ? privateWithdrawMaxUsdc.toFixed(6).replace(/\.?0+$/, "") : "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withdrawMethod, privateWithdrawMaxUsdc]);
 
   // Live oracle estimate + real fill-time ETA from @zkp2p/cash, debounced on amount/platform
   // change. Peer Cash always prices at the live zero-spread oracle rate — no more hand-rolled
@@ -4590,6 +4613,17 @@ export function BalanceModal({
                     </div>
                   </div>
 
+                  {/* MagicBlock's exactOut mode debits the sender for amount + this fee ON TOP —
+                      the built transaction is already real by this point, so if the reserved
+                      headroom above still wasn't enough, catch it here with the actual fee rather
+                      than let the signature go through to an on-chain "insufficient funds" fail. */}
+                  {(parseFloat(withdrawAmount) || 0) + (privateWithdrawFee ?? 0) > spendableBalance + 1e-6 && (
+                    <p className="text-base text-red-400 flex items-center gap-1.5 mt-3">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                      Amount plus the ${(privateWithdrawFee ?? 0).toFixed(2)} relay fee exceeds your balance — cancel and lower the amount.
+                    </p>
+                  )}
+
                   <div className="flex gap-2 mt-3">
                     <Button
                       variant="outline"
@@ -4600,7 +4634,8 @@ export function BalanceModal({
                     </Button>
                     <Button
                       onClick={() => privateFeeConfirmRef.current?.(true)}
-                      className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white"
+                      disabled={(parseFloat(withdrawAmount) || 0) + (privateWithdrawFee ?? 0) > spendableBalance + 1e-6}
+                      className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50"
                     >
                       Confirm &amp; send
                     </Button>
@@ -4664,7 +4699,7 @@ export function BalanceModal({
                       className="mt-1"
                     />
                     <p className={`text-base mt-1.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
-                      Available: {spendableBalance.toFixed(2)} USDC
+                      Available to send privately: {privateWithdrawMaxUsdc.toFixed(2)} USDC (${PRIVATE_WITHDRAW_FEE_HEADROOM_USDC.toFixed(2)} reserved for the relay fee)
                     </p>
                   </div>
                   <div>
@@ -4700,7 +4735,7 @@ export function BalanceModal({
                       privateWithdrawSubmitting ||
                       !parseFloat(withdrawAmount) ||
                       parseFloat(withdrawAmount) < PRIVATE_WITHDRAW_MIN_USDC ||
-                      parseFloat(withdrawAmount) > spendableBalance ||
+                      parseFloat(withdrawAmount) > privateWithdrawMaxUsdc ||
                       !effectiveWithdrawAddress.trim() ||
                       !isValidAddressForChain(effectiveWithdrawAddress, "solana")
                     }
