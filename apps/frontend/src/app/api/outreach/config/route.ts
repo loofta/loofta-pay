@@ -9,6 +9,7 @@ const DEFAULT_CONFIG = {
   freelancer_pitch:     "Get paid across borders in USDC instantly. No bank account required, no fees, no wallet history.",
   web3_project_pitch:   "Hey, Lisa here from Loofta Pay. I'm reaching out to a few projects that pay their team in crypto - is that your case? We're offering free access to our platform to pay your teammates privately, just using their email address. They claim it however they want. Would love to have you in.",
   giveaway_project_pitch: "Hey, Lisa here from Loofta Pay. Saw your giveaway - noticed winners get picked manually and have to drop wallet addresses in replies or DMs. We built a tool that draws winners with verifiable onchain randomness (VRF, anyone can check it wasn't rigged), and they claim with just their email or X handle, no wallet needed, so normies can enter too. If you want to try it out, you can create one here: https://pay.loofta.xyz/rewards/giveaways/create. Let me know once you do, I'll waive the fee for you :)",
+  creator_platform_pitch: "Hey, Lisa here from Loofta Pay. Saw you pay creators and clippers per campaign. We built payout links: you send the payment, they claim it with just their email or X handle, and they can cash out to a wallet or their local bank (Naira works today), no wallet setup needed on their side. Free to try and I'll waive the fee for you. Worth a chat?",
 };
 
 function checkSecret(req: NextRequest) {
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("outreach_config")
-      .select("product_pitch, message_tone, call_to_action, creator_pitch, freelancer_pitch, web3_project_pitch, giveaway_project_pitch, updated_at")
+      .select("product_pitch, message_tone, call_to_action, creator_pitch, freelancer_pitch, web3_project_pitch, giveaway_project_pitch, creator_platform_pitch, updated_at")
       .eq("id", 1)
       .single();
     if (error) {
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
     const { data, error } = await supabase
       .from("outreach_config")
       .upsert({ id: 1, ...body, updated_at: new Date().toISOString() })
-      .select("product_pitch, message_tone, call_to_action, creator_pitch, freelancer_pitch, web3_project_pitch, giveaway_project_pitch, updated_at")
+      .select("product_pitch, message_tone, call_to_action, creator_pitch, freelancer_pitch, web3_project_pitch, giveaway_project_pitch, creator_platform_pitch, updated_at")
       .single();
     if (error) {
       console.error("[outreach/config] POST upsert error:", error.message);

@@ -8,7 +8,7 @@ function checkSecret(req: NextRequest) {
   return !!secret && !!expected && secret === expected;
 }
 
-type ProspectType = "creator" | "freelancer" | "web3_project" | "giveaway_project";
+type ProspectType = "creator" | "freelancer" | "web3_project" | "giveaway_project" | "creator_platform";
 
 
 // ─── Queries ──────────────────────────────────────────────────────────────────

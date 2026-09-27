@@ -11,14 +11,14 @@ import { useToast } from "@/components/ui/use-toast";
 import {
   Loader2, Play, Trash2, Zap, Check, X, RefreshCw,
   SlidersHorizontal, Target, SendHorizonal, ArrowLeft, Search,
-  Mic2, Briefcase, Building2, Gift, ChevronDown, ChevronUp, MapPin, Users,
+  Mic2, Briefcase, Building2, Gift, Megaphone, Mail, ChevronDown, ChevronUp, MapPin, Users,
   Copy, MessageCircle, UserCheck, Activity, Square, CheckSquare2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ProspectType   = "creator" | "freelancer" | "web3_project" | "giveaway_project";
+type ProspectType   = "creator" | "freelancer" | "web3_project" | "giveaway_project" | "creator_platform";
 type ProspectStatus = "new" | "drafting" | "drafted" | "approved" | "rejected" | "sent" | "follow_pending";
 type Filter         = "all" | "approved" | "sent" | "rejected";
 
@@ -34,7 +34,8 @@ type Prospect = {
   qualified: boolean | null;
   qualification_reason: string | null;
   sent_at: string | null;
-  sent_via: "dm" | "reply" | null;
+  sent_via: "dm" | "reply" | "email" | null;
+  email: string | null;
   location: string | null;
   profile_image_url: string | null;
   followers_count: number | null;
@@ -50,6 +51,7 @@ type OutreachConfig = {
   freelancer_pitch: string;
   web3_project_pitch: string;
   giveaway_project_pitch: string;
+  creator_platform_pitch: string;
 };
 
 const DEFAULT_CONFIG: OutreachConfig = {
@@ -67,6 +69,8 @@ const DEFAULT_CONFIG: OutreachConfig = {
     "Hey, Lisa here from Loofta Pay. I'm reaching out to a few projects that pay their team in crypto - is that your case? We're offering free access to our platform to pay your teammates privately, just using their email address. They claim it however they want. Would love to have you in.",
   giveaway_project_pitch:
     "Hey, Lisa here from Loofta Pay. Saw your giveaway - noticed winners get picked manually and have to drop wallet addresses in replies or DMs. We built a tool that draws winners with verifiable onchain randomness (VRF, anyone can check it wasn't rigged), and they claim with just their email or X handle, no wallet needed, so normies can enter too. If you want to try it out, you can create one here: https://pay.loofta.xyz/rewards/giveaways/create. Let me know once you do, I'll waive the fee for you :)",
+  creator_platform_pitch:
+    "Hey, Lisa here from Loofta Pay. Saw you pay creators and clippers per campaign. We built payout links: you send the payment, they claim it with just their email or X handle, and they can cash out to a wallet or their local bank (Naira works today), no wallet setup needed on their side. Free to try and I'll waive the fee for you. Worth a chat?",
 };
 
 // ─── Type metadata ────────────────────────────────────────────────────────────
@@ -76,6 +80,7 @@ const TYPE_META: Record<ProspectType, { label: string; icon: React.ReactNode; ba
   freelancer:       { label: "Freelancer",    icon: <Briefcase className="h-3 w-3" />, badge: "border-sky-500/30    text-sky-300    bg-sky-500/10"    },
   web3_project:     { label: "Web3 Project",  icon: <Building2 className="h-3 w-3" />, badge: "border-emerald-500/30 text-emerald-300 bg-emerald-500/10" },
   giveaway_project: { label: "Giveaway",      icon: <Gift      className="h-3 w-3" />, badge: "border-fuchsia-500/30 text-fuchsia-300 bg-fuchsia-500/10" },
+  creator_platform: { label: "Platform",      icon: <Megaphone className="h-3 w-3" />, badge: "border-violet-500/30 text-violet-300 bg-violet-500/10" },
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -229,6 +234,22 @@ function ProspectCard({
     }
     onUpdate(await res.json());
     toast({ title: `DM sent to @${prospect.handle}` });
+  }
+
+  async function sendEmail() {
+    setSending(true);
+    const res = await fetch("/api/outreach/send-email", {
+      method: "POST", headers: h(),
+      body: JSON.stringify({ prospectId: prospect.id }),
+    });
+    setSending(false);
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}));
+      toast({ title: "Email failed", description: b.error ?? "unknown", variant: "destructive" });
+      return;
+    }
+    onUpdate(await res.json());
+    toast({ title: `Email sent to ${prospect.email}` });
   }
 
   async function copyMessage() {
@@ -392,6 +413,12 @@ function ProspectCard({
                 {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
                 {sending ? "sending…" : "send DM"}
               </button>
+              {prospect.email && (
+                <button onClick={sendEmail} disabled={sending}
+                  className="inline-flex items-center gap-2 h-9 px-4 text-base rounded-lg font-medium bg-sky-500/15 border border-sky-500/40 text-sky-300 hover:bg-sky-500/25 transition-colors disabled:opacity-50">
+                  <Mail className="h-4 w-4" /> send email
+                </button>
+              )}
               <button onClick={copyMessage}
                 className={cn("inline-flex items-center gap-2 h-9 px-3 text-base rounded-lg font-medium transition-colors", glassBtn)}>
                 <Copy className="h-4 w-4" /> copy
@@ -406,10 +433,19 @@ function ProspectCard({
               </button>
             </div>
           )}
+          {(isApproved || isDrafted) && (
+            <input
+              type="email"
+              defaultValue={prospect.email ?? ""}
+              placeholder="email (optional, enables email outreach)"
+              onBlur={(e) => { const v = e.target.value.trim(); if (v !== (prospect.email ?? "")) patch({ email: v || null }); }}
+              className="mt-3 h-9 w-full rounded-lg px-3 text-base bg-white/[0.04] border border-white/[0.08] text-gray-200 placeholder:text-gray-600 focus:border-sky-500/40 focus:outline-none"
+            />
+          )}
           {isSent && (
             <div className="flex items-center gap-3 mt-3 pt-3 border-t border-white/10">
               <span className="inline-flex items-center gap-1.5 text-base text-slate-500 font-medium">
-                <SendHorizonal className="h-4 w-4" /> sent
+                <SendHorizonal className="h-4 w-4" /> sent{prospect.sent_via === "email" ? " by email" : ""}
               </span>
               {prospect.replied  && <span className="inline-flex items-center gap-1.5 text-base text-orange-400 font-medium"><MessageCircle className="h-4 w-4" /> replied</span>}
               {prospect.followed && <span className="inline-flex items-center gap-1.5 text-base text-teal-400 font-medium"><UserCheck className="h-4 w-4" /> follows you</span>}
@@ -491,6 +527,7 @@ function TypePitchConfig({
             { key: "freelancer_pitch",        label: "Freelancer angle",    color: "text-sky-400"    },
             { key: "web3_project_pitch",      label: "Web3 Project angle",  color: "text-emerald-400"},
             { key: "giveaway_project_pitch",  label: "Giveaway angle",      color: "text-fuchsia-400"},
+            { key: "creator_platform_pitch",  label: "Creator platform angle", color: "text-violet-400"},
           ] as const).map(({ key, label, color }) => (
             <div key={key} className="pt-3">
               <span className={cn("block mb-1.5 text-sm font-mono font-medium uppercase tracking-wider", color)}>{label}</span>
@@ -523,6 +560,7 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
 
   const [newHandle, setNewHandle] = useState("");
   const [newBio, setNewBio]       = useState("");
+  const [newEmail, setNewEmail]   = useState("");
   const [newType, setNewType]     = useState<ProspectType>("freelancer");
   const [adding, setAdding]       = useState(false);
 
@@ -565,7 +603,7 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
     const res = await fetch("/api/outreach/prospects", {
       method: "POST",
       headers: { ...authH(), "Content-Type": "application/json" },
-      body: JSON.stringify({ handle: newHandle, bio: newBio, type: newType }),
+      body: JSON.stringify({ handle: newHandle, bio: newBio, type: newType, email: newEmail }),
     });
     setAdding(false);
     if (!res.ok) {
@@ -575,7 +613,7 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
     }
     const added: Prospect = await res.json();
     setProspects((prev) => [added, ...prev]);
-    setNewHandle(""); setNewBio("");
+    setNewHandle(""); setNewBio(""); setNewEmail("");
   }
 
   function handleUpdate(updated: Prospect) {
@@ -924,12 +962,15 @@ export default function OutreachDashboard({ adminHash }: { adminHash: string }) 
                 onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && addProspect()}
                 placeholder="@handle"
                 className="h-9 text-sm bg-white/[0.04] border-white/[0.08] text-gray-200 placeholder:text-gray-600 focus:border-orange-500/40" />
+              <Input value={newEmail} onChange={(e) => setNewEmail(e.target.value)}
+                placeholder="email (optional)"
+                className="h-9 text-sm bg-white/[0.04] border-white/[0.08] text-gray-200 placeholder:text-gray-600 focus:border-orange-500/40" />
               <Textarea value={newBio} onChange={(e) => setNewBio(e.target.value)}
                 placeholder="bio / signal…"
                 className="text-sm bg-white/[0.04] border-white/[0.08] min-h-[64px] resize-none text-gray-200 placeholder:text-gray-600 focus:border-orange-500/40" />
 
               <div className="grid grid-cols-2 gap-1.5">
-                {(["creator","freelancer","web3_project","giveaway_project"] as ProspectType[]).map((t) => (
+                {(["creator","freelancer","web3_project","giveaway_project","creator_platform"] as ProspectType[]).map((t) => (
                   <button key={t} onClick={() => setNewType(t)}
                     className={cn(
                       "h-8 rounded-lg text-sm font-mono font-medium uppercase tracking-wide border transition-colors",

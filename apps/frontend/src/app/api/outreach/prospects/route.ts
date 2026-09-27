@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const { handle, bio, type } = await req.json();
+    const { handle, bio, type, email } = await req.json();
     if (!handle?.trim()) {
       return NextResponse.json({ error: "handle is required" }, { status: 400 });
     }
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("outreach_prospects")
-      .insert({ handle: cleanHandle, bio: bio ?? "", type: type ?? "individual" })
+      .insert({ handle: cleanHandle, bio: bio ?? "", type: type ?? "individual", email: email?.trim() || null })
       .select("*")
       .single();
     if (error) {

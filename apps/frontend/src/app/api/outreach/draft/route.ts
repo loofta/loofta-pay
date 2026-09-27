@@ -13,7 +13,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
 } 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-type ProspectType = "creator" | "freelancer" | "web3_project" | "giveaway_project";
+type ProspectType = "creator" | "freelancer" | "web3_project" | "giveaway_project" | "creator_platform";
 
 const TYPE_CONTEXT: Record<ProspectType, string> = {
   creator:
@@ -24,6 +24,8 @@ const TYPE_CONTEXT: Record<ProspectType, string> = {
     "Web3 protocol or project that pays contributors, grantees, bounty hunters, or a distributed team. Real pain: when they pay contributors from their treasury, every recipient can see the full payment list - who got what, how much the treasury has, who the other contributors are. Loofta decouples payments from treasury visibility. They can pay in any token they hold; contributors receive privately. DEFAULT TO QUALIFYING unless purely a trading bot, scam, or completely dormant.",
   giveaway_project:
     "A crypto project, community, or account currently running (or about to run) a giveaway, reward campaign, or contest with a prize pool. This is NOT the treasury-privacy pitch - it's a partnership pitch. Real pain: winners are usually picked manually and asked to drop a wallet address in replies or DMs - slow, and easy to accuse of being rigged. Loofta's angle: draw winners with verifiable onchain randomness (VRF, anyone can check it wasn't rigged), and winners claim with just their email or X handle, no crypto wallet required. DEFAULT TO QUALIFYING if there's a live or recent giveaway/reward campaign signal.",
+  creator_platform:
+    "A platform or agency that runs creator, clipping, or KOL campaigns and pays many creators per campaign (pay-per-view clipping marketplaces, KOL marketplaces, UGC platforms). Partnership pitch, not treasury privacy. Real pain: paying hundreds of small creators across many countries is slow and costly, PayPal is blocked or expensive in places like Nigeria, Pakistan and the Philippines, and wallet-only payouts lose creators who have no wallet. Loofta angle: they pay with a link, the creator claims with just an email or X handle, and can cash out to a wallet or local bank (Naira works today). DEFAULT TO QUALIFYING unless the account is clearly dead.",
 };
 
 function buildPrompt(
@@ -36,6 +38,7 @@ function buildPrompt(
     freelancer_pitch: string;
     web3_project_pitch: string;
     giveaway_project_pitch: string;
+    creator_platform_pitch: string;
   },
 ) {
   const typePitch: Record<ProspectType, string> = {
@@ -43,6 +46,7 @@ function buildPrompt(
     freelancer:        config.freelancer_pitch,
     web3_project:      config.web3_project_pitch,
     giveaway_project:  config.giveaway_project_pitch,
+    creator_platform:  config.creator_platform_pitch,
   };
 
   return `You are writing outbound DMs for Lisa, founder of Loofta Pay.
@@ -77,7 +81,7 @@ ${typePitch[prospect.type] ?? config.product_pitch}
 ---
 TASK:
 
-1. RECLASSIFY - confirm or correct: "creator" | "freelancer" | "web3_project" | "giveaway_project"
+1. RECLASSIFY - confirm or correct: "creator" | "freelancer" | "web3_project" | "giveaway_project" | "creator_platform"
 
 2. QUALIFY - default YES. Only NO if: price/trading bot, completely dead account, zero connection to paying or being paid (or, for giveaway_project, zero signal of a live/recent giveaway or reward campaign).
 
@@ -141,7 +145,7 @@ export async function POST(req: NextRequest) {
     };
     // Normalize any stale "KOL" value Claude might still return
     if (parsed.type === "KOL") parsed.type = "creator";
-    if (!["creator","freelancer","web3_project","giveaway_project"].includes(parsed.type)) parsed.type = "creator";
+    if (!["creator","freelancer","web3_project","giveaway_project","creator_platform"].includes(parsed.type)) parsed.type = "creator";
     // Strip all dash variants and curly quotes regardless of prompt compliance
     if (parsed.message) {
       parsed.message = parsed.message
