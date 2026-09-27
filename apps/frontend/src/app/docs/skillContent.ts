@@ -187,8 +187,8 @@ Fields:
 - \`recipient_identifier\` (required): the email/username/handle matching \`recipient_type\`.
 - \`sender_wallet\` (required unless \`funding_source\` is set): the caller's own Solana wallet
   public key — pays gas and signs the returned transaction. Loofta never holds this wallet's key.
-- \`funding_source\` (optional): pay from another chain instead — \`gram_ton\` (native TON coin),
-  \`usdc_base\`, or \`usdc_stellar\`. Pass this instead of \`sender_wallet\`; requires
+- \`funding_source\` (optional): pay from another chain instead — \`gram_ton\` (native TON coin) or
+  \`usdc_base\`. Pass this instead of \`sender_wallet\`; requires
   \`refund_wallet\`. See below.
 - \`refund_wallet\` (required when \`funding_source\` is set): your address on the \`funding_source\`
   chain, used to refund you if the deposit can't complete.
@@ -250,7 +250,8 @@ Response:
   "claim_link": "https://pay.loofta.xyz/c/aB3xK9pQ",
   "is_private": false,
   "funding_source": "gram_ton",
-  "deposit_address": "EQC9f2c...4a1b",
+  "deposit_address": "UQC9f2c...4a1b",
+  "deposit_address_raw": "0:bd7f6c...",
   "deposit_memo": null,
   "deposit_amount": "18.652031",
   "deposit_deadline": "2026-09-07T12:34:56.000Z"

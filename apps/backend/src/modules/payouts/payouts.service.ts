@@ -3,11 +3,12 @@ import { ClaimsService } from '@/modules/claims/claims.service';
 import { DepositService } from '@/modules/claims/deposit.service';
 import { NearIntentsService } from '@/modules/intents/near-intents.service';
 import type { AuthenticatedIntegrator } from '@/modules/integrators/integrators.service';
+import { Address } from '@ton/core';
 import { CreatePayoutDto, PayoutFundingSource } from './dto/create-payout.dto';
 
 // Fixed symbol/chain pair NEAR Intents needs looked up for each supported funding_source. Chain
 // candidates list handles the possibility NEAR's token list names a chain differently than we'd
-// guess (e.g. Stellar as "xlm" instead of "stellar"). gram_ton uses native TON coin (NEAR
+// guess (e.g. a chain labeled differently than we expect). gram_ton uses native TON coin (NEAR
 // Intents' own token list labels it "GRAM") rather than the USDT jetton — a plain native-coin
 // transfer just credits the destination's balance directly, with no jetton-wallet "notify" step
 // to fail on insufficient gas, which is what made the USDT route unreliable (real stuck deposit,
@@ -15,15 +16,34 @@ import { CreatePayoutDto, PayoutFundingSource } from './dto/create-payout.dto';
 const FUNDING_SOURCE_TOKENS: Record<PayoutFundingSource, { symbol: string; chains: string[] }> = {
   gram_ton: { symbol: 'GRAM', chains: ['ton'] },
   usdc_base: { symbol: 'USDC', chains: ['base'] },
-  usdc_stellar: { symbol: 'USDC', chains: ['stellar', 'xlm'] },
 };
 
 const PAYOUT_EXPIRY_MS = 4 * 60 * 60 * 1000;
 
 // gram_ton waives both Loofta's own cross-chain fee and the NEAR app fee — bridging TON already
 // carries real, unavoidable overhead (HOT's bridge/relayer costs), so adding our own fee on top
-// only makes an already-expensive route worse. usdc_base/usdc_stellar are unaffected.
+// only makes an already-expensive route worse. usdc_base is unaffected.
 const FEE_FREE_FUNDING_SOURCES: PayoutFundingSource[] = ['gram_ton'];
+
+// NEAR Intents hands back TON deposit addresses in the bounceable "EQ..." form. Wallets and
+// exchanges display (and often expect) the non-bounceable "UQ..." form for plain deposits, so
+// return that as deposit_address plus the raw "0:<hex>" form. Same account, only flag bits and
+// checksum differ. Falls back to the original string if it isn't a parseable TON address.
+export function tonDepositAddressFields(
+  fundingSource: PayoutFundingSource,
+  address: string,
+): { deposit_address: string; deposit_address_raw?: string } {
+  if (fundingSource !== 'gram_ton') return { deposit_address: address };
+  try {
+    const parsed = Address.parse(address);
+    return {
+      deposit_address: parsed.toString({ bounceable: false, testOnly: false }),
+      deposit_address_raw: parsed.toRawString(),
+    };
+  } catch {
+    return { deposit_address: address };
+  }
+}
 
 @Injectable()
 export class PayoutsService {
@@ -63,6 +83,7 @@ export class PayoutsService {
     fee_amount_usdc?: number;
     funding_source?: PayoutFundingSource;
     deposit_address?: string;
+    deposit_address_raw?: string;
     deposit_memo?: string | null;
     deposit_amount?: string;
     deposit_deadline?: string;
@@ -163,7 +184,7 @@ export class PayoutsService {
         claim_link: created.link,
         is_private: isPrivate,
         funding_source: dto.funding_source,
-        deposit_address: deposit.depositAddress,
+        ...tonDepositAddressFields(dto.funding_source, deposit.depositAddress),
         deposit_memo: deposit.memo ?? null,
         deposit_amount: deposit.minAmountInFormatted,
         deposit_deadline: deposit.deadline,

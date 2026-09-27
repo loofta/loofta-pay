@@ -16,17 +16,16 @@ import { getRpcForMode, getRpcFallbackForMode } from "@/lib/solanaRpc";
 import { getEphemeralRpcForMode } from "@/lib/per/constants";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 
-type NetworkOption = "solana" | "base" | "ton" | "stellar";
+type NetworkOption = "solana" | "base" | "ton";
 
 // Every network/token pair the payouts API actually supports — "solana" signs and broadcasts a
-// Solana transaction with your own wallet right here, the other three return a deposit address
+// Solana transaction with your own wallet right here, the other two return a deposit address
 // instead (see funding_source in the payouts DTO). Fixed 1:1 token-per-network today, so picking
 // either dropdown keeps the other in sync rather than allowing invalid combinations.
 const NETWORKS: { value: NetworkOption; label: string; token: "USDC" | "GRAM"; fundingSource?: PayoutFundingSource }[] = [
   { value: "solana", label: "Solana", token: "USDC" },
   { value: "base", label: "Base", token: "USDC", fundingSource: "usdc_base" },
   { value: "ton", label: "TON", token: "GRAM", fundingSource: "gram_ton" },
-  { value: "stellar", label: "Stellar", token: "USDC", fundingSource: "usdc_stellar" },
 ];
 const TOKENS = ["USDC", "GRAM"] as const;
 
@@ -519,8 +518,8 @@ export function SendPayments({ onNavigate }: { onNavigate: (slug: string) => voi
             <td className="py-2 pr-4"><code>funding_source</code></td>
             <td className="py-2 pr-4 text-slate-400">string, optional</td>
             <td className="py-2 text-slate-400">
-              Fund from another chain instead of signing a Solana transaction: <code>gram_ton</code>, <code>usdc_base</code>,
-              or <code>usdc_stellar</code>. Pass this instead of <code>sender_wallet</code> — the response gives you a
+              Fund from another chain instead of signing a Solana transaction: <code>gram_ton</code> or <code>usdc_base</code>.
+              Pass this instead of <code>sender_wallet</code> — the response gives you a
               deposit address and the exact amount to send there for an exact-output delivery. Requires <code>refund_wallet</code>.
               <code>gram_ton</code> pays with native TON coin (labeled <code>GRAM</code> in most bridge APIs, TON&apos;s
               original pre-launch name) rather than a USDT jetton, and never has Loofta&apos;s cross-chain fee applied.
@@ -630,7 +629,8 @@ const signature = await connection.sendRawTransaction(tx.serialize());`}
   "claim_link": "https://pay.loofta.xyz/c/aB3xK9pQ",
   "is_private": false,
   "funding_source": "gram_ton",
-  "deposit_address": "EQC9f2c...4a1b",
+  "deposit_address": "UQC9f2c...4a1b",
+  "deposit_address_raw": "0:bd7f6c...",
   "deposit_memo": null,
   "deposit_amount": "18.652031",
   "deposit_deadline": "2026-09-07T12:34:56.000Z"
