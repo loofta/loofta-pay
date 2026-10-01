@@ -44,7 +44,7 @@ import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCar
 import { GuestCheckoutPay } from "@/components/app/GuestCheckoutPay";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock, ShoppingBag } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock, ShoppingBag, CreditCard, Globe, Users } from "lucide-react";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -82,6 +82,8 @@ import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddress
 import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 import { usePerPrivateTransfer, type PerTransferProgress } from "@/hooks/usePerPrivateTransfer";
+import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
+import { formatDelayDuration } from "@/lib/privacyDelay";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
 import { getSolanaCluster } from "@/lib/solanaCluster";
@@ -89,7 +91,7 @@ import { phantomWalletToAnchorWallet, privyStandardWalletToAnchorWallet } from "
 import { PaymentHistoryClaim } from "@/app/app/history/page";
 import type { NearToken } from "@/services/nearIntents";
 import {
-  PRIVATE_PAYMENT_ALL_PRIVATE_LINE,
+  privatePaymentAllPrivateLine,
   privatePaymentFundsAppearCopy,
   privatePaymentWaitingAfterSenderCopy,
   waitingForFundsCopy,
@@ -121,8 +123,37 @@ function formatPerTransferStepName(step: string): string {
 }
 
 /** When embedInApp: only the pay content in a dark card (no tabs, no full page). When false: full page with SendReceiveTabs and white card. */
-/** Claim-to-external-wallet is built but disabled for now — flip to re-enable. */
-const SHOW_EXTERNAL_CLAIM = false;
+/** Crypto card (Jam Card pilot) claim destination — UI placeholder only, no real payout wired up
+ *  yet. Jam's card network (Visa/Mastercard), partner API, and KYC field requirements are still
+ *  unconfirmed (see project_jamcard_pilot_evaluation memory) — flip once that integration exists. */
+const SHOW_CRYPTO_CARD_CLAIM = false;
+
+type CryptoClaimMethod = "wallet" | "external" | "anyToken";
+type CashClaimMethod = "naira" | "p2p" | "card";
+const CRYPTO_CLAIM_METHODS: readonly CryptoClaimMethod[] = ["wallet", "external", "anyToken"];
+const CASH_CLAIM_METHODS: readonly CashClaimMethod[] = ["naira", "p2p", "card"];
+const CRYPTO_CLAIM_PREF_KEY = "loofta:preferredClaimCryptoMethod";
+const CASH_CLAIM_PREF_KEY = "loofta:preferredClaimCashMethod";
+
+/** Per-viewer convenience only (which destination row shows first) — never anything load-bearing,
+ *  so a cleared/blocked localStorage just falls back to the given default. */
+function readPreferredClaimMethod<T extends string>(key: string, fallback: T, valid: readonly T[]): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const v = window.localStorage.getItem(key) as T | null;
+    return v && (valid as readonly string[]).includes(v) ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function rememberPreferredClaimMethod(key: string, method: string) {
+  try {
+    window.localStorage.setItem(key, method);
+  } catch {
+    // best-effort only
+  }
+}
 
 // ─── Dev preview: jump the claim-panel/sender-card UI into any state via ?preview=... ─────────
 // Same pattern as /app/megapot's DevPreviewPanel — localhost-only, overrides local derived
@@ -607,8 +638,10 @@ function ClaimPageSenderShareView({
         />
       </div>
       {/* Edit recipient: only while unclaimed (recipientType present) and not mid-claim.
-          Same inline dark-themed edit-in-place pattern as the lottery gift flow's
-          "Edit recipient" (apps/frontend/src/app/app/megapot/page.tsx) — no modal. */}
+          `userId` here is documented as "logged-in creator's id, only set when true" — the
+          caller is responsible for only passing it when the viewer actually is the creator (see
+          call sites below). Same inline dark-themed edit-in-place pattern as the lottery gift
+          flow's "Edit recipient" (apps/frontend/src/app/app/megapot/page.tsx) — no modal. */}
       {!isCancelled && recipientType && userId && (
         <div className="mt-4 max-w-md mx-auto text-left">
           {editOpen ? (
@@ -1856,7 +1889,7 @@ export function ClaimPayView({
     }
   };
   const claimAsRecipientMutation = useMutation({
-    mutationFn: async (opts?: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean }) => {
+    mutationFn: async (opts?: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean; split?: number; maxDelayMs?: number }) => {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
       console.info("[Claim] Initiating claim for:", id, "user:", user?.id?.slice(0, 12), "opts:", opts);
       const claimToken = await getAccessToken();
@@ -1994,10 +2027,8 @@ export function ClaimPayView({
   /** Every payment now routes through a burner and is claimed explicitly — the recipient always
    *  gets a choice of destination (own wallet or a pasted external address) and, unless the
    *  payment already arrived privately, whether to upgrade this claim to a private transfer. */
-  const [showExternalClaim, setShowExternalClaim] = useState(false);
   const [externalClaimAddress, setExternalClaimAddress] = useState("");
   const [externalClaimRiskStatus, setExternalClaimRiskStatus] = useState<"idle" | "checking" | "safe" | "unsafe">("idle");
-  const [externalClaimPrivately, setExternalClaimPrivately] = useState(false);
   useEffect(() => {
     const raw = externalClaimAddress.trim();
     if (!raw || !isValidAddressForChain(raw, "solana")) { setExternalClaimRiskStatus("idle"); return; }
@@ -2076,6 +2107,38 @@ export function ClaimPayView({
   // Once the recipient picks "Claim to wallet", drop into the original public/private choice —
   // "Claim to bank" no longer shows alongside it, matching the pre-bank-option flow exactly.
   const [walletClaimChosen, setWalletClaimChosen] = useState(false);
+  // "Claim to cash" tile reveal — sits alongside walletClaimChosen (both start false, showing the
+  // crypto/cash picker) but never sets it, so picking "Cash" then backing out still lands on the
+  // same picker rather than needing a third state to reconstruct it.
+  const [cashOptionsOpen, setCashOptionsOpen] = useState(false);
+  // Recipient's own private-claim timing-obfuscation choice — same split/delay concept as the
+  // payer's Pay Now sliders (privateSplit/privateDelayMs above) but a separate pair of state, since
+  // this is a different person (recipient, not sender) choosing on a different mutation
+  // (claimAsRecipientMutation, not the payer's private-transfer build). Defaults to no
+  // obfuscation (1 part, no delay) — same "opt into more privacy" default as the Pay Now sliders.
+  const [claimPrivateSplit, setClaimPrivateSplit] = useState<number>(1);
+  const [claimPrivateDelayMs, setClaimPrivateDelayMs] = useState<number>(0);
+  const [claimPrivateInfoOpen, setClaimPrivateInfoOpen] = useState(false);
+  // Off by default — same default as the old two-button layout's primary action being the public
+  // claim, "Claim privately" was the opt-in secondary button. The switch just exposes the same
+  // choice inline instead of as a separate button + confirm modal.
+  const [claimPrivatelyChosen, setClaimPrivatelyChosen] = useState(false);
+  const handleToggleClaimPrivately = (checked: boolean) => {
+    setClaimPrivatelyChosen(checked);
+    if (checked) setPrivacyBurstKey(Date.now());
+  };
+  // Which crypto/cash destination row is expanded inline (back-button pattern, same as
+  // cashOptionsOpen above) — null shows the row list. Rows are ordered with whichever method the
+  // recipient last actually claimed through shown first (readPreferredClaimMethod/
+  // rememberPreferredClaimMethod), a per-browser convenience only — never anything load-bearing.
+  const [cryptoMenuStep, setCryptoMenuStep] = useState<CryptoClaimMethod | null>(null);
+  const [cashMenuStep, setCashMenuStep] = useState<CashClaimMethod | null>(null);
+  const [preferredCryptoMethod, setPreferredCryptoMethod] = useState<CryptoClaimMethod>("wallet");
+  const [preferredCashMethod, setPreferredCashMethod] = useState<CashClaimMethod>("naira");
+  useEffect(() => {
+    setPreferredCryptoMethod(readPreferredClaimMethod(CRYPTO_CLAIM_PREF_KEY, "wallet", ["wallet", "external", "anyToken"] as const));
+    setPreferredCashMethod(readPreferredClaimMethod(CASH_CLAIM_PREF_KEY, "naira", ["naira", "p2p", "card"] as const));
+  }, []);
 
   // Inline "set up a bank account" dialog — shown when "Claim to bank" is clicked but no default
   // account exists yet, instead of bouncing the recipient away to the withdraw modal mid-claim.
@@ -2412,10 +2475,6 @@ export function ClaimPayView({
     const feeEstimate = gasFee + protocolFee;
     return { net: Math.max(0, usd - feeEstimate), feeEstimate };
   };
-  /** Non-null opens the "how much you'll receive" confirmation modal before actually submitting
-   *  a private claim (the only claim path with a fee) — holds whatever extra opts (e.g. a chosen
-   *  external destination) should ride along once confirmed. */
-  const [privateClaimConfirm, setPrivateClaimConfirm] = useState<{ destinationAddress?: string } | null>(null);
   const confirmPrivateClaimAmount = parseFloat(claim?.amount || "0") || 0;
   const confirmPrivateClaimEstimate = estimateClaimPrivatelyNet(confirmPrivateClaimAmount);
   /** Shared claim panel — replaces the old single hardcoded "claim to wallet" button (and the
@@ -2423,127 +2482,496 @@ export function ClaimPayView({
   const renderClaimPanel = (mobile: boolean) => (
     <div className={mobile ? "w-full" : "hidden md:flex flex-col w-full max-w-md mx-auto"}>
       {previewOverride?.forcePrivatelyPaidNotice && (
-        <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-300 mb-3">
+        <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-base text-slate-300 mb-3">
           <PrivacyGlyph size={16} opacity={1} />
           <span>This payment was sent privately</span>
         </div>
       )}
       {showBankClaimOption && !walletClaimChosen ? (
-        <>
-          <button
-            type="button"
-            onClick={() => setWalletClaimChosen(true)}
-            disabled={claimActionDisabled}
-            className={cn(
-              "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
-              mobile ? "py-4 text-base" : "py-3",
-              "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-              claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
-            )}
-          >
-            {!(walletNotReady || waitingForBurnerFunds) && <Wallet className={mobile ? "h-5 w-5" : "h-4 w-4"} />}
-            <span>Claim to wallet{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
-          </button>
-
-          <div className="flex items-center gap-3 my-2.5 w-full">
-            <div className="h-px flex-1 bg-white/10" />
-            <span className="text-xs font-medium tracking-widest text-slate-500 uppercase">or</span>
-            <div className="h-px flex-1 bg-white/10" />
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (pajDefaultBankAccount) {
-                setNairaClaimConfirmOpen(true);
-              } else {
-                openNairaSetup();
-              }
-            }}
-            disabled={claimActionDisabled}
-            className={cn(
-              "w-full rounded-2xl p-[1.5px] bg-gradient-to-r from-orange-500 via-amber-400 to-red-500 transition-opacity",
-              claimActionDisabled ? "opacity-50 cursor-not-allowed" : "hover:opacity-90",
-            )}
-          >
-            <span
+        !cashOptionsOpen ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setWalletClaimChosen(true)}
+              disabled={claimActionDisabled}
               className={cn(
-                "flex items-center justify-center gap-2 rounded-[calc(1rem-1.5px)] bg-[#0f0f12] font-semibold text-slate-100 transition-colors",
-                mobile ? "py-4 text-base" : "py-3 text-base",
+                "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
+                mobile ? "py-5 text-base" : "py-4 text-base",
+                "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
               )}
             >
-              {claimAsRecipientMutation.isPending && claimAsRecipientMutation.variables?.claimToNaira ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : !(walletNotReady || waitingForBurnerFunds) ? (
-                <Landmark className="h-4 w-4" />
-              ) : null}
-              <span>
-                {claimAsRecipientMutation.isPending && claimAsRecipientMutation.variables?.claimToNaira
-                  ? "Claiming…"
-                  : `Claim to bank${walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}`}
-              </span>
-            </span>
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            type="button"
-            onClick={() => { setClaimInitiated(true); claimAsRecipientMutation.mutate({}); }}
-            disabled={claimActionDisabled}
-            className={cn(
-              "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
-              mobile ? "py-4 text-base" : "py-3",
-              "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-              claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
-            )}
-          >
-            {claimAsRecipientMutation.isPending ? (
-              <><Loader2 className={mobile ? "h-5 w-5 animate-spin" : "h-4 w-4 animate-spin"} /><span>Claiming…</span></>
-            ) : (
-              <>
-                <CheckCircle2 className={mobile ? "h-5 w-5" : "h-4 w-4"} />
-                {/* "Claim now" when the payment already arrived privately — "publicly" would be
-                  misleading there. "Claim publicly" only makes sense as a contrast to the
-                  "Claim privately" option, which only appears for a publicly-sent payment anyway. */}
-                <span>{canClaimPrivately ? "Claim publicly" : "Claim now"}{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
-              </>
-            )}
-          </button>
+              {!(walletNotReady || waitingForBurnerFunds) && <Wallet className={mobile ? "h-5 w-5" : "h-4 w-4"} />}
+              <span>Claim in crypto{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
+            </button>
 
-          {/* Dark secondary button — this card is a dark surface (bg-white/5, forced-white text via
-              ClaimPayLayout's overrides). A confetti burst on click (same PrivacyConfettiBurst used
-              for the sender's incognito toggle) so going private still feels like a distinct choice —
-              no glow or bright color on the button itself though, an earlier amber-pulsing version
-              read as a privacy red flag in user feedback. Lives inside the "claim to wallet" branch
-              only — once "Claim to bank" is an option, it must never show alongside it; it only
-              appears after the recipient has specifically chosen the wallet path (or there was never
-              a bank option to begin with). */}
-          {canClaimPrivately && (
-            <>
-              <div className="flex items-center gap-3 my-2.5 w-full">
-                <div className="h-px flex-1 bg-white/10" />
-                <span className="text-xs font-medium tracking-widest text-slate-500 uppercase">or</span>
-                <div className="h-px flex-1 bg-white/10" />
-              </div>
-              <motion.button
-                type="button"
-                onClick={() => { setPrivacyBurstKey(Date.now()); setPrivateClaimConfirm({}); }}
-                disabled={claimActionDisabled}
-                whileHover={claimActionDisabled ? undefined : { scale: 1.02 }}
-                whileTap={claimActionDisabled ? undefined : { scale: 0.98 }}
+            <div className="flex items-center gap-3 my-3.5 w-full">
+              <div className="h-px flex-1 bg-white/10" />
+              <span className="text-base font-medium tracking-widest text-slate-500 uppercase">or</span>
+              <div className="h-px flex-1 bg-white/10" />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setCashOptionsOpen(true)}
+              disabled={claimActionDisabled}
+              className={cn(
+                "w-full rounded-2xl p-[1.5px] bg-gradient-to-r from-orange-500 via-amber-400 to-red-500 transition-opacity",
+                claimActionDisabled ? "opacity-50 cursor-not-allowed" : "hover:opacity-90",
+              )}
+            >
+              <span
                 className={cn(
-                  "w-full flex items-center justify-center gap-2 rounded-xl bg-black/30 border border-white/15 font-semibold text-slate-200 transition-colors hover:bg-black/40 hover:border-white/25",
-                  mobile ? "py-4 text-base" : "py-3",
-                  claimActionDisabled && "opacity-50 cursor-not-allowed hover:bg-black/30",
+                  "flex items-center justify-center gap-2 rounded-[calc(1rem-1.5px)] bg-[#0f0f12] font-semibold text-slate-100 transition-colors",
+                  mobile ? "py-5 text-base" : "py-4 text-base",
                 )}
               >
-                <PrivacyGlyph size={mobile ? 20 : 18} opacity={1} />
-                <span>Claim privately</span>
-              </motion.button>
+                <Landmark className="h-4 w-4" />
+                <span>Claim to cash</span>
+              </span>
+            </button>
+          </>
+        ) : (
+          <div className="space-y-2.5">
+            <button
+              type="button"
+              onClick={() => (cashMenuStep ? setCashMenuStep(null) : setCashOptionsOpen(false))}
+              className="flex items-center gap-1 text-base font-medium text-slate-400 hover:text-slate-200 transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" /> Back
+            </button>
+
+            {cashMenuStep === null && (
+              <div className="space-y-2.5">
+                {[...CASH_CLAIM_METHODS]
+                  .sort((a, b) => (a === preferredCashMethod ? -1 : b === preferredCashMethod ? 1 : 0))
+                  .map((methodKey) => {
+                    if (methodKey === "naira") {
+                      const claimingNaira = claimAsRecipientMutation.isPending && claimAsRecipientMutation.variables?.claimToNaira;
+                      return (
+                        <button
+                          key="naira"
+                          type="button"
+                          onClick={() => {
+                            rememberPreferredClaimMethod(CASH_CLAIM_PREF_KEY, "naira");
+                            if (pajDefaultBankAccount) {
+                              setNairaClaimConfirmOpen(true);
+                            } else {
+                              openNairaSetup();
+                            }
+                          }}
+                          disabled={claimActionDisabled}
+                          className={cn(
+                            "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 transition-all hover:border-white/20 hover:bg-white/10",
+                            mobile ? "py-4" : "py-3.5",
+                            claimActionDisabled && "opacity-50 cursor-not-allowed hover:border-white/10 hover:bg-white/5",
+                          )}
+                        >
+                          {claimingNaira ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <Landmark className="h-4 w-4 shrink-0" />}
+                          <span className="flex-1 min-w-0">
+                            <span className="block text-base">
+                              {claimingNaira ? "Claiming…" : `Bank account (Naira)${walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}`}
+                            </span>
+                            <span className="block text-base font-normal text-slate-500">Direct bank transfer</span>
+                          </span>
+                        </button>
+                      );
+                    }
+                    if (methodKey === "p2p") {
+                      return (
+                        <button
+                          key="p2p"
+                          type="button"
+                          onClick={() => setCashMenuStep("p2p")}
+                          disabled={claimActionDisabled}
+                          className={cn(
+                            "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 transition-all hover:border-white/20 hover:bg-white/10",
+                            mobile ? "py-4" : "py-3.5",
+                            claimActionDisabled && "opacity-50 cursor-not-allowed hover:border-white/10 hover:bg-white/5",
+                          )}
+                        >
+                          <Users className="h-4 w-4 shrink-0" />
+                          <span className="flex-1 min-w-0">
+                            <span className="block text-base">P2P</span>
+                            <span className="block text-base font-normal text-slate-500">Revolut, Cash App, Venmo, Zelle</span>
+                          </span>
+                        </button>
+                      );
+                    }
+                    // Crypto card (Jam Card pilot) — UI-only placeholder, no real payout wired up
+                    // yet. Flip SHOW_CRYPTO_CARD_CLAIM once the partner integration exists (see
+                    // project_jamcard_pilot_evaluation memory: network + KYC fields unconfirmed).
+                    return SHOW_CRYPTO_CARD_CLAIM ? (
+                      <button
+                        key="card"
+                        type="button"
+                        className={cn(
+                          "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 transition-all hover:border-white/20 hover:bg-white/10",
+                          mobile ? "py-4" : "py-3.5",
+                        )}
+                      >
+                        <CreditCard className="h-4 w-4 shrink-0" />
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-base">Crypto card</span>
+                          <span className="block text-base font-normal text-slate-500">Set up once, then claim to it every time</span>
+                        </span>
+                      </button>
+                    ) : (
+                      <div key="card" className="w-full flex items-center gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.02] px-4 py-3.5 opacity-70">
+                        <CreditCard className="h-4 w-4 text-slate-400 shrink-0" />
+                        <div className="text-left flex-1 min-w-0">
+                          <p className="text-base font-semibold text-slate-200">
+                            Crypto card <span className="ml-1.5 rounded-full bg-white/10 px-2 py-0.5 text-base font-medium tracking-wide text-amber-300 uppercase align-middle">Pilot</span>
+                          </p>
+                          <p className="text-base text-slate-500">Set up once, then claim to it every time — coming soon</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+
+            {cashMenuStep === "p2p" && (
+              <div className="space-y-3">
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                  <p className="text-base font-semibold text-slate-100 mb-1">Claim via P2P</p>
+                  <p className="text-base text-slate-500 leading-relaxed">
+                    Claims to your Loofta wallet first, then takes you to pick Revolut, Cash App, Venmo, or Zelle.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    rememberPreferredClaimMethod(CASH_CLAIM_PREF_KEY, "p2p");
+                    setClaimInitiated(true);
+                    claimAsRecipientMutation.mutate({}, { onSuccess: () => router.push("/app?balance=withdraw") });
+                  }}
+                  disabled={claimActionDisabled}
+                  className={cn(
+                    "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
+                    mobile ? "py-4 text-base" : "py-3",
+                    "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                    claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
+                  )}
+                >
+                  {claimAsRecipientMutation.isPending ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /><span>Claiming…</span></>
+                  ) : (
+                    <><Users className="h-4 w-4" /><span>Claim &amp; continue</span></>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )
+      ) : (
+        <div className="space-y-2.5">
+          {showBankClaimOption && cryptoMenuStep === null && (
+            <button
+              type="button"
+              onClick={() => setWalletClaimChosen(false)}
+              className="flex items-center gap-1 text-base font-medium text-slate-400 hover:text-slate-200 transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" /> Back
+            </button>
+          )}
+          {cryptoMenuStep !== null && (
+            <button
+              type="button"
+              onClick={() => setCryptoMenuStep(null)}
+              className="flex items-center gap-1 text-base font-medium text-slate-400 hover:text-slate-200 transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" /> Back
+            </button>
+          )}
+
+          {cryptoMenuStep === null && (
+            <div className="space-y-2.5">
+              {[...CRYPTO_CLAIM_METHODS]
+                .sort((a, b) => (a === preferredCryptoMethod ? -1 : b === preferredCryptoMethod ? 1 : 0))
+                .map((methodKey) => {
+                  if (methodKey === "wallet") {
+                    return (
+                      <button
+                        key="wallet"
+                        type="button"
+                        onClick={() => setCryptoMenuStep("wallet")}
+                        disabled={claimActionDisabled}
+                        className={cn(
+                          "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 transition-all hover:border-white/20 hover:bg-white/10",
+                          mobile ? "py-4" : "py-3.5",
+                          claimActionDisabled && "opacity-50 cursor-not-allowed hover:border-white/10 hover:bg-white/5",
+                        )}
+                      >
+                        <Wallet className="h-4 w-4 shrink-0" />
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-base">Loofta wallet</span>
+                          <span className="block text-base font-normal text-slate-500">Fastest</span>
+                        </span>
+                      </button>
+                    );
+                  }
+                  if (methodKey === "external") {
+                    return (
+                      <button
+                        key="external"
+                        type="button"
+                        onClick={() => setCryptoMenuStep("external")}
+                        disabled={claimActionDisabled}
+                        className={cn(
+                          "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 transition-all hover:border-white/20 hover:bg-white/10",
+                          mobile ? "py-4" : "py-3.5",
+                          claimActionDisabled && "opacity-50 cursor-not-allowed hover:border-white/10 hover:bg-white/5",
+                        )}
+                      >
+                        <Send className="h-4 w-4 shrink-0" />
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-base">External wallet</span>
+                          <span className="block text-base font-normal text-slate-500">Any Solana address</span>
+                        </span>
+                      </button>
+                    );
+                  }
+                  return (
+                    <button
+                      key="anyToken"
+                      type="button"
+                      onClick={() => setCryptoMenuStep("anyToken")}
+                      disabled={claimActionDisabled}
+                      className={cn(
+                        "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 transition-all hover:border-white/20 hover:bg-white/10",
+                        mobile ? "py-4" : "py-3.5",
+                        claimActionDisabled && "opacity-50 cursor-not-allowed hover:border-white/10 hover:bg-white/5",
+                      )}
+                    >
+                      <Globe className="h-4 w-4 shrink-0" />
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-base">Any token</span>
+                        <span className="block text-base font-normal text-slate-500">Any chain, via NEAR Intents</span>
+                      </span>
+                    </button>
+                  );
+                })}
+            </div>
+          )}
+
+          {cryptoMenuStep === "wallet" && (
+            <>
+              {canClaimPrivately && (
+                <IncognitoModeToggle
+                  checked={claimPrivatelyChosen}
+                  onCheckedChange={handleToggleClaimPrivately}
+                  onLabel="Claim privately"
+                  offLabel="Claim privately"
+                  ariaLabel="Claim this payment privately"
+                  className="mb-3"
+                />
+              )}
+
+              <AnimatePresence initial={false}>
+                {claimPrivatelyChosen && canClaimPrivately && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-2 mb-3">
+                      <div className="flex items-center justify-between text-base text-slate-400">
+                        <span>Claim amount</span>
+                        <span className="font-sans text-slate-200">${confirmPrivateClaimAmount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-base text-slate-400">
+                        <span>Privacy fee</span>
+                        <span className="font-sans text-slate-200">- ${confirmPrivateClaimEstimate.feeEstimate.toFixed(2)}</span>
+                      </div>
+                      <div className="h-px bg-white/10 my-1" />
+                      <div className="flex items-center justify-between text-lg font-semibold">
+                        <span className="text-white">You&apos;ll receive</span>
+                        <span className="font-sans text-amber-300">${confirmPrivateClaimEstimate.net.toFixed(2)}</span>
+                      </div>
+                    </div>
+                    <PrivacyTimingControls
+                      idPrefix="claim-privacy"
+                      split={claimPrivateSplit}
+                      onSplitChange={setClaimPrivateSplit}
+                      delayMs={claimPrivateDelayMs}
+                      onDelayMsChange={setClaimPrivateDelayMs}
+                      amountUsd={confirmPrivateClaimAmount}
+                      infoOpen={claimPrivateInfoOpen}
+                      onInfoOpenChange={setClaimPrivateInfoOpen}
+                      theme="dark"
+                      className="mb-3"
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <button
+                type="button"
+                onClick={() => {
+                  rememberPreferredClaimMethod(CRYPTO_CLAIM_PREF_KEY, "wallet");
+                  setClaimInitiated(true);
+                  claimAsRecipientMutation.mutate(
+                    claimPrivatelyChosen && canClaimPrivately
+                      ? { claimPrivately: true, split: claimPrivateSplit, maxDelayMs: claimPrivateDelayMs }
+                      : {},
+                  );
+                }}
+                disabled={claimActionDisabled}
+                className={cn(
+                  "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
+                  mobile ? "py-4 text-base" : "py-3",
+                  "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                  claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
+                )}
+              >
+                {claimAsRecipientMutation.isPending ? (
+                  <><Loader2 className={mobile ? "h-5 w-5 animate-spin" : "h-4 w-4 animate-spin"} /><span>Claiming…</span></>
+                ) : (
+                  <>
+                    <CheckCircle2 className={mobile ? "h-5 w-5" : "h-4 w-4"} />
+                    <span>Confirm claim{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
+                  </>
+                )}
+              </button>
             </>
           )}
-        </>
+
+          {cryptoMenuStep === "external" && (
+            <div className="space-y-3">
+              <Input
+                placeholder="Enter Solana address"
+                value={externalClaimAddress}
+                onChange={(e) => setExternalClaimAddress(e.target.value)}
+                className="font-mono text-base"
+              />
+              {externalClaimRiskStatus === "checking" && (
+                <p className="text-base flex items-center gap-1.5 text-gray-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                  Checking address…
+                </p>
+              )}
+              {externalClaimRiskStatus === "safe" && (
+                <p className="text-base flex items-center gap-1.5 text-emerald-500 font-medium">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                  Address compliant
+                </p>
+              )}
+              {externalClaimRiskStatus === "unsafe" && (
+                <p className="text-base flex items-center gap-1.5 text-red-500 font-medium">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Address flagged — claim blocked
+                </p>
+              )}
+
+              {canClaimPrivately && (
+                <IncognitoModeToggle
+                  checked={claimPrivatelyChosen}
+                  onCheckedChange={handleToggleClaimPrivately}
+                  onLabel="Claim privately"
+                  offLabel="Claim privately"
+                  ariaLabel="Claim this payment privately"
+                />
+              )}
+
+              <AnimatePresence initial={false}>
+                {claimPrivatelyChosen && canClaimPrivately && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-2">
+                      <div className="flex items-center justify-between text-base text-slate-400">
+                        <span>Claim amount</span>
+                        <span className="font-sans text-slate-200">${confirmPrivateClaimAmount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-base text-slate-400">
+                        <span>Privacy fee</span>
+                        <span className="font-sans text-slate-200">- ${confirmPrivateClaimEstimate.feeEstimate.toFixed(2)}</span>
+                      </div>
+                      <div className="h-px bg-white/10 my-1" />
+                      <div className="flex items-center justify-between text-lg font-semibold">
+                        <span className="text-white">You&apos;ll receive</span>
+                        <span className="font-sans text-amber-300">${confirmPrivateClaimEstimate.net.toFixed(2)}</span>
+                      </div>
+                    </div>
+                    <PrivacyTimingControls
+                      idPrefix="claim-external-privacy"
+                      split={claimPrivateSplit}
+                      onSplitChange={setClaimPrivateSplit}
+                      delayMs={claimPrivateDelayMs}
+                      onDelayMsChange={setClaimPrivateDelayMs}
+                      amountUsd={confirmPrivateClaimAmount}
+                      infoOpen={claimPrivateInfoOpen}
+                      onInfoOpenChange={setClaimPrivateInfoOpen}
+                      theme="dark"
+                      className="mt-3"
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <button
+                type="button"
+                onClick={() => {
+                  rememberPreferredClaimMethod(CRYPTO_CLAIM_PREF_KEY, "external");
+                  const dest = externalClaimAddress.trim();
+                  setClaimInitiated(true);
+                  claimAsRecipientMutation.mutate(
+                    claimPrivatelyChosen && canClaimPrivately
+                      ? { claimPrivately: true, destinationAddress: dest, split: claimPrivateSplit, maxDelayMs: claimPrivateDelayMs }
+                      : { destinationAddress: dest },
+                  );
+                }}
+                disabled={claimActionDisabled || externalClaimRiskStatus !== "safe"}
+                className={cn(
+                  "w-full flex items-center justify-center gap-2 rounded-xl py-3 font-semibold text-base transition-all",
+                  "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                  (claimActionDisabled || externalClaimRiskStatus !== "safe") && "opacity-50 cursor-not-allowed hover:opacity-50",
+                )}
+              >
+                {claimAsRecipientMutation.isPending ? "Claiming…" : "Claim to this address"}
+              </button>
+            </div>
+          )}
+
+          {cryptoMenuStep === "anyToken" && (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-base font-semibold text-slate-100 mb-1">Claim as any token</p>
+                <p className="text-base text-slate-500 leading-relaxed">
+                  Claims to your Loofta wallet first, then takes you to pick any token on any chain via NEAR Intents.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  rememberPreferredClaimMethod(CRYPTO_CLAIM_PREF_KEY, "anyToken");
+                  setClaimInitiated(true);
+                  claimAsRecipientMutation.mutate({}, { onSuccess: () => router.push("/app?balance=withdraw") });
+                }}
+                disabled={claimActionDisabled}
+                className={cn(
+                  "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
+                  mobile ? "py-4 text-base" : "py-3",
+                  "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
+                  claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
+                )}
+              >
+                {claimAsRecipientMutation.isPending ? (
+                  <><Loader2 className="h-4 w-4 animate-spin" /><span>Claiming…</span></>
+                ) : (
+                  <><Globe className="h-4 w-4" /><span>Claim &amp; continue</span></>
+                )}
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Small, unobtrusive discovery link for recipients without a saved default bank account
@@ -2555,155 +2983,12 @@ export function ClaimPayView({
         <button
           type="button"
           onClick={openNairaSetup}
-          className={cn("text-base md:text-sm text-slate-400 hover:text-slate-200 underline underline-offset-2", mobile ? "mt-3" : "mt-2")}
+          className={cn("text-base text-slate-400 hover:text-slate-200 underline underline-offset-2", mobile ? "mt-3" : "mt-2")}
         >
           Set up a bank account to receive payouts in Naira
         </button>
       )}
-
-      {/* Claim-to-external-wallet: disabled for now — set SHOW_EXTERNAL_CLAIM to re-enable. */}
-      {SHOW_EXTERNAL_CLAIM && (!showExternalClaim ? (
-        <button
-          type="button"
-          onClick={() => setShowExternalClaim(true)}
-          className={cn("text-base md:text-sm text-slate-400 hover:text-slate-200 underline underline-offset-2", mobile ? "mt-3" : "mt-2")}
-        >
-          Claim to a different wallet
-        </button>
-      ) : (
-        <div className={cn("mt-2 text-left", mobile ? "w-full" : "w-full max-w-sm")}>
-          <Input
-            placeholder="Enter Solana address"
-            value={externalClaimAddress}
-            onChange={(e) => setExternalClaimAddress(e.target.value)}
-            className="font-mono text-base"
-          />
-          {externalClaimRiskStatus === "checking" && (
-            <p className="text-base mt-1.5 flex items-center gap-1.5 text-gray-500">
-              <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-              Checking address…
-            </p>
-          )}
-          {externalClaimRiskStatus === "safe" && (
-            <p className="text-base mt-1.5 flex items-center gap-1.5 text-emerald-500 font-medium">
-              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-              Address compliant
-            </p>
-          )}
-          {externalClaimRiskStatus === "unsafe" && (
-            <p className="text-base mt-1.5 flex items-center gap-1.5 text-red-500 font-medium">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-              Address flagged — claim blocked
-            </p>
-          )}
-          {canClaimPrivately && (
-            <label className="flex items-center gap-2 mt-2 text-base md:text-sm text-gray-600">
-              <input type="checkbox" checked={externalClaimPrivately} onChange={(e) => setExternalClaimPrivately(e.target.checked)} />
-              Also claim privately
-            </label>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              const dest = externalClaimAddress.trim();
-              if (externalClaimPrivately) {
-                setPrivateClaimConfirm({ destinationAddress: dest });
-                return;
-              }
-              setClaimInitiated(true);
-              claimAsRecipientMutation.mutate({ destinationAddress: dest });
-            }}
-            disabled={claimActionDisabled || externalClaimRiskStatus !== "safe"}
-            className={cn(
-              "mt-2 w-full flex items-center justify-center gap-2 rounded-xl py-3 font-semibold text-base transition-all",
-              "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-              (claimActionDisabled || externalClaimRiskStatus !== "safe") && "opacity-50 cursor-not-allowed hover:opacity-50",
-            )}
-          >
-            Claim to this address
-          </button>
-        </div>
-      ))}
     </div>
-  );
-  /** "How much you'll actually receive" preview before confirming a private claim — the only
-   *  claim path with a fee. Rendered once (not inside renderClaimPanel, which is called twice
-   *  for the desktop/mobile layouts) to avoid mounting two dialogs. */
-  const renderPrivateClaimConfirmDialog = () => (
-    <Dialog open={!!privateClaimConfirm} onOpenChange={(open) => { if (!open) setPrivateClaimConfirm(null); }}>
-      <DialogContent
-        className={cn(
-          "border-white/10 bg-[#0f0f12] text-white",
-          "left-0 right-0 top-0 [transform:none] h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col data-[state=open]:!zoom-in-100 data-[state=open]:!animate-none",
-          "sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-2xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block",
-          "[&>button]:h-12 [&>button]:w-12 [&>button]:rounded-full [&>button_svg]:h-5 [&>button_svg]:w-5",
-        )}
-      >
-        {/* Drag handle — mobile only */}
-        <div className="sm:hidden flex justify-center pt-5 pb-2 shrink-0">
-          <div className="w-10 h-1 rounded-full bg-white/20" />
-        </div>
-
-        <div
-          className="sm:contents px-6 pb-6 sm:p-0 space-y-5 sm:space-y-4"
-          style={{ flex: "1 1 0", height: 0, overflowY: "auto", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
-        >
-          <DialogHeader className="pb-0 pt-2 sm:pt-0">
-            <DialogTitle className="flex items-center gap-2.5 font-display text-3xl sm:text-4xl font-medium tracking-tight text-white">
-              <PrivacyGlyph size={26} opacity={1} />
-              Claim privately
-            </DialogTitle>
-            <DialogDescription className="text-base font-medium mt-0.5 text-slate-400">
-              A MagicBlock private transfer fee is deducted from the claimed amount.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-2">
-            <div className="flex items-center justify-between text-base text-slate-400">
-              <span>Claim amount</span>
-              <span className="font-sans text-slate-200">${confirmPrivateClaimAmount.toFixed(2)}</span>
-            </div>
-            <div className="flex items-center justify-between text-base text-slate-400">
-              <span>Privacy fee</span>
-              <span className="font-sans text-slate-200">- ${confirmPrivateClaimEstimate.feeEstimate.toFixed(2)}</span>
-            </div>
-            <div className="h-px bg-white/10 my-1" />
-            <div className="flex items-center justify-between text-lg font-semibold">
-              <span className="text-white">You'll receive</span>
-              <span className="font-sans text-amber-300">${confirmPrivateClaimEstimate.net.toFixed(2)}</span>
-            </div>
-          </div>
-
-          <p className="text-base md:text-sm text-slate-500 leading-relaxed">
-            {privatePaymentFundsAppearCopy()}
-          </p>
-        </div>
-
-        <div className="shrink-0 flex flex-col-reverse sm:flex-row gap-2 px-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:px-0 sm:pb-0 sm:mt-2">
-          <button
-            type="button"
-            onClick={() => setPrivateClaimConfirm(null)}
-            disabled={claimActionDisabled}
-            className="flex-1 h-14 sm:h-12 rounded-xl text-lg sm:text-base font-semibold border border-white/10 text-slate-300 hover:bg-white/[0.06] transition-all disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (!privateClaimConfirm) return;
-              setClaimInitiated(true);
-              claimAsRecipientMutation.mutate({ claimPrivately: true, ...privateClaimConfirm });
-              setPrivateClaimConfirm(null);
-            }}
-            disabled={claimActionDisabled}
-            className="flex-1 h-14 sm:h-12 rounded-xl text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
-          >
-            Confirm
-          </button>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
   const [claimCompleted, setClaimCompleted] = useState(false);
   const confettiFiredRef = React.useRef(false);
@@ -2950,6 +3235,36 @@ export function ClaimPayView({
   const [txInput, setTxInput] = useState<string>("");
   const [submittingTx, setSubmittingTx] = useState<boolean>(false);
   const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
+  const [privacyInfoOpen, setPrivacyInfoOpen] = useState<boolean>(false);
+  // Same split/delay timing-obfuscation sliders as /fomo and GuestCheckoutPay — only consumed by
+  // the authenticated Pay Now flow below (perTransfer), see the PrivacyTimingControls block.
+  // Initialized from ?split=&delayMs= when the sender already chose these on the Send form
+  // (app/app/page.tsx's privacyQuery()) instead of resetting to 1/0 here.
+  const [privateSplit, setPrivateSplit] = useState<number>(() => {
+    const v = Number(searchParams.get("split"));
+    return Number.isFinite(v) && v >= 1 ? Math.min(15, Math.round(v)) : 1;
+  });
+  const [privateDelayMs, setPrivateDelayMs] = useState<number>(() => {
+    const v = Number(searchParams.get("delayMs"));
+    return Number.isFinite(v) && v >= 0 ? v : 0;
+  });
+  // Fall back to the claim's own persisted choice (private_split / private_max_delay_ms) once it
+  // loads, for anyone who lands here WITHOUT the sender's ?split=&delayMs= — a recipient, or the
+  // guest sender themselves revisiting the link later. The URL still wins on first render (it's
+  // available before the claim query resolves, and reflects the choice this exact session just
+  // made), this only fills the gap for every other visit.
+  useEffect(() => {
+    if (!claim) return;
+    if (searchParams.get("split") == null) {
+      const v = Number((claim as { private_split?: number | null }).private_split);
+      if (Number.isFinite(v) && v >= 1) setPrivateSplit(Math.min(15, Math.round(v)));
+    }
+    if (searchParams.get("delayMs") == null) {
+      const v = Number((claim as { private_max_delay_ms?: number | null }).private_max_delay_ms);
+      if (Number.isFinite(v) && v >= 0) setPrivateDelayMs(v);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claim]);
   // Dev-only: jump straight into the private/public sender card via ?preview=sender-private|
   // sender-public (see DEV_PREVIEW_STATES) — an effect rather than a lazy useState initializer
   // since previewOverride isn't available until after the localhost-detection effect runs on
@@ -3011,7 +3326,15 @@ export function ClaimPayView({
   // button — used to decide where the "Pay privately" switch renders (see the block right above
   // that ternary): inside GuestCheckoutPay itself (under the selected option) when this is true,
   // above the whole section otherwise.
-  const showGuestCheckout = !DEMO_MODE && chrome === "minimal" && !!claim?.claim_burner_address;
+  // Also true for a claim the guest (unauthenticated) Send flow created (create-from-*-guest,
+  // created_by null) once its own visitor isn't logged in either — same payment surface a
+  // merchant checkout link uses (chrome="minimal"), just reached from the main Send form instead
+  // of a payment link. An authenticated visitor still gets the normal Pay Now button below,
+  // never gated behind this — checkoutAuthenticated stays plain `authenticated` for them since
+  // the session-unlock dance right below only matters once showGuestCheckout is actually true
+  // for someone who IS logged in, which a guest-created claim's own creator never is.
+  const isGuestCreatedClaim = !claim?.created_by;
+  const showGuestCheckout = !DEMO_MODE && !!claim?.claim_burner_address && (chrome === "minimal" || (isGuestCreatedClaim && !authenticated));
   const isCreatorView = !!user?.id && claim?.created_by === user.id;
 
   // Checkout never trusts an ambient Privy session on load — the visitor has to explicitly click
@@ -3762,7 +4085,7 @@ export function ClaimPayView({
       console.log("[PrivateTransfer] PER transfer signature:", signature);
       toast({
         title: "Transfer submitted!",
-        description: `Your private transfer is processing — ${privatePaymentFundsAppearCopy()}`,
+        description: `Your private transfer is processing — ${privatePaymentFundsAppearCopy((claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}`,
       });
       await updateClaimStatus(
         claim.id,
@@ -3929,6 +4252,10 @@ export function ClaimPayView({
             onProgress: setPerTransferPhase,
             isBurnerRecipient: isBurnerForLoofta,
             gasless,
+            // Only sent when the split/delay sliders above are actually shown & touched
+            // (isPrivateMode, not requiresPrivate) — a mandatory-private link keeps today's
+            // default (auto split on mainnet, cluster-default delay) since its sliders never render.
+            ...(isPrivateMode && !requiresPrivate ? { split: privateSplit, maxDelayMs: privateDelayMs } : {}),
             onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
               looftaFeeUsdc = feeAmountUsdc;
               looftaFeeBreakdown = feeBreakdown ?? null;
@@ -4055,7 +4382,7 @@ export function ClaimPayView({
       toast({
         title: "Transfer submitted!",
         description: payPrivately
-          ? `$${amountUSD.toFixed(2)} USDC sent privately. ${privatePaymentFundsAppearCopy()}`
+          ? `$${amountUSD.toFixed(2)} USDC sent privately. ${privatePaymentFundsAppearCopy((claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}`
           : `$${amountUSD.toFixed(2)} USDC sent.`,
       });
     } catch (e: any) {
@@ -4362,7 +4689,6 @@ export function ClaimPayView({
   return (
     <>
       {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
-      {renderPrivateClaimConfirmDialog()}
       {renderNairaSetupDialog()}
       {renderNairaClaimConfirmDialog()}
 
@@ -4498,7 +4824,7 @@ export function ClaimPayView({
               <Skeleton className="h-12 w-full rounded-xl mt-2" />
             </div>
           )
-        ) : !authenticated && claim?.direction !== 'from_recipient' ? (
+        ) : !authenticated && claim?.direction !== 'from_recipient' && !showGuestCheckout ? (
           <div className="py-16 flex flex-col items-center text-center">
             <div className="w-16 h-16 rounded-full bg-white/10 border border-white/10 flex items-center justify-center mb-5">
               {pendingSocialPlatformHint ? (
@@ -4543,7 +4869,7 @@ export function ClaimPayView({
                 — see the 2026-07-24 Td2mutpu incident). The receipt view below already re-checks
                 SUCCESS on its own, so this only needs to stop routing settled claims into the
                 not-found branch. */}
-            {!isCreatorView && !isRecipient && claim?.direction !== 'from_recipient'
+            {!isCreatorView && !isRecipient && claim?.direction !== 'from_recipient' && !showGuestCheckout
               && String(status || claim?.status || "").toUpperCase() !== "SUCCESS" ? (
               claim?.recipient_pending_social && !hasSocialPlatformLinked(claim.recipient_pending_social_platform) ? (
                 <SocialConnectPrompt
@@ -4741,13 +5067,13 @@ export function ClaimPayView({
                 {claim?.is_private && claim?.created_at && Date.now() - new Date(claim.created_at).getTime() < 11 * 60_000 && (
                   <div className="flex items-start gap-2 text-base md:text-sm text-gray-500 mb-2">
                     <Loader2 className="h-4 w-4 animate-spin text-amber-500 shrink-0 mt-0.5" />
-                    <span>{privatePaymentFundsAppearCopy()}</span>
+                    <span>{privatePaymentFundsAppearCopy((claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}</span>
                   </div>
                 )}
                 {claim?.claimed_privately && claim?.paid_at && Date.now() - new Date(claim.paid_at).getTime() < 11 * 60_000 && (
                   <div className="flex items-start gap-2 text-base md:text-sm text-gray-500 mb-2">
                     <Loader2 className="h-4 w-4 animate-spin text-amber-500 shrink-0 mt-0.5" />
-                    <span>{privatePaymentFundsAppearCopy()}</span>
+                    <span>{privatePaymentFundsAppearCopy((claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}</span>
                   </div>
                 )}
               </div>
@@ -4871,7 +5197,7 @@ export function ClaimPayView({
                         transition={{ delay: 0.35 }}
                         className="text-base md:text-sm text-gray-500 text-center"
                       >
-                        {privatePaymentFundsAppearCopy()}
+                        {privatePaymentFundsAppearCopy((claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}
                       </motion.p>
                     )}
                   </motion.div>
@@ -4879,7 +5205,17 @@ export function ClaimPayView({
               })()
             ) : (isRecipient || isMerchantRecipientView) &&
               !isPendingRecipientClaim &&
-              ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CLAIMED"].includes(
+              // PRIVATE_TRANSFER_PENDING deliberately excluded — by this codebase's own design
+              // (see confirmClaimPaid's comment in GuestCheckoutPay.tsx) that status means "payer's
+              // leg settled, recipient still has to claim/sweep it out," never "already received."
+              // Including it here previously showed "Claimed" the moment the sender's payment
+              // started landing — worse, a split/delayed private transfer can sit at
+              // PRIVATE_TRANSFER_PENDING with only PART of its amount in the burner for the whole
+              // delivery window, during which burnerIsReady is ALSO false (balance < expected, not
+              // because it was swept) — the two different reasons for !burnerIsReady (genuinely
+              // swept vs. still delivering) were being conflated as one, and a payment that hadn't
+              // even fully arrived yet, let alone been claimed, read as "Claimed" (2026-09-30).
+              ["SUCCESS", "CLAIMED"].includes(
                 String(status || claim?.status || "").toUpperCase(),
               ) &&
               // Same reasoning as the receipt-view branch above: SUCCESS can be premature while
@@ -4964,7 +5300,7 @@ export function ClaimPayView({
                         <>
                           <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                           <span className="text-gray-500">
-                            {waitingForFundsCopy(claim?.is_private)}
+                            {waitingForFundsCopy(claim?.is_private, (claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}
                           </span>
                         </>
                       )}
@@ -5028,7 +5364,7 @@ export function ClaimPayView({
                           <>
                             <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                             <span className="text-gray-500">
-                              {waitingForFundsCopy(claim?.is_private)}
+                              {waitingForFundsCopy(claim?.is_private, (claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}
                             </span>
                           </>
                         )}
@@ -5171,7 +5507,7 @@ export function ClaimPayView({
                           <>
                             <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                             <span className="text-gray-500">
-                              {waitingForFundsCopy(claim?.is_private)}
+                              {waitingForFundsCopy(claim?.is_private, (claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}
                             </span>
                           </>
                         )}
@@ -5314,7 +5650,7 @@ export function ClaimPayView({
                     <>
                       <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                       <span className="text-gray-500">
-                        {waitingForFundsCopy(claim?.is_private)}
+                        {waitingForFundsCopy(claim?.is_private, (claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}
                       </span>
                     </>
                   )}
@@ -5885,10 +6221,31 @@ export function ClaimPayView({
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0 mt-0.5">
                       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                     </svg>
-                    <p className="min-w-0 leading-relaxed">{PRIVATE_PAYMENT_ALL_PRIVATE_LINE}</p>
+                    <p className="min-w-0 leading-relaxed">{privatePaymentAllPrivateLine(privateDelayMs)}</p>
                   </div>
                 ) : (
                   <IncognitoModeToggle checked={isPrivateMode} onCheckedChange={handleTogglePrivateMode} className="mt-5" />
+                )}
+
+                {/* Same split/delay timing-obfuscation sliders as /fomo and GuestCheckoutPay —
+                    only actually consumed by the authenticated Pay Now flow (payWithLooftaBalance
+                    → perTransfer → buildPrivateTransferForPayer), so only shown once logged in;
+                    for a signed-in guest this toggle is cosmetic (see the comment above), and
+                    these sliders would be too. */}
+                {!showGuestCheckout && !requiresPrivate && isPrivateMode && authenticated && (
+                  <div className="mt-4">
+                    <PrivacyTimingControls
+                      idPrefix="paynow"
+                      split={privateSplit}
+                      onSplitChange={setPrivateSplit}
+                      delayMs={privateDelayMs}
+                      onDelayMsChange={setPrivateDelayMs}
+                      amountUsd={claimAmountUSD}
+                      infoOpen={privacyInfoOpen}
+                      onInfoOpenChange={setPrivacyInfoOpen}
+                      theme="auto"
+                    />
+                  </div>
                 )}
 
                 {/* Wallet-exposure nudge — this recipient has already seen this sender's wallet
@@ -5928,8 +6285,8 @@ export function ClaimPayView({
                 {chrome !== "minimal" && (
                 <div className="mt-4">
                   <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
-                    <div className="text-base md:text-sm font-medium font-sans text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300 mb-2">Payment breakdown</div>
-                    <div className="space-y-1.5 text-base md:text-sm [@media(prefers-color-scheme:dark)]:[&_.text-gray-600]:text-slate-400 [@media(prefers-color-scheme:dark)]:[&_.text-gray-700]:text-slate-300 [@media(prefers-color-scheme:dark)]:[&_.text-gray-900]:text-slate-100 [@media(prefers-color-scheme:dark)]:[&_.border-gray-200]:border-white/10">
+                    <div className="text-base uppercase tracking-wide font-semibold font-sans text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400 mb-2">Payment breakdown</div>
+                    <div className="space-y-1.5 text-base [@media(prefers-color-scheme:dark)]:[&_.text-gray-600]:text-slate-400 [@media(prefers-color-scheme:dark)]:[&_.text-gray-700]:text-slate-300 [@media(prefers-color-scheme:dark)]:[&_.text-gray-900]:text-slate-100 [@media(prefers-color-scheme:dark)]:[&_.border-gray-200]:border-white/10">
                       {!payingPrivately ? (
                         /* Non-private: no fees */
                         <>
@@ -6013,6 +6370,8 @@ export function ClaimPayView({
                             isPrivateMode={isPrivateMode}
                             onTogglePrivateMode={handleTogglePrivateMode}
                             requiresPrivate={requiresPrivate}
+                            initialSplit={privateSplit}
+                            initialDelayMs={privateDelayMs}
                             onSettled={() => {
                               // Not "SUCCESS" — a guest payment always lands in the burner, never the
                               // recipient's real wallet, so it still needs an explicit claim. Setting
@@ -6524,6 +6883,9 @@ export function ClaimPayView({
                 </h2>
                 <p className="pt-2 text-base text-center text-muted-foreground">
                   Your payment is submitted. We're waiting for Solana to confirm — usually 10–30 seconds.
+                  {isPrivateMode && !requiresPrivate && privateDelayMs > 0 && (
+                    <> It can then take {formatDelayDuration(privateDelayMs)} to actually appear, since you chose a spread delay.</>
+                  )}
                 </p>
                 {confirmingTxSource && (
                   <p className="pt-1 text-base md:text-sm text-gray-500">

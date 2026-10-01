@@ -45,6 +45,10 @@ export type PerPrivateTransferOptions = {
   privySignAndSend?: (txBytes: Uint8Array) => Promise<string>;
   /** Default true. Pass false to retry without MB gas sponsorship (user pays SOL gas directly). */
   gasless?: boolean;
+  /** Same split/delay timing-obfuscation sliders as /fomo and GuestCheckoutPay — omit either to
+   *  keep the backend's own default (auto split on mainnet, cluster-default delay). */
+  split?: number;
+  maxDelayMs?: number;
 };
 
 /**
@@ -59,7 +63,7 @@ export function usePerPrivateTransfer() {
 
   const transfer = useCallback(
     async (wallet: Wallet, options: PerPrivateTransferOptions): Promise<string> => {
-      const { privyUserId, accessToken, claimId, onProgress, isBurnerRecipient, onSignature, onTxBuilt, privySignAndSend, gasless = true } = options;
+      const { privyUserId, accessToken, claimId, onProgress, isBurnerRecipient, onSignature, onTxBuilt, privySignAndSend, gasless = true, split, maxDelayMs } = options;
       if (!privyUserId?.trim()) {
         throw new Error("Log in to send a private transfer.");
       }
@@ -81,7 +85,7 @@ export function usePerPrivateTransfer() {
       // MAIN: build and sign the MagicBlock private transfer
       // ─────────────────────────────────────────────────────────────────────────
       console.info(`[PrivatePay] building MB private transfer tx | cluster=${apiCluster} claim=${claimId}`);
-      const txData = await buildClaimPrivateTransfer(claimId, privyUserId, sender, accessToken, apiCluster, gasless);
+      const txData = await buildClaimPrivateTransfer(claimId, privyUserId, sender, accessToken, apiCluster, gasless, split, maxDelayMs);
 
       if (txData.feeAmountUsdc != null) {
         onTxBuilt?.({ feeAmountUsdc: txData.feeAmountUsdc, feeBreakdown: txData.feeBreakdown });

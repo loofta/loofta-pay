@@ -22,12 +22,12 @@ import {
   buildMagicBlockPrivateTransferNoFee,
   totalWithMagicBlockPrivateFee,
   MAGICBLOCK_MAX_SPLIT,
-  MAGICBLOCK_MAX_DELAY_MS,
 } from "@/services/magicblockPrivateTransfer";
 import { privatePaymentFundsAppearCopy } from "@/lib/privatePaymentCopy";
 import { getSolanaHttpRpc, getSolanaCluster, isNonMainnetCluster } from "@/lib/solanaCluster";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { resolveFomoHandle, type FomoResolution } from "@/services/api/fomo";
+import { DELAY_UNITS, DELAY_UNIT_MAX, DELAY_UNIT_MS, DELAY_UNIT_LABEL, type DelayUnit, formatDelayDuration } from "@/lib/privacyDelay";
 
 const BRAND_GRADIENT = "bg-gradient-to-r from-[#FF1301] to-[#EAB308]";
 const BRAND_SHADOW = "shadow-[0_8px_32px_rgba(255,74,38,0.28)]";
@@ -37,7 +37,6 @@ const easeBrand = [0.16, 1, 0.3, 1] as const;
 const FOCUS_RING =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#111114]";
 const CARD_LABEL = "text-base font-medium uppercase tracking-[0.18em] text-slate-500";
-const MAX_DELAY_MIN = MAGICBLOCK_MAX_DELAY_MS / 60_000;
 // shadcn Slider is themed with light shadcn tokens; recolor track/range/thumb for the dark card.
 const SLIDER_DARK =
   "[&>span:first-child]:bg-white/10 [&>span:first-child>span]:bg-[#FF7A2A] [&_[role=slider]]:border-[#FF7A2A] [&_[role=slider]]:bg-[#16161a] [&_[role=slider]]:h-5 [&_[role=slider]]:w-5 [&_[role=slider]]:focus-visible:ring-orange-400 [&_[role=slider]]:focus-visible:ring-offset-[#16161a]";
@@ -165,6 +164,18 @@ function explorerTxUrl(sig: string): string {
   return `https://solscan.io/tx/${sig}${suffix}`;
 }
 
+/** What to promise after a private send — built from the settings the payment actually went out
+ *  with (MagicBlock's transfer endpoint has no documented max delay, so there's no single ceiling
+ *  to quote instead; see @/lib/privacyDelay). */
+function privateDeliveryCopy(split: number, delayMs: number): string {
+  const parts = split > 1 ? `${split} parts` : null;
+  const window = delayMs > 0 ? formatDelayDuration(delayMs).replace(/^up to /, "") : null;
+  if (parts && window) return `Arriving in ${parts} over the next ${window}.`;
+  if (parts) return `Arriving in ${parts}, all within moments.`;
+  if (window) return `Arriving within ${window}.`;
+  return "On its way now.";
+}
+
 function isUserRejection(message: unknown): boolean {
   return typeof message === "string" && /reject|cancel|denied|declined/i.test(message);
 }
@@ -207,6 +218,9 @@ function PayPanel({
   const [status, setStatus] = useState<PayStatus>("idle");
   const [txSig, setTxSig] = useState<string | null>(null);
   const [sentPrivately, setSentPrivately] = useState(false);
+  // Captured at send time: the sliders stay interactive, so reading them on the success screen
+  // would describe settings the payment never used.
+  const [sentDelivery, setSentDelivery] = useState({ split: 1, delayMs: 0 });
   const [error, setError] = useState<string | null>(null);
   const reduceMotion = useReducedMotion();
 
@@ -218,6 +232,15 @@ function PayPanel({
     if (!publicKey || !signTransaction || !recipientAddress) return;
     setError(null);
     setStatus("building");
+    // Deliberate: money is leaving a wallet to an address the payer never typed and never sees,
+    // so the resolved destination has to be inspectable rather than taken on faith.
+    console.log("[fomo] paying", {
+      recipient: recipientName,
+      solanaAddress: recipientAddress,
+      amountUsd,
+      private: isPrivate,
+      ...(isPrivate ? { split, maxDelayMs } : {}),
+    });
     try {
       const connection = new Connection(getSolanaHttpRpc(), "confirmed");
       let signature: string;
@@ -253,6 +276,7 @@ function PayPanel({
       await waitForSignatureConfirmation(connection, signature, 60_000, 1500, "fomoDeposit");
       setTxSig(signature);
       setSentPrivately(isPrivate);
+      setSentDelivery({ split, delayMs: maxDelayMs });
       setStatus("done");
     } catch (e: any) {
       setStatus("idle");
@@ -279,7 +303,9 @@ function PayPanel({
             {sentPrivately ? `Sent $${amountUsd} privately` : `Sent $${amountUsd}`}
           </p>
           <p className="mt-1 text-base text-slate-400">
-            {sentPrivately ? privatePaymentFundsAppearCopy() : `to ${recipientName}`}
+            {sentPrivately
+              ? `To ${recipientName}. ${privateDeliveryCopy(sentDelivery.split, sentDelivery.delayMs)}`
+              : `to ${recipientName}`}
           </p>
         </div>
         <a
@@ -387,7 +413,9 @@ function PayCard() {
   const [handle, setHandle] = useState("");
   const [isPrivate, setIsPrivate] = useState(false);
   const [split, setSplit] = useState(3);
-  const [delayMin, setDelayMin] = useState(5);
+  const [delayMs, setDelayMs] = useState(5 * 60_000);
+  const [delayUnit, setDelayUnit] = useState<DelayUnit>("minutes");
+  const [infoOpen, setInfoOpen] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [resolution, setResolution] = useState<FomoResolution | null>(null);
   const reduceMotion = useReducedMotion();
@@ -622,27 +650,54 @@ function PayCard() {
                   </div>
 
                   <div>
-                    <div className="flex items-baseline justify-between mb-3">
-                      <label htmlFor="fomo-delay" className="text-base text-slate-200">Spread over</label>
-                      <span className="font-display text-lg font-semibold text-slate-100 tabular-nums">
-                        {delayMin === 0 ? "No delay" : `up to ${delayMin} min`}
-                      </span>
-                    </div>
-                    <Slider
-                      id="fomo-delay"
-                      min={0}
-                      max={MAX_DELAY_MIN}
-                      step={1}
-                      value={[delayMin]}
-                      onValueChange={([v]) => setDelayMin(v)}
-                      aria-label="Maximum delivery delay in minutes"
-                      className={SLIDER_DARK}
-                    />
-                    <p className="mt-2 text-base text-slate-500">
-                      {delayMin === 0
-                        ? "Every part is delivered right away."
-                        : `Each part lands at a random moment within ${delayMin} ${delayMin === 1 ? "minute" : "minutes"}.`}
-                    </p>
+                    {(() => {
+                      const amountInUnit = Math.min(DELAY_UNIT_MAX[delayUnit], Math.round(delayMs / DELAY_UNIT_MS[delayUnit]));
+                      const changeUnit = (next: DelayUnit) => {
+                        if (next === delayUnit) return;
+                        const nextAmount = Math.min(DELAY_UNIT_MAX[next], Math.round(delayMs / DELAY_UNIT_MS[next]));
+                        setDelayUnit(next);
+                        setDelayMs(nextAmount * DELAY_UNIT_MS[next]);
+                      };
+                      return (
+                        <>
+                          <div className="flex items-baseline justify-between mb-3">
+                            <label htmlFor="fomo-delay" className="text-base text-slate-200">Spread over</label>
+                            <span className="font-display text-lg font-semibold text-slate-100 tabular-nums">
+                              {amountInUnit === 0 ? "No delay" : `up to ${amountInUnit} ${DELAY_UNIT_LABEL[delayUnit]}${amountInUnit === 1 ? "" : "s"}`}
+                            </span>
+                          </div>
+                          <div className="mb-3 inline-flex items-center gap-1 rounded-full bg-white/[0.06] p-1">
+                            {DELAY_UNITS.map((u) => (
+                              <button
+                                key={u}
+                                type="button"
+                                onClick={() => changeUnit(u)}
+                                className={`rounded-full px-3 py-1 text-sm font-medium capitalize transition-colors ${
+                                  delayUnit === u ? "bg-white/[0.14] text-white" : "text-slate-500 hover:text-slate-200"
+                                }`}
+                              >
+                                {u}
+                              </button>
+                            ))}
+                          </div>
+                          <Slider
+                            id="fomo-delay"
+                            min={0}
+                            max={DELAY_UNIT_MAX[delayUnit]}
+                            step={1}
+                            value={[amountInUnit]}
+                            onValueChange={([v]) => setDelayMs(v * DELAY_UNIT_MS[delayUnit])}
+                            aria-label={`Maximum delivery delay in ${delayUnit}`}
+                            className={SLIDER_DARK}
+                          />
+                          <p className="mt-2 text-base text-slate-500">
+                            {amountInUnit === 0
+                              ? "Every part is delivered right away."
+                              : `Each part lands at a random moment within ${amountInUnit} ${DELAY_UNIT_LABEL[delayUnit]}${amountInUnit === 1 ? "" : "s"}.`}
+                          </p>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               </motion.div>
@@ -659,7 +714,7 @@ function PayCard() {
                 <div className="flex items-center justify-between gap-4">
                   <dt className="text-slate-400">Delivery</dt>
                   <dd className="text-slate-100">
-                    {split === 1 ? "1 part" : `${split} parts`}{delayMin > 0 ? `, within ${delayMin} min` : ""}
+                    {split === 1 ? "1 part" : `${split} parts`}{delayMs > 0 ? `, within ${formatDelayDuration(delayMs).replace(/^up to /, "")}` : ""}
                   </dd>
                 </div>
               )}
@@ -683,7 +738,7 @@ function PayCard() {
               blocker={blocker}
               isPrivate={isPrivate}
               split={split}
-              maxDelayMs={delayMin * 60_000}
+              maxDelayMs={delayMs}
               onReset={() => {
                 setAmount("");
                 setHandle("");

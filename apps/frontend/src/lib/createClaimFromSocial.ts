@@ -13,6 +13,10 @@ export async function createClaimFromSocial(input: {
   isPrivate?: boolean;
   description?: string;
   cluster?: 'devnet' | 'mainnet';
+  /** MagicBlock split/delay chosen on the Send form — persisted on the claim so later views
+   *  (recipient, or the sender revisiting without ?split=&delayMs=) know the real value. */
+  split?: number;
+  maxDelayMs?: number;
 }): Promise<{ id: string; short_id?: string | null }> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
   const authHeader: Record<string, string> = input.accessToken
@@ -33,6 +37,8 @@ export async function createClaimFromSocial(input: {
       isPrivate: input.isPrivate ?? false,
       description: input.description ?? undefined,
       cluster: input.cluster,
+      split: input.split,
+      maxDelayMs: input.maxDelayMs,
     }),
   });
   if (!r.ok) {

@@ -14,6 +14,10 @@ export async function createClaimFromUsername(input: {
   cluster?: 'devnet' | 'mainnet';
   /** Set when `username` is actually a Twitter handle picked from the social picker — see DTO for why. */
   treatUnregisteredAsTwitter?: boolean;
+  /** MagicBlock split/delay chosen on the Send form — persisted on the claim so later views
+   *  (recipient, or the sender revisiting without ?split=&delayMs=) know the real value. */
+  split?: number;
+  maxDelayMs?: number;
 }): Promise<{ id: string; short_id?: string | null }> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
   const authHeader: Record<string, string> = input.accessToken
@@ -34,6 +38,8 @@ export async function createClaimFromUsername(input: {
       description: input.description ?? undefined,
       cluster: input.cluster,
       treatUnregisteredAsTwitter: input.treatUnregisteredAsTwitter ?? false,
+      split: input.split,
+      maxDelayMs: input.maxDelayMs,
     }),
   });
   if (!r.ok) {

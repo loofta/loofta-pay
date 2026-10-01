@@ -161,10 +161,14 @@ export async function buildClaimPrivateTransfer(
   accessToken?: string | null,
   cluster?: 'devnet' | 'mainnet',
   gasless = true,
+  /** Same split/delay timing-obfuscation sliders as /fomo and GuestCheckoutPay — omit either to
+   *  keep the backend's own default (auto split on mainnet, cluster-default delay). */
+  split?: number,
+  maxDelayMs?: number,
 ): Promise<MagicblockTxResponse> {
   return fetchApi<MagicblockTxResponse>(`/claims/${claimId}/build-private-transfer`, {
     method: 'POST',
-    body: JSON.stringify({ sender_wallet: senderWallet, cluster, gasless }),
+    body: JSON.stringify({ sender_wallet: senderWallet, cluster, gasless, split, max_delay_ms: maxDelayMs }),
     userId,
     accessToken,
   });

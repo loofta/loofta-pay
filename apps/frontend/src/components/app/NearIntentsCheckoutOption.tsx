@@ -507,7 +507,7 @@ export function NearIntentsAnyTokenOption({
       </button>
 
       {!disabled && expanded && (
-        <div className="col-span-2 [grid-row:2] rounded-xl border border-gray-200 bg-gray-50 p-4 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
+        <div className="col-span-3 [grid-row:2] rounded-xl border border-gray-200 bg-gray-50 p-4 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
           <DynamicWalletProviders>
             <PayPanel claimId={claimId} amountUsd={amountUsd} email={email} onSettled={onSettled} setError={setError} />
           </DynamicWalletProviders>

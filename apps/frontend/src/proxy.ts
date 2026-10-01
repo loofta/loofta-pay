@@ -71,6 +71,7 @@ export function proxy(request: NextRequest) {
     "/home",
     "/home-white",
     "/home-v2",
+    "/home-v3",
     "/home-classic",
     "/brand",
     "/terms",

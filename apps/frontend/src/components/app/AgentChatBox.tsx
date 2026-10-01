@@ -169,7 +169,7 @@ interface ChatMessage {
   insufficientFunds?: { neededUsd: number }
 }
 
-const PLATFORM_CHOICES: { id: SocialIconPlatform; label: string }[] = [
+const PLATFORM_CHOICES: { id: Exclude<SocialIconPlatform, "loofta">; label: string }[] = [
   { id: 'discord', label: 'Discord' },
   { id: 'github', label: 'GitHub' },
   { id: 'telegram', label: 'Telegram' },
@@ -403,7 +403,7 @@ export function AgentChatBox() {
     ])
   }
 
-  function choosePlatform(msgId: string, platform: SocialIconPlatform, identifier: string, amount: number, isPrivate: boolean) {
+  function choosePlatform(msgId: string, platform: Exclude<SocialIconPlatform, "loofta">, identifier: string, amount: number, isPrivate: boolean) {
     setMessages((m) => m.map((msg) => (msg.id === msgId && msg.platformChoice ? { ...msg, platformChoice: { ...msg.platformChoice, resolved: true } } : msg)))
     if (platform === 'telegram' && !TELEGRAM_SEND_ENABLED) {
       pushAssistant('Sending to Telegram is temporarily unavailable — try X, Discord, or GitHub instead.', 'error')
@@ -581,7 +581,7 @@ export function AgentChatBox() {
     updateMultiCard(id, { state: 'cancelled' })
   }
 
-  function chooseMultiPlatform(msgId: string, platform: SocialIconPlatform, choice: MultiPlatformChoice) {
+  function chooseMultiPlatform(msgId: string, platform: Exclude<SocialIconPlatform, "loofta">, choice: MultiPlatformChoice) {
     setMessages((m) => m.map((msg) => (msg.id === msgId && msg.multiPlatformChoice ? { ...msg, multiPlatformChoice: { ...msg.multiPlatformChoice, resolved: true } } : msg)))
     if (platform === 'telegram' && !TELEGRAM_SEND_ENABLED) {
       pushAssistant('Sending to Telegram is temporarily unavailable — try X, Discord, or GitHub instead.', 'error')

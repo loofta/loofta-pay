@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, IsBoolean, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, Max, IsInt, IsBoolean, MaxLength } from 'class-validator';
 
 export class CreateClaimFromUsernameDto {
   @ApiProperty({ description: 'Username (with or without @ prefix)', example: 'looftaxyz' })
@@ -27,6 +27,20 @@ export class CreateClaimFromUsernameDto {
   @IsOptional()
   @IsString()
   cluster?: 'devnet' | 'mainnet';
+
+  @ApiPropertyOptional({ description: 'MagicBlock private-transfer split (1-15), chosen on the Send form — persisted so later views (recipient, or the sender revisiting without the URL param) know the real value instead of guessing.', minimum: 1, maximum: 15 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(15)
+  split?: number;
+
+  @ApiPropertyOptional({ description: "MagicBlock private-transfer max delivery delay in ms — the transfer endpoint documents no maximum; this app's own UI ceiling is 7 days (604800000ms), chosen on the Send form and persisted for the same reason as split.", minimum: 0, maximum: 604_800_000 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(604_800_000)
+  maxDelayMs?: number;
 
   @ApiPropertyOptional({
     description:

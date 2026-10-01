@@ -74,14 +74,20 @@ interface MagicBlockTransferResponse {
  *  (single transfer, no delay) because checkout needs one prompt confirmation; flows that want
  *  graph-analysis resistance (e.g. the /fomo private deposit) opt in explicitly. */
 export interface MagicBlockPrivacyOptions {
-  /** Split into N sub-transfers, 1–15. */
+  /** Split into N sub-transfers. Per MagicBlock's own OpenAPI spec for this endpoint
+   *  (POST /v1/spl/transfer): "Must be between 1 and 15 and cannot exceed `amount`." — a real,
+   *  documented API limit, unlike maxDelayMs below. */
   split?: number;
-  /** Upper bound of the random delivery delay in ms, ≤ 600_000 (10 min). */
+  /** Upper bound of the random delivery delay in ms. MagicBlock's transfer endpoint documents no
+   *  maximum at all — its field table just says "Defaults to '0' or minDelayMs." The 600_000
+   *  (10 min) figure floated around this codebase belongs to the SWAP endpoint
+   *  (POST /v1/swap/swap: "Must be ≤ 600000 (10 minutes)"), confirmed straight from
+   *  .claude/skills/magicblock/private-payments.md — not this one. See DELAY_UI_MAX_MS in
+   *  @/lib/privacyDelay for the deliberate UI ceiling this app chooses instead. */
   maxDelayMs?: number;
 }
 
 export const MAGICBLOCK_MAX_SPLIT = 15;
-export const MAGICBLOCK_MAX_DELAY_MS = 600_000;
 
 async function buildMagicBlockPrivateTransfer(params: {
   from: string;
@@ -90,7 +96,10 @@ async function buildMagicBlockPrivateTransfer(params: {
   memo?: string;
 } & MagicBlockPrivacyOptions): Promise<MagicBlockTransferResponse> {
   const split = Math.min(MAGICBLOCK_MAX_SPLIT, Math.max(1, Math.round(params.split ?? 1)));
-  const maxDelayMs = Math.min(MAGICBLOCK_MAX_DELAY_MS, Math.max(0, Math.round(params.maxDelayMs ?? 0)));
+  // No min() clamp here — MagicBlock's transfer endpoint documents no maximum for maxDelayMs
+  // (unlike split, which is really capped at 15). Pass whatever the caller asks for; the UI-side
+  // ceiling (DELAY_UI_MAX_MS in @/lib/privacyDelay) is a deliberate app choice, not enforced here.
+  const maxDelayMs = Math.max(0, Math.round(params.maxDelayMs ?? 0));
   const amount = Math.round(params.amountUSDC * 10 ** USDC_DECIMALS);
   if (amount <= 0) throw new Error("Amount must be greater than 0");
 

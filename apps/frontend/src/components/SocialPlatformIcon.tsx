@@ -1,5 +1,8 @@
-/** Shared brand glyphs for social pay-by-handle platforms — same path data used in UserMenu's Connect accounts card and the Telegram relay page, kept here once new usages need it too. */
-export type SocialIconPlatform = "twitter" | "discord" | "github" | "telegram";
+/** Shared brand glyphs for social pay-by-handle platforms — same path data used in UserMenu's Connect accounts card and the Telegram relay page, kept here once new usages need it too.
+ *  "loofta" is not a social platform — it's the app's own mark, listed alongside them in the
+ *  send-to picker so a Loofta username stays reachable there instead of a separate top-level
+ *  pill (see app/app/page.tsx and home-v3/HomeV3Content.tsx). */
+export type SocialIconPlatform = "twitter" | "discord" | "github" | "telegram" | "loofta";
 
 const PATHS: Record<SocialIconPlatform, string> = {
   twitter:
@@ -10,11 +13,23 @@ const PATHS: Record<SocialIconPlatform, string> = {
     "M12 0C5.37 0 0 5.373 0 12c0 5.303 3.438 9.8 8.207 11.387.6.113.793-.26.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.91 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.303 24 12c0-6.627-5.373-12-12-12z",
   telegram:
     "M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.831-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z",
+  // Loofta's own icon mark (public/images/icons/loofta-icon-white.svg), same path just retinted
+  // to currentColor and its drop-shadow filter dropped to match the plain brand glyphs above.
+  loofta:
+    "M27.9532 49C20.655 49 14.8226 46.8696 10.4561 42.6087C6.15205 38.2861 4 32.2035 4 24.3611C4 19.5444 4.99805 15.3144 6.99415 11.6711C8.99025 8.02773 11.7661 5.18715 15.3216 3.14934C18.9396 1.04978 23.1501 0 27.9532 0C33.3177 0 37.7778 1.04978 41.3333 3.14934C44.8889 5.18715 47.54 8.02773 49.2865 11.6711C51.0955 15.3144 52 19.5444 52 24.3611C52 32.2035 50.0039 38.2861 46.0117 42.6087C42.0819 46.8696 36.0624 49 27.9532 49ZM15.1345 22.7864C15.1345 24.7007 16.1014 26.0592 18.0351 26.862C19.9688 27.603 23.2749 27.9735 27.9532 27.9735C32.6316 27.9735 35.9376 27.603 37.8713 26.862C39.8051 26.0592 40.7719 24.7007 40.7719 22.7864C40.7719 20.9338 39.8051 19.6371 37.8713 18.896C35.9376 18.155 32.6316 17.7845 27.9532 17.7845C23.2749 17.7845 19.9688 18.155 18.0351 18.896C16.1014 19.6371 15.1345 20.9338 15.1345 22.7864Z",
+};
+
+const VIEWBOX: Record<SocialIconPlatform, string> = {
+  twitter: "0 0 24 24",
+  discord: "0 0 24 24",
+  github: "0 0 24 24",
+  telegram: "0 0 24 24",
+  loofta: "0 0 56 49",
 };
 
 export function SocialPlatformIcon({ platform, className }: { platform: SocialIconPlatform; className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+    <svg viewBox={VIEWBOX[platform]} fill="currentColor" className={className} aria-hidden>
       <path d={PATHS[platform]} />
     </svg>
   );

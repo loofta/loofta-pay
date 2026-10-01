@@ -202,8 +202,8 @@ export class ClaimsService {
    * If user exists: send directly to their wallet.
    * If user does not exist: create "burner" claim with PENDING_USERNAME so they can claim later when they sign up with that username.
    */
-  async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string }> {
-    const { username, amount, userId, isPrivate = false, description, cluster, treatUnregisteredAsTwitter, expiresAt } = dto;
+  async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null }> {
+    const { username, amount, userId, isPrivate = false, description, cluster, treatUnregisteredAsTwitter, expiresAt, split, maxDelayMs } = dto;
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
     // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
@@ -257,7 +257,7 @@ export class ClaimsService {
       const id = claim.id;
       const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
       this.logger.log(`Created claim from username: ${id} for user ${cleanUsername} (private: ${isPrivate})`);
-      return { id, short_id: claim.short_id ?? null, link };
+      return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
       if (!(err instanceof NotFoundException)) throw err;
@@ -303,7 +303,7 @@ export class ClaimsService {
     const id = claim.id;
     const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
     this.logger.log(`Created claim from username (pending): ${id} for @${cleanUsername} – they can claim when they sign up${burner ? ' (unique burner)' : ''}`);
-    return { id, short_id: claim.short_id ?? null, link };
+    return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
   }
 
   /**
@@ -311,8 +311,8 @@ export class ClaimsService {
    * pay the connected user's wallet directly if the handle is already linked (social_accounts),
    * otherwise fall back to a pending burner claim they can claim once they connect that handle.
    */
-  async createFromSocial(dto: CreateClaimFromSocialDto): Promise<{ id: string; short_id: string | null; link: string }> {
-    const { platform, handle, amount, userId, isPrivate = false, description, cluster, expiresAt } = dto;
+  async createFromSocial(dto: CreateClaimFromSocialDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null }> {
+    const { platform, handle, amount, userId, isPrivate = false, description, cluster, expiresAt, split, maxDelayMs } = dto;
     const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
     const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
     // Strip a trailing Discord discriminator (e.g. "username#0") — senders no longer need to type one.
@@ -367,7 +367,7 @@ export class ClaimsService {
       const id = claim.id;
       const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
       this.logger.log(`Created claim from ${platform}: ${id} for @${cleanHandle} (private: ${isPrivate})`);
-      return { id, short_id: claim.short_id ?? null, link };
+      return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
       if (!(err instanceof NotFoundException)) throw err;
@@ -409,7 +409,7 @@ export class ClaimsService {
     const id = claim.id;
     const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
     this.logger.log(`Created claim from ${platform} (pending): ${id} for @${cleanHandle} – they can claim once they connect this platform${burner ? ' (unique burner)' : ''}`);
-    return { id, short_id: claim.short_id ?? null, link };
+    return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
   }
 
   /** Sentinel prefix for claims created by email when recipient has no account yet; they claim by signing in with that email */
@@ -789,8 +789,8 @@ export class ClaimsService {
   /**
    * Create a claim from email. If user exists, use their wallet. If not, create with PENDING_EMAIL so they can claim by signing in later.
    */
-  async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; short_id: string | null; link: string }> {
-    const { email, amount, userId, isPrivate = false, description, cluster, expiresAt } = dto;
+  async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null }> {
+    const { email, amount, userId, isPrivate = false, description, cluster, expiresAt, split, maxDelayMs } = dto;
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
     // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
@@ -842,7 +842,7 @@ export class ClaimsService {
       const id = claim.id;
       const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
       this.logger.log(`Created claim from email (existing user): ${id} for ${cleanEmail} (private: ${isPrivate})`);
-      return { id, short_id: claim.short_id ?? null, link };
+      return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
       if (!(err instanceof NotFoundException)) throw err;
@@ -884,7 +884,7 @@ export class ClaimsService {
     const id = claim.id;
     const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
     this.logger.log(`Created claim from email (pending): ${id} for ${cleanEmail} – they claim by signing in${burner ? ' (unique burner)' : ''}`);
-    return { id, short_id: claim.short_id ?? null, link };
+    return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
   }
 
   /**
@@ -939,8 +939,14 @@ export class ClaimsService {
       throw new NotFoundException('This payment doesn\'t exist.');
     }
 
-    // Access control: only the creator or the intended recipient may view a claim.
-    if (!requestingUserId) {
+    // Access control: only the creator or the intended recipient may view a claim — except a
+    // guest-created claim (create-from-*-guest, claim.created_by null), which has no owner to
+    // protect and is deliberately meant to be viewable and payable by anyone with the link, same
+    // as it's already payable by anyone with the link once showGuestCheckout is true for it (see
+    // c/[id]/page.tsx). Without this, a guest could send and get redirected to their own claim's
+    // /c/[id] and immediately hit "Authentication required to view this payment." before ever
+    // seeing the pay option.
+    if (!requestingUserId && claim.created_by) {
       throw new ForbiddenException('Authentication required to view this payment.');
     }
     const isCreator = !!(claim.created_by && claim.created_by === requestingUserId);
@@ -952,8 +958,13 @@ export class ClaimsService {
     // 2026-07-24 Td2mutpu incident), so checkIsRecipient's strict identity match can permanently
     // fail for the real recipient even though the payment already succeeded to their real wallet.
     const isAlreadySettled = (claim.status || '').toUpperCase() === 'SUCCESS';
-    if (!isCreator && !isAlreadySettled) {
-      const { isRecipient } = await this.checkIsRecipient(id, requestingUserId);
+    // A guest reading a guest-created claim (no requestingUserId, no claim.created_by) has no
+    // identity to check a recipient match against — same "anyone with the link" access the
+    // ForbiddenException bypass above already grants. Every other combination (an authenticated
+    // reader, or any claim that does have a creator) keeps the existing recipient-identity check.
+    const isGuestReadingGuestClaim = !requestingUserId && !claim.created_by;
+    if (!isCreator && !isAlreadySettled && !isGuestReadingGuestClaim) {
+      const { isRecipient } = await this.checkIsRecipient(id, requestingUserId!);
       if (!isRecipient) {
         throw new NotFoundException('Payment not found.');
       }
@@ -1119,6 +1130,11 @@ export class ClaimsService {
     senderWallet: string,
     requestCluster?: 'devnet' | 'mainnet',
     gasless = true,
+    /** User-chosen timing-obfuscation overrides from the Pay Now UI (same sliders as /fomo and
+     *  GuestCheckoutPay) — omit either to keep today's default (auto split on mainnet, cluster
+     *  default delay). */
+    split?: number,
+    maxDelayMs?: number,
   ): Promise<MagicblockPrivateTransferClientResponse> {
     const { requestMagicblockPrivateTransfer, toClientResponse } = await import('@/common/magicblock-private-transfer');
     const claim = await this.findOneRaw(claimId);
@@ -1214,6 +1230,8 @@ export class ClaimsService {
       exactOut: feeOnSender,
       ...(gasless ? { gasless: true } : {}),
       ...(platformFeeAccount ? { platformFeeBps: SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS, platformFeeAccount } : {}),
+      ...(split !== undefined ? { split } : {}),
+      ...(maxDelayMs !== undefined ? { maxDelayMs, minDelayMs: 0 } : {}),
     });
 
     // Decode the actual debit from the transaction — ground truth over the gross estimate.
@@ -1418,7 +1436,7 @@ export class ClaimsService {
   async claimAsRecipient(
     claimId: string,
     privyUserId: string,
-    opts?: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean },
+    opts?: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean; split?: number; maxDelayMs?: number },
   ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
     const claim = await this.findOneRaw(claimId);
     // Guard: do not re-claim a completed or cancelled payment
@@ -1541,7 +1559,8 @@ export class ClaimsService {
       // we must not have overwritten the PENDING_EMAIL/PENDING_USERNAME address, otherwise the user
       // cannot retry because the pending-claim detection no longer matches.
       const { sweepTxHash, sweptAmount, feeAmountUsdc, deliveredPrivately } = await this.sweepClaimBurnerToWallet(
-        claimId, claim, sweepDestination, { claimPrivately: opts?.claimPrivately, looftaFeeUsdc: nairaLooftaFeeUsdc },
+        claimId, claim, sweepDestination,
+        { claimPrivately: opts?.claimPrivately, looftaFeeUsdc: nairaLooftaFeeUsdc, split: opts?.split, maxDelayMs: opts?.maxDelayMs },
       );
 
       // Sweep didn't throw — safe to commit the resolved wallet to DB. Always the caller's own
@@ -2024,7 +2043,7 @@ export class ClaimsService {
     destination: string,
     burnerKeypair: Keypair,
     conn: Connection,
-    opts: { feeOnSender: boolean },
+    opts: { feeOnSender: boolean; split?: number; maxDelayMs?: number },
   ): Promise<{ sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
     const burnerAta = await getAssociatedTokenAddress(this.usdcMint, burnerKeypair.publicKey);
 
@@ -2085,6 +2104,11 @@ export class ClaimsService {
       ...(singlePaymentPlatformFeeAccount
         ? { platformFeeBps: SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS, platformFeeAccount: singlePaymentPlatformFeeAccount }
         : {}),
+      // Recipient-chosen timing-obfuscation overrides (same UI/params as the payer's Pay Now
+      // split/delay sliders, see buildPrivateTransferForPayer) — omit either to keep
+      // requestMagicblockPrivateTransfer's own default (auto split on mainnet, cluster default delay).
+      ...(opts.split !== undefined ? { split: opts.split } : {}),
+      ...(opts.maxDelayMs !== undefined ? { maxDelayMs: opts.maxDelayMs, minDelayMs: 0 } : {}),
     });
 
     // MagicBlock can return either a legacy or a v0 (versioned) message depending on the
@@ -2274,7 +2298,7 @@ export class ClaimsService {
     claimId: string,
     claim: Claim & { recipient_address?: string },
     destination: string,
-    opts?: { claimPrivately?: boolean; looftaFeeUsdc?: number },
+    opts?: { claimPrivately?: boolean; looftaFeeUsdc?: number; split?: number; maxDelayMs?: number },
   ): Promise<{ sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number; deliveredPrivately?: boolean }> {
     const rawClaim = claim as { claim_burner_address?: string | null; claim_burner_encrypted_secret?: string | null };
     const burnerAddr = (rawClaim.claim_burner_address || '').trim();
@@ -2320,7 +2344,11 @@ export class ClaimsService {
       // reaches this branch already-private (sender-chosen-private payments deliver directly and
       // never touch a burner), so this is always the "fee comes out of the claim" case.
       if (opts?.claimPrivately) {
-        const result = await this.sweepClaimBurnerPrivately(claimId, claim, destination, burnerKeypair, conn, { feeOnSender: false });
+        const result = await this.sweepClaimBurnerPrivately(claimId, claim, destination, burnerKeypair, conn, {
+          feeOnSender: false,
+          split: opts.split,
+          maxDelayMs: opts.maxDelayMs,
+        });
         return { ...result, deliveredPrivately: true };
       }
 
@@ -3199,7 +3227,19 @@ export class ClaimsService {
       updateData.paid_at = new Date().toISOString();
       if (createdByUserId) {
         const result = await this.fetchRawRow(id);
-        if (result && !result.row.created_by) {
+        // Never attribute creator identity to the claim's own recipient — this fires from
+        // claimAsRecipient's own SUCCESS path (recipientSwept) and its background sweep retries,
+        // both of which legitimately pass createdByUserId = the RECIPIENT, not the sender. Without
+        // this check, a guest-created claim's created_by (null until a recipient actually claims
+        // it) got silently stamped to the recipient's own id, making them appear as the claim's
+        // creator — which then showed them the sender-only "Edit recipient"/"Reclaim funds" UI on
+        // a payment they're supposed to be receiving (confirmed incident 2026-10-01, claim
+        // 01c8fe40). Same fix already applied to the Next.js proxy's equivalent PATCH handler
+        // (apps/frontend/src/app/api/claims/[id]/route.ts) — this is the backend's own copy of
+        // the same bug, reached via a completely different code path.
+        const recipientUserId = (result?.row as { recipient_user_id?: string | null } | undefined)?.recipient_user_id;
+        const isRecipientOfThisClaim = !!recipientUserId && recipientUserId === createdByUserId;
+        if (result && !result.row.created_by && !isRecipientOfThisClaim) {
           updateData.created_by = createdByUserId;
         }
       }

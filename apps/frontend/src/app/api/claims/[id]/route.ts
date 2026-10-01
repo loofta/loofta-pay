@@ -118,11 +118,14 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
   const direction = String((rawPayment?.direction as string) || "from_sender");
 
-  // from_recipient = payment request link created by the recipient — visible to anyone (payer doesn't need auth to view).
-  // from_sender = private payment link — only creator or intended recipient may view.
-  const isPublicPaymentRequest = direction === "from_recipient";
-
   const createdBy = String(rawPayment?.created_by ?? "");
+
+  // from_recipient = payment request link created by the recipient — visible to anyone (payer doesn't need auth to view).
+  // Guest-created claim (no created_by, has a burner address) = a no-login sender used the guest
+  // flow to mint this claim themselves; they need to be able to view/pay it without signing in.
+  // Anything else (from_sender created by a logged-in user) = private, creator/recipient only.
+  const isGuestCreatedClaim = !createdBy && !!rawPayment?.burner_address;
+  const isPublicPaymentRequest = direction === "from_recipient" || isGuestCreatedClaim;
 
   const requestingUserId = await getVerifiedUserId(request);
 
@@ -498,11 +501,19 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
           }
         }
       } else {
-        // from_sender: only creator/sender/recipient
+        // from_sender: only creator/sender/recipient — except a guest-created claim (no
+        // created_by, minted its own burner) settling its OWN payer leg. That claim has no
+        // account on either side yet, so none of the three checks above can ever be true for the
+        // guest who just paid it themselves (created_by is null, sender_user_id isn't set until
+        // this exact call sets it below, and they're not the recipient) — without this, every
+        // guest wallet-connect payment 403'd here forever, so pollUntilSettled/onSettled never
+        // fired and the payer's own page got stuck showing "Sent — waiting…" indefinitely instead
+        // of flipping to the settled/share-link view.
         const isCreator   = !!ep.created_by && ep.created_by === userId;
         const isSender    = !!ep.sender_user_id && ep.sender_user_id === userId;
         const isRecipient = !!ep.recipient_user_id && ep.recipient_user_id === userId;
-        if (!isCreator && !isSender && !isRecipient) {
+        const isGuestSettlingOwnGuestClaim = isGuestAttempt && !ep.created_by && !!ep.burner_address;
+        if (!isCreator && !isSender && !isRecipient && !isGuestSettlingOwnGuestClaim) {
           return NextResponse.json({ error: "Not authorized to update this payment" }, { status: 403 });
         }
       }
@@ -514,7 +525,15 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         }
       }
 
-      if (isPayerLegSettling && userId) {
+      // Never attribute creator/sender identity to the claim's own recipient — a recipient
+      // viewing/interacting with their own incoming payment can land on this same
+      // isPayerLegSettling branch (e.g. a status-settling PATCH firing while they're signed in),
+      // and without this guard they'd get silently stamped as both creator AND recipient of the
+      // same claim (confirmed incident 2026-09-30: a guest-created claim's created_by, null until
+      // then, got set to the recipient's own user id this way, which then incorrectly showed them
+      // the sender-only "Edit recipient" control on their own incoming payment).
+      const isRecipientOfThisClaim = !!ep.recipient_user_id && ep.recipient_user_id === userId;
+      if (isPayerLegSettling && userId && !isRecipientOfThisClaim) {
         if (!ep.created_by) updateData.created_by = userId;
         // Set sender_user_id when payer completes a from_recipient request link
         if (ep.direction === "from_recipient" && !ep.sender_user_id) updateData.sender_user_id = userId;

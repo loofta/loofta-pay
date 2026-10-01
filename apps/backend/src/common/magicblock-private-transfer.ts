@@ -266,6 +266,10 @@ export async function requestMagicblockPrivateTransfer(params: {
   minDelayMs?: number;
   /** Override cluster-default max delay (ms). Pass 0 for instant. */
   maxDelayMs?: number;
+  /** Override the auto-computed split (computeSplitForAmount, mainnet-only, random 2-10 by
+   *  amount tier). Explicit 0 or omitted on non-mainnet clusters falls back to that default;
+   *  any positive number here (1-15, MagicBlock's own cap) is sent as-is. */
+  split?: number;
   /** When true, `amount` is what the destination receives net — MagicBlock grosses up the
    *  sender's debit internally to cover its own fee. This is the official reference pattern
    *  (confirmed against MagicBlock's own web app and the payments-demo `one/` reference repo):
@@ -296,7 +300,9 @@ export async function requestMagicblockPrivateTransfer(params: {
     initVaultIfMissing: false,
     minDelayMs,
     maxDelayMs,
-    ...(params.cluster === 'mainnet' ? { split: computeSplitForAmount(params.amount) } : {}),
+    ...(params.split !== undefined && params.split > 0
+      ? { split: Math.min(15, Math.round(params.split)) }
+      : params.cluster === 'mainnet' ? { split: computeSplitForAmount(params.amount) } : {}),
     ...(params.gasless ? { gasless: true } : {}),
     ...(params.exactOut !== undefined ? { exactOut: params.exactOut } : {}),
     ...(params.platformFeeBps !== undefined && params.platformFeeAccount

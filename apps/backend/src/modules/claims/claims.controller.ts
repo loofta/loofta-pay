@@ -26,6 +26,7 @@ import {
 } from '@nestjs/swagger';
 import { AuthGuard, OptionalAuthGuard, CronGuard, RateLimitGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
+import { getClientIp } from '@/common/get-client-ip';
 
 // All payment-mutating endpoints require authentication (create, pay, status, tx-hash).
 // Read-only claim endpoints (GET /:id, /:id/latest-intent) remain public via OptionalAuthGuard.
@@ -38,7 +39,16 @@ import { ConfigService } from '@nestjs/config';
 import { DepositService, DepositResult } from './deposit.service';
 import { SolanaSponsorService } from './solana-sponsor.service';
 import { UsersService } from '../users/users.service';
-import { CreateClaimDto, CreateClaimFromUsernameDto, CreateClaimFromEmailDto, CreateClaimFromSocialDto, RequestDepositDto } from './dto';
+import {
+  CreateClaimDto,
+  CreateClaimFromUsernameDto,
+  CreateClaimFromEmailDto,
+  CreateClaimFromSocialDto,
+  CreateClaimFromEmailGuestDto,
+  CreateClaimFromSocialGuestDto,
+  CreateClaimFromUsernameGuestDto,
+  RequestDepositDto,
+} from './dto';
 import { Claim, ClaimIntent } from './entities/claim.entity';
 
 @ApiTags('claims')
@@ -70,6 +80,39 @@ export class ClaimsController {
     if (!internalKey || internalKey !== expectedSecret) {
       this.logger.warn(`ClaimsController[${routeLabel}]: blocked direct call — missing/invalid X-Loofta-Internal`);
       throw new ForbiddenException('Direct API access not permitted');
+    }
+  }
+
+  /**
+   * Abuse gate for the two guest (unauthenticated) claim-creation routes below — the only claim
+   * creation in this controller with no AuthGuard, so there's no verified Privy identity to rely
+   * on. Fails closed, same convention as assertInternalCaller: if TURNSTILE_SECRET_KEY isn't
+   * configured, guest creation is refused rather than silently left open to bots.
+   */
+  private async verifyTurnstile(token: string | undefined, ip: string, routeLabel: string): Promise<void> {
+    const secret = this.configService.get<string>('TURNSTILE_SECRET_KEY') ?? process.env.TURNSTILE_SECRET_KEY;
+    if (!secret) {
+      this.logger.error(`ClaimsController[${routeLabel}]: TURNSTILE_SECRET_KEY is not set — refusing guest claim creation until it is configured`);
+      throw new ServiceUnavailableException('Guest payments are not available right now');
+    }
+    if (!token) {
+      throw new ForbiddenException('Bot check failed. Please refresh and try again.');
+    }
+    try {
+      const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ secret, response: token, remoteip: ip }),
+      });
+      const data = (await res.json()) as { success?: boolean };
+      if (!data?.success) {
+        this.logger.warn(`ClaimsController[${routeLabel}]: Turnstile verification failed for ip=${ip}`);
+        throw new ForbiddenException('Bot check failed. Please refresh and try again.');
+      }
+    } catch (e) {
+      if (e instanceof ForbiddenException) throw e;
+      this.logger.error(`ClaimsController[${routeLabel}]: Turnstile siteverify call failed: ${e instanceof Error ? e.message : e}`);
+      throw new ServiceUnavailableException('Could not verify bot check right now, please try again.');
     }
   }
 
@@ -180,6 +223,116 @@ export class ClaimsController {
     @Req() req: { user?: { id: string } },
   ): Promise<{ id: string; link: string }> {
     return this.claimsService.createFromSocial({ ...createDto, userId: req.user?.id });
+  }
+
+  /**
+   * Guest (no Privy session) claim creation for the "connect wallet & pay directly" flow — the
+   * sender pays into the returned burner address themselves right after this call, same as an
+   * authenticated send, they just never log in. This is the only unauthenticated claim-creation
+   * route in this controller, so it leans on verifyTurnstile + tight per-IP rate limiting instead
+   * of AuthGuard. No isPrivate here — see CreateClaimFromEmailGuestDto: the guest picks privacy
+   * client-side when building the wallet transfer into burnerAddress below, not on the claim row.
+   */
+  @Post('create-from-email-guest')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(5, 60, 'claims:create-guest', 'ip')
+  @ApiOperation({ summary: 'Guest: create claim from email, no account required' })
+  @ApiResponse({
+    status: 201,
+    description: 'Claim created',
+    schema: {
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        link: { type: 'string', format: 'uri' },
+        burnerAddress: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input' })
+  @ApiResponse({ status: 403, description: 'Bot check failed' })
+  async createFromEmailGuest(
+    @Body() createDto: CreateClaimFromEmailGuestDto,
+    @Req() req: { headers: Record<string, unknown>; ip?: string },
+  ): Promise<{ id: string; link: string; burnerAddress: string }> {
+    await this.verifyTurnstile(createDto.turnstileToken, getClientIp(req), 'create-from-email-guest');
+    const { turnstileToken: _turnstileToken, ...rest } = createDto;
+    const result = await this.claimsService.createFromEmail(rest);
+    // findOne() requires an authenticated requestingUserId (creator or recipient) to guard
+    // against strangers reading arbitrary claims — no use here, so take burnerAddress straight
+    // off the creation result instead of a follow-up read.
+    if (!result.burnerAddress) {
+      throw new ServiceUnavailableException('Could not prepare this payment right now. Please try again.');
+    }
+    return { id: result.id, link: result.link, burnerAddress: result.burnerAddress };
+  }
+
+  /**
+   * Guest (no Privy session) claim creation from a social handle — see createFromEmailGuest.
+   */
+  @Post('create-from-social-guest')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(5, 60, 'claims:create-guest', 'ip')
+  @ApiOperation({ summary: 'Guest: create claim from a Discord/GitHub/Telegram handle, no account required' })
+  @ApiResponse({
+    status: 201,
+    description: 'Claim created',
+    schema: {
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        link: { type: 'string', format: 'uri' },
+        burnerAddress: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input' })
+  @ApiResponse({ status: 403, description: 'Bot check failed' })
+  async createFromSocialGuest(
+    @Body() createDto: CreateClaimFromSocialGuestDto,
+    @Req() req: { headers: Record<string, unknown>; ip?: string },
+  ): Promise<{ id: string; link: string; burnerAddress: string }> {
+    await this.verifyTurnstile(createDto.turnstileToken, getClientIp(req), 'create-from-social-guest');
+    const { turnstileToken: _turnstileToken, ...rest } = createDto;
+    const result = await this.claimsService.createFromSocial(rest);
+    if (!result.burnerAddress) {
+      throw new ServiceUnavailableException('Could not prepare this payment right now. Please try again.');
+    }
+    return { id: result.id, link: result.link, burnerAddress: result.burnerAddress };
+  }
+
+  /**
+   * Guest (no Privy session) claim creation for a Twitter handle — see createFromEmailGuest.
+   * Twitter goes through create-from-username (with treatUnregisteredAsTwitter), not
+   * create-from-social, same as the authenticated flow — see createFromUsername's own doc
+   * comment on treatUnregisteredAsTwitter.
+   */
+  @Post('create-from-username-guest')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(5, 60, 'claims:create-guest', 'ip')
+  @ApiOperation({ summary: 'Guest: create claim from a username or Twitter handle, no account required' })
+  @ApiResponse({
+    status: 201,
+    description: 'Claim created',
+    schema: {
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        link: { type: 'string', format: 'uri' },
+        burnerAddress: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input' })
+  @ApiResponse({ status: 403, description: 'Bot check failed' })
+  async createFromUsernameGuest(
+    @Body() createDto: CreateClaimFromUsernameGuestDto,
+    @Req() req: { headers: Record<string, unknown>; ip?: string },
+  ): Promise<{ id: string; link: string; burnerAddress: string }> {
+    await this.verifyTurnstile(createDto.turnstileToken, getClientIp(req), 'create-from-username-guest');
+    const { turnstileToken: _turnstileToken, ...rest } = createDto;
+    const result = await this.claimsService.createFromUsername(rest);
+    if (!result.burnerAddress) {
+      throw new ServiceUnavailableException('Could not prepare this payment right now. Please try again.');
+    }
+    return { id: result.id, link: result.link, burnerAddress: result.burnerAddress };
   }
 
   /**
@@ -297,7 +450,7 @@ export class ClaimsController {
   async claimAsRecipient(
     @Param('id') id: string,
     @Req() req: { user?: { id: string } },
-    @Body() body: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean },
+    @Body() body: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean; split?: number; maxDelayMs?: number },
   ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
     const privyUserId = req.user?.id;
     if (!privyUserId) throw new UnauthorizedException('Login required to claim.');
@@ -305,6 +458,8 @@ export class ClaimsController {
       claimPrivately: body?.claimPrivately,
       destinationAddress: body?.destinationAddress,
       claimToNaira: body?.claimToNaira,
+      split: body?.split,
+      maxDelayMs: body?.maxDelayMs,
     });
   }
 
@@ -382,11 +537,19 @@ export class ClaimsController {
   async buildPrivateTransfer(
     @Param('id') id: string,
     @Req() req: { user?: { id: string } },
-    @Body() body: { sender_wallet: string; cluster?: 'devnet' | 'mainnet'; gasless?: boolean },
+    @Body() body: { sender_wallet: string; cluster?: 'devnet' | 'mainnet'; gasless?: boolean; split?: number; max_delay_ms?: number },
   ) {
     const privyUserId = req.user?.id;
     if (!privyUserId) throw new UnauthorizedException('Login required.');
-    return this.claimsService.buildPrivateTransferForPayer(id, privyUserId, body.sender_wallet, body.cluster, body.gasless ?? true);
+    return this.claimsService.buildPrivateTransferForPayer(
+      id,
+      privyUserId,
+      body.sender_wallet,
+      body.cluster,
+      body.gasless ?? true,
+      body.split,
+      body.max_delay_ms,
+    );
   }
 
   /**

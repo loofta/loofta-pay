@@ -37,18 +37,17 @@
  */
 
 import { useEffect, useState } from "react";
-import Image from "next/image";
 import { Connection, VersionedTransaction, type Transaction } from "@solana/web3.js";
-import { Loader2, LogIn, VenetianMask } from "lucide-react";
+import { Loader2, VenetianMask } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { NearIntentsAnyTokenOption } from "@/components/app/NearIntentsCheckoutOption";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
-import { SolanaWalletConnectProvider, useWallet as useSolanaWalletAdapter, WalletMultiButton } from "@/components/SolanaWalletConnect";
+import { SolanaWalletConnectProvider, useWallet as useSolanaWalletAdapter, useWalletModal } from "@/components/SolanaWalletConnect";
 import { buildUSDCTransferTransaction, sendSignedUSDCTransfer } from "@/services/solanaTransfer";
-import { buildMagicBlockPrivateTransferWithLooftaFee, totalWithLooftaPrivateFee } from "@/services/magicblockPrivateTransfer";
+import { buildMagicBlockPrivateTransferNoFee, totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
-import { PRIVATE_PAYMENT_ALL_PRIVATE_LINE } from "@/lib/privatePaymentCopy";
+import { privatePaymentAllPrivateLine } from "@/lib/privatePaymentCopy";
+import { formatDelayDuration } from "@/lib/privacyDelay";
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 3 * 60_000;
@@ -83,15 +82,17 @@ function isValidEmail(value: string): boolean {
 
 type PayFromWalletStatus = "idle" | "building" | "awaiting_signature" | "broadcasting" | "sent";
 
-/** Connect-wallet panel for the USDC-on-Solana option — Phantom/Solflare (or any other Wallet
- *  Standard wallet) via the same SolanaWalletConnectProvider/WalletMultiButton pair used for
- *  private deposits in BalanceModal. Must render inside SolanaWalletConnectProvider. */
+/** Single "Pay now" button for the USDC-on-Solana option — one click either way: if no wallet is
+ *  connected yet it opens the wallet picker and auto-continues straight into the payment the
+ *  moment a wallet connects, instead of making the guest connect, see a separate address readout,
+ *  then click a second "Pay" button. Must render inside SolanaWalletConnectProvider. */
 function UsdcSolanaWalletPanel({
   amountUsd,
   status,
   onPay,
   onViewQrInstead,
   private: isPrivate,
+  delayMs,
 }: {
   amountUsd: number;
   status: PayFromWalletStatus;
@@ -100,57 +101,72 @@ function UsdcSolanaWalletPanel({
    *  can't be represented as "send to this address", it has to go through the Payments API. */
   onViewQrInstead?: () => void;
   private?: boolean;
+  /** The delay chosen on the sliders above (0 when off) — shown as an ETA once sent, since a
+   *  private transfer with a delay doesn't land immediately. */
+  delayMs?: number;
 }) {
-  const { publicKey, signTransaction, connected, disconnect } = useSolanaWalletAdapter();
+  const { publicKey, signTransaction, connected, connecting, wallet, connect } = useSolanaWalletAdapter();
+  const { setVisible } = useWalletModal();
+  // Set by clicking "Pay" before a wallet is connected — the wallet picker only calls the
+  // adapter's select() when a wallet is clicked (see WalletModal's handleWalletClick), never
+  // connect() itself; normally a second click on WalletMultiButton is what triggers connect().
+  // While this is true, the effect below drives that second step automatically: connect() the
+  // moment a wallet is selected, then fire onPay the moment that connect() resolves — so picking
+  // a wallet in the modal is the only extra step the guest ever has to take.
+  const [pendingAutoPay, setPendingAutoPay] = useState(false);
   const canPay = connected && !!publicKey && !!signTransaction && status === "idle";
   const short = publicKey ? `${publicKey.toBase58().slice(0, 4)}..${publicKey.toBase58().slice(-4)}` : "";
+
+  useEffect(() => {
+    if (!pendingAutoPay) return;
+    if (connected && publicKey && signTransaction) {
+      setPendingAutoPay(false);
+      onPay(publicKey.toBase58(), signTransaction);
+    } else if (wallet && !connecting && !connected) {
+      connect().catch(() => setPendingAutoPay(false));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAutoPay, connected, publicKey, signTransaction, wallet, connecting]);
 
   if (status === "sent") {
     return (
       <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400 flex items-center justify-center gap-1.5">
-        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Sent — waiting for confirmation…
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        {isPrivate && delayMs ? `Sent — ${formatDelayDuration(delayMs)} to be funded and claimable by the recipient` : "Sent — waiting for confirmation…"}
       </p>
     );
   }
 
   return (
-    <div className="space-y-3">
-      {connected && publicKey ? (
-        <div className="flex items-center justify-center gap-2 rounded-lg bg-white border border-gray-200 py-2 [@media(prefers-color-scheme:dark)]:bg-black/20 [@media(prefers-color-scheme:dark)]:border-white/10">
-          <span className="text-sm font-mono text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">{short}</span>
-          <button
-            type="button"
-            onClick={() => void disconnect()}
-            className="text-sm underline underline-offset-2 text-gray-400 hover:text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-500 [@media(prefers-color-scheme:dark)]:hover:text-white"
-          >
-            Disconnect
-          </button>
-        </div>
-      ) : (
-        <div className="[&_.wallet-adapter-dropdown]:block [&_.wallet-adapter-dropdown]:w-full [&_.wallet-adapter-button]:w-full [&_.wallet-adapter-button]:justify-center [&_.wallet-adapter-button]:h-10 [&_.wallet-adapter-button]:rounded-lg [&_.wallet-adapter-button]:text-sm [&_.wallet-adapter-button]:font-semibold [&_.wallet-adapter-button]:font-sans">
-          <WalletMultiButton style={{ background: "linear-gradient(135deg,#FF4A26,#FF8C00)" }} />
-        </div>
-      )}
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => {
+          if (canPay) {
+            onPay(publicKey!.toBase58(), signTransaction!);
+          } else {
+            setPendingAutoPay(true);
+            setVisible(true);
+          }
+        }}
+        disabled={status !== "idle"}
+        className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-50"
+      >
+        {status === "building" ? (
+          <><Loader2 className="w-4 h-4 animate-spin" /> Preparing…</>
+        ) : status === "awaiting_signature" ? (
+          <><Loader2 className="w-4 h-4 animate-spin" /> Confirm in your wallet…</>
+        ) : status === "broadcasting" ? (
+          <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</>
+        ) : (
+          isPrivate
+            ? `Pay $${totalWithMagicBlockPrivateFee(amountUsd).toFixed(2)} privately`
+            : `Pay $${amountUsd.toFixed(2)} USDC`
+        )}
+      </button>
 
-      {connected && publicKey && signTransaction && (
-        <button
-          type="button"
-          onClick={() => onPay(publicKey.toBase58(), signTransaction)}
-          disabled={!canPay}
-          className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 disabled:opacity-50"
-        >
-          {status === "building" ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /> Preparing…</>
-          ) : status === "awaiting_signature" ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /> Confirm in your wallet…</>
-          ) : status === "broadcasting" ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</>
-          ) : (
-            isPrivate
-              ? `Pay $${totalWithLooftaPrivateFee(amountUsd).toFixed(2)} privately`
-              : `Pay $${amountUsd.toFixed(2)} USDC`
-          )}
-        </button>
+      {connected && publicKey && (
+        <p className="text-center text-sm text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500">Connected as {short}</p>
       )}
 
       {status === "idle" && onViewQrInstead && (
@@ -179,34 +195,42 @@ function UsdcSolanaOption({
   burnerAddress,
   amountUsd,
   email,
-  expanded,
-  onToggle,
   onSettled,
   setError,
   isPrivateMode,
+  initialSplit,
+  initialDelayMs,
 }: {
   claimId: string;
   burnerAddress: string;
   amountUsd: number;
   email: string;
-  expanded: boolean;
-  onToggle: () => void;
   onSettled: () => void;
   setError: (e: string | null) => void;
   /** When true, the connected wallet builds and sends a private transfer via MagicBlock's public
    *  Payments API instead of a plain SPL transfer — see the file header comment. No auth needed
    *  either way; this only changes which transaction gets built. */
   isPrivateMode?: boolean;
+  /** Carried over from GuestCheckoutPay's own props — see its doc comment. */
+  initialSplit?: number;
+  initialDelayMs?: number;
 }) {
   const [payMethod, setPayMethod] = useState<"wallet" | "qr">("wallet");
   const [payStatus, setPayStatus] = useState<PayFromWalletStatus>("idle");
+  // Split/delay were already chosen once, on the Send form that created this link (carried over
+  // via initialSplit/initialDelayMs) — this screen reuses them silently instead of showing the
+  // same sliders again for the guest to redo.
+  const split = initialSplit && initialSplit >= 1 ? initialSplit : 1;
+  const delayMs = initialDelayMs && initialDelayMs >= 0 ? initialDelayMs : 0;
   // Set once the wallet-connect send succeeds, so the settlement poll below can check the exact
   // tx instead of only the burner's balance — the QR flow has no such hash, since any wallet
   // could have sent it at any time.
   const [sentTxHash, setSentTxHash] = useState<string | undefined>(undefined);
 
+  // This component only ever mounts once a valid email is on file (GuestCheckoutPay renders it
+  // conditionally below), so the settlement poll can just run for its whole lifetime instead of
+  // waiting on a separate "expanded" flag from an outer tile picker that no longer exists.
   useEffect(() => {
-    if (!expanded) return;
     let aborted = false;
     setError(null);
     pollUntilSettled(claimId, email, sentTxHash, !!isPrivateMode, () => aborted).then((settled) => {
@@ -218,7 +242,7 @@ function UsdcSolanaOption({
       aborted = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded, sentTxHash]);
+  }, [sentTxHash]);
 
   const handlePayFromWallet = async (
     senderAddress: string,
@@ -231,15 +255,18 @@ function UsdcSolanaOption({
 
       let signature: string;
       if (isPrivateMode) {
-        // Legacy or v0 depending on what MagicBlock's own API decides fits — either way, Loofta's
-        // 10bps fee is already appended as a second instruction, one signature covers both.
-        // sendRawTransaction below works identically for either serialized transaction type.
-        const tx = await buildMagicBlockPrivateTransferWithLooftaFee({
+        // No Loofta fee here — this is an unauthenticated guest paying from their own external
+        // wallet, not a Loofta-custodied balance, so there's nothing for Loofta to sponsor or take
+        // a cut on; MagicBlock's own sponsor already covers gas and collects its own relay fee.
+        // (buildMagicBlockPrivateTransferWithLooftaFee is for flows that DO take a Loofta cut, and
+        // requires NEXT_PUBLIC_SOLANA_FEE_ATA_WALLET to be configured — not needed or wanted here.)
+        const tx = await buildMagicBlockPrivateTransferNoFee({
           from: senderAddress,
           to: burnerAddress,
           amountUSDC: amountUsd,
           memo: claimId,
-          connection,
+          split,
+          maxDelayMs: delayMs,
         });
 
         setPayStatus("awaiting_signature");
@@ -277,59 +304,38 @@ function UsdcSolanaOption({
   };
 
   return (
-    <>
-      <button
-        type="button"
-        onClick={onToggle}
-        className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-colors ${
-          expanded
-            ? "border-orange-400 bg-orange-50 [@media(prefers-color-scheme:dark)]:bg-orange-500/10"
-            : "border-gray-200 hover:bg-gray-50 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:hover:bg-white/5"
-        }`}
-      >
-        <Image src="/images/icons/withdraw-usdc.svg" alt="" width={32} height={32} className="object-contain" />
-        <span className="text-base font-medium text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">USDC on Solana</span>
-      </button>
-
-      {expanded && (
-        <div className="col-span-2 [grid-row:2] rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3 text-center [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
-          {isPrivateMode && (
-            <p className="text-base text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-300 flex items-center justify-center gap-1.5">
-              <VenetianMask className="w-4 h-4 shrink-0" /> Your wallet signs a private MagicBlock transfer — no account needed, network fee included.
-            </p>
-          )}
-          {payMethod === "wallet" || isPrivateMode ? (
-            <SolanaWalletConnectProvider rpcUrl={getSolanaHttpRpc()}>
-              <UsdcSolanaWalletPanel
-                amountUsd={amountUsd}
-                status={payStatus}
-                onPay={handlePayFromWallet}
-                onViewQrInstead={isPrivateMode ? undefined : () => setPayMethod("qr")}
-                private={isPrivateMode}
-              />
-            </SolanaWalletConnectProvider>
-          ) : (
-            <>
-              <QRCodeSVG value={burnerAddress} size={140} className="mx-auto rounded-lg bg-white p-2 border border-gray-200" />
-              <div>
-                <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">Send exactly</p>
-                <p className="text-lg font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${amountUsd.toFixed(2)} USDC</p>
-                <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">on Solana</p>
-              </div>
-              <div className="rounded-lg bg-white border border-gray-200 px-3 py-2 break-all text-base font-mono text-gray-700 [@media(prefers-color-scheme:dark)]:bg-black/20 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:text-slate-300">{burnerAddress}</div>
-              <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400 flex items-center justify-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Waiting for it to arrive…</p>
-              <button
-                type="button"
-                onClick={() => setPayMethod("wallet")}
-                className="w-full text-center text-base underline underline-offset-2 text-gray-400 hover:text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-500 [@media(prefers-color-scheme:dark)]:hover:text-white"
-              >
-                Or pay with a connected wallet instead
-              </button>
-            </>
-          )}
-        </div>
+    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3 text-center [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
+      {payMethod === "wallet" || isPrivateMode ? (
+        <SolanaWalletConnectProvider rpcUrl={getSolanaHttpRpc()}>
+          <UsdcSolanaWalletPanel
+            amountUsd={amountUsd}
+            status={payStatus}
+            onPay={handlePayFromWallet}
+            onViewQrInstead={isPrivateMode ? undefined : () => setPayMethod("qr")}
+            private={isPrivateMode}
+            delayMs={delayMs}
+          />
+        </SolanaWalletConnectProvider>
+      ) : (
+        <>
+          <QRCodeSVG value={burnerAddress} size={140} className="mx-auto rounded-lg bg-white p-2 border border-gray-200" />
+          <div>
+            <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">Send exactly</p>
+            <p className="text-lg font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${amountUsd.toFixed(2)} USDC</p>
+            <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">on Solana</p>
+          </div>
+          <div className="rounded-lg bg-white border border-gray-200 px-3 py-2 break-all text-base font-mono text-gray-700 [@media(prefers-color-scheme:dark)]:bg-black/20 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:text-slate-300">{burnerAddress}</div>
+          <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400 flex items-center justify-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Waiting for it to arrive…</p>
+          <button
+            type="button"
+            onClick={() => setPayMethod("wallet")}
+            className="w-full text-center text-base underline underline-offset-2 text-gray-400 hover:text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-500 [@media(prefers-color-scheme:dark)]:hover:text-white"
+          >
+            Or pay with a connected wallet instead
+          </button>
+        </>
       )}
-    </>
+    </div>
   );
 }
 
@@ -345,6 +351,8 @@ export function GuestCheckoutPay({
   isPrivateMode,
   onTogglePrivateMode,
   requiresPrivate = false,
+  initialSplit,
+  initialDelayMs,
 }: {
   claimId: string;
   burnerAddress: string;
@@ -370,25 +378,16 @@ export function GuestCheckoutPay({
    *  you could visibly toggle off while the fee breakdown stayed on the private number regardless.
    *  When this is true, show a locked, checked, non-interactive row instead of a real switch. */
   requiresPrivate?: boolean;
+  /** Carried over from the Send form's own split/delay sliders (app/app/page.tsx's
+   *  privacyQuery()) via ?split=&delayMs=, so these start from that choice instead of
+   *  resetting to 1/0 — see UsdcSolanaOption below. */
+  initialSplit?: number;
+  initialDelayMs?: number;
 }) {
   const [email, setEmail] = useState("");
   const [emailTouched, setEmailTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const emailValid = isValidEmail(email);
-  // Two top-level ways to pay, as tabs instead of a button stacked above a divider. Defaults to
-  // whichever fits the visitor already: signed in -> Loofta tab, otherwise guest. If sign-in
-  // completes while the guest tab is open (the Loofta tab is the only thing that triggers
-  // onLogin, but authenticated can also flip from a session restore), jump back to the Loofta tab
-  // so the visitor isn't left looking at the guest options after they just signed in.
-  const [activeTab, setActiveTab] = useState<"loofta" | "guest">(() => (authenticated ? "loofta" : "guest"));
-  useEffect(() => {
-    if (authenticated) setActiveTab("loofta");
-  }, [authenticated]);
-  // Only one payment-option panel open at a time — both live in the same 2-column grid row, so
-  // showing both simultaneously would either overlap (each pinned to row 2) or push one tile onto
-  // a third row depending on which expanded first. Keeping this exclusive keeps the QR/deposit
-  // panel pinned directly under both tiles, never wedged between them.
-  const [activeOption, setActiveOption] = useState<"usdc" | "any" | null>(null);
 
   // The link's own requiresPrivate always wins, same as the parent's payingPrivately = requiresPrivate
   // || isPrivateMode — the raw switch state alone isn't enough here, or a mandatory-private link
@@ -396,121 +395,87 @@ export function GuestCheckoutPay({
   // (or, per the bug this fixed, has tried and failed to) touch the switch themselves.
   const effectivePrivate = requiresPrivate || !!isPrivateMode;
 
-  // "Any token" has no private variant (see NearIntentsAnyTokenOption's disabled prop) — collapse
-  // it if the guest had it open and then switches private mode on.
-  useEffect(() => {
-    if (effectivePrivate && activeOption === "any") setActiveOption(null);
-  }, [effectivePrivate, activeOption]);
+  // No tab switcher — signing in is just the "Sign in to pay" link at the bottom, so there's only
+  // ever one flow on screen. `authenticated` (set only for checkout links a signed-in visitor
+  // lands on) swaps the whole card for the balance-based "Pay now" button instead.
+  if (authenticated) {
+    return (
+      <button
+        type="button"
+        onClick={onPayWithLoofta}
+        className="w-full flex items-center justify-between gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+      >
+        <span>Pay now</span>
+        <span className="text-sm font-medium opacity-90">
+          Balance: {typeof looftaBalanceUSD === "number" ? `$${looftaBalanceUSD.toFixed(2)}` : "…"}
+        </span>
+      </button>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1 [@media(prefers-color-scheme:dark)]:bg-white/5">
-        <button
-          type="button"
-          onClick={() => setActiveTab("loofta")}
-          className={`rounded-lg py-2 text-base font-medium transition-colors ${
-            activeTab === "loofta"
-              ? "bg-white text-gray-900 shadow-sm [@media(prefers-color-scheme:dark)]:bg-white/10 [@media(prefers-color-scheme:dark)]:text-slate-100"
-              : "text-gray-500 hover:text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-400 [@media(prefers-color-scheme:dark)]:hover:text-slate-200"
+      <div>
+        <label className="text-base text-gray-500 mb-1 block [@media(prefers-color-scheme:dark)]:text-slate-400">Email <span className="text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500">&middot; enter this first to unlock the options below</span></label>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onBlur={() => setEmailTouched(true)}
+          placeholder="you@example.com"
+          autoFocus
+          className={`w-full rounded-lg bg-white border px-3 py-2 text-base text-gray-900 outline-none [@media(prefers-color-scheme:dark)]:bg-black/20 [@media(prefers-color-scheme:dark)]:text-slate-100 ${
+            emailTouched && !emailValid ? "border-red-400 focus:border-red-500" : "border-gray-300 focus:border-orange-400 [@media(prefers-color-scheme:dark)]:border-white/20"
           }`}
-        >
-          Pay with Loofta
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("guest")}
-          className={`rounded-lg py-2 text-base font-medium transition-colors ${
-            activeTab === "guest"
-              ? "bg-white text-gray-900 shadow-sm [@media(prefers-color-scheme:dark)]:bg-white/10 [@media(prefers-color-scheme:dark)]:text-slate-100"
-              : "text-gray-500 hover:text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-400 [@media(prefers-color-scheme:dark)]:hover:text-slate-200"
-          }`}
-        >
-          Pay as guest
-        </button>
+        />
+        {emailTouched && !emailValid && <p className="text-base text-red-600 mt-1 [@media(prefers-color-scheme:dark)]:text-red-400">Enter a valid email to continue.</p>}
       </div>
 
-      {activeTab === "loofta" ? (
-        <div className="space-y-2">
-          {authenticated ? (
-            <button
-              type="button"
-              onClick={onPayWithLoofta}
-              className="w-full flex items-center justify-between gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-            >
-              <span>Pay now</span>
-              <span className="text-sm font-medium opacity-90">
-                Balance: {typeof looftaBalanceUSD === "number" ? `$${looftaBalanceUSD.toFixed(2)}` : "…"}
-              </span>
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={onLogin}
-                className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-base bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-              >
-                <LogIn className="w-4 h-4" /> Sign in to pay
-              </button>
-              <p className="text-base text-gray-400 text-center [@media(prefers-color-scheme:dark)]:text-slate-500">
-                New to Loofta? Signing in sets up your account automatically — no separate signup.
-              </p>
-            </>
-          )}
+      {requiresPrivate ? (
+        <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
+          <VenetianMask className="h-4 w-4 shrink-0 text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-300" strokeWidth={1.75} />
+          <p className="text-sm text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-300">{privatePaymentAllPrivateLine(initialDelayMs)}</p>
         </div>
+      ) : onTogglePrivateMode ? (
+        <IncognitoModeToggle checked={!!isPrivateMode} onCheckedChange={onTogglePrivateMode} light />
+      ) : null}
+
+      {emailValid ? (
+        <UsdcSolanaOption
+          claimId={claimId}
+          burnerAddress={burnerAddress}
+          amountUsd={amountUsd}
+          email={email}
+          onSettled={onSettled}
+          setError={setError}
+          isPrivateMode={effectivePrivate}
+          initialSplit={initialSplit}
+          initialDelayMs={initialDelayMs}
+        />
       ) : (
-        <>
-          <div>
-            <label className="text-base text-gray-500 mb-1 block [@media(prefers-color-scheme:dark)]:text-slate-400">Email <span className="text-gray-400 [@media(prefers-color-scheme:dark)]:text-slate-500">&middot; enter this first to unlock the options below</span></label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onBlur={() => setEmailTouched(true)}
-              placeholder="you@example.com"
-              autoFocus
-              className={`w-full rounded-lg bg-white border px-3 py-2 text-base text-gray-900 outline-none [@media(prefers-color-scheme:dark)]:bg-black/20 [@media(prefers-color-scheme:dark)]:text-slate-100 ${
-                emailTouched && !emailValid ? "border-red-400 focus:border-red-500" : "border-gray-300 focus:border-orange-400 [@media(prefers-color-scheme:dark)]:border-white/20"
-              }`}
-            />
-            {emailTouched && !emailValid && <p className="text-base text-red-600 mt-1 [@media(prefers-color-scheme:dark)]:text-red-400">Enter a valid email to continue.</p>}
-          </div>
-
-          {requiresPrivate ? (
-            <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5">
-              <VenetianMask className="h-4 w-4 shrink-0 text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-300" strokeWidth={1.75} />
-              <p className="text-sm text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-300">{PRIVATE_PAYMENT_ALL_PRIVATE_LINE}</p>
-            </div>
-          ) : onTogglePrivateMode ? (
-            <IncognitoModeToggle checked={!!isPrivateMode} onCheckedChange={onTogglePrivateMode} light />
-          ) : null}
-
-          <fieldset disabled={!emailValid} className="grid grid-cols-2 gap-2 disabled:opacity-50" onClick={() => !emailValid && setEmailTouched(true)}>
-            <UsdcSolanaOption
-              claimId={claimId}
-              burnerAddress={burnerAddress}
-              amountUsd={amountUsd}
-              email={email}
-              expanded={activeOption === "usdc"}
-              onToggle={() => setActiveOption((v) => (v === "usdc" ? null : "usdc"))}
-              onSettled={onSettled}
-              setError={setError}
-              isPrivateMode={effectivePrivate}
-            />
-            <NearIntentsAnyTokenOption
-              claimId={claimId}
-              amountUsd={amountUsd}
-              email={email}
-              expanded={activeOption === "any"}
-              onToggle={() => setActiveOption((v) => (v === "any" ? null : "any"))}
-              onSettled={onSettled}
-              setError={setError}
-              disabled={effectivePrivate}
-            />
-          </fieldset>
-
-          {error && <p className="text-base text-red-600 [@media(prefers-color-scheme:dark)]:text-red-400 text-center">{error}</p>}
-        </>
+        <button
+          type="button"
+          onClick={() => setEmailTouched(true)}
+          className="w-full rounded-xl border border-dashed border-gray-300 p-4 text-center text-base text-gray-400 [@media(prefers-color-scheme:dark)]:border-white/15 [@media(prefers-color-scheme:dark)]:text-slate-500"
+        >
+          Enter your email above to connect a wallet and pay
+        </button>
       )}
+
+      {/* Any other token, or a card, or paying from a Loofta balance — all need Privy sign-in
+          (Any token's NEAR Intents bridge and the balance-based Pay Now button both live behind
+          the authenticated flow; card on-ramps here are Privy fundWallet()/PAJ Cash, both
+          inherently session-based). One plain link instead of a second tab/CTA competing with the
+          wallet-connect flow above. */}
+      <button
+        type="button"
+        onClick={onLogin}
+        className="w-full text-center text-sm text-gray-400 hover:text-gray-600 underline underline-offset-2 [@media(prefers-color-scheme:dark)]:text-slate-500 [@media(prefers-color-scheme:dark)]:hover:text-slate-300"
+      >
+        Want to pay with a different token or by card? Sign in to pay
+      </button>
+
+      {error && <p className="text-base text-red-600 [@media(prefers-color-scheme:dark)]:text-red-400 text-center">{error}</p>}
     </div>
   );
 }
