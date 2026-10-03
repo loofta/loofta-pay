@@ -534,7 +534,11 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     console.info(`[MultiSend] broadcasting paymentId=${paymentId} sendTo=${sendTo} cluster=${cluster}`);
     const rpc = sendTo === "ephemeral" ? getEphemeralRpcForMode(cluster) : getRpcForMode(cluster);
     const broadcastConn = new Connection(rpc, "confirmed");
-    const sig = await broadcastConn.sendRawTransaction(signedBytes, { skipPreflight: true, maxRetries: 3 });
+    // Base layer: run preflight so a doomed tx throws its real error now instead of silently
+    // never landing (skipPreflight hid this and left us polling a null status for 120s).
+    // Ephemeral keeps skipPreflight (MagicBlock txs can fail simulation but still deliver).
+    const skipPreflight = sendTo === "ephemeral";
+    const sig = await broadcastConn.sendRawTransaction(signedBytes, { skipPreflight, maxRetries: 3 });
     console.info(`[MultiSend] broadcast ok sig=${sig.slice(0, 12)}… paymentId=${paymentId}`);
     // Base layer: fall back to the secondary RPC provider (Alchemy/Helius) in case the
     // primary hasn't indexed the signature yet. Ephemeral: fall back to the base RPC.
@@ -544,6 +548,10 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
     // base-layer confirmation is a normal-speed tx (the 1-10min privacy delay applies to the
     // crank's separate background settlement, not to this signature landing).
     const timeoutMs = 120_000;
+    // Re-broadcast the same signed tx while waiting; RPC nodes drop txs under congestion.
+    const resend = setInterval(() => {
+      broadcastConn.sendRawTransaction(signedBytes, { skipPreflight: true, maxRetries: 0 }).catch(() => { });
+    }, 4000);
     try {
       await waitForSignatureConfirmation(broadcastConn, sig, timeoutMs, 1500, "multiSend", fallbackConn);
     } catch (e) {
@@ -557,6 +565,8 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       } else {
         throw e;
       }
+    } finally {
+      clearInterval(resend);
     }
     console.info(`[MultiSend] confirmed sig=${sig.slice(0, 12)}… paymentId=${paymentId}`);
     return sig;
