@@ -471,35 +471,46 @@ export function AgentChatBox() {
 
       const result = await buildMultiSend({ recipients: multiRecipients, sender_wallet: wallet.address, cluster }, user.id, accessToken)
 
-      // showWalletUIs: false — the fee payer covers gas, not the user's wallet.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const signedOutput = await (privySolanaSignTransaction as any)({
-        transaction: Buffer.from(result.transactionBase64, 'base64') as Uint8Array,
-        wallet,
-        chain,
-        options: { uiOptions: { showWalletUIs: false } },
-      })
-      const signedBytes: Uint8Array = signedOutput.signedTransaction
-
+      const txs = result.transactions?.length
+        ? result.transactions
+        : [{ transactionBase64: result.transactionBase64, payment_ids: result.payment_ids, networkFeeUsdc: result.networkFeeUsdc ?? 0 }]
       const broadcastConn = new Connection(getRpcForMode(cluster), 'confirmed')
-      const sig = await broadcastConn.sendRawTransaction(signedBytes, { skipPreflight: true, maxRetries: 3 })
       const fallbackRpcUrl = getRpcFallbackForMode(cluster)
       const fallbackConn = fallbackRpcUrl ? new Connection(fallbackRpcUrl, 'confirmed') : undefined
-      try {
-        await waitForSignatureConfirmation(broadcastConn, sig, 120_000, 1500, 'multiSend', fallbackConn)
-      } catch (e: unknown) {
-        // MagicBlock/fee-payer co-signed txs can land with a non-fatal Custom instruction error
-        // even though the transfer succeeded — same tolerance MultiSendFlow applies.
-        const msg = e instanceof Error ? e.message : ''
-        if (!(msg.includes('InstructionError') && msg.includes('"Custom":'))) throw e
-      }
+      for (const t of txs) {
+        // showWalletUIs: false — the fee payer covers gas, not the user's wallet.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const signedOutput = await (privySolanaSignTransaction as any)({
+          transaction: Buffer.from(t.transactionBase64, 'base64') as Uint8Array,
+          wallet,
+          chain,
+          options: { uiOptions: { showWalletUIs: false } },
+        })
+        const signedBytes: Uint8Array = signedOutput.signedTransaction
 
-      // Fire-and-forget, same reasoning as the single-send status sync: the transfer already
-      // landed on-chain, so a confirm-call hiccup here must never turn a successful send into
-      // an apparent failure.
-      multiConfirm(result.payment_ids, user.id, accessToken, sig, result.networkFeeUsdc ?? 0).catch((e: unknown) => {
-        console.error('[AgentChatBox] multiConfirm failed (payment already sent, safe to ignore):', e)
-      })
+        // Preflight on so a doomed tx throws its real error instead of silently never landing.
+        const sig = await broadcastConn.sendRawTransaction(signedBytes, { skipPreflight: false, maxRetries: 3 })
+        const resend = setInterval(() => {
+          broadcastConn.sendRawTransaction(signedBytes, { skipPreflight: true, maxRetries: 0 }).catch(() => { })
+        }, 4000)
+        try {
+          await waitForSignatureConfirmation(broadcastConn, sig, 120_000, 1500, 'multiSend', fallbackConn)
+        } catch (e: unknown) {
+          // MagicBlock/fee-payer co-signed txs can land with a non-fatal Custom instruction error
+          // even though the transfer succeeded — same tolerance MultiSendFlow applies.
+          const msg = e instanceof Error ? e.message : ''
+          if (!(msg.includes('InstructionError') && msg.includes('"Custom":'))) throw e
+        } finally {
+          clearInterval(resend)
+        }
+
+        // Fire-and-forget, same reasoning as the single-send status sync: the transfer already
+        // landed on-chain, so a confirm-call hiccup here must never turn a successful send into
+        // an apparent failure.
+        multiConfirm(t.payment_ids, user.id, accessToken, sig, t.networkFeeUsdc).catch((e: unknown) => {
+          console.error('[AgentChatBox] multiConfirm failed (payment already sent, safe to ignore):', e)
+        })
+      }
 
       updateMultiCard(id, { state: 'sent', links: result.links.map((l) => ({ ...l, link: l.link.replace(/\/c\/([^/?#]+)/, '/share/$1') })) })
       fireConfetti()

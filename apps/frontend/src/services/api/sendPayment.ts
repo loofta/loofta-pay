@@ -34,6 +34,9 @@ export interface MultiSendResult {
   recipientCount: number;
   /** ATA-rent recovery charged on top of totalAmountUsdc; 0 when every recipient already has a USDC ATA. */
   networkFeeUsdc: number;
+  /** Large batches are split into several txs (Solana's 1232-byte limit). Sign + broadcast each
+   *  in order and multiConfirm each entry's payment_ids. Absent on older backends. */
+  transactions?: Array<{ transactionBase64: string; payment_ids: string[]; networkFeeUsdc: number }>;
 }
 
 /** The sender's one private MagicBlock transfer for a batch — sender wallet → this batch's

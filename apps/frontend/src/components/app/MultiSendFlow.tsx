@@ -483,22 +483,28 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       const wallet = solanaWallets.find((w) => w.address === senderWallet) ?? solanaWallets[0];
       if (!wallet) throw new Error("Loofta wallet not found. Try logging out and back in.");
 
-      setPhase({ kind: "awaiting_signature" });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const signedOutput = await (privySolanaSignTransaction as any)({
-        transaction: Buffer.from(result.transactionBase64, "base64") as Uint8Array,
-        wallet,
-        chain,
-        options: { uiOptions: { showWalletUIs: false } },
-      });
-      const signedBytes: Uint8Array = signedOutput.signedTransaction;
+      const txs = result.transactions?.length
+        ? result.transactions
+        : [{ transactionBase64: result.transactionBase64, payment_ids: result.payment_ids, networkFeeUsdc: result.networkFeeUsdc ?? 0 }];
+      for (let i = 0; i < txs.length; i++) {
+        setPhase({ kind: "awaiting_signature" });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const signedOutput = await (privySolanaSignTransaction as any)({
+          transaction: Buffer.from(txs[i].transactionBase64, "base64") as Uint8Array,
+          wallet,
+          chain,
+          options: { uiOptions: { showWalletUIs: false } },
+        });
+        const signedBytes: Uint8Array = signedOutput.signedTransaction;
 
-      setPhase({ kind: "broadcasting", index: 1, total: 1 });
-      const sig = await broadcastAndWaitForHash(signedBytes, "combined", "base", cluster);
-      // Pass the real backend-computed value, not a hardcoded 0 — the backend charges a small
-      // ATA-rent recovery fee whenever this send created new recipient token accounts (see
-      // ata-rent-recovery.ts), so it's not always exactly free even on this "no platform fee" path.
-      multiConfirm(result.payment_ids, user.id, accessToken, sig, result.networkFeeUsdc ?? 0).catch(() => { });
+        setPhase({ kind: "broadcasting", index: i + 1, total: txs.length });
+        const sig = await broadcastAndWaitForHash(signedBytes, "combined", "base", cluster);
+        // Pass the real backend-computed value, not a hardcoded 0 — the backend charges a small
+        // ATA-rent recovery fee whenever this send created new recipient token accounts (see
+        // ata-rent-recovery.ts), so it's not always exactly free even on this "no platform fee" path.
+        // Confirmed per tx so a later tx failing never leaves already-landed payments unconfirmed.
+        multiConfirm(txs[i].payment_ids, user.id, accessToken, sig, txs[i].networkFeeUsdc).catch(() => { });
+      }
 
       console.info(`[MultiSend] public send done payment_ids=${result.payment_ids.join(",")}`);
       setCompletedLinks(result.links as MultiSendLink[]);

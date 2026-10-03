@@ -28,8 +28,9 @@ import {
   getAssociatedTokenAddress,
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
+  createAssociatedTokenAccountIdempotentInstruction,
 } from '@solana/spl-token';
-import { TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { isSolanaDevnetFromConfig, isSolanaLocalhostFromConfig, getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { EmailService } from '../email/email.service';
 import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
@@ -166,6 +167,9 @@ export class SendPaymentService {
     recipientCount: number;
     /** ATA-rent recovery charged on top of totalAmountUsdc; 0 when every recipient already has a USDC ATA. */
     networkFeeUsdc: number;
+    /** One entry per transaction (a large batch is split to stay under Solana's 1232-byte limit).
+     *  Sender signs and broadcasts each; confirm each entry's payment_ids once it lands. */
+    transactions: Array<{ transactionBase64: string; payment_ids: string[]; networkFeeUsdc: number }>;
   }> {
     if (!this.feePayerKeypair) {
       throw new BadRequestException(
@@ -335,42 +339,24 @@ export class SendPaymentService {
         'Your USDC token account does not exist. Please deposit USDC to your wallet first.',
       );
     }
-    const feePayerAtaExists = accountInfos[1] !== null;
 
-    const newAtaCount = infos.filter((_, i) => accountInfos[i + 2] === null).length;
-    const recovery = await quoteAtaRentRecoveryUsdc(newAtaCount);
-    if (recovery.newAtaCount > 0) {
-      this.logger.log(
-        `[MultiSend] ATA rent recovery: ${recovery.newAtaCount} new ATA(s) → $${recovery.totalUsdc.toFixed(4)} charged to sender (solPrice=${recovery.solPriceUsd ?? 'unavailable'})`,
-      );
-    }
-
-    // ─── Phase 3: build combined transaction ──────────────────────────────────
-    const instructions = [];
-
-    if (recovery.totalUsdcUnits > 0 && !feePayerAtaExists) {
-      // One-time bootstrap of our own USDC ATA — not a per-request cost, happens at most once ever.
-      instructions.push(
-        createAssociatedTokenAccountInstruction(
-          this.feePayerKeypair.publicKey,
-          feePayerUsdcAta,
-          this.feePayerKeypair.publicKey,
-          this.usdcMint,
-        ),
-      );
-    }
-
+    // ─── Phase 3: build the recipient instructions, then split into as many transactions as
+    // needed. A single tx is capped at 1232 bytes; each recipient that needs a sponsored ATA
+    // costs ~150 bytes, so ~10 recipients does not fit in one tx. ──────────────────────────
+    const recipientIxs: TransactionInstruction[][] = [];
+    const needsNewAta: boolean[] = [];
     for (let i = 0; i < infos.length; i++) {
       const info = infos[i];
       const recipientAtaExists = accountInfos[i + 2] !== null;
+      needsNewAta.push(!recipientAtaExists);
+      const ixs: TransactionInstruction[] = [];
 
       if (!recipientAtaExists) {
-        // Anti-drain guard — this cost IS recovered from the sender (recovery.totalUsdcUnits
-        // below), so unlike the other sponsor-paid-ATA sites this isn't free money for a
-        // recipient on its own. Still guarded as a backstop: don't rely solely on the rent-
-        // recovery estimate being exactly right, and don't let a recipient farm free sponsored
-        // accounts across many different senders' multi-sends just because no single sender
-        // notices the pattern.
+        // Anti-drain guard — this cost IS recovered from the sender (recovery below), so unlike
+        // the other sponsor-paid-ATA sites this isn't free money for a recipient on its own.
+        // Still guarded as a backstop: don't rely solely on the rent-recovery estimate being
+        // exactly right, and don't let a recipient farm free sponsored accounts across many
+        // different senders' multi-sends just because no single sender notices the pattern.
         const allowed = await guardAtaSponsorship(
           this.supabaseService,
           info.toPubkey.toBase58(),
@@ -383,7 +369,7 @@ export class SendPaymentService {
             `Recipient ${info.toPubkey.toBase58().slice(0, 8)}… already received a sponsored token account once before and closed it. Remove them from this send or ask them to fund their own account first.`,
           );
         }
-        instructions.push(
+        ixs.push(
           createAssociatedTokenAccountInstruction(
             this.feePayerKeypair.publicKey,
             info.toAta,
@@ -392,29 +378,74 @@ export class SendPaymentService {
           ),
         );
       }
-
-      instructions.push(
-        createTransferInstruction(senderAta, info.toAta, senderPubkey, info.amountUnits),
-      );
-    }
-
-    if (recovery.totalUsdcUnits > 0) {
-      instructions.push(
-        createTransferInstruction(senderAta, feePayerUsdcAta, senderPubkey, recovery.totalUsdcUnits),
-      );
+      ixs.push(createTransferInstruction(senderAta, info.toAta, senderPubkey, info.amountUnits));
+      recipientIxs.push(ixs);
     }
 
     const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
-    const message = new TransactionMessage({
-      payerKey: this.feePayerKeypair.publicKey,
-      recentBlockhash: blockhash,
-      instructions,
-    }).compileToV0Message();
+    const feePayer = this.feePayerKeypair.publicKey;
+    // Idempotent so every chunk can safely include it regardless of order/landing.
+    const bootstrapFeePayerAtaIx = createAssociatedTokenAccountIdempotentInstruction(
+      feePayer,
+      feePayerUsdcAta,
+      feePayer,
+      this.usdcMint,
+    );
+    const compile = (ixs: TransactionInstruction[]): VersionedTransaction => {
+      const msg = new TransactionMessage({ payerKey: feePayer, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message();
+      return new VersionedTransaction(msg);
+    };
+    // Worst-case sizing: assume the bootstrap ix and the recovery transfer are both present.
+    const MAX_TX_BYTES = 1232;
+    const sizingTail = [
+      bootstrapFeePayerAtaIx,
+      createTransferInstruction(senderAta, feePayerUsdcAta, senderPubkey, 1n),
+    ];
+    const fits = (idxs: number[]): boolean =>
+      compile([...idxs.flatMap((i) => recipientIxs[i]), ...sizingTail]).serialize().length <= MAX_TX_BYTES;
 
-    const tx = new VersionedTransaction(message);
-    tx.sign([this.feePayerKeypair]);
+    const chunks: number[][] = [];
+    let current: number[] = [];
+    for (let i = 0; i < infos.length; i++) {
+      if (current.length > 0 && !fits([...current, i])) {
+        chunks.push(current);
+        current = [];
+      }
+      current.push(i);
+    }
+    if (current.length) chunks.push(current);
+    if (chunks.some((c) => c.length === 1 && !fits(c))) {
+      throw new BadRequestException('A single recipient transaction exceeds the Solana size limit.');
+    }
 
-    const transactionBase64 = Buffer.from(tx.serialize()).toString('base64');
+    const transactions: Array<{ transactionBase64: string; payment_ids: string[]; networkFeeUsdc: number }> = [];
+    let totalRecoveryUsdc = 0;
+    for (const idxs of chunks) {
+      const chunkNewAtas = idxs.filter((i) => needsNewAta[i]).length;
+      const recovery = await quoteAtaRentRecoveryUsdc(chunkNewAtas);
+      const ixs: TransactionInstruction[] = [];
+      if (recovery.totalUsdcUnits > 0) ixs.push(bootstrapFeePayerAtaIx);
+      for (const i of idxs) ixs.push(...recipientIxs[i]);
+      if (recovery.totalUsdcUnits > 0) {
+        ixs.push(createTransferInstruction(senderAta, feePayerUsdcAta, senderPubkey, recovery.totalUsdcUnits));
+      }
+      if (recovery.newAtaCount > 0) {
+        this.logger.log(
+          `[MultiSend] ATA rent recovery (tx ${transactions.length + 1}/${chunks.length}): ${recovery.newAtaCount} new ATA(s) → $${recovery.totalUsdc.toFixed(4)} charged to sender (solPrice=${recovery.solPriceUsd ?? 'unavailable'})`,
+        );
+      }
+      const tx = compile(ixs);
+      tx.sign([this.feePayerKeypair]);
+      totalRecoveryUsdc += recovery.totalUsdc;
+      transactions.push({
+        transactionBase64: Buffer.from(tx.serialize()).toString('base64'),
+        payment_ids: idxs.map((i) => infos[i].paymentId),
+        networkFeeUsdc: recovery.totalUsdc,
+      });
+    }
+    this.logger.log(`[MultiSend] ${infos.length} recipients split into ${transactions.length} transaction(s)`);
+
+    const transactionBase64 = transactions[0].transactionBase64;
     const totalAmountUsdc = infos.reduce((sum, r) => sum + parseFloat(r.amountStr), 0);
 
     // ─── Phase 4: fire-and-forget email per email recipient ────────────────────
@@ -446,7 +477,8 @@ export class SendPaymentService {
       payment_ids: infos.map((r) => r.paymentId),
       totalAmountUsdc,
       recipientCount: infos.length,
-      networkFeeUsdc: recovery.totalUsdc,
+      networkFeeUsdc: totalRecoveryUsdc,
+      transactions,
     };
   }
 
