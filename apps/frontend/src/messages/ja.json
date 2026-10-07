@@ -180,7 +180,9 @@
         "question": "デブネットにいます — テスト用SOLとUSDCはどうやって入手しますか？",
         "answer": "<solanaLink>Solanaフォーセット</solanaLink>から無料のデブネットSOLを入手してください。デブネットUSDCは<circleLink>Circleフォーセット</circleLink>を使用してください。"
       }
-    }
+    },
+    "signInToSendHandle": "ハンドルまたはメールに送るにはログインしてください",
+    "signInToSendHandleHint": "メールまたはソーシャルログイン — ウォレット宛はアカウント不要"
   },
   "MarketingPage": {
     "nav": {
@@ -553,5 +555,32 @@
     "endsToday": "本日終了",
     "daysLeft": "残り{days}日",
     "backToRewards": "リワード"
+  },
+  "HomeV3": {
+    "hero": {
+      "eyebrow": "どこでもキャッシュアウト",
+      "headlineBefore": "任意の",
+      "headlineAfter": "またはメールへ送金",
+      "headlineCashOut": "相手は好きな方法で受け取れます。",
+      "support": "アカウントなしでウォレットへ、またはログインしてハンドルへ送信 — Venmo、Cash App、Revolut、Zelle、Solana上のUSDC、または任意の暗号資産で受け取れます。",
+      "supportWithPaj": "アカウントなしでウォレットへ、またはログインしてハンドルへ送信 — Venmo、Cash App、Revolut、Zelle、PAJナイラ、Solana上のUSDC、または任意の暗号資産で受け取れます。",
+      "cashOutLabel": "キャッシュアウト先",
+      "ctaStart": "無料で送金を開始",
+      "ctaBusiness": "ビジネス向け",
+      "railVenmo": "Venmo",
+      "railCashApp": "Cash App",
+      "railRevolut": "Revolut",
+      "railZelle": "Zelle",
+      "railUsdc": "USDC",
+      "railAnyCrypto": "任意の暗号資産",
+      "railPaj": "PAJ Cash",
+      "railVenmoSub": "USD",
+      "railCashAppSub": "USD",
+      "railRevolutSub": "USD · EUR · GBP",
+      "railZelleSub": "銀行へ",
+      "railUsdcSub": "Solana上",
+      "railAnyCryptoSub": "150+トークン",
+      "railPajSub": "ナイラ銀行"
+    }
   }
 }

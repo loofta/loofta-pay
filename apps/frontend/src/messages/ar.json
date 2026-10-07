@@ -180,7 +180,9 @@
         "question": "أنا على شبكة التطوير — كيف أحصل على SOL وUSDC تجريبية؟",
         "answer": "احصل على SOL تجريبي مجاني من <solanaLink>صنبور Solana</solanaLink>. للحصول على USDC التجريبي، استخدم <circleLink>صنبور Circle</circleLink>."
       }
-    }
+    },
+    "signInToSendHandle": "سجّل الدخول للإرسال إلى مقبض أو بريد إلكتروني",
+    "signInToSendHandleHint": "تسجيل دخول بالبريد أو الاجتماعي — إرسال عنوان المحفظة بلا حساب"
   },
   "MarketingPage": {
     "nav": {
@@ -553,5 +555,32 @@
     "endsToday": "ينتهي اليوم",
     "daysLeft": "متبقي {days} يوم",
     "backToRewards": "المكافآت"
+  },
+  "HomeV3": {
+    "hero": {
+      "eyebrow": "اسحب أموالك في أي مكان",
+      "headlineBefore": "أرسل مالاً إلى أي",
+      "headlineAfter": "أو بريد إلكتروني",
+      "headlineCashOut": "يستلمون بالطريقة التي تناسبهم.",
+      "support": "ادفع إلى محفظة بلا حساب، أو سجّل الدخول للإرسال إلى معرف — يستلمون عبر Venmo وCash App وRevolut وZelle وUSDC على Solana أو أي عملة مشفرة.",
+      "supportWithPaj": "ادفع إلى محفظة بلا حساب، أو سجّل الدخول للإرسال إلى معرف — يستلمون عبر Venmo وCash App وRevolut وZelle وPAJ نيرة وUSDC على Solana أو أي عملة مشفرة.",
+      "cashOutLabel": "يسحبون إلى",
+      "ctaStart": "ابدأ الإرسال مجاناً",
+      "ctaBusiness": "للأعمال",
+      "railVenmo": "Venmo",
+      "railCashApp": "Cash App",
+      "railRevolut": "Revolut",
+      "railZelle": "Zelle",
+      "railUsdc": "USDC",
+      "railAnyCrypto": "أي عملة مشفرة",
+      "railPaj": "PAJ Cash",
+      "railVenmoSub": "USD",
+      "railCashAppSub": "USD",
+      "railRevolutSub": "USD · EUR · GBP",
+      "railZelleSub": "إلى بنكهم",
+      "railUsdcSub": "على Solana",
+      "railAnyCryptoSub": "أكثر من 150 رمزاً",
+      "railPajSub": "بنك النيرة"
+    }
   }
 }

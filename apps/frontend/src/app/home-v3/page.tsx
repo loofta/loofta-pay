@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
-import HomeV3Content from "./HomeV3Content";
+import { redirect } from "next/navigation";
 
-// Draft homepage for review — not the live "/" yet (see ../home-v2/HomeV2Content.tsx, which
-// still serves "/"). Kept out of search results while it's being validated.
+// home-v3 is the live `/` homepage — keep this route as a stable alias.
 export const metadata: Metadata = {
   robots: {
     index: false,
@@ -11,5 +10,5 @@ export const metadata: Metadata = {
 };
 
 export default function Page() {
-  return <HomeV3Content />;
+  redirect("/");
 }

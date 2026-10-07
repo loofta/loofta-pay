@@ -180,7 +180,9 @@
         "question": "Saya di devnet — bagaimana cara mendapatkan SOL dan USDC uji coba?",
         "answer": "Dapatkan SOL devnet gratis dari <solanaLink>faucet Solana</solanaLink>. Untuk USDC devnet, gunakan <circleLink>faucet Circle</circleLink>."
       }
-    }
+    },
+    "signInToSendHandle": "Masuk untuk mengirim ke handle atau email",
+    "signInToSendHandleHint": "Login email atau sosial — kirim ke alamat wallet tanpa akun"
   },
   "MarketingPage": {
     "nav": {
@@ -553,5 +555,32 @@
     "endsToday": "Berakhir hari ini",
     "daysLeft": "{days}h tersisa",
     "backToRewards": "Hadiah"
+  },
+  "HomeV3": {
+    "hero": {
+      "eyebrow": "Cash out di mana saja",
+      "headlineBefore": "Kirim uang ke",
+      "headlineAfter": "atau email",
+      "headlineCashOut": "Mereka cairkan dengan cara mereka.",
+      "support": "Bayar ke wallet tanpa akun, atau masuk untuk kirim ke handle — mereka klaim ke Venmo, Cash App, Revolut, Zelle, USDC di Solana, atau kripto apa pun.",
+      "supportWithPaj": "Bayar ke wallet tanpa akun, atau masuk untuk kirim ke handle — mereka klaim ke Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC di Solana, atau kripto apa pun.",
+      "cashOutLabel": "Mereka cairkan ke",
+      "ctaStart": "Mulai kirim, gratis",
+      "ctaBusiness": "Untuk bisnis",
+      "railVenmo": "Venmo",
+      "railCashApp": "Cash App",
+      "railRevolut": "Revolut",
+      "railZelle": "Zelle",
+      "railUsdc": "USDC",
+      "railAnyCrypto": "Kripto apa pun",
+      "railPaj": "PAJ Cash",
+      "railVenmoSub": "USD",
+      "railCashAppSub": "USD",
+      "railRevolutSub": "USD · EUR · GBP",
+      "railZelleSub": "Ke bank mereka",
+      "railUsdcSub": "Di Solana",
+      "railAnyCryptoSub": "150+ token",
+      "railPajSub": "Bank naira"
+    }
   }
 }

@@ -16,26 +16,31 @@ import {
   Mail,
   ShieldCheck,
   Sparkles,
+  Wallet,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AnimatePresence, useReducedMotion } from "framer-motion";
-import { Turnstile } from "@marsidev/react-turnstile";
-import { TURNSTILE_SITE_KEY } from "@/lib/turnstile";
+import { useTranslations } from "next-intl";
 import { Footer } from "@/components/layout/Footer";
 import { AmountInput } from "@/components/AmountInput";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
 import { SOCIAL_PLATFORMS } from "@/lib/socialPlatforms";
-import { createClaimFromEmailGuest, createClaimFromSocialGuest, createClaimFromUsernameGuest } from "@/lib/createClaimGuest";
 import { createClaimFromEmail } from "@/lib/createClaimFromEmail";
 import { createClaimFromUsername } from "@/lib/createClaimFromUsername";
 import { createClaimFromSocial } from "@/lib/createClaimFromSocial";
+import { UNREGISTERED_ACCOUNT_FEE_USD } from "@/lib/unregisteredAccountFee";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
+import { isValidSolanaAddress } from "@/lib/refundAddresses";
+import { SolanaWalletConnectProvider } from "@/components/SolanaWalletConnect";
+import { DirectWalletPayPanel } from "@/components/app/DirectWalletPayPanel";
+import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
 import { useToast } from "@/components/ui/use-toast";
+import { PEER_PLATFORMS } from "@/lib/peerPlatforms";
 import {
   Icon3DArrowUser,
   Icon3DNumber,
@@ -43,10 +48,13 @@ import {
   Icon3DStar,
 } from "@/components/ui/icons3d";
 import { cmcLogoForSymbol } from "@/lib/tokenImages";
+import { totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
+
+const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
 
 // Same list + default (Twitter) as the platform picker on the real Send form
 // (app/app/page.tsx SOCIAL_PICKS) — Twitter and Loofta both route through
-// createClaimFromUsernameGuest, the rest through createClaimFromSocialGuest, see onSend below.
+// createClaimFromUsername; Discord/GitHub/Telegram through createClaimFromSocial.
 const GUEST_SOCIAL_PICKS: { id: SocialIconPlatform; name: string }[] = [
   { id: "loofta", name: "Loofta" },
   { id: "twitter", name: "Twitter" },
@@ -156,26 +164,46 @@ function Header() {
    (amount first, then recipient, then privacy — same static glow
    behind the card, same dividers), the only difference being a
    mode picker since this sends to an email OR a social handle,
-   not just one fomo.family username. Branches on auth state at
-   creation time, same as the main Send & Receive form's handleSend:
-   signed-in visitors create through the authenticated endpoints
-   (created_by correctly stamped to their account — required for
-   /c/[id]'s own isCreatorView-gated UI, e.g. Edit recipient, and to
-   avoid "Payment not found" firing for a signed-in creator viewing
-   their own just-created claim), everyone else through the guest
-   Turnstile-protected create-from-*-guest endpoints. No login
-   required to send either way — only changes which endpoint set is
-   used and how the claim gets attributed.
+   not just one fomo.family username. Handle/email requires Privy
+   login (same as /app); wallet-address pays stay guest via
+   DirectWalletPayPanel. Authenticated handle sends use the normal
+   create-claim endpoints so created_by is stamped for /c/[id].
    ===================================================== */
 
 const CARD_LABEL = `text-[13px] font-semibold uppercase tracking-[0.18em] ${INK_3}`;
 
-// Stable reference, not a fresh object literal on every render — see the same fix and comment on
-// TURNSTILE_OPTIONS in app/app/page.tsx (this form re-renders on every keystroke too, and a new
-// `options` object identity was silently resetting the widget's challenge each time).
-const TURNSTILE_OPTIONS = { appearance: "interaction-only" as const };
+/** Same Privy methods as /app — wallet login is not enabled (see AuthProvider). */
+const PRIVY_LOGIN_METHODS = ["email", "twitter", "discord", "github"] as const;
 
-type SendMode = "social" | "email";
+/** Top-level destination: handle/email (claim + $0.10, requires login) vs raw Solana wallet (guest OK). */
+type DestKind = "handle" | "wallet";
+/** Within handle mode — email vs social platform. */
+type HandleKind = "social" | "email";
+
+/**
+ * Privy social login can full-page redirect (not popup) in some browsers — same as /app's
+ * SEND_DRAFT_KEY. sessionStorage survives the reload so amount/recipient aren't wiped mid-login.
+ */
+const HOME_V3_SEND_DRAFT_KEY = "loofta.home-v3.send.formDraft";
+type HomeV3SendDraft = {
+  recipient: string;
+  amount: string;
+  destKind: DestKind;
+  handleKind: HandleKind;
+  socialPlatform: SocialIconPlatform;
+  isPrivateMode: boolean;
+  split: number;
+  delayMs: number;
+};
+function readHomeV3SendDraft(): HomeV3SendDraft | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(HOME_V3_SEND_DRAFT_KEY);
+    return raw ? (JSON.parse(raw) as HomeV3SendDraft) : null;
+  } catch {
+    return null;
+  }
+}
 
 // Same rotating-example-word treatment as /fomo's HandleToken (FomoDepositContent.tsx) — flips
 // through example handles so "@handle" in the headline reads as the product itself, not a
@@ -236,77 +264,103 @@ function HeroHandleWord() {
 function SendWidget() {
   const { toast } = useToast();
   const router = useRouter();
+  const t = useTranslations("HomePage");
   const { authenticated } = useAuth();
-  const { user, getAccessToken } = usePrivy();
+  const { user, getAccessToken, login: privyLogin } = usePrivy();
   // Own identifiers, for the self-send guard in onSend below — same check as the main Send form.
   const ownUsername = useAuthStore((s) => s.username ?? null);
   const ownLooUsername = useAuthStore((s) => s.looUsername ?? null);
   const ownTwitterUsername = useAuthStore((s) => s.twitterUsername ?? null);
   const ownEmail = useAuthStore((s) => s.email ?? null);
-  const [mode, setMode] = useState<SendMode>("social");
+  // Hush-style two-tab destination: handle/email (claim) vs wallet (direct). Handle kind picks
+  // email vs social inside the first tab. Draft restores after mount (not in useState init) so
+  // SSR/hydration stay in sync — Privy redirect logins still get the draft back via useEffect.
+  const [destKind, setDestKind] = useState<DestKind>("handle");
+  const [handleKind, setHandleKind] = useState<HandleKind>("social");
   const [recipient, setRecipient] = useState("");
   const [socialPlatform, setSocialPlatform] = useState<SocialIconPlatform>("twitter");
   const [amount, setAmount] = useState("50");
-  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  // Same privacy toggle + split/delay sliders as the Send & Receive form (app/app/page.tsx) —
-  // carried to /c/[id] via ?split=&delayMin= so the pay-time sliders there start from this
-  // choice instead of resetting, same as privacyQuery() there.
   const [isPrivateMode, setIsPrivateMode] = useState(false);
   const [split, setSplit] = useState(1);
   const [delayMs, setDelayMs] = useState(0);
   const [privacyInfoOpen, setPrivacyInfoOpen] = useState(false);
+  const [draftHydrated, setDraftHydrated] = useState(false);
 
   const trimmedRecipient = recipient.trim().replace(/^@+/, "");
   const amountNum = Number(amount);
-  const canSend = trimmedRecipient.length > 0 && amountNum >= 5;
+  const walletAddress = destKind === "wallet" ? recipient.trim() : "";
+  const walletAddressValid = destKind === "wallet" && isValidSolanaAddress(walletAddress);
+  const isHandleDest = destKind === "handle";
+  const canSend = isHandleDest && trimmedRecipient.length > 0 && amountNum >= 5;
+  // Flat claim fee only for handle/email — wallet-to-wallet skips it.
+  const platformFeeUsd = isHandleDest ? UNREGISTERED_ACCOUNT_FEE_USD : 0;
+  const payTotal = isPrivateMode
+    ? totalWithMagicBlockPrivateFee(amountNum) + platformFeeUsd
+    : amountNum + platformFeeUsd;
+
+  // Restore draft after mount, then persist on further edits (skip the first paint write so we
+  // don't clobber a saved draft with defaults before restore runs).
+  useEffect(() => {
+    const d = readHomeV3SendDraft();
+    if (d) {
+      setDestKind(d.destKind);
+      setHandleKind(d.handleKind);
+      setRecipient(d.recipient);
+      setSocialPlatform(d.socialPlatform);
+      setAmount(d.amount);
+      setIsPrivateMode(d.isPrivateMode);
+      setSplit(d.split);
+      setDelayMs(d.delayMs);
+    }
+    setDraftHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!draftHydrated) return;
+    const next: HomeV3SendDraft = {
+      recipient,
+      amount,
+      destKind,
+      handleKind,
+      socialPlatform,
+      isPrivateMode,
+      split,
+      delayMs,
+    };
+    sessionStorage.setItem(HOME_V3_SEND_DRAFT_KEY, JSON.stringify(next));
+  }, [draftHydrated, recipient, amount, destKind, handleKind, socialPlatform, isPrivateMode, split, delayMs]);
 
   const onSend = async () => {
     if (!canSend || sending) return;
-    // Self-send guard — see the matching comment in app/app/page.tsx's handleSend.
-    if (authenticated) {
-      const myIdentifiers = [ownUsername, ownLooUsername, ownTwitterUsername, ownEmail]
-        .filter((v): v is string => !!v)
-        .map((v) => v.replace(/^@/, "").replace(/^loo-/i, "").toLowerCase().trim());
-      const candidateRecipient = trimmedRecipient.replace(/^loo-/i, "").toLowerCase().trim();
-      if (candidateRecipient && myIdentifiers.includes(candidateRecipient)) {
-        toast({ variant: "destructive", title: "Can't send to yourself", description: "Pick a different recipient for this payment." });
-        return;
-      }
+    // Handle/email requires Privy login; wallet-address pays stay guest via DirectWalletPayPanel.
+    if (!authenticated) {
+      privyLogin({ loginMethods: [...PRIVY_LOGIN_METHODS], disableSignup: false });
+      return;
     }
-    if (!authenticated && !turnstileToken) {
-      toast({ variant: "destructive", title: "One sec", description: "Still verifying you're not a bot — try again in a moment." });
+    const myIdentifiers = [ownUsername, ownLooUsername, ownTwitterUsername, ownEmail]
+      .filter((v): v is string => !!v)
+      .map((v) => v.replace(/^@/, "").replace(/^loo-/i, "").toLowerCase().trim());
+    const candidateRecipient = trimmedRecipient.replace(/^loo-/i, "").toLowerCase().trim();
+    if (candidateRecipient && myIdentifiers.includes(candidateRecipient)) {
+      toast({ variant: "destructive", title: "Can't send to yourself", description: "Pick a different recipient for this payment." });
       return;
     }
     setSending(true);
     try {
-      const isTwitter = mode === "social" && socialPlatform === "twitter";
-      const isLoofta = mode === "social" && socialPlatform === "loofta";
-      let created: { id: string };
-      if (authenticated) {
-        // Signed-in creation — created_by gets correctly stamped to this account (see file header
-        // comment), unlike the guest path below.
-        const accessToken = await getAccessToken();
-        created = mode === "email"
-          ? await createClaimFromEmail({ email: trimmedRecipient.toLowerCase(), amount, userId: user?.id, accessToken, isPrivate: isPrivateMode })
-          : isTwitter
-            ? await createClaimFromUsername({ username: trimmedRecipient, amount, userId: user?.id, accessToken, isPrivate: isPrivateMode, treatUnregisteredAsTwitter: true })
-            : isLoofta
-              ? await createClaimFromUsername({ username: `loo-${trimmedRecipient.replace(/^loo-/i, "").toLowerCase()}`, amount, userId: user?.id, accessToken, isPrivate: isPrivateMode })
-              : await createClaimFromSocial({ platform: socialPlatform as "discord" | "github" | "telegram", handle: trimmedRecipient, amount, userId: user?.id, accessToken, isPrivate: isPrivateMode });
-      } else {
-        created = mode === "email"
-          ? await createClaimFromEmailGuest({ email: trimmedRecipient.toLowerCase(), amount, isPrivate: isPrivateMode, turnstileToken: turnstileToken! })
-          : isTwitter
-            ? await createClaimFromUsernameGuest({ username: trimmedRecipient, amount, isPrivate: isPrivateMode, treatUnregisteredAsTwitter: true, turnstileToken: turnstileToken! })
-            : isLoofta
-              ? await createClaimFromUsernameGuest({ username: `loo-${trimmedRecipient.replace(/^loo-/i, "").toLowerCase()}`, amount, isPrivate: isPrivateMode, turnstileToken: turnstileToken! })
-              : await createClaimFromSocialGuest({ platform: socialPlatform as "discord" | "github" | "telegram", handle: trimmedRecipient, amount, isPrivate: isPrivateMode, turnstileToken: turnstileToken! });
-      }
+      const isTwitter = handleKind === "social" && socialPlatform === "twitter";
+      const isLoofta = handleKind === "social" && socialPlatform === "loofta";
+      const privacyChoice = isPrivateMode ? { split, maxDelayMs: delayMs } : {};
+      const accessToken = await getAccessToken();
+      const created = handleKind === "email"
+        ? await createClaimFromEmail({ email: trimmedRecipient.toLowerCase(), amount, userId: user?.id, accessToken, isPrivate: isPrivateMode, ...privacyChoice })
+        : isTwitter
+          ? await createClaimFromUsername({ username: trimmedRecipient, amount, userId: user?.id, accessToken, isPrivate: isPrivateMode, treatUnregisteredAsTwitter: true, ...privacyChoice })
+          : isLoofta
+            ? await createClaimFromUsername({ username: `loo-${trimmedRecipient.replace(/^loo-/i, "").toLowerCase()}`, amount, userId: user?.id, accessToken, isPrivate: isPrivateMode, ...privacyChoice })
+            : await createClaimFromSocial({ platform: socialPlatform as "discord" | "github" | "telegram", handle: trimmedRecipient, amount, userId: user?.id, accessToken, isPrivate: isPrivateMode, ...privacyChoice });
+      sessionStorage.removeItem(HOME_V3_SEND_DRAFT_KEY);
       const query = isPrivateMode ? `?split=${split}&delayMs=${delayMs}` : "";
-      // Client-side transition, not window.location.href — a full page reload forces /c/[id] (a
-      // large route) to cold-compile in dev, which made this look stuck on "Sending…" for
-      // several seconds even though the claim had already been created successfully.
       router.push(`/c/${created.id}${query}`);
     } catch (e: unknown) {
       setSending(false);
@@ -318,11 +372,30 @@ function SendWidget() {
   const reduceMotion = useReducedMotion();
 
   return (
-    <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.12 }} className="relative w-full max-w-[480px]">
-      {/* Static glow, not an animated sheen — same treatment as /fomo's PayCard. */}
-      <div className="pointer-events-none absolute -inset-6 rounded-[2.5rem] bg-[#FF4A26]/[0.08] blur-3xl" aria-hidden />
-      <div className="relative rounded-[1.75rem] border border-white/10 bg-[#16161a] shadow-[0_30px_80px_-30px_rgba(0,0,0,0.7)] overflow-hidden">
-        {/* One-time sheen sweep on load, not a looping animation — plays once and stops. */}
+    <motion.div
+      {...fadeUp}
+      transition={{ ...fadeUp.transition, delay: 0.12 }}
+      className="relative w-full max-w-[480px] [perspective:1400px]"
+    >
+      {/* Soft brand bloom + depth plane behind the send card */}
+      <div className="pointer-events-none absolute -inset-8 rounded-[2.75rem] bg-[#FF4A26]/[0.12] blur-3xl" aria-hidden />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -bottom-10 left-1/2 h-16 w-[78%] -translate-x-1/2 rounded-[100%] bg-black/55 blur-2xl"
+      />
+      <motion.div
+        className="relative overflow-hidden rounded-[1.75rem] bg-[#16161a] shadow-[0_40px_90px_-28px_rgba(0,0,0,0.85),0_0_0_1px_rgba(255,255,255,0.06)_inset] will-change-transform [transform-style:preserve-3d]"
+        initial={reduceMotion ? false : { rotateY: -10, rotateX: 6, y: 18, opacity: 0 }}
+        whileInView={reduceMotion ? undefined : { rotateY: -6, rotateX: 3, y: 0, opacity: 1 }}
+        viewport={{ once: true, margin: "-40px" }}
+        transition={{ duration: 1.05, ease: easeBrand, delay: 0.08 }}
+        whileHover={reduceMotion ? undefined : { rotateY: -2, rotateX: 1, y: -4 }}
+      >
+        {/* Top sheen — product-like plastic edge */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-px bg-gradient-to-r from-transparent via-white/35 to-transparent"
+        />
         {!reduceMotion && (
           <motion.div
             aria-hidden
@@ -334,11 +407,10 @@ function SendWidget() {
           />
         )}
 
-        {/* Amount — the hero of the card, same as /fomo's PayCard. */}
         <div className="relative z-[1] px-6 sm:px-7 pt-6 pb-7">
           <div className="flex items-center justify-between mb-6">
             <span className={CARD_LABEL}>Amount</span>
-            <span className={`text-base ${INK_3}`}>on Solana</span>
+            <span className={`text-base ${INK_3}`}>USDC · Solana</span>
           </div>
           <AmountInput
             id="hero-amount"
@@ -359,32 +431,58 @@ function SendWidget() {
 
         <div className="h-px bg-white/[0.07]" aria-hidden />
 
-        {/* To — mode picker is the one real difference from /fomo's single fomo-handle field. */}
         <div className="relative z-[1] px-6 sm:px-7 py-6">
           <div className="flex items-center justify-between mb-3">
             <span className={CARD_LABEL}>To</span>
           </div>
-          <div className="flex gap-1.5 rounded-2xl bg-white/[0.06] p-1.5 mb-3">
+          {/* Hush-inspired pill tabs: Handle or email | Wallet */}
+          <div className="flex gap-1 rounded-full bg-[#050505] p-1 mb-3">
             {([
-              { k: "social" as const, label: "Social handle", icon: <AtSign className="h-4 w-4" /> },
-              { k: "email" as const, label: "Email", icon: <Mail className="h-4 w-4" /> },
+              { k: "handle" as const, label: "Handle or email" },
+              { k: "wallet" as const, label: "Wallet address" },
             ]).map((o) => (
               <button
                 key={o.k}
                 type="button"
-                onClick={() => { setMode(o.k); setRecipient(""); }}
-                className={`flex flex-1 items-center justify-center gap-2 rounded-xl py-2.5 font-grotesk text-sm font-semibold transition-all duration-200 ${mode === o.k
-                  ? `bg-white/[0.14] ${INK} shadow-[0_2px_8px_rgba(0,0,0,0.4)]`
+                onClick={() => { setDestKind(o.k); setRecipient(""); }}
+                className={`flex-1 rounded-full py-2.5 font-grotesk text-sm font-semibold transition-all duration-200 ${destKind === o.k
+                  ? "bg-[#F2F2F2] text-[#050505]"
                   : `${INK_3} hover:${INK_2}`
                   }`}
               >
-                {o.icon}
                 {o.label}
               </button>
             ))}
           </div>
+
+          {isHandleDest && (
+            <div className="flex gap-1.5 mb-3">
+              {([
+                { k: "social" as const, label: "Social", icon: <AtSign className="h-3.5 w-3.5" /> },
+                { k: "email" as const, label: "Email", icon: <Mail className="h-3.5 w-3.5" /> },
+              ]).map((o) => (
+                <button
+                  key={o.k}
+                  type="button"
+                  onClick={() => { setHandleKind(o.k); setRecipient(""); }}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${handleKind === o.k
+                    ? "bg-white/[0.14] text-white"
+                    : `${INK_3} hover:${INK_2} hover:bg-white/[0.06]`
+                    }`}
+                >
+                  {o.icon}
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="relative">
-            {mode === "email" ? (
+            {destKind === "wallet" ? (
+              <span className={`absolute left-4 top-1/2 -translate-y-1/2 ${INK_3}`} aria-hidden>
+                <Wallet className="h-5 w-5" />
+              </span>
+            ) : handleKind === "email" ? (
               <span className={`absolute left-4 top-1/2 -translate-y-1/2 ${INK_3}`} aria-hidden>
                 <Mail className="h-5 w-5" />
               </span>
@@ -419,20 +517,34 @@ function SendWidget() {
               type="text"
               value={recipient}
               onChange={(e) => setRecipient(e.target.value.replace(/^@+/, ""))}
-              onKeyDown={(e) => { if (e.key === "Enter") onSend(); }}
-              placeholder={mode === "email" ? "satoshi@gmail.com" : socialPlatform === "loofta" ? "Loofta username" : "satoshi"}
+              onKeyDown={(e) => { if (e.key === "Enter" && isHandleDest) onSend(); }}
+              placeholder={
+                destKind === "wallet"
+                  ? "Solana wallet address"
+                  : handleKind === "email"
+                    ? "satoshi@gmail.com"
+                    : socialPlatform === "loofta"
+                      ? "Loofta username"
+                      : "@handle"
+              }
               autoComplete="off"
               autoCapitalize="none"
               spellCheck={false}
-              className={`w-full h-14 rounded-2xl bg-white/5 border ${BORDER_LINE} ${INK} placeholder:text-[#7D7B76] pr-4 focus:border-white/30 transition-colors ${mode === "email" ? "pl-12" : "pl-16"}`}
+              className={`w-full h-14 rounded-2xl bg-white/5 border ${BORDER_LINE} ${INK} placeholder:text-[#7D7B76] pr-4 focus:border-white/30 transition-colors ${destKind === "wallet" || handleKind === "email" ? "pl-12" : "pl-16"}`}
               style={{ fontSize: "20px" }}
             />
           </div>
+          {isHandleDest && (
+            <p className={`mt-3 text-sm ${INK_3}`}>
+              {authenticated
+                ? `+$${UNREGISTERED_ACCOUNT_FEE_USD.toFixed(2)} claim fee · they don't need an account yet`
+                : t("signInToSendHandle")}
+            </p>
+          )}
         </div>
 
         <div className="h-px bg-white/[0.07]" aria-hidden />
 
-        {/* Privacy + pay */}
         <div className="relative z-[1] px-6 sm:px-7 pt-5 pb-6 space-y-4">
           <IncognitoModeToggle checked={isPrivateMode} onCheckedChange={setIsPrivateMode} onLabel="Send privately" offLabel="Send privately" className="[&>span]:text-base" />
 
@@ -461,39 +573,191 @@ function SendWidget() {
             )}
           </AnimatePresence>
 
-          <button
-            type="button"
-            onClick={onSend}
-            disabled={!canSend || sending}
-            className={`flex w-full items-center justify-center gap-2.5 rounded-full py-[18px] font-display text-lg font-medium text-white transition-all duration-300 disabled:opacity-50 ${BRAND_GRADIENT} shadow-[0_14px_34px_-12px_rgba(255,19,1,0.6)] hover:-translate-y-0.5 disabled:hover:translate-y-0`}
-          >
-            {sending ? (
-              <><Loader2 className="h-5 w-5 animate-spin" /> Sending…</>
-            ) : (
-              <>Send it <ArrowRight className="h-5 w-5" strokeWidth={2} /></>
-            )}
-          </button>
+          {destKind === "wallet" ? (
+            <SolanaWalletConnectProvider rpcUrl={getSolanaHttpRpc()}>
+              <DirectWalletPayPanel
+                amountUsd={amountNum}
+                recipientAddress={walletAddressValid ? walletAddress : null}
+                recipientName={walletAddress ? `${walletAddress.slice(0, 4)}…${walletAddress.slice(-4)}` : "this wallet"}
+                blocker={
+                  amountNum < 5
+                    ? "Enter an amount of at least $5"
+                    : !walletAddress
+                      ? "Enter a wallet address"
+                      : !walletAddressValid
+                        ? "Not a valid Solana address"
+                        : null
+                }
+                isPrivate={isPrivateMode}
+                split={split}
+                maxDelayMs={delayMs}
+                onReset={() => {
+                  setAmount("");
+                  setRecipient("");
+                }}
+              />
+            </SolanaWalletConnectProvider>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onSend}
+                disabled={!canSend || sending}
+                className={`flex w-full items-center justify-center gap-2.5 rounded-full py-[18px] font-display text-lg font-medium text-white transition-all duration-300 disabled:opacity-50 ${BRAND_GRADIENT} shadow-[0_14px_34px_-12px_rgba(255,19,1,0.6)] hover:-translate-y-0.5 disabled:hover:translate-y-0`}
+              >
+                {sending ? (
+                  <><Loader2 className="h-5 w-5 animate-spin" /> Preparing…</>
+                ) : authenticated ? (
+                  <>
+                    {isPrivateMode ? `Pay $${payTotal.toFixed(2)} privately` : `Continue to pay $${payTotal.toFixed(2)}`}
+                    <ArrowRight className="h-5 w-5" strokeWidth={2} />
+                  </>
+                ) : (
+                  <>{t("signInToContinue")} <ArrowRight className="h-5 w-5" strokeWidth={2} /></>
+                )}
+              </button>
 
-          <div className={`flex items-center justify-center gap-2 font-grotesk text-base ${INK_3}`}>
-            <Lock className="h-3.5 w-3.5" />
-            They don&apos;t need an account yet
-          </div>
+              <div className={`flex items-center justify-center gap-2 font-grotesk text-base ${INK_3}`}>
+                <Lock className="h-3.5 w-3.5" />
+                {authenticated
+                  ? "They don't need an account yet"
+                  : t("signInToSendHandleHint")}
+              </div>
+            </>
+          )}
         </div>
-      </div>
+      </motion.div>
+    </motion.div>
+  );
+}
 
-      {!authenticated && (
-        <Turnstile
-          siteKey={TURNSTILE_SITE_KEY}
-          onSuccess={setTurnstileToken}
-          onExpire={() => setTurnstileToken(null)}
-          onError={(code) => {
-            console.error("[Turnstile] error:", code);
-            toast({ variant: "destructive", title: "Bot check failed", description: `Turnstile error: ${code}` });
-          }}
-          options={TURNSTILE_OPTIONS}
-          className="fixed bottom-4 right-4 z-50"
-        />
-      )}
+/* =====================================================
+   HERO CASH-OUT SIGNAL — Hush-style rail cards in first viewport
+   ===================================================== */
+
+type HeroRail = {
+  id: string;
+  name: string;
+  sub: string;
+  logo?: string;
+  glow: string;
+  href: string;
+};
+
+function HeroCashOutRails() {
+  const t = useTranslations("HomeV3.hero");
+  const reduceMotion = useReducedMotion();
+
+  const rails: HeroRail[] = [
+    {
+      id: "venmo",
+      name: t("railVenmo"),
+      sub: t("railVenmoSub"),
+      logo: "/images/platforms/venmo.png",
+      glow: "rgba(0,140,255,0.45)",
+      href: "#claim",
+    },
+    {
+      id: "cashapp",
+      name: t("railCashApp"),
+      sub: t("railCashAppSub"),
+      logo: "/images/platforms/cashapp.webp",
+      glow: "rgba(0,200,80,0.4)",
+      href: "#claim",
+    },
+    {
+      id: "revolut",
+      name: t("railRevolut"),
+      sub: t("railRevolutSub"),
+      logo: "/images/platforms/revolut.png",
+      glow: "rgba(255,255,255,0.28)",
+      href: "#claim",
+    },
+    {
+      id: "zelle",
+      name: t("railZelle"),
+      sub: t("railZelleSub"),
+      logo: "/images/platforms/zelle.png",
+      glow: "rgba(108,70,255,0.4)",
+      href: "#claim",
+    },
+    {
+      id: "usdc",
+      name: t("railUsdc"),
+      sub: t("railUsdcSub"),
+      logo: cmcLogoForSymbol("USDC") ?? undefined,
+      glow: "rgba(39,117,202,0.45)",
+      href: "#claim",
+    },
+    {
+      id: "any",
+      name: t("railAnyCrypto"),
+      sub: t("railAnyCryptoSub"),
+      glow: "rgba(234,179,8,0.4)",
+      href: "#claim",
+    },
+    ...(PAJ_CASH_ENABLED
+      ? [{
+          id: "paj",
+          name: t("railPaj"),
+          sub: t("railPajSub"),
+          logo: "/images/icons/paj-cash-logo.svg",
+          glow: "rgba(255,106,0,0.4)",
+          href: "#claim",
+        } satisfies HeroRail]
+      : []),
+  ];
+
+  return (
+    <motion.div
+      {...fadeUp}
+      transition={{ ...fadeUp.transition, delay: 0.12 }}
+      className="w-full"
+    >
+      <p className={`mb-3 font-grotesk text-sm font-semibold uppercase tracking-[0.18em] ${INK_3}`}>
+        {t("cashOutLabel")}
+      </p>
+      <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4">
+        {rails.map((rail, i) => (
+          <motion.a
+            key={rail.id}
+            href={rail.href}
+            initial={reduceMotion ? false : { opacity: 0, y: 16, rotateX: 12 }}
+            whileInView={reduceMotion ? undefined : { opacity: 1, y: 0, rotateX: 0 }}
+            viewport={{ once: true, margin: "-20px" }}
+            transition={{ duration: 0.55, ease: easeBrand, delay: 0.14 + i * 0.045 }}
+            whileHover={reduceMotion ? undefined : { y: -4, rotateX: -4 }}
+            className="group relative flex flex-col items-center gap-2.5 rounded-2xl bg-white/[0.03] px-2.5 py-3.5 [transform-style:preserve-3d] transition-colors hover:bg-white/[0.06] sm:px-3 sm:py-4"
+            style={{
+              boxShadow: `0 22px 48px -28px ${rail.glow}`,
+            }}
+          >
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-x-3 top-2 h-10 rounded-full opacity-70 blur-xl transition-opacity group-hover:opacity-100"
+              style={{ background: rail.glow }}
+            />
+            <span className="relative flex h-11 w-11 items-center justify-center rounded-2xl bg-[#0B0B0F]/80 shadow-[0_10px_24px_-12px_rgba(0,0,0,0.8)] [transform:translateZ(18px)] sm:h-12 sm:w-12">
+              {rail.logo ? (
+                <Image
+                  src={rail.logo}
+                  alt=""
+                  width={28}
+                  height={28}
+                  className="h-7 w-7 rounded-lg object-contain"
+                  unoptimized
+                />
+              ) : (
+                <Sparkles className="h-6 w-6 text-[#EAB308]" aria-hidden />
+              )}
+            </span>
+            <span className="relative text-center">
+              <span className={`block font-display text-sm font-medium leading-tight ${INK}`}>{rail.name}</span>
+              <span className={`mt-0.5 block font-grotesk text-sm leading-tight ${INK_3}`}>{rail.sub}</span>
+            </span>
+          </motion.a>
+        ))}
+      </div>
     </motion.div>
   );
 }
@@ -503,25 +767,40 @@ function SendWidget() {
    ===================================================== */
 
 function Hero() {
+  const t = useTranslations("HomeV3.hero");
+
   return (
-    <section className="relative overflow-hidden px-6 pb-24 pt-20 md:px-10 md:pb-32 md:pt-28">
+    <section className="relative overflow-hidden px-5 pb-20 pt-12 md:px-10 md:pb-32 md:pt-24">
       <div
         aria-hidden
         className="pointer-events-none absolute left-1/2 top-[-140px] h-[620px] w-[1100px] -translate-x-1/2"
         style={{
           background:
-            "radial-gradient(ellipse at center, rgba(255,106,0,0.14), rgba(234,179,8,0.06) 44%, transparent 66%)",
+            "radial-gradient(ellipse at center, rgba(255,106,0,0.16), rgba(234,179,8,0.07) 44%, transparent 66%)",
         }}
+      />
+      {/* Secondary atmosphere — rim light so the send card reads as a product, not a flat panel */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute right-[-8%] top-[12%] h-[420px] w-[420px] rounded-full opacity-40 blur-3xl"
+        style={{ background: "radial-gradient(circle, rgba(255,74,38,0.18), transparent 70%)" }}
       />
 
       {/* items-start, not items-center — the right column's height changes when the privacy
           sliders expand, and items-center would re-center (visibly drag down) the left text
           every time that happens. Pinning both columns to the top keeps the headline still. */}
-      <div className="relative z-[2] mx-auto grid max-w-[1320px] grid-cols-1 items-start gap-10 lg:grid-cols-[1fr_1.05fr] lg:gap-12">
-        <div className="lg:pt-6">
-          <div className="mb-6">
-            <h1 className={`m-0 font-display text-[clamp(34px,3.8vw,54px)] font-medium leading-[1.15] tracking-[-0.03em] ${INK}`}>
-              {revealWords("Send money to any")}
+      <div className="relative z-[2] mx-auto grid max-w-[1320px] grid-cols-1 items-start gap-8 lg:grid-cols-[1fr_1.05fr] lg:gap-12">
+        <div className="lg:pt-4">
+          <motion.p
+            {...fadeUp}
+            className="mb-3 font-grotesk text-sm font-semibold uppercase tracking-[0.22em] text-[#FF6A00]"
+          >
+            {t("eyebrow")}
+          </motion.p>
+
+          <div className="mb-4">
+            <h1 className={`m-0 font-display text-[clamp(30px,7.2vw,54px)] font-medium leading-[1.1] tracking-[-0.03em] ${INK}`}>
+              {revealWords(t("headlineBefore"))}
               <br />
               <motion.span
                 className="inline-block will-change-[transform,filter]"
@@ -532,41 +811,52 @@ function Hero() {
               >
                 <HeroHandleWord />
               </motion.span>{" "}
-              {revealWords("or email", { delayOffset: 0.35 })}
+              {revealWords(t("headlineAfter"), { delayOffset: 0.35 })}
             </h1>
+            <motion.p
+              {...fadeUp}
+              transition={{ ...fadeUp.transition, delay: 0.06 }}
+              className={`mt-2.5 font-display text-[clamp(22px,5vw,36px)] font-medium leading-[1.15] tracking-[-0.02em] ${INK_2}`}
+            >
+              {t("headlineCashOut")}
+            </motion.p>
+          </div>
+
+          {/* Rails before long copy so cash-out logos land in the first mobile viewport */}
+          <div className="mb-5 max-w-[640px]">
+            <HeroCashOutRails />
           </div>
 
           <motion.p
             {...fadeUp}
-            transition={{ ...fadeUp.transition, delay: 0.08 }}
-            className={`mb-9 max-w-[540px] font-grotesk text-[clamp(18px,1.8vw,20px)] font-normal leading-[1.5] ${INK_2}`}
+            transition={{ ...fadeUp.transition, delay: 0.1 }}
+            className={`mb-6 max-w-[540px] font-grotesk text-[clamp(16px,1.7vw,19px)] font-normal leading-[1.5] ${INK_2}`}
           >
-            Just type an email address or social handle and send, they claim it whenever
-            they&apos;re ready, in 150+ tokens or straight to their bank.
+            {PAJ_CASH_ENABLED ? t("supportWithPaj") : t("support")}
           </motion.p>
 
           <motion.div
             {...fadeUp}
             transition={{ ...fadeUp.transition, delay: 0.16 }}
-            className="mb-9 flex flex-wrap gap-4"
+            className="flex flex-wrap gap-3 sm:gap-4"
           >
-            <Link
-              href={APP_URL}
+            <a
+              href="#hero-recipient"
               className={`inline-flex items-center gap-2 rounded-full px-5 py-3 font-display text-base font-medium text-white shadow-[0_10px_24px_-10px_rgba(255,19,1,0.6)] transition-transform duration-200 hover:-translate-y-0.5 ${BRAND_GRADIENT}`}
             >
-              Start sending, it&apos;s free
+              {t("ctaStart")}
               <ArrowRight className="h-4 w-4" strokeWidth={2} />
-            </Link>
+            </a>
             <a
               href="/partners"
               className={`inline-flex items-center gap-2 rounded-full border-[1.5px] ${BORDER_LINE} px-5 py-3 font-display text-base font-medium ${INK} transition-colors duration-200 hover:border-white/40`}
             >
-              For business
+              {t("ctaBusiness")}
             </a>
           </motion.div>
         </div>
 
-        <div className="flex justify-center lg:justify-start">
+        <div className="flex justify-center lg:justify-start lg:pt-2">
           <SendWidget />
         </div>
       </div>
@@ -611,7 +901,9 @@ function ProofStrip() {
 }
 
 /* =====================================================
-   CLAIM — 150+ tokens + bank cash-out
+   CLAIM — crypto (USDC / any) vs cash (Peer + PAJ)
+   Mirrors /c/[id] + BalanceModal withdraw rails so the
+   marketing page isn't a weaker demo of claim options.
    ===================================================== */
 
 const MARQUEE_TOKENS: { symbol: string; name: string }[] = [
@@ -627,10 +919,14 @@ const MARQUEE_TOKENS: { symbol: string; name: string }[] = [
   { symbol: "DOGE", name: "Dogecoin" },
 ];
 
+const PEER_CLAIM_PLATFORMS = PEER_PLATFORMS.filter((p) =>
+  ["venmo", "cashapp", "revolut", "zelle"].includes(p.id),
+);
+
 function TokenPill({ symbol }: { symbol: string }) {
   const logo = cmcLogoForSymbol(symbol);
   return (
-    <span className={`flex flex-shrink-0 items-center gap-3 rounded-full border ${BORDER_LINE} ${BG_PAPER_2} py-3.5 pl-3.5 pr-5`}>
+    <span className={`flex flex-shrink-0 items-center gap-3 rounded-full ${BG_PAPER_2} py-3.5 pl-3.5 pr-5 shadow-[0_12px_32px_-18px_rgba(0,0,0,0.7)]`}>
       {logo && (
         <Image src={logo} alt={symbol} width={34} height={34} className="h-[34px] w-[34px] rounded-full" />
       )}
@@ -662,52 +958,108 @@ function ClaimSection() {
             Claim, your way
           </span>
           <h2 className={`mt-[18px] font-display text-[clamp(40px,5.4vw,72px)] font-medium leading-[1.02] tracking-[-0.035em] ${INK}`}>
-            {revealWords("They receive it however")}
+            {revealWords("Crypto or cash —")}
             <br />
-            {revealWords("they", { delayOffset: 0.2 })}{" "}
-            <span className="italic text-[#7D7B76]">{revealWords("actually want it.", { delayOffset: 0.24 })}</span>
+            {revealWords("their", { delayOffset: 0.2 })}{" "}
+            <span className="italic text-[#7D7B76]">{revealWords("call.", { delayOffset: 0.24 })}</span>
           </h2>
           <p className={`mt-[22px] font-grotesk text-[clamp(18px,2vw,22px)] font-normal leading-[1.55] ${INK_2}`}>
-            One link. The recipient picks the payout — hold it in any of 150+ tokens, or send it
-            straight to a bank account in local currency. Loofta handles the swap and the rails.
+            {`Same choice as in the app: claim in USDC or any crypto, or cash out via Peer (Venmo, Cash App, Revolut, Zelle)${PAJ_CASH_ENABLED ? " — plus PAJ Naira when eligible" : ""}.`}
           </p>
         </motion.div>
 
-        <div className="grid grid-cols-1 gap-6">
-          <motion.div {...fadeUp} className={`rounded-[28px] border ${BORDER_LINE} ${BG_PAPER_2} p-10`}>
-            <div className="flex items-baseline gap-3">
-              <span className={`font-display text-[clamp(48px,8vw,88px)] font-medium tracking-[-0.03em] ${BRAND_GRADIENT} bg-clip-text text-transparent`}>150+</span>
-              <span className={`font-display text-2xl font-medium ${INK}`}>supported tokens</span>
-            </div>
-            <p className={`mt-2 font-grotesk text-lg ${INK_2}`}>
-              USDC, SOL, ETH, BTC, and every major asset across Solana, Base, Arbitrum, Ethereum and more.
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* Crypto — mirrors /c/[id] "Claim in crypto / USDC" + "Any crypto" */}
+          <motion.div {...fadeUp} className={`rounded-[28px] ${BG_PAPER_2} p-8 sm:p-10 shadow-[0_30px_70px_-36px_rgba(0,0,0,0.75)]`}>
+            <span className="font-grotesk text-sm font-semibold uppercase tracking-[0.18em] text-[#EAB308]">
+              Crypto
+            </span>
+            <h3 className={`mt-3 font-display text-[clamp(28px,3.2vw,34px)] font-medium leading-[1.05] tracking-[-0.02em] ${INK}`}>
+              USDC or any token
+            </h3>
+            <ul className="mt-5 flex flex-col gap-4">
+              <li className="flex items-start gap-3 px-1 py-1">
+                <Wallet className="mt-0.5 h-5 w-5 shrink-0 text-[#EAB308]" />
+                <span>
+                  <span className={`block font-display text-lg font-medium ${INK}`}>USDC on Solana</span>
+                  <span className={`block font-grotesk text-base ${INK_2}`}>Hold it in your Loofta wallet</span>
+                </span>
+              </li>
+              <li className="flex items-start gap-3 px-1 py-1">
+                <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-[#EAB308]" />
+                <span>
+                  <span className={`block font-display text-lg font-medium ${INK}`}>Any crypto</span>
+                  <span className={`block font-grotesk text-base ${INK_2}`}>Any chain, via NEAR Intents</span>
+                </span>
+              </li>
+            </ul>
+            <p className={`mt-5 font-grotesk text-base ${INK_2}`}>
+              150+ tokens across Solana, Base, Arbitrum, Ethereum and more.
             </p>
             <TokenMarquee />
+            <Link
+              href={`${APP_URL}?balance=withdraw&method=crypto`}
+              className={`mt-7 inline-flex items-center gap-2 rounded-full border ${BORDER_LINE} px-5 py-3 font-display text-base font-medium ${INK} transition-colors hover:border-white/40`}
+            >
+              Open crypto withdraw
+              <ArrowRight className="h-4 w-4" strokeWidth={2} />
+            </Link>
           </motion.div>
 
+          {/* Cash — mirrors /c/[id] Peer + optional PAJ */}
           <motion.div
             {...fadeUp}
             transition={{ ...fadeUp.transition, delay: 0.08 }}
-            className={`rounded-[28px] border ${BORDER_LINE} ${BG_PAPER_2} p-10`}
+            className={`rounded-[28px] ${BG_PAPER_2} p-8 sm:p-10 shadow-[0_30px_70px_-36px_rgba(0,0,0,0.75)]`}
           >
-            <h3 className={`font-display text-[34px] font-medium leading-[1.02] tracking-[-0.02em] ${INK}`}>
-              Straight to the bank
+            <span className="font-grotesk text-sm font-semibold uppercase tracking-[0.18em] text-[#FF6A00]">
+              Cash
+            </span>
+            <h3 className={`mt-3 font-display text-[clamp(28px,3.2vw,34px)] font-medium leading-[1.05] tracking-[-0.02em] ${INK}`}>
+              Peer cash out
             </h3>
-            <p className={`mt-3.5 font-grotesk text-lg leading-[1.55] ${INK_2}`}>
-              Cash out to a real bank account in USD, EUR, GBP, NGN or JPY, no exchange, no manual
-              off-ramp. Money lands where they already spend it.
+            <p className={`mt-3 font-grotesk text-lg leading-[1.55] ${INK_2}`}>
+              Venmo · Cash App · Revolut · Zelle — claim to wallet, then cash out where they already spend.
             </p>
-            <div className="mt-7 flex flex-wrap gap-3.5">
-              {["USD", "EUR", "GBP", "NGN"].map((cur) => (
-                <span
-                  key={cur}
-                  className={`inline-flex items-center gap-2.5 rounded-2xl border ${BORDER_LINE} bg-[rgba(255,255,255,0.04)] px-[22px] py-4 font-display text-[22px] font-medium ${INK}`}
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              {PEER_CLAIM_PLATFORMS.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center gap-3 rounded-2xl bg-white/[0.04] px-4 py-3.5"
                 >
-                  <Landmark className="h-5 w-5" style={{ color: "#7D7B76" }} />
-                  {cur}
-                </span>
+                  <Image src={p.logo} alt={p.name} width={28} height={28} className="h-7 w-7 rounded-lg object-contain" />
+                  <span className={`font-display text-lg font-medium ${INK}`}>{p.name}</span>
+                </div>
               ))}
             </div>
+            <Link
+              href={`${APP_URL}?balance=withdraw&method=peer`}
+              className={`mt-6 inline-flex w-full items-center justify-center gap-2 rounded-full py-3.5 font-display text-base font-medium text-white transition-transform hover:-translate-y-0.5 ${BRAND_GRADIENT}`}
+            >
+              Open Peer cash out
+              <ArrowRight className="h-4 w-4" strokeWidth={2} />
+            </Link>
+
+            {PAJ_CASH_ENABLED && (
+              <div className="mt-6 rounded-2xl bg-white/[0.04] p-5">
+                <div className="flex items-start gap-3">
+                  <Landmark className="mt-0.5 h-5 w-5 shrink-0 text-[#7D7B76]" />
+                  <div className="min-w-0 flex-1">
+                    <p className={`font-display text-lg font-medium ${INK}`}>PAJ Cash (Naira)</p>
+                    <p className={`mt-1 font-grotesk text-base ${INK_2}`}>
+                      Nigerian bank transfer — shown when eligible (NG location or linked PAJ account).
+                    </p>
+                    <Link
+                      href={`${APP_URL}?balance=withdraw&method=paj`}
+                      className={`mt-3 inline-flex items-center gap-1.5 font-grotesk text-base font-medium text-[#FF6A00] hover:text-[#FF8A3A]`}
+                    >
+                      Open PAJ withdraw
+                      <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            )}
           </motion.div>
         </div>
       </div>
@@ -761,7 +1113,7 @@ function PrivacySection() {
         <motion.div
           {...fadeUp}
           transition={{ ...fadeUp.transition, delay: 0.1 }}
-          className={`relative hidden aspect-square flex-col items-center justify-between overflow-hidden rounded-[32px] border ${BORDER_LINE} ${BG_PAPER_2} p-8 shadow-[0_40px_90px_-30px_rgba(0,0,0,0.6)] sm:flex sm:p-10`}
+          className={`relative hidden aspect-square flex-col items-center justify-between overflow-hidden rounded-[32px] ${BG_PAPER_2} p-8 shadow-[0_40px_90px_-30px_rgba(0,0,0,0.6)] sm:flex sm:p-10`}
         >
           <div className="flex flex-col items-center gap-3">
             <Icon3DArrowUser size={72} showArrow={false} />
@@ -801,9 +1153,9 @@ function PrivacySection() {
 
 function HowItWorks() {
   const steps: { n: 1 | 2 | 3; title: string; body: string }[] = [
-    { n: 1, title: "Type an email or @handle", body: "No wallet address, no ENS lookup, just who they already are." },
-    { n: 2, title: "They get a claim link", body: "Sent instantly by email or DM, no account required to receive it." },
-    { n: 3, title: "Claim in tokens or cash", body: "150+ tokens, or straight to a bank account, their call." },
+    { n: 1, title: "Type an email or @handle", body: "Or send to a Solana wallet with no account. Handle/email needs a quick sign-in." },
+    { n: 2, title: "They get a claim link", body: "Sent instantly by email or DM — recipients don't need an account yet." },
+    { n: 3, title: "Claim in crypto or cash", body: "USDC, any crypto, or Peer cash out (Venmo, Cash App, Revolut, Zelle) — PAJ Naira when eligible." },
   ];
 
   return (
@@ -826,7 +1178,7 @@ function HowItWorks() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-60px" }}
               transition={{ duration: 0.45, ease: easeBrand, delay: i * 0.15 }}
-              className={`rounded-[26px] border ${BORDER_LINE} ${BG_PAPER_2} p-9`}
+              className={`rounded-[26px] ${BG_PAPER_2} p-9 shadow-[0_28px_60px_-36px_rgba(0,0,0,0.7)]`}
             >
               <Icon3DNumber n={s.n} size={72} />
               <h3 className={`mt-[22px] font-display text-[30px] font-medium leading-[1.02] ${INK}`}>{s.title}</h3>
@@ -854,7 +1206,7 @@ function GiveawaysSection() {
 
   return (
     <section id="giveaways" className="px-6 py-24 md:px-10 md:py-28">
-      <div className={`mx-auto max-w-[1240px] overflow-hidden rounded-[40px] border ${BORDER_LINE} ${BG_PAPER_2} p-9 md:p-16`}>
+      <div className={`mx-auto max-w-[1240px] overflow-hidden rounded-[40px] ${BG_PAPER_2} p-9 md:p-16 shadow-[0_40px_90px_-40px_rgba(0,0,0,0.75)]`}>
         <motion.div {...fadeUp} className="mx-auto max-w-[820px] text-center">
           <span className="font-grotesk text-base font-semibold uppercase tracking-[0.22em] text-[#FF1301]">
             Giveaways
@@ -878,7 +1230,7 @@ function GiveawaysSection() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-60px" }}
               transition={{ duration: 0.45, ease: easeBrand, delay: i * 0.1 }}
-              className={`rounded-[22px] border ${BORDER_LINE_2} bg-white/[0.03] p-6 text-center`}
+              className="rounded-[22px] bg-white/[0.04] p-6 text-center"
             >
               <span className={`mx-auto flex h-11 w-11 items-center justify-center rounded-full text-white ${BRAND_GRADIENT}`}>
                 <p.icon className="h-5 w-5" strokeWidth={2} />
@@ -909,14 +1261,14 @@ function GiveawaysSection() {
 
 function BusinessSection() {
   const bullets = [
-    "Payouts to email, social handle or bank, no wallet required",
+    "Payouts to email, social handle, wallet, or cash (Peer / PAJ)",
     "150+ settlement tokens with automatic swaps",
     "Drop-in SDK & hosted checkout, live in a day",
   ];
 
   return (
     <section id="business" className="px-6 py-24 md:px-10 md:py-28">
-      <div className={`mx-auto max-w-[1240px] overflow-hidden rounded-[40px] border ${BORDER_LINE} ${BG_PAPER_2} p-9 md:p-16`}>
+      <div className={`mx-auto max-w-[1240px] overflow-hidden rounded-[40px] ${BG_PAPER_2} p-9 md:p-16 shadow-[0_40px_90px_-40px_rgba(0,0,0,0.75)]`}>
         <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-[1.1fr_0.9fr]">
           <motion.div {...fadeUp}>
             <span className="font-grotesk text-base font-semibold uppercase tracking-[0.22em] text-[#FF1301]">
@@ -963,7 +1315,7 @@ function BusinessSection() {
           <motion.div
             {...fadeUp}
             transition={{ ...fadeUp.transition, delay: 0.1 }}
-            className="rounded-[24px] border border-[rgba(255,255,255,0.08)] bg-[#141419] p-7 font-mono text-[15px] leading-[1.9] text-[#E6E4DE] shadow-[0_30px_70px_-30px_rgba(0,0,0,0.5)]"
+            className="rounded-[24px] bg-[#141419] p-7 font-mono text-[15px] leading-[1.9] text-[#E6E4DE] shadow-[0_30px_70px_-30px_rgba(0,0,0,0.5)]"
           >
             <div className="mb-[18px] flex gap-2">
               {[0, 1, 2].map((i) => <span key={i} className="h-3 w-3 rounded-full bg-[#3A3A44]" />)}
@@ -1018,7 +1370,7 @@ function RewardsSection() {
       <div className="mx-auto max-w-[1240px]">
         <motion.div
           {...fadeUp}
-          className="relative overflow-hidden rounded-[40px] border border-[rgba(255,255,255,0.1)] bg-[#131319] px-5 py-12 text-center sm:px-8 md:px-16 md:py-14"
+          className="relative overflow-hidden rounded-[40px] bg-[#131319] px-5 py-12 text-center shadow-[0_40px_90px_-40px_rgba(0,0,0,0.75)] sm:px-8 md:px-16 md:py-14"
         >
           <div
             aria-hidden
@@ -1042,7 +1394,7 @@ function RewardsSection() {
 
             <div className="mt-[34px] flex justify-center gap-2.5 sm:gap-5">
               {[{ v: h, l: "Hrs" }, { v: m, l: "Min" }, { v: s, l: "Sec" }].map((c) => (
-                <div key={c.l} className={`min-w-[76px] rounded-2xl border border-[rgba(255,255,255,0.12)] bg-white/[0.06] px-3 py-3.5 sm:min-w-[110px] sm:px-[26px] sm:py-5`}>
+                <div key={c.l} className="min-w-[76px] rounded-2xl bg-white/[0.06] px-3 py-3.5 sm:min-w-[110px] sm:px-[26px] sm:py-5">
                   <div className={`font-display text-[32px] font-medium leading-none tabular-nums sm:text-[52px] ${INK}`}>{c.v}</div>
                   <div className="mt-1 font-grotesk text-sm font-semibold uppercase tracking-[0.16em] text-white/50">{c.l}</div>
                 </div>
@@ -1054,7 +1406,7 @@ function RewardsSection() {
               get paid, and stack entries into the jackpot, automatically.
             </p>
 
-            <div className="mx-auto mt-8 inline-flex flex-col items-center gap-2 rounded-2xl border border-[rgba(255,255,255,0.12)] bg-white/[0.06] px-8 py-6 font-grotesk text-white sm:px-12 sm:py-8">
+            <div className="mx-auto mt-8 inline-flex flex-col items-center gap-2 rounded-2xl bg-white/[0.06] px-8 py-6 font-grotesk text-white sm:px-12 sm:py-8">
               <span className="h-[26px] w-[26px] sm:h-[34px] sm:w-[34px] [&>svg]:h-full [&>svg]:w-full">
                 <Icon3DStar size={34} />
               </span>
@@ -1115,15 +1467,34 @@ function FinalCTA() {
 /* =====================================================
    PAGE
 
-   Fork of HomeV2Content (see ../home-v2/HomeV2Content.tsx) —
-   draft for review, not live yet. Two changes from v2:
-   1. Hero's SendWidget is now a real form (hands off into the
-      Send form prefilled) instead of a fake animated mock.
-   2. New GiveawaysSection, given its own section instead of
-      being one bullet buried inside BusinessSection.
+   Live `/` homepage (fork of HomeV2Content). Hero SendWidget is a
+   real form: handle/email (Privy) or wallet address (guest DirectWalletPay).
+   GiveawaysSection is its own section, not a Business bullet.
    ===================================================== */
 
+/**
+ * ?balance=topup|withdraw|history (+ optional ?method=peer|paj|crypto) — same deep-links as
+ * /app. Home-v3 has no MinimalHeader/BalanceModal, so hand off to /app with the params intact.
+ */
+function useBalanceDeepLinkRedirect() {
+  const router = useRouter();
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("balance");
+    if (tab !== "topup" && tab !== "withdraw" && tab !== "history") return;
+    const methodRaw = params.get("method");
+    const qs = new URLSearchParams({ balance: tab });
+    if (methodRaw === "peer" || methodRaw === "paj" || methodRaw === "crypto") {
+      qs.set("method", methodRaw);
+    }
+    router.replace(`/app?${qs.toString()}`);
+  }, [router]);
+}
+
 export default function HomeV3Content() {
+  useBalanceDeepLinkRedirect();
+
   return (
     <div className={`min-h-screen bg-[#0B0B0F] font-grotesk ${INK}`}>
       <Header />

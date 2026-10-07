@@ -180,7 +180,9 @@
         "question": "Tôi đang ở devnet — làm thế nào để nhận SOL và USDC thử nghiệm?",
         "answer": "Lấy SOL devnet miễn phí từ <solanaLink>vòi Solana</solanaLink>. Đối với USDC devnet, hãy sử dụng <circleLink>vòi Circle</circleLink>."
       }
-    }
+    },
+    "signInToSendHandle": "Đăng nhập để gửi tới handle hoặc email",
+    "signInToSendHandleHint": "Đăng nhập email hoặc mạng xã hội — gửi tới ví không cần tài khoản"
   },
   "MarketingPage": {
     "nav": {
@@ -553,5 +555,32 @@
     "endsToday": "Kết thúc hôm nay",
     "daysLeft": "Còn {days} ngày",
     "backToRewards": "Phần thưởng"
+  },
+  "HomeV3": {
+    "hero": {
+      "eyebrow": "Rút tiền mọi nơi",
+      "headlineBefore": "Gửi tiền tới",
+      "headlineAfter": "hoặc email",
+      "headlineCashOut": "Họ rút theo cách của họ.",
+      "support": "Thanh toán tới ví không cần tài khoản, hoặc đăng nhập để gửi tới handle — họ nhận qua Venmo, Cash App, Revolut, Zelle, USDC trên Solana hoặc bất kỳ crypto nào.",
+      "supportWithPaj": "Thanh toán tới ví không cần tài khoản, hoặc đăng nhập để gửi tới handle — họ nhận qua Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC trên Solana hoặc bất kỳ crypto nào.",
+      "cashOutLabel": "Họ rút về",
+      "ctaStart": "Bắt đầu gửi, miễn phí",
+      "ctaBusiness": "Dành cho doanh nghiệp",
+      "railVenmo": "Venmo",
+      "railCashApp": "Cash App",
+      "railRevolut": "Revolut",
+      "railZelle": "Zelle",
+      "railUsdc": "USDC",
+      "railAnyCrypto": "Mọi crypto",
+      "railPaj": "PAJ Cash",
+      "railVenmoSub": "USD",
+      "railCashAppSub": "USD",
+      "railRevolutSub": "USD · EUR · GBP",
+      "railZelleSub": "Về ngân hàng",
+      "railUsdcSub": "Trên Solana",
+      "railAnyCryptoSub": "150+ token",
+      "railPajSub": "Ngân hàng naira"
+    }
   }
 }

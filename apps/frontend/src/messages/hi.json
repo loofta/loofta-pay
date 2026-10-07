@@ -179,7 +179,9 @@
         "question": "मैं डेवनेट पर हूं — टेस्ट SOL और USDC कैसे पाऊं?",
         "answer": "मुफ्त डेवनेट SOL <solanaLink>Solana faucet</solanaLink> से पाएं। डेवनेट USDC के लिए <circleLink>Circle faucet</circleLink> का उपयोग करें।"
       }
-    }
+    },
+    "signInToSendHandle": "हैंडल या ईमेल पर भेजने के लिए साइन इन करें",
+    "signInToSendHandleHint": "ईमेल या सोशल लॉगिन — वॉलेट पते पर भेजने के लिए खाता नहीं चाहिए"
   },
   "MarketingPage": {
     "nav": {
@@ -551,5 +553,32 @@
     "endsToday": "आज समाप्त",
     "daysLeft": "{days} दिन बचे",
     "backToRewards": "पुरस्कार"
+  },
+  "HomeV3": {
+    "hero": {
+      "eyebrow": "कहीं भी कैश आउट",
+      "headlineBefore": "किसी भी",
+      "headlineAfter": "या ईमेल पर भेजें",
+      "headlineCashOut": "वे अपने तरीके से निकालते हैं।",
+      "support": "बिना खाते वॉलेट को भुगतान करें, या हैंडल के लिए साइन इन करें — वे Venmo, Cash App, Revolut, Zelle, Solana पर USDC या किसी भी क्रिप्टो में क्लेम करते हैं।",
+      "supportWithPaj": "बिना खाते वॉलेट को भुगतान करें, या हैंडल के लिए साइन इन करें — वे Venmo, Cash App, Revolut, Zelle, PAJ नायरा, Solana पर USDC या किसी भी क्रिप्टो में क्लेम करते हैं।",
+      "cashOutLabel": "वे कैश आउट करते हैं",
+      "ctaStart": "भेजना शुरू करें, मुफ़्त है",
+      "ctaBusiness": "व्यवसाय के लिए",
+      "railVenmo": "Venmo",
+      "railCashApp": "Cash App",
+      "railRevolut": "Revolut",
+      "railZelle": "Zelle",
+      "railUsdc": "USDC",
+      "railAnyCrypto": "कोई भी क्रिप्टो",
+      "railPaj": "PAJ Cash",
+      "railVenmoSub": "USD",
+      "railCashAppSub": "USD",
+      "railRevolutSub": "USD · EUR · GBP",
+      "railZelleSub": "उनके बैंक में",
+      "railUsdcSub": "Solana पर",
+      "railAnyCryptoSub": "150+ टोकन",
+      "railPajSub": "नायरा बैंक"
+    }
   }
 }

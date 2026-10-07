@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import HomeV2Content from "./home-v2/HomeV2Content";
+import HomeV3Content from "./home-v3/HomeV3Content";
 
 const TITLE = "Send USDC to Anyone — Email or Social Handle";
 const DESCRIPTION =
@@ -38,5 +38,5 @@ export const metadata: Metadata = {
 };
 
 export default function Page() {
-  return <HomeV2Content />;
+  return <HomeV3Content />;
 }

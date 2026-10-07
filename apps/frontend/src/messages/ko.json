@@ -180,7 +180,9 @@
         "question": "데브넷에 있습니다 — 테스트 SOL과 USDC는 어떻게 받나요?",
         "answer": "<solanaLink>Solana 수도꼭지</solanaLink>에서 무료 데브넷 SOL을 받으세요. 데브넷 USDC의 경우 <circleLink>Circle 수도꼭지</circleLink>를 사용하세요."
       }
-    }
+    },
+    "signInToSendHandle": "핸들이나 이메일로 보내려면 로그인하세요",
+    "signInToSendHandleHint": "이메일 또는 소셜 로그인 — 지갑 주소 전송은 계정 불필요"
   },
   "MarketingPage": {
     "nav": {
@@ -553,5 +555,32 @@
     "endsToday": "오늘 종료",
     "daysLeft": "{days}일 남음",
     "backToRewards": "리워드"
+  },
+  "HomeV3": {
+    "hero": {
+      "eyebrow": "어디서나 현금화",
+      "headlineBefore": "어떤",
+      "headlineAfter": "또는 이메일로 보내기",
+      "headlineCashOut": "받는 사람이 원하는 방식으로 출금합니다.",
+      "support": "계정 없이 지갑으로 보내거나, 로그인 후 핸들로 전송 — Venmo, Cash App, Revolut, Zelle, Solana USDC 또는 모든 암호화폐로 수령합니다.",
+      "supportWithPaj": "계정 없이 지갑으로 보내거나, 로그인 후 핸들로 전송 — Venmo, Cash App, Revolut, Zelle, PAJ 나이라, Solana USDC 또는 모든 암호화폐로 수령합니다.",
+      "cashOutLabel": "출금 가능",
+      "ctaStart": "무료로 보내기 시작",
+      "ctaBusiness": "비즈니스용",
+      "railVenmo": "Venmo",
+      "railCashApp": "Cash App",
+      "railRevolut": "Revolut",
+      "railZelle": "Zelle",
+      "railUsdc": "USDC",
+      "railAnyCrypto": "모든 암호화폐",
+      "railPaj": "PAJ Cash",
+      "railVenmoSub": "USD",
+      "railCashAppSub": "USD",
+      "railRevolutSub": "USD · EUR · GBP",
+      "railZelleSub": "은행으로",
+      "railUsdcSub": "Solana",
+      "railAnyCryptoSub": "150+ 토큰",
+      "railPajSub": "나이라 은행"
+    }
   }
 }

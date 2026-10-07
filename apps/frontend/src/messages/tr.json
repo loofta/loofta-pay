@@ -180,7 +180,9 @@
         "question": "Devnet'teyim — test SOL ve USDC nasıl alabilirim?",
         "answer": "Ücretsiz devnet SOL'u <solanaLink>Solana faucet</solanaLink>'ten alın. Devnet USDC için <circleLink>Circle faucet</circleLink>'i kullanın."
       }
-    }
+    },
+    "signInToSendHandle": "Bir kullanıcı adına veya e-postaya göndermek için giriş yapın",
+    "signInToSendHandleHint": "E-posta veya sosyal giriş — cüzdan adresine göndermek için hesap gerekmez"
   },
   "MarketingPage": {
     "nav": {
@@ -553,5 +555,32 @@
     "endsToday": "Bugün bitiyor",
     "daysLeft": "{days}g kaldı",
     "backToRewards": "Ödüller"
+  },
+  "HomeV3": {
+    "hero": {
+      "eyebrow": "Her yerden nakde çevir",
+      "headlineBefore": "Herhangi bir",
+      "headlineAfter": "veya e-postaya gönder",
+      "headlineCashOut": "Onlar kendi yollarıyla nakde çevirir.",
+      "support": "Hesapsız bir cüzdana ödeyin veya handle için giriş yapın — Venmo, Cash App, Revolut, Zelle, Solana'da USDC veya herhangi bir kripto ile alırlar.",
+      "supportWithPaj": "Hesapsız bir cüzdana ödeyin veya handle için giriş yapın — Venmo, Cash App, Revolut, Zelle, PAJ Naira, Solana'da USDC veya herhangi bir kripto ile alırlar.",
+      "cashOutLabel": "Nakde çevirdikleri yer",
+      "ctaStart": "Göndermeye başla, ücretsiz",
+      "ctaBusiness": "İşletmeler için",
+      "railVenmo": "Venmo",
+      "railCashApp": "Cash App",
+      "railRevolut": "Revolut",
+      "railZelle": "Zelle",
+      "railUsdc": "USDC",
+      "railAnyCrypto": "Her kripto",
+      "railPaj": "PAJ Cash",
+      "railVenmoSub": "USD",
+      "railCashAppSub": "USD",
+      "railRevolutSub": "USD · EUR · GBP",
+      "railZelleSub": "Bankalarına",
+      "railUsdcSub": "Solana'da",
+      "railAnyCryptoSub": "150+ token",
+      "railPajSub": "Naira banka"
+    }
   }
 }

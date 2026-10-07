@@ -180,7 +180,9 @@
         "question": "Nasa devnet ako — paano ako makakakuha ng test SOL at USDC?",
         "answer": "Kumuha ng libreng devnet SOL mula sa <solanaLink>Solana faucet</solanaLink>. Para sa devnet USDC, gamitin ang <circleLink>Circle faucet</circleLink>."
       }
-    }
+    },
+    "signInToSendHandle": "Mag-sign in para magpadala sa handle o email",
+    "signInToSendHandleHint": "Email o social login — walang account kailangan para sa wallet address"
   },
   "MarketingPage": {
     "nav": {
@@ -553,5 +555,32 @@
     "endsToday": "Magtatapos ngayon",
     "daysLeft": "{days}d natitira",
     "backToRewards": "Mga Gantimpala"
+  },
+  "HomeV3": {
+    "hero": {
+      "eyebrow": "Cash out kahit saan",
+      "headlineBefore": "Magpadala ng pera sa anumang",
+      "headlineAfter": "o email",
+      "headlineCashOut": "Kinukuha nila sa paraan nila.",
+      "support": "Magbayad sa wallet nang walang account, o mag-sign in para magpadala sa handle — kinu-claim nila sa Venmo, Cash App, Revolut, Zelle, USDC sa Solana, o anumang crypto.",
+      "supportWithPaj": "Magbayad sa wallet nang walang account, o mag-sign in para magpadala sa handle — kinu-claim nila sa Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC sa Solana, o anumang crypto.",
+      "cashOutLabel": "Kinukuha nila sa",
+      "ctaStart": "Magsimulang magpadala, libre ito",
+      "ctaBusiness": "Para sa negosyo",
+      "railVenmo": "Venmo",
+      "railCashApp": "Cash App",
+      "railRevolut": "Revolut",
+      "railZelle": "Zelle",
+      "railUsdc": "USDC",
+      "railAnyCrypto": "Anumang crypto",
+      "railPaj": "PAJ Cash",
+      "railVenmoSub": "USD",
+      "railCashAppSub": "USD",
+      "railRevolutSub": "USD · EUR · GBP",
+      "railZelleSub": "Sa bangko nila",
+      "railUsdcSub": "Sa Solana",
+      "railAnyCryptoSub": "150+ tokens",
+      "railPajSub": "Bangko sa naira"
+    }
   }
 }

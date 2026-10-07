@@ -180,7 +180,9 @@
         "question": "Estou no devnet — como obtenho SOL e USDC de teste?",
         "answer": "Obtenha SOL de devnet gratuito no <solanaLink>faucet do Solana</solanaLink>. Para USDC de devnet, use o <circleLink>faucet da Circle</circleLink>."
       }
-    }
+    },
+    "signInToSendHandle": "Entre para enviar para um handle ou e-mail",
+    "signInToSendHandleHint": "Login por e-mail ou rede social — envios para carteira não precisam de conta"
   },
   "MarketingPage": {
     "nav": {
@@ -553,5 +555,32 @@
     "endsToday": "Termina hoje",
     "daysLeft": "{days}d restantes",
     "backToRewards": "Recompensas"
+  },
+  "HomeV3": {
+    "hero": {
+      "eyebrow": "Saque em qualquer lugar",
+      "headlineBefore": "Envie dinheiro para qualquer",
+      "headlineAfter": "ou e-mail",
+      "headlineCashOut": "Eles sacam do jeito deles.",
+      "support": "Pague uma carteira sem conta, ou entre para enviar a um handle — eles resgatam no Venmo, Cash App, Revolut, Zelle, USDC na Solana ou qualquer cripto.",
+      "supportWithPaj": "Pague uma carteira sem conta, ou entre para enviar a um handle — eles resgatam no Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC na Solana ou qualquer cripto.",
+      "cashOutLabel": "Eles sacam para",
+      "ctaStart": "Comece a enviar, é grátis",
+      "ctaBusiness": "Para empresas",
+      "railVenmo": "Venmo",
+      "railCashApp": "Cash App",
+      "railRevolut": "Revolut",
+      "railZelle": "Zelle",
+      "railUsdc": "USDC",
+      "railAnyCrypto": "Qualquer cripto",
+      "railPaj": "PAJ Cash",
+      "railVenmoSub": "USD",
+      "railCashAppSub": "USD",
+      "railRevolutSub": "USD · EUR · GBP",
+      "railZelleSub": "Para o banco",
+      "railUsdcSub": "Na Solana",
+      "railAnyCryptoSub": "150+ tokens",
+      "railPajSub": "Banco em naira"
+    }
   }
 }
