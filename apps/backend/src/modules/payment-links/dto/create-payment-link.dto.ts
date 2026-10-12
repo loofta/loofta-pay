@@ -2,12 +2,11 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNumber, IsOptional, IsString, IsBoolean, IsUrl, Min, Max, MaxLength } from 'class-validator';
 
 export class CreatePaymentLinkDto {
-  // $1 floor at the DTO level — the service enforces the real $5 floor only when is_private
-  // resolves to true (MagicBlock's private-transfer minimum); a public transfer has no such
-  // constraint.
-  @ApiProperty({ description: 'Amount in USD the recipient should receive. $1 minimum if public (the default), $5 minimum if private.', example: 25 })
+  // One-cent floor at the DTO level — the service enforces the real $1 floor only when is_private
+  // resolves to true; a public transfer has no such constraint.
+  @ApiProperty({ description: 'Amount in USD the recipient should receive. $0.01 minimum if public (the default), $1 minimum if private.', example: 25 })
   @IsNumber()
-  @Min(1)
+  @Min(0.01)
   @Max(10000)
   amount: number;
 

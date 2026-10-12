@@ -76,6 +76,49 @@ export class UsersController {
    * Check if a username exists and return only public fields.
    * email and privyUserId are intentionally omitted — this endpoint is unauthenticated.
    */
+  @Get('pay-target')
+  @Throttle({ short: { ttl: 60000, limit: 30 } })
+  @ApiOperation({ summary: 'Whether a send recipient is a registered Loofta user (no wallet or email)' })
+  @ApiQuery({ name: 'kind', enum: ['email', 'username', 'twitter', 'social'] })
+  @ApiQuery({ name: 'value' })
+  @ApiQuery({ name: 'platform', required: false })
+  async lookupPayTarget(
+    @Query('kind') kind: string,
+    @Query('value') value: string,
+    @Query('platform') platform?: string,
+  ) {
+    if (!value?.trim()) throw new BadRequestException('value is required');
+    if (kind !== 'email' && kind !== 'username' && kind !== 'twitter' && kind !== 'social') {
+      throw new BadRequestException('kind must be email, username, twitter, or social');
+    }
+    if (kind === 'social' && platform !== 'discord' && platform !== 'github' && platform !== 'telegram') {
+      throw new BadRequestException('platform is required for a social handle');
+    }
+    return this.usersService.lookupPayTarget({
+      kind,
+      value,
+      platform: kind === 'social' ? platform as 'discord' | 'github' | 'telegram' : undefined,
+    });
+  }
+
+  @Get('me/private-payments')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Whether payments to this user must be private' })
+  async getMyPrivatePayments(@PrivyUser() user: { id: string }) {
+    return { requirePrivatePayments: await this.usersService.getRequirePrivatePayments(user.id) };
+  }
+
+  @Post('me/private-payments')
+  @UseGuards(PrivyAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Require private payments to this user. Privacy fees come out of what they receive.' })
+  async setMyPrivatePayments(@PrivyUser() user: { id: string }, @Body() body: { enabled?: boolean }) {
+    if (typeof body?.enabled !== 'boolean') throw new BadRequestException('enabled must be a boolean');
+    await this.usersService.setRequirePrivatePayments(user.id, body.enabled);
+    return { requirePrivatePayments: body.enabled };
+  }
+
   @Get('by-username')
   @Throttle({ short: { ttl: 60000, limit: 10 } })
   @ApiOperation({ summary: 'Check if username exists (public fields only)' })

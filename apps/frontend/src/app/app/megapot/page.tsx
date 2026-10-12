@@ -22,6 +22,7 @@ import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 import { PRIZE_TIERS, TicketNumberCard } from "@/components/megapot/TicketNumberCard";
 import { MAIN_MAX, MAIN_COUNT, BONUS_MAX, type TicketNumbers, randomTicket, NumberPickerModal, ChooseNumbers } from "@/components/megapot/ChooseNumbers";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
+import { jetbrainsMono, sora } from "@/components/home-v4/fonts";
 
 const MAGICBLOCK_GASLESS_RELAY_FEE_USD = 0.20; // flat relay fee MagicBlock charges in gasless mode
 const MAGICBLOCK_BPS = 10;
@@ -142,30 +143,6 @@ function SignInGate({ message, login }: { message: string; login: () => void }) 
         Sign in to continue
       </button>
     </div>
-  );
-}
-
-// ─── IconBubble ───────────────────────────────────────────────────────────────
-
-function IconBubble({ active, children }: { active: boolean; children: React.ReactNode }) {
-  return (
-    <span className="relative shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-full">
-      <span aria-hidden="true" className={[
-        "absolute inset-0 rounded-full transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-        active
-          ? "bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_10px_24px_rgba(255,122,42,0.25)] scale-[1.02]"
-          : "bg-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] scale-100",
-      ].join(" ")} />
-      <span aria-hidden="true" className={[
-        "absolute -inset-1 rounded-full blur-md transition-opacity duration-300",
-        active ? "opacity-60 bg-[radial-gradient(circle,rgba(255,122,42,0.55),transparent_60%)]" : "opacity-0",
-      ].join(" ")} />
-      <span className={[
-        "relative z-10 shrink-0 flex items-center justify-center [&>svg]:h-4 [&>svg]:w-4 [&>svg]:stroke-[2.25]",
-        "transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-        active ? "text-white translate-y-[-0.5px]" : "text-slate-300",
-      ].join(" ")}>{children}</span>
-    </span>
   );
 }
 
@@ -324,39 +301,29 @@ function MegapotTabs({ activeTab, wonCount }: { activeTab: Tab; wonCount: number
   // hardcoding "/app/megapot" here turns every tab click into an extra redirect round trip.
   const isAppPath = usePathname()?.startsWith("/app");
   const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
-  const tabBase = "group relative z-10 whitespace-nowrap rounded-xl px-4 py-2.5 inline-flex items-center justify-center gap-2 font-semibold text-[16px] tracking-[-0.01em] transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.99]";
-  const tabText = (t: Tab) => ["relative z-10 transition-colors duration-300 font-sans font-medium text-lg", activeTab === t ? "text-slate-100" : "text-slate-400 group-hover:text-slate-200"].join(" ");
-  const sliderPos = activeTab === "redeem" ? "translate-x-full" : "translate-x-0";
-  const isHistory = activeTab === "history";
+  const mine = activeTab === "history" || activeTab === "redeem";
+  // Same face and weight on both labels. The inactive one used to be a dim grey, which
+  // antialiased thinner than the white active label and read as a different font.
+  const tabStyle = {
+    fontFamily: "var(--font-home-sora), Sora, sans-serif",
+    fontWeight: 700,
+    WebkitFontSmoothing: "antialiased",
+  } as const;
+  const pill = (on: boolean) =>
+    on
+      ? "bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] text-white"
+      : "bg-transparent text-[#F2EFE8] hover:text-white";
   return (
-    <div className="hidden md:flex items-center justify-between mb-6">
-      <div className="relative grid grid-cols-2 rounded-2xl p-1 bg-white/[0.05] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] border border-white/[0.06] overflow-hidden">
-        <div aria-hidden="true" className={["absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-xl transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] bg-gradient-to-b from-white/[0.08] to-white/[0.03] shadow-[0_8px_24px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.08)] border border-white/[0.08]", isHistory ? "opacity-0" : sliderPos].join(" ")} />
-        <div aria-hidden="true" className={["pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-xl transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] opacity-40 bg-[radial-gradient(80%_140%_at_50%_0%,rgba(255,122,42,0.35),transparent_60%)]", isHistory ? "opacity-0" : sliderPos].join(" ")} />
-        <Link href={megapotBase} className={tabBase}>
-          <IconBubble active={activeTab === "buy"}><Ticket /></IconBubble>
-          <span className={tabText("buy")}>Buy</span>
+    <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="flex gap-1 rounded-full border border-white/[0.07] bg-[#141419] p-[5px]">
+        <Link href={megapotBase} className={`rounded-full px-5 py-2.5 text-[15px] leading-none ${pill(activeTab === "buy")}`} style={tabStyle}>
+          Buy
         </Link>
-        <Link href={`${megapotBase}?tab=redeem`} className={tabBase}>
-          <IconBubble active={activeTab === "redeem"}><Trophy /></IconBubble>
-          <span className={tabText("redeem")}>Redeem{wonCount > 0 ? ` (${wonCount})` : ""}</span>
+        <Link href={`${megapotBase}?tab=history`} className={`rounded-full px-5 py-2.5 text-[15px] leading-none ${pill(mine)}`} style={tabStyle}>
+          My tickets{wonCount > 0 ? ` (${wonCount})` : ""}
         </Link>
       </div>
-      <Link href={`${megapotBase}?tab=history`}
-        className={[
-          "p-2.5 rounded-xl transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-          "border border-white/[0.06]",
-          isHistory
-            ? "bg-white/10 text-amber-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
-            : "bg-white/[0.05] text-slate-400 hover:text-slate-200 hover:bg-white/[0.08]",
-        ].join(" ")}
-        title="History"
-      >
-        <span className="sr-only">History</span>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-        </svg>
-      </Link>
+      <img src="/megapot.svg" alt="Megapot" className="h-[22px] opacity-85" />
     </div>
   );
 }
@@ -1413,7 +1380,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-5">
+    <div className="flex flex-col gap-5 rounded-[30px] border border-white/[0.07] bg-[#141419] p-7">
       {isRunning && (
         <PurchaseProgressModal
           step={step}
@@ -1454,11 +1421,17 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
       )}
       {!isRunning && step !== "confirmed" && step !== "checking" && step !== "done" && giftStep !== "done" && (
         <>
-          <p className="text-slate-300 text-xl font-medium font-sans">Buy tickets{sendPrivately ? " privately" : ""}</p>
-
-          {sendPrivately && (
-            <p className="text-sm text-slate-400">🔒 Shielded via MagicBlock. Min {PRIVATE_MIN} tickets. Uses your Loofta balance.</p>
-          )}
+          <div className="flex flex-col gap-1.5">
+            <p className="text-[22px] font-bold tracking-[-0.03em] text-[#F2EFE8]" style={{ fontFamily: "var(--font-home-sora), sans-serif" }}>
+              Buy tickets{sendPrivately ? " privately" : ""}
+            </p>
+            {sendPrivately && (
+              <p className="flex items-center gap-2 text-sm text-[#9A98A3]">
+                <img src="/magicblock.svg" alt="" className="h-3.5" />
+                Shielded via MagicBlock. Uses your Loofta balance.
+              </p>
+            )}
+          </div>
 
           {/* Gift toggle */}
           <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden">
@@ -1506,29 +1479,32 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
 
           {/* Ticket count selector */}
           <div>
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-slate-300 text-xl font-sans font-medium">Tickets</p>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-base font-bold text-[#F2EFE8]">Tickets</p>
               <div className="flex gap-1.5">
                 {PRESETS.map(n => (
                   <button key={n} onClick={() => setCount(n)}
-                    className={["px-3 py-1.5 rounded-lg text-base font-medium transition-all border",
-                      numTickets === n
-                        ? "bg-[#FF7A2A]/20 border-[#FF7A2A]/40 text-[#FF7A2A]"
-                        : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"].join(" ")}>
+                    className="min-w-[46px] rounded-xl border px-3 py-2 text-sm font-bold"
+                    style={numTickets === n
+                      ? { background: "rgba(255,90,26,0.16)", borderColor: "rgba(255,122,42,0.7)", color: "#FF8A4A" }
+                      : { background: "#1A1A20", borderColor: "rgba(255,255,255,0.08)", color: "#C9C6CF" }}>
                     {n}
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="flex items-center bg-white/[0.03] border border-white/10 rounded-xl overflow-hidden">
+            <div className="flex items-center gap-2 rounded-[20px] border border-white/[0.07] bg-[#0E0E12] p-2">
               <button onClick={() => setCount(numTickets - 1)}
-                className="w-14 h-12 flex items-center justify-center text-2xl text-slate-300 hover:text-white hover:bg-white/[0.06] transition-all shrink-0">
+                className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[15px] bg-[#1E1E25] text-[22px] font-bold">
                 −
               </button>
-              <span className="flex-1 text-center text-2xl font-bold text-white tabular-nums">{numTickets}</span>
+              <span className="flex flex-1 flex-col items-center">
+                <span className="text-[34px] font-extrabold leading-none tracking-[-0.04em] tabular-nums" style={{ fontFamily: "var(--font-home-sora), sans-serif" }}>{numTickets}</span>
+                <span className="text-xs text-[#6E6C78]">$1.00 each</span>
+              </span>
               <button onClick={() => setCount(numTickets + 1)}
-                className="w-14 h-12 flex items-center justify-center text-2xl text-slate-300 hover:text-white hover:bg-white/[0.06] transition-all shrink-0">
+                className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[15px] bg-[#1E1E25] text-[22px] font-bold">
                 +
               </button>
             </div>
@@ -1536,32 +1512,35 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
 
           {/* Choose numbers — collapsible for ≤10 tickets, random notice for 11+ (skipped when gifting, since the recipient's numbers are always assigned randomly at claim time) */}
           {giftMode ? (
-            <div className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-              <Shuffle className="w-4 h-4 text-slate-400 shrink-0" />
-              <p className="text-base text-slate-300">Numbers are picked randomly when they claim their ticket</p>
+            <div className="flex items-center gap-3 rounded-[18px] border border-white/[0.06] bg-[#0E0E12] px-4 py-3.5">
+              <Shuffle className="h-4 w-4 shrink-0 text-[#8A8893]" />
+              <p className="text-sm text-[#C9C6CF]">Numbers are picked randomly when they claim their ticket</p>
             </div>
           ) : numTickets <= 10 ? (
-            <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] overflow-hidden">
-              <button type="button" onClick={() => setChooseOpen(o => !o)}
-                className="w-full flex items-center justify-between px-4 py-3.5 text-left hover:bg-white/[0.03] transition-colors">
-                <span className="text-base font-medium text-slate-200">Choose numbers</span>
-                <ChevronDown className={["w-4 h-4 text-slate-400 transition-transform duration-200", chooseOpen ? "rotate-180" : ""].join(" ")} />
-              </button>
+            <div className="flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-1 rounded-2xl border border-white/[0.06] bg-[#0E0E12] p-1">
+                <button type="button" onClick={() => setChooseOpen(false)}
+                  className="rounded-xl px-2 py-[11px] text-sm font-bold"
+                  style={{ background: chooseOpen ? "transparent" : "#1E1E25", color: chooseOpen ? "#9A98A3" : "#F2EFE8" }}>
+                  Quick pick
+                </button>
+                <button type="button" onClick={() => setChooseOpen(true)}
+                  className="rounded-xl px-2 py-[11px] text-sm font-bold"
+                  style={{ background: chooseOpen ? "#1E1E25" : "transparent", color: chooseOpen ? "#F2EFE8" : "#9A98A3" }}>
+                  Pick your own
+                </button>
+              </div>
               {chooseOpen && (
-                <div className="px-4 pb-4 border-t border-white/[0.06]">
-                  <div className="mt-4">
-                    <ChooseNumbers tickets={tickets} setTickets={(t) => {
-                      setTickets(t);
-                      setNumTickets(t.length);
-                    }} />
-                  </div>
-                </div>
+                <ChooseNumbers tickets={tickets} setTickets={(t) => {
+                  setTickets(t);
+                  setNumTickets(t.length);
+                }} />
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-3 px-4 py-3.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-              <Shuffle className="w-4 h-4 text-slate-400 shrink-0" />
-              <p className="text-base text-slate-300">Numbers picked randomly for 11+ tickets</p>
+            <div className="flex items-center gap-3 rounded-[18px] border border-white/[0.06] bg-[#0E0E12] px-4 py-3.5">
+              <Shuffle className="h-4 w-4 shrink-0 text-[#8A8893]" />
+              <p className="text-sm text-[#C9C6CF]">Numbers picked randomly for 11+ tickets</p>
             </div>
           )}
 
@@ -1601,7 +1580,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           ) : giftMode ? (
             <button onClick={!authenticated ? () => login() : () => handleGiftBuy()}
               disabled={authenticated && (drawCutoff || giftStep === "signing" || !giftIdentifier.trim())}
-              className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center justify-center gap-2">
+              className="flex h-[58px] w-full items-center justify-center gap-2.5 rounded-[18px] bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] text-[17px] font-semibold text-white shadow-[0_14px_40px_rgba(255,70,10,0.3)] transition-all hover:opacity-90 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100">
               {!authenticated ? (
                 <>
                   <LogIn className="w-5 h-5" />
@@ -1617,7 +1596,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
           ) : (
             <button onClick={!authenticated ? () => login() : () => (sendPrivately ? handlePrivateBuy() : handlePublicBuy())}
               disabled={authenticated && drawCutoff}
-              className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center justify-center gap-2">
+              className="flex h-[58px] w-full items-center justify-center gap-2.5 rounded-[18px] bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] text-[17px] font-semibold text-white shadow-[0_14px_40px_rgba(255,70,10,0.3)] transition-all hover:opacity-90 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100">
               {!authenticated ? (
                 <>
                   <LogIn className="w-5 h-5" />
@@ -1677,40 +1656,14 @@ function GlowPlayAgainButton({ onClick, disabled, children }: {
 // instead of that button's green/teal, to visually match the pack foil + payment confirm button
 // the user lands on next) rather than the flat bordered card it started as.
 function MysteryPackBanner() {
-  const reduceMotion = useReducedMotion();
   return (
-    <Link
-      href="/app/megapot/packs"
-      className="relative mb-4 block rounded-2xl active:scale-[0.99] transition-transform"
-    >
-      <style>{`@keyframes packBannerGlow { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }`}</style>
-      <div
-        aria-hidden
-        className="absolute -inset-px rounded-2xl blur-[6px]"
-        style={{
-          background: "linear-gradient(110deg,#FF1301,#FF6A00,#EAB308,#FF4A26,#FF1301)",
-          backgroundSize: "220% 100%",
-          animation: reduceMotion ? undefined : "packBannerGlow 6s linear infinite",
-          opacity: reduceMotion ? 0.5 : 0.7,
-        }}
-      />
-      <div className="relative flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-[#15110d] px-4 py-3.5">
-        <div className="flex items-center gap-3 min-w-0">
-          {/* Hand-built glossy 3D-style badge (public/images/icons/mystery-pack-icon.svg) matching
-              the look of the app's other 3D icon assets (target-icon.png etc.) — gradient depth,
-              gloss highlight, drop shadow — with a "?" medallion mirroring the actual pack's own
-              mystery-circle treatment in MegapotPack.tsx's packArt(). */}
-          <img src="/images/icons/mystery-pack-icon.svg" alt="" className="w-10 h-10 shrink-0" />
-          <div className="min-w-0">
-            <p className="text-base font-semibold text-slate-100">Mystery Pack</p>
-            <p className="text-sm text-slate-400 truncate">Open a pack, win up to 100 tickets</p>
-          </div>
-        </div>
-        <span className="flex items-center gap-1 rounded-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-3.5 py-2 text-sm font-semibold text-white shrink-0">
-          Open
-          <ArrowUpRight className="w-4 h-4" />
-        </span>
-      </div>
+    <Link href="/app/megapot/packs" className="flex items-center gap-3.5 rounded-3xl border border-[rgba(245,183,12,0.25)] p-4 active:scale-[0.99]" style={{ background: "linear-gradient(135deg,#24170B,#141210)" }}>
+      <span className="grid h-[50px] w-[50px] shrink-0 -rotate-6 place-items-center rounded-2xl text-2xl font-extrabold text-[#6A3500]" style={{ fontFamily: "var(--font-home-sora), sans-serif", background: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", boxShadow: "inset 0 3px 6px rgba(255,255,255,0.5),inset 0 -7px 12px rgba(0,0,0,0.22),0 6px 0 #8E5202" }}>?</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[15px] font-extrabold">Mystery Pack</span>
+        <span className="block text-[13px] text-[#A9A08F]">Open a pack, win up to 100 tickets</span>
+      </span>
+      <span className="shrink-0 rounded-full bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] px-3.5 py-2 text-[13px] font-bold text-white">Open</span>
     </Link>
   );
 }
@@ -1719,38 +1672,16 @@ function MysteryPackBanner() {
 // MysteryPackBanner above, just Megapot's own red/orange/amber palette instead of the pack's,
 // linking to its own dedicated page (/app/megapot/subscribe) the same way Mystery Packs does.
 function SubscriptionBanner() {
-  const reduceMotion = useReducedMotion();
   return (
-    <Link
-      href="/app/megapot/subscribe"
-      className="relative mb-4 block rounded-2xl active:scale-[0.99] transition-transform"
-    >
-      <style>{`@keyframes subBannerGlow { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }`}</style>
-      <div
-        aria-hidden
-        className="absolute -inset-px rounded-2xl blur-[6px]"
-        style={{
-          background: "linear-gradient(110deg,#FF4A26,#FF7A2A,#E1A041,#FF4A26)",
-          backgroundSize: "220% 100%",
-          animation: reduceMotion ? undefined : "subBannerGlow 6s linear infinite",
-          opacity: reduceMotion ? 0.5 : 0.7,
-        }}
-      />
-      <div className="relative flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-[#15110d] px-4 py-3.5">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 shrink-0 rounded-xl bg-gradient-to-br from-[#FF1301] to-[#EAB308] flex items-center justify-center">
-            <Ticket className="w-5 h-5 text-white" strokeWidth={2.2} />
-          </div>
-          <div className="min-w-0">
-            <p className="text-base font-semibold text-slate-100">Ticket subscription</p>
-            <p className="text-sm text-slate-400 truncate">Cheaper than buying one at a time — auto-bought on your schedule</p>
-          </div>
-        </div>
-        <span className="flex items-center gap-1 rounded-full bg-gradient-to-r from-[#FF1301] to-[#EAB308] px-3.5 py-2 text-sm font-semibold text-white shrink-0">
-          Subscribe
-          <ArrowUpRight className="w-4 h-4" />
-        </span>
-      </div>
+    <Link href="/app/megapot/subscribe" className="flex items-center gap-3.5 rounded-3xl border border-[rgba(255,90,26,0.25)] p-4 active:scale-[0.99]" style={{ background: "linear-gradient(135deg,#26120B,#141110)" }}>
+      <span className="grid h-[50px] w-[50px] shrink-0 rotate-6 place-items-center rounded-2xl" style={{ background: "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)", boxShadow: "inset 0 3px 6px rgba(255,255,255,0.5),inset 0 -7px 12px rgba(0,0,0,0.22),0 6px 0 #9C2802" }}>
+        <TicketGlyph size={24} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[15px] font-extrabold">Ticket subscription</span>
+        <span className="block text-[13px] text-[#A9A0A0]">Cheaper than buying one at a time. Auto-buys daily.</span>
+      </span>
+      <span className="shrink-0 rounded-full bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] px-3.5 py-2 text-[13px] font-bold text-white">Subscribe</span>
     </Link>
   );
 }
@@ -2348,10 +2279,24 @@ function nextParisDrawDate(after = new Date()): Date {
 // someone start a purchase the backend is about to reject).
 const DRAW_PURCHASE_CUTOFF_MS = 5 * 60_000;
 
-function PrizePoolHero({ prizePool, drawTime, onHowToPlay, onPrizeTiers }: {
+function TicketGlyph({ stroke = "#fff", size = 24 }: { stroke?: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 8.5V6.5a1.5 1.5 0 0 1 1.5-1.5h15A1.5 1.5 0 0 1 21 6.5v2a2.5 2.5 0 0 0 0 5v2a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 15.5v-2a2.5 2.5 0 0 0 0-5z" />
+      <path d="M14 5v12" strokeDasharray="2 2.4" />
+    </svg>
+  );
+}
+
+const HOW_STEPS = [
+  { n: "01", t: "Top up your Loofta balance with any token or bank." },
+  { n: "02", t: "Pick how many tickets. Quick pick or your own numbers." },
+  { n: "03", t: "One draw every day. Winnings land in your balance." },
+];
+
+function PrizePoolHero({ prizePool, drawTime, onPrizeTiers }: {
   prizePool: string | null;
   drawTime: string | null;
-  onHowToPlay: () => void;
   onPrizeTiers: () => void;
 }) {
   // Prefer API draw time; fall back to computing next 19:00 Paris ourselves
@@ -2375,6 +2320,7 @@ function PrizePoolHero({ prizePool, drawTime, onHowToPlay, onPrizeTiers }: {
     return () => clearInterval(id);
   }, [target]);
 
+  const [howOpen, setHowOpen] = useState(false);
   const amount = prizePool ? Math.round(parseFloat(prizePool) / 100_000) * 100_000 : 1_100_000;
   const pad = (n: number) => String(n).padStart(2, "0");
   const segs = [
@@ -2384,43 +2330,64 @@ function PrizePoolHero({ prizePool, drawTime, onHowToPlay, onPrizeTiers }: {
   ];
 
   return (
-    <div className="text-center pt-2 pb-7 px-2">
-      <p className="text-sm font-bold tracking-[0.22em] text-slate-500 uppercase mb-4">Prize Pool</p>
-      <p
-        className="font-black leading-none tracking-tight bg-gradient-to-b from-white via-slate-100 to-amber-200 bg-clip-text text-transparent select-none"
+    <div
+      className="relative mb-[18px] flex flex-col items-center gap-4 overflow-hidden rounded-[32px] border border-[rgba(255,140,40,0.22)] px-6 pb-7 pt-10 text-center"
+      style={{ background: "radial-gradient(520px 260px at 50% 0%,rgba(255,110,26,0.28),rgba(255,110,26,0) 70%),#141419" }}
+    >
+      <div className="absolute left-[clamp(-10px,3vw,30px)] top-[34px] grid h-[62px] w-[62px] -rotate-[14deg] place-items-center rounded-[20px]" style={{ background: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", boxShadow: "inset 0 3px 6px rgba(255,255,255,0.5),inset 0 -7px 12px rgba(0,0,0,0.22),0 6px 0 #8E5202,0 18px 34px rgba(0,0,0,0.5)" }}>
+        <TicketGlyph stroke="#6A3500" size={30} />
+      </div>
+      <div className="absolute right-[clamp(-10px,3vw,30px)] top-[86px] grid h-[54px] w-[54px] rotate-12 place-items-center rounded-[18px]" style={{ background: "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)", boxShadow: "inset 0 3px 6px rgba(255,255,255,0.5),inset 0 -7px 12px rgba(0,0,0,0.22),0 6px 0 #9C2802,0 18px 34px rgba(0,0,0,0.5)" }}>
+        <TicketGlyph size={26} />
+      </div>
+      <span className="font-mono text-xs tracking-[0.24em] text-[#FF9A5A]" style={{ fontFamily: "var(--font-home-mono), ui-monospace, monospace" }}>
+        TODAY&apos;S PRIZE POOL
+      </span>
+      <span
+        className="select-none font-extrabold leading-[0.95] tracking-[-0.06em]"
         style={{
-          filter: "drop-shadow(0 3px 28px rgba(251,146,60,0.22))",
-          // Fluid instead of a fixed 72px→84px breakpoint jump — the fixed size overflowed and
-          // clipped at the viewport edge on narrower phones once the pool hit 7 digits.
-          fontSize: "clamp(40px, 13vw, 84px)",
+          fontFamily: "var(--font-home-sora), sans-serif",
+          fontSize: "clamp(46px, 10vw, 84px)",
+          background: "linear-gradient(180deg,#FFFFFF 30%,#FFD27A 100%)",
+          WebkitBackgroundClip: "text",
+          backgroundClip: "text",
+          color: "transparent",
+          filter: "drop-shadow(0 8px 30px rgba(255,120,30,0.35))",
         }}
       >
         ${amount.toLocaleString("en-US")}
-      </p>
-
-      <div className="flex items-end justify-center gap-1.5 mt-6">
-        {segs.map((seg, i) => (
-          <div key={seg.l} className="flex items-end gap-1.5">
-            {i > 0 && <span className="text-slate-600 font-bold text-lg pb-4">:</span>}
-            <div className="flex flex-col items-center">
-              <div className="w-[52px] h-[52px] rounded-xl bg-white/[0.06] border border-white/[0.09] flex items-center justify-center">
-                <span className="text-[26px] font-bold text-white tabular-nums leading-none">{seg.v}</span>
-              </div>
-              <span className="text-[10px] text-slate-600 font-bold tracking-[0.18em] mt-1.5 uppercase">{seg.l}</span>
+      </span>
+      <div className="flex flex-col items-center gap-2">
+        <span className="text-[13px] font-semibold text-[#8A8893]">{cd.done ? "Draw in progress" : "Next draw in"}</span>
+        <div className="flex items-start gap-2">
+          {segs.map((seg) => (
+            <div key={seg.l} className="flex flex-col items-center gap-1.5">
+              <span className="min-w-16 rounded-2xl border border-white/[0.08] bg-[#0E0E12] px-2 py-3 text-[28px] font-bold tabular-nums tracking-[-0.03em] shadow-[inset_0_-3px_0_rgba(255,255,255,0.03)]" style={{ fontFamily: "var(--font-home-sora), sans-serif" }}>
+                {seg.v}
+              </span>
+              <span className="text-[10.5px] tracking-[0.18em] text-[#6E6C78]" style={{ fontFamily: "var(--font-home-mono), ui-monospace, monospace" }}>{seg.l}</span>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
-      {cd.done && <p className="text-sm text-amber-400 mt-2 font-medium">Draw in progress 🎯</p>}
-
-      <div className="flex items-center justify-center gap-3 mt-6">
-        <button onClick={onHowToPlay} className="px-5 py-2 rounded-full border border-white/[0.15] text-slate-300 font-medium text-sm hover:bg-white/[0.06] transition-colors">
-          How to Play
+      <div className="mt-1 flex flex-wrap justify-center gap-2">
+        <button type="button" onClick={() => setHowOpen((o) => !o)} className="rounded-full border border-white/[0.14] px-[18px] py-2.5 text-sm font-bold text-[#F2EFE8]" style={{ background: howOpen ? "#22222A" : "transparent" }}>
+          How to play
         </button>
-        <button onClick={onPrizeTiers} className="px-5 py-2 rounded-full border border-white/[0.15] text-slate-300 font-medium text-sm hover:bg-white/[0.06] transition-colors">
-          Prize Tiers
+        <button type="button" onClick={onPrizeTiers} className="rounded-full border border-white/[0.14] px-[18px] py-2.5 text-sm font-bold text-[#F2EFE8]">
+          Prize tiers
         </button>
       </div>
+      {howOpen && (
+        <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(min(100%,160px),1fr))] gap-2.5 text-left">
+          {HOW_STEPS.map((h) => (
+            <div key={h.n} className="flex flex-col gap-1.5 rounded-2xl border border-white/[0.06] bg-[#0E0E12] p-3.5">
+              <span className="text-xs text-[#FF8A4A]" style={{ fontFamily: "var(--font-home-mono), ui-monospace, monospace" }}>{h.n}</span>
+              <span className="text-sm leading-snug text-[#C9C6CF]">{h.t}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -3724,25 +3691,27 @@ export default function MegapotPage() {
         : [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])]
           .filter(t => t.status === "won" && !inFlightOrDoneWithdrawalTicketIds.has(t.id));
   const isRedeemPreview = redeemPreview === "redeem" || redeemPreview === "redeem-batch" || redeemPreview === "redeem-playagain" || redeemPreview === "redeem-done" || redeemPreview === "redeem-arrived";
+  const isAppPath = usePathname()?.startsWith("/app");
+  const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
+  const winningsUsd = wonTickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
 
   return (
-    <div className="bg-[#0f0f12] text-white mobile-first">
-      <div className="w-full max-w-lg mx-auto px-4 py-6 min-h-[calc(100svh-var(--header-h,0px)-4rem)]">
+    <div className={`bg-[#0B0B0E] text-[#F2EFE8] mobile-first ${sora.variable} ${jetbrainsMono.variable}`}>
+      <div className="mx-auto flex w-full max-w-[640px] flex-col gap-[18px] px-4 py-6 pb-28">
 
         <MegapotTabs activeTab={tab} wonCount={wonTickets.length} />
 
         {tab === "buy" && (
           <>
-            <MysteryPackBanner />
-            <SubscriptionBanner />
-
             <PrizePoolHero
               prizePool={dashboard?.nextDraw?.prizePool ?? null}
               drawTime={dashboard?.nextDraw?.drawTime ?? null}
-              onHowToPlay={() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" })}
               onPrizeTiers={() => setPrizeTiersOpen(true)}
             />
-
+            <div className="grid grid-cols-1 gap-3 min-[560px]:grid-cols-2">
+              <MysteryPackBanner />
+              <SubscriptionBanner />
+            </div>
             <BuyTab accessToken={accessToken.current} solPriceUsd={solPriceUsd} onPurchased={fetchDashboard} activeTickets={dashboard?.activeTickets ?? []} dashboardLoading={dashboardLoading} nextDraw={dashboard?.nextDraw} />
           </>
         )}
@@ -3755,6 +3724,23 @@ export default function MegapotPage() {
         )}
         {tab === "history" && (
           authenticated ? (
+            <>
+            <div className="flex items-center gap-4 rounded-[26px] border border-[rgba(245,183,12,0.25)] p-[22px]" style={{ background: "linear-gradient(135deg,#24170B,#141210)" }}>
+              <span className="grid h-[58px] w-[58px] shrink-0 -rotate-6 place-items-center rounded-[18px]" style={{ background: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", boxShadow: "inset 0 3px 6px rgba(255,255,255,0.5),inset 0 -7px 12px rgba(0,0,0,0.22),0 6px 0 #8E5202" }}>
+                <Trophy className="h-7 w-7 text-[#6A3500]" strokeWidth={2.4} />
+              </span>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-[13px] font-bold text-[#D9A866]">Winnings to redeem</span>
+                <span className="text-[30px] font-bold tracking-[-0.04em]" style={{ fontFamily: "var(--font-home-sora), sans-serif" }}>{fmt(winningsUsd)}</span>
+              </span>
+              {wonTickets.length > 0 ? (
+                <Link href={`${megapotBase}?tab=redeem`} className="shrink-0 rounded-full bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] px-4 py-2.5 text-sm font-bold text-white">
+                  Redeem
+                </Link>
+              ) : (
+                <span className="shrink-0 rounded-full bg-[#26262E] px-4 py-2.5 text-sm font-bold text-[#77757F]">Redeem</span>
+              )}
+            </div>
             <HistoryTab
               history={dashboard?.history ?? []}
               withdrawals={dashboard?.withdrawals ?? []}
@@ -3767,6 +3753,7 @@ export default function MegapotPage() {
               nextDrawRoundId={dashboard?.nextDraw?.roundId ?? null}
               withdrawMinUsdc={dashboard?.withdrawMinUsdc}
             />
+            </>
           ) : (
             <SignInGate message="Sign in to see your ticket history." login={login} />
           )
@@ -3793,21 +3780,19 @@ export default function MegapotPage() {
       {IS_LOCALHOST && <DevPreviewPanel />}
 
       {/* FAQ — same style as send/receive */}
-      <section id="how-it-works" className="md:pb-16 px-4 mt-2 pb-24">
-        <div className="max-w-xl mx-auto">
-          <h2 className="text-3xl md:text-4xl font-medium font-sans text-white text-center mb-8 md:mb-10">
-            How it works
+      {tab === "buy" && (
+      <section id="how-it-works" className="px-4 pb-8">
+        <div className="mx-auto flex max-w-[640px] flex-col gap-2.5">
+          <h2 className="px-1 py-1.5 text-[22px] font-bold tracking-[-0.03em]" style={{ fontFamily: "var(--font-home-sora), sans-serif" }}>
+            Questions
           </h2>
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2.5">
             {FAQ_ITEMS.map((item, index) => (
-              <div key={index} className="rounded-[20px] border border-white/10 bg-white/5 overflow-hidden">
+              <div key={index} className="overflow-hidden rounded-[20px] border border-white/[0.07] bg-[#141419]">
                 <button type="button" onClick={() => setOpenFaq(openFaq === index ? null : index)}
-                  className="w-full px-6 py-5 flex items-center justify-between text-left">
-                  <span className="text-lg md:text-xl font-semibold font-sans text-slate-200">{item.question}</span>
-                  <motion.span className="text-4xl text-orange-500 shrink-0 ml-4"
-                    animate={{ rotate: openFaq === index ? 45 : 0 }} transition={{ duration: 0.2 }}>
-                    +
-                  </motion.span>
+                  className="flex w-full items-center justify-between gap-3 px-5 py-[18px] text-left">
+                  <span className="text-base font-bold text-[#F2EFE8]">{item.question}</span>
+                  <span className="shrink-0 text-[22px] font-semibold text-[#FF7A2A]">{openFaq === index ? "−" : "+"}</span>
                 </button>
                 <AnimatePresence initial={false}>
                   {openFaq === index && (
@@ -3823,6 +3808,7 @@ export default function MegapotPage() {
           </div>
         </div>
       </section>
+      )}
 
     </div>
   );

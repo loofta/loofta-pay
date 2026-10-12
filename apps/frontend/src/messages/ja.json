@@ -182,7 +182,7 @@
       }
     },
     "signInToSendHandle": "ハンドルまたはメールに送るにはログインしてください",
-    "signInToSendHandleHint": "メールまたはソーシャルログイン — ウォレット宛はアカウント不要"
+    "signInToSendHandleHint": "メールまたはソーシャルログイン。ウォレット宛はアカウント不要"
   },
   "MarketingPage": {
     "nav": {
@@ -562,8 +562,8 @@
       "headlineBefore": "任意の",
       "headlineAfter": "またはメールへ送金",
       "headlineCashOut": "相手は好きな方法で受け取れます。",
-      "support": "アカウントなしでウォレットへ、またはログインしてハンドルへ送信 — Venmo、Cash App、Revolut、Zelle、Solana上のUSDC、または任意の暗号資産で受け取れます。",
-      "supportWithPaj": "アカウントなしでウォレットへ、またはログインしてハンドルへ送信 — Venmo、Cash App、Revolut、Zelle、PAJナイラ、Solana上のUSDC、または任意の暗号資産で受け取れます。",
+      "support": "アカウントなしでウォレットへ、またはログインしてハンドルへ送信 . Venmo、Cash App、Revolut、Zelle、Solana上のUSDC、または任意の暗号資産で受け取れます。",
+      "supportWithPaj": "アカウントなしでウォレットへ、またはログインしてハンドルへ送信 . Venmo、Cash App、Revolut、Zelle、PAJナイラ、Solana上のUSDC、または任意の暗号資産で受け取れます。",
       "cashOutLabel": "キャッシュアウト先",
       "ctaStart": "無料で送金を開始",
       "ctaBusiness": "ビジネス向け",
@@ -582,5 +582,17 @@
       "railAnyCryptoSub": "150+トークン",
       "railPajSub": "ナイラ銀行"
     }
+  },
+  "LaunchDeck": {
+    "eyebrow": "すぐ始める",
+    "title": "始めたいことを選んでください。",
+    "subtitle": "送金、ギブアウェイ開始、受け取りリンクの共有。",
+    "sendTitle": "送金する",
+    "sendBody": "ハンドル・メール・ウォレットへ。相手は好きな方法で現金化。",
+    "giveawayTitle": "ギブアウェイ開始",
+    "giveawayBody": "賞金を預託し、リンクを共有。オンチェーン抽選。",
+    "receiveTitle": "受け取る",
+    "receiveBody": "受け取りリンクやQRを共有 . 相手にウォレットは不要。",
+    "cta": "開く"
   }
 }

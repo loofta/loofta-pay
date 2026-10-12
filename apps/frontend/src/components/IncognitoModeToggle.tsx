@@ -1,19 +1,15 @@
 "use client";
 
-import { VenetianMask } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
-/** Compact row for the optional per-payment privacy toggle. The dramatic "incognito" moment
- *  (dark card + a small "Private" badge) lives on the whole pay card (see IncognitoCardBadge in
- *  c/[id]/page.tsx) — this row just needs to read clearly at a glance. Deliberately muted: no
- *  bright color or glow — those read as a privacy red flag in user feedback, the opposite of
- *  what a "private" indicator should feel like. */
+/** Pay-privately row from the app mock: orange lock tile, title, hint, gradient switch.
+ *  The whole row toggles. `light` keeps the same shape on a light card (guest checkout). */
 export function IncognitoModeToggle({
   checked,
   onCheckedChange,
   onLabel = "Pay privately",
   offLabel = "Pay privately",
+  description,
   ariaLabel = "Make this payment private",
   className,
   light = false,
@@ -24,6 +20,8 @@ export function IncognitoModeToggle({
    *  redeem/withdraw flow where the user is claiming winnings, not paying. Override per context. */
   onLabel?: string;
   offLabel?: string;
+  /** Second line under the label. Defaults to the mockup hint on the pay-privately row. */
+  description?: string;
   ariaLabel?: string;
   className?: string;
   /** Text/icon are slate-toned by default — fine on the dark pay card this was built for, unreadable
@@ -31,27 +29,52 @@ export function IncognitoModeToggle({
    *  TokenCombobox's own `light` prop. */
   light?: boolean;
 }) {
+  const label = checked ? onLabel : offLabel;
+  const hint =
+    description ??
+    (onLabel === "Pay privately" || onLabel === "Send privately" ? "Hide who paid and how much" : undefined);
+
   return (
-    <div className={cn(
-      "flex items-center gap-2.5 rounded-xl border px-3 py-2",
-      light ? "border-gray-200 bg-gray-50 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:bg-white/5" : "border-white/10 bg-white/5",
-      className
-    )}>
-      {checked && (
-        <VenetianMask
-          className={cn("h-4 w-4 shrink-0", light ? "text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-300" : "text-slate-300")}
-          strokeWidth={1.75}
-        />
-      )}
-      <span className={cn(
-        "flex-1 min-w-0 text-sm font-medium transition-colors",
-        light
-          ? (checked ? "text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100" : "text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-200")
-          : (checked ? "text-slate-100" : "text-slate-200")
-      )}>
-        {checked ? onLabel : offLabel}
+    <button
+      type="button"
+      aria-pressed={checked}
+      aria-label={ariaLabel}
+      onClick={() => onCheckedChange(!checked)}
+      className={cn("flex w-full items-center gap-3.5 rounded-[18px] px-4 py-3.5 text-left", className)}
+      style={{
+        background: light
+          ? checked ? "rgba(255,90,26,0.08)" : "#F6F5F2"
+          : checked ? "rgba(255,90,26,0.08)" : "#0E0E12",
+        border: `1px solid ${checked ? "rgba(255,90,26,0.35)" : light ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.08)"}`,
+      }}
+    >
+      <span
+        aria-hidden
+        className="grid h-10 w-10 shrink-0 place-items-center rounded-[13px]"
+        style={{
+          background: "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)",
+          boxShadow: "inset 0 2px 4px rgba(255,255,255,0.5), 0 3px 0 #9C2802",
+        }}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="4.5" y="11" width="15" height="10" rx="2.5" />
+          <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+        </svg>
       </span>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} aria-label={ariaLabel} />
-    </div>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className={cn("text-[15px] font-bold", light ? "text-[#16161C]" : "text-[#F2EFE8]")}>{label}</span>
+        {hint && <span className="text-[13px] text-[#8A8893]">{hint}</span>}
+      </span>
+      <span
+        aria-hidden
+        className="inline-flex h-[30px] w-[52px] shrink-0 items-center rounded-full p-[3px]"
+        style={{
+          background: checked ? "linear-gradient(90deg,#FF2D0A,#F5B70C)" : light ? "#D5D3CC" : "#3A3A44",
+          justifyContent: checked ? "flex-end" : "flex-start",
+        }}
+      >
+        <span className="block h-6 w-6 shrink-0 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.28)]" />
+      </span>
+    </button>
   );
 }

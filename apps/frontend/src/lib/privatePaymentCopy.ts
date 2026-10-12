@@ -41,6 +41,29 @@ export function privatePaymentWaitingAfterSenderCopy(delayMs?: number | null): s
  * landing delay when the payment was actually funded privately; a public SPL transfer confirms
  * in seconds, and implying otherwise is misleading.
  */
+/**
+ * Timestamp at which a private payment can be called Claimed: paid_at plus the
+ * sender's delay. `delayMs === null` means the delay was not on the link and
+ * was not saved, so the wait is the MagicBlock maximum — never paid_at itself.
+ * A known delay of 0 means the sender chose no delay, so it lands at paid_at.
+ * Returns null until that moment.
+ */
+export function privateFundsLandedAt(
+  paidAt: string | null | undefined,
+  delayMs: number | null | undefined,
+  now = Date.now(),
+): string | null {
+  if (!paidAt) return null;
+  const paidMs = new Date(paidAt).getTime();
+  if (!Number.isFinite(paidMs)) return null;
+  const wait = delayMs == null
+    ? PRIVATE_PAYMENT_MAX_WAIT_MINUTES * 60_000
+    : Math.max(0, delayMs);
+  const landedMs = paidMs + wait;
+  if (now < landedMs) return null;
+  return new Date(landedMs).toISOString();
+}
+
 export function waitingForFundsCopy(isPrivate: boolean | null | undefined, delayMs?: number | null): string {
   if (!isPrivate) return "Waiting for the payment to land.";
   const eta = typeof delayMs === "number" && delayMs > 0

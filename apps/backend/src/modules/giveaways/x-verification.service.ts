@@ -11,6 +11,13 @@ import {
   GiveawayEntry,
 } from './entities/giveaway.entity';
 
+export interface XRecentPost {
+  id: string;
+  text: string;
+  url: string;
+  when: string;
+}
+
 export interface XProfile {
   id: string;
   username: string;
@@ -20,6 +27,26 @@ export interface XProfile {
   /** X's own "verified" flag (blue check / legacy verification) — not to be confused with
    *  is_identity_verified or verified_type, which this app doesn't need. */
   verified: boolean;
+}
+
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function relativeTime(createdAt: string): string {
+  const then = new Date(createdAt).getTime();
+  if (!Number.isFinite(then)) return '';
+  const hours = Math.max(0, Math.floor((Date.now() - then) / 3_600_000));
+  if (hours < 1) return 'Just now';
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'Yesterday';
+  return `${days}d ago`;
 }
 
 const SORSA_BASE_URL = 'https://api.sorsa.io/v3';
@@ -92,6 +119,7 @@ export class XVerificationService {
   private readonly logger = new Logger(XVerificationService.name);
   private sorsaApiKey: string | null = null;
   private readonly profileCache = new Map<string, { profile: XProfile; expiresAt: number }>();
+  private readonly recentPostCache = new Map<string, { posts: XRecentPost[]; expiresAt: number }>();
   private readonly countryCache = new Map<string, { country: string; expiresAt: number }>();
   private dailyCallCount = 0;
   private dailyCallCountDate = '';
@@ -179,6 +207,41 @@ export class XVerificationService {
 
   isAvailable(): boolean {
     return this.sorsaApiKey !== null;
+  }
+
+  /**
+   * Last original posts on a public X account (replies and reposts dropped). One Sorsa search,
+   * cached for 10 minutes per handle so opening the raid picker does not bill on every click.
+   */
+  async recentOriginalPosts(handle: string, limit = 5): Promise<XRecentPost[]> {
+    const clean = handle.replace(/^@/, '').trim();
+    if (!/^[A-Za-z0-9_]{1,15}$/.test(clean)) return [];
+    if (!this.sorsaApiKey) return [];
+    const cacheKey = clean.toLowerCase();
+    const cached = this.recentPostCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.posts;
+
+    await this.consumeDailyCapOrThrow(`recent-posts:${cacheKey}`);
+    const res = await this.sorsaRequest<{ tweets?: Array<Record<string, unknown>> }>('POST', '/search-tweets', {
+      query: `from:${clean}`,
+      order: 'latest',
+    });
+    const posts = (res?.tweets ?? [])
+      .filter((t) => !t.retweeted_status && String(t.is_reply) !== 'true' && !t.in_reply_to_tweet_id)
+      .slice(0, limit)
+      .map((t) => {
+        const id = String(t.id ?? '');
+        const text = decodeEntities(String(t.full_text ?? '')).replace(/\s+/g, ' ').trim();
+        return {
+          id,
+          text: text.length > 180 ? text.slice(0, 177) + '…' : text,
+          url: `https://x.com/${clean}/status/${id}`,
+          when: relativeTime(String(t.created_at ?? '')),
+        };
+      })
+      .filter((t) => t.id && t.text);
+    this.recentPostCache.set(cacheKey, { posts, expiresAt: Date.now() + 10 * 60 * 1000 });
+    return posts;
   }
 
   /** Thin wrapper over Sorsa's REST API — ApiKey header auth, GET params as query string, POST

@@ -12,6 +12,20 @@ export async function generateMetadata({
   const { short_id } = await params;
   const preview = await getSharePreview(short_id);
   if (!preview) {
+    const backend = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+    const cashRes = await fetch(`${backend}/offramp/public/${encodeURIComponent(short_id)}`, { cache: "no-store" }).catch(() => null);
+    const cash = cashRes?.ok ? await cashRes.json().catch(() => null) : null;
+    if (cash?.platformName && cash?.identifier) {
+      const amount = Number(cash.amountUsdc);
+      const amountLabel = Number.isFinite(amount)
+        ? (amount % 1 === 0 ? `$${amount}` : `$${amount.toFixed(2)}`)
+        : "A payment";
+      const title = `${amountLabel} to ${String(cash.identifier).replace(/^[@$]/, "")} on ${cash.platformName}`;
+      return {
+        title,
+        description: "Follow this payment on Loofta.",
+      };
+    }
     return { title: "Payment link not found — Loofta Pay" };
   }
 

@@ -35,7 +35,7 @@ export function isValidAddressForChain(address: string, chain: string): boolean 
   const evmChains = new Set([
     "eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism",
     "bsc", "berachain", "pol", "polygon", "avax", "avalanche", "gnosis",
-    "fantom", "ftm", "linea", "scroll", "zksync", "zk", "blast", "matic",
+    "fantom", "ftm", "linea", "scroll", "zksync", "zk", "blast", "matic", "monad",
   ]);
   if (evmChains.has(ch)) return /^0x[a-fA-F0-9]{40}$/.test(raw);
 
@@ -76,7 +76,7 @@ export function getRefundToForChain(chain: string): string {
 	const evmChains = new Set([
 		"eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism",
 		"bsc", "berachain", "pol", "polygon", "avax", "avalanche", "gnosis",
-		"fantom", "ftm", "linea", "scroll", "zksync", "zk", "blast"
+		"fantom", "ftm", "linea", "scroll", "zksync", "zk", "blast", "monad"
 	]);
 	if (evmChains.has(key)) {
 		return "0x8910b3f20921f1be3847182c54f10cd71d3de2d7";

@@ -38,7 +38,7 @@ const RECIPIENT_LABELS: Record<PayoutRecipientType, { label: string; placeholder
   telegram: { label: "Telegram handle", placeholder: "@alice", type: "text" },
 };
 
-const PRIVATE_MIN_USD = 5;
+const PRIVATE_MIN_USD = 1;
 const CUSTOM_INTEGRATION_HREF = "mailto:hello@loofta.xyz?subject=" + encodeURIComponent("Custom payout integration");
 const TELEGRAM_HREF = "https://t.me/looftaxyz";
 
@@ -108,8 +108,8 @@ function TryPayNow() {
       return;
     }
     const amountNum = Number(amount);
-    if (!amountNum || amountNum < 1) {
-      setPhase({ kind: "error", message: "Minimum is $1." });
+    if (!amountNum || amountNum < 0.01) {
+      setPhase({ kind: "error", message: "Minimum is $0.01." });
       return;
     }
     if (isPrivate && amountNum < PRIVATE_MIN_USD) {
@@ -288,7 +288,7 @@ function TryPayNow() {
         <label className="text-base text-slate-400 mb-1 block">Amount (USD)</label>
         <input
           type="number"
-          min={isPrivate ? PRIVATE_MIN_USD : 1}
+          min={isPrivate ? PRIVATE_MIN_USD : 0.01}
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           className="w-full rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-base text-white outline-none focus:border-orange-400/50"
@@ -497,7 +497,7 @@ export function SendPayments({ onNavigate }: { onNavigate: (slug: string) => voi
           <tr className="border-b border-white/5">
             <td className="py-2 pr-4"><code>amount</code></td>
             <td className="py-2 pr-4 text-slate-400">number</td>
-            <td className="py-2 text-slate-400">USD, $10,000 maximum. $1 minimum, $5 minimum if <code>is_private</code> is <code>true</code>.</td>
+            <td className="py-2 text-slate-400">USD, $10,000 maximum. $0.01 minimum, $1 minimum if <code>is_private</code> is <code>true</code>.</td>
           </tr>
           <tr className="border-b border-white/5">
             <td className="py-2 pr-4"><code>recipient_type</code></td>

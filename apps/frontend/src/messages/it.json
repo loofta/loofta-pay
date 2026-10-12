@@ -182,7 +182,7 @@
       }
     },
     "signInToSendHandle": "Accedi per inviare a un handle o e-mail",
-    "signInToSendHandleHint": "Accesso con e-mail o social — i pagamenti a wallet non richiedono account"
+    "signInToSendHandleHint": "Accesso con e-mail o social. I pagamenti a wallet non richiedono account"
   },
   "MarketingPage": {
     "nav": {
@@ -562,8 +562,8 @@
       "headlineBefore": "Invia denaro a qualsiasi",
       "headlineAfter": "o email",
       "headlineCashOut": "Incassano a modo loro.",
-      "support": "Paga un wallet senza account, o accedi per inviare a un handle — reclamano su Venmo, Cash App, Revolut, Zelle, USDC su Solana o qualsiasi crypto.",
-      "supportWithPaj": "Paga un wallet senza account, o accedi per inviare a un handle — reclamano su Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC su Solana o qualsiasi crypto.",
+      "support": "Paga un wallet senza account, o accedi per inviare a un handle . reclamano su Venmo, Cash App, Revolut, Zelle, USDC su Solana o qualsiasi crypto.",
+      "supportWithPaj": "Paga un wallet senza account, o accedi per inviare a un handle . reclamano su Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC su Solana o qualsiasi crypto.",
       "cashOutLabel": "Incassano su",
       "ctaStart": "Inizia a inviare, è gratis",
       "ctaBusiness": "Per le aziende",
@@ -582,5 +582,17 @@
       "railAnyCryptoSub": "150+ token",
       "railPajSub": "Banca in naira"
     }
+  },
+  "LaunchDeck": {
+    "eyebrow": "Lancia qualsiasi cosa",
+    "title": "Scegli cosa vuoi avviare.",
+    "subtitle": "Invia un pagamento, lancia un giveaway o condividi un link di ricezione.",
+    "sendTitle": "Invia pagamento",
+    "sendBody": "Paga un handle, email o wallet. Incassano come preferiscono.",
+    "giveawayTitle": "Lancia giveaway",
+    "giveawayBody": "Finanzia il premio, condividi un link, estrazione on-chain.",
+    "receiveTitle": "Ricevi",
+    "receiveBody": "Condividi il link o QR . niente wallet per loro.",
+    "cta": "Apri"
   }
 }

@@ -9,7 +9,7 @@ import { CreateGiveawayDto } from './dto/create-giveaway.dto';
 import { SubmitTaskCompletionDto } from './dto/submit-task-completion.dto';
 import { ReviewTaskCompletionDto } from './dto/review-task-completion.dto';
 import { SelectWinnersDto } from './dto/select-winners.dto';
-import { BuildFundingPrivateTransferDto } from './dto/build-funding-private-transfer.dto';
+import { BuildFundingPrivateTransferDto, ConfirmDirectTokenFundingDto } from './dto/build-funding-private-transfer.dto';
 import { Giveaway } from './entities/giveaway.entity';
 
 @ApiTags('giveaways')
@@ -66,12 +66,36 @@ export class GiveawaysController {
   async funding(@Req() req: { user?: { id: string } }, @Param('id') id: string) {
     const giveaway = await this.giveawaysService.findOneForCreator(id, req.user!.id);
     const status = await this.fundingService.checkAndUpdateFundingStatus(giveaway);
+    const tokenQuote = await this.fundingService.quoteDirectTokenFunding(giveaway).catch(() => null);
     return {
       burner_address: giveaway.burner_address,
       mint: giveaway.mint,
       funding_required_usd: giveaway.funding_required_usd,
+      tokenQuote,
       ...status,
     };
+  }
+
+  @Post(':id/funding/token')
+  @ApiOperation({ summary: 'Build one transaction that sends the prize token to the burner and the USDC platform fee to Loofta' })
+  async buildDirectTokenFunding(
+    @Req() req: { user?: { id: string } },
+    @Param('id') id: string,
+    @Body() dto: BuildFundingPrivateTransferDto,
+  ) {
+    const giveaway = await this.giveawaysService.findOneOrThrow(id);
+    return this.fundingService.buildDirectTokenFunding(giveaway, req.user!.id, dto.sender_wallet);
+  }
+
+  @Post(':id/funding/token/confirm')
+  @ApiOperation({ summary: 'Open the giveaway once the token-plus-fee transaction is confirmed' })
+  async confirmDirectTokenFunding(
+    @Req() req: { user?: { id: string } },
+    @Param('id') id: string,
+    @Body() dto: ConfirmDirectTokenFundingDto,
+  ) {
+    const giveaway = await this.giveawaysService.findOneOrThrow(id);
+    return this.fundingService.confirmDirectTokenFunding(giveaway, req.user!.id, dto.signature);
   }
 
   @Post(':id/funding/private-transfer')

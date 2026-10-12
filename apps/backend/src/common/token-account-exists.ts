@@ -21,13 +21,13 @@ import { getAccount } from '@solana/spl-token';
 export async function tokenAccountExists(
   conn: Connection,
   ata: PublicKey,
-  opts?: { retries?: number; baseDelayMs?: number },
+  opts?: { retries?: number; baseDelayMs?: number; programId?: PublicKey },
 ): Promise<boolean> {
   const retries = opts?.retries ?? 2;
   const baseDelayMs = opts?.baseDelayMs ?? 300;
   for (let attempt = 0; ; attempt++) {
     try {
-      await getAccount(conn, ata);
+      await getAccount(conn, ata, 'confirmed', opts?.programId);
       return true;
     } catch (e: any) {
       if (e?.name === 'TokenAccountNotFoundError') return false;

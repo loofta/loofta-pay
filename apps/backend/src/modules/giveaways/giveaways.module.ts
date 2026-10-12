@@ -18,6 +18,7 @@ import { GiveawayVrfService } from './giveaway-vrf.service';
 import { GiveawayPayoutService } from './giveaway-payout.service';
 import { GiveawayGiphyService } from './giveaway-giphy.service';
 import { GiveawayCronService } from './giveaway-cron.service';
+import { GiveawayTokenService } from './giveaway-token.service';
 
 @Module({
   imports: [ClaimsModule, SendPaymentModule, EmailModule, IntentsModule, UsersModule],
@@ -42,6 +43,7 @@ import { GiveawayCronService } from './giveaway-cron.service';
     GiveawayPayoutService,
     GiveawayGiphyService,
     GiveawayCronService,
+    GiveawayTokenService,
   ],
   exports: [
     GiveawaysService,

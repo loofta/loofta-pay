@@ -39,6 +39,7 @@ import { getEphemeralRpcForMode } from "@/lib/per/constants";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
 import { buildGiveawayFundingPrivateTransfer } from "@/services/api/claims";
+import { signAndBroadcastSponsoredTx } from "@/services/solanaSponsor";
 import { FormattedText } from "@/components/FormattedText";
 import posthog from "posthog-js";
 
@@ -256,7 +257,7 @@ function taskDisplayTitle(task: PublicTask): string {
 
 interface PublicGiveaway {
   id: string; title: string; description: string | null; logo_url: string | null; project_name: string | null; short_id: string | null;
-  winner_count: number; selection_mode: string; prize_amount_usd: string; reward_type?: "usdc" | "megapot_ticket"; entries_close_at: string;
+  winner_count: number; selection_mode: string; prize_amount_usd: string; reward_type?: "usdc" | "megapot_ticket"; prize_mint?: string | null; prize_token_symbol?: string | null; entries_close_at: string;
   eligibility: { min_followers?: number; min_account_age_days?: number; verified_only?: boolean; required_countries?: string[]; required_continents?: string[] };
   status: string; burner_address: string | null; mint: string | null; is_devnet: boolean;
   funding_required_usd: string | null; funding_confirmed_usd: string; entry_count: number;
@@ -575,10 +576,55 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
     }
   }, [submitTask, toast, refetchEntry]);
 
-  const handleFund = useCallback(async (remainingUsd: number, burnerAddress: string) => {
+  const tokenPaySig = useRef<string | null>(null);
+  const handleFund = useCallback(async (remainingUsd: number, burnerAddress: string, tokenPay = false) => {
     setPaying(true);
     try {
-      if (payPrivately) {
+      if (tokenPay) {
+        const senderAddress = solanaPayment.senderAddress;
+        const wallet = solanaWallets?.find((w) => w.address === senderAddress);
+        if (!senderAddress || !wallet) throw new Error("Embedded wallet not found. Try logging out and back in.");
+        const accessToken = await getAccessToken();
+        const headers = { ...(await authHeaders(getAccessToken)), "Content-Type": "application/json" };
+        if (!tokenPaySig.current) {
+          const built = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}/funding/token`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ sender_wallet: senderAddress }),
+          });
+          const builtBody = await built.json().catch(() => null);
+          if (!built.ok) throw new Error(builtBody?.message || "Couldn't build the token payment");
+          const rawTxBytes = Buffer.from(builtBody.transactionBase64 as string, "base64");
+          const chain = getPrivySolanaChainForMode(networkMode);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const signedOutput = await (signTransaction as any)({
+            transaction: rawTxBytes,
+            wallet,
+            chain,
+            options: { uiOptions: { showWalletUIs: false } },
+          });
+          tokenPaySig.current = await signAndBroadcastSponsoredTx(
+            signedOutput.signedTransaction,
+            user?.id ?? "",
+            "giveawayTokenFunding",
+            accessToken,
+            networkMode === "mainnet" ? "mainnet" : "devnet",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            resolvedId,
+          );
+        }
+        const confirmed = await fetch(`${BACKEND_URL}/giveaways/${resolvedId}/funding/token/confirm`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ signature: tokenPaySig.current }),
+        });
+        const confirmedBody = await confirmed.json().catch(() => null);
+        if (!confirmed.ok) throw new Error(confirmedBody?.message || "Payment sent, but it isn't confirmed yet. Try again in a moment.");
+        tokenPaySig.current = null;
+      } else if (payPrivately) {
         const senderAddress = solanaPayment.senderAddress;
         const wallet = solanaWallets?.find((w) => w.address === senderAddress);
         if (!senderAddress || !wallet) throw new Error("Embedded wallet not found. Try logging out and back in.");
@@ -909,14 +955,16 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             <p className="flex items-baseline gap-2.5 mb-3">
               <span className="text-5xl font-bold tracking-tight text-white">${totalPoolLabel}</span>
               <span className="text-base text-slate-400">
-                {giveaway.reward_type === "megapot_ticket" ? "worth of Megapot tickets" : "USDC"}
+                {giveaway.reward_type === "megapot_ticket" ? "worth of Megapot tickets" : giveaway.prize_token_symbol ? `in ${giveaway.prize_token_symbol}` : "USDC"}
               </span>
             </p>
             <div className="flex flex-wrap gap-2 mb-3">
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
                 {giveaway.reward_type === "megapot_ticket"
                   ? `${giveaway.prize_amount_usd} ticket${Number(giveaway.prize_amount_usd) === 1 ? "" : "s"} each`
-                  : `$${giveaway.prize_amount_usd} each`}
+                  : giveaway.prize_token_symbol
+                    ? `$${giveaway.prize_amount_usd} in ${giveaway.prize_token_symbol} each`
+                    : `$${giveaway.prize_amount_usd} each`}
               </span>
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
                 {giveaway.winner_count} winner{giveaway.winner_count === 1 ? "" : "s"}
@@ -1002,6 +1050,8 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             const requiredUsd = Number(giveaway.funding_required_usd ?? 0);
             const confirmedUsd = Number(funding?.fundingConfirmedUsd ?? giveaway.funding_confirmed_usd ?? 0);
             const remainingUsd = Math.max(0, requiredUsd - confirmedUsd);
+            const tokenQuote = funding?.tokenQuote as { symbol: string; amount: string; feeUsdc: number } | null | undefined;
+            const payInToken = Boolean(giveaway.prize_mint && tokenQuote);
 
             // Client-side estimate only (used for display before the tx is actually built) — same
             // approach MultiSendFlow uses for its private-mode fee preview.
@@ -1012,7 +1062,9 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             const privateFeeUsdc = bpsFeeUsdc + flatFeeUsdc;
             const totalDueUsdc = payPrivately ? remainingUsd + privateFeeUsdc : remainingUsd;
 
-            const insufficientBalance = !solanaPayment.isBalanceLoading && !solanaPayment.hasEnoughBalance(totalDueUsdc);
+            const usdcNeeded = payInToken ? (tokenQuote?.feeUsdc ?? 0) : totalDueUsdc;
+            const insufficientBalance = !payInToken && !solanaPayment.isBalanceLoading && usdcNeeded > 0 && !solanaPayment.hasEnoughBalance(usdcNeeded);
+            const shortFee = payInToken && !solanaPayment.isBalanceLoading && usdcNeeded > 0 && !solanaPayment.hasEnoughBalance(usdcNeeded);
 
             if (remainingUsd <= 0) {
               return (
@@ -1028,38 +1080,54 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             return (
               <div className="relative mb-5">
                 {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
-                {payPrivately && (
+                {!payInToken && payPrivately && (
                   <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 z-10 select-none [filter:drop-shadow(0_2px_5px_rgba(0,0,0,0.6))]">
                     <PrivacyGlyph size={24} opacity={1} className="text-slate-300" />
                   </div>
                 )}
-                <div className={`rounded-2xl border p-4 space-y-3 transition-colors ${payPrivately ? "border-white/15 bg-black/40" : "border-white/10 bg-white/5"}`}>
+                <div className={`rounded-2xl border p-4 space-y-3 transition-colors ${!payInToken && payPrivately ? "border-white/15 bg-black/40" : "border-white/10 bg-white/5"}`}>
                   <p className="text-base font-medium text-slate-400 uppercase tracking-widest">Fund this giveaway</p>
-                  <p className="text-base text-slate-300">
-                    <span className="font-semibold text-white">${remainingUsd.toFixed(2)} USDC</span> left to fund
-                    {confirmedUsd > 0 && <span className="text-slate-500"> · ${confirmedUsd.toFixed(2)} of ${requiredUsd.toFixed(2)} confirmed</span>}
-                  </p>
+                  {payInToken && tokenQuote ? (
+                    <p className="text-base text-slate-300">
+                      <span className="font-semibold text-white">{tokenQuote.amount} {tokenQuote.symbol}</span> goes to escrow
+                      {tokenQuote.feeUsdc > 0 && <> and <span className="font-semibold text-white">${tokenQuote.feeUsdc.toFixed(2)} USDC</span> goes to Loofta</>}
+                      , in one transaction.
+                    </p>
+                  ) : (
+                    <p className="text-base text-slate-300">
+                      <span className="font-semibold text-white">${remainingUsd.toFixed(2)} USDC</span> left to fund
+                      {confirmedUsd > 0 && <span className="text-slate-500"> · ${confirmedUsd.toFixed(2)} of ${requiredUsd.toFixed(2)} confirmed</span>}
+                    </p>
+                  )}
 
-                  <IncognitoModeToggle
-                    checked={payPrivately}
-                    onCheckedChange={handleTogglePayPrivately}
-                    onLabel="Pay privately"
-                    offLabel="Pay privately"
-                  />
+                  {!payInToken && (
+                    <IncognitoModeToggle
+                      checked={payPrivately}
+                      onCheckedChange={handleTogglePayPrivately}
+                      onLabel="Pay privately"
+                      offLabel="Pay privately"
+                    />
+                  )}
                   <p className="text-base text-slate-400">
-                    {payPrivately ? `+$${privateFeeUsdc.toFixed(2)} fees (MagicBlock) · $${totalDueUsdc.toFixed(2)} total` : "Normal funding is a plain on-chain transfer, free of charge."}
+                    {payInToken
+                      ? "The prize token stays in escrow. The platform fee is paid in USDC."
+                      : payPrivately ? `+$${privateFeeUsdc.toFixed(2)} fees (MagicBlock) · $${totalDueUsdc.toFixed(2)} total` : "Normal funding is a plain on-chain transfer, free of charge."}
                   </p>
 
-                  {insufficientBalance ? (
+                  {shortFee ? (
+                    <InsufficientBalanceCard balanceUSD={solanaPayment.balanceUSD} neededUSD={usdcNeeded} showFeesLabel />
+                  ) : insufficientBalance ? (
                     <InsufficientBalanceCard balanceUSD={solanaPayment.balanceUSD} neededUSD={totalDueUsdc} showFeesLabel={payPrivately} />
                   ) : (
                     <GradientActionButton
                       disabled={paying || remainingUsd <= 0}
                       loading={paying}
                       loadingText="Paying…"
-                      onClick={() => handleFund(remainingUsd, giveaway.burner_address!)}
+                      onClick={() => handleFund(remainingUsd, giveaway.burner_address!, payInToken)}
                     >
-                      Pay ${totalDueUsdc.toFixed(2)} now
+                      {payInToken && tokenQuote
+                        ? `Pay ${tokenQuote.amount} ${tokenQuote.symbol}${tokenQuote.feeUsdc > 0 ? ` + $${tokenQuote.feeUsdc.toFixed(2)}` : ""}`
+                        : `Pay $${totalDueUsdc.toFixed(2)} now`}
                     </GradientActionButton>
                   )}
                 </div>

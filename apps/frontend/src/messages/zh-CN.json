@@ -182,7 +182,7 @@
       }
     },
     "signInToSendHandle": "登录后即可发送到用户名或邮箱",
-    "signInToSendHandleHint": "邮箱或社交登录 — 发送到钱包地址无需账户"
+    "signInToSendHandleHint": "邮箱或社交登录。发送到钱包地址无需账户"
   },
   "MarketingPage": {
     "nav": {
@@ -562,8 +562,8 @@
       "headlineBefore": "向任意",
       "headlineAfter": "或邮箱转账",
       "headlineCashOut": "对方按自己的方式提现。",
-      "support": "无需账户即可向钱包付款，或登录后向社交账号发送——对方可提现到 Venmo、Cash App、Revolut、Zelle、Solana 上的 USDC 或任意加密货币。",
-      "supportWithPaj": "无需账户即可向钱包付款，或登录后向社交账号发送——对方可提现到 Venmo、Cash App、Revolut、Zelle、PAJ 奈拉、Solana 上的 USDC 或任意加密货币。",
+      "support": "无需账户即可向钱包付款，或登录后向社交账号发送. . 对方可提现到 Venmo、Cash App、Revolut、Zelle、Solana 上的 USDC 或任意加密货币。",
+      "supportWithPaj": "无需账户即可向钱包付款，或登录后向社交账号发送. . 对方可提现到 Venmo、Cash App、Revolut、Zelle、PAJ 奈拉、Solana 上的 USDC 或任意加密货币。",
       "cashOutLabel": "对方可提现到",
       "ctaStart": "免费开始发送",
       "ctaBusiness": "面向企业",
@@ -582,5 +582,17 @@
       "railAnyCryptoSub": "150+ 代币",
       "railPajSub": "奈拉银行"
     }
+  },
+  "LaunchDeck": {
+    "eyebrow": "一键发起",
+    "title": "选择你要启动的内容。",
+    "subtitle": "发送付款、发起抽奖，或分享收款链接。",
+    "sendTitle": "发送付款",
+    "sendBody": "付给 handle、邮箱或钱包。对方按自己的方式提现。",
+    "giveawayTitle": "发起抽奖",
+    "giveawayBody": "存入奖金、分享链接、链上开奖。",
+    "receiveTitle": "收款",
+    "receiveBody": "分享收款链接或二维码. . 对方无需钱包。",
+    "cta": "打开"
   }
 }

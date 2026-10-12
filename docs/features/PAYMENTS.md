@@ -134,20 +134,18 @@ Loofta-managed embedded wallet and holds no DB credentials; it calls the backend
 
 ## Min amount
 
-**$5.00 USDC minimum, enforced inconsistently:**
-- Client-side hardcoded in three places (`app/app/page.tsx`, `ClaimPageContent.tsx`,
-  `app/app/c/[id]/page.tsx`).
-- Backend DTO (`CreateClaimDto.amount`) only enforces `@Min(0.01)` — the $5 floor is **not**
-  enforced there.
-- Enforced server-side only in `buildPrivateTransferForPayer()`
-  (`BadRequestException` under $5, with a carve-out for multi-send batch rows).
+**Private payments floor at $1.00 USDC. Public payments floor at $0.01:**
+- Client-side in `app/app/page.tsx`, `home-v3/HomeV3Content.tsx`, `ClaimPageContent.tsx`,
+  and `app/app/c/[id]/page.tsx` (the $1 check only applies when the payment is private).
+- Backend DTO (`CreateClaimDto.amount`) enforces `@Min(0.01)` for any claim.
+- Enforced server-side in `buildPrivateTransferForPayer()`
+  (`BadRequestException` under $1, with a carve-out for multi-send batch rows).
 - Multi-send: `MULTI_SEND_MIN_TOTAL_USD = 5` via a custom `MinTotalAmount` validator on the
   DTO — sums all recipient amounts, requires the **total** ≥ $5 (individual rows only need
   `@Min(0.01)`).
 
-**Gap:** a plain public single payment created directly via API (e.g. an integrator hitting
-`POST /claims/create`) has **no server-side $5 floor at all** — only client UI stops normal
-users from going under it.
+A plain public single payment has no server-side floor beyond `@Min(0.01)`. The $1 floor applies
+only when the payment is private.
 
 ## Burner logic & DB encryption
 
@@ -316,8 +314,8 @@ a distributed lock.
 ### Cross-cutting gotchas
 1. Two link formats (`/c/{short_id}` vs `/share/{uuid}`) from two services with duplicated
    `generateShortId()` — easy for the two to drift.
-2. The $5 minimum is solid on multi-send and the private-transfer builder, client-side-only on
-   plain public single sends.
+2. Private single payments floor at $1 (client and `buildPrivateTransferForPayer`). Multi-send
+   still requires a $5 total. A plain public single payment only needs $0.01.
 3. `updateStatus()`'s legacy-strip column list must be manually kept in sync with new
    `payments`-only columns.
 4. `apps/frontend/src/components/payments/` is an empty leftover directory.

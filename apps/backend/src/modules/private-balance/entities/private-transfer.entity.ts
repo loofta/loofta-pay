@@ -42,6 +42,10 @@ export interface PrivateTransfer {
    *  account (the common case). Stored rather than re-quoted so the sweep charges exactly what
    *  the user was shown before signing. */
   ata_setup_fee_usdc: string | number | null;
+  /** Deposit only: MagicBlock split chosen when the burner was created. Null keeps the server default. */
+  delivery_split: number | null;
+  /** Deposit only: MagicBlock max delivery delay in ms. Null keeps the server default. */
+  delivery_max_delay_ms: number | null;
 }
 
 /** Fields safe to return to the client — never the encrypted burner secret. */

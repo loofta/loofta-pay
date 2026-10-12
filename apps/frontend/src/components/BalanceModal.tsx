@@ -35,7 +35,7 @@ import { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
 import { useReducedMotion } from "framer-motion";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
-import { cashoutFeeUsdc, cashoutPayoutUsdc } from "@/services/peerCash";
+import { cashoutGrossUsdc, cashoutPayoutUsdc } from "@/services/peerCash";
 
 /** Gate check before any EVM gas-sponsored transaction. Throws if rate-limited. */
 async function assertEvmSponsorAllowed(walletAddress: string, userId: string, accessToken: string | null) {
@@ -172,7 +172,6 @@ const PRIVATE_DEPOSIT_SESSION_KEY = "loofta_private_deposit_id";
 const PRIVATE_WITHDRAW_SESSION_KEY = "loofta_private_withdraw_id";
 const PRIVATE_TRANSFER_TERMINAL_STATUSES = new Set(["complete", "failed"]);
 const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
-const LOOFTA_FEE_WALLET = "0x50c236e3B93D3d69fe23F4D648A13901e6DdbC39" as const;
 // Withdraw-flow lottery ticket add-on. Mirrors megapot/page.tsx's handlePublicBuy/randomTicket
 // (numbers only matter for display — the backend accepts a quick-pick pick same as a manual one).
 const LOTTERY_TICKET_PRICE_USDC = 1;
@@ -190,7 +189,6 @@ function randomLotteryQuickPick(): { main: number[]; bonus: number } {
 
 type WithdrawalStep = "idle" | "submitting" | "sent" | "bridging" | "complete" | "failed" | "settling";
 type PeerStep = "platform" | "form" | "bridging" | "creating-deposit" | "deposit-error" | "deposited" | "complete" | "cancelling" | "cancelled" | "failed";
-type PeerOfframpRecord = { id: string; created_at: string; platform: string; platform_identifier: string; currency: string; amount_usdc: number; status: string; zkp2p_deposit_id: string | null; filled_amount_usdc?: number | null; fill_state?: string | null };
 
 // "cancelling" intentionally excluded — requires active signing and can't be resumed; maps to deposit-error on restore
 const ACTIVE_PEER_STEPS = new Set<PeerStep>(["bridging", "creating-deposit", "deposit-error", "deposited"]);
@@ -471,7 +469,7 @@ export interface BalanceModalProps {
    * balance") — skip the auto-redirect to Recent for a stuck withdrawal so that request wins. */
   lockInitialTab?: boolean;
   /** Deep-link into a withdraw rail when opening the withdraw tab (claim cash-out / ?method=). */
-  initialWithdrawMethod?: "peer" | "paj" | "crypto";
+  initialWithdrawMethod?: "peer" | "paj" | "crypto" | "near";
   /** Shortfall to prefill when opening from "Add funds & pay". */
   topUpAmountUsd?: number;
   /** Pay someone else's Venmo, Cash App, or Revolut handle. Opens the Peer cash-out form filled in. */
@@ -537,8 +535,6 @@ export function BalanceModal({
   const [dbDepositsLoading, setDbDepositsLoading] = useState(false);
   // DB id of the current in-flight Near Intents deposit so we can PATCH it as the bridge progresses
   const [depositDbId, setDepositDbId] = useState<string | null>(null);
-  const [peerOfframpHistory, setPeerOfframpHistory] = useState<PeerOfframpRecord[]>([]);
-  const [peerHistoryLoading, setPeerHistoryLoading] = useState(false);
 
   // Quote estimation for cross-chain
   const [quoteAmount, setQuoteAmount] = useState<string | null>(null);
@@ -1466,7 +1462,7 @@ export function BalanceModal({
         await assertEvmSponsorAllowed(peerBaseWalletAddress!, user!.id, evmGateToken);
 
         const { base } = await import("viem/chains");
-        const { createPublicClient: mkPublic, createWalletClient, custom, http: httpT, erc20Abi: _erc20Abi, encodeFunctionData } = await import("viem");
+        const { createPublicClient: mkPublic, createWalletClient, custom, http: httpT, erc20Abi: _erc20Abi } = await import("viem");
 
         const evmWallet = evmWalletsRef.current.find(
           (w) => w.address.toLowerCase() === peerBaseWalletAddress!.toLowerCase() && typeof (w as any).getEthereumProvider === "function"
@@ -1502,10 +1498,7 @@ export function BalanceModal({
 
         // Relay can report the bridge done before Base shows the USDC. Wait for the
         // payout amount instead of failing the setup on the first zero read.
-        const { cashoutFeeAtomic, cashoutPayoutAtomic } = await import("@/services/peerCash");
         const requestedAtomic = BigInt(Math.round(peerAmountUSDC * 1_000_000));
-        const feeAtomic = cashoutFeeAtomic(requestedAtomic);
-        const payoutAtomic = cashoutPayoutAtomic(requestedAtomic);
         const pubClient = mkPublic({ chain: base, transport: httpT("https://mainnet.base.org") });
         const readBaseUsdc = () => pubClient.readContract({
           address: BASE_USDC_ADDRESS,
@@ -1517,33 +1510,14 @@ export function BalanceModal({
         let rawBalance = 0n;
         for (let attempt = 0; attempt < 15 && !cancelled; attempt++) {
           rawBalance = await readBaseUsdc();
-          console.log(PEER_LOG, "Base USDC balance", rawBalance.toString(), "payout", payoutAtomic.toString(), "attempt", attempt);
-          if (rawBalance >= payoutAtomic) break;
+          console.log(PEER_LOG, "Base USDC balance", rawBalance.toString(), "deposit", requestedAtomic.toString(), "attempt", attempt);
+          if (rawBalance >= requestedAtomic) break;
           await new Promise((r) => setTimeout(r, 4000));
         }
         setPeerBasePending(false);
         if (cancelled) return;
-        if (rawBalance < payoutAtomic) throw new Error("No USDC found on Base wallet. It may still be bridging — please wait and retry.");
-        const atomicUsdc = payoutAtomic;
-        if (feeAtomic > 0n && rawBalance >= payoutAtomic + feeAtomic) {
-          try {
-            const feeData = encodeFunctionData({
-              abi: _erc20Abi,
-              functionName: "transfer",
-              args: [LOOFTA_FEE_WALLET, feeAtomic],
-            });
-            const feeHash = await sponsoredClient.sendTransaction({
-              to: BASE_USDC_ADDRESS,
-              data: feeData,
-              chain: base,
-              account: peerBaseWalletAddress as `0x${string}`,
-            });
-            await pubClient.waitForTransactionReceipt({ hash: feeHash });
-            console.log(PEER_LOG, "cash-out fee sent", { feeAtomic: feeAtomic.toString(), feeHash });
-          } catch (feeErr) {
-            console.warn(PEER_LOG, "cash-out fee transfer failed", feeErr);
-          }
-        }
+        if (rawBalance < requestedAtomic) throw new Error("No USDC found on Base wallet. It may still be bridging — please wait and retry.");
+        const atomicUsdc = requestedAtomic;
 
         if (cancelled) return;
         startedCashout = true;
@@ -1563,6 +1537,7 @@ export function BalanceModal({
           payee: zkp2pId,
           signer: sponsoredClient as any,
           // Paying someone else's handle is one order, filled by one person.
+          // Deposit is amount + fill incentive; the peer still pays the typed fiat amount.
           exactFill: !!peerPay,
         });
 
@@ -2046,17 +2021,23 @@ export function BalanceModal({
       } else if (initialWithdrawMethod === "crypto") {
         setShowFiatOfframpPicker(false);
         setWithdrawMethod("crypto-picker");
+      } else if (initialWithdrawMethod === "near") {
+        setShowFiatOfframpPicker(false);
+        setTab("withdraw");
+        setWithdrawMethod("near-intents");
+        if (topUpAmountUsd && topUpAmountUsd > 0) {
+          setWithdrawAmount(topUpAmountUsd.toFixed(2).replace(/\.00$/, ""));
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialTab, initialWithdrawMethod, peerPay]);
+  }, [open, initialTab, initialWithdrawMethod, peerPay, topUpAmountUsd]);
 
   // On open: load history and resume any in-progress Near Intents withdrawal
   useEffect(() => {
     if (!open) return;
     const history = getWithdrawalHistory();
     setRecentWithdrawals(history);
-    fetchPeerHistory();
     fetchDbDeposits();
     fetchPajCashHistory();
 
@@ -2260,10 +2241,16 @@ export function BalanceModal({
   // A pay-to-app already has its own amount; overwriting it would send the whole balance.
   useEffect(() => {
     if (peerPay) return;
+    if (topUpAmountUsd && topUpAmountUsd > 0) {
+      setWithdrawAmount(topUpAmountUsd.toFixed(2).replace(/\.00$/, ""));
+      return;
+    }
     if (open && spendableBalance > 0) setWithdrawAmount(spendableBalance.toFixed(6).replace(/\.?0+$/, ""));
-  }, [open, spendableBalance, peerPay]);
+  }, [open, spendableBalance, peerPay, topUpAmountUsd]);
 
   const withdrawAmountNum = parseFloat(withdrawAmount) || 0;
+  const peerPayGrossUsd = peerPay ? cashoutGrossUsdc(peerPay.amountUsd) : 0;
+  const peerPayFeeUsd = peerPay ? Math.max(0, peerPayGrossUsd - peerPay.amountUsd) : 0;
 
   // Private withdrawals debit the sender for amount + fees ON TOP (MagicBlock exactOut) — see
   // PRIVATE_WITHDRAW_FEE_HEADROOM_USDC. This is the real max the form should ever offer/allow.
@@ -2292,7 +2279,8 @@ export function BalanceModal({
     const t = setTimeout(async () => {
       try {
         const { getPeerEstimate: fetchEstimate, usdc } = await import("@/services/peerCash");
-        const est = await fetchEstimate(usdc(cashoutPayoutUsdc(withdrawAmountNum)), peerCurrency, platform.processorName, true);
+        const estimateUsdc = peerPay ? cashoutGrossUsdc(withdrawAmountNum) : withdrawAmountNum;
+        const est = await fetchEstimate(usdc(estimateUsdc), peerCurrency, platform.processorName, true);
         if (cancelled) return;
         setPeerEstimate({ receiveAmount: est.receiveAmount, eta: est.eta ?? null });
       } catch (err) {
@@ -2304,7 +2292,7 @@ export function BalanceModal({
     }, 400);
 
     return () => { cancelled = true; clearTimeout(t); };
-  }, [withdrawMethod, peerStep, peerPlatformId, peerCurrency, withdrawAmountNum]);
+  }, [withdrawMethod, peerStep, peerPlatformId, peerCurrency, withdrawAmountNum, peerPay]);
 
   // Quote estimation for cross-chain withdrawals (re-runs when amount changes)
   useEffect(() => {
@@ -2424,19 +2412,6 @@ export function BalanceModal({
     setPeerFailMessage(null);
   };
 
-  const fetchPeerHistory = async () => {
-    const token = await getAccessToken();
-    if (!token) return;
-    setPeerHistoryLoading(true);
-    try {
-      const res = await fetch("/api/offramp?history=true", { headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) {
-        const records = await res.json();
-        setPeerOfframpHistory(Array.isArray(records) ? records : []);
-      }
-    } catch { /* non-fatal */ } finally { setPeerHistoryLoading(false); }
-  };
-
   const fetchPajCashHistory = async () => {
     if (!PAJ_CASH_ENABLED) return;
     try {
@@ -2444,28 +2419,6 @@ export function BalanceModal({
       const orders = await pajListOrders(token);
       setPajCashHistory(orders);
     } catch { /* non-fatal */ }
-  };
-
-  const resumePeerOfframp = (record: PeerOfframpRecord) => {
-    const baseWallet = evmWalletsRef.current.find(
-      (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
-    );
-    resetPeer();
-    setPeerOfframpId(record.id);
-    setPeerPlatformId(record.platform);
-    setPeerIdentifier(record.platform_identifier);
-    setPeerCurrency(record.currency);
-    setPeerAmountUSDC(record.amount_usdc);
-    if (baseWallet) setPeerBaseWalletAddress(baseWallet.address);
-    if (record.zkp2p_deposit_id) setPeerZkp2pDepositId(record.zkp2p_deposit_id);
-    setPeerFilledAmountUSDC(typeof record.filled_amount_usdc === "number" ? record.filled_amount_usdc : null);
-    if (record.status === "CANCELLING") {
-      setPeerStep("deposit-error");
-    } else {
-      setPeerStep("deposited");
-    }
-    setWithdrawMethod("peer-offramp");
-    setTab("withdraw");
   };
 
   const handlePeerBridgeBackDirect = async () => {
@@ -2614,7 +2567,8 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "Minimum $1", description: "Minimum offramp is $1.00 USDC." });
       return;
     }
-    if (withdrawAmountNum > spendableBalance) {
+    const depositUsdc = peerPay ? cashoutGrossUsdc(withdrawAmountNum) : withdrawAmountNum;
+    if (depositUsdc > spendableBalance) {
       if (peerPay && spendableBalance <= 0) {
         peerPayKickRef.current = false;
         return;
@@ -2633,7 +2587,7 @@ export function BalanceModal({
       return;
     }
     setPeerSubmitting(true);
-    console.log(PEER_LOG, "submit", { platform: platform.id, amount: withdrawAmountNum, currency: peerCurrency });
+    console.log(PEER_LOG, "submit", { platform: platform.id, amount: withdrawAmountNum, depositUsdc, currency: peerCurrency });
     try {
       // Cash-out spends Base USDC from a wallet Privy has linked to this user. Peer does not
       // pull Solana USDC itself, so this address is both the bridge destination and the signer.
@@ -2668,7 +2622,7 @@ export function BalanceModal({
       if (!baseWallet) throw new Error("Could not load your Base wallet. Please try again.");
       const baseWalletAddr = baseWallet.address;
       setPeerBaseWalletAddress(baseWalletAddr);
-      setPeerAmountUSDC(withdrawAmountNum);
+      setPeerAmountUSDC(depositUsdc);
       console.log(PEER_LOG, "using Base EOA wallet (sponsored)", baseWalletAddr);
 
       const token = await getAccessToken();
@@ -2682,15 +2636,22 @@ export function BalanceModal({
           platform: platform.processorName,
           identifier: peerIdentifier.trim(),
           currency: peerCurrency,
-          amountUSDC: withdrawAmountNum,
+          amountUSDC: depositUsdc,
           solanaAddress: payerAddress,
           baseWalletAddress: baseWalletAddr,
         }),
       });
-      const prep = await prepRes.json() as {
+      const prepText = await prepRes.text();
+      let prep: {
         id?: string; shortId?: string; bridge?: string; amountInUsdc?: number;
         depositAddress?: string; memo?: string; message?: string;
-      };
+      } = {};
+      try { prep = prepText ? JSON.parse(prepText) : {}; } catch { /* empty or HTML error page */ }
+      if (!prepText) {
+        throw new Error(prepRes.status >= 500
+          ? "The payment service is unavailable. Try again in a moment."
+          : `Failed to prepare this send (${prepRes.status}).`);
+      }
       console.log(PEER_LOG, "prepare response", { status: prepRes.status, id: prep.id, bridge: prep.bridge });
       if (!prepRes.ok || !prep.id || prep.bridge !== "relay") {
         throw new Error(prep.message || "Failed to prepare offramp");
@@ -2710,7 +2671,9 @@ export function BalanceModal({
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
-      const txBody = await txRes.json() as { transaction?: string; message?: string };
+      const txText = await txRes.text();
+      let txBody: { transaction?: string; message?: string } = {};
+      try { txBody = txText ? JSON.parse(txText) : {}; } catch { /* empty or HTML error page */ }
       if (!txRes.ok || !txBody.transaction) throw new Error(txBody.message || "Could not build the bridge");
       const rawTx = Uint8Array.from(atob(txBody.transaction), (c) => c.charCodeAt(0));
       const { signedTransaction } = await signTransaction({
@@ -2727,14 +2690,16 @@ export function BalanceModal({
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ transaction: btoa(signedBinary) }),
       });
-      const broadcast = await broadcastRes.json() as { signature?: string; message?: string };
+      const broadcastText = await broadcastRes.text();
+      let broadcast: { signature?: string; message?: string } = {};
+      try { broadcast = broadcastText ? JSON.parse(broadcastText) : {}; } catch { /* empty or HTML error page */ }
       if (!broadcastRes.ok || !broadcast.signature) throw new Error(broadcast.message || "Bridge failed to send");
 
       console.log(PEER_LOG, "Relay deposit sent", { sig: broadcast.signature });
       setPeerBridgeTxSig(broadcast.signature);
       setPeerBridgeDepositAddress("relay");
       setPeerBridgeStatus("PENDING");
-      optimisticWithdrawBalance(prep.amountInUsdc || withdrawAmountNum);
+      optimisticWithdrawBalance(prep.amountInUsdc || depositUsdc);
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -2752,22 +2717,6 @@ export function BalanceModal({
       setPeerSubmitting(false);
     }
   };
-
-  // Paying a Venmo / Cash App / Revolut handle starts immediately. The withdraw
-  // form is for cashing out to yourself; this path should only show status.
-  useEffect(() => {
-    if (!open || !peerPay) {
-      peerPayKickRef.current = false;
-      return;
-    }
-    if (peerStep !== "form" || peerSubmitting || peerPayKickRef.current) return;
-    if (!wallet) return;
-    if (peerPlatformId !== peerPay.platformId || !peerIdentifier.trim()) return;
-    if (!(withdrawAmountNum >= 1)) return;
-    if (spendableBalance < withdrawAmountNum) return;
-    peerPayKickRef.current = true;
-    void handlePeerSubmit();
-  }, [open, peerPay, peerStep, peerSubmitting, wallet, peerPlatformId, peerIdentifier, withdrawAmountNum, spendableBalance, handlePeerSubmit]);
 
   // Once the pay is actually sending, leave this modal and open the same kind of
   // receipt page a normal payment uses. The share code is the receipt id.
@@ -3397,7 +3346,7 @@ export function BalanceModal({
                     {`Pay to ${getPlatform(peerPay.platformId)?.name ?? "app"}`}
                   </DialogTitle>
                   <DialogDescription className={cn("text-base font-medium mt-1 truncate", dark ? "text-[#8A8893]" : "text-gray-500")}>
-                    {`$${peerPay.amountUsd.toFixed(2)} to ${peerPay.identifier.replace(/^[@$]/, "")}`}
+                    {`They receive $${peerPay.amountUsd.toFixed(2)}`}
                   </DialogDescription>
                 </div>
               </div>
@@ -3471,7 +3420,6 @@ export function BalanceModal({
               type="button"
               onClick={() => {
                 setRecentWithdrawals(getWithdrawalHistory());
-                fetchPeerHistory();
                 fetchDbDeposits();
                 setTab("history");
               }}
@@ -4133,10 +4081,10 @@ export function BalanceModal({
               coinbase: "Coinbase",
               moonpay: "MoonPay",
             };
-            const isEmpty = dbDeposits.length === 0 && recentWithdrawals.length === 0 && peerOfframpHistory.length === 0 && pajCashHistory.length === 0 && !dbDepositsLoading;
+            const isEmpty = dbDeposits.length === 0 && recentWithdrawals.length === 0 && pajCashHistory.length === 0 && !dbDepositsLoading;
             return (
               <div className="py-2 min-h-0 overflow-y-auto sm:max-h-[60vh]">
-                {dbDepositsLoading && dbDeposits.length === 0 && peerOfframpHistory.length === 0 && recentWithdrawals.length === 0 ? (
+                {dbDepositsLoading && dbDeposits.length === 0 && recentWithdrawals.length === 0 ? (
                   <div className="flex justify-center py-6"><Loader2 className={`h-5 w-5 animate-spin ${dark ? "text-slate-400" : "text-gray-400"}`} /></div>
                 ) : isEmpty ? (
                   <p className={`text-base text-center py-6 ${dark ? "text-slate-400" : "text-gray-500"}`}>No recent activity.</p>
@@ -4144,7 +4092,6 @@ export function BalanceModal({
                   <ul className="space-y-2">
                     {[
                       ...dbDeposits.map((dep) => ({ kind: "deposit" as const, ts: new Date(dep.created_at).getTime(), dep })),
-                      ...peerOfframpHistory.map((record) => ({ kind: "peer" as const, ts: new Date(record.created_at).getTime(), record })),
                       ...recentWithdrawals.map((item) => ({ kind: "withdrawal" as const, ts: item.createdAt, item })),
                       ...pajCashHistory.map((order) => ({ kind: "paj" as const, ts: new Date(order.created_at).getTime(), order })),
                     ]
@@ -4183,47 +4130,6 @@ export function BalanceModal({
                                     {isPending && <Loader2 className="h-3 w-3 animate-spin" />}
                                     {statusLabel}
                                   </span>
-                                </div>
-                              </div>
-                            </li>
-                          );
-                        }
-
-                        if (entry.kind === "peer") {
-                          const record = entry.record;
-                          const platform = getPlatform(record.platform);
-                          const isActive = ["PENDING_BRIDGE", "BRIDGING", "DEPOSITED", "CANCELLING"].includes(record.status);
-                          const canResume = ["DEPOSITED", "CANCELLING"].includes(record.status);
-                          const statusLabel = record.status === "PENDING_BRIDGE" ? "Sending…" : record.status === "BRIDGING" ? "Bridging…" : record.status === "DEPOSITED" ? "Waiting for peer" : record.status === "COMPLETE" ? "Complete" : record.status === "CANCELLING" ? "Cancelling…" : record.status === "CANCELLED" ? "Cancelled" : "Failed";
-                          const statusColor = record.status === "COMPLETE" ? "text-emerald-400" : record.status === "CANCELLED" ? (dark ? "text-slate-500" : "text-gray-400") : record.status === "FAILED" ? "text-red-400" : "text-blue-400";
-                          return (
-                            <li key={`peer-${record.id}`}>
-                              <div className={`rounded-lg border p-3 ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0 flex-1">
-                                    <p className={`font-semibold text-base ${dark ? "text-white" : "text-gray-900"}`}>
-                                      ${Number(record.amount_usdc).toFixed(2)} → {record.currency} via {platform?.name ?? record.platform}
-                                    </p>
-                                    <p className={`text-base mt-0.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>{record.platform_identifier}</p>
-                                    <p className={`text-base mt-0.5 ${dark ? "text-slate-500" : "text-gray-400"}`}>
-                                      {new Date(record.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                                    </p>
-                                  </div>
-                                  <div className="flex flex-col items-end gap-2 shrink-0">
-                                    <span className={`text-base font-medium flex items-center gap-1 ${statusColor}`}>
-                                      {isActive && <Loader2 className="h-3 w-3 animate-spin" />}
-                                      {statusLabel}
-                                    </span>
-                                    {canResume && (
-                                      <button
-                                        type="button"
-                                        onClick={() => resumePeerOfframp(record)}
-                                        className={`text-base font-medium underline underline-offset-2 ${dark ? "text-orange-400 hover:text-orange-300" : "text-orange-600 hover:text-orange-700"}`}
-                                      >
-                                        Resume →
-                                      </button>
-                                    )}
-                                  </div>
                                 </div>
                               </div>
                             </li>
@@ -5475,7 +5381,7 @@ export function BalanceModal({
           {/* Paying someone's app handle — no cash-out form, just status until the bridge starts. */}
           {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerPay && peerStep === "form" && (
             <div className="py-6 flex flex-col items-center gap-4 text-center">
-              {!loadingBalance && spendableBalance + 1e-6 < peerPay.amountUsd ? (
+              {!loadingBalance && spendableBalance + 1e-6 < peerPayGrossUsd ? (
                 <div className="w-full space-y-3 text-left">
                   <div className={cn("flex items-center justify-between gap-3 rounded-2xl border px-4 py-3.5", dark ? "border-white/10 bg-[#0E0E12]" : "border-gray-200 bg-white")}>
                     <div className="min-w-0">
@@ -5483,14 +5389,14 @@ export function BalanceModal({
                       <div className={cn("mt-0.5 text-xl font-semibold", dark ? "text-white" : "text-gray-900")}>${spendableBalance.toFixed(2)}</div>
                     </div>
                     <div className="text-right">
-                      <div className={cn("text-base", dark ? "text-[#8A8893]" : "text-gray-500")}>Add to pay</div>
-                      <div className={cn("mt-0.5 text-xl font-semibold", dark ? "text-white" : "text-gray-900")}>${Math.max(0, peerPay.amountUsd - spendableBalance).toFixed(2)}</div>
+                      <div className={cn("text-base", dark ? "text-[#8A8893]" : "text-gray-500")}>You pay</div>
+                      <div className={cn("mt-0.5 text-xl font-semibold", dark ? "text-white" : "text-gray-900")}>${peerPayGrossUsd.toFixed(2)}</div>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => {
-                      const shortfall = Math.max(0, peerPay.amountUsd - spendableBalance).toFixed(2);
+                      const shortfall = Math.max(0, peerPayGrossUsd - spendableBalance).toFixed(2);
                       setDepositAmount(shortfall);
                       setPeerDepositAmount(shortfall);
                       setTopUpView(null);
@@ -5502,13 +5408,33 @@ export function BalanceModal({
                   </button>
                 </div>
               ) : (
-                <>
-                  <span className="relative block h-8 w-8" aria-hidden>
-                    <span className={cn("absolute inset-0 rounded-full border-2", dark ? "border-white/15" : "border-black/10")} />
-                    <span className={cn("absolute inset-0 rounded-full border-2 border-transparent animate-spin", dark ? "border-t-white" : "border-t-gray-900")} />
-                  </span>
-                  <p className={cn("text-lg font-medium", dark ? "text-white" : "text-gray-900")}>Sending</p>
-                </>
+                <div className="w-full space-y-3 text-left">
+                  <div className={cn("rounded-2xl border px-4 py-3.5 space-y-2", dark ? "border-white/10 bg-[#0E0E12]" : "border-gray-200 bg-white")}>
+                    <div className="flex items-center justify-between">
+                      <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>They receive</span>
+                      <span className={cn("text-base font-semibold", dark ? "text-white" : "text-gray-900")}>${peerPay.amountUsd.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>Fill incentive</span>
+                      <span className={cn("text-base", dark ? "text-slate-300" : "text-gray-700")}>${peerPayFeeUsd.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-white/10 pt-2">
+                      <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>You pay</span>
+                      <span className={cn("text-xl font-semibold", dark ? "text-white" : "text-gray-900")}>${peerPayGrossUsd.toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { void handlePeerSubmit(); }}
+                    disabled={peerSubmitting}
+                    className="w-full h-12 rounded-xl font-semibold text-base bg-gradient-to-r from-orange-500 to-red-500 text-white disabled:opacity-60"
+                  >
+                    {peerSubmitting ? "Preparing…" : `Pay $${peerPayGrossUsd.toFixed(2)}`}
+                  </button>
+                  <p className={cn("text-center text-sm", dark ? "text-slate-500" : "text-gray-500")}>
+                    Getting your USDC back costs a bridge fee.
+                  </p>
+                </div>
               )}
             </div>
           )}
@@ -5564,7 +5490,7 @@ export function BalanceModal({
                       className="flex-1"
                     />
                     <Button type="button" variant="outline" size="sm"
-                      onClick={() => setWithdrawAmount(Math.min(spendableBalance, platformCap).toFixed(6).replace(/\.?0+$/, ""))}
+                      onClick={() => setWithdrawAmount(Math.min(spendableBalance, platformCap).toFixed(2).replace(/\.00$/, ""))}
                       className={`shrink-0 px-3 ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}>
                       Max
                     </Button>
@@ -5589,12 +5515,10 @@ export function BalanceModal({
                         <span className={`text-base flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-400"}`}>
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />Fetching rate…
                         </span>
-                      ) : peerEstimate ? (
-                        <span className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
-                          ≈ {getPeerCurrency(peerCurrency)?.symbol}{peerEstimate.receiveAmount.toFixed(2)} {peerCurrency}
-                        </span>
                       ) : (
-                        <span className={`text-base ${dark ? "text-slate-500" : "text-gray-400"}`}>—</span>
+                        <span className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
+                          ${cashoutPayoutUsdc(withdrawAmountNum).toFixed(2)} {peerCurrency}
+                        </span>
                       )}
                     </div>
                     {peerEstimate?.eta && (
@@ -5604,8 +5528,8 @@ export function BalanceModal({
                       </div>
                     )}
                     <div className="flex items-center justify-between">
-                      <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>Fee</span>
-                      <span className={`text-base ${dark ? "text-slate-300" : "text-gray-700"}`}>${cashoutFeeUsdc(withdrawAmountNum).toFixed(2)}</span>
+                      <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>Peer discount</span>
+                      <span className={`text-base ${dark ? "text-slate-300" : "text-gray-700"}`}>${Math.max(0, withdrawAmountNum - cashoutPayoutUsdc(withdrawAmountNum)).toFixed(2)}</span>
                     </div>
                   </div>
                 )}
@@ -5613,8 +5537,8 @@ export function BalanceModal({
                 <div className={`rounded-xl border p-3 ${dark ? "border-white/10 bg-white/5" : "border-blue-100 bg-blue-50/60"}`}>
                   <p className={`text-base ${dark ? "text-slate-400" : "text-blue-700"}`}>
                     {peerPay
-                      ? `A peer sends ${peerCurrency} to ${peerIdentifier.trim() || "this handle"} on ${platform.name}. You can cancel anytime to get your USDC back.`
-                      : `A peer sends ${peerCurrency} to ${peerIdentifier.trim() || "this handle"} on ${platform.name}. You can cancel anytime to get your USDC back.`}
+                      ? `A peer sends ${peerCurrency} to ${peerIdentifier.trim() || "this handle"} on ${platform.name}. Getting your USDC back costs a bridge fee.`
+                      : `A peer sends ${peerCurrency} to ${peerIdentifier.trim() || "this handle"} on ${platform.name}. Getting your USDC back costs a bridge fee.`}
                   </p>
                 </div>
 
@@ -5627,13 +5551,11 @@ export function BalanceModal({
                   )}
                   <Button
                     onClick={handlePeerSubmit}
-                    disabled={peerSubmitting || !peerIdentifier.trim() || withdrawAmountNum < (devnetMode ? 0.01 : 1) || withdrawAmountNum > Math.min(spendableBalance, platformCap)}
+                    disabled={peerSubmitting || !peerIdentifier.trim() || withdrawAmountNum < (devnetMode ? 0.01 : 1) || withdrawAmountNum > platformCap || withdrawAmountNum > spendableBalance}
                     className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50">
                     {peerSubmitting
                       ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Preparing…</span>
-                      : peerPay
-                        ? `Pay $${withdrawAmountNum > 0 ? withdrawAmountNum.toFixed(2) : "0.00"} to ${platform.name}`
-                        : `Cash out $${withdrawAmountNum > 0 ? withdrawAmountNum.toFixed(2) : "0.00"} → ${platform.name}`}
+                      : `Pay $${withdrawAmountNum > 0 ? withdrawAmountNum.toFixed(2) : "0.00"}`}
                   </Button>
                 </div>
               </div>
@@ -5720,6 +5642,7 @@ export function BalanceModal({
                   <X className="h-4 w-4 mr-2" />Cancel and get USDC back
                 </Button>
               )}
+              <p className={`text-sm text-center ${dark ? "text-slate-500" : "text-gray-500"}`}>Getting your USDC back costs a bridge fee.</p>
             </div>
           )}
 
@@ -5746,6 +5669,7 @@ export function BalanceModal({
               >
                 Cancel and get USDC back
               </Button>
+              <p className={`text-sm text-center ${dark ? "text-slate-500" : "text-gray-500"}`}>Getting your USDC back costs a bridge fee.</p>
             </div>
           )}
 
@@ -5832,7 +5756,7 @@ export function BalanceModal({
 
                 {!peerPay && (
                 <div className={`rounded-xl border p-3 text-base ${dark ? "border-amber-400/20 bg-amber-400/5 text-amber-300" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                  Taking too long? You can cancel to get your USDC back.{peerEstimate?.eta ? ` Typical fill time for ${platform?.name} is ${peerEstimate.eta.label}.` : " Cash outs usually complete within minutes, but can take longer if peers are busy."}
+                  Taking too long? You can cancel to get your USDC back, which costs a bridge fee.{peerEstimate?.eta ? ` Typical fill time for ${platform?.name} is ${peerEstimate.eta.label}.` : " Cash outs usually complete within minutes, but can take longer if peers are busy."}
                 </div>
                 )}
 
@@ -6005,13 +5929,16 @@ export function BalanceModal({
                     Try again
                   </Button>
                   {peerBridgeTxSig && (
-                  <Button
-                    onClick={handlePeerBridgeBackDirect}
-                    variant="outline"
-                    className={cn("w-full", dark ? "border-white/20 !bg-transparent text-slate-200 hover:!bg-white/10 hover:text-white" : "border-gray-300 !bg-transparent text-gray-900 hover:!bg-gray-100 hover:text-gray-900")}
-                  >
-                    <X className="h-4 w-4 mr-2" />Cancel and get USDC back
-                  </Button>
+                    <>
+                      <Button
+                        onClick={handlePeerBridgeBackDirect}
+                        variant="outline"
+                        className={cn("w-full", dark ? "border-white/20 !bg-transparent text-slate-200 hover:!bg-white/10 hover:text-white" : "border-gray-300 !bg-transparent text-gray-900 hover:!bg-gray-100 hover:text-gray-900")}
+                      >
+                        <X className="h-4 w-4 mr-2" />Cancel and get USDC back
+                      </Button>
+                      <p className={`text-sm text-center ${dark ? "text-slate-500" : "text-gray-500"}`}>Getting your USDC back costs a bridge fee.</p>
+                    </>
                   )}
                 </>
               )}

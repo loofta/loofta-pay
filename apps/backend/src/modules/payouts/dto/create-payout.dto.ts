@@ -11,9 +11,9 @@ export const PAYOUT_FUNDING_SOURCES = ['gram_ton', 'usdc_base'] as const;
 export type PayoutFundingSource = (typeof PAYOUT_FUNDING_SOURCES)[number];
 
 export class CreatePayoutDto {
-  @ApiProperty({ description: 'Amount in USD the recipient should receive. $1 minimum if public (the default), $5 minimum if private.', example: 25 })
+  @ApiProperty({ description: 'Amount in USD the recipient should receive. $0.01 minimum if public (the default), $1 minimum if private.', example: 25 })
   @IsNumber()
-  @Min(1)
+  @Min(0.01)
   @Max(10000)
   amount: number;
 
@@ -56,7 +56,7 @@ export class CreatePayoutDto {
   message?: string;
 
   @ApiPropertyOptional({
-    description: 'Shield the amount and your wallet from public view. Defaults to false. $5 minimum (MagicBlock\'s private-transfer floor).',
+    description: 'Shield the amount and your wallet from public view. Defaults to false. $1 minimum.',
     default: false,
   })
   @IsOptional()

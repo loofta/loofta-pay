@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
@@ -10,6 +10,8 @@ import { motion } from 'framer-motion'
 import { Loader2, ArrowDown, Lock, AlertCircle, CheckCircle2, ArrowRight, Mail, LogIn } from 'lucide-react'
 import { GradientActionButton } from '@/components/ui/GradientActionButton'
 import { SocialPlatformIcon, type SocialIconPlatform } from '@/components/SocialPlatformIcon'
+import { getPlatform } from '@/lib/peerPlatforms'
+import { cashoutPayoutUsdc } from '@/services/peerCash'
 import confetti from 'canvas-confetti'
 
 interface SharePaymentPreview {
@@ -35,6 +37,62 @@ const PAID_STATUSES = new Set(['SUCCESS', 'PRIVATE_TRANSFER_PENDING', 'CLAIMED',
 // again without risking a double payment, and the recipient has nothing to wait ON the sender for.
 const IN_FLIGHT_STATUS = 'IN_FLIGHT';
 
+type CashPayShare = {
+  platform: string
+  platformName: string
+  identifier: string
+  currency: string
+  amountUsdc: number
+  status: string
+  etaLabel: string | null
+}
+
+function CashPayShareCard({ payment }: { payment: CashPayShare }) {
+  const [liveEta, setLiveEta] = useState<string | null>(payment.etaLabel)
+  useEffect(() => {
+    if (payment.etaLabel) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { getPeerEstimate, usdc } = await import('@/services/peerCash')
+        const est = await getPeerEstimate(usdc(payment.amountUsdc), payment.currency, payment.platform, true)
+        if (!cancelled && est.eta?.label) setLiveEta(est.eta.label)
+      } catch { /* leave the fallback */ }
+    })()
+    return () => { cancelled = true }
+  }, [payment.etaLabel, payment.amountUsdc, payment.currency, payment.platform])
+  const arrived = payment.status === 'COMPLETE' || payment.status === 'SUCCESS'
+  const cancelled = payment.status === 'CANCELLED'
+  const receive = cashoutPayoutUsdc(payment.amountUsdc)
+  const amount = receive % 1 === 0 ? `$${receive}` : `$${receive.toFixed(2)}`
+  const handle = payment.identifier.replace(/^[@$]/, '')
+  const logo = getPlatform(payment.platform)?.logo
+  return (
+    <div className="flex flex-col items-center px-4 pt-6 pb-16 min-h-[calc(100vh-64px)]">
+      <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-white/[0.03] overflow-hidden">
+        <div className="flex items-center justify-center gap-2 border-b border-white/[0.06] px-5 py-4">
+          {arrived ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <Lock className="h-4 w-4 text-white/60" />}
+          <span className="text-base font-semibold text-white">
+            {cancelled ? 'Payment cancelled' : arrived ? 'Payment sent' : 'Payment on the way'}
+          </span>
+        </div>
+        <div className="flex flex-col items-center gap-3 px-6 py-7 text-center">
+          {logo && <img src={logo} alt="" className="h-14 w-14 rounded-2xl object-cover" />}
+          <span className={`text-5xl font-bold tracking-tight ${arrived ? 'text-emerald-400' : 'text-white'}`}>{amount}</span>
+          <span className="text-xl font-bold text-white">{handle} on {payment.platformName}</span>
+          <p className="text-base text-white/50">
+            {cancelled
+              ? 'This payment was cancelled.'
+              : arrived
+                ? `${payment.currency} is in their ${payment.platformName}.`
+                : liveEta || 'A peer is sending this.'}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** Public preview of an existing payment, keyed by its own share `short_id` — the same code used
  *  in `/c/:short_id` links. Shows Loofta usernames (not Twitter handles) for sender/recipient and
  *  never exposes email or wallet address; once logged in as a party to it, the CTA hands off to
@@ -48,6 +106,18 @@ export default function ShareClient({ short_id }: { short_id: string }) {
   const myUsername = useAuthStore((s) => s.username ?? null)
 
   const hasEmail = user?.linkedAccounts?.some((a: any) => a.type === 'email' || a.type === 'google' || a.type === 'apple')
+
+  const { data: cashPay, isLoading: cashLoading } = useQuery<CashPayShare | null>({
+    queryKey: ['share-cash-pay', short_id],
+    enabled: ready,
+    queryFn: async () => {
+      const res = await fetch(`/api/offramp/public/${encodeURIComponent(short_id)}`)
+      if (res.status === 404) return null
+      if (!res.ok) throw new Error('Not found')
+      return res.json()
+    },
+    retry: false,
+  })
 
   const { data: request, isLoading } = useQuery<SharePaymentPreview>({
     queryKey: ['share-payment', short_id, authenticated],
@@ -110,12 +180,16 @@ export default function ShareClient({ short_id }: { short_id: string }) {
   )
 
   // ── Loading ──────────────────────────────────────────────────────────────
-  if (isLoading || !ready) {
+  if (isLoading || !ready || (cashLoading && !request)) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <Loader2 className="h-7 w-7 animate-spin text-white/30" />
       </div>
     )
+  }
+
+  if (!request && cashPay) {
+    return <CashPayShareCard payment={cashPay} />
   }
 
   if (!request) {

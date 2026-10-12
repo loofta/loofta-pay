@@ -88,6 +88,18 @@ export function getPlatform(id: string): PeerPlatform | undefined {
   return PEER_PLATFORMS.find(p => p.id === id);
 }
 
+/**
+ * Handles a sender can pay directly through Peer Cash. Wise and PayPal are in
+ * the SDK, but a new handle needs a Peer identity attestation this app cannot
+ * create, so they are not offered. Zelle stays on the withdraw picker only.
+ */
+export const DIRECT_CASH_PLATFORM_IDS = ["venmo", "cashapp", "revolut"] as const;
+export type DirectCashPlatformId = (typeof DIRECT_CASH_PLATFORM_IDS)[number];
+
+export const DIRECT_CASH_PLATFORMS: PeerPlatform[] = DIRECT_CASH_PLATFORM_IDS.map(
+  (id) => PEER_PLATFORMS.find((p) => p.id === id)!,
+);
+
 const COOLDOWN_KEY = (id: string) => `peer_last_withdraw_${id}`;
 
 export function getPlatformCooldownRemaining(platformId: string, cooldownHours: number | null): number {

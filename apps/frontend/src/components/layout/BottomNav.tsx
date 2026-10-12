@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ArrowDown, ArrowUp, Clock, Settings, Ticket, Trophy } from "lucide-react";
+import { ArrowDown, ArrowUp, Clock, Settings, Ticket } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 type NavKey = 'send' | 'receive' | 'history' | 'settings' | 'megapot-buy' | 'megapot-redeem' | 'megapot-history';
@@ -74,8 +74,7 @@ export function BottomNav() {
 
     if (isMegapot) {
         let activeKey: NavKey = 'megapot-buy';
-        if (tab === 'redeem') activeKey = 'megapot-redeem';
-        else if (tab === 'history') activeKey = 'megapot-history';
+        if (tab === 'redeem' || tab === 'history') activeKey = 'megapot-history';
 
         // On pay.loofta.xyz, proxy.ts redirects any literal "/app/*" URL back to the clean
         // path — hardcoding "/app/megapot" here turned every tab click into an extra
@@ -88,8 +87,7 @@ export function BottomNav() {
                 <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
                 <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-1 mt-1">
                     <NavItem href={megapotBase} label="Buy" active={activeKey === 'megapot-buy'} icon={<Ticket />} />
-                    <NavItem href={`${megapotBase}?tab=redeem`} label="Redeem" active={activeKey === 'megapot-redeem'} icon={<Trophy />} />
-                    <NavItem href={`${megapotBase}?tab=history`} label="History" active={activeKey === 'megapot-history'} icon={<Clock />} />
+                    <NavItem href={`${megapotBase}?tab=history`} label="Tickets" active={activeKey === 'megapot-history'} icon={<Clock />} />
                     <NavItem href={profileHref} label="Profile" active={false} icon={<Settings />} />
                 </div>
             </nav>

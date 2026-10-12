@@ -47,7 +47,7 @@ export default function GiveawaysPage() {
 
             <div className="flex flex-wrap items-center gap-4">
               <a
-                href={`${APP_URL}/rewards/giveaways/create`}
+                href="/rewards-rail"
                 className={`inline-flex items-center gap-2 rounded-full px-6 py-3 text-base font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] ${BRAND_GRADIENT} ${BRAND_SHADOW}`}
               >
                 Launch a giveaway

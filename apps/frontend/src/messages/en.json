@@ -182,7 +182,7 @@
       }
     },
     "signInToSendHandle": "Sign in to send to a handle or email",
-    "signInToSendHandleHint": "Email or social login — wallet address sends need no account"
+    "signInToSendHandleHint": "Email or social login. Wallet address sends need no account"
   },
   "MarketingPage": {
     "nav": {
@@ -561,10 +561,10 @@
       "headlineBefore": "Send money to any",
       "headlineAfter": "or email",
       "headlineCashOut": "They cash out their way.",
-      "support": "Pay a wallet with no account, or sign in to send to a handle — they claim to Venmo, Cash App, Revolut, Zelle, USDC on Solana, or any crypto.",
-      "supportWithPaj": "Pay a wallet with no account, or sign in to send to a handle — they claim to Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC on Solana, or any crypto.",
+      "support": "Pay a wallet with no account, or sign in to send to a handle. They claim to Venmo, Cash App, Revolut, Zelle, USDC, or any crypto.",
+      "supportWithPaj": "Pay a wallet with no account, or sign in to send to a handle. They claim to Venmo, Cash App, Revolut, Zelle, PAJ Cash, USDC, or any crypto.",
       "cashOutLabel": "They cash out to",
-      "ctaStart": "Start sending, it's free",
+      "ctaStart": "Start sending",
       "ctaBusiness": "For business",
       "railVenmo": "Venmo",
       "railCashApp": "Cash App",
@@ -576,10 +576,22 @@
       "railVenmoSub": "USD",
       "railCashAppSub": "USD",
       "railRevolutSub": "USD · EUR · GBP",
-      "railZelleSub": "To their bank",
+      "railZelleSub": "Bank",
       "railUsdcSub": "On Solana",
       "railAnyCryptoSub": "150+ tokens",
-      "railPajSub": "Naira bank"
+      "railPajSub": "NGN"
     }
+  },
+  "LaunchDeck": {
+    "eyebrow": "Launch",
+    "title": "What do you want to start?",
+    "subtitle": "Send a payment, drop a giveaway, or share a receive link.",
+    "sendTitle": "Send payment",
+    "sendBody": "Pay a handle, email, or wallet. They cash out their way.",
+    "giveawayTitle": "Launch giveaway",
+    "giveawayBody": "Fund a prize, share one link, on-chain draw.",
+    "receiveTitle": "Get paid",
+    "receiveBody": "Share your receive link or QR. No wallet needed for them.",
+    "cta": "Open"
   }
 }

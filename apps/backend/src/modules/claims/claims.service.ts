@@ -197,12 +197,91 @@ export class ClaimsService {
     return { id, short_id: shortId, link };
   }
 
+  /** Sender's MagicBlock split/delay. Best-effort: the columns ship in
+   *  20260930180000 and are not on every database yet, so a missing-column error must not
+   *  fail payment creation or the transfer itself. */
+  private async savePrivacyTiming(paymentId: string, split?: number, maxDelayMs?: number): Promise<void> {
+    const patch: { private_split?: number; private_max_delay_ms?: number } = {};
+    if (typeof split === 'number' && Number.isFinite(split) && split >= 1) {
+      patch.private_split = Math.min(15, Math.round(split));
+    }
+    if (typeof maxDelayMs === 'number' && Number.isFinite(maxDelayMs) && maxDelayMs >= 0) {
+      patch.private_max_delay_ms = Math.round(maxDelayMs);
+    }
+    if (!Object.keys(patch).length) return;
+    const { error } = await this.supabaseService.payments.update(patch).eq('id', paymentId);
+    if (error) {
+      this.logger.warn(`Could not save privacy timing on ${paymentId}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Registered recipient: USDC goes to their wallet. No burner, no claim step, no $0.10.
+   * If they turned on "only accept private payments", the payer can only pay privately.
+   * The privacy fee is always on the payer (fee_on_sender = true).
+   */
+  private async insertDirectRegisteredPayment(params: {
+    amount: string | number;
+    userId?: string;
+    description?: string;
+    isDevnet: boolean;
+    expiresAt?: string | null;
+    requestedPrivate: boolean;
+    requirePrivatePayments: boolean;
+    recipientAddress: string;
+    recipientUserId: string;
+    recipientUsername?: string | null;
+    recipientEmail?: string | null;
+    split?: number;
+    maxDelayMs?: number;
+  }): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: null; payTo: string | null; requirePrivate: boolean }> {
+    const requirePrivate = params.requirePrivatePayments;
+    const isPrivate = requirePrivate || params.requestedPrivate;
+    const { data: claim, error } = await this.supabaseService.payments
+      .insert({
+        amount: Number(params.amount),
+        direction: 'from_sender',
+        recipient_address: params.recipientAddress,
+        recipient_username: params.recipientUsername ?? null,
+        recipient_email: params.recipientEmail ?? null,
+        recipient_user_id: params.recipientUserId,
+        created_by: params.userId ? String(params.userId) : null,
+        status: 'OPEN',
+        description: params.description || null,
+        to_chain: 'solana',
+        to_token: 'USDC',
+        is_devnet: params.isDevnet,
+        is_private: isPrivate,
+        fee_on_sender: true,
+        short_id: generateShortId(),
+        expires_at: params.expiresAt ?? null,
+      })
+      .select('id, short_id')
+      .single();
+    if (error || !claim) {
+      this.logger.error('Error creating direct payment:', error);
+      throw new BadRequestException('Failed to create payment');
+    }
+    await this.savePrivacyTiming(claim.id, params.split, params.maxDelayMs);
+    const link = `${this.baseUrl}/c/${claim.short_id ?? claim.id}`;
+    this.logger.log(`Direct payment ${claim.id} to registered user (private: ${isPrivate}, requirePrivate: ${requirePrivate})`);
+    return {
+      id: claim.id,
+      short_id: claim.short_id ?? null,
+      link,
+      burnerAddress: null,
+      payTo: isPrivate ? null : params.recipientAddress,
+      requirePrivate,
+    };
+  }
+
   /**
    * Create a claim from username (wallet address fetched server-side only).
-   * If user exists: send directly to their wallet.
-   * If user does not exist: create "burner" claim with PENDING_USERNAME so they can claim later when they sign up with that username.
+   * If user exists: pay their wallet directly (no claim). If they require private payments,
+   * the payer can only send privately, and the privacy fee is added on top of what they send.
+   * If user does not exist: burner claim with PENDING_USERNAME so they can claim later.
    */
-  async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null }> {
+  async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
     const { username, amount, userId, isPrivate = false, description, cluster, treatUnregisteredAsTwitter, expiresAt, split, maxDelayMs } = dto;
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
@@ -214,50 +293,29 @@ export class ClaimsService {
     let recipientAddress: string;
 
     try {
-      const user = await this.usersService.findByUsername(cleanUsername);
+      const user = treatUnregisteredAsTwitter
+        ? await this.usersService.findByTwitterOrUsername(cleanUsername)
+        : await this.usersService.findByUsername(cleanUsername);
       if (!isDevnet && !(await this.usersService.hasCompletedMainnetWalletUpdate(user.privyUserId))) {
         throw new BadRequestException(
           "This recipient is registered but hasn't updated Loofta to mainnet yet. Ask them to open Loofta and complete the update, then try sending again.",
         );
       }
       recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
-
-      // Every payment now routes through a burner and requires an explicit claim, registered
-      // recipients included — the sender never pays a recipient's real wallet directly.
-      const burner = this.createClaimBurner();
-      if (!burner) {
-        this.logger.warn('Creating claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Claiming will fail until the key is set.');
-      }
-      const { data: claim, error: claimError } = await this.supabaseService.payments
-        .insert({
-          amount: Number(amount),
-          direction: 'from_sender',
-          recipient_address: recipientAddress,
-          recipient_username: cleanUsername,
-          recipient_user_id: user.privyUserId,
-          created_by: userId ? String(userId) : null,
-          status: 'OPEN',
-          description: description || null,
-          to_chain: 'solana',
-          to_token: 'USDC',
-          is_devnet: isDevnet,
-          is_private: isPrivate,
-          short_id: generateShortId(),
-          expires_at: expiresAt ?? null,
-          ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
-        })
-        .select('id, short_id')
-        .single();
-
-      if (claimError) {
-        this.logger.error('Error creating claim:', claimError);
-        throw new BadRequestException('Failed to create claim');
-      }
-
-      const id = claim.id;
-      const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
-      this.logger.log(`Created claim from username: ${id} for user ${cleanUsername} (private: ${isPrivate})`);
-      return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
+      return this.insertDirectRegisteredPayment({
+        amount,
+        userId,
+        description,
+        isDevnet,
+        expiresAt,
+        requestedPrivate: isPrivate,
+        requirePrivatePayments: user.requirePrivatePayments,
+        recipientAddress,
+        recipientUserId: user.privyUserId,
+        recipientUsername: user.username ?? cleanUsername,
+        split,
+        maxDelayMs,
+      });
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
       if (!(err instanceof NotFoundException)) throw err;
@@ -299,11 +357,12 @@ export class ClaimsService {
       this.logger.error('Error creating claim from username (pending):', claimError);
       throw new BadRequestException('Failed to create claim');
     }
+    await this.savePrivacyTiming(claim.id, split, maxDelayMs);
 
     const id = claim.id;
     const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
     this.logger.log(`Created claim from username (pending): ${id} for @${cleanUsername} – they can claim when they sign up${burner ? ' (unique burner)' : ''}`);
-    return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
+    return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null, payTo: null, requirePrivate: false };
   }
 
   /**
@@ -311,7 +370,7 @@ export class ClaimsService {
    * pay the connected user's wallet directly if the handle is already linked (social_accounts),
    * otherwise fall back to a pending burner claim they can claim once they connect that handle.
    */
-  async createFromSocial(dto: CreateClaimFromSocialDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null }> {
+  async createFromSocial(dto: CreateClaimFromSocialDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
     const { platform, handle, amount, userId, isPrivate = false, description, cluster, expiresAt, split, maxDelayMs } = dto;
     const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
     const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
@@ -329,45 +388,20 @@ export class ClaimsService {
         );
       }
       recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
-
-      // Always create a burner here, regardless of isPrivate — deliberate, not a leftover default.
-      // Public sends to a social handle still route sender→burner→recipient so the pay-time
-      // privacy toggle on /c/[id] can switch a claim into private funding right up to the moment
-      // it's paid, without needing a different code path per privacy setting.
-      const burner = this.createClaimBurner();
-      if (!burner) {
-        this.logger.warn('Creating claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Claiming will fail until the key is set.');
-      }
-      const { data: claim, error: claimError } = await this.supabaseService.payments
-        .insert({
-          amount: Number(amount),
-          direction: 'from_sender',
-          recipient_address: recipientAddress,
-          recipient_username: user.username ?? null,
-          recipient_user_id: user.privyUserId,
-          created_by: userId ? String(userId) : null,
-          status: 'OPEN',
-          description: description || null,
-          to_chain: 'solana',
-          to_token: 'USDC',
-          is_devnet: isDevnet,
-          is_private: isPrivate,
-          short_id: generateShortId(),
-          expires_at: expiresAt ?? null,
-          ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
-        })
-        .select('id, short_id')
-        .single();
-
-      if (claimError) {
-        this.logger.error('Error creating claim:', claimError);
-        throw new BadRequestException('Failed to create claim');
-      }
-
-      const id = claim.id;
-      const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
-      this.logger.log(`Created claim from ${platform}: ${id} for @${cleanHandle} (private: ${isPrivate})`);
-      return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
+      return this.insertDirectRegisteredPayment({
+        amount,
+        userId,
+        description,
+        isDevnet,
+        expiresAt,
+        requestedPrivate: isPrivate,
+        requirePrivatePayments: user.requirePrivatePayments,
+        recipientAddress,
+        recipientUserId: user.privyUserId,
+        recipientUsername: user.username,
+        split,
+        maxDelayMs,
+      });
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
       if (!(err instanceof NotFoundException)) throw err;
@@ -405,11 +439,12 @@ export class ClaimsService {
       this.logger.error('Error creating claim from social handle (pending):', claimError);
       throw new BadRequestException('Failed to create claim');
     }
+    await this.savePrivacyTiming(claim.id, split, maxDelayMs);
 
     const id = claim.id;
     const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
     this.logger.log(`Created claim from ${platform} (pending): ${id} for @${cleanHandle} – they can claim once they connect this platform${burner ? ' (unique burner)' : ''}`);
-    return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
+    return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null, payTo: null, requirePrivate: false };
   }
 
   /** Sentinel prefix for claims created by email when recipient has no account yet; they claim by signing in with that email */
@@ -477,7 +512,7 @@ export class ClaimsService {
       ...row,
       claim_burner_address: row.burner_address ?? null,
       claim_burner_encrypted_secret: row.burner_encrypted_secret ?? null,
-      to_symbol: 'USDC',
+      to_symbol: row.token_amount != null && typeof row.to_token === 'string' && row.to_token ? row.to_token : 'USDC',
       // compat aliases for legacy field names still consumed by page.tsx / admin UI
       paid_with_chain: row.from_chain ?? null,
       paid_with_token: row.from_token ?? null,
@@ -789,7 +824,7 @@ export class ClaimsService {
   /**
    * Create a claim from email. If user exists, use their wallet. If not, create with PENDING_EMAIL so they can claim by signing in later.
    */
-  async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null }> {
+  async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
     const { email, amount, userId, isPrivate = false, description, cluster, expiresAt, split, maxDelayMs } = dto;
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
@@ -808,41 +843,21 @@ export class ClaimsService {
         );
       }
       recipientAddress = await this.usersService.getSolanaWalletAddress(user.privyUserId);
-
-      const burner = this.createClaimBurner();
-      if (!burner) {
-        this.logger.warn('Creating claim without burner: SEND_PAYMENT_ENC_KEY may be missing. Claiming will fail until the key is set.');
-      }
-      const { data: claim, error: claimError } = await this.supabaseService.payments
-        .insert({
-          amount: Number(amount),
-          direction: 'from_sender',
-          recipient_address: recipientAddress,
-          recipient_user_id: user.privyUserId,
-          recipient_email: cleanEmail,
-          created_by: userId ? String(userId) : null,
-          status: 'OPEN',
-          description: description || null,
-          to_chain: 'solana',
-          to_token: 'USDC',
-          is_devnet: isDevnet,
-          is_private: isPrivate,
-          short_id: generateShortId(),
-          expires_at: expiresAt ?? null,
-          ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
-        })
-        .select('id, short_id')
-        .single();
-
-      if (claimError) {
-        this.logger.error('Error creating claim from email (existing user):', claimError);
-        throw new BadRequestException('Failed to create claim');
-      }
-
-      const id = claim.id;
-      const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
-      this.logger.log(`Created claim from email (existing user): ${id} for ${cleanEmail} (private: ${isPrivate})`);
-      return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
+      return this.insertDirectRegisteredPayment({
+        amount,
+        userId,
+        description,
+        isDevnet,
+        expiresAt,
+        requestedPrivate: isPrivate,
+        requirePrivatePayments: user.requirePrivatePayments,
+        recipientAddress,
+        recipientUserId: user.privyUserId,
+        recipientUsername: user.username,
+        recipientEmail: cleanEmail,
+        split,
+        maxDelayMs,
+      });
     } catch (err: unknown) {
       if (err instanceof BadRequestException) throw err;
       if (!(err instanceof NotFoundException)) throw err;
@@ -880,11 +895,12 @@ export class ClaimsService {
       this.logger.error('Error creating claim from email (pending):', claimError);
       throw new BadRequestException('Failed to create claim');
     }
+    await this.savePrivacyTiming(claim.id, split, maxDelayMs);
 
     const id = claim.id;
     const link = `${this.baseUrl}/c/${claim.short_id ?? id}`;
     this.logger.log(`Created claim from email (pending): ${id} for ${cleanEmail} – they claim by signing in${burner ? ' (unique burner)' : ''}`);
-    return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null };
+    return { id, short_id: claim.short_id ?? null, link, burnerAddress: burner?.claim_burner_address ?? null, payTo: null, requirePrivate: false };
   }
 
   /**
@@ -1154,10 +1170,10 @@ export class ClaimsService {
       throw new BadRequestException('Invalid claim amount');
     }
     // Multi-send recipient rows only need to satisfy the batch-level $5 minimum already
-    // enforced by BuildMultiSendDto — standalone payment links enforce it per-link here.
+    // enforced by BuildMultiSendDto — a standalone private payment floors at $1 here.
     const isMultiSend = (row as unknown as { is_multi_send?: boolean }).is_multi_send === true;
-    if (amountUsd < 5 && !isMultiSend) {
-      throw new BadRequestException('Minimum payment amount is $5.00 USDC.');
+    if (amountUsd < 1 && !isMultiSend) {
+      throw new BadRequestException('Minimum payment amount is $1.00 USDC.');
     }
     const baseUnits = Math.round(amountUsd * 1_000_000);
     // fee_on_sender=true (Exact out): MagicBlock's own exactOut grosses up the sender's debit
@@ -1190,6 +1206,7 @@ export class ClaimsService {
         ...(isNonPrivateLink ? { is_private: true } : {}),
       })
       .eq('id', claimId);
+    await this.savePrivacyTiming(claimId, split, maxDelayMs);
     this.logger.log(`[PrivatePay] stamped claim ${claimId}: is_devnet=${correctIsDevnet} sender_user_id=${privyUserId}${isNonPrivateLink ? ' is_private=true (sender opted into private on a non-private link)' : ''}`);
 
     // MagicBlock cost = 10 BPS volume fee + gasless relay fee (0.002 SOL priced live), plus
@@ -1288,12 +1305,12 @@ export class ClaimsService {
     if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
       throw new BadRequestException('Invalid claim amount');
     }
-    if (amountUsd < 1) {
-      throw new BadRequestException('Minimum payment amount is $1.00 USDC.');
-    }
 
     const { conn, claimMint } = this.resolveClaimNetwork(claim);
     const baseUnits = Math.round(amountUsd * 1_000_000);
+    if (baseUnits < 1) {
+      throw new BadRequestException('Invalid claim amount');
+    }
     const payer = new PublicKey(senderWallet.trim());
     const burner = new PublicKey(to);
     const payerAta = await getAssociatedTokenAddress(claimMint, payer);
@@ -1323,15 +1340,24 @@ export class ClaimsService {
 
   /** Resolve the correct Solana connection and USDC mint for a claim based on its is_devnet flag.
    *  Falls back to backend SOLANA_CLUSTER config when is_devnet is null (legacy claims). */
-  private resolveClaimNetwork(claim: Claim): { conn: Connection; claimMint: PublicKey; cluster: 'mainnet' | 'devnet' } {
-    const rawClaim = claim as { is_devnet?: boolean | null };
+  private resolveClaimNetwork(claim: Claim): { conn: Connection; claimMint: PublicKey; cluster: 'mainnet' | 'devnet'; tokenProgram: PublicKey } {
+    const rawClaim = claim as { is_devnet?: boolean | null; solana_mint?: string | null; token_program?: string | null };
     const isDevnet = rawClaim.is_devnet ?? isSolanaDevnetFromConfig(this.configService);
     const cluster: 'mainnet' | 'devnet' = isDevnet ? 'devnet' : 'mainnet';
     const conn = this.solanaSponsor.getConnectionForCluster(cluster);
-    const mintStr = isDevnet
+    const defaultMint = isDevnet
       ? (this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
       : (this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
-    return { conn, claimMint: new PublicKey(mintStr), cluster };
+    const mintStr = rawClaim.solana_mint?.trim() || defaultMint;
+    let tokenProgram = TOKEN_PROGRAM_ID;
+    if (rawClaim.token_program?.trim()) {
+      try {
+        tokenProgram = new PublicKey(rawClaim.token_program.trim());
+      } catch {
+        tokenProgram = TOKEN_PROGRAM_ID;
+      }
+    }
+    return { conn, claimMint: new PublicKey(mintStr), cluster, tokenProgram };
   }
 
   /**
@@ -1343,7 +1369,11 @@ export class ClaimsService {
   private resolveEffectiveRecipientForPrivatePayment(
     claim: Claim & { claim_burner_address?: string | null },
   ): string {
-    return (claim.claim_burner_address || '').trim();
+    const burner = (claim.claim_burner_address || '').trim();
+    if (burner) return burner;
+    const direct = (claim.recipient_address || '').trim();
+    if (direct && !this.isPendingRecipientAddress(direct)) return direct;
+    return '';
   }
 
   /**
@@ -1429,6 +1459,50 @@ export class ClaimsService {
     return !!data?.length;
   }
 
+  private static readonly PAYOUT_METHODS = new Set([
+    'wallet', 'external', 'near', 'venmo', 'cashapp', 'revolut', 'zelle', 'coinbase', 'paj',
+  ]);
+  private static readonly PAYOUT_STATUSES = new Set(['pending', 'in_wallet', 'cashing_out', 'completed', 'failed']);
+
+  /** Best-effort receipt write. A missing column (migration not applied yet) must not fail the claim. */
+  private async writeClaimPayout(
+    claimId: string,
+    input: { method?: string; status?: string; etaLabel?: string | null; detail?: string | null },
+  ): Promise<void> {
+    const method = String(input.method || '').trim().toLowerCase();
+    if (!ClaimsService.PAYOUT_METHODS.has(method)) return;
+    const statusRaw = String(input.status || 'pending').trim().toLowerCase();
+    const status = ClaimsService.PAYOUT_STATUSES.has(statusRaw) ? statusRaw : 'pending';
+    const eta = input.etaLabel ? String(input.etaLabel).slice(0, 80) : null;
+    const detail = input.detail ? String(input.detail).slice(0, 160) : null;
+    const { error } = await this.supabaseService.payments
+      .update({
+        claim_payout_method: method,
+        claim_payout_status: status,
+        claim_payout_eta_label: eta,
+        claim_payout_detail: detail,
+        claim_payout_updated_at: new Date().toISOString(),
+      })
+      .eq('id', claimId);
+    if (error) {
+      this.logger.warn(`Claim ${claimId}: failed to save payout receipt (non-fatal): ${error.message}`);
+    }
+  }
+
+  /** Recipient-only. Lets the claim page keep a cash-out's status after the wallet sweep. */
+  async updateClaimPayout(
+    claimId: string,
+    privyUserId: string,
+    input: { method?: string; status?: string; etaLabel?: string | null; detail?: string | null },
+  ): Promise<{ ok: true }> {
+    const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
+    if (!isRecipient) {
+      throw new ForbiddenException('You are not the recipient of this payment.');
+    }
+    await this.writeClaimPayout(claimId, input);
+    return { ok: true };
+  }
+
   /**
    * Claim a pending payment (PENDING_EMAIL / PENDING_USERNAME) as the authenticated recipient.
    * Updates recipient_address to the user's Solana wallet so the payer can complete deposit.
@@ -1436,7 +1510,17 @@ export class ClaimsService {
   async claimAsRecipient(
     claimId: string,
     privyUserId: string,
-    opts?: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean; split?: number; maxDelayMs?: number },
+    opts?: {
+      claimPrivately?: boolean;
+      destinationAddress?: string;
+      claimToNaira?: boolean;
+      split?: number;
+      maxDelayMs?: number;
+      payoutMethod?: string;
+      payoutStatus?: string;
+      payoutEtaLabel?: string;
+      payoutDetail?: string;
+    },
   ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
     const claim = await this.findOneRaw(claimId);
     // Guard: do not re-claim a completed or cancelled payment
@@ -1459,6 +1543,10 @@ export class ClaimsService {
     const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
     if (!isRecipient) {
       throw new ForbiddenException('You are not the intended recipient of this payment.');
+    }
+    const tokenPrizeMint = (claim as { solana_mint?: string | null }).solana_mint?.trim();
+    if (tokenPrizeMint && (opts?.claimPrivately || opts?.claimToNaira)) {
+      throw new BadRequestException('This prize is a Solana token. Claim it to a Solana wallet.');
     }
     // identityWallet: the caller's own registered wallet — persisted to recipient_address and
     // used as the retry target for the default claim-to-wallet flow. sweepDestination: where
@@ -1553,6 +1641,15 @@ export class ClaimsService {
         () => {},
         (e: unknown) => this.logger.warn(`Claim ${claimId}: failed to stamp claim_requested_at (non-fatal): ${String(e)}`),
       );
+
+    if (opts?.payoutMethod) {
+      await this.writeClaimPayout(claimId, {
+        method: opts.payoutMethod,
+        status: opts.payoutStatus,
+        etaLabel: opts.payoutEtaLabel,
+        detail: opts.payoutDetail,
+      });
+    }
 
     try {
       // Attempt sweep before writing recipient_address — if sweep throws (e.g. fee payer has no SOL)
@@ -1824,13 +1921,14 @@ export class ClaimsService {
     burnerAta: PublicKey,
     maxWaitMs: number,
     minUnits: bigint = BigInt(1),
+    programId: PublicKey = TOKEN_PROGRAM_ID,
   ): Promise<bigint> {
     const deadline = Date.now() + maxWaitMs;
     let attempt = 0;
     while (Date.now() < deadline) {
       attempt += 1;
       try {
-        const acc = await getAccount(conn, burnerAta);
+        const acc = await getAccount(conn, burnerAta, 'confirmed', programId);
         if (acc.amount >= minUnits) {
           this.logger.log(
             `Claim ${claimId}: burner ATA credited ${acc.amount} base units (≥${minUnits} expected, poll attempt ${attempt}, waited ≤${maxWaitMs}ms)`,
@@ -1848,7 +1946,7 @@ export class ClaimsService {
       await new Promise((r) => setTimeout(r, BURNER_INBOUND_POLL_MS));
     }
     try {
-      const acc = await getAccount(conn, burnerAta);
+      const acc = await getAccount(conn, burnerAta, 'confirmed', programId);
       return acc.amount;
     } catch {
       return BigInt(0);
@@ -2321,7 +2419,8 @@ export class ClaimsService {
     try {
       const secretKey = this.decryptClaimBurnerSecret(rawClaim.claim_burner_encrypted_secret, burnerAddr);
       const burnerKeypair = Keypair.fromSecretKey(new Uint8Array(secretKey));
-      const { conn, claimMint } = this.resolveClaimNetwork(claim);
+      const { conn, claimMint, tokenProgram } = this.resolveClaimNetwork(claim);
+      const splPrize = claim as { solana_mint?: string | null; token_base_units?: string | null; token_amount?: string | null };
 
       // Cross-chain payments (e.g. ETH/BTC → Solana via NEAR Intents) land in the burner. Only
       // claims that actually asked for privacy need the MagicBlock PER transfer here — a public
@@ -2354,18 +2453,24 @@ export class ClaimsService {
 
       // Always attempt PER withdraw first. This also recovers older claims that
       // were incorrectly marked non-private while funds are still in PER deposit.
-      const perWithdraw = await this.tryWithdrawPerDepositToBurnerAta(
-        claimId,
-        burnerKeypair,
-        conn,
-        String(claim.amount || '0'),
-      );
+      // Token-prize claims never went through MagicBlock — the tokens are already in the ATA.
+      const isSplPrize = Boolean(splPrize.solana_mint?.trim());
+      const perWithdraw = isSplPrize
+        ? { attempted: false, success: false, error: undefined as string | undefined, debug: undefined as string[] | undefined }
+        : await this.tryWithdrawPerDepositToBurnerAta(
+            claimId,
+            burnerKeypair,
+            conn,
+            String(claim.amount || '0'),
+          );
       const amountUsdForSweep = parseFloat(String(claim.amount || '0'));
-      const expectedUnits = BigInt(Math.round(amountUsdForSweep * 1_000_000));
-      const burnerAta = await getAssociatedTokenAddress(claimMint, burnerKeypair.publicKey);
+      const expectedUnits = isSplPrize && splPrize.token_base_units && /^\d+$/.test(splPrize.token_base_units)
+        ? BigInt(splPrize.token_base_units)
+        : BigInt(Math.round(amountUsdForSweep * 1_000_000));
+      const burnerAta = await getAssociatedTokenAddress(claimMint, burnerKeypair.publicKey, false, tokenProgram);
       let balance = BigInt(0);
       try {
-        const acc = await getAccount(conn, burnerAta);
+        const acc = await getAccount(conn, burnerAta, 'confirmed', tokenProgram);
         balance = acc.amount;
       } catch {
         // ATA may not exist yet
@@ -2374,7 +2479,7 @@ export class ClaimsService {
         this.logger.log(
           `Claim ${claimId}: burner ATA balance=${balance} < expected=${expectedUnits} — polling for full delivery (up to ${BURNER_INBOUND_INLINE_MAX_MS}ms)…`,
         );
-        balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS, expectedUnits);
+        balance = await this.pollBurnerAtaUntilPositive(claimId, conn, burnerAta, BURNER_INBOUND_INLINE_MAX_MS, expectedUnits, tokenProgram);
       }
       this.logger.log(
         `Claim ${claimId}: [MONEY] burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} balance=${balance} expected=${expectedUnits} perAttempted=${perWithdraw.attempted} perSuccess=${perWithdraw.success} -> recipient ${destination.slice(0, 8)}...`,
@@ -2389,13 +2494,13 @@ export class ClaimsService {
         // constructed with no message, so it surfaced as "Claim transfer failed: . Please try
         // again." (real incident, claim 3d05bc19, 2026-07-28). Safe for normal on-curve wallets
         // too: this only skips a validation check, it doesn't change the derived ATA address.
-        const recipientAta = await getAssociatedTokenAddress(claimMint, recipientPubkey, true);
+        const recipientAta = await getAssociatedTokenAddress(claimMint, recipientPubkey, true, tokenProgram);
         const sweepTx = new Transaction();
         // tokenAccountExists absorbs transient RPC blips with a couple of short retries before
         // concluding "genuinely doesn't exist" — a plain getAccount() try/catch would otherwise
         // mistake a rate-limited RPC call for a missing account, wrongly tripping the abuse guard
         // on a legitimate repeat-claim wallet on a false premise.
-        if (!(await tokenAccountExists(conn, recipientAta))) {
+        if (!(await tokenAccountExists(conn, recipientAta, { programId: tokenProgram }))) {
           if (feePayerKp) {
             const allowed = await this.guardAtaSponsorship(
               recipientPubkey.toBase58(),
@@ -2417,6 +2522,7 @@ export class ClaimsService {
                 recipientAta,
                 recipientPubkey,
                 claimMint,
+                tokenProgram,
               ),
             );
           }
@@ -2431,22 +2537,24 @@ export class ClaimsService {
         // doubles as the protocol-fee collector (same wallet as platformFeeAccount elsewhere) —
         // its USDC ATA is expected to already exist (see magicblock-private-transfer.ts) but we
         // create it if missing anyway, cheap insurance against a broadcast-time failure.
-        const looftaFeeUnits = feePayerKp && opts?.looftaFeeUsdc
-          ? BigInt(Math.round(opts.looftaFeeUsdc * 1_000_000))
-          : feePayerKp && isCrossChain && balance > expectedUnits
-            ? balance - expectedUnits
-            : BigInt(0);
+        const looftaFeeUnits = isSplPrize
+          ? BigInt(0)
+          : feePayerKp && opts?.looftaFeeUsdc
+            ? BigInt(Math.round(opts.looftaFeeUsdc * 1_000_000))
+            : feePayerKp && isCrossChain && balance > expectedUnits
+              ? balance - expectedUnits
+              : BigInt(0);
         const netUnits = balance - looftaFeeUnits;
         if (looftaFeeUnits > BigInt(0) && feePayerKp) {
-          const feeAta = await getAssociatedTokenAddress(claimMint, feePayerKp.publicKey);
+          const feeAta = await getAssociatedTokenAddress(claimMint, feePayerKp.publicKey, false, tokenProgram);
           try {
-            await getAccount(conn, feeAta);
+            await getAccount(conn, feeAta, 'confirmed', tokenProgram);
           } catch {
-            sweepTx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, feeAta, feePayerKp.publicKey, claimMint));
+            sweepTx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, feeAta, feePayerKp.publicKey, claimMint, tokenProgram));
           }
-          sweepTx.add(createTransferInstruction(burnerAta, feeAta, burnerKeypair.publicKey, looftaFeeUnits));
+          sweepTx.add(createTransferInstruction(burnerAta, feeAta, burnerKeypair.publicKey, looftaFeeUnits, [], tokenProgram));
         }
-        sweepTx.add(createTransferInstruction(burnerAta, recipientAta, burnerKeypair.publicKey, netUnits));
+        sweepTx.add(createTransferInstruction(burnerAta, recipientAta, burnerKeypair.publicKey, netUnits, [], tokenProgram));
         // Reclaim the burner's own token-account rent (~0.002 SOL) back to the fee payer in the
         // same transaction — the transfers above always drain the burner ATA to exactly zero
         // (looftaFeeUnits + netUnits == balance), so it's safe to close right after. Burners are
@@ -2454,7 +2562,7 @@ export class ClaimsService {
         // it directly offsets the ATA-creation costs the fee payer pays elsewhere in this same
         // function (recipient/fee ATA creation) instead of those being a pure one-way cost.
         if (feePayerKp) {
-          sweepTx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burnerKeypair.publicKey));
+          sweepTx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burnerKeypair.publicKey, [], tokenProgram));
         }
         const feePayerPubkey = feePayerKp?.publicKey ?? burnerKeypair.publicKey;
         const sweepSigners = feePayerKp ? [burnerKeypair, feePayerKp] : [burnerKeypair];
@@ -2489,7 +2597,9 @@ export class ClaimsService {
           `Claim ${claimId}: [MONEY] ✅ swept ${balance} base-units USDC (${(Number(balance) / 1_000_000).toFixed(6)} USDC) burner=${burnerKeypair.publicKey.toBase58().slice(0, 8)} -> recipient=${destination.slice(0, 8)} tx=${sig}`,
         );
         sweepTxHash = sig;
-        sweptAmount = (Number(netUnits) / 1_000_000).toFixed(6);
+        sweptAmount = isSplPrize && splPrize.token_amount
+          ? String(splPrize.token_amount)
+          : (Number(netUnits) / 1_000_000).toFixed(6);
         if (looftaFeeUnits > BigInt(0)) feeAmountUsdc = Number(looftaFeeUnits) / 1_000_000;
       } else if (perWithdraw.attempted && !perWithdraw.success) {
         // PER deposit existed but we could not withdraw – do not silently succeed.

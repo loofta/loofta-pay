@@ -36,12 +36,14 @@ import { cn } from "@/lib/utils";
 import { trimDecimals, roundUpDecimals, formatUTCTimestamp } from "@/lib/format";
 import { findTokenBySelection } from "@/lib/tokens";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
+import { sora } from "@/components/home-v4/fonts";
 import { useClaimPayStore } from "@/store/claimPay";
 import { useAuthStore } from "@/store/auth";
 import { DescriptionWithGif } from "@/components/DescriptionWithGif";
 import { TokenIcon } from "@/components/TokenIcon";
 import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
 import { GuestCheckoutPay } from "@/components/app/GuestCheckoutPay";
+import { UNREGISTERED_ACCOUNT_FEE_USD } from "@/lib/unregisteredAccountFee";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock, ShoppingBag, CreditCard, Globe, Users } from "lucide-react";
@@ -63,10 +65,72 @@ import {
   type PajResolvedBankAccount,
 } from "@/services/pajCash";
 import { computeLooftaFeeUsdc } from "@/lib/pajCashFee";
+import { PEER_PLATFORMS } from "@/lib/peerPlatforms";
+import { getPeerEstimate, usdc as peerUsdc } from "@/services/peerCash";
+import { SolanaWalletConnectProvider, useWallet, WalletMultiButton } from "@/components/SolanaWalletConnect";
+import { getSolanaHttpRpc } from "@/lib/solanaCluster";
+import { isGuestSentClaim } from "@/lib/guestSentClaims";
 import { getClientGeo } from "@/lib/geo";
 import { PajCashLinkFlow } from "@/components/paj-cash/PajCashLinkFlow";
 import { BankCombobox } from "@/components/paj-cash/BankCombobox";
 const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
+
+const PAYOUT_METHOD_LABEL: Record<string, string> = {
+  wallet: "Loofta wallet",
+  external: "External wallet",
+  near: "Any crypto",
+  venmo: "Venmo",
+  cashapp: "Cash App",
+  revolut: "Revolut",
+  zelle: "Zelle",
+  coinbase: "Coinbase",
+  paj: "PAJ Cash",
+};
+
+function payoutStatusCopy(status: string): string {
+  if (status === "in_wallet") return "In your Loofta wallet";
+  if (status === "cashing_out") return "Cash out in progress";
+  if (status === "completed") return "Completed";
+  if (status === "failed") return "Needs attention";
+  return "Claimed";
+}
+
+function DepositIcons({ icons }: { icons: { src: string; bg: string }[] }) {
+  return (
+    <span className="flex shrink-0">
+      {icons.map((icon, i) => (
+        <span
+          key={`${icon.src}-${i}`}
+          className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl border-2 border-[#141418]"
+          style={{ background: icon.bg, marginLeft: i ? -8 : 0 }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={icon.src} alt="" className="h-5 w-5 object-contain" />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Fills the external-wallet field from Phantom, Solflare, or any Wallet Standard wallet. */
+function ConnectExternalWalletButton({ onAddress }: { onAddress: (address: string) => void }) {
+  const { publicKey, connected } = useWallet();
+  useEffect(() => {
+    if (connected && publicKey) onAddress(publicKey.toBase58());
+  }, [connected, publicKey, onAddress]);
+  return (
+    <WalletMultiButton
+      style={{
+        width: "100%",
+        height: 44,
+        justifyContent: "center",
+        borderRadius: 12,
+        fontSize: 15,
+        fontWeight: 600,
+      }}
+    />
+  );
+}
 const EVM_CHAIN_SET = new Set(["eth", "ethereum", "arb", "arbitrum", "base", "op", "optimism", "bsc", "avax", "avalanche", "polygon", "matic", "fantom", "ftm", "gnosis", "linea", "scroll", "zksync", "zk", "blast", "pol"]);
 function isEvmChainId(chain?: string): boolean { return EVM_CHAIN_SET.has(String(chain || "").toLowerCase()); }
 import { usePrivy, useWallets as useEvmWallets, useLinkAccount } from "@privy-io/react-auth";
@@ -75,7 +139,7 @@ import {
   useSignTransaction as usePrivySolanaSignTransaction,
 } from "@privy-io/react-auth/solana";
 import { isDemoMode } from "@/config/demoMode";
-import { getUsdcAtaBalanceBaseUnits } from "@/services/solanaBalance";
+import { getSplAtaBalanceBaseUnits, getUsdcAtaBalanceBaseUnits } from "@/services/solanaBalance";
 import { Connection, PublicKey, Transaction, VersionedTransaction } from "@solana/web3.js";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 import { getRefundToForChain, isValidAddressForChain } from "@/lib/refundAddresses";
@@ -94,10 +158,12 @@ import {
   privatePaymentAllPrivateLine,
   privatePaymentFundsAppearCopy,
   privatePaymentWaitingAfterSenderCopy,
+  privateFundsLandedAt,
   waitingForFundsCopy,
 } from "@/lib/privatePaymentCopy";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
+import { fetchSolanaFeePayerAddress } from "@/services/solanaSponsor";
 import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
 import { TELEGRAM_SEND_ENABLED } from "@/lib/socialPlatforms";
 import { PrivacyGlyph } from "@/components/PrivacyGlyph";
@@ -156,9 +222,11 @@ function rememberPreferredClaimMethod(key: string, method: string) {
 }
 
 // ─── Dev preview: jump the claim-panel/sender-card UI into any state via ?preview=... ─────────
+// Disabled for now (localhost included). Flip this back on to restore the panel and overrides.
 // Same pattern as /app/megapot's DevPreviewPanel — localhost-only, overrides local derived
 // booleans on the REAL page instead of mocking a separate component, so what you see is the
 // actual render path. Visit any real claim link (any [id] works) and append ?preview=<key>.
+const CLAIM_DEV_PREVIEW_ENABLED = false;
 //
 // "Waiting to be paid" and the generic sender view need no override — they're just what a real
 // unpaid claim's own link shows by default, before any preview param.
@@ -392,8 +460,9 @@ function ClaimPayLayout({
             animate={cardBorderAnimation}
             transition={cardTransition}
             className={cn(
-              "rounded-2xl p-6 text-white transition-colors [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30",
-              incognito ? "bg-black/40" : "bg-white/5",
+              sora.variable,
+              "rounded-[30px] p-7 text-white transition-colors border border-white/[0.07] [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.bg-white]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.border-gray-200]:!border-white/10 [&_.border-gray-100]:!border-white/10 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&_input]:focus-visible:!ring-white/30",
+              incognito ? "bg-black/40" : "bg-[#141419]",
             )}
           >
             {children}
@@ -602,41 +671,51 @@ function ClaimPageSenderShareView({
   const shareRecipientSuffix = recipientLabel ? ` (${recipientLabel})` : "";
   const shareText = `You have a payment of $${amount.toFixed(2)} to claim${shareRecipientSuffix}. Sign in or sign up on Loofta to claim it.`;
 
+  const ready = ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(status);
+  const who = recipientLabel ? ` to ${recipientLabel}` : "";
+
   return (
-    <div className="mt-6 text-center py-12">
-      <div className="mb-4 text-6xl">🔗</div>
-      <h3 className="text-2xl font-semibold text-gray-900 mb-2">
-        Share this claim link
-      </h3>
-      <p className="text-gray-600 text-base mb-4">
-        {["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(status)
-          ? `$${amount.toFixed(2)} is ready. The recipient can claim after signing in or signing up on Loofta${recipientLabel ? ` (${recipientLabel})` : ""}.`
-          : `The recipient can claim $${amount.toFixed(2)} after signing in or signing up on Loofta${recipientLabel ? ` (${recipientLabel})` : ""}.`}
-      </p>
-      <div className="flex flex-col sm:flex-row gap-2 justify-center items-stretch sm:items-center">
-        <div className="flex gap-2 flex-1 max-w-md mx-auto">
-          <Input
-            readOnly
-            value={claimLink}
-            className="font-mono text-sm flex-1 bg-gray-50"
+    <div className="py-2 text-center">
+      <p className="text-base text-slate-400">{isCancelled ? "Cancelled" : ready ? "Paid" : "Link ready"}</p>
+      <p className="mt-2 text-5xl font-semibold tracking-tight tabular-nums text-white">${amount.toFixed(2)}</p>
+      {!isCancelled && (
+        <p className="mt-3 text-base text-slate-300 max-w-sm mx-auto">
+          {ready
+            ? `Send this link${who}. They claim it on Loofta.`
+            : `Share this link${who}. They can claim it once the payment lands.`}
+        </p>
+      )}
+      {!isCancelled && (
+        <div className="mt-6 space-y-3 text-left">
+          <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
+            <a
+              href={claimLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 min-w-0 truncate text-base text-slate-300 hover:text-white hover:underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 rounded-sm"
+            >
+              {claimLink.replace(/^https?:\/\//, "")}
+            </a>
+            <button
+              type="button"
+              onClick={handleCopy}
+              aria-label={copied ? "Copied" : "Copy link"}
+              className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
+            >
+              {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+            </button>
+          </div>
+          <GradientActionButton type="button" onClick={handleCopy}>
+            {copied ? "Copied" : "Copy link"}
+          </GradientActionButton>
+          <ShareLinkMenu
+            url={claimLink}
+            title="Payment for you"
+            text={shareText}
+            triggerClassName="w-full h-11 rounded-2xl bg-transparent border border-white/10 text-slate-200 hover:bg-white/[0.06] shadow-none"
           />
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            onClick={handleCopy}
-            className="shrink-0 !text-slate-900 border-gray-400 hover:bg-gray-100 hover:!text-slate-900"
-          >
-            {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4 !text-slate-900" />}
-          </Button>
         </div>
-        <ShareLinkMenu
-          url={claimLink}
-          title="Payment for you"
-          text={shareText}
-          triggerClassName="px-6 py-3"
-        />
-      </div>
+      )}
       {/* Edit recipient: only while unclaimed (recipientType present) and not mid-claim.
           `userId` here is documented as "logged-in creator's id, only set when true" — the
           caller is responsible for only passing it when the viewer actually is the creator (see
@@ -734,7 +813,7 @@ function ClaimPageSenderShareView({
         </div>
       )}
       {isCancelled && (
-        <p className="mt-4 text-base md:text-sm text-gray-500">Payment cancelled. Any funds have been returned to your Loofta wallet.</p>
+        <p className="mt-4 text-base text-slate-400">Payment cancelled. Any funds have been returned to your Loofta wallet.</p>
       )}
     </div>
   );
@@ -842,7 +921,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; recipient_user_id?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_pending_social?: boolean; recipient_pending_social_platform?: string | null; recipient_pending_social_value?: string | null; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; claimed_privately?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null; merchant_name?: string | null; merchant_logo_url?: string | null },
+    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; recipient_user_id?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_pending_social?: boolean; recipient_pending_social_platform?: string | null; recipient_pending_social_value?: string | null; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; claimed_privately?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null; merchant_name?: string | null; merchant_logo_url?: string | null; private_split?: number | null; private_max_delay_ms?: number | null },
     latestIntent: data.latestIntent || null,
     pendingEmail: false,
     pendingSocialPlatform: null,
@@ -1323,7 +1402,7 @@ export function ClaimPayView({
   }, []);
   // Dev-only: jump the claim-panel/sender-card UI into any state via ?preview=... (see
   // DEV_PREVIEW_STATES / DevPreviewPanel above).
-  const previewParam = isClaimPageLocalhost ? searchParams.get("preview") : null;
+  const previewParam = CLAIM_DEV_PREVIEW_ENABLED && isClaimPageLocalhost ? searchParams.get("preview") : null;
   const previewOverride = previewParam ? DEV_PREVIEW_STATES[previewParam] : undefined;
   const { toast } = useToast();
   const { user, logout, login, authenticated, ready: privyReady, getAccessToken } = usePrivy();
@@ -1690,6 +1769,17 @@ export function ClaimPayView({
   });
   const claimData = claimQuery.data as any;
   const claim = claimData?.claim;
+  const tokenPrize = claim as {
+    solana_mint?: string | null;
+    token_amount?: string | number | null;
+    token_base_units?: string | null;
+    token_program?: string | null;
+    to_symbol?: string;
+  } | null;
+  const isTokenPrize = !!tokenPrize?.solana_mint?.trim();
+  const tokenPrizeAmount = isTokenPrize ? tokenPrize?.token_amount : null;
+  const tokenPrizeSymbol = isTokenPrize ? (tokenPrize?.to_symbol || "tokens") : "USDC";
+  const tokenPrizeLogo = isTokenPrize ? `/api/giveaways/token-icon?mint=${encodeURIComponent(tokenPrize!.solana_mint!.trim())}` : null;
   // Which sign-in method/platform this payment is pending on, from the viewer's perspective —
   // populated either from the confirmed claim (once this viewer IS the recipient) or from the
   // API's pending-login hint on a 403/404 (viewer not yet confirmed, so no claim data at all).
@@ -1805,14 +1895,18 @@ export function ClaimPayView({
   // and no obvious feedback loop tying that wait back to this button. Comparing against the
   // claim's expected amount instead means the button simply doesn't enable until delivery is
   // actually complete, matching what "Claim" should mean.
-  const claimExpectedBaseUnits = Math.round(parseFloat(claim?.amount || "0") * 1_000_000);
+  const claimExpectedBaseUnits = isTokenPrize && tokenPrize?.token_base_units && /^\d+$/.test(tokenPrize.token_base_units)
+    ? Number(tokenPrize.token_base_units)
+    : Math.round(parseFloat(claim?.amount || "0") * 1_000_000);
   const burnerReadyQuery = useQuery({
-    queryKey: ["burner-ready", burnerAddr, claimNetworkMode, claimExpectedBaseUnits],
+    queryKey: ["burner-ready", burnerAddr, claimNetworkMode, claimExpectedBaseUnits, tokenPrize?.solana_mint ?? "usdc"],
     queryFn: async (): Promise<{ balance: number; isReady: boolean }> => {
       if (!burnerAddr) return { balance: 0, isReady: false };
-      const balance = await getUsdcAtaBalanceBaseUnits(burnerAddr, claimNetworkMode);
+      const balance = isTokenPrize
+        ? await getSplAtaBalanceBaseUnits(burnerAddr, tokenPrize!.solana_mint!.trim(), claimNetworkMode, tokenPrize?.token_program || undefined)
+        : await getUsdcAtaBalanceBaseUnits(burnerAddr, claimNetworkMode);
       console.info(
-        `[BurnerReady] claimId=${id} usdcBaseUnits=${balance} expected=${claimExpectedBaseUnits} (ATA may be missing until first deposit)`,
+        `[BurnerReady] claimId=${id} baseUnits=${balance} expected=${claimExpectedBaseUnits} mint=${tokenPrize?.solana_mint || "usdc"}`,
       );
       return { balance, isReady: claimExpectedBaseUnits > 0 && balance >= claimExpectedBaseUnits };
     },
@@ -1889,7 +1983,7 @@ export function ClaimPayView({
     }
   };
   const claimAsRecipientMutation = useMutation({
-    mutationFn: async (opts?: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean; split?: number; maxDelayMs?: number }) => {
+    mutationFn: async (opts?: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean; split?: number; maxDelayMs?: number; payoutMethod?: string; payoutStatus?: string; payoutEtaLabel?: string | null; payoutDetail?: string | null }) => {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
       console.info("[Claim] Initiating claim for:", id, "user:", user?.id?.slice(0, 12), "opts:", opts);
       const claimToken = await getAccessToken();
@@ -2095,15 +2189,13 @@ export function ClaimPayView({
     return () => { cancelled = true; };
   }, [pajDefaultBankAccount, claim?.amount, getAccessToken]);
 
-  // Two-way "claim to wallet / claim to bank" layout — shown once the recipient already has a
-  // default Naira payout account set up (i.e. has done this before), OR they're in Nigeria by IP
-  // (pajNigeria) even without one yet, so first-time Nigerian claimers see the bank option as a
-  // real button instead of a buried text link. "Claim to bank" already handles the no-account
-  // case itself (opens the setup dialog on click, see below) so no separate branch is needed here.
-  // Merely PAJ-linked-from-elsewhere with no bank account and no NG IP still falls back to the
-  // small discovery link, since showing a full "Claim to bank" button to a non-Nigerian who has
-  // no path to pass PAJ's BVN/NIN KYC would just be a dead end dressed up as a primary option.
-  const showBankClaimOption = previewOverride?.showBankClaimOption ?? (PAJ_CASH_ENABLED && isRecipient && (!!pajDefaultBankAccount || pajNigeria));
+  // Hush-like: every recipient sees crypto vs cash (Peer Venmo/Cash App/Revolut/Zelle + optional
+  // Naira). Naira stays gated inside the cash menu — only show it when PAJ is enabled and the
+  // recipient already has a default bank, is in Nigeria by IP, or already started a PAJ link.
+  // Preview override keeps the old `showBankClaimOption` name for ?preview= keys.
+  const showBankClaimOption = isTokenPrize ? false : (previewOverride?.showBankClaimOption ?? isRecipient);
+  const showNairaClaimMethod =
+    PAJ_CASH_ENABLED && (!!pajDefaultBankAccount || pajNigeria || pajLinked);
   // Once the recipient picks "Claim to wallet", drop into the original public/private choice —
   // "Claim to bank" no longer shows alongside it, matching the pre-bank-option flow exactly.
   const [walletClaimChosen, setWalletClaimChosen] = useState(false);
@@ -2132,13 +2224,106 @@ export function ClaimPayView({
   // recipient last actually claimed through shown first (readPreferredClaimMethod/
   // rememberPreferredClaimMethod), a per-browser convenience only — never anything load-bearing.
   const [cryptoMenuStep, setCryptoMenuStep] = useState<CryptoClaimMethod | null>(null);
-  const [cashMenuStep, setCashMenuStep] = useState<CashClaimMethod | null>(null);
+  const [cashMenuStep, setCashMenuStep] = useState<"venmo" | "cashapp" | "revolut" | "zelle" | "coinbase" | "paj" | null>(null);
+  const [peerHandle, setPeerHandle] = useState("");
+  const [peerEtaLabel, setPeerEtaLabel] = useState<string | null>(null);
+  const [peerEtaLoading, setPeerEtaLoading] = useState(false);
+  const [payoutReceipt, setPayoutReceipt] = useState<{
+    method: string;
+    status: string;
+    eta: string | null;
+    detail: string | null;
+  } | null>(null);
   const [preferredCryptoMethod, setPreferredCryptoMethod] = useState<CryptoClaimMethod>("wallet");
-  const [preferredCashMethod, setPreferredCashMethod] = useState<CashClaimMethod>("naira");
+  const [preferredCashMethod, setPreferredCashMethod] = useState<CashClaimMethod>("p2p");
   useEffect(() => {
     setPreferredCryptoMethod(readPreferredClaimMethod(CRYPTO_CLAIM_PREF_KEY, "wallet", ["wallet", "external", "anyToken"] as const));
-    setPreferredCashMethod(readPreferredClaimMethod(CASH_CLAIM_PREF_KEY, "naira", ["naira", "p2p", "card"] as const));
+    setPreferredCashMethod(readPreferredClaimMethod(CASH_CLAIM_PREF_KEY, "p2p", ["naira", "p2p", "card"] as const));
   }, []);
+
+  useEffect(() => {
+    const method = (claim as { claim_payout_method?: string | null } | null)?.claim_payout_method;
+    if (!method || method === "wallet") return;
+    setPayoutReceipt({
+      method,
+      status: (claim as { claim_payout_status?: string | null }).claim_payout_status || "pending",
+      eta: (claim as { claim_payout_eta_label?: string | null }).claim_payout_eta_label || null,
+      detail: (claim as { claim_payout_detail?: string | null }).claim_payout_detail || null,
+    });
+  }, [claim]);
+
+  const peerPlatform = PEER_PLATFORMS.find((p) => p.id === cashMenuStep) ?? null;
+  useEffect(() => {
+    if (!peerPlatform) { setPeerEtaLabel(null); return; }
+    const amount = parseFloat(claim?.amount || "0");
+    if (!(amount > 0)) return;
+    let cancelled = false;
+    setPeerEtaLoading(true);
+    const timer = setTimeout(() => {
+      getPeerEstimate(peerUsdc(amount), "USD", peerPlatform.processorName, true)
+        .then((est) => { if (!cancelled) setPeerEtaLabel(est.eta?.label ?? null); })
+        .catch(() => { if (!cancelled) setPeerEtaLabel(null); })
+        .finally(() => { if (!cancelled) setPeerEtaLoading(false); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [peerPlatform, claim?.amount]);
+
+  const keepClaimCard = !!payoutReceipt && payoutReceipt.method !== "wallet";
+
+  const persistPayout = async (next: { method: string; status: string; eta: string | null; detail: string | null }) => {
+    setPayoutReceipt(next);
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const token = await getAccessToken();
+      await fetch(`${backendUrl}/claims/${id}/payout`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          method: next.method,
+          status: next.status,
+          etaLabel: next.eta,
+          detail: next.detail,
+        }),
+      });
+      queryClient.invalidateQueries({ queryKey: ["claim", id], exact: true });
+    } catch {
+      // The receipt still shows from local state. The claim POST stamps the same fields.
+    }
+  };
+
+  const openCoinbaseOfframp = async () => {
+    const address = deriveSolanaEmbeddedAddress(user);
+    if (!address) {
+      toast({ variant: "destructive", title: "Wallet still setting up", description: "Try again in a moment." });
+      return;
+    }
+    const accessToken = await getAccessToken();
+    const sessionRes = await fetch("/api/coinbase/offramp-session", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      body: JSON.stringify({ walletAddress: address, blockchains: ["solana"] }),
+    });
+    if (!sessionRes.ok) {
+      const err = await sessionRes.json().catch(() => ({})) as { error?: string; detail?: string };
+      throw new Error(err.detail || err.error || "Could not open Coinbase");
+    }
+    const { token: sessionToken } = await sessionRes.json();
+    if (!sessionToken) throw new Error("Could not open Coinbase");
+    const params = new URLSearchParams();
+    params.set("appId", "68e3c83a-3d5a-49aa-a8fa-7ef26d824de1");
+    params.set("sessionToken", sessionToken);
+    params.set("defaultNetwork", "solana");
+    params.set("defaultAsset", "USDC");
+    params.set("redirectUrl", window.location.href);
+    if (user?.id) params.set("partnerUserRef", user.id.slice(0, 50));
+    window.open(`https://pay.coinbase.com/v3/sell/input?${params.toString()}`, "_blank");
+  };
 
   // Inline "set up a bank account" dialog — shown when "Claim to bank" is clicked but no default
   // account exists yet, instead of bouncing the recipient away to the withdraw modal mid-claim.
@@ -2443,9 +2628,21 @@ export function ClaimPayView({
               <button
                 type="button"
                 onClick={() => {
+                  const pajDetail = pajDefaultBankAccount ? `${pajDefaultBankAccount.bank_name} ····${pajDefaultBankAccount.account_number.slice(-4)}` : "Naira bank";
+                  const pajReceipt = { method: "paj", status: "cashing_out", eta: "Usually within a few minutes", detail: pajDetail };
                   setNairaClaimConfirmOpen(false);
+                  setPayoutReceipt(pajReceipt);
                   setClaimInitiated(true);
-                  claimAsRecipientMutation.mutate({ claimToNaira: true });
+                  claimAsRecipientMutation.mutate({
+                    claimToNaira: true,
+                    payoutMethod: "paj",
+                    payoutStatus: "cashing_out",
+                    payoutEtaLabel: pajReceipt.eta,
+                    payoutDetail: pajDetail,
+                  }, {
+                    onSuccess: () => { void persistPayout(pajReceipt); },
+                    onError: () => setPayoutReceipt(null),
+                  });
                 }}
                 disabled={claimActionDisabled || nairaQuote == null}
                 className="flex-1 h-14 sm:h-12 rounded-xl text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50"
@@ -2462,7 +2659,9 @@ export function ClaimPayView({
   /** Redundant to offer once the payment already arrived privately — the burner's incoming leg
    *  already broke any on-chain link back to the sender, so a plain public sweep out reveals
    *  nothing new (see the Context section of the universal-claim plan). */
-  const canClaimPrivately = previewOverride?.canClaimPrivately ?? !claim?.is_private;
+  const canClaimPrivately = isTokenPrize
+    ? false
+    : (previewOverride?.canClaimPrivately ?? !claim?.is_private);
   const claimActionDisabled = claimAsRecipientMutation.isPending || waitingForBurnerFunds || walletNotReady;
   /** Recipient pays this fee out of the claimed amount when upgrading a public burner to a
    *  private claim (exact-in) — mirrors sweepClaimBurnerPrivately's math server-side. Estimate
@@ -2479,7 +2678,69 @@ export function ClaimPayView({
   const confirmPrivateClaimEstimate = estimateClaimPrivatelyNet(confirmPrivateClaimAmount);
   /** Shared claim panel — replaces the old single hardcoded "claim to wallet" button (and the
    *  first-claim-only "claim privately" button) with the full set of choices, for every claim. */
-  const renderClaimPanel = (mobile: boolean) => (
+  const renderClaimPanel = (mobile: boolean) => {
+    if (keepClaimCard && payoutReceipt) {
+      const method = payoutReceipt.method;
+      const resume = () => {
+        const amountUsd = parseFloat(claim?.amount || "0");
+        if (method === "venmo" || method === "cashapp" || method === "revolut" || method === "zelle") {
+          window.dispatchEvent(new CustomEvent("openBalanceModal", {
+            detail: {
+              tab: "withdraw",
+              method: "peer",
+              amountUsd,
+              peerPay: payoutReceipt.detail
+                ? { platformId: method, identifier: payoutReceipt.detail, amountUsd }
+                : undefined,
+            },
+          }));
+        } else if (method === "coinbase") {
+          openCoinbaseOfframp().catch((err: unknown) => {
+            toast({ variant: "destructive", title: "Coinbase", description: err instanceof Error ? err.message : "Could not open Coinbase" });
+          });
+        } else if (method === "near") {
+          window.dispatchEvent(new CustomEvent("openBalanceModal", {
+            detail: { tab: "withdraw", method: "near", amountUsd },
+          }));
+        } else if (method === "paj") {
+          window.dispatchEvent(new CustomEvent("openBalanceModal", {
+            detail: { tab: "withdraw", method: "paj", amountUsd },
+          }));
+        }
+      };
+      return (
+        <div className={mobile ? "w-full" : "hidden md:flex flex-col w-full max-w-md mx-auto"}>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-semibold text-slate-200">{PAYOUT_METHOD_LABEL[method] || "Cash out"}</span>
+              <span className="text-sm font-medium text-amber-300">
+                {claimAsRecipientMutation.isPending
+                  ? "Claiming…"
+                  : method === "near"
+                    ? "In your Loofta wallet"
+                    : payoutStatusCopy(payoutReceipt.status)}
+              </span>
+            </div>
+            {payoutReceipt.detail && (
+              <p className="text-sm text-slate-400 truncate">{payoutReceipt.detail}</p>
+            )}
+            {payoutReceipt.eta && (
+              <p className="text-sm text-slate-300">{payoutReceipt.eta}</p>
+            )}
+            {method !== "external" && (
+              <button
+                type="button"
+                onClick={resume}
+                className="w-full rounded-xl py-2.5 text-sm font-semibold text-white bg-white/10 hover:bg-white/15"
+              >
+                {method === "near" ? "Pick a token" : payoutReceipt.status === "completed" ? "View cash out" : "Continue cash out"}
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+    return (
     <div className={mobile ? "w-full" : "hidden md:flex flex-col w-full max-w-md mx-auto"}>
       {previewOverride?.forcePrivatelyPaidNotice && (
         <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-base text-slate-300 mb-3">
@@ -2502,7 +2763,7 @@ export function ClaimPayView({
               )}
             >
               {!(walletNotReady || waitingForBurnerFunds) && <Wallet className={mobile ? "h-5 w-5" : "h-4 w-4"} />}
-              <span>Claim in crypto{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
+              <span>Claim {isTokenPrize ? tokenPrizeSymbol : "in crypto"}{walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}</span>
             </button>
 
             <div className="flex items-center gap-3 my-3.5 w-full">
@@ -2522,14 +2783,52 @@ export function ClaimPayView({
             >
               <span
                 className={cn(
-                  "flex items-center justify-center gap-2 rounded-[calc(1rem-1.5px)] bg-[#0f0f12] font-semibold text-slate-100 transition-colors",
-                  mobile ? "py-5 text-base" : "py-4 text-base",
+                  "flex flex-col items-stretch gap-3 rounded-[calc(1rem-1.5px)] bg-[#0f0f12] font-semibold text-slate-100 transition-colors px-4",
+                  mobile ? "py-4 text-base" : "py-3.5 text-base",
                 )}
               >
-                <Landmark className="h-4 w-4" />
-                <span>Claim to cash</span>
+                <span className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2">
+                    <Landmark className="h-4 w-4 shrink-0" />
+                    <span>Claim to cash</span>
+                  </span>
+                  <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-sm font-medium text-amber-300">Easiest</span>
+                </span>
+                <span className="grid grid-cols-4 gap-2">
+                  {PEER_PLATFORMS.map((p) => (
+                    <span key={p.id} className="flex flex-col items-center gap-1.5">
+                      <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-white/5 border border-white/10">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={p.logo} alt="" className="h-7 w-7 object-contain" />
+                      </span>
+                      <span className="text-sm font-normal text-slate-400">{p.name}</span>
+                    </span>
+                  ))}
+                </span>
               </span>
             </button>
+            <div className="mt-2.5 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => { setCashOptionsOpen(true); setCashMenuStep("coinbase"); }}
+                disabled={claimActionDisabled}
+                className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-semibold text-slate-200 hover:bg-white/10 disabled:opacity-50"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/images/icons/coinbase-logo.png" alt="" className="h-5 w-5 object-contain" />
+                Coinbase
+              </button>
+              <button
+                type="button"
+                onClick={() => { setCashOptionsOpen(true); setCashMenuStep("paj"); }}
+                disabled={claimActionDisabled}
+                className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-semibold text-slate-200 hover:bg-white/10 disabled:opacity-50"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/images/icons/paj-cash-logo.svg" alt="" className="h-5 w-5 object-contain" />
+                PAJ Cash
+              </button>
+            </div>
           </>
         ) : (
           <div className="space-y-2.5">
@@ -2543,122 +2842,169 @@ export function ClaimPayView({
 
             {cashMenuStep === null && (
               <div className="space-y-2.5">
-                {[...CASH_CLAIM_METHODS]
-                  .sort((a, b) => (a === preferredCashMethod ? -1 : b === preferredCashMethod ? 1 : 0))
-                  .map((methodKey) => {
-                    if (methodKey === "naira") {
-                      const claimingNaira = claimAsRecipientMutation.isPending && claimAsRecipientMutation.variables?.claimToNaira;
-                      return (
-                        <button
-                          key="naira"
-                          type="button"
-                          onClick={() => {
-                            rememberPreferredClaimMethod(CASH_CLAIM_PREF_KEY, "naira");
-                            if (pajDefaultBankAccount) {
-                              setNairaClaimConfirmOpen(true);
-                            } else {
-                              openNairaSetup();
-                            }
-                          }}
-                          disabled={claimActionDisabled}
-                          className={cn(
-                            "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 transition-all hover:border-white/20 hover:bg-white/10",
-                            mobile ? "py-4" : "py-3.5",
-                            claimActionDisabled && "opacity-50 cursor-not-allowed hover:border-white/10 hover:bg-white/5",
-                          )}
-                        >
-                          {claimingNaira ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : <Landmark className="h-4 w-4 shrink-0" />}
-                          <span className="flex-1 min-w-0">
-                            <span className="block text-base">
-                              {claimingNaira ? "Claiming…" : `Bank account (Naira)${walletNotReady ? " (setting up wallet…)" : waitingForBurnerFunds ? " (not ready)" : ""}`}
-                            </span>
-                            <span className="block text-base font-normal text-slate-500">Direct bank transfer</span>
-                          </span>
-                        </button>
-                      );
-                    }
-                    if (methodKey === "p2p") {
-                      return (
-                        <button
-                          key="p2p"
-                          type="button"
-                          onClick={() => setCashMenuStep("p2p")}
-                          disabled={claimActionDisabled}
-                          className={cn(
-                            "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 transition-all hover:border-white/20 hover:bg-white/10",
-                            mobile ? "py-4" : "py-3.5",
-                            claimActionDisabled && "opacity-50 cursor-not-allowed hover:border-white/10 hover:bg-white/5",
-                          )}
-                        >
-                          <Users className="h-4 w-4 shrink-0" />
-                          <span className="flex-1 min-w-0">
-                            <span className="block text-base">P2P</span>
-                            <span className="block text-base font-normal text-slate-500">Revolut, Cash App, Venmo, Zelle</span>
-                          </span>
-                        </button>
-                      );
-                    }
-                    // Crypto card (Jam Card pilot) — UI-only placeholder, no real payout wired up
-                    // yet. Flip SHOW_CRYPTO_CARD_CLAIM once the partner integration exists (see
-                    // project_jamcard_pilot_evaluation memory: network + KYC fields unconfirmed).
-                    return SHOW_CRYPTO_CARD_CLAIM ? (
-                      <button
-                        key="card"
-                        type="button"
-                        className={cn(
-                          "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 transition-all hover:border-white/20 hover:bg-white/10",
-                          mobile ? "py-4" : "py-3.5",
-                        )}
-                      >
-                        <CreditCard className="h-4 w-4 shrink-0" />
-                        <span className="flex-1 min-w-0">
-                          <span className="block text-base">Crypto card</span>
-                          <span className="block text-base font-normal text-slate-500">Set up once, then claim to it every time</span>
-                        </span>
-                      </button>
-                    ) : (
-                      <div key="card" className="w-full flex items-center gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.02] px-4 py-3.5 opacity-70">
-                        <CreditCard className="h-4 w-4 text-slate-400 shrink-0" />
-                        <div className="text-left flex-1 min-w-0">
-                          <p className="text-base font-semibold text-slate-200">
-                            Crypto card <span className="ml-1.5 rounded-full bg-white/10 px-2 py-0.5 text-base font-medium tracking-wide text-amber-300 uppercase align-middle">Pilot</span>
-                          </p>
-                          <p className="text-base text-slate-500">Set up once, then claim to it every time — coming soon</p>
-                        </div>
-                      </div>
-                    );
-                  })}
+                {PEER_PLATFORMS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => { setPeerHandle(""); setCashMenuStep(p.id as "venmo" | "cashapp" | "revolut" | "zelle"); }}
+                    disabled={claimActionDisabled}
+                    className={cn(
+                      "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 transition-all hover:border-white/20 hover:bg-white/10",
+                      mobile ? "py-4" : "py-3.5",
+                      claimActionDisabled && "opacity-50 cursor-not-allowed",
+                    )}
+                  >
+                    <DepositIcons icons={[{ src: p.logo, bg: p.id === "venmo" ? "#3D95CE" : p.id === "cashapp" ? "#00D632" : p.id === "revolut" ? "#191C1F" : "#6D1ED4" }]} />
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-base">{p.name}</span>
+                      <span className="block text-base font-normal text-slate-500">Cash out to {p.name}</span>
+                    </span>
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setCashMenuStep("coinbase")}
+                  disabled={claimActionDisabled}
+                  className={cn(
+                    "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 hover:bg-white/10",
+                    mobile ? "py-4" : "py-3.5",
+                    claimActionDisabled && "opacity-50",
+                  )}
+                >
+                  <DepositIcons icons={[{ src: "/images/icons/coinbase-logo.png", bg: "#0052FF" }]} />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-base">Coinbase</span>
+                    <span className="block text-base font-normal text-slate-500">Sell USDC to your bank</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCashMenuStep("paj")}
+                  disabled={claimActionDisabled}
+                  className={cn(
+                    "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 hover:bg-white/10",
+                    mobile ? "py-4" : "py-3.5",
+                    claimActionDisabled && "opacity-50",
+                  )}
+                >
+                  <DepositIcons icons={[{ src: "/images/icons/paj-cash-logo.svg", bg: "#111" }]} />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-base">PAJ Cash</span>
+                    <span className="block text-base font-normal text-slate-500">Nigerian bank transfer</span>
+                  </span>
+                </button>
               </div>
             )}
 
-            {cashMenuStep === "p2p" && (
+            {peerPlatform && (
               <div className="space-y-3">
-                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                  <p className="text-base font-semibold text-slate-100 mb-1">Claim via P2P</p>
-                  <p className="text-base text-slate-500 leading-relaxed">
-                    Claims to your Loofta wallet first, then takes you to pick Revolut, Cash App, Venmo, or Zelle.
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+                  <p className="text-base font-semibold text-slate-100">Cash out to {peerPlatform.name}</p>
+                  <Input
+                    placeholder={peerPlatform.placeholder}
+                    value={peerHandle}
+                    onChange={(e) => setPeerHandle(e.target.value)}
+                    className="bg-white/10 border-white/20 text-white placeholder:text-slate-400"
+                  />
+                  <p className="text-sm text-slate-400">
+                    {peerEtaLoading ? "Checking fill time…" : peerEtaLabel ? `Typical fill time: ${peerEtaLabel}` : "We’ll show the fill time as soon as Peer quotes it."}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    rememberPreferredClaimMethod(CASH_CLAIM_PREF_KEY, "p2p");
+                    const handle = peerHandle.trim();
+                    if (!handle) {
+                      toast({ variant: "destructive", title: `Add your ${peerPlatform.name} ${peerPlatform.idLabel}` });
+                      return;
+                    }
+                    const receipt = { method: peerPlatform.id, status: "in_wallet", eta: peerEtaLabel, detail: handle };
                     setClaimInitiated(true);
-                    claimAsRecipientMutation.mutate({}, { onSuccess: () => router.push("/app?balance=withdraw") });
+                    claimAsRecipientMutation.mutate(
+                      { payoutMethod: peerPlatform.id, payoutStatus: "in_wallet", payoutEtaLabel: peerEtaLabel, payoutDetail: handle },
+                      {
+                        onSuccess: () => {
+                          void persistPayout(receipt);
+                          const amountUsd = parseFloat(claim?.amount || "0");
+                          window.dispatchEvent(new CustomEvent("openBalanceModal", {
+                            detail: {
+                              tab: "withdraw",
+                              method: "peer",
+                              amountUsd,
+                              peerPay: { platformId: peerPlatform.id, identifier: handle, amountUsd },
+                            },
+                          }));
+                        },
+                      },
+                    );
                   }}
-                  disabled={claimActionDisabled}
+                  disabled={claimActionDisabled || !peerHandle.trim()}
                   className={cn(
                     "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
                     mobile ? "py-4 text-base" : "py-3",
                     "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                    claimActionDisabled && "opacity-50 cursor-not-allowed hover:opacity-50",
+                    (claimActionDisabled || !peerHandle.trim()) && "opacity-50 cursor-not-allowed",
                   )}
                 >
-                  {claimAsRecipientMutation.isPending ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" /><span>Claiming…</span></>
-                  ) : (
-                    <><Users className="h-4 w-4" /><span>Claim &amp; continue</span></>
-                  )}
+                  {claimAsRecipientMutation.isPending ? "Claiming…" : `Claim & cash out to ${peerPlatform.name}`}
+                </button>
+              </div>
+            )}
+
+            {cashMenuStep === "coinbase" && (
+              <div className="space-y-3">
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                  <p className="text-base font-semibold text-slate-100">Coinbase</p>
+                  <p className="text-base text-slate-500 mt-1">Claims into your Loofta wallet, then opens Coinbase so you can sell to your bank. Usually a few minutes.</p>
+                </div>
+                <button
+                  type="button"
+                  disabled={claimActionDisabled}
+                  onClick={() => {
+                    const receipt = { method: "coinbase", status: "in_wallet", eta: "Finish the sale in Coinbase", detail: "Coinbase" };
+                    setClaimInitiated(true);
+                    claimAsRecipientMutation.mutate(
+                      { payoutMethod: "coinbase", payoutStatus: "in_wallet", payoutEtaLabel: receipt.eta, payoutDetail: receipt.detail },
+                      {
+                        onSuccess: () => {
+                          void persistPayout(receipt);
+                          openCoinbaseOfframp().catch((err: unknown) => {
+                            toast({ variant: "destructive", title: "Coinbase", description: err instanceof Error ? err.message : "Could not open Coinbase" });
+                          });
+                        },
+                      },
+                    );
+                  }}
+                  className="w-full rounded-xl py-3 font-semibold text-white bg-gradient-to-r from-[#FF1301] to-[#EAB308] disabled:opacity-50"
+                >
+                  {claimAsRecipientMutation.isPending ? "Claiming…" : "Claim & open Coinbase"}
+                </button>
+              </div>
+            )}
+
+            {cashMenuStep === "paj" && (
+              <div className="space-y-3">
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                  <p className="text-base font-semibold text-slate-100">PAJ Cash</p>
+                  <p className="text-base text-slate-500 mt-1">
+                    {pajDefaultBankAccount
+                      ? `Pays ${pajDefaultBankAccount.bank_name} ····${pajDefaultBankAccount.account_number.slice(-4)}. Usually within a few minutes.`
+                      : "Link PAJ Cash and a Nigerian bank account, then this claim pays out in Naira."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={claimActionDisabled}
+                  onClick={() => {
+                    if (!PAJ_CASH_ENABLED && !pajLinked && !pajDefaultBankAccount) {
+                      toast({ title: "PAJ Cash", description: "Naira payouts are turned on for this claim. We’ll link your bank next." });
+                    }
+                    if (pajDefaultBankAccount) setNairaClaimConfirmOpen(true);
+                    else openNairaSetup();
+                  }}
+                  className="w-full rounded-xl py-3 font-semibold text-white bg-gradient-to-r from-[#FF1301] to-[#EAB308] disabled:opacity-50"
+                >
+                  {pajDefaultBankAccount ? "Review Naira payout" : "Set up PAJ Cash"}
                 </button>
               </div>
             )}
@@ -2688,6 +3034,7 @@ export function ClaimPayView({
           {cryptoMenuStep === null && (
             <div className="space-y-2.5">
               {[...CRYPTO_CLAIM_METHODS]
+                .filter((methodKey) => !(isTokenPrize && methodKey === "anyToken"))
                 .sort((a, b) => (a === preferredCryptoMethod ? -1 : b === preferredCryptoMethod ? 1 : 0))
                 .map((methodKey) => {
                   if (methodKey === "wallet") {
@@ -2703,10 +3050,10 @@ export function ClaimPayView({
                           claimActionDisabled && "opacity-50 cursor-not-allowed hover:border-white/10 hover:bg-white/5",
                         )}
                       >
-                        <Wallet className="h-4 w-4 shrink-0" />
+                        <DepositIcons icons={[{ src: "/images/usdc.svg", bg: "#2775CA" }, { src: "/images/logo/solana-mark.svg", bg: "#111" }]} />
                         <span className="flex-1 min-w-0">
-                          <span className="block text-base">Loofta wallet</span>
-                          <span className="block text-base font-normal text-slate-500">Fastest</span>
+                          <span className="block text-base">{isTokenPrize ? `${tokenPrizeSymbol} on Solana` : "USDC on Solana"}</span>
+                          <span className="block text-base font-normal text-slate-500">{isTokenPrize ? "The prize token, into your Loofta wallet" : "Loofta wallet · fastest"}</span>
                         </span>
                       </button>
                     );
@@ -2724,7 +3071,7 @@ export function ClaimPayView({
                           claimActionDisabled && "opacity-50 cursor-not-allowed hover:border-white/10 hover:bg-white/5",
                         )}
                       >
-                        <Send className="h-4 w-4 shrink-0" />
+                        <DepositIcons icons={[{ src: "/images/sol.png", bg: "#14F195" }]} />
                         <span className="flex-1 min-w-0">
                           <span className="block text-base">External wallet</span>
                           <span className="block text-base font-normal text-slate-500">Any Solana address</span>
@@ -2744,9 +3091,9 @@ export function ClaimPayView({
                         claimActionDisabled && "opacity-50 cursor-not-allowed hover:border-white/10 hover:bg-white/5",
                       )}
                     >
-                      <Globe className="h-4 w-4 shrink-0" />
+                      <DepositIcons icons={[{ src: "/images/sol.png", bg: "#14F195" }, { src: "/images/btc.svg", bg: "#F7931A" }]} />
                       <span className="flex-1 min-w-0">
-                        <span className="block text-base">Any token</span>
+                        <span className="block text-base">Any crypto</span>
                         <span className="block text-base font-normal text-slate-500">Any chain, via NEAR Intents</span>
                       </span>
                     </button>
@@ -2841,8 +3188,11 @@ export function ClaimPayView({
 
           {cryptoMenuStep === "external" && (
             <div className="space-y-3">
+              <SolanaWalletConnectProvider rpcUrl={getSolanaHttpRpc()}>
+                <ConnectExternalWalletButton onAddress={setExternalClaimAddress} />
+              </SolanaWalletConnectProvider>
               <Input
-                placeholder="Enter Solana address"
+                placeholder="Or paste a Solana address"
                 value={externalClaimAddress}
                 onChange={(e) => setExternalClaimAddress(e.target.value)}
                 className="font-mono text-base"
@@ -2921,11 +3271,29 @@ export function ClaimPayView({
                 onClick={() => {
                   rememberPreferredClaimMethod(CRYPTO_CLAIM_PREF_KEY, "external");
                   const dest = externalClaimAddress.trim();
+                  const short = dest.length > 10 ? `${dest.slice(0, 4)}…${dest.slice(-4)}` : dest;
+                  const externalReceipt = {
+                    method: "external",
+                    status: "completed",
+                    eta: claimPrivatelyChosen ? "Private delivery" : "Direct to this wallet",
+                    detail: short,
+                  };
+                  setPayoutReceipt(externalReceipt);
                   setClaimInitiated(true);
                   claimAsRecipientMutation.mutate(
-                    claimPrivatelyChosen && canClaimPrivately
-                      ? { claimPrivately: true, destinationAddress: dest, split: claimPrivateSplit, maxDelayMs: claimPrivateDelayMs }
-                      : { destinationAddress: dest },
+                    {
+                      ...(claimPrivatelyChosen && canClaimPrivately
+                        ? { claimPrivately: true, destinationAddress: dest, split: claimPrivateSplit, maxDelayMs: claimPrivateDelayMs }
+                        : { destinationAddress: dest }),
+                      payoutMethod: "external",
+                      payoutStatus: "completed",
+                      payoutEtaLabel: externalReceipt.eta,
+                      payoutDetail: short,
+                    },
+                    {
+                      onSuccess: () => { void persistPayout(externalReceipt); },
+                      onError: () => setPayoutReceipt(null),
+                    },
                   );
                 }}
                 disabled={claimActionDisabled || externalClaimRiskStatus !== "safe"}
@@ -2943,17 +3311,49 @@ export function ClaimPayView({
           {cryptoMenuStep === "anyToken" && (
             <div className="space-y-3">
               <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                <p className="text-base font-semibold text-slate-100 mb-1">Claim as any token</p>
+                <p className="text-base font-semibold text-slate-100 mb-1">Any crypto</p>
                 <p className="text-base text-slate-500 leading-relaxed">
-                  Claims to your Loofta wallet first, then takes you to pick any token on any chain via NEAR Intents.
+                  Claims into your Loofta wallet, then opens NEAR Intents so you can send it as any token on any chain. You can claim that first hop privately.
                 </p>
               </div>
+              {canClaimPrivately && (
+                <IncognitoModeToggle
+                  checked={claimPrivatelyChosen}
+                  onCheckedChange={handleToggleClaimPrivately}
+                  onLabel="Claim privately"
+                  offLabel="Claim privately"
+                  ariaLabel="Claim this payment privately"
+                />
+              )}
               <button
                 type="button"
                 onClick={() => {
                   rememberPreferredClaimMethod(CRYPTO_CLAIM_PREF_KEY, "anyToken");
+                  const privately = claimPrivatelyChosen && canClaimPrivately;
+                  const receipt = {
+                    method: "near",
+                    status: "in_wallet",
+                    eta: null as string | null,
+                    detail: "Pick the token and chain",
+                  };
                   setClaimInitiated(true);
-                  claimAsRecipientMutation.mutate({}, { onSuccess: () => router.push("/app?balance=withdraw") });
+                  claimAsRecipientMutation.mutate(
+                    {
+                      ...(privately ? { claimPrivately: true, split: claimPrivateSplit, maxDelayMs: claimPrivateDelayMs } : {}),
+                      payoutMethod: "near",
+                      payoutStatus: "in_wallet",
+                      payoutDetail: receipt.detail,
+                    },
+                    {
+                      onSuccess: () => {
+                        void persistPayout(receipt);
+                        const amountUsd = parseFloat(claim?.amount || "0");
+                        window.dispatchEvent(new CustomEvent("openBalanceModal", {
+                          detail: { tab: "withdraw", method: "near", amountUsd },
+                        }));
+                      },
+                    },
+                  );
                 }}
                 disabled={claimActionDisabled}
                 className={cn(
@@ -2966,30 +3366,16 @@ export function ClaimPayView({
                 {claimAsRecipientMutation.isPending ? (
                   <><Loader2 className="h-4 w-4 animate-spin" /><span>Claiming…</span></>
                 ) : (
-                  <><Globe className="h-4 w-4" /><span>Claim &amp; continue</span></>
+                  <><Globe className="h-4 w-4" /><span>Claim &amp; pick a token</span></>
                 )}
               </button>
             </div>
           )}
         </div>
       )}
-
-      {/* Small, unobtrusive discovery link for recipients without a saved default bank account
-          yet — either because they're in Nigeria by IP (pajNigeria) or because they've started
-          linking PAJ Cash but never finished (pajLinked). The prominent two-button "Claim to
-          wallet / Claim to bank" layout only shows once a default account already exists (see
-          showBankClaimOption above), so this is how everyone else finds their way in. */}
-      {PAJ_CASH_ENABLED && isRecipient && !showBankClaimOption && (pajLinked || pajNigeria) && (
-        <button
-          type="button"
-          onClick={openNairaSetup}
-          className={cn("text-base text-slate-400 hover:text-slate-200 underline underline-offset-2", mobile ? "mt-3" : "mt-2")}
-        >
-          Set up a bank account to receive payouts in Naira
-        </button>
-      )}
     </div>
   );
+  };
   const [claimCompleted, setClaimCompleted] = useState(false);
   const confettiFiredRef = React.useRef(false);
   const [optimisticClaimedAt, setOptimisticClaimedAt] = useState<string | null>(null);
@@ -3110,7 +3496,7 @@ export function ClaimPayView({
       }
       const data = await r.json();
       if (data?.swept && data?.sweptAmount) {
-        toast({ title: "Claim sweep completed", description: `$${data.sweptAmount} USDC moved to your wallet.` });
+        toast({ title: "Claim sweep completed", description: isTokenPrize ? `${data.sweptAmount} ${tokenPrizeSymbol} moved to your wallet.` : `$${data.sweptAmount} USDC moved to your wallet.` });
       } else {
         toast({ title: "No funds to sweep", description: "Burner currently has no USDC in ATA. For private PER payments, funds may still be in PER state." });
       }
@@ -3248,6 +3634,15 @@ export function ClaimPayView({
     const v = Number(searchParams.get("delayMs"));
     return Number.isFinite(v) && v >= 0 ? v : 0;
   });
+  // Keep the spread locked to ?delayMs= on the link. A later client navigation that only
+  // changes the query (or a slider edit that rewrites it) has to move this state too —
+  // the initializer above runs once, so without this the banner stays on the first value.
+  useEffect(() => {
+    const raw = searchParams.get("delayMs");
+    if (raw == null) return;
+    const v = Number(raw);
+    if (Number.isFinite(v) && v >= 0) setPrivateDelayMs(v);
+  }, [searchParams]);
   // Fall back to the claim's own persisted choice (private_split / private_max_delay_ms) once it
   // loads, for anyone who lands here WITHOUT the sender's ?split=&delayMs= — a recipient, or the
   // guest sender themselves revisiting the link later. The URL still wins on first render (it's
@@ -3265,6 +3660,46 @@ export function ClaimPayView({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claim]);
+  // The link's ?delayMs= is the delay this payment was created with. It wins over a saved
+  // value so the banner and the "funds are landing" notice always quote that same wait.
+  const urlDelayRaw = searchParams.get("delayMs");
+  const urlDelayMs = urlDelayRaw == null ? null : Number(urlDelayRaw);
+  const savedDelayRaw = (claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms;
+  const savedDelayMs = Number(savedDelayRaw);
+  // History drops ?delayMs=. Remember it on this browser so a later visit still
+  // knows when the private payment actually lands.
+  const [rememberedDelayMs, setRememberedDelayMs] = useState<number | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    try {
+      const raw = localStorage.getItem(`loofta-pay-delay:${id}`);
+      if (raw == null) return;
+      const v = Number(raw);
+      if (Number.isFinite(v) && v >= 0) setRememberedDelayMs(v);
+    } catch { /* private mode / blocked storage */ }
+  }, [id]);
+  const delayFromUrl = urlDelayMs != null && Number.isFinite(urlDelayMs) && urlDelayMs >= 0 ? urlDelayMs : null;
+  const delayFromClaim = savedDelayRaw != null && Number.isFinite(savedDelayMs) && savedDelayMs >= 0 ? savedDelayMs : null;
+  const knownDelayMs = delayFromUrl ?? delayFromClaim ?? (privateDelayMs > 0 ? privateDelayMs : null) ?? rememberedDelayMs;
+  const landingDelayMs = knownDelayMs ?? 0;
+  useEffect(() => {
+    if (!id || knownDelayMs == null) return;
+    try { localStorage.setItem(`loofta-pay-delay:${id}`, String(knownDelayMs)); } catch { /* ignore */ }
+  }, [id, knownDelayMs]);
+  // Flip "Paid" to "Claimed" when the private delay elapses, without a refresh.
+  const [receiptNowMs, setReceiptNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!claim?.is_private || !claim?.paid_at) return;
+    if (privateFundsLandedAt(claim.paid_at, knownDelayMs, Date.now())) return;
+    const timer = setInterval(() => setReceiptNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [claim?.is_private, claim?.paid_at, knownDelayMs]);
+  const setSpreadDelayMs = (ms: number) => {
+    setPrivateDelayMs(ms);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("delayMs", String(ms));
+    router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
+  };
   // Dev-only: jump straight into the private/public sender card via ?preview=sender-private|
   // sender-public (see DEV_PREVIEW_STATES) — an effect rather than a lazy useState initializer
   // since previewOverride isn't available until after the localhost-detection effect runs on
@@ -3336,6 +3771,18 @@ export function ClaimPayView({
   const isGuestCreatedClaim = !claim?.created_by;
   const showGuestCheckout = !DEMO_MODE && !!claim?.claim_burner_address && (chrome === "minimal" || (isGuestCreatedClaim && !authenticated));
   const isCreatorView = !!user?.id && claim?.created_by === user.id;
+  // Guest sender returning from the one-step Send flow: no account to match, only this device's
+  // local record (see markGuestSentClaim). Read after mount so SSR/hydration agree.
+  const [sentByThisGuestDevice, setSentByThisGuestDevice] = useState(false);
+  useEffect(() => {
+    setSentByThisGuestDevice(isGuestSentClaim(id));
+  }, [id]);
+  const isGuestSenderPaidView =
+    sentByThisGuestDevice &&
+    !authenticated &&
+    isGuestCreatedClaim &&
+    claim?.direction !== "from_recipient" &&
+    ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CLAIMED"].includes(String(status || claim?.status || "").toUpperCase());
 
   // Checkout never trusts an ambient Privy session on load — the visitor has to explicitly click
   // Login before "Pay with Loofta balance" becomes available, and that unlock expires after 15
@@ -4056,6 +4503,8 @@ export function ClaimPayView({
           accessToken: perToken,
           claimId: claim.id,
           isBurnerRecipient,
+          split: privateSplit,
+          maxDelayMs: landingDelayMs,
           onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
             setPaidFeeUsdc(feeAmountUsdc);
             if (feeBreakdown) setPaidFeeBreakdown(feeBreakdown);
@@ -4085,7 +4534,7 @@ export function ClaimPayView({
       console.log("[PrivateTransfer] PER transfer signature:", signature);
       toast({
         title: "Transfer submitted!",
-        description: `Your private transfer is processing — ${privatePaymentFundsAppearCopy((claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}`,
+        description: `Your private transfer is processing — ${privatePaymentFundsAppearCopy(landingDelayMs)}`,
       });
       await updateClaimStatus(
         claim.id,
@@ -4135,6 +4584,20 @@ export function ClaimPayView({
   // Note: Privy’s confirm modal shows the wallet’s SOL balance (for gas), not USDC — so you may see "$0.00" there even when you have USDC; gas sponsorship covers fees.
   const claimAmountUSD = parseFloat(claim?.amount || "0") || 0;
   const { total: privatePayTotal, protocolFee: privatePayProtocolFee, gasFee: privatePayGasFee } = estimatePrivateTotal(claimAmountUSD);
+  // $0.10 claim fee for an email or social handle that does not have an account yet.
+  // A Loofta username (pending or registered) is not charged. Applies to public and private.
+  const claimFeeUsd = (
+    claim?.recipient_pending_email ||
+    claim?.recipient_pending_social
+  ) ? UNREGISTERED_ACCOUNT_FEE_USD : 0;
+  const chargeClaimFee = claimFeeUsd > 0;
+  // The big price is what leaves the payer's wallet.
+  const headlineUsd = destUSD == null
+    ? null
+    : (payingPrivately && isFeeOnSender ? privatePayTotal : destUSD) + (chargeClaimFee ? claimFeeUsd : 0);
+  const headlineTokenAmount = headlineUsd != null && destToken?.price && destToken.price > 0
+    ? headlineUsd / destToken.price
+    : destTokenAmount;
   const looftaBalanceUSD = solanaPayment.balanceUSD;
   // Sender owes gross USDC (base + privacy fee); check that, not just base.
   // Privy wallets can take a moment to hydrate after login; guard Pay Now until the signer is present.
@@ -4252,10 +4715,9 @@ export function ClaimPayView({
             onProgress: setPerTransferPhase,
             isBurnerRecipient: isBurnerForLoofta,
             gasless,
-            // Only sent when the split/delay sliders above are actually shown & touched
-            // (isPrivateMode, not requiresPrivate) — a mandatory-private link keeps today's
-            // default (auto split on mainnet, cluster-default delay) since its sliders never render.
-            ...(isPrivateMode && !requiresPrivate ? { split: privateSplit, maxDelayMs: privateDelayMs } : {}),
+            // Same delay the banner quotes: ?delayMs= on this link, or the value saved on the payment.
+            split: privateSplit,
+            maxDelayMs: landingDelayMs,
             onTxBuilt: ({ feeAmountUsdc, feeBreakdown }) => {
               looftaFeeUsdc = feeAmountUsdc;
               looftaFeeBreakdown = feeBreakdown ?? null;
@@ -4331,6 +4793,7 @@ export function ClaimPayView({
           // instruction entirely, which is why this stayed hidden).
           usdcMint: getUsdcMintForMode(networkMode === "mainnet" ? "mainnet" : "devnet"),
           claimId: claim.id,
+          looftaFeeUsdc: claimFeeUsd > 0 ? claimFeeUsd : undefined,
         });
       }
       setPerTransferPhase(null);
@@ -4342,6 +4805,32 @@ export function ClaimPayView({
         throw new Error(
           "Transaction did not confirm in time. Check Solscan for status — do not mark as paid until the transaction confirms."
         );
+      }
+
+      // Email / social private payments also take the flat $0.10 claim fee. MagicBlock's
+      // transfer can't carry that leg, so it is a second sponsored USDC transfer to the fee
+      // payer. The claim amount already landed — a failed fee transfer must not fail the payment.
+      if (payPrivately && chargeClaimFee) {
+        try {
+          const feeWallet = await fetchSolanaFeePayerAddress(user.id, looFtaToken);
+          if (feeWallet) {
+            await sendUsdcWithBackendFeePayer({
+              senderAddress,
+              recipientAddress: feeWallet,
+              amountUSDC: claimFeeUsd,
+              connection,
+              wallet,
+              privyUserId: user.id,
+              signTransaction: privySolanaSignTransaction,
+              chain,
+              accessToken: looFtaToken,
+              network: networkMode === "mainnet" ? "mainnet" : "devnet",
+              usdcMint: getUsdcMintForMode(networkMode === "mainnet" ? "mainnet" : "devnet"),
+            });
+          }
+        } catch (feeErr) {
+          console.warn("[PayWithLoofta] claim fee transfer failed after private pay", feeErr);
+        }
       }
 
       console.info("[PayWithLoofta] Updating claim status → SUCCESS, tx:", sig);
@@ -4382,7 +4871,7 @@ export function ClaimPayView({
       toast({
         title: "Transfer submitted!",
         description: payPrivately
-          ? `$${amountUSD.toFixed(2)} USDC sent privately. ${privatePaymentFundsAppearCopy((claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}`
+          ? `$${amountUSD.toFixed(2)} USDC sent privately. ${privatePaymentFundsAppearCopy(landingDelayMs)}`
           : `$${amountUSD.toFixed(2)} USDC sent.`,
       });
     } catch (e: any) {
@@ -4484,6 +4973,39 @@ export function ClaimPayView({
     }
     setShowPayNowModal(true);
   }
+
+  // One-step Send (app/app/page.tsx, home SendWidget): ?pay=1 opens the Pay Now modal as soon as
+  // the creator's wallet is ready. Stripped from the URL right away so a refresh doesn't reopen it.
+  const autoPayRequested = searchParams.get("pay") === "1";
+  const autoPayFiredRef = React.useRef(false);
+  useEffect(() => {
+    if (!autoPayRequested || autoPayFiredRef.current) return;
+    if (!authenticated || !claim || !isCreatorView || !isPayerWalletReady || !solanaPayment.senderAddress) return;
+    autoPayFiredRef.current = true;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("pay");
+    const qs = params.toString();
+    router.replace(`${window.location.pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
+    const currentStatus = String(status || claim.status || "").toUpperCase();
+    const blocked =
+      isWrongNetwork ||
+      (payingPrivately && claimAmountUSD < 1) ||
+      ["SUCCESS", "IN_FLIGHT", "PRIVATE_TRANSFER_PENDING", "CLAIMED"].includes(currentStatus);
+    if (!blocked) void handlePayWithLooftaBalance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPayRequested, authenticated, claim, isCreatorView, isPayerWalletReady, solanaPayment.senderAddress]);
+
+  const resumePayAfterTopUpRef = React.useRef(false);
+  useEffect(() => {
+    const onClosed = () => {
+      if (!resumePayAfterTopUpRef.current) return;
+      resumePayAfterTopUpRef.current = false;
+      void solanaPayment.refreshBalance();
+      setShowPayNowModal(true);
+    };
+    window.addEventListener("balanceModalClosed", onClosed);
+    return () => window.removeEventListener("balanceModalClosed", onClosed);
+  }, [solanaPayment]);
 
   async function onPayNow() {
     if (!claim || !selectedFrom || !destToken) return;
@@ -4621,14 +5143,17 @@ export function ClaimPayView({
     // this is the "+$X.XX from Y" card, seen live on payment 1352b7e4-c2f3-4e31-9bca-45ff88acc151
     // showing "from @looftaxyz" on a payment looftaxyz *received*, paid by a guest with no
     // account — sender_username/guest_sender_email were correct in the database the whole time.
-    const c = claim as PaymentHistoryClaim & { direction?: string; sender_username?: string | null; guest_sender_email?: string | null };
+    const c = claim as PaymentHistoryClaim & { direction?: string; sender_username?: string | null; guest_sender_email?: string | null; guest_sender_wallet?: string | null };
+    const walletLabel = (w: string) => (w.length > 10 ? `${w.slice(0, 4)}…${w.slice(-4)}` : w);
     if (c.direction === "from_recipient") {
       if (c.sender_username) return `@${c.sender_username}`;
       if (c.guest_sender_email) return c.guest_sender_email;
+      if (c.guest_sender_wallet) return walletLabel(c.guest_sender_wallet);
       return "Anonymous";
     }
     if (claim.creator_username) return `@${claim.creator_username}`;
     if (claim.creator_email) return claim.creator_email;
+    if (c.guest_sender_wallet) return walletLabel(c.guest_sender_wallet);
     return "Anonymous";
   }
 
@@ -4869,7 +5394,21 @@ export function ClaimPayView({
                 — see the 2026-07-24 Td2mutpu incident). The receipt view below already re-checks
                 SUCCESS on its own, so this only needs to stop routing settled claims into the
                 not-found branch. */}
-            {!isCreatorView && !isRecipient && claim?.direction !== 'from_recipient' && !showGuestCheckout
+            {isGuestSenderPaidView ? (
+              <ClaimPageSenderShareView
+                claimId={id}
+                shortCode={claim?.short_id}
+                amount={parseFloat(claim?.amount || "0")}
+                recipientLabel={
+                  claim?.recipient_pending_email_value ||
+                  (claim?.recipient_pending_username_value ? `@${claim.recipient_pending_username_value}` : undefined) ||
+                  (claim?.recipient_pending_social_value
+                    ? `@${claim.recipient_pending_social_value} on ${claim.recipient_pending_social_platform ?? "social"}`
+                    : undefined)
+                }
+                status={String(status || claim?.status || "").toUpperCase()}
+              />
+            ) : !isCreatorView && !isRecipient && claim?.direction !== 'from_recipient' && !showGuestCheckout
               && String(status || claim?.status || "").toUpperCase() !== "SUCCESS" ? (
               claim?.recipient_pending_social && !hasSocialPlatformLinked(claim.recipient_pending_social_platform) ? (
                 <SocialConnectPrompt
@@ -4946,7 +5485,7 @@ export function ClaimPayView({
               // (sender's client posts an optimistic status update before the recipient claims)
               // — burnerIsReady=true means funds are still sitting there, so don't show "already
               // received" in that case; fall through to the claim panel instead.
-              !burnerIsReady ? (
+              !burnerIsReady && !keepClaimCard ? (
               <div className="mt-6 py-6">
                 <div className="text-center mb-6">
                   {claim?.direction === "from_recipient" && (
@@ -4966,6 +5505,64 @@ export function ClaimPayView({
                   )}
                 </div>
                 <ClaimDescriptionMessageBox description={claim?.description} />
+                {(() => {
+                  const shareId = claim?.short_id || claim?.id;
+                  const claimLink = typeof window !== "undefined"
+                    ? `${window.location.origin}/share/${shareId}`
+                    : `https://pay.loofta.xyz/share/${shareId}`;
+                  const shareText = `$${parseFloat(claim?.amount || "0").toFixed(2)} on Loofta.`;
+                  const copyShareLink = async () => {
+                    try {
+                      await navigator.clipboard.writeText(claimLink);
+                      setPaymentCompleteCopied(true);
+                      toast({ title: "Link copied" });
+                      setTimeout(() => setPaymentCompleteCopied(false), 2000);
+                    } catch {
+                      toast({ variant: "destructive", title: "Copy failed" });
+                    }
+                  };
+                  return (
+                    <>
+                    <div className="flex gap-2 mb-4">
+                      <div className="flex gap-2 flex-1 min-w-0">
+                        <Input
+                          readOnly
+                          value={claimLink}
+                          aria-label="Share link"
+                          className="font-mono text-sm flex-1 bg-gray-50"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={copyShareLink}
+                          aria-label={paymentCompleteCopied ? "Copied" : "Copy link"}
+                          className="shrink-0 border-white/20 bg-white/10 text-white hover:bg-white/20"
+                        >
+                          {paymentCompleteCopied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                      <ShareLinkMenu
+                        url={claimLink}
+                        title="Payment on Loofta"
+                        text={shareText}
+                        triggerClassName="px-5 py-2"
+                      />
+                    </div>
+                    <div className="mb-4 flex items-center justify-between">
+                      <span className="text-base text-gray-500">Status link</span>
+                      <a
+                        href={claimLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-base font-medium text-gray-900 underline-offset-2 hover:underline"
+                      >
+                        Open
+                      </a>
+                    </div>
+                    </>
+                  );
+                })()}
                 {/* Troubleshoot payment (localhost-only debug panel) — disabled for now, keep for later.
                 {isClaimPageLocalhost &&
                   !!(claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.claim_burner_address) && (
@@ -5045,39 +5642,46 @@ export function ClaimPayView({
                     </div>
                   )}
                 */}
-                <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200 space-y-2">
-                  {claim?.created_at && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-600 text-base md:text-sm">Created</span>
-                      <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
-                    </div>
-                  )}
-                  {claim?.paid_at && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-600 text-base md:text-sm">
-                        {claim?.recipient_pending_email || claim?.recipient_pending_username || claim?.recipient_pending_social ? "Paid" : "Claimed"}
-                      </span>
-                      <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
-                    </div>
-                  )}
-                </div>
-                {/* Sent privately: the delay is on the sender→burner leg, counted from Created.
-                    Claimed privately: the delay is on the burner→wallet leg, counted from Claimed.
-                    Independent legs — show whichever one is still inside its own 10-min window. */}
-                {claim?.is_private && claim?.created_at && Date.now() - new Date(claim.created_at).getTime() < 11 * 60_000 && (
-                  <div className="flex items-start gap-2 text-base md:text-sm text-gray-500 mb-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-amber-500 shrink-0 mt-0.5" />
-                    <span>{privatePaymentFundsAppearCopy((claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}</span>
-                  </div>
-                )}
-                {claim?.claimed_privately && claim?.paid_at && Date.now() - new Date(claim.paid_at).getTime() < 11 * 60_000 && (
-                  <div className="flex items-start gap-2 text-base md:text-sm text-gray-500 mb-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-amber-500 shrink-0 mt-0.5" />
-                    <span>{privatePaymentFundsAppearCopy((claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}</span>
-                  </div>
-                )}
+                {(() => {
+                  // Private: "Claimed" is when the funds have landed (paid_at + the
+                  // sender's delay), not the moment the sender's transaction confirmed.
+                  const landedAt = claim?.is_private
+                    ? privateFundsLandedAt(claim?.paid_at, knownDelayMs, receiptNowMs)
+                    : (claim?.paid_at ?? null);
+                  const stillLanding = !!claim?.is_private && !!claim?.paid_at && !landedAt;
+                  return (
+                    <>
+                      <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200 space-y-2">
+                        {claim?.created_at && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600 text-base md:text-sm">Created</span>
+                            <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
+                          </div>
+                        )}
+                        {claim?.is_private && claim?.paid_at && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600 text-base md:text-sm">Paid</span>
+                            <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
+                          </div>
+                        )}
+                        {landedAt && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-600 text-base md:text-sm">Claimed</span>
+                            <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(landedAt)}</span>
+                          </div>
+                        )}
+                      </div>
+                      {stillLanding && (
+                        <div className="flex items-start gap-2 text-base md:text-sm text-gray-500 mb-2">
+                          <Loader2 className="h-4 w-4 animate-spin text-amber-500 shrink-0 mt-0.5" />
+                          <span>{privatePaymentFundsAppearCopy(knownDelayMs)}</span>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
-            ) : user?.id && (claimAsRecipientMutation.isPending || previewOverride?.forceClaimingScreen) && !claimCompleted ? (
+            ) : user?.id && (claimAsRecipientMutation.isPending || previewOverride?.forceClaimingScreen) && !claimCompleted && !keepClaimCard ? (
               (() => {
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
                 return (
@@ -5119,12 +5723,15 @@ export function ClaimPayView({
                   </div>
                 );
               })()
-            ) : user?.id && (claimCompleted || claimInitiated || claimAsRecipientMutation.isSuccess) ? (
+            ) : user?.id && (claimCompleted || claimInitiated || claimAsRecipientMutation.isSuccess) && !keepClaimCard ? (
               (() => {
                 const senderLabel =
                   claim?.creator_username ? `@${claim.creator_username}` : (claim?.creator_email || null);
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
-                const claimedAt = claim?.paid_at || optimisticClaimedAt;
+                const paidAt = claim?.paid_at || null;
+                const landedAt = claim?.is_private
+                  ? privateFundsLandedAt(optimisticClaimedAt || paidAt, knownDelayMs, receiptNowMs)
+                  : (optimisticClaimedAt || paidAt);
                 return (
                   <motion.div
                     initial={{ opacity: 0, y: 16 }}
@@ -5183,21 +5790,27 @@ export function ClaimPayView({
                           <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.created_at)}</span>
                         </div>
                       )}
-                      {claimedAt && (
+                      {claim?.is_private && paidAt && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600 text-base md:text-sm">Paid</span>
+                          <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(paidAt)}</span>
+                        </div>
+                      )}
+                      {landedAt && (
                         <div className="flex items-center justify-between">
                           <span className="text-gray-600 text-base md:text-sm">Claimed</span>
-                          <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claimedAt)}</span>
+                          <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(landedAt)}</span>
                         </div>
                       )}
                     </motion.div>
-                    {claim?.claimed_privately && claimedAt && (Date.now() - new Date(claimedAt).getTime()) < 11 * 60_000 && (
+                    {claim?.is_private && (optimisticClaimedAt || paidAt) && !landedAt && (
                       <motion.p
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         transition={{ delay: 0.35 }}
                         className="text-base md:text-sm text-gray-500 text-center"
                       >
-                        {privatePaymentFundsAppearCopy((claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}
+                        {privatePaymentFundsAppearCopy(landingDelayMs)}
                       </motion.p>
                     )}
                   </motion.div>
@@ -5222,7 +5835,7 @@ export function ClaimPayView({
               // the burner still holds unswept funds. Don't tell a merchant "already received"
               // while their money is still sitting in the burner — fall through to the claim
               // panel below instead.
-              !burnerIsReady ? (
+              !burnerIsReady && !keepClaimCard ? (
               (() => {
                 const senderLabel = getSenderDisplay(claim);
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
@@ -5294,13 +5907,13 @@ export function ClaimPayView({
                       ) : burnerIsReady ? (
                         <>
                           <CheckCircle2 className="h-4 w-4 text-green-500" />
-                          <span className="text-green-600 font-medium">Funds ready — you can claim now.</span>
+                          <span className="text-green-600 font-medium">{keepClaimCard ? "Claimed — status is on the receipt below." : "Funds ready — you can claim now."}</span>
                         </>
                       ) : (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                           <span className="text-gray-500">
-                            {waitingForFundsCopy(claim?.is_private, (claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}
+                            {waitingForFundsCopy(claim?.is_private, landingDelayMs)}
                           </span>
                         </>
                       )}
@@ -5358,13 +5971,13 @@ export function ClaimPayView({
                         ) : burnerIsReady ? (
                           <>
                             <CheckCircle2 className="h-4 w-4 text-green-500" />
-                            <span className="text-green-600 font-medium">Funds ready — you can claim now.</span>
+                            <span className="text-green-600 font-medium">{keepClaimCard ? "Claimed — status is on the receipt below." : "Funds ready — you can claim now."}</span>
                           </>
                         ) : (
                           <>
                             <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                             <span className="text-gray-500">
-                              {waitingForFundsCopy(claim?.is_private, (claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}
+                              {waitingForFundsCopy(claim?.is_private, landingDelayMs)}
                             </span>
                           </>
                         )}
@@ -5501,13 +6114,13 @@ export function ClaimPayView({
                         ) : burnerIsReady ? (
                           <>
                             <CheckCircle2 className="h-4 w-4 text-green-500" />
-                            <span className="text-green-600 font-medium">Funds ready — you can claim now.</span>
+                            <span className="text-green-600 font-medium">{keepClaimCard ? "Claimed — status is on the receipt below." : "Funds ready — you can claim now."}</span>
                           </>
                         ) : (
                           <>
                             <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                             <span className="text-gray-500">
-                              {waitingForFundsCopy(claim?.is_private, (claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}
+                              {waitingForFundsCopy(claim?.is_private, landingDelayMs)}
                             </span>
                           </>
                         )}
@@ -5617,13 +6230,20 @@ export function ClaimPayView({
                 // they claimed — same "still in burner" case the two branches above defer here
                 // for. isPendingRecipientClaim is false for this claim type, so it never hits the
                 // isCreatorView "payment to yourself" P2P copy below.
-                (!isPendingRecipientClaim && burnerIsReady)) ? (
+                (!isPendingRecipientClaim && burnerIsReady) ||
+                keepClaimCard) ? (
               <div className="mt-6 text-center pt-12 pb-6 px-4">
                 {claim?.direction === "from_recipient" && (
                   <MerchantPaymentBadge claim={claim} />
                 )}
-                <div className="text-6xl font-sans font-semibold">
-                  + ${parseFloat(claim?.amount || "0").toFixed(2)}
+                <div className="text-6xl font-sans font-semibold inline-flex items-center justify-center gap-3">
+                  {tokenPrizeLogo ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={tokenPrizeLogo} alt="" className="h-12 w-12 rounded-full object-cover bg-white/10" />
+                  ) : null}
+                  {tokenPrizeAmount != null && String(tokenPrizeAmount) !== ""
+                    ? `+ ${tokenPrizeAmount} ${tokenPrizeSymbol}`
+                    : `+ $${parseFloat(claim?.amount || "0").toFixed(2)}`}
                 </div>
                 <div className="text-xl text-gray-500 mt-3 mb-5">
                   {isCreatorView && claim?.direction !== "from_recipient" ? (
@@ -5644,13 +6264,13 @@ export function ClaimPayView({
                   ) : burnerIsReady ? (
                     <>
                       <CheckCircle2 className="h-4 w-4 text-green-500" />
-                      <span className="text-green-600 font-medium">Funds ready — you can claim now.</span>
+                      <span className="text-green-600 font-medium">{keepClaimCard ? "Claimed — status is on the receipt below." : "Funds ready — you can claim now."}</span>
                     </>
                   ) : (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
                       <span className="text-gray-500">
-                        {waitingForFundsCopy(claim?.is_private, (claim as { private_max_delay_ms?: number | null } | null)?.private_max_delay_ms)}
+                        {waitingForFundsCopy(claim?.is_private, landingDelayMs)}
                       </span>
                     </>
                   )}
@@ -5803,7 +6423,7 @@ export function ClaimPayView({
                           <>
                             {paidFeeUsdc != null && paidFeeUsdc > 0 && (
                               <div className="flex items-center justify-between">
-                                <span className="text-base md:text-sm text-gray-500">Privacy fee (deducted)</span>
+                                <span className="text-base md:text-sm text-gray-500">Privacy fee, from what they receive</span>
                                 <span className="text-base md:text-sm text-gray-700">${paidFeeUsdc.toFixed(4)}</span>
                               </div>
                             )}
@@ -5828,6 +6448,17 @@ export function ClaimPayView({
                             <span className="text-base md:text-sm text-gray-700">{formatUTCTimestamp(claim.paid_at)}</span>
                           </div>
                         )}
+                        <div className="flex items-center justify-between border-t border-gray-200 pt-2">
+                          <span className="text-base md:text-sm text-gray-500">Status link</span>
+                          <a
+                            href={claimLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-base md:text-sm font-medium text-gray-900 underline-offset-2 hover:underline"
+                          >
+                            Open
+                          </a>
+                        </div>
                       </div>
                     </>
                   );
@@ -5915,16 +6546,27 @@ export function ClaimPayView({
             ) : (
               <>
                 {!embedInApp && chrome !== "minimal" && (
-                  <div className="mb-3">
+                  <div className="mb-5 flex items-center gap-3.5">
+                    {(claim as { direction?: string } | null)?.direction === "from_sender" && (
+                      <div
+                        className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[17px] bg-[radial-gradient(120%_120%_at_28%_18%,#FFFFFF_0%,#ECEAF0_45%,#BDBAC6_100%)] text-2xl font-extrabold text-[#16161C] shadow-[inset_0_2px_4px_rgba(255,255,255,0.5),0_4px_0_#8C8898]"
+                        style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif" }}
+                      >
+                        @
+                      </div>
+                    )}
+                    <div className="min-w-0">
                     {claim?.direction === "from_recipient" && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-base md:text-xs font-medium text-slate-300 mb-1.5">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-sm font-medium text-slate-300 mb-1.5">
                         <ShoppingBag className="w-3 h-3" /> Merchant payment
                       </span>
                     )}
-                    <div className="text-xl font-sans font-medium text-slate-300">
+                    {(claim as { direction?: string } | null)?.direction === "from_sender" && (
+                      <div className="text-sm font-semibold text-[#8A8893]">Payment to</div>
+                    )}
+                    <div className="truncate text-xl font-bold text-white" style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif" }}>
                       {(claim as { direction?: string } | null)?.direction === "from_sender" ? (
                         <>
-                          {"Payment to "}
                           {(claim as { recipient_pending_username_value?: string } | null)?.recipient_pending_username_value
                             ? `@${(claim as { recipient_pending_username_value?: string }).recipient_pending_username_value}`
                             : claim?.recipient_username
@@ -5962,6 +6604,7 @@ export function ClaimPayView({
                             : claim?.creator_email || "Anonymous"}
                         </>
                       )}
+                    </div>
                     </div>
                   </div>
                 )}
@@ -6021,12 +6664,12 @@ export function ClaimPayView({
                     {!embedInApp && <div className="text-base uppercase tracking-wide font-semibold text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">{(claim as { direction?: string } | null)?.direction === "from_sender" ? "Amount to send" : "Amount to pay"}</div>}
                     <div className="mt-1 flex items-baseline justify-between">
                       <div className="text-3xl md:text-4xl font-sans font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100 leading-none">
-                        {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
+                        {headlineUsd != null ? `$${headlineUsd.toFixed(2)}` : `—`}
                       </div>
                       <div className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">
                         <span className="inline-flex items-center gap-1">
                           <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
-                          {destTokenAmount != null ? Number(parseFloat(String(destTokenAmount)).toFixed(4)) : "—"} {claim.to_symbol} {destToken?.chain ? `on ${destToken.chain.charAt(0).toUpperCase() + destToken.chain.slice(1)}` : ""}
+                          {headlineTokenAmount != null ? Number(parseFloat(String(headlineTokenAmount)).toFixed(4)) : "—"} {claim.to_symbol} {destToken?.chain ? `on ${destToken.chain.charAt(0).toUpperCase() + destToken.chain.slice(1)}` : ""}
                         </span>
                       </div>
                     </div>
@@ -6046,8 +6689,14 @@ export function ClaimPayView({
                             <>
                               <div className="flex items-center justify-between">
                                 <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">You pay</span>
-                                <span className="font-semibold font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${claimAmountUSD.toFixed(2)}</span>
+                                <span className="font-semibold font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${(headlineUsd ?? claimAmountUSD).toFixed(2)}</span>
                               </div>
+                              {chargeClaimFee && (
+                                <div className="flex items-center justify-between">
+                                  <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Claim fee</span>
+                                  <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">${claimFeeUsd.toFixed(2)}</span>
+                                </div>
+                              )}
                               <div className="flex items-center justify-between">
                                 <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Network fee</span>
                                 <span className="font-medium text-emerald-600 [@media(prefers-color-scheme:dark)]:text-emerald-400">Free</span>
@@ -6065,23 +6714,35 @@ export function ClaimPayView({
                               </div>
                               <div className="flex items-center justify-between">
                                 <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Privacy fee</span>
-                                <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
+                                <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">${(privatePayProtocolFee + privatePayGasFee).toFixed(2)}</span>
                               </div>
+                              {chargeClaimFee && (
+                                <div className="flex items-center justify-between">
+                                  <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Claim fee</span>
+                                  <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">${claimFeeUsd.toFixed(2)}</span>
+                                </div>
+                              )}
                               <div className="pt-2 border-t border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10 flex items-center justify-between">
                                 <span className="font-medium font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">You pay</span>
-                                <span className="font-semibold font-sans text-lg text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${privatePayTotal.toFixed(2)}</span>
+                                <span className="font-semibold font-sans text-lg text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${(headlineUsd ?? privatePayTotal).toFixed(2)}</span>
                               </div>
                             </>
                           ) : (
                             <>
                               <div className="flex items-center justify-between">
                                 <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">You pay</span>
-                                <span className="font-semibold font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${claimAmountUSD.toFixed(2)}</span>
+                                <span className="font-semibold font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${(claimAmountUSD + (chargeClaimFee ? claimFeeUsd : 0)).toFixed(2)}</span>
                               </div>
                               <div className="flex items-center justify-between">
-                                <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Privacy fee (deducted)</span>
+                                <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Privacy fee, from what they receive</span>
                                 <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
                               </div>
+                              {chargeClaimFee && (
+                                <div className="flex items-center justify-between">
+                                  <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Claim fee</span>
+                                  <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">${claimFeeUsd.toFixed(2)}</span>
+                                </div>
+                              )}
                               <div className="pt-2 border-t border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10 flex items-center justify-between">
                                 <span className="font-medium font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">Merchant receives</span>
                                 <span className="font-semibold font-sans text-lg text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">~${(claimAmountUSD - (privatePayProtocolFee + privatePayGasFee)).toFixed(2)}</span>
@@ -6094,8 +6755,16 @@ export function ClaimPayView({
                   </div>
                 ) : (
                   <>
+                    <div className={embedInApp ? "mt-2" : "mt-1"}>
+                      <div
+                        className="text-[56px] font-bold leading-none tracking-[-0.05em] text-white"
+                        style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif" }}
+                      >
+                        {headlineUsd != null ? `$${headlineUsd.toFixed(2)}` : `—`}
+                      </div>
+                    </div>
                     {!embedInApp && claim?.description && (
-                      <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
+                      <div className="mt-4 p-3 rounded-lg bg-gray-50 border border-gray-200">
                         <div className="text-base md:text-sm text-gray-600 mb-1">Message</div>
                         <div className="text-base text-gray-900 whitespace-pre-wrap break-words">
                           {(() => {
@@ -6160,18 +6829,6 @@ export function ClaimPayView({
                         </div>
                       </div>
                     )}
-                    {!embedInApp && <div className="text-base mt-2 text-slate-500">{(claim as { direction?: string } | null)?.direction === "from_sender" ? "Amount to send" : "Amount requested"}</div>}
-                    <div className={embedInApp ? "mt-2 flex items-baseline justify-between" : "mt-1 flex items-baseline justify-between"}>
-                      <div className="text-3xl md:text-4xl font-sans font-semibold text-gray-900 leading-none">
-                        {destUSD != null ? `$${destUSD.toFixed(2)}` : `—`}
-                      </div>
-                      <div className="text-base text-gray-500">
-                        <span className="inline-flex items-center gap-1">
-                          <TokenIcon token={destToken ?? undefined} chain={destToken?.chain} size={16} />
-                          {destTokenAmount != null ? Number(parseFloat(String(destTokenAmount)).toFixed(4)) : "—"} {claim.to_symbol} {destToken?.chain ? `on ${destToken.chain.charAt(0).toUpperCase() + destToken.chain.slice(1)}` : ""}
-                        </span>
-                      </div>
-                    </div>
                   </>
                 )}
               </>
@@ -6216,14 +6873,7 @@ export function ClaimPayView({
                     On the GuestCheckoutPay path (showGuestCheckout) this is skipped here entirely —
                     GuestCheckoutPay renders its own copy of the switch, above its token/method
                     selection, instead of up top on this card. */}
-                {showGuestCheckout ? null : requiresPrivate ? (
-                  <div className="mt-5 flex gap-2 text-base md:text-sm text-gray-600">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 flex-shrink-0 mt-0.5">
-                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                    </svg>
-                    <p className="min-w-0 leading-relaxed">{privatePaymentAllPrivateLine(privateDelayMs)}</p>
-                  </div>
-                ) : (
+                {showGuestCheckout || requiresPrivate ? null : (
                   <IncognitoModeToggle checked={isPrivateMode} onCheckedChange={handleTogglePrivateMode} className="mt-5" />
                 )}
 
@@ -6238,8 +6888,8 @@ export function ClaimPayView({
                       idPrefix="paynow"
                       split={privateSplit}
                       onSplitChange={setPrivateSplit}
-                      delayMs={privateDelayMs}
-                      onDelayMsChange={setPrivateDelayMs}
+                      delayMs={landingDelayMs}
+                      onDelayMsChange={setSpreadDelayMs}
                       amountUsd={claimAmountUSD}
                       infoOpen={privacyInfoOpen}
                       onInfoOpenChange={setPrivacyInfoOpen}
@@ -6271,10 +6921,10 @@ export function ClaimPayView({
                 )} */}
 
                 {/* Minimum amount notice */}
-                {claimAmountUSD > 0 && claimAmountUSD < 5 && (
+                {payingPrivately && claimAmountUSD > 0 && claimAmountUSD < 1 && (
                   <div className={chrome === "minimal" ? "mt-4 md:mt-0 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-base md:text-sm text-amber-700" : "mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-base md:text-sm text-amber-700"}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
-                    <span>Minimum payment amount is <strong>$5.00 USDC</strong>. This payment link cannot be paid.</span>
+                    <span>A private payment needs at least <strong>$1.00 USDC</strong>. This payment link cannot be paid privately.</span>
                   </div>
                 )}
 
@@ -6284,16 +6934,21 @@ export function ClaimPayView({
                     amount row), so it isn't duplicated here. */}
                 {chrome !== "minimal" && (
                 <div className="mt-4">
-                  <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
-                    <div className="text-base uppercase tracking-wide font-semibold font-sans text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400 mb-2">Payment breakdown</div>
+                  <div className="p-[18px] rounded-[18px] bg-[#0E0E12] border border-white/[0.06]">
+                    <div className="text-sm tracking-[0.16em] font-medium text-[#77757F] mb-3" style={{ fontFamily: "var(--font-home-mono), ui-monospace, monospace" }}>BREAKDOWN</div>
                     <div className="space-y-1.5 text-base [@media(prefers-color-scheme:dark)]:[&_.text-gray-600]:text-slate-400 [@media(prefers-color-scheme:dark)]:[&_.text-gray-700]:text-slate-300 [@media(prefers-color-scheme:dark)]:[&_.text-gray-900]:text-slate-100 [@media(prefers-color-scheme:dark)]:[&_.border-gray-200]:border-white/10">
                       {!payingPrivately ? (
-                        /* Non-private: no fees */
                         <>
                           <div className="flex items-center justify-between">
                             <span className="text-gray-600">You pay</span>
-                            <span className="font-semibold font-sans text-gray-900">${claimAmountUSD.toFixed(2)}</span>
+                            <span className="font-semibold font-sans text-gray-900">${(headlineUsd ?? claimAmountUSD).toFixed(2)}</span>
                           </div>
+                          {chargeClaimFee && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-600">Claim fee</span>
+                              <span className="font-medium text-gray-700">${claimFeeUsd.toFixed(2)}</span>
+                            </div>
+                          )}
                           <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                             <span className="font-medium font-sans text-gray-900">Recipient receives</span>
                             <span className="font-semibold font-sans text-lg text-gray-900">${claimAmountUSD.toFixed(2)}</span>
@@ -6307,23 +6962,35 @@ export function ClaimPayView({
                           </div>
                           <div className="flex items-center justify-between">
                             <span className="text-gray-600">Privacy fee</span>
-                            <span className="font-medium text-gray-700">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
+                            <span className="font-medium text-gray-700">${(privatePayProtocolFee + privatePayGasFee).toFixed(2)}</span>
                           </div>
+                          {chargeClaimFee && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-600">Claim fee</span>
+                              <span className="font-medium text-gray-700">${claimFeeUsd.toFixed(2)}</span>
+                            </div>
+                          )}
                           <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                             <span className="font-medium font-sans text-gray-900">You pay</span>
-                            <span className="font-semibold font-sans text-lg text-gray-900">${privatePayTotal.toFixed(2)}</span>
+                            <span className="font-semibold font-sans text-lg text-gray-900">${(headlineUsd ?? privatePayTotal).toFixed(2)}</span>
                           </div>
                         </>
                       ) : (
                         <>
                           <div className="flex items-center justify-between">
                             <span className="text-gray-600">You pay</span>
-                            <span className="font-semibold font-sans text-gray-900">${claimAmountUSD.toFixed(2)}</span>
+                            <span className="font-semibold font-sans text-gray-900">${(claimAmountUSD + (chargeClaimFee ? claimFeeUsd : 0)).toFixed(2)}</span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="text-gray-600">Privacy fee (deducted)</span>
+                            <span className="text-gray-600">Privacy fee, from what they receive</span>
                             <span className="font-medium text-gray-700">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
                           </div>
+                          {chargeClaimFee && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-600">Claim fee</span>
+                              <span className="font-medium text-gray-700">${claimFeeUsd.toFixed(2)}</span>
+                            </div>
+                          )}
                           <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
                             <span className="font-medium font-sans text-gray-900">Recipient receives</span>
                             <span className="font-semibold font-sans text-lg text-gray-900">~${(claimAmountUSD - (privatePayProtocolFee + privatePayGasFee)).toFixed(2)}</span>
@@ -6363,6 +7030,7 @@ export function ClaimPayView({
                             claimId={id}
                             burnerAddress={claim.claim_burner_address}
                             amountUsd={claimAmountUSD}
+                            platformFeeUsd={claimFeeUsd}
                             onLogin={handleCheckoutLogin}
                             authenticated={checkoutAuthenticated}
                             looftaBalanceUSD={checkoutAuthenticated ? looftaBalanceUSD : undefined}
@@ -6403,7 +7071,7 @@ export function ClaimPayView({
                               ? true
                               : isWrongNetwork
                                 ? true
-                                : claimAmountUSD < 5
+                                : payingPrivately && claimAmountUSD < 1
                                   ? true
                                   : requiresPrivate && !isPrivateMode
                                     ? true
@@ -6854,7 +7522,8 @@ export function ClaimPayView({
       >
         <DialogContent
           className={cn(
-            "sm:max-w-md p-8 border-white/10 bg-[#0f0f12] text-white shadow-2xl [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-muted-foreground]:!text-slate-400 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.ring-offset-background]:!ring-offset-[#0f0f12] [&_.bg-red-50]:!bg-red-500/15 [&_.border-red-200]:!border-red-400/30 [&_.text-red-800]:!text-red-200 [&_.bg-emerald-50]:!bg-emerald-500/15 [&_.border-emerald-200]:!border-emerald-400/30 [&_.bg-emerald-100]:!bg-emerald-500/20 [&_.text-emerald-600]:!text-emerald-300 [&_.bg-orange-50]:!bg-orange-500/15 [&_.border-orange-200]:!border-orange-400/30 [&_.bg-orange-100]:!bg-orange-500/20 [&_.text-orange-600]:!text-orange-300 [&_.text-orange-500]:!text-orange-300 [&_.bg-amber-50]:!bg-amber-500/15 [&_.text-amber-600]:!text-amber-300 [&>*:last-child]:!text-slate-400 [&>*:last-child:hover]:!text-white [&>*:last-child:hover]:!bg-white/10",
+            sora.variable,
+            "sm:max-w-[520px] p-7 rounded-[30px] border-white/10 bg-[#121217] text-white shadow-[0_40px_120px_rgba(0,0,0,0.7)] [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-muted-foreground]:!text-slate-400 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.ring-offset-background]:!ring-offset-[#121217] [&_.bg-red-50]:!bg-red-500/15 [&_.border-red-200]:!border-red-400/30 [&_.text-red-800]:!text-red-200 [&_.bg-emerald-50]:!bg-emerald-500/15 [&_.border-emerald-200]:!border-emerald-400/30 [&_.bg-emerald-100]:!bg-emerald-500/20 [&_.text-emerald-600]:!text-emerald-300 [&_.bg-orange-50]:!bg-orange-500/15 [&_.border-orange-200]:!border-orange-400/30 [&_.bg-orange-100]:!bg-orange-500/20 [&_.text-orange-600]:!text-orange-300 [&_.text-orange-500]:!text-orange-300 [&_.bg-amber-50]:!bg-amber-500/15 [&_.text-amber-600]:!text-amber-300 [&>*:last-child]:!text-slate-400 [&>*:last-child:hover]:!text-white [&>*:last-child:hover]:!bg-white/10",
             payNowModalDismissLocked && "[&>button.absolute.right-4.top-4]:pointer-events-none [&>button.absolute.right-4.top-4]:opacity-0",
           )}
           aria-describedby={undefined}
@@ -6967,85 +7636,125 @@ export function ClaimPayView({
             </>
           ) : (
             <>
-              <DialogHeader className="flex flex-col items-center justify-center text-center space-y-0 pb-5 sm:text-center" aria-hidden>
-                <div className="mb-3 text-4xl">💳</div>
-                <h2 className="text-xl font-semibold text-gray-900 text-center">
-                  Pay ${payingPrivately && isFeeOnSender
-                    ? (pendingFeeUsdc != null ? claimAmountUSD + pendingFeeUsdc : privatePayTotal).toFixed(2)
-                    : claimAmountUSD.toFixed(2)}
-                </h2>
-                <p className="pt-0.5 text-base md:text-sm text-center text-muted-foreground">
-                  {!payingPrivately ? (
-                    <>no privacy fee</>
-                  ) : isFeeOnSender ? (
-                    <>${claimAmountUSD.toFixed(2)} + {pendingFeeUsdc != null ? "" : "~"}$
-                      {pendingFeeUsdc != null
-                        ? pendingFeeUsdc.toFixed(3)
-                        : (privatePayProtocolFee + privatePayGasFee).toFixed(3)}{" "}
-                      fee</>
-                  ) : (
-                    <>fees deducted from recipient</>
-                  )}
-                </p>
-              </DialogHeader>
-              <div className="space-y-3">
-                {(() => {
-                  const needed = payingPrivately && isFeeOnSender
-                    ? (pendingFeeUsdc != null ? claimAmountUSD + pendingFeeUsdc : privatePayTotal)
-                    : claimAmountUSD;
-                  const hasEnough = solanaPayment.hasEnoughBalance(needed);
-                  const isLoading = solanaPayment.isBalanceLoading;
-                  if (!isLoading && !hasEnough) {
-                    return (
+              {(() => {
+                const needed = (payingPrivately && isFeeOnSender
+                  ? (pendingFeeUsdc != null ? claimAmountUSD + pendingFeeUsdc : privatePayTotal)
+                  : claimAmountUSD) + (chargeClaimFee ? claimFeeUsd : 0);
+                const feeAmount = pendingFeeUsdc != null
+                  ? pendingFeeUsdc
+                  : privatePayProtocolFee + privatePayGasFee;
+                const payTo =
+                  claim?.recipient_username
+                    ? `@${claim.recipient_username}`
+                    : (claim as { recipient_pending_username_value?: string } | null)?.recipient_pending_username_value
+                      ? `@${(claim as { recipient_pending_username_value?: string }).recipient_pending_username_value}`
+                      : (claim as { recipient_pending_email_value?: string } | null)?.recipient_pending_email_value
+                        || claim?.recipient_email
+                        || ((claim as { recipient_pending_social_value?: string } | null)?.recipient_pending_social_value
+                          ? `@${(claim as { recipient_pending_social_value?: string }).recipient_pending_social_value}`
+                          : "recipient");
+                const recipientGets = payingPrivately && !isFeeOnSender
+                  ? Math.max(0, claimAmountUSD - feeAmount)
+                  : claimAmountUSD;
+                const hasEnough = solanaPayment.hasEnoughBalance(needed);
+                const isLoading = solanaPayment.isBalanceLoading;
+                const soraFace = { fontFamily: "var(--font-home-sora), Sora, sans-serif" } as const;
+                return (
+                  <div className="flex flex-col gap-5">
+                    <div className="flex items-center gap-3.5">
+                      <div
+                        className="grid h-[52px] w-[52px] place-items-center rounded-[17px] bg-[radial-gradient(120%_120%_at_28%_18%,#FFFFFF_0%,#ECEAF0_45%,#BDBAC6_100%)] text-2xl font-extrabold text-[#16161C] shadow-[inset_0_2px_4px_rgba(255,255,255,0.5),0_4px_0_#8C8898]"
+                        style={soraFace}
+                      >
+                        @
+                      </div>
+                      <div className="flex min-w-0 flex-col">
+                        <span className="text-sm font-semibold text-[#8A8893]">Payment to</span>
+                        <span className="truncate text-xl font-bold text-white" style={soraFace}>{payTo}</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-end justify-between gap-3">
+                      <span className="text-[56px] font-bold leading-none tracking-[-0.05em] text-white" style={soraFace}>
+                        ${needed.toFixed(2)}
+                      </span>
+                      <span className="pb-1 text-sm text-[#8A8893]">USDC on Solana</span>
+                    </div>
+                    {payingPrivately && (
+                      <div className="rounded-2xl border border-[rgba(255,90,26,0.25)] bg-[rgba(255,90,26,0.08)] px-4 py-3.5 text-sm leading-normal text-[#E6C9B8]">
+                        {privatePaymentFundsAppearCopy(landingDelayMs).replace(/^Funds/, "This payment is private. Funds")}
+                      </div>
+                    )}
+                    <div className="flex flex-col gap-3 rounded-[18px] border border-white/[0.06] bg-[#0E0E12] p-[18px]">
+                      <span className="text-sm tracking-[0.16em] text-[#77757F]" style={{ fontFamily: "var(--font-home-mono), ui-monospace, monospace" }}>BREAKDOWN</span>
+                      <div className="flex justify-between text-[15px]">
+                        <span className="text-[#B5B2BC]">Recipient receives</span>
+                        <span className="font-bold">${recipientGets.toFixed(2)}</span>
+                      </div>
+                      {payingPrivately && (
+                        <div className="flex justify-between gap-3 text-[15px]">
+                          <span className="text-[#B5B2BC]">{isFeeOnSender ? "Privacy fee" : "Privacy fee, from what they receive"}</span>
+                          <span className="font-bold">${feeAmount.toFixed(2)}</span>
+                        </div>
+                      )}
+                      {chargeClaimFee && (
+                        <div className="flex justify-between text-[15px]">
+                          <span className="text-[#B5B2BC]">Claim fee</span>
+                          <span className="font-bold">${claimFeeUsd.toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="h-px bg-white/[0.07]" />
+                      <div className="flex justify-between text-[17px]">
+                        <span className="font-bold">You pay</span>
+                        <span className="font-bold" style={soraFace}>${needed.toFixed(2)}</span>
+                      </div>
+                      <p className="text-sm text-[#8A8893]">
+                        {isLoading ? "Loading balance…" : `$${looftaBalanceUSD.toFixed(2)} in your Loofta wallet`}
+                      </p>
+                    </div>
+                    {!isLoading && !hasEnough ? (
                       <InsufficientBalanceCard
                         balanceUSD={looftaBalanceUSD}
                         neededUSD={needed}
                         showFeesLabel={false}
-                        onBeforeTopUp={() => setShowPayNowModal(false)}
+                        onBeforeTopUp={() => {
+                          resumePayAfterTopUpRef.current = true;
+                          setShowPayNowModal(false);
+                        }}
                       />
-                    );
-                  }
-                  return (
-                    <>
+                    ) : (
                       <button
                         type="button"
                         onClick={() => payWithLooftaBalance()}
                         disabled={!authenticated || !isPayerWalletReady || isLoading || payingWithLoofta}
-                        className="w-full flex items-center gap-3 p-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full rounded-[18px] py-[18px] text-center text-[17px] font-semibold text-white shadow-[0_14px_40px_rgba(255,70,10,0.3)] disabled:cursor-not-allowed disabled:opacity-50"
+                        style={{ ...soraFace, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)" }}
                       >
-                        <LooftaIcon className="w-8 h-8 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-white">Loofta wallet</div>
-                          <div className="text-base md:text-sm text-slate-400 mt-0.5">
-                            {isLoading ? "Loading balance…" : `$${looftaBalanceUSD.toFixed(2)} available`}
-                          </div>
-                        </div>
-                        <ArrowRight className="w-5 h-5 text-slate-400 shrink-0" />
+                        {payingWithLoofta ? "Paying…" : "Pay now"}
                       </button>
-                      {payWithLooftaError && (
-                        <div className="space-y-2">
-                          <div className="p-3 rounded-lg bg-red-500/15 border border-red-400/30 text-base md:text-sm text-red-200 [overflow-wrap:anywhere] whitespace-pre-wrap">
-                            <strong>Payment failed:</strong> {payWithLooftaError}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => { setPayWithLooftaError(null); payWithLooftaBalance(false); }}
-                            className="w-full py-2.5 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-base md:text-sm text-slate-300 transition-colors"
-                          >
-                            Try without gas sponsorship
-                          </button>
+                    )}
+                    {payWithLooftaError && (
+                      <div className="space-y-2">
+                        <div className="rounded-lg border border-red-400/30 bg-red-500/15 p-3 text-sm text-red-200 [overflow-wrap:anywhere] whitespace-pre-wrap">
+                          <strong>Payment failed:</strong> {payWithLooftaError}
                         </div>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
+                        <button
+                          type="button"
+                          onClick={() => { setPayWithLooftaError(null); payWithLooftaBalance(false); }}
+                          className="w-full rounded-xl border border-white/20 bg-white/5 py-2.5 text-sm text-slate-300 transition-colors hover:bg-white/10"
+                        >
+                          Try without gas sponsorship
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </>
           )}
         </DialogContent>
       </Dialog>
 
-      {isClaimPageLocalhost && chrome !== "minimal" && <DevPreviewPanel />}
+      {CLAIM_DEV_PREVIEW_ENABLED && isClaimPageLocalhost && chrome !== "minimal" && <DevPreviewPanel />}
     </>
   );
 }

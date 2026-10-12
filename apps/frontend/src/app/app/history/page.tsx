@@ -8,10 +8,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
 import { SendReceiveTabs } from "@/components/app/SendReceiveTabs";
-import { ArrowDown, ArrowUp, Repeat } from "lucide-react";
+import { Repeat } from "lucide-react";
 import { useTranslations, useLocale } from "next-intl";
 import { PrivacyGlyph } from "@/components/PrivacyGlyph";
 import { useBulkClaim } from "@/hooks/useBulkClaim";
+import { manrope, sora } from "@/components/home-v4/fonts";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
 const PENDING_USERNAME_PREFIX = "PENDING_USERNAME:";
@@ -43,6 +44,9 @@ export type PaymentHistoryClaim = {
   /** Set only for a from_recipient payment (checkout/payment-link) paid by a guest with no
    *  Loofta account — the only sender identity there is to show for one. */
   guest_sender_email?: string | null;
+  guest_sender_wallet?: string | null;
+  /** Set for a pay to Venmo, Cash App, or Revolut. Opens the receipt instead of /c/[id]. */
+  receipt_path?: string | null;
 };
 
 function getSenderDisplay(claim: PaymentHistoryClaim, anonymous: string): string {
@@ -53,9 +57,13 @@ function getSenderDisplay(claim: PaymentHistoryClaim, anonymous: string): string
     if (claim.guest_sender_email) return claim.guest_sender_email;
     return anonymous;
   }
-  if (claim.creator_username) return `@${claim.creator_username}`;
-  if (claim.creator_email) return claim.creator_email;
-  return anonymous;
+    if (claim.creator_username) return `@${claim.creator_username}`;
+    if (claim.creator_email) return claim.creator_email;
+    if (claim.guest_sender_wallet) {
+      const w = claim.guest_sender_wallet;
+      return w.length > 10 ? `${w.slice(0, 4)}…${w.slice(-4)}` : w;
+    }
+    return anonymous;
 }
 
 function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string {
@@ -75,6 +83,8 @@ function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string 
     const sep = rest.indexOf(":");
     const platform = sep >= 0 ? rest.slice(0, sep).trim() : null;
     const handle = (sep >= 0 ? rest.slice(sep + 1) : rest).trim();
+    const cashName = platform === "venmo" ? "Venmo" : platform === "cashapp" ? "Cash App" : platform === "revolut" ? "Revolut" : null;
+    if (cashName) return `${handle} on ${cashName}`;
     return platform ? `@${handle} on ${platform}` : `@${handle}`;
   }
   if (claim.recipient_email) return claim.recipient_email;
@@ -208,30 +218,6 @@ async function fetchPaymentHistory(
 
 const PAYMENT_HISTORY_GC_MS = 5 * 60 * 1000;
 
-function IconBubble({
-  active,
-  variant,
-  children,
-}: {
-  active: boolean;
-  variant: "sent" | "received";
-  children: React.ReactNode;
-}) {
-  const base =
-    "inline-flex h-8 w-8 items-center justify-center rounded-full shrink-0 border transition-colors";
-  const styles = active
-    ? "text-white border-white/10"
-    : variant === "received"
-      ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
-      : "bg-amber-500/10 text-amber-300 border-amber-500/20";
-
-  return (
-    <span aria-hidden="true" className={`${base} ${styles}`}>
-      <span className="flex items-center justify-center [&>svg]:h-4 [&>svg]:w-4">{children}</span>
-    </span>
-  );
-}
-
 export default function HistoryPage() {
   const t = useTranslations('HistoryPage');
   const locale = useLocale();
@@ -340,13 +326,11 @@ export default function HistoryPage() {
 
   if (!authenticated) {
     return (
-      <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
-        <div className="max-w-lg mx-auto px-4 py-6 pb-24">
-          <div className="min-h-[calc(100vh-var(--header-h,0px))]">
-            <div className="hidden md:block">
-              <SendReceiveTabs activeTab={null} visualOnly />
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
+    <div className={`${sora.variable} ${manrope.variable} min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first`} style={{ fontFamily: "var(--font-home-manrope), Manrope, sans-serif" }}>
+      <div className="max-w-lg mx-auto px-4 py-6 pb-24">
+        <div className="min-h-[calc(100vh-var(--header-h,0px))]">
+          <SendReceiveTabs activeTab={null} visualOnly />
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
               <h1 className="text-xl font-medium font-sans text-white mb-2">{t('signInTitle')}</h1>
               <p className="text-slate-400 mb-4">{t('signInPrompt')}</p>
               <button
@@ -364,14 +348,11 @@ export default function HistoryPage() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first">
+    <div className={`${sora.variable} ${manrope.variable} min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white mobile-first`} style={{ fontFamily: "var(--font-home-manrope), Manrope, sans-serif" }}>
       <div className="max-w-lg mx-auto px-4 py-6 pb-24">
         <div className="min-h-[calc(100vh-var(--header-h,0px))]">
-          <div className="hidden md:block">
-            <SendReceiveTabs activeTab={null} visualOnly />
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 mb-6">
-            <h1 className="text-lg font-medium font-sans text-white mb-4">{t('title')}</h1>
+          <SendReceiveTabs activeTab={null} visualOnly />
+          <div className="mb-6">
             {loading ? (
               <div className="animate-pulse">
                 <div className="grid grid-cols-2 gap-3 mb-6">
@@ -412,54 +393,33 @@ export default function HistoryPage() {
               <p className="text-red-400 text-base">{error}</p>
             ) : (
               <>
-                <div className="grid grid-cols-2 gap-3 mb-6">
-                  {/* SENT */}
+                <div className="grid grid-cols-2 gap-3 mb-4">
                   <button
                     type="button"
                     onClick={() => setTypeFilter((prev) => (prev === "sent" ? "all" : "sent"))}
-                    className={[
-                      "rounded-2xl border p-4 text-left transition-colors hover:bg-white/10",
-                      typeFilter === "sent"
-                        ? "bg-amber-500/10 border-amber-400/30 ring-2 ring-amber-400/30"
-                        : "bg-amber-500/5 border-amber-500/20",
-                    ].join(" ")}
+                    className="flex flex-col gap-1.5 rounded-[22px] border p-5 text-left"
+                    style={{
+                      background: "linear-gradient(160deg,#241709,#151210)",
+                      borderColor: typeFilter === "sent" ? "rgba(245,150,12,0.55)" : "rgba(245,150,12,0.22)",
+                    }}
                   >
-                    <div className="flex items-center gap-2">
-                      <IconBubble active={typeFilter === "sent"} variant="sent">
-                        <ArrowUp />
-                      </IconBubble>
-                      <p className="text-slate-300 text-base font-medium uppercase tracking-wide">
-                        {t('amountSent')}
-                      </p>
-                    </div>
-                    <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">
-                      ${totalSent.toFixed(2)}
-                    </p>
+                    <span className="text-sm font-semibold text-[#D9A866]">↑ {t('amountSent')}</span>
+                    <span className="text-[28px] font-semibold tracking-[-0.04em] text-white tabular-nums" style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif" }}>${totalSent.toFixed(2)}</span>
                   </button>
-                  {/* RECEIVED */}
                   <button
                     type="button"
                     onClick={() => setTypeFilter((prev) => (prev === "received" ? "all" : "received"))}
-                    className={[
-                      "rounded-2xl border p-4 text-left transition-colors hover:bg-white/10",
-                      typeFilter === "received"
-                        ? "bg-emerald-500/10 border-emerald-400/30 ring-2 ring-emerald-400/30"
-                        : "bg-emerald-500/5 border-emerald-500/20",
-                    ].join(" ")}
+                    className="flex flex-col gap-1.5 rounded-[22px] border p-5 text-left"
+                    style={{
+                      background: "linear-gradient(160deg,#0D2016,#101513)",
+                      borderColor: typeFilter === "received" ? "rgba(60,200,120,0.55)" : "rgba(60,200,120,0.22)",
+                    }}
                   >
-                    <div className="flex items-center gap-2">
-                      <IconBubble active={typeFilter === "received"} variant="received">
-                        <ArrowDown />
-                      </IconBubble>
-                      <p className="text-slate-300 text-base font-medium uppercase tracking-wide">
-                        {t('amountReceived')}
-                      </p>
-                    </div>
-                    <p className="text-3xl font-sans font-semibold text-white mt-2 tabular-nums">
-                      ${totalReceived.toFixed(2)}
-                    </p>
+                    <span className="text-sm font-semibold text-[#6FD39A]">↓ {t('amountReceived')}</span>
+                    <span className="text-[28px] font-semibold tracking-[-0.04em] text-white tabular-nums" style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif" }}>${totalReceived.toFixed(2)}</span>
                   </button>
                 </div>
+                <div className="flex flex-col gap-3 rounded-[30px] border border-white/[0.07] bg-[#141419] p-[22px]">
 
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <p className="text-slate-400 text-base font-medium">{t('recentPayments')}</p>
@@ -586,57 +546,60 @@ export default function HistoryPage() {
                             : t('claimAllClaimingBadge')
                         : getStatusLabel(claim.status || "");
                       return (
-                        <li key={`${type}-${claim.id}`} className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
+                        <li key={`${type}-${claim.id}`} className="overflow-hidden rounded-[18px] border border-white/[0.06] bg-[#0F0F13]">
                           <Link
-                            href={`/c/${claim.id}?from=history`}
-                            className="block p-3 hover:bg-white/10 transition-colors"
+                            href={claim.receipt_path || `/c/${claim.id}?from=history`}
+                            className="block p-3.5 transition-colors hover:bg-white/[0.03]"
                           >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className={`flex items-center gap-1.5 text-base font-semibold ${type === "sent" ? "text-amber-400" : "text-emerald-400"}`}>
-                                {type === "sent" ? t('sent') : t('received')}
-                                {showPrivacyIcon && (
-                                  <span aria-label="Private" className="inline-flex text-slate-400">
-                                    <PrivacyGlyph size={14} opacity={0.9} />
-                                  </span>
+                            <div className="flex items-center gap-3">
+                              <span
+                                className="grid h-10 w-10 shrink-0 place-items-center rounded-[13px] text-base font-semibold"
+                                style={{
+                                  background: type === "sent" ? "rgba(245,150,12,0.14)" : "rgba(60,200,120,0.14)",
+                                  color: type === "sent" ? "#F5A623" : "#5FD38E",
+                                }}
+                              >
+                                {type === "sent" ? "↑" : "↓"}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                {hasKnownCounterparty && (
+                                  <p className="truncate text-base font-semibold text-[#F2EFE8]">
+                                    {type === "sent" ? t('to') : t('from')} {senderOrPayee}
+                                  </p>
                                 )}
-                              </span>
-                              <span className="text-white font-semibold font-sans">
-                                {type === "sent" ? "-" : "+"}${amount.toFixed(2)} {claim.to_symbol}
-                              </span>
-                            </div>
-                            {hasKnownCounterparty && (
-                              <div className="mt-1.5 text-base font-medium text-slate-300">
-                                {type === "sent" ? t('to') : t('from')} {senderOrPayee}
+                                <p className="text-sm text-[#77757F]">
+                                  {new Date(claim.created_at).toLocaleString(locale, {
+                                    month: "short",
+                                    day: "numeric",
+                                    hour: "numeric",
+                                    minute: "2-digit",
+                                  })}
+                                  {showPrivacyIcon ? " · private" : ""}
+                                </p>
                               </div>
-                            )}
+                              <div className="flex shrink-0 flex-col items-end gap-1">
+                                <span className="whitespace-nowrap text-base font-semibold tabular-nums" style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif", color: type === "sent" ? "#F2EFE8" : "#5FD38E" }}>
+                                  {type === "sent" ? "−" : "+"}${Number.isFinite(amount) ? amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}
+                                </span>
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-sm font-bold ${statusBadgeClass}`}>
+                                  {statusBadgeLabel}
+                                </span>
+                              </div>
+                            </div>
                             {showMessageOrGif && (
-                              <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 space-y-2">
+                              <div className="mt-2.5 space-y-2 rounded-xl bg-[#17171D] px-3 py-2.5">
                                 {type === "received" && gifUrl && (
                                   <img
                                     src={gifUrl}
                                     alt=""
-                                    className="rounded-lg w-full max-h-32 object-cover object-center"
+                                    className="max-h-32 w-full rounded-lg object-cover object-center"
                                   />
                                 )}
                                 {message && (
-                                  <p className="text-base sm:text-sm text-slate-300 line-clamp-2 italic">"{message}"</p>
+                                  <p className="line-clamp-2 text-sm italic text-[#B5B2BC]">"{message}"</p>
                                 )}
                               </div>
                             )}
-                            <div className="flex items-center justify-between gap-2 mt-2">
-                              <span className="text-base sm:text-sm text-slate-500">
-                                {new Date(claim.created_at).toLocaleDateString(locale, {
-                                  month: "short",
-                                  day: "numeric",
-                                  year: "numeric",
-                                })}
-                              </span>
-                              <span
-                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border ${statusBadgeClass}`}
-                              >
-                                {statusBadgeLabel}
-                              </span>
-                            </div>
                           </Link>
                           {sendAgainHref && (
                             <button
@@ -653,6 +616,7 @@ export default function HistoryPage() {
                     })}
                   </ul>
                 )}
+                </div>
               </>
             )}
           </div>

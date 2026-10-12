@@ -22,13 +22,10 @@ import { X, Info, Volume2, VolumeX } from "lucide-react";
 import SlideToPay from "@/components/megapot/SlideToPay";
 import { warmUpAudio } from "@/lib/packSoundEffects";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
-import { useAuthStore } from "@/store/auth";
 import type { PackOpenResult, PackRarity } from "@/components/megapot/MegapotPack";
 import posthog from "posthog-js";
 
 const MegapotPack = dynamic(() => import("@/components/megapot/MegapotPack"), { ssr: false });
-const BalanceModal = dynamic(() => import("@/components/BalanceModal").then(m => ({ default: m.BalanceModal })), { ssr: false });
-
 interface PackTierPublic {
   tierKey: string;
   ticketsAwarded: number;
@@ -106,12 +103,8 @@ export default function MegapotPacksPage() {
   // "top up your balance" action instead of a generic on-chain failure after tapping to pay.
   const {
     balanceUSD: ownBalance,
-    walletAddress: ownSolanaAddress,
     isLoading: loadingOwnBalance,
-    refetch: refetchOwnBalance,
   } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated });
-  const [showBalanceModal, setShowBalanceModal] = useState(false);
-  const networkMode = useAuthStore((s) => s.networkMode);
 
   const [tiers, setTiers] = useState<PackTierPublic[] | null>(null);
   const [priceUsdc, setPriceUsdc] = useState<number | null>(null);
@@ -596,7 +589,7 @@ export default function MegapotPacksPage() {
                 <p className="text-sm text-slate-400 mt-1">Top up your balance to open a pack.</p>
               </div>
               <button
-                onClick={() => setShowBalanceModal(true)}
+                onClick={() => window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab: "topup" } }))}
                 className="w-full py-2.5 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] font-semibold text-white hover:brightness-110 active:scale-[0.98] transition-[filter,transform]"
               >
                 Top up balance
@@ -721,19 +714,6 @@ export default function MegapotPacksPage() {
         )}
       </AnimatePresence>
 
-      <BalanceModal
-        open={showBalanceModal}
-        onClose={() => setShowBalanceModal(false)}
-        balanceUSD={ownBalance.toFixed(2)}
-        balanceExact={ownBalance}
-        loadingBalance={loadingOwnBalance}
-        solanaAddress={ownSolanaAddress}
-        onRefresh={() => refetchOwnBalance()}
-        dark
-        devnetMode={networkMode === "devnet"}
-        initialTab="topup"
-        lockInitialTab
-      />
     </div>
   );
 }

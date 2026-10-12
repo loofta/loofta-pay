@@ -1,10 +1,12 @@
-import { Controller, Get, Logger, NotFoundException, Param } from '@nestjs/common';
+import { Controller, Get, Logger, NotFoundException, Param, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { SupabaseService } from '@/database/supabase.service';
 import { GiveawaysService } from './giveaways.service';
 import { GiveawayVrfService } from './giveaway-vrf.service';
 import { GiveawayEntriesService } from './giveaway-entries.service';
 import { Giveaway, GiveawayStatus } from './entities/giveaway.entity';
+import { GiveawayTokenService } from './giveaway-token.service';
+import { XVerificationService } from './x-verification.service';
 
 // Entries (and who won) go public once the pool is frozen — before that, revealing who's in the
 // running would leak the live entrant list while people can still act on it. This is also
@@ -52,7 +54,29 @@ export class GiveawaysPublicController {
     private readonly giveawaysService: GiveawaysService,
     private readonly vrf: GiveawayVrfService,
     private readonly entriesService: GiveawayEntriesService,
+    private readonly tokens: GiveawayTokenService,
+    private readonly xVerification: XVerificationService,
   ) {}
+
+  @Get('x-posts')
+  @ApiOperation({ summary: 'Last 5 original posts on a public X account, for choosing raid targets.' })
+  async recentXPosts(@Query('handle') handle?: string) {
+    const clean = (handle ?? '').replace(/^@/, '').trim();
+    if (!/^[A-Za-z0-9_]{1,15}$/.test(clean)) return { posts: [] };
+    try {
+      const posts = await this.xVerification.recentOriginalPosts(clean, 5);
+      return { posts };
+    } catch (err) {
+      this.logger.warn(`[x-posts] ${clean}: ${err instanceof Error ? err.message : err}`);
+      return { posts: [] };
+    }
+  }
+
+  @Get('tokens')
+  @ApiOperation({ summary: 'Search Solana tokens by symbol or mint (Jupiter). No auth required.' })
+  async searchTokens(@Query('q') q?: string) {
+    return { tokens: await this.tokens.search(q ?? '') };
+  }
 
   @Get()
   @ApiOperation({ summary: 'Browse open giveaways. No auth required.' })
@@ -210,6 +234,9 @@ export class GiveawaysPublicController {
       selection_mode: giveaway.selection_mode,
       prize_amount_usd: giveaway.prize_amount_usd,
       reward_type: giveaway.reward_type,
+      prize_mint: giveaway.prize_mint,
+      prize_token_symbol: giveaway.prize_token_symbol,
+      prize_token_decimals: giveaway.prize_token_decimals,
       entries_close_at: giveaway.entries_close_at,
       eligibility: giveaway.eligibility,
       status: giveaway.status,

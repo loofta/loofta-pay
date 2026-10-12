@@ -182,7 +182,7 @@
       }
     },
     "signInToSendHandle": "Connectez-vous pour envoyer à un identifiant ou un e-mail",
-    "signInToSendHandleHint": "Connexion e-mail ou sociale — les envois vers une adresse wallet restent sans compte"
+    "signInToSendHandleHint": "Connexion e-mail ou sociale. Les envois vers une adresse wallet restent sans compte"
   },
   "MarketingPage": {
     "nav": {
@@ -562,8 +562,8 @@
       "headlineBefore": "Envoyez de l'argent à n'importe quel",
       "headlineAfter": "ou e-mail",
       "headlineCashOut": "Ils encaissent à leur façon.",
-      "support": "Payez un wallet sans compte, ou connectez-vous pour envoyer à un handle — ils réclament via Venmo, Cash App, Revolut, Zelle, USDC sur Solana ou toute crypto.",
-      "supportWithPaj": "Payez un wallet sans compte, ou connectez-vous pour envoyer à un handle — ils réclament via Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC sur Solana ou toute crypto.",
+      "support": "Payez un wallet sans compte, ou connectez-vous pour envoyer à un handle . ils réclament via Venmo, Cash App, Revolut, Zelle, USDC sur Solana ou toute crypto.",
+      "supportWithPaj": "Payez un wallet sans compte, ou connectez-vous pour envoyer à un handle . ils réclament via Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC sur Solana ou toute crypto.",
       "cashOutLabel": "Ils encaissent vers",
       "ctaStart": "Commencer à envoyer, c'est gratuit",
       "ctaBusiness": "Pour les entreprises",
@@ -582,5 +582,17 @@
       "railAnyCryptoSub": "150+ tokens",
       "railPajSub": "Banque en naira"
     }
+  },
+  "LaunchDeck": {
+    "eyebrow": "Lancez tout",
+    "title": "Choisissez ce que vous voulez démarrer.",
+    "subtitle": "Envoyez un paiement, lancez un giveaway ou partagez un lien de réception.",
+    "sendTitle": "Envoyer un paiement",
+    "sendBody": "Payez un handle, un e-mail ou un wallet. Ils encaissent à leur façon.",
+    "giveawayTitle": "Lancer un giveaway",
+    "giveawayBody": "Financez le prix, partagez un lien, tirage on-chain.",
+    "receiveTitle": "Être payé",
+    "receiveBody": "Partagez votre lien ou QR . pas de wallet pour eux.",
+    "cta": "Ouvrir"
   }
 }

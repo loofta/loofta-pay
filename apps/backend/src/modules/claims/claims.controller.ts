@@ -83,6 +83,28 @@ export class ClaimsController {
     }
   }
 
+  /** Guest pay needs an address to send to. Registered users are paid at their wallet (no $0.10).
+   *  Private-only users are not payable from a signed-out wallet — the payer has to sign in so
+   *  the private transfer is built server-side. The privacy fee is added on top of what they send. */
+  private guestPayDestination(result: {
+    id: string;
+    link: string;
+    burnerAddress: string | null;
+    payTo: string | null;
+    requirePrivate: boolean;
+  }): { id: string; link: string; burnerAddress: string; direct: boolean } {
+    if (result.requirePrivate) {
+      throw new BadRequestException(
+        'This person only accepts private payments. Sign in to Loofta to pay them. The privacy fee is added on top of what you send.',
+      );
+    }
+    const destination = result.burnerAddress ?? result.payTo;
+    if (!destination) {
+      throw new ServiceUnavailableException('Could not prepare this payment right now. Please try again.');
+    }
+    return { id: result.id, link: result.link, burnerAddress: destination, direct: !result.burnerAddress };
+  }
+
   /**
    * Abuse gate for the two guest (unauthenticated) claim-creation routes below — the only claim
    * creation in this controller with no AuthGuard, so there's no verified Privy identity to rely
@@ -90,6 +112,12 @@ export class ClaimsController {
    * configured, guest creation is refused rather than silently left open to bots.
    */
   private async verifyTurnstile(token: string | undefined, ip: string, routeLabel: string): Promise<void> {
+    // Local `nest start` is not NODE_ENV=production. Cloudflare's sitekey rejects localhost,
+    // so guest sends from the dev app skip the bot check. Production still verifies every token.
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.log(`ClaimsController[${routeLabel}]: skipping Turnstile on local dev (ip=${ip})`);
+      return;
+    }
     const secret = this.configService.get<string>('TURNSTILE_SECRET_KEY') ?? process.env.TURNSTILE_SECRET_KEY;
     if (!secret) {
       this.logger.error(`ClaimsController[${routeLabel}]: TURNSTILE_SECRET_KEY is not set — refusing guest claim creation until it is configured`);
@@ -253,17 +281,11 @@ export class ClaimsController {
   async createFromEmailGuest(
     @Body() createDto: CreateClaimFromEmailGuestDto,
     @Req() req: { headers: Record<string, unknown>; ip?: string },
-  ): Promise<{ id: string; link: string; burnerAddress: string }> {
+  ): Promise<{ id: string; link: string; burnerAddress: string; direct: boolean }> {
     await this.verifyTurnstile(createDto.turnstileToken, getClientIp(req), 'create-from-email-guest');
     const { turnstileToken: _turnstileToken, ...rest } = createDto;
     const result = await this.claimsService.createFromEmail(rest);
-    // findOne() requires an authenticated requestingUserId (creator or recipient) to guard
-    // against strangers reading arbitrary claims — no use here, so take burnerAddress straight
-    // off the creation result instead of a follow-up read.
-    if (!result.burnerAddress) {
-      throw new ServiceUnavailableException('Could not prepare this payment right now. Please try again.');
-    }
-    return { id: result.id, link: result.link, burnerAddress: result.burnerAddress };
+    return this.guestPayDestination(result);
   }
 
   /**
@@ -289,14 +311,11 @@ export class ClaimsController {
   async createFromSocialGuest(
     @Body() createDto: CreateClaimFromSocialGuestDto,
     @Req() req: { headers: Record<string, unknown>; ip?: string },
-  ): Promise<{ id: string; link: string; burnerAddress: string }> {
+  ): Promise<{ id: string; link: string; burnerAddress: string; direct: boolean }> {
     await this.verifyTurnstile(createDto.turnstileToken, getClientIp(req), 'create-from-social-guest');
     const { turnstileToken: _turnstileToken, ...rest } = createDto;
     const result = await this.claimsService.createFromSocial(rest);
-    if (!result.burnerAddress) {
-      throw new ServiceUnavailableException('Could not prepare this payment right now. Please try again.');
-    }
-    return { id: result.id, link: result.link, burnerAddress: result.burnerAddress };
+    return this.guestPayDestination(result);
   }
 
   /**
@@ -325,14 +344,11 @@ export class ClaimsController {
   async createFromUsernameGuest(
     @Body() createDto: CreateClaimFromUsernameGuestDto,
     @Req() req: { headers: Record<string, unknown>; ip?: string },
-  ): Promise<{ id: string; link: string; burnerAddress: string }> {
+  ): Promise<{ id: string; link: string; burnerAddress: string; direct: boolean }> {
     await this.verifyTurnstile(createDto.turnstileToken, getClientIp(req), 'create-from-username-guest');
     const { turnstileToken: _turnstileToken, ...rest } = createDto;
     const result = await this.claimsService.createFromUsername(rest);
-    if (!result.burnerAddress) {
-      throw new ServiceUnavailableException('Could not prepare this payment right now. Please try again.');
-    }
-    return { id: result.id, link: result.link, burnerAddress: result.burnerAddress };
+    return this.guestPayDestination(result);
   }
 
   /**
@@ -340,9 +356,9 @@ export class ClaimsController {
    * Declared before :id so "solana-sponsor/fee-payer" is not captured as claim id.
    */
   @Get('solana-sponsor/fee-payer')
-  @UseGuards(AuthGuard)
-  @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Get Solana fee payer address for sponsorship' })
+  @UseGuards(RateLimitGuard)
+  @RateLimit(60, 60, 'claims:fee-payer', 'ip')
+  @ApiOperation({ summary: 'Get Solana fee payer address. Public on-chain address, used as the $0.10 claim-fee destination.' })
   @ApiResponse({
     status: 200,
     description: 'Fee payer address if sponsorship is enabled',
@@ -450,7 +466,17 @@ export class ClaimsController {
   async claimAsRecipient(
     @Param('id') id: string,
     @Req() req: { user?: { id: string } },
-    @Body() body: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean; split?: number; maxDelayMs?: number },
+    @Body() body: {
+      claimPrivately?: boolean;
+      destinationAddress?: string;
+      claimToNaira?: boolean;
+      split?: number;
+      maxDelayMs?: number;
+      payoutMethod?: string;
+      payoutStatus?: string;
+      payoutEtaLabel?: string;
+      payoutDetail?: string;
+    },
   ): Promise<{ claimed: boolean; sweepTxHash?: string; sweptAmount?: string; feeAmountUsdc?: number }> {
     const privyUserId = req.user?.id;
     if (!privyUserId) throw new UnauthorizedException('Login required to claim.');
@@ -460,7 +486,28 @@ export class ClaimsController {
       claimToNaira: body?.claimToNaira,
       split: body?.split,
       maxDelayMs: body?.maxDelayMs,
+      payoutMethod: body?.payoutMethod,
+      payoutStatus: body?.payoutStatus,
+      payoutEtaLabel: body?.payoutEtaLabel,
+      payoutDetail: body?.payoutDetail,
     });
+  }
+
+  /** Recipient updates the cash-out receipt (status / ETA) after they leave the claim card. */
+  @Post(':id/payout')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'claims:payout')
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Save how this claim is being cashed out, and its status' })
+  async updateClaimPayout(
+    @Param('id') id: string,
+    @Req() req: { user?: { id: string } },
+    @Body() body: { method?: string; status?: string; etaLabel?: string | null; detail?: string | null },
+  ) {
+    const privyUserId = req.user?.id;
+    if (!privyUserId) throw new UnauthorizedException('Login required.');
+    return this.claimsService.updateClaimPayout(id, privyUserId, body ?? {});
   }
 
   /**

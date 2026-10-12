@@ -148,9 +148,8 @@
 body {
   font-family: 'Clash Grotesk', sans-serif;
   color: rgb(var(--foreground-rgb));
-  background: white;
-  height: var(--tg-viewport-stable-height);
-  max-height: var(--tg-viewport-stable-height);
+  background: #0f0f12;
+  min-height: 100vh;
 }
 
 .tg-webview {

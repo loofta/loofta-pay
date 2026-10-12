@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
-import { getVerifiedUserId, getPrivyUser } from "@/lib/serverAuth";
+import { getVerifiedUserId, getPrivyUser, getVerifiedLiveTwitterProfile } from "@/lib/serverAuth";
 import { generateUniqueLooUsername, getTwitterHandleFromLinkedAccounts } from "@/lib/looUsername";
 import { redisGet, redisSet } from "@/lib/redis-cache";
 
@@ -30,8 +30,11 @@ export async function POST(request: NextRequest) {
           skipOnboarding: boolean;
           ataMigratedMainnet: boolean; ataMigratedDevnet: boolean; createdAt: string;
         };
-        // Only serve from cache when onboarding is definitively done
-        if (u.skipOnboarding || u.username) {
+        // Only serve from cache when onboarding is definitively done.
+        // A Twitter account cached before we stored the profile photo would keep the
+        // header on the letter fallback for the whole TTL — refetch those once.
+        const missingTwitterAvatar = !!u.twitterUsername && !u.avatarUrl;
+        if ((u.skipOnboarding || u.username) && !missingTwitterAvatar) {
           return NextResponse.json({ exists: true, user: u, needsUsername: !u.username });
         }
       } catch {
@@ -56,14 +59,32 @@ export async function POST(request: NextRequest) {
     }
 
     if (user) {
+      let avatarUrl = user.avatar_url ?? null;
+      let twitterUsername = user.twitter_username ?? null;
+      // Accounts created before avatars were stored still have a Twitter login on Privy.
+      // Persist the photo once so the header (and every other surface) can show it.
+      if (!avatarUrl && twitterUsername) {
+        const profile = await getVerifiedLiveTwitterProfile(privyUserId);
+        if (profile?.avatarUrl) {
+          avatarUrl = profile.avatarUrl;
+          const { error: avatarError } = await supabase
+            .from("app_users")
+            .update({ avatar_url: avatarUrl })
+            .eq("privy_user_id", privyUserId);
+          if (avatarError) {
+            console.error("[users/check] avatar backfill failed:", avatarError);
+          }
+        }
+      }
+
       const userPayload = {
         id: user.id,
         privyUserId: user.privy_user_id,
         email: user.email,
         username: user.username ?? null,
         looUsername: user.loo_username ?? null,
-        twitterUsername: user.twitter_username ?? null,
-        avatarUrl: user.avatar_url ?? null,
+        twitterUsername,
+        avatarUrl,
         skipOnboarding: user.skip_onboarding ?? false,
         ataMigratedMainnet: user.ata_migrated_mainnet ?? false,
         ataMigratedDevnet: user.ata_migrated_devnet ?? false,

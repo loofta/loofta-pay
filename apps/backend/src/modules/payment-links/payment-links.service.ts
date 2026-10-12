@@ -58,11 +58,10 @@ export class PaymentLinksService {
 
     // Per-link setting, defaults to public — the recipient can already choose to claim privately
     // at claim time, so a payer-side private link is opt-in, not the default. Only the private
-    // path has a $5 floor (MagicBlock's private-transfer minimum) — a plain public transfer has
-    // no such constraint.
+    // path has a $1 floor — a plain public transfer has no such constraint.
     const isPrivate = dto.is_private === true;
-    if (isPrivate && dto.amount < 5) {
-      throw new BadRequestException('Private payment links require a $5 minimum.');
+    if (isPrivate && dto.amount < 1) {
+      throw new BadRequestException('Private payment links require a $1 minimum.');
     }
 
     const recipientAddress = await this.usersService.getSolanaWalletAddress(integrator.ownerUserId);

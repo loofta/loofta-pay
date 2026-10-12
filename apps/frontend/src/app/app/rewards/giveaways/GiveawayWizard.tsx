@@ -1,26 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Mail, Plus, X, Calendar as CalendarGlyph, Check, ImagePlus, Smile, ChevronDown } from "lucide-react";
+import { X, Calendar as CalendarGlyph, Check, Smile, ChevronDown } from "lucide-react";
 import EmojiPicker, { EmojiClickData, Theme } from "emoji-picker-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePrivy, useLinkAccount } from "@privy-io/react-auth";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/components/ui/use-toast";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { RichTextEditor } from "@/components/RichTextEditor";
-import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { LogoCropModal } from "@/components/LogoCropModal";
-import { GiveawayLivePreview, type PreviewTask } from "@/components/GiveawayLivePreview";
 import { CONTINENTS, COUNTRIES, type Continent } from "@/lib/countries";
+import { sora, manrope, jetbrainsMono } from "@/components/home-v4/fonts";
+import "@/components/app-home/loofta-app.css";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import posthog from "posthog-js";
 
@@ -129,16 +126,16 @@ interface TaskRow {
   engage: { retweet: boolean; like: boolean; comment: boolean; bookmark: boolean };
 }
 
-function newRow(): TaskRow {
+function newRow(category: TaskCategory = "x_follow"): TaskRow {
   return {
     id: crypto.randomUUID(),
-    category: "engage",
+    category,
     target: "",
     title: "",
     instructions: "",
     requiredText: "",
     requireProof: false,
-    engage: { retweet: true, like: false, comment: false, bookmark: false },
+    engage: { retweet: true, like: true, comment: false, bookmark: false },
   };
 }
 
@@ -579,16 +576,173 @@ function CountryMultiSelect({
 }
 
 const SELECTION_MODE_LABELS: Record<"random" | "first_come" | "manual", string> = {
-  random: "Random",
+  random: "Random draw",
   first_come: "First come",
   manual: "I'll pick",
 };
+
+const SORA = "var(--font-home-sora), Sora, sans-serif";
+const MONO = "var(--font-home-mono), ui-monospace, monospace";
+const FIELD: CSSProperties = {
+  background: "#0E0E12",
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: 14,
+  outline: "none",
+  color: "#F2EFE8",
+  fontSize: 15,
+  padding: "13px 14px",
+  minWidth: 0,
+  width: "100%",
+  fontWeight: 600,
+};
+const CARD: CSSProperties = {
+  padding: 22,
+  borderRadius: 24,
+  background: "#141419",
+  border: "1px solid rgba(255,255,255,0.07)",
+  display: "flex",
+  flexDirection: "column",
+  gap: 16,
+};
+
+function usd(n: number) {
+  if (!Number.isFinite(n)) return "$0.00";
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function taskPreviewLabel(row: TaskRow): string {
+  if (row.category === "custom") return (row.title ?? "").trim() || "Custom task";
+  if (row.category === "x_follow") {
+    const handle = row.target.trim().replace(/^@/, "");
+    return handle ? `Follow @${handle} on X` : "Follow on X";
+  }
+  if (row.category === "x_post") return (row.requiredText ?? "").trim() ? "Post the required text on X" : "Post on X";
+  if (row.category === "engage") {
+    const bits = [
+      row.engage.like && "like",
+      row.engage.retweet && "repost",
+      row.engage.comment && "comment",
+      row.engage.bookmark && "bookmark",
+    ].filter(Boolean) as string[];
+    if (!bits.length) return "Engage with a post";
+    const phrase = bits.join(", ").replace(/, ([^,]*)$/, " and $1");
+    return `${phrase[0].toUpperCase()}${phrase.slice(1)} the post`;
+  }
+  return CATEGORY_LABELS[row.category];
+}
+
+function TokenLogo({ mint, size = 28 }: { mint: string; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return <img src="/images/sol.png" alt="" width={size} height={size} style={{ width: size, height: size, objectFit: "contain" }} />;
+  }
+  return (
+    <img
+      src={`/api/giveaways/token-icon?mint=${encodeURIComponent(mint)}`}
+      alt=""
+      width={size}
+      height={size}
+      onError={() => setFailed(true)}
+      style={{ width: size, height: size, borderRadius: 999, objectFit: "cover", background: "#1A1A22" }}
+    />
+  );
+}
+
+function Fold({
+  title,
+  hint,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  hint: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div style={open ? CARD : { borderRadius: 24, background: "#141419", border: "1px solid rgba(255,255,255,0.07)" }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{ cursor: "pointer", width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: open ? 0 : "18px 22px", background: "transparent", border: 0, color: "#F2EFE8", textAlign: "left" }}
+      >
+        <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+          <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 18 }}>{title}</span>
+          {!open && <span style={{ fontSize: 13, fontWeight: 500, color: "#77757F" }}>{hint}</span>}
+        </span>
+        <ChevronDown size={18} color="#FF7A2A" style={{ flex: "none", transform: open ? "rotate(180deg)" : undefined, transition: "transform 160ms ease" }} />
+      </button>
+      {open ? children : null}
+    </div>
+  );
+}
+
+function XMark() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff" aria-hidden>
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
+  );
+}
+
+function TaskGlyph({ category, size = 16 }: { category: TaskCategory; size?: number }) {
+  if (category === "telegram_join") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="#fff" aria-hidden>
+        <path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z" />
+      </svg>
+    );
+  }
+  if (category === "discord_join") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="#fff" aria-hidden>
+        <path d="M20.3 4.4a19.8 19.8 0 0 0-4.9-1.5.1.1 0 0 0-.1 0c-.2.4-.4.9-.6 1.3a18.3 18.3 0 0 0-5.5 0 12.6 12.6 0 0 0-.6-1.3.1.1 0 0 0-.1 0A19.7 19.7 0 0 0 3.7 4.4a.1.1 0 0 0 0 0C.5 9-.3 13.6.1 18.1a.1.1 0 0 0 0 .1 19.9 19.9 0 0 0 6 3 .1.1 0 0 0 .1 0c.5-.6.9-1.3 1.2-2a.1.1 0 0 0 0-.1 13 13 0 0 1-1.9-.9.1.1 0 0 1 0-.1l.4-.3a.1.1 0 0 1 .1 0c3.9 1.8 8.2 1.8 12 0a.1.1 0 0 1 .1 0l.4.3a.1.1 0 0 1 0 .1 12.3 12.3 0 0 1-1.9.9.1.1 0 0 0 0 .1c.4.7.8 1.4 1.2 2a.1.1 0 0 0 .1 0 19.8 19.8 0 0 0 6-3 .1.1 0 0 0 0-.1c.5-5.2-.8-9.7-3.5-13.7a.1.1 0 0 0 0 0zM8 15.3c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.5 8 10.5s2.2 1.1 2.2 2.4c0 1.3-1 2.4-2.2 2.4zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4c0 1.3-1 2.4-2.2 2.4z" />
+      </svg>
+    );
+  }
+  if (category === "custom") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" aria-hidden>
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+    );
+  }
+  return <XMark />;
+}
+
+function taskTile(category: TaskCategory) {
+  if (category === "telegram_join") return "#229ED9";
+  if (category === "discord_join") return "#5865F2";
+  if (category === "custom") return "#FF5A1A";
+  return "#000";
+}
+
+const ADD_TASKS: Array<{ category: TaskCategory; label: string }> = [
+  { category: "x_follow", label: "Follow on X" },
+  { category: "engage", label: "Engage with a post" },
+  { category: "x_post", label: "Post on X" },
+  { category: "telegram_join", label: "Join Telegram" },
+  { category: "discord_join", label: "Join Discord" },
+  { category: "custom", label: "Custom task" },
+];
 
 /** Whole-wizard draft, persisted to localStorage so a reload (or an accidental tab close)
  *  doesn't lose progress. Modeled as a single TanStack Query cache entry rather than a pile of
  *  useState — hydrated once from storage (or, in edit mode with nothing cached yet, from the
  *  backend) via queryFn, every update goes through updateDraft() below which patches the cache
  *  AND writes through to storage in the same call. */
+interface PrizeToken {
+  mint: string;
+  symbol: string;
+  name: string;
+  logo: string | null;
+  decimals: number;
+  usdPrice: number | null;
+}
+
 interface GiveawayDraft {
   step: number;
   title: string;
@@ -598,7 +752,8 @@ interface GiveawayDraft {
   totalPool: number;
   winnerCount: number;
   selectionMode: "random" | "first_come" | "manual";
-  rewardType: "usdc" | "megapot_ticket";
+  rewardType: "usdc" | "megapot_ticket" | "token";
+  prizeToken: PrizeToken | null;
   entriesCloseAt: string;
   minFollowers: string;
   minAccountAgeDays: string;
@@ -620,6 +775,7 @@ function defaultDraft(): GiveawayDraft {
     winnerCount: 10,
     selectionMode: "random",
     rewardType: "usdc",
+    prizeToken: null,
     entriesCloseAt: "",
     minFollowers: "",
     minAccountAgeDays: "",
@@ -641,6 +797,11 @@ interface RemoteGiveaway {
   selection_mode: "random" | "first_come" | "manual";
   prize_amount_usd: string;
   reward_type?: "usdc" | "megapot_ticket";
+  prize_mint?: string | null;
+  prize_token_symbol?: string | null;
+  prize_token_name?: string | null;
+  prize_token_logo?: string | null;
+  prize_token_decimals?: number | null;
   entries_close_at: string;
   eligibility: {
     min_followers?: number;
@@ -665,7 +826,17 @@ function draftFromRemote(g: RemoteGiveaway): GiveawayDraft {
     totalPool: Math.max(MIN_TOTAL_POOL, Math.round(prizeAmount * g.winner_count)),
     winnerCount: g.winner_count,
     selectionMode: g.selection_mode,
-    rewardType: g.reward_type ?? "usdc",
+    rewardType: g.prize_mint ? "token" : (g.reward_type ?? "usdc"),
+    prizeToken: g.prize_mint
+      ? {
+          mint: g.prize_mint,
+          symbol: g.prize_token_symbol || "Token",
+          name: g.prize_token_name || "Solana token",
+          logo: g.prize_token_logo ?? null,
+          decimals: g.prize_token_decimals ?? 0,
+          usdPrice: null,
+        }
+      : null,
     entriesCloseAt: g.entries_close_at ? toLocalInputValue(new Date(g.entries_close_at)) : "",
     minFollowers: g.eligibility?.min_followers != null ? String(g.eligibility.min_followers) : "",
     minAccountAgeDays: g.eligibility?.min_account_age_days != null ? String(g.eligibility.min_account_age_days) : "",
@@ -765,7 +936,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     gcTime: Infinity,
     retry: false,
   });
-  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, requiredCountries, requiredContinents, excludedCountries, tasks } = draft;
+  const { step, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, prizeToken, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, requiredCountries, requiredContinents, excludedCountries, tasks } = draft;
   const prizeAmount = winnerCount > 0 ? totalPool / winnerCount : 0;
   const validWinnerCounts = useMemo(() => divisorsUpTo(totalPool, MAX_WINNERS), [totalPool]);
 
@@ -915,7 +1086,8 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   // Megapot tickets are $1 each and lottery_gifts caps a single gift at 100 tickets — prizeAmount
   // is already always a whole number here (winnerCount is snapped to a divisor of totalPool).
   const step2Valid = prizeAmount > 0 && winnerCount > 0 && totalPool >= effectiveMinPool
-    && (rewardType !== "megapot_ticket" || prizeAmount <= 100);
+    && (rewardType !== "megapot_ticket" || prizeAmount <= 100)
+    && (rewardType !== "token" || Boolean(prizeToken?.mint));
   const step3Valid = tasks.every(rowIsValid);
   const step4Valid = Boolean(entriesCloseAt);
 
@@ -953,16 +1125,94 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   // TaskRow -> the small icon+label the live preview shows per task. "engage" rows collapse the
   // individually-checked actions (retweet/like/...) back into the one category label, matching
   // how a creator picked it, rather than exploding into several preview rows.
-  const previewTasks: PreviewTask[] = useMemo(
-    () =>
-      tasks
-        .filter(rowIsValid)
-        .map((row) => ({
-          icon: CATEGORY_ICONS[row.category],
-          label: row.category === "custom" ? (row.title ?? "").trim() || "Custom task" : CATEGORY_LABELS[row.category],
-        })),
+  const previewTasks = useMemo(
+    () => tasks.filter(rowIsValid).map((row) => ({ category: row.category, label: taskPreviewLabel(row) })),
     [tasks],
   );
+
+  const [prizeOpen, setPrizeOpen] = useState(true);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [closePreset, setClosePreset] = useState<"24h" | "3d" | "1w" | "2w" | "custom">("1w");
+  const closeInit = useRef(false);
+  useEffect(() => {
+    if (closeInit.current || draftLoading) return;
+    closeInit.current = true;
+    if (!draft.entriesCloseAt) {
+      setClosePreset("1w");
+      setEntriesCloseAt(toLocalInputValue(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)));
+    } else {
+      setClosePreset("custom");
+    }
+  }, [draft.entriesCloseAt, draftLoading, setEntriesCloseAt]);
+
+  const applyClosePreset = useCallback((preset: "24h" | "3d" | "1w" | "2w" | "custom") => {
+    setClosePreset(preset);
+    if (preset === "custom") {
+      if (!entriesCloseAt) setEntriesCloseAt(toLocalInputValue(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)));
+      return;
+    }
+    const days = preset === "24h" ? 1 : preset === "3d" ? 3 : preset === "2w" ? 14 : 7;
+    setEntriesCloseAt(toLocalInputValue(new Date(Date.now() + days * 24 * 60 * 60 * 1000)));
+  }, [entriesCloseAt, setEntriesCloseAt]);
+
+  const pickReward = useCallback((next: GiveawayDraft["rewardType"]) => {
+    if (next === "megapot_ticket") {
+      const per = Math.max(1, Math.min(100, Math.round(prizeAmount) || 10));
+      updateDraft({ rewardType: next, winnerCount, totalPool: per * winnerCount, prizeToken: null });
+      return;
+    }
+    if (next === "usdc") {
+      updateDraft({ rewardType: next, prizeToken: null });
+      return;
+    }
+    updateDraft({ rewardType: next });
+  }, [prizeAmount, updateDraft, winnerCount]);
+
+  const bumpWinners = useCallback((dir: 1 | -1) => {
+    if (rewardType === "token") {
+      updateDraft({ winnerCount: Math.min(MAX_WINNERS, Math.max(1, winnerCount + dir)) });
+      return;
+    }
+    if (rewardType === "megapot_ticket") {
+      const next = Math.min(MAX_WINNERS, Math.max(1, winnerCount + dir));
+      const per = Math.max(1, Math.min(100, Math.round(prizeAmount) || 1));
+      updateDraft({ winnerCount: next, totalPool: per * next });
+      return;
+    }
+    const valid = divisorsUpTo(totalPool, MAX_WINNERS);
+    const idx = Math.max(0, valid.indexOf(winnerCount));
+    setWinnerCount(valid[Math.min(valid.length - 1, Math.max(0, idx + dir))] ?? valid[0]);
+  }, [prizeAmount, rewardType, setWinnerCount, totalPool, updateDraft, winnerCount]);
+
+  const [tokenQuery, setTokenQuery] = useState("");
+  const [tokenHits, setTokenHits] = useState<PrizeToken[]>([]);
+  const [tokenSearching, setTokenSearching] = useState(false);
+  useEffect(() => {
+    if (rewardType !== "token") return;
+    const q = tokenQuery.trim();
+    if (q.length < 2) {
+      setTokenHits([]);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      setTokenSearching(true);
+      fetch(`${BACKEND_URL}/giveaways/public/tokens?q=${encodeURIComponent(q)}`)
+        .then((r) => r.json())
+        .then((body: { tokens?: PrizeToken[] }) => setTokenHits(Array.isArray(body.tokens) ? body.tokens : []))
+        .catch(() => setTokenHits([]))
+        .finally(() => setTokenSearching(false));
+    }, 280);
+    return () => window.clearTimeout(handle);
+  }, [rewardType, tokenQuery]);
+
+  const addTaskOf = useCallback((category: TaskCategory) => {
+    updateDraft((prev) => (prev.tasks.length >= MAX_TASKS ? prev : { tasks: [...prev.tasks, newRow(category)] }));
+  }, [updateDraft]);
+
+  const platformFee = mode === "create" && createAsAdmin ? 0 : (totalPool > 0 ? Math.max(5, Math.round(totalPool * 10) / 100) : 0);
+  const ticketsEach = Math.max(0, Math.round(prizeAmount) || 0);
 
   const goNext = useCallback(() => {
     if (step === 1 && !step1Valid) {
@@ -1010,7 +1260,8 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
           winner_count: winnerCount,
           selection_mode: selectionMode,
           prize_amount_usd: prizeAmount,
-          reward_type: rewardType,
+          reward_type: rewardType === "token" ? "usdc" : rewardType,
+          prize_mint: rewardType === "token" ? prizeToken?.mint ?? null : null,
           entries_close_at: new Date(entriesCloseAt).toISOString(),
           eligibility: {
             ...(minFollowers ? { min_followers: Number(minFollowers) } : {}),
@@ -1043,565 +1294,572 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
       // cached pre-creation snapshot straight from cache on navigation — the new giveaway looks
       // missing until an unrelated refetch happens to fire or the page is manually reloaded.
       queryClient.invalidateQueries({ queryKey: ["giveaways-mine"] });
-      const redirectTo = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways/mine";
+      const redirectTo = mode === "edit" && giveawayId ? `/app/rewards/giveaways/${giveawayId}` : "/app/rewards/giveaways/mine";
       setTimeout(() => router.push(redirectTo), 1800);
     } catch (err: any) {
       toast({ variant: "destructive", title: mode === "edit" ? "Failed to save changes" : "Failed to submit giveaway", description: err.message });
     } finally {
       setSubmitting(false);
     }
-  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, requiredCountries, requiredContinents, excludedCountries, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft, queryClient]);
+  }, [mode, giveawayId, notifyEmail, title, description, projectName, logoUrl, totalPool, winnerCount, selectionMode, rewardType, prizeToken, prizeAmount, entriesCloseAt, minFollowers, minAccountAgeDays, verifiedOnly, requiredCountries, requiredContinents, excludedCountries, tasks, createAsAdmin, getAccessToken, router, toast, clearDraft, queryClient]);
 
-  const backHref = mode === "edit" && giveawayId ? `/rewards/giveaways/${giveawayId}` : "/rewards/giveaways";
+  const trySubmit = useCallback(() => {
+    if (!title.trim()) {
+      toast({ variant: "destructive", title: "Add a title first" });
+      return;
+    }
+    if (rewardType === "token" && !prizeToken?.mint) {
+      toast({ variant: "destructive", title: "Choose a token", description: "Search by name, or paste its mint address." });
+      return;
+    }
+    if (!step2Valid) {
+      toast({
+        variant: "destructive",
+        title: rewardType === "megapot_ticket" && prizeAmount > 100
+          ? "Ticket prizes are capped at 100 per winner"
+          : `Total prize pool must be at least $${effectiveMinPool}`,
+      });
+      return;
+    }
+    if (!step3Valid) {
+      toast({ variant: "destructive", title: "Every task needs a target, and engage tasks need at least one action" });
+      return;
+    }
+    if (!entriesCloseAt || new Date(entriesCloseAt).getTime() <= Date.now()) {
+      toast({ variant: "destructive", title: "Set a close time in the future" });
+      return;
+    }
+    handleSubmit();
+  }, [effectiveMinPool, entriesCloseAt, handleSubmit, prizeAmount, prizeToken, rewardType, step2Valid, step3Valid, title, toast]);
+
+
+  const backHref = mode === "edit" && giveawayId ? `/app/rewards/giveaways/${giveawayId}` : "/app/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
-  // The live-preview column only makes sense once there's a form on screen to preview — narrower
-  // single-column width for the sign-in gate, loading/error states, and the post-submit screen.
-  const showPreviewColumn = authenticated && !(mode === "edit" && (draftLoading || draftError)) && !submitted;
+  const showForm = authenticated && !(mode === "edit" && (draftLoading || draftError)) && !submitted;
+  const isTickets = rewardType === "megapot_ticket";
+  const closeWhen = (() => {
+    if (!entriesCloseAt) return "—";
+    const d = new Date(entriesCloseAt);
+    if (isNaN(d.getTime())) return "—";
+    return `${d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} at ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
+  })();
+  const remain = (() => {
+    if (!entriesCloseAt) return "—";
+    const diff = new Date(entriesCloseAt).getTime() - Date.now();
+    if (isNaN(diff)) return "—";
+    if (diff <= 0) return "closed";
+    const days = Math.floor(diff / 86_400_000);
+    const hours = Math.floor((diff % 86_400_000) / 3_600_000);
+    return `${days}d ${hours}h`;
+  })();
+  const closeDatePart = entriesCloseAt?.slice(0, 10) ?? "";
+  const closeTimePart = entriesCloseAt && entriesCloseAt.length >= 16 ? entriesCloseAt.slice(11, 16) : "18:00";
+  const todayStr = toLocalInputValue(new Date()).slice(0, 10);
+  const prizeChips = [
+    isTickets ? `${ticketsEach} each` : `${usd(prizeAmount).replace(/\.00$/, "")} each`,
+    `${winnerCount} winner${winnerCount === 1 ? "" : "s"}`,
+    SELECTION_MODE_LABELS[selectionMode],
+  ];
+  const ready = Boolean(title.trim()) && step2Valid && step3Valid && Boolean(entriesCloseAt);
 
   return (
     <>
-      <div className="bg-[#0a0a0c]">
-        <div className={`mx-auto px-4 pt-4 pb-2 ${showPreviewColumn ? "max-w-[1200px]" : "max-w-lg"}`}>
-          <Link href={backHref} className="inline-flex items-center gap-1.5 text-base text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={16} />
-            <span>{backLabel}</span>
+      <div className={`loofta-app ${sora.variable} ${manrope.variable} ${jetbrainsMono.variable}`} style={{ fontFamily: "var(--font-home-manrope), Manrope, sans-serif", color: "#F2EFE8", minHeight: "calc(100vh - var(--header-h, 0px))" }}>
+        <div style={{ maxWidth: showForm ? 1180 : 760, margin: "0 auto", padding: "clamp(20px, 4vw, 36px) clamp(16px, 4vw, 28px) 96px", display: "flex", flexDirection: "column", gap: 18 }}>
+          <Link href={backHref} style={{ fontWeight: 700, fontSize: 14, color: "#C9C6CF", width: "fit-content" }}>
+            ← {backLabel}
           </Link>
-        </div>
-      </div>
 
-      <div className="relative min-h-[calc(100vh-var(--header-h,0px))] overflow-x-hidden bg-[#0a0a0c] text-white">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute left-1/2 top-[-300px] h-[500px] w-[900px] -translate-x-1/2 rounded-full opacity-[0.12] blur-[140px]"
-          style={{ background: "radial-gradient(ellipse, #FF1301, transparent 65%)" }}
-        />
-        <div className={`relative mx-auto px-4 py-6 pb-24 ${showPreviewColumn ? "max-w-[1200px]" : "max-w-lg"}`}>
           {!authenticated ? (
-            <div className="rounded-2xl border border-white/15 bg-white/[0.06] shadow-2xl p-8 text-center">
-              <p className="text-base text-slate-300 mb-4">Sign in to {mode === "edit" ? "edit this giveaway" : "launch a giveaway"}.</p>
-              <GradientActionButton onClick={() => login({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })}>
-                <span className="text-base">Sign in</span>
-              </GradientActionButton>
+            <div style={{ ...CARD, alignItems: "center", textAlign: "center", padding: "44px 28px" }}>
+              <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 28, letterSpacing: "-0.04em" }}>Sign in to launch a giveaway</span>
+              <span style={{ fontSize: 15, color: "#9A98A3", maxWidth: 420 }}>Set the prize, logo, and description. We review it, then you fund the prize.</span>
+              <button type="button" onClick={() => login({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })} style={{ cursor: "pointer", marginTop: 8, padding: "15px 26px", borderRadius: 16, border: 0, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: 600, fontSize: 16 }}>
+                Sign in
+              </button>
             </div>
           ) : mode === "edit" && draftLoading ? (
-            <div className="rounded-2xl border border-white/15 bg-white/[0.06] shadow-2xl p-8 animate-pulse">
-              <div className="h-24 rounded-xl bg-white/5" />
-            </div>
+            <div style={{ ...CARD, minHeight: 160 }} />
           ) : mode === "edit" && draftError ? (
-            <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 text-center">
-              <p className="text-red-400 text-base">{(draftError as Error).message}</p>
-              <Link href={backHref} className="mt-3 inline-block text-base text-slate-400 hover:text-white underline">
-                Back to giveaway
-              </Link>
+            <div style={{ ...CARD, alignItems: "center", textAlign: "center" }}>
+              <span style={{ color: "#F87171", fontSize: 16 }}>{(draftError as Error).message}</span>
+              <Link href={backHref} style={{ fontWeight: 700, color: "#FF7A2A" }}>Back to giveaway</Link>
+            </div>
+          ) : submitted ? (
+            <div style={{ maxWidth: 560, margin: "0 auto", padding: "44px 28px 28px", borderRadius: 30, background: "#141419", border: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", alignItems: "center", gap: 14, textAlign: "center" }}>
+              <div style={{ width: 100, height: 100, borderRadius: 32, transform: "rotate(-6deg)", background: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.55),0 8px 0 #8E5202,0 28px 56px rgba(245,150,12,0.35)", display: "grid", placeItems: "center", marginBottom: 8 }}>
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6A3500" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="m5 12 5 5 9-10" />
+                </svg>
+              </div>
+              <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 30, letterSpacing: "-0.04em" }}>
+                {mode === "edit" ? "Changes saved" : "Submitted for approval"}
+              </span>
+              <span style={{ fontSize: 15, lineHeight: 1.5, color: "#9A98A3", maxWidth: 400 }}>
+                {mode === "edit" ? "Taking you back to your giveaway." : "We usually review in about 2 hours. We'll email you when it's approved and ready to fund."}
+              </span>
             </div>
           ) : (
-            <div className={showPreviewColumn ? "grid grid-cols-1 lg:grid-cols-[1.15fr_.85fr] gap-8 lg:gap-12 items-start" : ""}>
-            <div className="rounded-3xl border border-white/10 bg-white/[0.05] shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)] p-6">
-              {submitted ? (
-                <div className="py-10 text-center">
-                  <motion.div
-                    initial={{ scale: 0.5, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ type: "spring", stiffness: 260, damping: 18 }}
-                    className="mb-4 flex justify-center"
-                  >
-                    <Image src="/images/icons/giveaway-prize-icon.svg" alt="" width={72} height={72} />
-                  </motion.div>
-                  <motion.p
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.15 }}
-                    className="text-2xl font-medium text-white"
-                  >
-                    {mode === "edit" ? "Changes saved!" : "Submitted for approval!"}
-                  </motion.p>
-                  <p className="text-base text-slate-400 mt-2">
-                    {mode === "edit" ? "Taking you back to your giveaway…" : "Taking you to My Giveaways…"}
-                  </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,380px),1fr))", gap: 24, alignItems: "start" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 4 }}>
+                  <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: "clamp(28px,4vw,36px)", letterSpacing: "-0.05em", lineHeight: 1.05 }}>
+                    {mode === "edit" ? "Edit giveaway" : "Launch a giveaway"}
+                  </span>
+                  <span style={{ fontSize: 15, color: "#9A98A3" }}>Start with the prize, logo, and description. Open the other sections when you need them.</span>
                 </div>
-              ) : (
-                <>
-                  <StepDots step={step} justCompleted={justCompletedStep} />
-                  <h1 className="font-display text-[32px] font-medium tracking-[-0.025em] text-white mb-2 flex items-center gap-3">
-                    {stepMeta[step - 1].icon && (
-                      <Image src={stepMeta[step - 1].icon!} alt="" width={30} height={30} className="shrink-0" />
-                    )}
-                    {stepMeta[step - 1].title}
-                  </h1>
-                  <p className="font-grotesk text-[15px] text-slate-400 mb-7">{stepMeta[step - 1].subtitle}</p>
 
-                  <AnimatePresence mode="wait">
-                    <motion.div
-                      key={step}
-                      initial={{ opacity: 0, x: 12 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -12 }}
-                      transition={{ duration: 0.2 }}
-                      className="space-y-4"
-                    >
-                      {step === 1 && (
+                <Fold
+                  title="What are you giving?"
+                  hint={`${title.trim() || "Add a title"} · ${isTickets ? `${ticketsEach * winnerCount} tickets` : usd(totalPool)} · ${rewardType === "token" ? (prizeToken?.symbol ?? "Any token") : isTickets ? "Lucky Prize" : "USDC"}`}
+                  open={prizeOpen}
+                  onToggle={() => setPrizeOpen((v) => !v)}
+                >
+                  <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Giveaway title, e.g. October community drop" style={FIELD} />
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8 }}>
+                    {([
+                      { key: "usdc" as const, label: "USDC", sub: "Cash prize", tile: "radial-gradient(120% 120% at 28% 18%,#9CC8FF 0%,#2775CA 48%,#1A55A0 100%)", rim: "#123E78", ink: "#fff" },
+                      { key: "token" as const, label: "Any token", sub: "Search or mint", tile: "#111318", rim: "#2A2A32", ink: "#fff" },
+                      { key: "megapot_ticket" as const, label: "Lucky Prize", sub: "$1.1M+ daily", tile: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", rim: "#8E5202", ink: "#6A3500" },
+                    ]).map((p) => {
+                      const on = rewardType === p.key;
+                      return (
+                        <button key={p.key} type="button" onClick={() => pickReward(p.key)} style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "14px 8px", borderRadius: 18, background: on ? "rgba(255,90,26,0.1)" : "#0E0E12", border: `1.5px solid ${on ? "rgba(255,122,42,0.75)" : "rgba(255,255,255,0.07)"}`, textAlign: "center", color: "#F2EFE8" }}>
+                          <span style={{ width: 40, height: 40, borderRadius: 13, display: "grid", placeItems: "center", overflow: "hidden", fontFamily: SORA, fontWeight: 800, fontSize: 17, color: p.ink, background: p.tile, boxShadow: p.key === "token" ? "none" : `inset 0 2px 4px rgba(255,255,255,0.5),0 3px 0 ${p.rim}` }}>
+                            {p.key === "usdc" ? "$" : p.key === "token" ? (
+                              <img src="/images/sol.png" alt="" width={28} height={28} style={{ width: 28, height: 28, objectFit: "contain" }} />
+                            ) : (
+                              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6A3500" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                <path d="M3 8.5V6.5a1.5 1.5 0 0 1 1.5-1.5h15A1.5 1.5 0 0 1 21 6.5v2a2.5 2.5 0 0 0 0 5v2a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 15.5v-2a2.5 2.5 0 0 0 0-5z" />
+                                <path d="M14 5v12" strokeDasharray="2 2.4" />
+                              </svg>
+                            )}
+                          </span>
+                          <span style={{ fontWeight: 700, fontSize: 14 }}>{p.label}</span>
+                          {p.key === "megapot_ticket" && on ? (
+                            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", color: "#C9B27A" }}>Megapot</span>
+                          ) : (
+                            <span style={{ fontSize: 13, color: "#8A8893" }}>{p.sub}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {rewardType === "token" && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {prizeToken ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 14, background: "#0E0E12", border: "1px solid rgba(255,255,255,0.08)" }}>
+                          <TokenLogo mint={prizeToken.mint} />
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ display: "block", fontWeight: 700 }}>{prizeToken.symbol}</span>
+                            <span style={{ display: "block", fontSize: 12, color: "#8A8893", overflow: "hidden", textOverflow: "ellipsis" }}>{prizeToken.name}</span>
+                          </span>
+                          <button type="button" onClick={() => updateDraft({ prizeToken: null })} style={{ cursor: "pointer", background: "transparent", border: 0, color: "#C9C6CF", fontWeight: 700 }}>Change</button>
+                        </div>
+                      ) : (
                         <>
-                          {isAdmin && mode === "create" && (
+                          <input
+                            value={tokenQuery}
+                            onChange={(e) => setTokenQuery(e.target.value)}
+                            placeholder="Search BONK, JUP… or paste a mint address"
+                            style={FIELD}
+                          />
+                          {tokenSearching && <span style={{ fontSize: 13, color: "#8A8893" }}>Searching…</span>}
+                          {tokenHits.map((hit) => (
+                            <button
+                              key={hit.mint}
+                              type="button"
+                              onClick={() => { updateDraft({ prizeToken: hit }); setTokenQuery(""); }}
+                              style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 14, background: "#0E0E12", border: "1px solid rgba(255,255,255,0.08)", color: "#F2EFE8", textAlign: "left" }}
+                            >
+                              <TokenLogo mint={hit.mint} />
+                              <span style={{ fontWeight: 700 }}>{hit.symbol}</span>
+                              <span style={{ fontSize: 13, color: "#8A8893" }}>{hit.name}</span>
+                            </button>
+                          ))}
+                          {!tokenSearching && tokenQuery.trim().length >= 32 && tokenHits.length === 0 && (
                             <button
                               type="button"
-                              onClick={() => setCreateAsAdmin((v) => !v)}
-                              className={`w-full flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
-                                createAsAdmin ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/[0.03]"
-                              }`}
+                              onClick={() => { updateDraft({ prizeToken: { mint: tokenQuery.trim(), symbol: `${tokenQuery.trim().slice(0, 4)}…${tokenQuery.trim().slice(-4)}`, name: "Custom mint", logo: null, decimals: 0, usdPrice: null } }); setTokenQuery(""); }}
+                              style={{ cursor: "pointer", padding: "10px 12px", borderRadius: 14, background: "#0E0E12", border: "1px solid rgba(255,122,42,0.45)", color: "#F2EFE8", textAlign: "left", fontWeight: 700 }}
                             >
-                              <span className="flex items-center gap-2 text-left">
-                                <Image src="/loofta_icon_magic.png" alt="" width={20} height={20} className="rounded-full shrink-0" />
-                                <span className={`text-base font-medium ${createAsAdmin ? "text-white" : "text-slate-300"}`}>
-                                  Create as Loofta (admin)
-                                  <span className="block text-sm font-normal text-slate-500">
-                                    Auto-approved, pinned to the top, prize pool as low as ${ADMIN_MIN_TOTAL_POOL} for testing
-                                  </span>
-                                </span>
-                              </span>
-                              <span className={`shrink-0 w-10 h-6 rounded-full border transition-colors relative ${
-                                createAsAdmin ? "bg-[#FF7A2A] border-[#FF7A2A]" : "bg-white/10 border-white/15"
-                              }`}>
-                                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${createAsAdmin ? "left-[18px]" : "left-0.5"}`} />
-                              </span>
+                              Use this mint address
                             </button>
                           )}
-                          <div>
-                            <Label className={labelClass}>Title</Label>
-                            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Launch Week Giveaway" className={inputClass} />
-                          </div>
-                          <div>
-                            <FieldLabel optional>Description</FieldLabel>
-                            <RichTextEditor value={description} onChange={setDescription} rows={6}
-                              maxLength={2000} placeholder="What is this giveaway for?" />
-                          </div>
-                          <div>
-                            <FieldLabel optional>Project name</FieldLabel>
-                            <Input value={projectName} onChange={(e) => setProjectName(e.target.value)} placeholder="Your project or brand name" className={inputClass} />
-                          </div>
-                          <div>
-                            <FieldLabel optional>Project logo</FieldLabel>
-                            <label
-                              className={`flex items-center gap-3.5 rounded-xl px-4 py-3.5 cursor-pointer transition-colors ${
-                                logoUrl ? "border border-emerald-400/35 bg-emerald-400/[0.06]" : "border border-dashed border-white/20 bg-white/[0.03] hover:bg-white/[0.06]"
-                              } ${uploadingLogo ? "opacity-60 pointer-events-none" : ""}`}
-                            >
-                              {logoUrl ? (
-                                <Image src={logoUrl} alt="" width={44} height={44} className="rounded-lg object-cover border border-white/10 shrink-0" />
-                              ) : (
-                                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-white/[0.06] shrink-0">
-                                  <ImagePlus className="w-5 h-5 text-slate-400" />
-                                </div>
-                              )}
-                              <div className={`text-base ${logoUrl ? "text-emerald-400" : "text-slate-400"}`}>
-                                {uploadingLogo ? "Uploading…" : logoUrl ? "Logo added — click to change" : "Upload your logo"}
-                                <span className="block text-sm text-slate-500 mt-0.5">Square works best — you&apos;ll get to crop it next</span>
-                              </div>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                disabled={uploadingLogo}
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) setPendingLogoFile(file);
-                                  e.target.value = "";
-                                }}
-                              />
-                            </label>
-                            <p className="text-sm text-slate-500 mt-1">
-                              Shown as a badge next to your project name on the giveaway page, alongside the Loofta badge.
-                            </p>
-                          </div>
-                        </>
-                      )}
-
-                      {step === 2 && (
-                        <>
-                          <div>
-                            <Label className={labelClass}>Prize type</Label>
-                            <div className="flex gap-2">
-                              {(["usdc", "megapot_ticket"] as const).map((rt) => (
-                                <button
-                                  key={rt}
-                                  type="button"
-                                  onClick={() => setRewardType(rt)}
-                                  className={`flex-1 rounded-xl px-3 py-3 text-base font-medium border transition-all ${
-                                    rewardType === rt ? "border-[#FF7A2A] text-white" : "border-white/15 text-slate-300 hover:bg-white/[0.06]"
-                                  }`}
-                                >
-                                  {rt === "usdc" ? "USDC" : "Megapot tickets"}
-                                </button>
-                              ))}
-                            </div>
-                            <p className="text-sm text-slate-500 mt-1.5">
-                              {rewardType === "usdc"
-                                ? "Winners get a normal USDC claim link."
-                                : "Winners get that many dollars' worth of Megapot tickets, gifted automatically at payout — capped at $100 (100 tickets) per winner."}
-                            </p>
-                          </div>
-
-                          <div>
-                            <Label className={labelClass}>Total prize pool</Label>
-                            <RangeSlider min={effectiveMinPool} max={MAX_TOTAL_POOL} step={10} value={totalPool} onChange={setTotalPool} onCommit={commitTotalPool} />
-                            <div className="relative mt-2">
-                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">$</span>
-                              <Input
-                                type="number"
-                                value={totalPoolInput}
-                                onChange={(e) => setTotalPoolInput(e.target.value)}
-                                onBlur={() => commitTotalPool(Number(totalPoolInput))}
-                                className={`${inputClass} pl-7`}
-                              />
-                            </div>
-                            {!createAsAdmin && (
-                              <p className="text-sm text-slate-500 mt-1.5">
-                                Plus a flat $5 platform fee to launch — you&apos;ll fund ${totalPool + 5} total.
-                              </p>
-                            )}
-                          </div>
-
-                          <div>
-                            <Label className={labelClass}>Number of winners</Label>
-                            <RangeSlider
-                              min={0}
-                              max={Math.max(0, validWinnerCounts.length - 1)}
-                              step={1}
-                              value={Math.max(0, validWinnerCounts.indexOf(winnerCount))}
-                              onChange={(idx) => setWinnerCount(validWinnerCounts[idx] ?? validWinnerCounts[0])}
-                            />
-                            <Input
-                              type="number"
-                              value={winnerCountInput}
-                              onChange={(e) => setWinnerCountInput(e.target.value)}
-                              onBlur={() => setWinnerCount(Number(winnerCountInput))}
-                              className={`${inputClass} mt-2`}
-                            />
-                            <p className="text-sm text-slate-500 mt-1.5">
-                              Only counts that split ${totalPool} evenly are selectable{validWinnerCounts.length <= 8 ? `: ${validWinnerCounts.join(", ")}` : ""}.
-                            </p>
-                          </div>
-
-                          <div className="rounded-xl border border-white/15 bg-white/[0.04] p-3 flex items-center justify-between">
-                            <span className={helperClass}>Prize per winner</span>
-                            <span className="text-xl font-medium text-white">
-                              ${prizeAmount}{rewardType === "megapot_ticket" ? ` = ${prizeAmount} ticket${prizeAmount === 1 ? "" : "s"}` : ""}
-                            </span>
-                          </div>
-                          {rewardType === "megapot_ticket" && prizeAmount > 100 && (
-                            <p className="text-sm text-red-400 -mt-3">
-                              Ticket prizes are capped at $100 per winner — lower the pool or add more winners.
-                            </p>
+                          {!tokenSearching && tokenQuery.trim().length > 1 && tokenQuery.trim().length < 32 && tokenHits.length === 0 && (
+                            <span style={{ fontSize: 13, color: "#8A8893" }}>No token found. Paste its mint address.</span>
                           )}
-
-                          <div>
-                            <Label className={labelClass}>Winner selection</Label>
-                            <div className="flex gap-2">
-                              {(["random", "first_come", "manual"] as const).map((mode2) => (
-                                <button
-                                  key={mode2}
-                                  type="button"
-                                  onClick={() => setSelectionMode(mode2)}
-                                  className={`flex-1 rounded-xl px-3 py-3 text-base font-medium border transition-all ${
-                                    selectionMode === mode2 ? "border-[#FF7A2A] text-white" : "border-white/15 text-slate-300 hover:bg-white/[0.06]"
-                                  }`}
-                                >
-                                  {SELECTION_MODE_LABELS[mode2]}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
                         </>
                       )}
-
-                      {step === 3 && (
-                        <>
-                          <p className={helperClass}>
-                            Pick from the task catalog below. X tasks are verified automatically — everything else is reviewed by you.
-                          </p>
-                          <div className="space-y-3">
-                            {tasks.map((task, idx) => (
-                              <div key={task.id} className="rounded-xl border border-white/15 bg-white/[0.04] p-4 space-y-3">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-base font-medium text-slate-300">Task {idx + 1}</span>
-                                  {tasks.length > 1 && (
-                                    <button type="button" onClick={() => removeTask(task.id)} className="text-slate-400 hover:text-white hover:bg-white/[0.08] rounded-lg p-1.5 transition-colors">
-                                      <X className="w-4 h-4" />
-                                    </button>
-                                  )}
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2">
-                                  {(Object.keys(CATEGORY_LABELS) as TaskCategory[]).map((cat) => (
-                                    <button
-                                      key={cat}
-                                      type="button"
-                                      onClick={() => setTaskCategory(task.id, cat)}
-                                      className={`rounded-xl px-3 py-2.5 text-base font-medium border transition-all ${
-                                        task.category === cat ? "border-[#FF7A2A] text-white" : "border-white/15 text-slate-300 hover:bg-white/[0.06]"
-                                      }`}
-                                    >
-                                      {CATEGORY_LABELS[cat]}
-                                    </button>
-                                  ))}
-                                </div>
-
-                                {task.category === "custom" ? (
-                                  <>
-                                    <Input
-                                      value={task.title}
-                                      onChange={(e) => setTaskTitle(task.id, e.target.value)}
-                                      placeholder="Task title — e.g. Join the stream, Join waitlist, Create an account"
-                                      className={inputClass}
-                                    />
-                                    <Input
-                                      value={task.target}
-                                      onChange={(e) => setTaskTarget(task.id, e.target.value)}
-                                      placeholder={CATEGORY_TARGET_LABELS.custom}
-                                      className={inputClass}
-                                    />
-                                  </>
-                                ) : task.category === "x_post" ? (
-                                  <>
-                                    <RequiredTextField
-                                      value={task.requiredText ?? ""}
-                                      onChange={(v) => setTaskRequiredText(task.id, v)}
-                                    />
-                                    <p className="text-sm text-slate-500">
-                                      Entrants get a one-click pre-filled post with this exact text — verified automatically against X.
-                                    </p>
-                                  </>
-                                ) : (
-                                  <Input
-                                    value={task.target}
-                                    onChange={(e) => setTaskTarget(task.id, e.target.value)}
-                                    placeholder={CATEGORY_TARGET_LABELS[task.category]}
-                                    className={inputClass}
-                                  />
-                                )}
-
-                                {SELF_REPORT_CATEGORIES.has(task.category) && (
-                                  <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleRequireProof(task.id)}
-                                      className={`w-full flex items-center justify-between gap-3 text-left text-base font-medium transition-colors ${
-                                        task.requireProof ? "text-white" : "text-slate-300"
-                                      }`}
-                                    >
-                                      <span>Require proof of completion</span>
-                                      <span
-                                        className={`shrink-0 w-10 h-6 rounded-full border transition-colors relative ${
-                                          task.requireProof ? "bg-[#FF7A2A] border-[#FF7A2A]" : "bg-white/10 border-white/15"
-                                        }`}
-                                      >
-                                        <span
-                                          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${task.requireProof ? "left-[18px]" : "left-0.5"}`}
-                                        />
-                                      </span>
-                                    </button>
-                                    <p className="text-sm text-slate-500 mt-1.5">Ask entrants to submit a screenshot or a link</p>
-                                  </div>
-                                )}
-
-                                {task.category === "engage" && (
-                                  <>
-                                    <div className="flex flex-wrap gap-2">
-                                      {ENGAGE_ACTIONS.map((action) => (
-                                        <button
-                                          key={action.key}
-                                          type="button"
-                                          onClick={() => toggleEngageAction(task.id, action.key)}
-                                          className={`rounded-full px-3.5 py-1.5 text-base font-medium border transition-all ${
-                                            task.engage[action.key] ? "border-[#FF7A2A] text-white" : "border-white/15 text-slate-400 hover:bg-white/[0.06]"
-                                          }`}
-                                        >
-                                          {action.label}
-                                        </button>
-                                      ))}
-                                    </div>
-                                    {task.engage.bookmark && (
-                                      <p className="text-sm text-slate-500">
-                                        Bookmark can&apos;t be auto-verified (X has no public API for it) — you&apos;ll review it manually.
-                                      </p>
-                                    )}
-                                    <Input
-                                      value={task.instructions}
-                                      onChange={(e) => setTaskInstructions(task.id, e.target.value)}
-                                      placeholder="Instructions (optional) — e.g. what the comment should mention"
-                                      className={inputClass}
-                                    />
-                                  </>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={addTask}
-                            disabled={tasks.length >= MAX_TASKS}
-                            className="inline-flex items-center gap-1.5 text-base font-medium border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all rounded-xl px-3 py-2 disabled:opacity-40"
-                          >
-                            <Plus className="w-4 h-4" /> Add another task
-                          </button>
-                        </>
-                      )}
-
-                      {step === 4 && (
-                        <>
-                          <div>
-                            <Label className={labelClass}>Entries close at</Label>
-                            <DateTimePicker value={entriesCloseAt} onChange={setEntriesCloseAt} />
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <FieldLabel optional>Min X followers</FieldLabel>
-                              <Input type="number" min="0" value={minFollowers} onChange={(e) => setMinFollowers(e.target.value)} className={inputClass} placeholder="e.g. 100" />
-                            </div>
-                            <div>
-                              <FieldLabel optional>Min X account age</FieldLabel>
-                              <Input type="number" min="0" value={minAccountAgeDays} onChange={(e) => setMinAccountAgeDays(e.target.value)} className={inputClass} placeholder="e.g. 30 days" />
-                            </div>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => setVerifiedOnly(!verifiedOnly)}
-                            className={`w-full flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
-                              verifiedOnly ? "border-[#FF7A2A]/40 bg-[#FF7A2A]/10" : "border-white/10 bg-white/[0.03]"
-                            }`}
-                          >
-                            <span className="text-left">
-                              <span className={`text-base font-medium ${verifiedOnly ? "text-white" : "text-slate-300"}`}>Require verified X account</span>
-                              <span className="block text-sm font-normal text-slate-500">Only entrants with X's verified badge can enter</span>
-                            </span>
-                            <span className={`shrink-0 w-10 h-6 rounded-full border transition-colors relative ${
-                              verifiedOnly ? "bg-[#FF7A2A] border-[#FF7A2A]" : "bg-white/10 border-white/15"
-                            }`}>
-                              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${verifiedOnly ? "left-[18px]" : "left-0.5"}`} />
-                            </span>
-                          </button>
-
-                          <div>
-                            <FieldLabel optional>Continents</FieldLabel>
-                            <div className="flex flex-wrap gap-2">
-                              {CONTINENTS.map((continent) => (
-                                <button
-                                  key={continent}
-                                  type="button"
-                                  onClick={() => toggleContinent(continent)}
-                                  className={`rounded-full px-3.5 py-1.5 text-base font-medium border transition-all ${
-                                    requiredContinents.includes(continent) ? "border-[#FF7A2A] text-white" : "border-white/15 text-slate-400 hover:bg-white/[0.06]"
-                                  }`}
-                                >
-                                  {continent}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div>
-                            <FieldLabel optional>Specific countries</FieldLabel>
-                            <CountryMultiSelect selected={requiredCountries} onAdd={addRequiredCountry} onRemove={removeRequiredCountry} />
-                            <p className="text-sm text-slate-500 mt-1.5">
-                              Entrants qualify if their X account&apos;s region matches either a selected continent or a selected country.
-                            </p>
-                          </div>
-
-                          <div>
-                            <FieldLabel optional>Exclude countries</FieldLabel>
-                            <CountryMultiSelect selected={excludedCountries} onAdd={addExcludedCountry} onRemove={removeExcludedCountry} />
-                            <p className="text-sm text-slate-500 mt-1.5">
-                              Entrants from these countries can&apos;t enter, even if they&apos;d otherwise qualify. Not shown to entrants — they just won&apos;t be able to enter.
-                            </p>
-                          </div>
-                        </>
-                      )}
-
-                      {step === 5 && (
-                        <>
-                          <div className="rounded-xl border border-white/15 bg-white/[0.04] p-5 space-y-1.5">
-                            <p className="text-2xl font-medium text-white truncate">{title}</p>
-                            <p className="text-base text-slate-300">
-                              ${totalPool} total · {rewardType === "megapot_ticket" ? `${prizeAmount} ticket${prizeAmount === 1 ? "" : "s"}` : `$${prizeAmount}`} × {winnerCount} winner{winnerCount === 1 ? "" : "s"} · {SELECTION_MODE_LABELS[selectionMode]}
-                            </p>
-                            <p className="text-base text-slate-500">
-                              Closes {entriesCloseAt ? new Date(entriesCloseAt).toLocaleDateString() : "—"} · {tasks.length} task{tasks.length === 1 ? "" : "s"}
-                            </p>
-                          </div>
-
-                          <div>
-                            <Label className={labelClass}>Email{mode === "create" ? " (required)" : ""}</Label>
-                            {notifyEmail ? (
-                              <div className="flex items-center gap-2 rounded-xl bg-white/[0.04] border border-white/10 px-3 py-2.5">
-                                <Mail className="w-4 h-4 text-slate-500 shrink-0" />
-                                <p className="text-base text-slate-400">We&apos;ll email {notifyEmail} about approval, funding, and payouts.</p>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => linkEmail()}
-                                className="w-full flex items-center gap-2 rounded-xl bg-[#FF7A2A]/10 border border-[#FF7A2A]/40 px-3 py-2.5 hover:bg-[#FF7A2A]/15 transition-colors text-left"
-                              >
-                                <Mail className="w-4 h-4 text-[#FF7A2A] shrink-0" />
-                                <p className="text-base font-medium text-white">
-                                  {mode === "create" ? "Add your email to submit — we need it to notify you" : "Add your email to be notified about updates"}
-                                </p>
-                              </button>
-                            )}
-                          </div>
-
-                          <p className={helperClass}>
-                            Loofta reviews every giveaway before it opens for entries. Once approved, budget or task changes go through support —
-                            there&apos;s no self-service edit after this.
-                          </p>
-                        </>
-                      )}
-                    </motion.div>
-                  </AnimatePresence>
-
-                  <div className="mt-6 space-y-3">
-                    {step < TOTAL_STEPS ? (
-                      <GradientActionButton onClick={goNext}>
-                        <span className="text-base">Continue</span>
-                      </GradientActionButton>
-                    ) : (
-                      <GradientActionButton
-                        onClick={handleSubmit}
-                        disabled={mode === "create" && !notifyEmail}
-                        loading={submitting}
-                        loadingText={mode === "edit" ? "Saving…" : "Submitting…"}
-                      >
-                        <span className="text-base">{mode === "edit" ? "Save changes" : "Submit for approval"}</span>
-                      </GradientActionButton>
-                    )}
-                    {step > 1 && (
-                      <button type="button" onClick={goBack} className="block w-full text-center text-base font-semibold text-slate-400 hover:text-white transition-colors py-1">
-                        ← Back
-                      </button>
-                    )}
+                      <span style={{ fontSize: 13, lineHeight: 1.5, color: "#9A98A3" }}>
+                        You fund in USDC. The prize pool is swapped into {prizeToken?.symbol ?? "that token"} when the giveaway goes live, and winners are paid in it.
+                      </span>
+                    </div>
+                  )}
+                  {isTickets && (
+                    <div style={{ display: "flex", gap: 14, alignItems: "center", padding: "14px 16px", borderRadius: 18, background: "linear-gradient(135deg,#2A120C,#120F12)", border: "1px solid rgba(255,90,26,0.28)" }}>
+                      <img src="/megapot.svg" alt="Megapot" style={{ height: 24, width: "auto" }} />
+                      <span style={{ fontSize: 14, lineHeight: 1.5, color: "#E6C9B8" }}>
+                        <span style={{ fontWeight: 800, color: "#fff" }}>Megapot is a daily lottery with a $1.1M+ prize pool.</span>{" "}
+                        Each winner gets tickets for the next draw, at $1 per ticket.
+                      </span>
+                    </div>
+                  )}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>{isTickets ? "TICKETS PER WINNER" : "TOTAL PRIZE"}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 14px", borderRadius: 14, background: "#0E0E12", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        {!isTickets && <span style={{ color: "#5E6880", fontWeight: 700, fontSize: 18 }}>$</span>}
+                        <input
+                          value={isTickets ? (ticketsEach ? String(ticketsEach) : "") : totalPoolInput}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/[^0-9.]/g, "").slice(0, 7);
+                            if (isTickets) {
+                              const n = Math.min(100, parseInt(raw || "0", 10) || 0);
+                              updateDraft({ totalPool: n * Math.max(1, winnerCount) });
+                            } else {
+                              setTotalPoolInput(raw);
+                            }
+                          }}
+                          onBlur={() => {
+                            if (isTickets) {
+                              const n = Math.max(1, Math.min(100, ticketsEach || 1));
+                              updateDraft({ totalPool: n * Math.max(1, winnerCount) });
+                            } else {
+                              commitTotalPool(Number(totalPoolInput));
+                            }
+                          }}
+                          inputMode="decimal"
+                          style={{ flex: 1, minWidth: 0, background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontFamily: SORA, fontWeight: 700, fontSize: 22, padding: "11px 0" }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>WINNERS</span>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 6, borderRadius: 14, background: "#0E0E12", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        <button type="button" onClick={() => bumpWinners(-1)} aria-label="Fewer winners" style={{ cursor: "pointer", width: 38, height: 38, borderRadius: 11, background: "#1E1E25", border: 0, color: "#F2EFE8", fontWeight: 800, fontSize: 18 }}>−</button>
+                        <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 22 }}>{winnerCount}</span>
+                        <button type="button" onClick={() => bumpWinners(1)} aria-label="More winners" style={{ cursor: "pointer", width: 38, height: 38, borderRadius: 11, background: "#1E1E25", border: 0, color: "#F2EFE8", fontWeight: 800, fontSize: 18 }}>+</button>
+                      </div>
+                    </div>
                   </div>
-                </>
-              )}
+                  <span style={{ fontSize: 14, color: "#8A8893" }}>
+                    {isTickets
+                      ? `${winnerCount} winners × ${ticketsEach} tickets = ${ticketsEach * winnerCount} tickets (${usd(ticketsEach * winnerCount)})`
+                      : rewardType === "token"
+                        ? `Each winner gets ${usd(prizeAmount)} in ${prizeToken?.symbol ?? "the token"}${prizeToken?.usdPrice ? ` (about ${(prizeAmount / prizeToken.usdPrice).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${prizeToken.symbol})` : ""}`
+                        : `Each winner gets ${usd(prizeAmount)} USDC`}
+                  </span>
+                  {rewardType === "megapot_ticket" && prizeAmount > 100 && (
+                    <span style={{ fontSize: 14, color: "#F87171" }}>Ticket prizes are capped at 100 per winner.</span>
+                  )}
+                  {!isTickets && totalPool < effectiveMinPool && (
+                    <span style={{ fontSize: 14, color: "#F87171" }}>Prize pool must be at least ${effectiveMinPool}.</span>
+                  )}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>DESCRIPTION</span>
+                    <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="What's this giveaway for?" style={{ ...FIELD, fontWeight: 500, resize: "vertical", fontFamily: "inherit" }} />
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>PROJECT NAME</span>
+                      <input value={projectName} onChange={(e) => setProjectName(e.target.value)} placeholder="Your project or brand" style={{ ...FIELD, fontWeight: 500 }} />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>LOGO</span>
+                      <label style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 14, border: "1.5px dashed rgba(255,255,255,0.14)", fontSize: 14, fontWeight: 600, color: "#B5B2BC" }}>
+                        {logoUrl ? <Image src={logoUrl} alt="" width={28} height={28} style={{ width: 28, height: 28, borderRadius: 8, objectFit: "cover" }} /> : null}
+                        {uploadingLogo ? "Uploading…" : logoUrl ? "Change square logo" : "+ Upload square logo"}
+                        <input type="file" accept="image/*" hidden disabled={uploadingLogo} onChange={(e) => { const file = e.target.files?.[0]; if (file) setPendingLogoFile(file); e.target.value = ""; }} />
+                      </label>
+                    </div>
+                  </div>
+                </Fold>
+
+                <Fold
+                  title="How do people enter?"
+                  hint={`${tasks.length} task${tasks.length === 1 ? "" : "s"} · ${previewTasks[0]?.label ?? "Add a task"}`}
+                  open={tasksOpen}
+                  onToggle={() => setTasksOpen((v) => !v)}
+                >
+                  {tasks.map((task) => (
+                    <div key={task.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 8px 8px 10px", borderRadius: 16, background: "#0E0E12", border: "1px solid rgba(255,255,255,0.07)" }}>
+                      <span style={{ flex: "none", width: 36, height: 36, borderRadius: 11, background: taskTile(task.category), display: "grid", placeItems: "center" }}>
+                        <TaskGlyph category={task.category} />
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#8A8893" }}>{CATEGORY_LABELS[task.category]}</span>
+                        {task.category === "custom" ? (
+                          <>
+                            <input value={task.title} onChange={(e) => setTaskTitle(task.id, e.target.value)} placeholder="Task title — e.g. Join the stream" style={{ background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontSize: 15, fontWeight: 600, padding: "2px 0" }} />
+                            <input value={task.target} onChange={(e) => setTaskTarget(task.id, e.target.value)} placeholder="Link (optional)" style={{ background: "transparent", border: 0, outline: "none", color: "#C9C6CF", fontSize: 14, padding: "2px 0" }} />
+                          </>
+                        ) : task.category === "x_post" ? (
+                          <RequiredTextField value={task.requiredText ?? ""} onChange={(v) => setTaskRequiredText(task.id, v)} />
+                        ) : (
+                          <input value={task.target} onChange={(e) => setTaskTarget(task.id, e.target.value)} placeholder={CATEGORY_TARGET_LABELS[task.category]} style={{ background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontSize: 15, fontWeight: 600, padding: "2px 0" }} />
+                        )}
+                        {task.category === "engage" && (
+                          <>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", paddingTop: 8 }}>
+                              {ENGAGE_ACTIONS.map((action) => {
+                                const on = task.engage[action.key];
+                                return (
+                                  <button key={action.key} type="button" onClick={() => toggleEngageAction(task.id, action.key)} style={{ cursor: "pointer", padding: "7px 12px", borderRadius: 999, fontWeight: 700, fontSize: 13, background: on ? "rgba(255,90,26,0.12)" : "#17171D", color: on ? "#F2EFE8" : "#9A98A3", border: `1px solid ${on ? "rgba(255,122,42,0.7)" : "rgba(255,255,255,0.08)"}` }}>
+                                    {on ? "✓" : "+"} {action.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <input value={task.instructions} onChange={(e) => setTaskInstructions(task.id, e.target.value)} placeholder="Instructions — e.g. quote this post and mention the launch" style={{ marginTop: 8, background: "#17171D", border: "1px solid rgba(255,255,255,0.08)", outline: "none", color: "#F2EFE8", fontSize: 14, borderRadius: 10, padding: "8px 10px" }} />
+                          </>
+                        )}
+                        {SELF_REPORT_CATEGORIES.has(task.category) && (
+                          <button type="button" onClick={() => toggleRequireProof(task.id)} style={{ cursor: "pointer", marginTop: 8, display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 12, background: "#17171D", border: `1px solid ${task.requireProof ? "rgba(255,122,42,0.7)" : "rgba(255,255,255,0.08)"}`, textAlign: "left", width: "100%" }}>
+                            <span style={{ flex: 1 }}>
+                              <span style={{ display: "block", fontWeight: 700, fontSize: 13.5, color: "#F2EFE8" }}>Require proof of completion</span>
+                              <span style={{ display: "block", fontSize: 12, color: "#8A8893" }}>Ask entrants to submit a screenshot or a link</span>
+                            </span>
+                            <Toggle on={task.requireProof} />
+                          </button>
+                        )}
+                      </div>
+                      {tasks.length > 1 && (
+                        <button type="button" onClick={() => removeTask(task.id)} aria-label="Remove task" className="lh-19" style={{ cursor: "pointer", flex: "none", width: 32, height: 32, borderRadius: 10, border: 0, background: "transparent", color: "#6E6C78", fontSize: 18 }}>×</button>
+                      )}
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.06em", color: "#6E6C78" }}>ADD A TASK</span>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {ADD_TASKS.map((ta) => (
+                        <button key={ta.category} type="button" onClick={() => addTaskOf(ta.category)} disabled={tasks.length >= MAX_TASKS} className="lh-20" style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 7, padding: "8px 13px 8px 8px", borderRadius: 999, background: "#0E0E12", border: "1px solid rgba(255,255,255,0.08)", fontWeight: 700, fontSize: 14, color: "#C9C6CF", opacity: tasks.length >= MAX_TASKS ? 0.4 : 1 }}>
+                          <span style={{ width: 22, height: 22, borderRadius: 7, background: taskTile(ta.category), display: "grid", placeItems: "center" }}>
+                            <TaskGlyph category={ta.category} size={12} />
+                          </span>
+                          + {ta.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 13, color: "#77757F" }}>X tasks are checked automatically. Fewer tasks means more entries.</span>
+                </Fold>
+
+                <Fold
+                  title="When does it close?"
+                  hint={closeWhen}
+                  open={closeOpen}
+                  onToggle={() => setCloseOpen((v) => !v)}
+                >
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {([
+                      ["24h", "24 hours"],
+                      ["3d", "3 days"],
+                      ["1w", "1 week"],
+                      ["2w", "2 weeks"],
+                      ["custom", "Pick a date"],
+                    ] as const).map(([key, label]) => {
+                      const on = closePreset === key;
+                      return (
+                        <button key={key} type="button" onClick={() => applyClosePreset(key)} style={{ cursor: "pointer", padding: "10px 15px", borderRadius: 999, fontWeight: 700, fontSize: 14, background: on ? "rgba(255,90,26,0.12)" : "#0E0E12", color: on ? "#F2EFE8" : "#9A98A3", border: `1px solid ${on ? "rgba(255,122,42,0.7)" : "rgba(255,255,255,0.08)"}` }}>
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {closePreset === "custom" && (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10 }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.06em", color: "#8A8893" }}>DATE</span>
+                        <input type="date" value={closeDatePart} min={todayStr} onChange={(e) => setEntriesCloseAt(`${e.target.value}T${closeTimePart || "18:00"}`)} style={{ ...FIELD, colorScheme: "dark" }} />
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.06em", color: "#8A8893" }}>TIME</span>
+                        <input type="time" value={closeTimePart} onChange={(e) => setEntriesCloseAt(`${closeDatePart || todayStr}T${e.target.value}`)} style={{ ...FIELD, colorScheme: "dark" }} />
+                      </div>
+                    </div>
+                  )}
+                  <span style={{ fontSize: 13, color: "#8A8893" }}>
+                    Entries close <span style={{ color: "#F2EFE8", fontWeight: 700 }}>{closeWhen}</span> · one week is the sweet spot
+                  </span>
+                </Fold>
+
+                <Fold
+                  title="Who can enter"
+                  hint={`${SELECTION_MODE_LABELS[selectionMode]}${minFollowers ? ` · ${minFollowers}+ followers` : ""}${verifiedOnly ? " · verified only" : ""}`}
+                  open={moreOpen}
+                  onToggle={() => setMoreOpen((v) => !v)}
+                >
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                      {isAdmin && mode === "create" && (
+                        <button type="button" onClick={() => setCreateAsAdmin((v) => !v)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 16, background: createAsAdmin ? "rgba(255,122,42,0.1)" : "#0E0E12", border: `1px solid ${createAsAdmin ? "rgba(255,122,42,0.4)" : "rgba(255,255,255,0.08)"}`, color: "#F2EFE8", textAlign: "left" }}>
+                          <span style={{ flex: 1 }}>
+                            <span style={{ display: "block", fontWeight: 700, fontSize: 15 }}>Create as Loofta</span>
+                            <span style={{ display: "block", fontSize: 13, color: "#8A8893" }}>Admin only. Auto-approved, and the prize pool can be as low as ${ADMIN_MIN_TOTAL_POOL}.</span>
+                          </span>
+                          <Toggle on={createAsAdmin} />
+                        </button>
+                      )}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>WINNER SELECTION</span>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {(["random", "first_come", "manual"] as const).map((modeKey) => {
+                            const on = selectionMode === modeKey;
+                            return (
+                              <button key={modeKey} type="button" onClick={() => setSelectionMode(modeKey)} style={{ cursor: "pointer", padding: "10px 15px", borderRadius: 999, fontWeight: 700, fontSize: 14, background: on ? "rgba(255,90,26,0.12)" : "#0E0E12", color: on ? "#F2EFE8" : "#9A98A3", border: `1px solid ${on ? "rgba(255,122,42,0.7)" : "rgba(255,255,255,0.08)"}` }}>
+                                {SELECTION_MODE_LABELS[modeKey]}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12 }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>MIN X FOLLOWERS</span>
+                          <input value={minFollowers} onChange={(e) => setMinFollowers(e.target.value.replace(/[^0-9]/g, ""))} placeholder="e.g. 100" inputMode="numeric" style={{ ...FIELD, fontWeight: 500, border: `1px solid ${minFollowers && !["10", "100", "1000"].includes(minFollowers) ? "rgba(255,122,42,0.6)" : "rgba(255,255,255,0.08)"}` }} />
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {([["10", "10"], ["100", "100"], ["1000", "1,000"]] as const).map(([value, label]) => {
+                              const on = minFollowers === value;
+                              return (
+                                <button key={value} type="button" onClick={() => setMinFollowers(value)} style={{ cursor: "pointer", padding: "9px 14px", borderRadius: 999, fontWeight: 700, fontSize: 13.5, background: on ? "rgba(255,90,26,0.12)" : "#0E0E12", color: on ? "#F2EFE8" : "#9A98A3", border: `1px solid ${on ? "rgba(255,122,42,0.7)" : "rgba(255,255,255,0.08)"}` }}>
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>MIN X ACCOUNT AGE (DAYS)</span>
+                          <input value={minAccountAgeDays} onChange={(e) => setMinAccountAgeDays(e.target.value.replace(/[^0-9]/g, ""))} placeholder="e.g. 30" inputMode="numeric" style={{ ...FIELD, fontWeight: 500 }} />
+                        </div>
+                      </div>
+                      <button type="button" onClick={() => setVerifiedOnly(!verifiedOnly)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 16, background: "#0E0E12", border: "1px solid rgba(255,255,255,0.08)", color: "#F2EFE8", textAlign: "left" }}>
+                        <span style={{ flex: 1 }}>
+                          <span style={{ display: "block", fontWeight: 700, fontSize: 15 }}>Verified X accounts only</span>
+                          <span style={{ display: "block", fontSize: 13, color: "#8A8893" }}>Only entrants with X&apos;s verified badge</span>
+                        </span>
+                        <Toggle on={verifiedOnly} />
+                      </button>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>CONTINENTS</span>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {CONTINENTS.map((continent) => {
+                            const on = requiredContinents.includes(continent);
+                            return (
+                              <button key={continent} type="button" onClick={() => toggleContinent(continent)} style={{ cursor: "pointer", padding: "8px 12px", borderRadius: 999, fontWeight: 700, fontSize: 13, background: on ? "rgba(255,90,26,0.12)" : "#0E0E12", color: on ? "#F2EFE8" : "#9A98A3", border: `1px solid ${on ? "rgba(255,122,42,0.7)" : "rgba(255,255,255,0.08)"}` }}>
+                                {continent}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>COUNTRIES</span>
+                        <CountryMultiSelect selected={requiredCountries} onAdd={addRequiredCountry} onRemove={removeRequiredCountry} />
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>EXCLUDE COUNTRIES</span>
+                        <CountryMultiSelect selected={excludedCountries} onAdd={addExcludedCountry} onRemove={removeExcludedCountry} />
+                      </div>
+                  </div>
+                </Fold>
+
+                <div style={CARD}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15 }}>
+                      <span style={{ color: "#B5B2BC" }}>Prize</span>
+                      <span style={{ fontWeight: 700 }}>{isTickets ? `${ticketsEach * winnerCount} tickets · ${usd(totalPool)}` : usd(totalPool)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15 }}>
+                      <span style={{ color: "#B5B2BC" }}>Platform fee (10%, $5 min)</span>
+                      <span style={{ fontWeight: 700 }}>{usd(platformFee)}</span>
+                    </div>
+                    <div style={{ height: 1, background: "rgba(255,255,255,0.07)" }} />
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <span style={{ fontWeight: 700 }}>{mode === "edit" ? "Funding total" : "You'll fund after approval"}</span>
+                      <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 24, letterSpacing: "-0.03em" }}>{usd(totalPool + platformFee)}</span>
+                    </div>
+                  </div>
+                  {notifyEmail ? (
+                    <div style={{ ...FIELD, fontWeight: 500, color: "#C9C6CF" }}>We&apos;ll email {notifyEmail}</div>
+                  ) : (
+                    <button type="button" onClick={() => linkEmail()} style={{ ...FIELD, cursor: "pointer", textAlign: "left", fontWeight: 600, color: "#F2EFE8", background: "#0E0E12" }}>
+                      Add your email for approval and payout updates
+                    </button>
+                  )}
+                  <button type="button" onClick={trySubmit} disabled={submitting || (mode === "create" && !notifyEmail)} style={{ cursor: "pointer", textAlign: "center", padding: 18, borderRadius: 18, border: 0, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: 600, fontSize: 17, opacity: ready && (mode !== "create" || notifyEmail) ? 1 : 0.45, boxShadow: "0 14px 40px rgba(255,70,10,0.3)" }}>
+                    {submitting ? (mode === "edit" ? "Saving…" : "Submitting…") : mode === "edit" ? "Save changes" : "Submit for approval"}
+                  </button>
+                  <span style={{ fontSize: 13, lineHeight: 1.5, color: "#6E6C78", textAlign: "center" }}>
+                    Loofta reviews every giveaway before it opens. After approval, changes to the prize or tasks go through support.
+                  </span>
+                </div>
               </div>
-              {showPreviewColumn && (
-                <GiveawayLivePreview
-                  title={title}
-                  projectName={projectName}
-                  logoUrl={logoUrl}
-                  description={description}
-                  totalPool={totalPool}
-                  winnerCount={winnerCount}
-                  selectionMode={selectionMode}
-                  rewardType={rewardType}
-                  entriesCloseAt={entriesCloseAt}
-                  minFollowers={minFollowers}
-                  verifiedOnly={verifiedOnly}
-                  isOfficial={mode === "create" && createAsAdmin}
-                  tasks={previewTasks}
-                  pulse={previewPulse}
-                />
-              )}
+
+              <div style={{ position: "sticky", top: 90, display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+                <span style={{ fontFamily: MONO, fontSize: 13, letterSpacing: "0.18em", color: "#5FD38E" }}>LIVE PREVIEW</span>
+                <div style={{ padding: 22, borderRadius: 28, background: "#141419", border: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", gap: 16, boxShadow: "0 30px 80px rgba(0,0,0,0.4)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#8A8893", display: "flex", alignItems: "center", gap: 8 }}>
+                      {logoUrl ? <Image src={logoUrl} alt="" width={18} height={18} style={{ width: 18, height: 18, borderRadius: 99, objectFit: "cover" }} /> : null}
+                      {projectName.trim() || "Your project"}
+                    </span>
+                    <span style={{ padding: "4px 11px", borderRadius: 999, background: "#22222A", fontSize: 13, fontWeight: 800 }}>Draft</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>{title.trim() || "Your giveaway title"}</span>
+                    {description.trim() ? <span style={{ fontSize: 14, color: "#9A98A3" }}>{description}</span> : null}
+                  </div>
+                  <div style={{ padding: 20, borderRadius: 22, background: isTickets ? "linear-gradient(150deg,#2E1E06,#15120E)" : "linear-gradient(150deg,#0F2016,#101513)", border: `1px solid ${isTickets ? "rgba(245,183,12,0.35)" : "rgba(60,200,120,0.3)"}`, display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontFamily: MONO, fontSize: 13, letterSpacing: "0.16em", color: isTickets ? "#F5B70C" : "#5FD38E" }}>PRIZE POOL · IN ESCROW</span>
+                      <span style={{ width: 34, height: 34, borderRadius: 11, display: "grid", placeItems: "center", fontFamily: SORA, fontWeight: 800, fontSize: 14, color: isTickets ? "#6A3500" : "#fff", background: isTickets ? "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)" : "#2775CA" }}>
+                        {isTickets ? "M" : "$"}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 44, letterSpacing: "-0.05em", lineHeight: 1 }}>
+                        {isTickets ? String(ticketsEach * winnerCount) : usd(totalPool).replace(/\.00$/, "")}
+                      </span>
+                      <span style={{ fontSize: 15, fontWeight: 700, color: "#B5B2BC" }}>{isTickets ? "tickets" : "USDC"}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {prizeChips.map((pc) => (
+                        <span key={pc} style={{ padding: "6px 11px", borderRadius: 999, background: "rgba(255,255,255,0.08)", fontSize: 13, fontWeight: 700 }}>{pc}</span>
+                      ))}
+                    </div>
+                    <span style={{ fontSize: 13, color: "#9A98A3" }}>
+                      Closes in <span style={{ color: "#F2EFE8", fontWeight: 700 }}>{remain}</span>
+                    </span>
+                  </div>
+                  {isTickets && (
+                    <span style={{ fontSize: 13, color: "#9A98A3", lineHeight: 1.5 }}>
+                      Tickets for Megapot&apos;s daily draw. Today&apos;s jackpot: <span style={{ color: "#F5B70C", fontWeight: 800 }}>$1.1M+</span>
+                    </span>
+                  )}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <span style={{ fontFamily: MONO, fontSize: 13, letterSpacing: "0.16em", color: "#77757F" }}>TO ENTER</span>
+                    {previewTasks.length === 0 ? (
+                      <span style={{ fontSize: 14, color: "#8A8893" }}>Add a task and it shows up here.</span>
+                    ) : previewTasks.map((pt) => (
+                      <div key={pt.label} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 16, background: "#0F0F13", border: "1px solid rgba(255,255,255,0.06)" }}>
+                        <span style={{ flex: "none", width: 30, height: 30, borderRadius: 10, background: taskTile(pt.category), display: "grid", placeItems: "center" }}>
+                          <TaskGlyph category={pt.category} size={13} />
+                        </span>
+                        <span style={{ flex: 1, fontWeight: 700, fontSize: 14 }}>{pt.label}</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#8A8893" }}>To do</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ width: "100%", textAlign: "center", padding: 14, borderRadius: 16, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontWeight: 700, fontSize: 15, opacity: 0.9 }}>
+                    Enter giveaway
+                  </div>
+                </div>
+                <div style={{ padding: "16px 18px", borderRadius: 20, background: "#101014", border: "1px solid rgba(255,255,255,0.06)", fontSize: 14, lineHeight: 1.5, color: "#9A98A3" }}>
+                  Want this on your own domain, with your logo and no Loofta branding?{" "}
+                  <a href="https://t.me/looftaxyz" style={{ fontWeight: 700, color: "#F2EFE8" }}>Message us on Telegram</a>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -1617,14 +1875,14 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
           }}
         />
       )}
-
-      <style jsx global>{`
-        @keyframes g-pop {
-          0% { transform: scale(1); }
-          40% { transform: scale(1.35); }
-          100% { transform: scale(1); }
-        }
-      `}</style>
     </>
+  );
+}
+
+function Toggle({ on }: { on: boolean }) {
+  return (
+    <span style={{ position: "relative", flex: "none", width: 52, height: 30, borderRadius: 999, background: on ? "linear-gradient(90deg,#FF2D0A,#F5B70C)" : "#3A3A44" }}>
+      <span style={{ position: "absolute", top: 3, left: on ? 25 : 3, width: 24, height: 24, borderRadius: "50%", background: "#fff", transition: "left .2s" }} />
+    </span>
   );
 }

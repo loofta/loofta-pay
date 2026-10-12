@@ -182,7 +182,7 @@
       }
     },
     "signInToSendHandle": "Đăng nhập để gửi tới handle hoặc email",
-    "signInToSendHandleHint": "Đăng nhập email hoặc mạng xã hội — gửi tới ví không cần tài khoản"
+    "signInToSendHandleHint": "Đăng nhập email hoặc mạng xã hội. Gửi tới ví không cần tài khoản"
   },
   "MarketingPage": {
     "nav": {
@@ -562,8 +562,8 @@
       "headlineBefore": "Gửi tiền tới",
       "headlineAfter": "hoặc email",
       "headlineCashOut": "Họ rút theo cách của họ.",
-      "support": "Thanh toán tới ví không cần tài khoản, hoặc đăng nhập để gửi tới handle — họ nhận qua Venmo, Cash App, Revolut, Zelle, USDC trên Solana hoặc bất kỳ crypto nào.",
-      "supportWithPaj": "Thanh toán tới ví không cần tài khoản, hoặc đăng nhập để gửi tới handle — họ nhận qua Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC trên Solana hoặc bất kỳ crypto nào.",
+      "support": "Thanh toán tới ví không cần tài khoản, hoặc đăng nhập để gửi tới handle . họ nhận qua Venmo, Cash App, Revolut, Zelle, USDC trên Solana hoặc bất kỳ crypto nào.",
+      "supportWithPaj": "Thanh toán tới ví không cần tài khoản, hoặc đăng nhập để gửi tới handle . họ nhận qua Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC trên Solana hoặc bất kỳ crypto nào.",
       "cashOutLabel": "Họ rút về",
       "ctaStart": "Bắt đầu gửi, miễn phí",
       "ctaBusiness": "Dành cho doanh nghiệp",
@@ -582,5 +582,17 @@
       "railAnyCryptoSub": "150+ token",
       "railPajSub": "Ngân hàng naira"
     }
+  },
+  "LaunchDeck": {
+    "eyebrow": "Bắt đầu mọi thứ",
+    "title": "Chọn thứ bạn muốn bắt đầu.",
+    "subtitle": "Gửi thanh toán, mở giveaway hoặc chia sẻ link nhận.",
+    "sendTitle": "Gửi thanh toán",
+    "sendBody": "Trả handle, email hoặc ví. Họ rút tiền theo cách của họ.",
+    "giveawayTitle": "Mở giveaway",
+    "giveawayBody": "Nạp giải thưởng, chia sẻ một link, rút thăm on-chain.",
+    "receiveTitle": "Nhận tiền",
+    "receiveBody": "Chia sẻ link hoặc QR . họ không cần ví.",
+    "cta": "Mở"
   }
 }

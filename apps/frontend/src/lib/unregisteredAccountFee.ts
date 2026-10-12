@@ -1,8 +1,8 @@
 /**
- * Flat USDC fee charged when paying a handle/email (unregistered claim path) — covers burner
- * ATA / claim infrastructure. Direct wallet-to-wallet sends skip this; the recipient already
- * has an address, so there's no claim to set up. Inspired by hush's flat $0.10 leg, kept
- * separate from MagicBlock's private relay fee.
+ * Flat USDC fee charged when paying an email or social handle (unregistered claim path) —
+ * covers burner ATA / claim infrastructure. Charged on public and private payments.
+ * A Loofta username and a direct wallet send skip this. Kept separate from MagicBlock's
+ * private relay fee.
  */
 export const UNREGISTERED_ACCOUNT_FEE_USD = 0.1;
 

@@ -118,8 +118,12 @@ async function buildMagicBlockPrivateTransfer(params: {
       toBalance: "base",
       initIfMissing: true,
       initAtasIfMissing: true,
-      initVaultIfMissing: true,
-      idempotent: true,
+      // Leave the vault alone. Initializing it adds extra account-creation instructions that
+      // wallets preview as a SOL debit instead of the USDC payment.
+      initVaultIfMissing: false,
+      // Recipient receives exactly `amount`. MagicBlock adds its own fee on top, which is what
+      // the wallet balance change should show (payment + relay), not a fee-only transfer.
+      exactOut: true,
       // Defaults to no delay and no splitting (checkout needs a prompt, single confirmation);
       // callers opt into timing obfuscation via MagicBlockPrivacyOptions.
       minDelayMs: "0",
@@ -159,10 +163,70 @@ export async function buildMagicBlockPrivateTransferNoFee(params: {
   to: string;
   amountUSDC: number;
   memo?: string;
-} & MagicBlockPrivacyOptions): Promise<Transaction | VersionedTransaction> {
+} & MagicBlockPrivacyOptions): Promise<{
+  transaction: Transaction | VersionedTransaction;
+  /** Where the signed transaction has to be submitted. Base-to-base private transfers use "base". */
+  sendTo: "base" | "ephemeral";
+}> {
   const built = await buildMagicBlockPrivateTransfer(params);
   const rawBytes = Buffer.from(built.transactionBase64, "base64");
-  return built.version === "v0" ? VersionedTransaction.deserialize(rawBytes) : Transaction.from(rawBytes);
+  const transaction = built.version === "v0" ? VersionedTransaction.deserialize(rawBytes) : Transaction.from(rawBytes);
+  return { transaction, sendTo: built.sendTo };
+}
+
+function snapshotSignatures(tx: Transaction | VersionedTransaction): Uint8Array[] {
+  if (tx instanceof VersionedTransaction) {
+    return tx.signatures.map((sig) => Uint8Array.from(sig));
+  }
+  return tx.signatures.map((slot) => (slot.signature ? Uint8Array.from(slot.signature) : new Uint8Array()));
+}
+
+function signatureIsEmpty(sig: Uint8Array | undefined): boolean {
+  return !sig || sig.length === 0 || sig.every((byte) => byte === 0);
+}
+
+/** MagicBlock gasless transfers arrive with the sponsor already signed as fee payer. Some
+ *  wallets wipe that signature while adding the user's. Put it back or the broadcast fails. */
+function restoreSponsorSignatures(tx: Transaction | VersionedTransaction, before: Uint8Array[]) {
+  if (tx instanceof VersionedTransaction) {
+    before.forEach((sig, i) => {
+      if (!signatureIsEmpty(sig) && signatureIsEmpty(tx.signatures[i])) tx.signatures[i] = sig;
+    });
+    return;
+  }
+  before.forEach((sig, i) => {
+    const slot = tx.signatures[i];
+    if (slot && !slot.signature && !signatureIsEmpty(sig)) slot.signature = Buffer.from(sig);
+  });
+}
+
+/**
+ * Sign a gasless MagicBlock transfer with an external wallet (Phantom, Solflare).
+ *
+ * `signTransaction` on those wallets throws "Unexpected error" when the fee payer is
+ * MagicBlock's sponsor rather than the user, and the preview then only shows the $0.20
+ * relay fee. `signAllTransactions` is the path that keeps the sponsor signature and
+ * simulates the full USDC debit.
+ */
+export async function signExternalWalletTransaction<T extends Transaction | VersionedTransaction>(
+  tx: T,
+  sign: {
+    signTransaction?: (tx: T) => Promise<T>;
+    signAllTransactions?: (txs: T[]) => Promise<T[]>;
+  },
+): Promise<T> {
+  const before = snapshotSignatures(tx);
+  let signed: T;
+  if (sign.signAllTransactions) {
+    const batch = await sign.signAllTransactions([tx]);
+    signed = batch[0];
+  } else if (sign.signTransaction) {
+    signed = await sign.signTransaction(tx);
+  } else {
+    throw new Error("This wallet cannot sign the payment.");
+  }
+  restoreSponsorSignatures(signed, before);
+  return signed;
 }
 
 /** A dedicated fee-collection wallet, distinct from SolanaSponsorService's fee-payer/gas-sponsor

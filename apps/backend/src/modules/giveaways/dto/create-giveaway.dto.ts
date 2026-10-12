@@ -156,6 +156,12 @@ export class CreateGiveawayDto {
   @IsEnum(GiveawayRewardType)
   reward_type?: GiveawayRewardType;
 
+  @ApiPropertyOptional({ description: 'SPL mint winners are paid in. Omit for a USDC prize. The creator still funds USDC; the prize pool is swapped into this mint when funding lands.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  prize_mint?: string | null;
+
   @ApiProperty({ description: 'ISO 8601 timestamp entries close at.' })
   @IsISO8601()
   entries_close_at: string;

@@ -2,9 +2,10 @@
  * Guest (no Loofta account) claim creation — hits the unauthenticated
  * POST /claims/create-from-email-guest / create-from-social-guest routes (protected by
  * Turnstile + tight per-IP rate limiting instead of Privy auth, see claims.controller.ts).
- * Used by the Send & Receive form and the home-v3 hero for a signed-out sender; the caller just
- * redirects to /c/[id] afterward — that's where GuestCheckoutPay shows the guest "Solana USDC"
- * pay option (burnerAddress is returned here but the claim page re-fetches it itself).
+ * Used by the Send & Receive form and the home-v3 hero for a signed-out sender. Callers keep the
+ * guest on the send surface with GuestCheckoutPay and only reveal the claim/share link after
+ * payment settles — never redirect to /c/[id] before pay (burnerAddress is returned here for that
+ * inline pay step).
  */
 
 async function parseCreateClaimError(r: Response): Promise<string> {
@@ -32,7 +33,7 @@ export async function createClaimFromEmailGuest(input: {
   description?: string;
   cluster?: "devnet" | "mainnet";
   turnstileToken: string;
-} & PrivacyChoice): Promise<{ id: string; link: string; burnerAddress: string }> {
+} & PrivacyChoice): Promise<{ id: string; link: string; burnerAddress: string; direct: boolean }> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
   const r = await fetch(`${backendUrl}/claims/create-from-email-guest`, {
     method: "POST",
@@ -51,7 +52,7 @@ export async function createClaimFromEmailGuest(input: {
   if (!r.ok) throw new Error(await parseCreateClaimError(r));
   const data = await r.json();
   if (!data?.id || !data?.burnerAddress) throw new Error("Server response missing claim ID or address");
-  return { id: data.id, link: data.link, burnerAddress: data.burnerAddress };
+  return { id: data.id, link: data.link, burnerAddress: data.burnerAddress, direct: !!data.direct };
 }
 
 export async function createClaimFromSocialGuest(input: {
@@ -62,7 +63,7 @@ export async function createClaimFromSocialGuest(input: {
   description?: string;
   cluster?: "devnet" | "mainnet";
   turnstileToken: string;
-} & PrivacyChoice): Promise<{ id: string; link: string; burnerAddress: string }> {
+} & PrivacyChoice): Promise<{ id: string; link: string; burnerAddress: string; direct: boolean }> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
   const r = await fetch(`${backendUrl}/claims/create-from-social-guest`, {
     method: "POST",
@@ -82,7 +83,7 @@ export async function createClaimFromSocialGuest(input: {
   if (!r.ok) throw new Error(await parseCreateClaimError(r));
   const data = await r.json();
   if (!data?.id || !data?.burnerAddress) throw new Error("Server response missing claim ID or address");
-  return { id: data.id, link: data.link, burnerAddress: data.burnerAddress };
+  return { id: data.id, link: data.link, burnerAddress: data.burnerAddress, direct: !!data.direct };
 }
 
 /** Twitter goes through this endpoint (with treatUnregisteredAsTwitter), not
@@ -95,7 +96,7 @@ export async function createClaimFromUsernameGuest(input: {
   cluster?: "devnet" | "mainnet";
   treatUnregisteredAsTwitter?: boolean;
   turnstileToken: string;
-} & PrivacyChoice): Promise<{ id: string; link: string; burnerAddress: string }> {
+} & PrivacyChoice): Promise<{ id: string; link: string; burnerAddress: string; direct: boolean }> {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
   const r = await fetch(`${backendUrl}/claims/create-from-username-guest`, {
     method: "POST",
@@ -115,5 +116,5 @@ export async function createClaimFromUsernameGuest(input: {
   if (!r.ok) throw new Error(await parseCreateClaimError(r));
   const data = await r.json();
   if (!data?.id || !data?.burnerAddress) throw new Error("Server response missing claim ID or address");
-  return { id: data.id, link: data.link, burnerAddress: data.burnerAddress };
+  return { id: data.id, link: data.link, burnerAddress: data.burnerAddress, direct: !!data.direct };
 }

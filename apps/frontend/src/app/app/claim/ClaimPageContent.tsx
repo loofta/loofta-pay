@@ -271,7 +271,7 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
   const recipientTrimmed = (recipient || "").trim();
   const recipientAddressValid = !recipientTrimmed || isValidAddressForChain(recipientTrimmed, selectedTo?.chain || "solana");
   const canContinueStep1 =
-    parsedAmount >= 5 &&
+    parsedAmount >= (effectivePrivate ? 1 : 0.01) &&
     (receiveDestination === "loofta"
       ? !!(solanaWallet?.address && defaultLooftaToken)
       : !!selectedTo && !!recipientTrimmed && recipientAddressValid);
@@ -728,8 +728,8 @@ export function ClaimPageContent(props: { embedInApp?: boolean }) {
                           USD
                         </span>
                       </div>
-                      {parsedAmount > 0 && (usdValue ?? parsedAmount) < 5 && (
-                        <p className="mt-1.5 text-base md:text-sm text-red-400">Minimum payment amount is $5.00</p>
+                      {effectivePrivate && parsedAmount > 0 && (usdValue ?? parsedAmount) < 1 && (
+                        <p className="mt-1.5 text-base md:text-sm text-red-400">A private payment needs at least $1.00</p>
                       )}
                     </div>
 

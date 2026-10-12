@@ -16,3 +16,9 @@ export class BuildFundingPrivateTransferDto {
   @IsBoolean()
   gasless?: boolean;
 }
+
+export class ConfirmDirectTokenFundingDto {
+  @ApiProperty({ description: 'Signature of the token-plus-fee funding transaction' })
+  @IsString()
+  signature: string;
+}

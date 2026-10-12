@@ -1,7 +1,5 @@
-"use client";
-
-import { GiveawayWizard } from "../GiveawayWizard";
+import { redirect } from "next/navigation";
 
 export default function CreateGiveawayPage() {
-  return <GiveawayWizard mode="create" />;
+  redirect("/rewards-rail");
 }

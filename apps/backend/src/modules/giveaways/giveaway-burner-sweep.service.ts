@@ -6,6 +6,7 @@ import {
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
   createCloseAccountInstruction,
+  TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import { SupabaseService } from '@/database/supabase.service';
 import { SendPaymentEncryptionService } from '../send-payment/encryption.service';
@@ -102,14 +103,17 @@ export class GiveawayBurnerSweepService {
     callerUserId?: string;
     /** Platform fee to withhold from the creator's refund and send to the fee payer's own wallet instead. */
     platformFeeBaseUnits?: bigint;
+    /** Token program that owns `mint`. Defaults to classic SPL Token. */
+    tokenProgram?: PublicKey;
   }): Promise<{ sweepTxHash: string; platformFeeBaseUnits: bigint } | null> {
     const { conn, burnerKeypair, creatorWallet, mint, context, callerUserId } = params;
+    const tokenProgram = params.tokenProgram ?? TOKEN_PROGRAM_ID;
     const feePayerKp = this.requireFeePayer();
 
-    const burnerAta = await getAssociatedTokenAddress(mint, burnerKeypair.publicKey);
+    const burnerAta = await getAssociatedTokenAddress(mint, burnerKeypair.publicKey, false, tokenProgram);
     let remaining = 0n;
     try {
-      remaining = (await getAccount(conn, burnerAta)).amount;
+      remaining = (await getAccount(conn, burnerAta, 'confirmed', tokenProgram)).amount;
     } catch {
       return null; // burner ATA doesn't exist — nothing to refund
     }
@@ -123,11 +127,11 @@ export class GiveawayBurnerSweepService {
     const creatorUnits = remaining - feeUnits;
 
     const creatorPubkey = new PublicKey(creatorWallet.trim());
-    const creatorAta = await getAssociatedTokenAddress(mint, creatorPubkey, true);
+    const creatorAta = await getAssociatedTokenAddress(mint, creatorPubkey, true, tokenProgram);
 
     const tx = new Transaction();
     if (creatorUnits > 0n) {
-      if (!(await tokenAccountExists(conn, creatorAta))) {
+      if (!(await tokenAccountExists(conn, creatorAta, { programId: tokenProgram }))) {
         if (callerUserId) {
           await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, callerUserId, 1, 'GiveawayRefund');
         }
@@ -144,20 +148,20 @@ export class GiveawayBurnerSweepService {
             'This wallet already received a sponsored token account once before and closed it. Further free account creation is blocked to prevent abuse. Please contact support.',
           );
         }
-        tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, creatorAta, creatorPubkey, mint));
+        tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, creatorAta, creatorPubkey, mint, tokenProgram));
       }
-      tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, creatorUnits));
+      tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, creatorUnits, [], tokenProgram));
     }
     if (feeUnits > 0n) {
       // Fee payer's own ATA — an address we generate/hold the key for, so no guardAtaSponsorship
       // needed (the "we own it" bucket, same as fundNewClaimBurner's destination).
-      const feePayerAta = await getAssociatedTokenAddress(mint, feePayerKp.publicKey);
-      if (!(await tokenAccountExists(conn, feePayerAta))) {
-        tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, feePayerAta, feePayerKp.publicKey, mint));
+      const feePayerAta = await getAssociatedTokenAddress(mint, feePayerKp.publicKey, false, tokenProgram);
+      if (!(await tokenAccountExists(conn, feePayerAta, { programId: tokenProgram }))) {
+        tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, feePayerAta, feePayerKp.publicKey, mint, tokenProgram));
       }
-      tx.add(createTransferInstruction(burnerAta, feePayerAta, burnerKeypair.publicKey, feeUnits));
+      tx.add(createTransferInstruction(burnerAta, feePayerAta, burnerKeypair.publicKey, feeUnits, [], tokenProgram));
     }
-    tx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burnerKeypair.publicKey));
+    tx.add(createCloseAccountInstruction(burnerAta, feePayerKp.publicKey, burnerKeypair.publicKey, [], tokenProgram));
 
     tx.feePayer = feePayerKp.publicKey;
     tx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;
@@ -183,20 +187,23 @@ export class GiveawayBurnerSweepService {
     giveawayBurnerKeypair: Keypair;
     mint: PublicKey;
     amountBaseUnits: bigint;
+    /** Token program that owns `mint`. Defaults to classic SPL Token (USDC). */
+    tokenProgram?: PublicKey;
   }): Promise<{ burner: GiveawayBurner; txHash: string }> {
     const { conn, giveawayBurnerKeypair, mint, amountBaseUnits } = params;
+    const tokenProgram = params.tokenProgram ?? TOKEN_PROGRAM_ID;
     const feePayerKp = this.requireFeePayer();
 
     const burner = this.createBurner();
     if (!burner) throw new Error('Giveaway sweep encryption is not configured (SEND_PAYMENT_ENC_KEY missing).');
     const newBurnerKeypair = this.decryptBurner(burner.address, burner.encryptedSecret);
 
-    const sourceAta = await getAssociatedTokenAddress(mint, giveawayBurnerKeypair.publicKey);
-    const destAta = await getAssociatedTokenAddress(mint, newBurnerKeypair.publicKey);
+    const sourceAta = await getAssociatedTokenAddress(mint, giveawayBurnerKeypair.publicKey, false, tokenProgram);
+    const destAta = await getAssociatedTokenAddress(mint, newBurnerKeypair.publicKey, false, tokenProgram);
 
     const tx = new Transaction();
-    tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, destAta, newBurnerKeypair.publicKey, mint));
-    tx.add(createTransferInstruction(sourceAta, destAta, giveawayBurnerKeypair.publicKey, amountBaseUnits));
+    tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, destAta, newBurnerKeypair.publicKey, mint, tokenProgram));
+    tx.add(createTransferInstruction(sourceAta, destAta, giveawayBurnerKeypair.publicKey, amountBaseUnits, [], tokenProgram));
 
     tx.feePayer = feePayerKp.publicKey;
     tx.recentBlockhash = (await conn.getLatestBlockhash('confirmed')).blockhash;

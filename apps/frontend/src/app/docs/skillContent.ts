@@ -55,12 +55,12 @@ Response:
 
 Fields:
 
-- \`amount\` (required): USD, number, $10,000 maximum. $1 minimum for a plain public transfer (the
-  default), $5 minimum if \`is_private\` is \`true\`.
+- \`amount\` (required): USD, number, $10,000 maximum. $0.01 minimum for a plain public transfer (the
+  default), $1 minimum if \`is_private\` is \`true\`.
 - \`message\` (optional): shown to the payer, 1000 chars max.
 - \`is_private\` (optional): defaults to \`false\` (a plain public transfer, no privacy fee). Pass
   \`true\` to require the payer to pay privately instead — shields the amount and that it went to
-  your wallet on-chain, $5 minimum.
+  your wallet on-chain, $1 minimum.
 - \`webhook_url\` (optional): POSTed \`{ event: "payment.succeeded", short_id, amount, message, paid_at }\`
   the moment the payer's leg lands, signed with header \`X-Loofta-Signature: sha256=<hmac>\` —
   verify by recomputing \`HMAC-SHA256(rawBody, webhook_secret)\`. \`webhook_secret\` is only in the
@@ -182,7 +182,7 @@ Response:
 
 Fields:
 
-- \`amount\` (required): USD, $10,000 maximum, $1 minimum ($5 if \`is_private\` is \`true\`).
+- \`amount\` (required): USD, $10,000 maximum, $0.01 minimum ($1 if \`is_private\` is \`true\`).
 - \`recipient_type\` (required): \`email\`, \`username\`, \`twitter\`, \`discord\`, \`github\`, or \`telegram\`.
 - \`recipient_identifier\` (required): the email/username/handle matching \`recipient_type\`.
 - \`sender_wallet\` (required unless \`funding_source\` is set): the caller's own Solana wallet
@@ -195,7 +195,7 @@ Fields:
 - \`message\` (optional): shown to the recipient on their claim page, 500 chars max.
 - \`is_private\` (optional): defaults to \`false\`. \`true\` shields the amount and sender wallet
   on-chain — a MagicBlock private transfer, ~10 bps + $0.20 flat gas on top of \`amount\`. Requires
-  \`amount\` to be at least $5.
+  \`amount\` to be at least $1.
 
 Sign and broadcast \`unsigned_transaction\` yourself — \`transaction_version\` tells you whether to
 deserialize it as a legacy \`Transaction\` or \`VersionedTransaction\`, and \`send_to\` tells you which

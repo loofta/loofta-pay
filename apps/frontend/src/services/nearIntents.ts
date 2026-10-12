@@ -367,11 +367,13 @@ export async function getDepositInfo(params: {
   userAddress?: string;
   authMethod?: AuthMethod;
   swapType?: "EXACT_INPUT" | "EXACT_OUTPUT"; // default EXACT_INPUT
+  /** NEAR Confidential Intents. `advanced` unlinks the origin deposit from the Solana payout. */
+  confidentiality?: "public" | "basic" | "advanced";
 }): Promise<DepositInfo> {
   // Block deposit creation in demo mode
   assertNotDemoMode("Deposit address creation");
 
-  const { fromToken, toToken, amount, recipient, sender, refundAddress, slippageBps = 100, userAddress, authMethod, swapType = "EXACT_INPUT" } = params;
+  const { fromToken, toToken, amount, recipient, sender, refundAddress, slippageBps = 100, userAddress, authMethod, swapType = "EXACT_INPUT", confidentiality } = params;
   const swapTypeEnum = swapType === "EXACT_OUTPUT" ? QuoteRequest.swapType.EXACT_OUTPUT : QuoteRequest.swapType.EXACT_INPUT;
 
   // Refund address is required for non-custodial operations
@@ -428,6 +430,9 @@ export async function getDepositInfo(params: {
       quoteWaitingTimeMs: 3000,
     } as QuoteRequest);
     if (REFERRAL_CODE) (req as any).referral = REFERRAL_CODE;
+  }
+  if (confidentiality && confidentiality !== "public") {
+    (req as QuoteRequest & { confidentiality?: string }).confidentiality = confidentiality;
   }
   try {
     const raw = await OneClickService.getQuote(req);

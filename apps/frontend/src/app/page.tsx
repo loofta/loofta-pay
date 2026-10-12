@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import HomeV3Content from "./home-v3/HomeV3Content";
+import LooftaHomePage from "@/components/home-v4/LooftaHomePage.jsx";
 
-const TITLE = "Send USDC to Anyone — Email or Social Handle";
+const TITLE = "Loofta: Send money to any @username or email";
 const DESCRIPTION =
-  "Send USDC to anyone with just an email address or social handle — no wallet required. They claim it in 150+ tokens or straight to their bank. Flip on Shielded mode to keep sender and recipient private. Built for creators, freelancers, and distributed teams.";
+  "Just type a handle or email and send. They claim it whenever they're ready, in 150+ tokens or straight to their bank.";
 
 export const metadata: Metadata = {
   title: TITLE,
@@ -38,5 +38,5 @@ export const metadata: Metadata = {
 };
 
 export default function Page() {
-  return <HomeV3Content />;
+  return <LooftaHomePage />;
 }

@@ -202,14 +202,13 @@ export function TokenCombobox({
 			<DialogPortal>
 				{/* Overlay */}
 				<div
-					// z-[110]/[111]: must stay above BalanceModal's own z-[100] wrapper (bumped for the
-					// Mystery Pack page fix), or this popup renders open but hidden/unclickable underneath it.
-					className="fixed inset-0 z-[110] bg-black/75 backdrop-blur-sm"
+					// Above BalanceModal (z-[100]) and the deposit sheet (z-[120]), or the picker opens underneath them.
+					className="fixed inset-0 z-[130] bg-black/75 backdrop-blur-sm"
 					onClick={() => setOpen(false)}
 				/>
 				{/* Centering shell — flex center on desktop, full-screen on mobile.
 				    pointer-events-none so clicks outside the content hit the overlay. */}
-				<div className="fixed inset-0 z-[111] flex items-center justify-center pointer-events-none sm:p-4">
+				<div className="fixed inset-0 z-[131] flex items-center justify-center pointer-events-none sm:p-4">
 				<DialogPrimitive.Content
 					onOpenAutoFocus={(e) => { e.preventDefault(); inputRef.current?.focus(); }}
 					className={cn(

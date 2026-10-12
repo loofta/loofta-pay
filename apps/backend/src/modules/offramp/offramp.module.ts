@@ -4,9 +4,11 @@ import { OfframpService } from './offramp.service';
 import { OfframpProcessorService } from './offramp-processor.service';
 import { IntentsModule } from '../intents/intents.module';
 import { UsersModule } from '@/modules/users/users.module';
+import { LotteryModule } from '../lottery/lottery.module';
+import { ClaimsModule } from '@/modules/claims/claims.module';
 
 @Module({
-  imports: [IntentsModule, UsersModule],
+  imports: [IntentsModule, UsersModule, LotteryModule, ClaimsModule],
   controllers: [OfframpController],
   providers: [OfframpService, OfframpProcessorService],
   exports: [OfframpService],

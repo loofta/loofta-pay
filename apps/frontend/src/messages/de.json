@@ -182,7 +182,7 @@
       }
     },
     "signInToSendHandle": "Melde dich an, um an einen Handle oder eine E-Mail zu senden",
-    "signInToSendHandleHint": "E-Mail- oder Social-Login — Wallet-Adressen brauchen kein Konto"
+    "signInToSendHandleHint": "E-Mail- oder Social-Login. Wallet-Adressen brauchen kein Konto"
   },
   "MarketingPage": {
     "nav": {
@@ -562,8 +562,8 @@
       "headlineBefore": "Sende Geld an jedes",
       "headlineAfter": "oder E-Mail",
       "headlineCashOut": "Sie zahlen auf ihre Weise aus.",
-      "support": "Zahle an eine Wallet ohne Konto, oder melde dich an für einen Handle — sie claimen zu Venmo, Cash App, Revolut, Zelle, USDC auf Solana oder jede Krypto.",
-      "supportWithPaj": "Zahle an eine Wallet ohne Konto, oder melde dich an für einen Handle — sie claimen zu Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC auf Solana oder jede Krypto.",
+      "support": "Zahle an eine Wallet ohne Konto, oder melde dich an für einen Handle . sie claimen zu Venmo, Cash App, Revolut, Zelle, USDC auf Solana oder jede Krypto.",
+      "supportWithPaj": "Zahle an eine Wallet ohne Konto, oder melde dich an für einen Handle . sie claimen zu Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC auf Solana oder jede Krypto.",
       "cashOutLabel": "Sie zahlen aus zu",
       "ctaStart": "Kostenlos senden starten",
       "ctaBusiness": "Für Unternehmen",
@@ -582,5 +582,17 @@
       "railAnyCryptoSub": "150+ Token",
       "railPajSub": "Naira-Bank"
     }
+  },
+  "LaunchDeck": {
+    "eyebrow": "Alles starten",
+    "title": "Wähle, was du starten willst.",
+    "subtitle": "Zahlung senden, Giveaway starten oder Empfangslink teilen.",
+    "sendTitle": "Zahlung senden",
+    "sendBody": "Handle, E-Mail oder Wallet bezahlen. Sie cashen aus wie sie wollen.",
+    "giveawayTitle": "Giveaway starten",
+    "giveawayBody": "Preis finanzieren, einen Link teilen, On-Chain-Ziehung.",
+    "receiveTitle": "Bezahlt werden",
+    "receiveBody": "Empfangslink oder QR teilen . kein Wallet für sie nötig.",
+    "cta": "Öffnen"
   }
 }

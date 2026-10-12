@@ -68,7 +68,15 @@ export interface MultiCreateResult {
 }
 
 export async function createMultiPayments(
-  input: { recipients: MultiSendRecipient[]; sender_wallet: string; cluster?: 'devnet' | 'mainnet' },
+  input: {
+    recipients: MultiSendRecipient[];
+    sender_wallet: string;
+    cluster?: 'devnet' | 'mainnet';
+    /** MagicBlock split (1–15) applied to every recipient's private payout. */
+    split?: number;
+    /** MagicBlock max delivery delay in ms, applied to every recipient's private payout. */
+    maxDelayMs?: number;
+  },
   userId: string,
   accessToken?: string | null,
 ): Promise<MultiCreateResult> {

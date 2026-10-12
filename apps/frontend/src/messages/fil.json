@@ -182,7 +182,7 @@
       }
     },
     "signInToSendHandle": "Mag-sign in para magpadala sa handle o email",
-    "signInToSendHandleHint": "Email o social login — walang account kailangan para sa wallet address"
+    "signInToSendHandleHint": "Email o social login. Walang account kailangan para sa wallet address"
   },
   "MarketingPage": {
     "nav": {
@@ -562,8 +562,8 @@
       "headlineBefore": "Magpadala ng pera sa anumang",
       "headlineAfter": "o email",
       "headlineCashOut": "Kinukuha nila sa paraan nila.",
-      "support": "Magbayad sa wallet nang walang account, o mag-sign in para magpadala sa handle — kinu-claim nila sa Venmo, Cash App, Revolut, Zelle, USDC sa Solana, o anumang crypto.",
-      "supportWithPaj": "Magbayad sa wallet nang walang account, o mag-sign in para magpadala sa handle — kinu-claim nila sa Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC sa Solana, o anumang crypto.",
+      "support": "Magbayad sa wallet nang walang account, o mag-sign in para magpadala sa handle . kinu-claim nila sa Venmo, Cash App, Revolut, Zelle, USDC sa Solana, o anumang crypto.",
+      "supportWithPaj": "Magbayad sa wallet nang walang account, o mag-sign in para magpadala sa handle . kinu-claim nila sa Venmo, Cash App, Revolut, Zelle, PAJ Naira, USDC sa Solana, o anumang crypto.",
       "cashOutLabel": "Kinukuha nila sa",
       "ctaStart": "Magsimulang magpadala, libre ito",
       "ctaBusiness": "Para sa negosyo",
@@ -582,5 +582,17 @@
       "railAnyCryptoSub": "150+ tokens",
       "railPajSub": "Bangko sa naira"
     }
+  },
+  "LaunchDeck": {
+    "eyebrow": "Simulan ang kahit ano",
+    "title": "Piliin ang gusto mong simulan.",
+    "subtitle": "Magpadala ng bayad, mag-launch ng giveaway, o mag-share ng receive link.",
+    "sendTitle": "Magpadala ng bayad",
+    "sendBody": "Bayaran ang handle, email, o wallet. Sila ang magca-cash out sa paraan nila.",
+    "giveawayTitle": "Mag-launch ng giveaway",
+    "giveawayBody": "Pondohan ang prize, i-share ang link, on-chain draw.",
+    "receiveTitle": "Tumanggap",
+    "receiveBody": "I-share ang receive link o QR . walang wallet kailangan nila.",
+    "cta": "Buksan"
   }
 }

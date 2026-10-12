@@ -6,14 +6,22 @@ function fwd(authHeader: string | null): Record<string, string> {
   return authHeader ? { authorization: authHeader } : {};
 }
 
+const UNAVAILABLE = { message: "The payment service is unavailable. Try again in a moment." };
+
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   const { id } = await props.params;
   const authHeader = request.headers.get("authorization");
-  const res = await fetch(`${backendUrl()}/offramp/${id}`, {
-    headers: fwd(authHeader),
-  });
-  const data = await res.json().catch(() => ({}));
-  return NextResponse.json(data, { status: res.status });
+  const action = new URL(request.url).searchParams.get("action");
+  const path = action === "relay-status" ? `${id}/relay-status` : id;
+  try {
+    const res = await fetch(`${backendUrl()}/offramp/${path}`, {
+      headers: fwd(authHeader),
+    });
+    const data = await res.json().catch(() => ({}));
+    return NextResponse.json(data, { status: res.status });
+  } catch {
+    return NextResponse.json(UNAVAILABLE, { status: 503 });
+  }
 }
 
 export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -29,23 +37,30 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     action === "cancel"          ? "cancel"          :
     action === "mark-cancelled"  ? "mark-cancelled"  :
     action === "fund-gas"        ? "fund-gas"        :
+    action === "relay-tx"        ? "relay-tx"        :
+    action === "relay-broadcast" ? "relay-broadcast" :
+    action === "delete"         ? "delete"          :
     null;
 
   if (!endpoint) return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 
   // Actions that carry a request body
-  const hasBody = ["record-deposit", "bridge-back", "fund-gas"].includes(action);
+  const hasBody = ["record-deposit", "bridge-back", "fund-gas", "relay-broadcast"].includes(action);
   const body = hasBody ? await request.text() : undefined;
 
-  const res = await fetch(`${backendUrl()}/offramp/${id}/${endpoint}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...fwd(authHeader),
-    },
-    ...(body !== undefined ? { body } : {}),
-  });
+  try {
+    const res = await fetch(`${backendUrl()}/offramp/${id}/${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...fwd(authHeader),
+      },
+      ...(body !== undefined ? { body } : {}),
+    });
 
-  const data = await res.json().catch(() => ({}));
-  return NextResponse.json(data, { status: res.status });
+    const data = await res.json().catch(() => ({}));
+    return NextResponse.json(data, { status: res.status });
+  } catch {
+    return NextResponse.json(UNAVAILABLE, { status: 503 });
+  }
 }

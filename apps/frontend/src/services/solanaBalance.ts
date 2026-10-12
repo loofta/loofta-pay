@@ -43,6 +43,26 @@ export async function fetchEmbeddedSolanaUsdcBalance(
  * USDC balance in raw base units (6 decimals) for a wallet's USDC ATA.
  * Uses getAccountInfo instead of getTokenAccountBalance — the latter errors when ATA doesn't exist.
  */
+/** SPL token balance in raw base units. `tokenProgram` is the mint's program (classic SPL or Token-2022). */
+export async function getSplAtaBalanceBaseUnits(
+  ownerAddress: string,
+  mintAddress: string,
+  networkMode?: NetworkMode,
+  tokenProgram?: string,
+): Promise<number> {
+  try {
+    const mode = networkMode ?? defaultNetworkMode();
+    const conn = new Connection(getRpcForMode(mode), "confirmed");
+    const programId = new PublicKey(tokenProgram || "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    const ata = getAssociatedTokenAddressSync(new PublicKey(mintAddress), new PublicKey(ownerAddress), false, programId);
+    const acctInfo = await conn.getAccountInfo(ata);
+    if (!acctInfo || acctInfo.data.length < 72) return 0;
+    return Number(acctInfo.data.readBigUInt64LE(64));
+  } catch {
+    return 0;
+  }
+}
+
 export async function getUsdcAtaBalanceBaseUnits(ownerAddress: string, networkMode?: NetworkMode): Promise<number> {
   try {
     const mode = networkMode ?? defaultNetworkMode();

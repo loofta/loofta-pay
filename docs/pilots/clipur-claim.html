@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Claim · Loofta</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      background: #e7ebf4;
+      color: #0f172a;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font-family: inherit; }
+    .pitch {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 22px 20px 8px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-end;
+    }
+    .pitch h1 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+    .pitch p { margin: 0; max-width: 560px; color: #5c657a; font-size: 13px; line-height: 1.45; }
+    .pitch a {
+      flex-shrink: 0;
+      background: #fff;
+      border: 1px solid #eceef3;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #1c2030;
+      text-decoration: none;
+    }
+    .browser {
+      max-width: 920px;
+      margin: 12px auto 28px;
+      background: #0f0f12;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 18px 50px rgba(28, 32, 60, 0.12);
+      min-height: 780px;
+    }
+    .chrome {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 14px;
+      background: #1a1a1f;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .dots { display: flex; gap: 6px; }
+    .dots i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+    .dots i:nth-child(1) { background: #ff5f57; }
+    .dots i:nth-child(2) { background: #febc2e; }
+    .dots i:nth-child(3) { background: #28c840; }
+    .url {
+      margin-left: 8px;
+      flex: 1;
+      max-width: 460px;
+      height: 26px;
+      border-radius: 7px;
+      background: #111114;
+      border: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      color: #94a3b8;
+      font-size: 12px;
+    }
+    .page { max-width: 32rem; margin: 0 auto; padding: 24px 16px 48px; color: #fff; }
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: -0.02em; }
+    .brand img { height: 22px; }
+    .back {
+      color: #94a3b8;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .back:hover { color: #fff; }
+    .card {
+      background: #141419;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 30px;
+      padding: 36px 28px 28px;
+      text-align: center;
+    }
+    .amount { font-size: 60px; font-weight: 650; letter-spacing: -0.04em; line-height: 1; }
+    .from { margin-top: 12px; color: #94a3b8; font-size: 20px; }
+    .from b { color: #e2e8f0; font-weight: 500; }
+    .msg {
+      margin: 20px auto 0;
+      max-width: 28rem;
+      text-align: left;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 12px 14px;
+      color: #cbd5e1;
+      font-size: 15px;
+    }
+    .ready {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 16px;
+      color: #16a34a;
+      font-weight: 500;
+      font-size: 14px;
+    }
+    .ready i { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: block; }
+    .actions { margin-top: 40px; text-align: left; }
+    .grad {
+      width: 100%;
+      border: 0;
+      border-radius: 12px;
+      padding: 16px;
+      font-size: 16px;
+      font-weight: 650;
+      color: #fff;
+      cursor: pointer;
+      background: linear-gradient(90deg, #FF1301, #EAB308);
+    }
+    .grad:hover { opacity: 0.92; }
+    .or {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 14px 0;
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .or span { flex: 1; height: 1px; background: rgba(255,255,255,0.1); }
+    .cash-wrap {
+      width: 100%;
+      border: 0;
+      padding: 1.5px;
+      border-radius: 16px;
+      background: linear-gradient(90deg, #f97316, #fbbf24, #ef4444);
+      cursor: pointer;
+    }
+    .cash-wrap:hover { opacity: 0.92; }
+    .cash-inner {
+      display: block;
+      background: #0f0f12;
+      border-radius: 14.5px;
+      padding: 14px 16px;
+      color: #f1f5f9;
+      text-align: left;
+    }
+    .cash-head { display: flex; align-items: center; justify-content: space-between; font-weight: 650; }
+    .easiest {
+      background: rgba(255,255,255,0.1);
+      color: #fcd34d;
+      border-radius: 999px;
+      padding: 2px 10px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .logos { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+    .logos div { display: flex; flex-direction: column; align-items: center; gap: 6px; color: #94a3b8; font-size: 13px; font-weight: 400; }
+    .logos img, .tile-icon {
+      width: 40px; height: 40px; border-radius: 12px;
+      object-fit: contain; background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1); padding: 6px;
+    }
+    .row {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-align: left;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05);
+      color: #f1f5f9;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      font-weight: 650;
+    }
+    .row:hover { background: rgba(255,255,255,0.1); }
+    .row.selected { border-color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.1); }
+    .row img { width: 28px; height: 28px; object-fit: contain; border-radius: 8px; }
+    .row small { display: block; font-weight: 400; color: #64748b; font-size: 15px; margin-top: 2px; }
+    .navback {
+      border: 0; background: transparent; color: #94a3b8;
+      font-size: 15px; font-weight: 500; cursor: pointer; padding: 0 0 12px; display: flex; align-items: center; gap: 4px;
+    }
+    .navback:hover { color: #e2e8f0; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; color: #94a3b8; font-size: 14px; margin-bottom: 6px; }
+    .field input, .field select {
+      width: 100%;
+      height: 44px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      padding: 0 12px;
+      font-size: 15px;
+      outline: none;
+    }
+    .combo {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.09);
+      color: #fff;
+      cursor: pointer;
+      text-align: left;
+    }
+    .combo:hover { background: rgba(255,255,255,0.09); }
+    .combo .meta { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .combo .sym { font-weight: 600; font-size: 15px; }
+    .combo .net { color: rgba(255,255,255,0.45); font-size: 14px; }
+    .mark {
+      width: 26px; height: 26px; border-radius: 50%;
+      display: grid; place-items: center; overflow: hidden; flex-shrink: 0;
+      font-size: 11px; font-weight: 700; color: #111;
+    }
+    .mark.lg { width: 32px; height: 32px; }
+    .mark img { width: 100%; height: 100%; object-fit: cover; }
+    .picker {
+      margin-top: 8px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(13,13,20,0.98);
+      border-radius: 16px;
+      overflow: hidden;
+      text-align: left;
+    }
+    .picker-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.07); font-weight: 650;
+    }
+    .picker-head button { border: 0; background: transparent; color: rgba(255,255,255,0.45); cursor: pointer; font-size: 16px; }
+    .picker-body { display: flex; height: 248px; }
+    .nets { width: 128px; border-right: 1px solid rgba(255,255,255,0.07); overflow: auto; padding: 8px; background: rgba(255,255,255,0.02); }
+    .nets p { margin: 4px 8px 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.3); font-weight: 650; }
+    .nets button, .toks button {
+      width: 100%; text-align: left; border: 0; background: transparent; color: rgba(255,255,255,0.55);
+      border-radius: 10px; padding: 8px 10px; cursor: pointer; font-size: 13px; font-weight: 550;
+    }
+    .nets button.on, .toks button:hover { background: rgba(255,255,255,0.12); color: #fff; }
+    .toks { flex: 1; overflow: auto; padding: 8px; }
+    .toks button { display: flex; align-items: center; gap: 10px; }
+    .toks b { display: block; color: #fff; font-size: 14px; }
+    .toks small { color: rgba(255,255,255,0.45); font-size: 12px; font-weight: 500; }
+    .field input::placeholder { color: #64748b; }
+    .connected {
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      text-align: left;
+    }
+    .connected b { display: block; }
+    .connected span { color: #94a3b8; font-size: 13px; }
+    .private {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.03);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+    }
+    .private b { display: block; font-size: 15px; }
+    .private span { color: #94a3b8; font-size: 13px; }
+    .switchbox {
+      width: 42px; height: 24px; border-radius: 99px; border: 0;
+      background: rgba(255,255,255,0.2); position: relative; cursor: pointer; flex-shrink: 0;
+    }
+    .switchbox[aria-pressed="true"] { background: linear-gradient(90deg, #FF1301, #EAB308); }
+    .switchbox i {
+      position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+      border-radius: 50%; background: #fff; transition: transform .15s ease;
+    }
+    .switchbox[aria-pressed="true"] i { transform: translateX(18px); }
+    .note {
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.03);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .note b { display: block; margin-bottom: 4px; }
+    .note p { margin: 0; color: #64748b; font-size: 15px; line-height: 1.45; }
+    .fee { color: #94a3b8; font-size: 15px; }
+    .fee div { display: flex; justify-content: space-between; margin-bottom: 6px; }
+    .fee .net { color: #fcd34d; font-weight: 650; font-size: 18px; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); }
+    .err { color: #fb7185; font-size: 14px; min-height: 0; margin: 0 0 8px; }
+    .hidden { display: none !important; }
+    .done-mark { font-size: 56px; line-height: 1; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="browser">
+    <div class="chrome">
+      <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="url" id="url">https://pay.loofta.xyz/c/k4mP9xQ2</div>
+    </div>
+    <div class="page">
+      <div class="top">
+        <a class="back" href="clipur-wallet.html">← Clipur</a>
+        <div class="brand">
+          <img src="../../apps/frontend/public/images/logo/loofta_logo_orange.svg" alt="Loofta" />
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="amount" id="amount">+ $84.00</div>
+        <div class="from">from <b>Clipur</b></div>
+        <div class="msg">Clip earnings. Verified clips only. Pending stays on Clipur.</div>
+
+        <div class="actions" id="flow">
+          <div data-step="home">
+            <button class="grad" type="button" data-go="crypto">Claim in crypto</button>
+            <div class="or"><span></span>or<span></span></div>
+            <button class="cash-wrap" type="button" data-go="cash">
+              <span class="cash-inner">
+                <span class="cash-head"><span>Claim to cash</span><span class="easiest">Easiest</span></span>
+                <span class="logos">
+                  <div><img src="../../apps/frontend/public/images/platforms/venmo.png" alt="" />Venmo</div>
+                  <div><img src="../../apps/frontend/public/images/platforms/cashapp.webp" alt="" />Cash App</div>
+                  <div><img src="../../apps/frontend/public/images/platforms/revolut.png" alt="" />Revolut</div>
+                  <div><img src="../../apps/frontend/public/images/platforms/zelle.png" alt="" />Zelle</div>
+                </span>
+              </span>
+            </button>
+          </div>
+
+          <div data-step="crypto" class="hidden">
+            <button class="navback" type="button" data-go="home">← Back</button>
+            <button class="row" type="button" data-go="solana"><img src="../../apps/frontend/public/images/usdc.svg" alt="" /><span>USDC on Solana<small>Connect a wallet to claim</small></span></button>
+            <button class="row" type="button" data-go="any"><img src="../../apps/frontend/public/images/btc.svg" alt="" /><span>Any token<small>Pick a token, paste an address</small></span></button>
+          </div>
+
+          <div data-step="solana" class="hidden">
+            <button class="navback" type="button" data-go="crypto">← Back</button>
+            <div class="private">
+              <div><b>Claim privately</b><span>Hides this payout on-chain</span></div>
+              <button class="switchbox" id="private-sol" type="button" aria-pressed="false" aria-label="Claim privately"><i></i></button>
+            </div>
+            <div class="fee hidden" id="sol-fee"></div>
+            <div class="connected hidden" id="wallet-connected"><b id="wallet-label">Wallet connected</b><span id="wallet-addr"></span></div>
+            <button class="grad" type="button" id="connect-wallet">Connect wallet</button>
+          </div>
+
+          <div data-step="any" class="hidden">
+            <button class="navback" type="button" data-go="crypto">← Back</button>
+            <div class="field">
+              <label>Token</label>
+              <button type="button" class="combo" id="token-trigger" aria-expanded="false">
+                <span class="meta" id="token-meta"></span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="1.8"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg>
+              </button>
+              <div class="picker hidden" id="token-picker">
+                <div class="picker-head">Select token <button type="button" id="token-close" aria-label="Close">✕</button></div>
+                <div class="picker-body">
+                  <div class="nets" id="token-nets"></div>
+                  <div class="toks" id="token-list"></div>
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <label for="token-address">Wallet address</label>
+              <input id="token-address" placeholder="Paste a Zcash address" spellcheck="false" autocomplete="off" />
+            </div>
+            <p class="err" id="err-any"></p>
+            <button class="grad" type="button" id="confirm-any">Claim to this address</button>
+          </div>
+
+          <div data-step="cash" class="hidden">
+            <button class="navback" type="button" data-go="home">← Back</button>
+            <button class="row" type="button" data-peer="Venmo" data-ph="@yourusername"><img src="../../apps/frontend/public/images/platforms/venmo.png" alt="" /><span>Venmo<small>USD</small></span></button>
+            <button class="row" type="button" data-peer="Cash App" data-ph="$yourtag"><img src="../../apps/frontend/public/images/platforms/cashapp.webp" alt="" /><span>Cash App<small>USD</small></span></button>
+            <button class="row" type="button" data-peer="Revolut" data-ph="@yourusername"><img src="../../apps/frontend/public/images/platforms/revolut.png" alt="" /><span>Revolut<small>USD · EUR · GBP</small></span></button>
+            <button class="row" type="button" data-peer="Zelle" data-ph="you@email.com"><img src="../../apps/frontend/public/images/platforms/zelle.png" alt="" /><span>Zelle<small>USD</small></span></button>
+            <div id="cash-form" class="hidden">
+              <div class="field">
+                <label for="peer-handle" id="peer-label">Account</label>
+                <input id="peer-handle" autocomplete="off" />
+              </div>
+              <p class="err" id="err-peer"></p>
+              <button class="grad" type="button" id="confirm-peer">Claim</button>
+            </div>
+          </div>
+
+          <div data-step="done" class="hidden" style="text-align:center">
+            <div class="done-mark">✅</div>
+            <div class="amount" id="done-amount" style="font-size:40px">+ $84.00</div>
+            <p class="from" id="done-where" style="margin-bottom:20px">Claimed</p>
+            <a class="grad" href="clipur-wallet.html" style="display:inline-flex;align-items:center;justify-content:center;text-decoration:none;width:auto;padding:14px 22px">Back to Clipur</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const amount = Math.max(0, Number(params.get("amount")) || 84);
+    const money = "$" + amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById("amount").textContent = "+ " + money;
+    document.getElementById("done-amount").textContent = "+ " + money;
+
+    let privately = false;
+    let peerName = "Venmo";
+
+    function feeBox(on) {
+      const fee = on ? 0.2 + (Math.max(0, amount - 0.2) * 0.001) : 0;
+      const net = Math.max(0, amount - fee);
+      const el = document.getElementById("sol-fee");
+      el.classList.toggle("hidden", !on);
+      el.innerHTML = "<div><span>Claim amount</span><span>" + money + "</span></div>"
+        + "<div><span>Privacy fee</span><span>− $" + fee.toFixed(2) + "</span></div>"
+        + "<div class='net'><span>You'll receive</span><span>$" + net.toFixed(2) + "</span></div>";
+    }
+
+    function show(step) {
+      document.querySelectorAll("[data-step]").forEach((el) => {
+        el.classList.toggle("hidden", el.getAttribute("data-step") !== step);
+      });
+    }
+
+    document.querySelectorAll("[data-go]").forEach((btn) => {
+      btn.addEventListener("click", () => show(btn.getAttribute("data-go")));
+    });
+
+    let walletConnected = false;
+    document.getElementById("private-sol").onclick = () => {
+      privately = !privately;
+      document.getElementById("private-sol").setAttribute("aria-pressed", String(privately));
+      feeBox(privately);
+      if (walletConnected) document.getElementById("connect-wallet").textContent = privately ? "Claim privately" : "Claim USDC";
+    };
+
+    function finish(where) {
+      document.getElementById("done-where").innerHTML = "Claimed to <b>" + where + "</b>";
+      show("done");
+    }
+
+    document.getElementById("connect-wallet").onclick = () => {
+      if (!walletConnected) {
+        walletConnected = true;
+        document.getElementById("wallet-connected").classList.remove("hidden");
+        document.getElementById("wallet-addr").textContent = "7xK2…9pQm";
+        document.getElementById("connect-wallet").textContent = privately ? "Claim privately" : "Claim USDC";
+        return;
+      }
+      finish(privately ? "USDC on Solana, privately · 7xK2…9pQm" : "USDC on Solana · 7xK2…9pQm");
+    };
+
+    const IMG = "../../apps/frontend/public/images/";
+    const TOKENS = [
+      { symbol: "ZEC", name: "Zcash", network: "Zcash", hint: "Paste a Zcash address", color: "#F4B728", letter: "Z" },
+      { symbol: "BTC", name: "Bitcoin", network: "Bitcoin", hint: "Paste a Bitcoin address", img: IMG + "btc.svg" },
+      { symbol: "ETH", name: "Ethereum", network: "Ethereum", hint: "Paste an Ethereum address", img: IMG + "eth.svg" },
+      { symbol: "SOL", name: "Solana", network: "Solana", hint: "Paste a Solana address", img: IMG + "sol.png" },
+      { symbol: "USDT", name: "Tether", network: "Ethereum", hint: "Paste an Ethereum address", img: IMG + "usdt.svg" },
+      { symbol: "USDT", name: "Tether", network: "Tron", hint: "Paste a Tron address", img: IMG + "usdt.svg" },
+      { symbol: "TON", name: "Toncoin", network: "TON", hint: "Paste a TON address", color: "#0098EA", letter: "T" },
+    ];
+    let pickedToken = TOKENS[0];
+    let pickedNetwork = "All";
+
+    function tokenMark(token, large) {
+      if (token.img) return "<span class='mark" + (large ? " lg" : "") + "'><img alt='' src='" + token.img + "'></span>";
+      return "<span class='mark" + (large ? " lg" : "") + "' style='background:" + token.color + "'>" + token.letter + "</span>";
+    }
+    function paintTrigger() {
+      document.getElementById("token-meta").innerHTML = tokenMark(pickedToken, false) + "<span class='sym'>" + pickedToken.symbol + "</span><span class='net'>" + pickedToken.network + "</span>";
+      document.getElementById("token-address").placeholder = pickedToken.hint;
+    }
+    function paintPicker() {
+      const networks = ["All", ...new Set(TOKENS.map((t) => t.network))];
+      document.getElementById("token-nets").innerHTML = "<p>Network</p>" + networks.map((name) =>
+        "<button type='button' data-net='" + name + "' class='" + (name === pickedNetwork ? "on" : "") + "'>" + name + "</button>"
+      ).join("");
+      const list = TOKENS.filter((t) => pickedNetwork === "All" || t.network === pickedNetwork);
+      document.getElementById("token-list").innerHTML = list.map((t, i) =>
+        "<button type='button' data-i='" + TOKENS.indexOf(t) + "'>" + tokenMark(t, true) + "<span><b>" + t.symbol + "</b><small>" + t.name + " · " + t.network + "</small></span></button>"
+      ).join("");
+      document.querySelectorAll("#token-nets [data-net]").forEach((btn) => {
+        btn.onclick = () => { pickedNetwork = btn.getAttribute("data-net"); paintPicker(); };
+      });
+      document.querySelectorAll("#token-list [data-i]").forEach((btn) => {
+        btn.onclick = () => {
+          pickedToken = TOKENS[Number(btn.getAttribute("data-i"))];
+          paintTrigger();
+          document.getElementById("token-picker").classList.add("hidden");
+          document.getElementById("token-trigger").setAttribute("aria-expanded", "false");
+        };
+      });
+    }
+    document.getElementById("token-trigger").onclick = () => {
+      const picker = document.getElementById("token-picker");
+      const open = picker.classList.toggle("hidden");
+      document.getElementById("token-trigger").setAttribute("aria-expanded", String(!open));
+      if (!open) paintPicker();
+    };
+    document.getElementById("token-close").onclick = () => {
+      document.getElementById("token-picker").classList.add("hidden");
+      document.getElementById("token-trigger").setAttribute("aria-expanded", "false");
+    };
+    paintTrigger();
+    document.getElementById("confirm-any").onclick = () => {
+      const address = document.getElementById("token-address").value.trim();
+      const err = document.getElementById("err-any");
+      if (address.length < 8) { err.textContent = "Paste a " + pickedToken.symbol + " address."; return; }
+      err.textContent = "";
+      finish(pickedToken.symbol + " on " + pickedToken.network + " · " + address.slice(0, 4) + "…" + address.slice(-4));
+    };
+
+    document.querySelectorAll("[data-peer]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        peerName = btn.getAttribute("data-peer");
+        document.getElementById("peer-label").textContent = peerName;
+        document.getElementById("peer-handle").placeholder = btn.getAttribute("data-ph");
+        document.getElementById("confirm-peer").textContent = "Claim to " + peerName;
+        document.getElementById("cash-form").classList.remove("hidden");
+        document.querySelectorAll("[data-peer]").forEach((other) => other.classList.toggle("selected", other === btn));
+      });
+    });
+    document.getElementById("confirm-peer").onclick = () => {
+      const handle = document.getElementById("peer-handle").value.trim();
+      const err = document.getElementById("err-peer");
+      if (!handle) { err.textContent = "Add your " + peerName + " account."; return; }
+      err.textContent = "";
+      finish(peerName + " · " + handle);
+    };
+  </script>
+</body>
+</html>

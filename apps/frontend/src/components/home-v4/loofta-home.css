@@ -1,0 +1,96 @@
+.loofta-home {
+  background: #07070a;
+  color: #f2efe8;
+  font-family: var(--font-home-manrope), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.loofta-home *,
+.loofta-home *::before,
+.loofta-home *::after {
+  box-sizing: border-box;
+}
+.loofta-home a {
+  color: #f2efe8;
+  text-decoration: none;
+}
+.loofta-home a:hover {
+  color: #ff7a2a;
+}
+/* Hero is top-aligned so the send card can grow (privacy controls) without moving the copy;
+   this offset keeps the copy visually centered against the card's resting height. */
+.loofta-home .lh-hero-title {
+  font-size: clamp(40px, 9.5vw, 88px);
+}
+/* Icons and the send card share one entrance, then the icons fade on their own. */
+.loofta-home .lh-pay-cluster {
+  transform-origin: 50% 46%;
+  animation: lh-pay-in 1.05s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes lh-pay-in {
+  0% {
+    opacity: 0;
+    transform: perspective(1200px) translateY(52px) rotateX(11deg) rotateY(-18deg) scale(0.94);
+  }
+  /* Opaque early so the icons are visible for the rest of the card's move. */
+  32% {
+    opacity: 1;
+    transform: perspective(1200px) translateY(26px) rotateX(6deg) rotateY(-9deg) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loofta-home .lh-pay-cluster {
+    animation: none;
+  }
+  .loofta-home .lh-caret {
+    animation: none;
+  }
+  .loofta-home .lh-email-line {
+    transition: none;
+  }
+}
+.loofta-home .lh-caret {
+  display: inline-block;
+  width: 0.045em;
+  height: 0.78em;
+  margin-left: 0.06em;
+  background: currentColor;
+  vertical-align: -0.04em;
+  animation: lh-caret 1.05s steps(1) infinite;
+}
+@keyframes lh-caret {
+  50% { opacity: 0; }
+}
+.loofta-home .lh-email-line {
+  display: block;
+  color: #66646e;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transform: translateY(0.12em);
+  transition: max-height 0.5s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.4s ease 0.05s, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.loofta-home .lh-email-line.is-on {
+  max-height: 1.2em;
+  opacity: 1;
+  transform: none;
+}
+/* Keep “any @handle” on one line. */
+@media (min-width: 1024px) {
+  .loofta-home .lh-hero-copy {
+    padding-top: 96px;
+  }
+  .loofta-home .lh-hero-title {
+    font-size: clamp(48px, calc(5.4vw - 4px), 80px);
+  }
+}
+.loofta-home .lh-hero-title .lh-nowrap {
+  white-space: nowrap;
+}
+.loofta-home ::selection {
+  background: #ff4a12;
+  color: #fff;
+}

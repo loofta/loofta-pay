@@ -5,6 +5,8 @@ import {
   IsNumber,
   IsOptional,
   Min,
+  Max,
+  IsInt,
   IsIn,
   MaxLength,
   IsArray,
@@ -91,6 +93,20 @@ export class BuildMultiSendDto {
   @IsString()
   @IsIn(['devnet', 'mainnet'])
   cluster?: 'devnet' | 'mainnet';
+
+  @ApiPropertyOptional({ description: 'MagicBlock split (1-15) applied to every recipient payout in this batch.', minimum: 1, maximum: 15 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(15)
+  split?: number;
+
+  @ApiPropertyOptional({ description: 'MagicBlock max delivery delay in ms, applied to every recipient payout. 0 means no delay. UI ceiling is 7 days.', minimum: 0, maximum: 604_800_000 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(604_800_000)
+  maxDelayMs?: number;
 }
 
 /** Step 2 of the private flow: build the sender's one funding transfer (sender → this batch's

@@ -43,10 +43,16 @@ export async function startPrivateDeposit(
   userId: string,
   accessToken?: string | null,
   cluster?: 'devnet' | 'mainnet',
+  schedule?: { split?: number; maxDelayMs?: number },
 ): Promise<{ id: string; depositAddress: string; memo?: string | null; amountToSendUsdc?: number; feeEstimateUsdc?: number }> {
   return fetchApi(`/private-balance/deposit/start`, {
     method: 'POST',
-    body: JSON.stringify({ amount_usdc: amountUsdc, cluster }),
+    body: JSON.stringify({
+      amount_usdc: amountUsdc,
+      cluster,
+      ...(schedule?.split ? { split: schedule.split } : {}),
+      ...(schedule?.maxDelayMs != null ? { max_delay_ms: schedule.maxDelayMs } : {}),
+    }),
     userId,
     accessToken,
   });
@@ -75,10 +81,17 @@ export async function buildDirectPrivateDeposit(
   userId: string,
   accessToken?: string | null,
   cluster?: 'devnet' | 'mainnet',
+  schedule?: { split?: number; maxDelayMs?: number },
 ): Promise<MagicblockTxResponse> {
   return fetchApi(`/private-balance/deposit/build-direct`, {
     method: 'POST',
-    body: JSON.stringify({ amount_usdc: amountUsdc, source_wallet_address: sourceWalletAddress, cluster }),
+    body: JSON.stringify({
+      amount_usdc: amountUsdc,
+      source_wallet_address: sourceWalletAddress,
+      cluster,
+      ...(schedule?.split ? { split: schedule.split } : {}),
+      ...(schedule?.maxDelayMs != null ? { max_delay_ms: schedule.maxDelayMs } : {}),
+    }),
     userId,
     accessToken,
   });

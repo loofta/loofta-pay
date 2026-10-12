@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 import { ConfigService } from '@nestjs/config';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
@@ -122,6 +122,7 @@ export class UsersService {
     privyUserId: string;
     email: string | null;
     username: string | null;
+    requirePrivatePayments: boolean;
   }> {
     // Strip Discord's legacy "#0"-style discriminator suffix — see verifyRecipientIdentityForSendPayment.
     const cleanHandle = (handle || '').replace(/^@/, '').replace(/#\d+$/, '').toLowerCase().trim();
@@ -138,7 +139,7 @@ export class UsersService {
     }
 
     const { data: user, error } = await this.supabaseService.appUsers
-      .select('id, privy_user_id, email, username')
+      .select('id, privy_user_id, email, username, require_private_payments')
       .eq('privy_user_id', social.user_id)
       .maybeSingle();
 
@@ -151,6 +152,7 @@ export class UsersService {
       privyUserId: user.privy_user_id,
       email: user.email,
       username: user.username,
+      requirePrivatePayments: user.require_private_payments === true,
     };
   }
 
@@ -288,11 +290,12 @@ export class UsersService {
     privyUserId: string;
     email: string | null;
     username: string | null;
+    requirePrivatePayments: boolean;
   }> {
     const clean = (email || '').trim().toLowerCase();
     if (!clean) throw new NotFoundException('Email is required');
     const { data: user, error } = await this.supabaseService.appUsers
-      .select('id, privy_user_id, email, username')
+      .select('id, privy_user_id, email, username, require_private_payments')
       .eq('email', clean)
       .maybeSingle();
     if (error) {
@@ -305,6 +308,7 @@ export class UsersService {
       privyUserId: user.privy_user_id,
       email: user.email,
       username: user.username,
+      requirePrivatePayments: user.require_private_payments === true,
     };
   }
 
@@ -385,6 +389,7 @@ export class UsersService {
     privyUserId: string;
     email: string | null;
     username: string | null;
+    requirePrivatePayments: boolean;
   }> {
     // Remove @ prefix if present
     const cleanUsername = username.replace(/^@/, '').toLowerCase();
@@ -394,7 +399,7 @@ export class UsersService {
     // Use maybeSingle() instead of single() to handle 0 rows gracefully.
     // ilike for case-insensitive exact match (DB may store "Lisa" while we query "lisa").
     const { data: user, error } = await this.supabaseService.appUsers
-      .select('id, privy_user_id, email, username')
+      .select('id, privy_user_id, email, username, require_private_payments')
       .ilike('username', cleanUsername)
       .maybeSingle();
 
@@ -421,7 +426,91 @@ export class UsersService {
       privyUserId: user.privy_user_id,
       email: user.email,
       username: user.username,
+      requirePrivatePayments: user.require_private_payments === true,
     };
+  }
+
+  /**
+   * Twitter send: a handle counts as registered when it matches username, twitter_username,
+   * or a linked social_accounts twitter row.
+   */
+  async findByTwitterOrUsername(handle: string): Promise<{
+    id: string;
+    privyUserId: string;
+    email: string | null;
+    username: string | null;
+    requirePrivatePayments: boolean;
+  }> {
+    const clean = (handle || '').replace(/^@/, '').toLowerCase().trim();
+    if (!clean || !/^[a-z0-9_]{1,32}$/.test(clean)) throw new NotFoundException('User not found');
+    const { data: user, error } = await this.supabaseService.appUsers
+      .select('id, privy_user_id, email, username, require_private_payments')
+      .or(`username.ilike.${clean},twitter_username.ilike.${clean}`)
+      .maybeSingle();
+    if (!error && user?.privy_user_id) {
+      return {
+        id: user.id,
+        privyUserId: user.privy_user_id,
+        email: user.email,
+        username: user.username,
+        requirePrivatePayments: user.require_private_payments === true,
+      };
+    }
+    const { data: social } = await this.supabaseService.socialAccounts
+      .select('user_id')
+      .eq('platform', 'twitter')
+      .eq('handle', clean)
+      .maybeSingle();
+    if (!social?.user_id) throw new NotFoundException('User not found');
+    const { data: linked } = await this.supabaseService.appUsers
+      .select('id, privy_user_id, email, username, require_private_payments')
+      .eq('privy_user_id', social.user_id)
+      .maybeSingle();
+    if (!linked?.privy_user_id) throw new NotFoundException('User not found');
+    return {
+      id: linked.id,
+      privyUserId: linked.privy_user_id,
+      email: linked.email,
+      username: linked.username,
+      requirePrivatePayments: linked.require_private_payments === true,
+    };
+  }
+
+  /** Public send-form lookup. No wallet, no email — only whether this person is on Loofta
+   *  and whether they only accept private payments. */
+  async lookupPayTarget(opts: {
+    kind: 'email' | 'username' | 'twitter' | 'social';
+    value: string;
+    platform?: SocialPlatform;
+  }): Promise<{ registered: boolean; requirePrivatePayments: boolean }> {
+    try {
+      const user = opts.kind === 'email'
+        ? await this.findByEmail(opts.value)
+        : opts.kind === 'twitter'
+          ? await this.findByTwitterOrUsername(opts.value)
+          : opts.kind === 'social' && opts.platform
+            ? await this.findBySocialHandle(opts.platform, opts.value)
+            : await this.findByUsername(opts.value);
+      return { registered: true, requirePrivatePayments: user.requirePrivatePayments };
+    } catch (err) {
+      if (err instanceof NotFoundException) return { registered: false, requirePrivatePayments: false };
+      throw err;
+    }
+  }
+
+  async getRequirePrivatePayments(privyUserId: string): Promise<boolean> {
+    const { data } = await this.supabaseService.appUsers
+      .select('require_private_payments')
+      .eq('privy_user_id', privyUserId)
+      .maybeSingle();
+    return data?.require_private_payments === true;
+  }
+
+  async setRequirePrivatePayments(privyUserId: string, enabled: boolean): Promise<void> {
+    const { error } = await this.supabaseService.appUsers
+      .update({ require_private_payments: enabled })
+      .eq('privy_user_id', privyUserId);
+    if (error) throw new BadRequestException('Could not update this setting.');
   }
 
   /**
@@ -526,14 +615,11 @@ export class UsersService {
     const normalized = evmAddress.trim().toLowerCase();
     for (const account of user.linked_accounts) {
       const type = (account.type || '').toLowerCase();
-      const chainType = (account.chain_type || '').toLowerCase();
-      const chainId = (account.chain_id || '').toString().toLowerCase();
-      const isEvm =
-        type === 'wallet' || type === 'smart_wallet' || type === 'ethereum' ||
-        chainType === 'ethereum' || chainId.startsWith('eip155:');
-      if (!isEvm) continue;
+      const chainType = (account.chain_type || account.chainType || '').toLowerCase();
+      if (type.includes('solana') || chainType === 'solana') continue;
       const addr = (account.address || '').toString().trim().toLowerCase();
-      if (addr && addr === normalized) return true;
+      // Any linked 0x address is an EVM wallet (embedded, smart wallet, or external).
+      if (/^0x[0-9a-f]{40}$/.test(addr) && addr === normalized) return true;
     }
     return false;
   }

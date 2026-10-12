@@ -182,7 +182,7 @@
       }
     },
     "signInToSendHandle": "Bir kullanıcı adına veya e-postaya göndermek için giriş yapın",
-    "signInToSendHandleHint": "E-posta veya sosyal giriş — cüzdan adresine göndermek için hesap gerekmez"
+    "signInToSendHandleHint": "E-posta veya sosyal giriş. Cüzdan adresine göndermek için hesap gerekmez"
   },
   "MarketingPage": {
     "nav": {
@@ -562,8 +562,8 @@
       "headlineBefore": "Herhangi bir",
       "headlineAfter": "veya e-postaya gönder",
       "headlineCashOut": "Onlar kendi yollarıyla nakde çevirir.",
-      "support": "Hesapsız bir cüzdana ödeyin veya handle için giriş yapın — Venmo, Cash App, Revolut, Zelle, Solana'da USDC veya herhangi bir kripto ile alırlar.",
-      "supportWithPaj": "Hesapsız bir cüzdana ödeyin veya handle için giriş yapın — Venmo, Cash App, Revolut, Zelle, PAJ Naira, Solana'da USDC veya herhangi bir kripto ile alırlar.",
+      "support": "Hesapsız bir cüzdana ödeyin veya handle için giriş yapın . Venmo, Cash App, Revolut, Zelle, Solana'da USDC veya herhangi bir kripto ile alırlar.",
+      "supportWithPaj": "Hesapsız bir cüzdana ödeyin veya handle için giriş yapın . Venmo, Cash App, Revolut, Zelle, PAJ Naira, Solana'da USDC veya herhangi bir kripto ile alırlar.",
       "cashOutLabel": "Nakde çevirdikleri yer",
       "ctaStart": "Göndermeye başla, ücretsiz",
       "ctaBusiness": "İşletmeler için",
@@ -582,5 +582,17 @@
       "railAnyCryptoSub": "150+ token",
       "railPajSub": "Naira banka"
     }
+  },
+  "LaunchDeck": {
+    "eyebrow": "Her şeyi başlat",
+    "title": "Ne başlatmak istediğini seç.",
+    "subtitle": "Ödeme gönder, çekiliş başlat veya alma linki paylaş.",
+    "sendTitle": "Ödeme gönder",
+    "sendBody": "Handle, e-posta veya cüzdana öde. Onlar kendi yöntemleriyle çeker.",
+    "giveawayTitle": "Çekiliş başlat",
+    "giveawayBody": "Ödülü fonla, bir link paylaş, zincir üstü çekiliş.",
+    "receiveTitle": "Ödeme al",
+    "receiveBody": "Alma linkini veya QR’ı paylaş . onlar için cüzdan gerekmez.",
+    "cta": "Aç"
   }
 }

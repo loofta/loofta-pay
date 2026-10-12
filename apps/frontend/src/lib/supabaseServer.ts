@@ -11,6 +11,9 @@ export function getSupabaseAdmin() {
   if (!url || !key) {
     throw new Error("Missing SUPABASE_URL or Supabase secret key env (SUPABASE_SECRET or SUPABASE_SERVICE_ROLE_KEY)");
   }
+  if (!/^https?:\/\//i.test(String(url).trim())) {
+    throw new Error("SUPABASE_URL must be an HTTP or HTTPS URL");
+  }
   return createClient(url, key, {
     auth: { persistSession: false, detectSessionInUrl: false },
   });

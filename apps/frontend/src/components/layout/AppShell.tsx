@@ -33,29 +33,33 @@ function ShellContent({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
+  // Loofta Rewards is a full-page spec with its own header. The app rewrite serves it at
+  // /rewards-rail (internally /app/rewards-rail), so both shapes need to skip this chrome.
+  const isRewardsRail = pathname === "/rewards-rail" || pathname === "/app/rewards-rail" || pathname?.startsWith("/rewards-rail/") || pathname?.startsWith("/app/rewards-rail/");
   // Mystery Pack is a full-screen immersive page sized as calc(100svh - var(--header-h,0px)) —
   // that var only tracks MinimalHeader's own height, not this banner's, so showing it here would
   // push the pack canvas down by an unaccounted amount (the same overlap bug the header itself
   // used to have, one layer up).
   const isImmersivePage = pathname?.startsWith('/megapot/packs') || pathname?.startsWith('/app/megapot/packs');
   const showBottomNav = !isCheckoutPage && (
-    pathname === '/' || pathname === '/app' ||
+    pathname === '/' || pathname === '/app' || pathname === '/app/send' || pathname === '/app/receive' ||
     pathname === '/history' || pathname === '/app/history' ||
     pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' || pathname === '/profile' ||
     pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
     pathname === '/sparks' || pathname === '/app/sparks' ||
-    pathname === '/megapot' || pathname === '/app/megapot'
+    pathname === '/megapot' || pathname === '/app/megapot' ||
+    pathname === '/app/card'
   );
-  const showMinimalHeader = !isCheckoutPage;
-  const showFooter = !isCheckoutPage;
+  const showMinimalHeader = !isCheckoutPage && !isRewardsRail;
+  const showFooter = !isCheckoutPage && !isRewardsRail;
 
   return (
-    <>
+    <div className="min-h-screen bg-[#0f0f12]">
       <UserSync suppressOnboarding={isCheckoutPage} />
       {/* Checkout is meant to feel like a self-contained payment page (Stripe-style) — none of
           these promo/update overlays belong on top of someone else's embedded payment flow. */}
-      {!isCheckoutPage && <UpdateJun26Modal show={updateShow} />}
-      {!isCheckoutPage && (unclaimed || unclaimedGifts || (hasFreeSpin && !isImmersivePage) || showAddEmail || showTerminalPromo) && (
+      {!isCheckoutPage && !isRewardsRail && <UpdateJun26Modal show={updateShow} />}
+      {!isCheckoutPage && !isRewardsRail && (unclaimed || unclaimedGifts || (hasFreeSpin && !isImmersivePage) || showAddEmail || showTerminalPromo) && (
         <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:bottom-4 z-[100] sm:max-w-sm flex flex-col-reverse gap-3">
           {unclaimed && <UnclaimedPaymentToast payments={unclaimed} onDismiss={dismissUnclaimed} />}
           {unclaimedGifts && <UnclaimedGiftToast gifts={unclaimedGifts} onDismiss={dismissUnclaimedGifts} />}
@@ -80,7 +84,7 @@ function ShellContent({ children }: { children: ReactNode }) {
       </main>
       {showFooter && <Footer />}
       {showBottomNav && <BottomNav />}
-    </>
+    </div>
   );
 }
 

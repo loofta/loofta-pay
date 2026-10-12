@@ -1,0 +1,24 @@
+# Keep agents off generated trees. Searches that walk these dominate turn time.
+node_modules/
+**/.next/
+**/.expo/
+**/.gradle/
+**/target/
+**/*.map
+**/*.tsbuildinfo
+
+apps/video/
+apps/Logos/
+Magicblock Logos/
+
+# Native build output and Capacitor-synced web bundles
+apps/mobile/android/
+apps/mobile/ios/
+apps/seeker-pay/android/
+apps/seeker-pay/dist/
+apps/backend/dist/
+apps/sdk/dist/
+apps/twitter-bot/dist/
+
+apps/backend/scripts/nest-backtest/cache/
+package-lock.json

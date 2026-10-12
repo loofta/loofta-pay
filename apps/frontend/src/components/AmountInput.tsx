@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 
 interface AmountInputProps {
@@ -22,12 +22,18 @@ interface AmountInputProps {
    *  hero-sized fields (e.g. the /fomo pay card) pass larger values. */
   maxFontPx?: number;
   minFontPx?: number;
+  /** Digit count at which the font is still `maxFontPx`. Each digit past this shrinks by `shrinkStepPx`. */
+  shrinkStartChars?: number;
+  shrinkStepPx?: number;
 }
 
-/** Same sanitize logic as the send page's amount field (apps/frontend/src/app/app/page.tsx) —
- * keeps digits and a single decimal point, capped at maxDecimals. */
+/** Digits only when maxDecimals is 0 (fractional keystrokes are dropped, not concatenated).
+ *  Otherwise keeps digits and a single decimal point, capped at maxDecimals. */
 function sanitizeAmount(raw: string, maxDecimals: number): string {
   let s = String(raw || "").replace(/,/g, ".");
+  if (maxDecimals <= 0) {
+    return s.split(".")[0].replace(/[^0-9]/g, "").replace(/^0+(?=\d)/, "");
+  }
   s = s.replace(/[^0-9.]/g, "");
   const hadTrailingDot = s.endsWith(".");
   const parts = s.split(".");
@@ -44,9 +50,7 @@ function sanitizeAmount(raw: string, maxDecimals: number): string {
   return p[0] || "";
 }
 
-function computeFontPx(chars: number, maxPx: number, minPx: number) {
-  const startChars = 6;
-  const stepPerChar = 3;
+function computeFontPx(chars: number, maxPx: number, minPx: number, startChars: number, stepPerChar: number) {
   const delta = Math.max(0, chars - startChars) * stepPerChar;
   return Math.max(minPx, maxPx - delta);
 }
@@ -57,64 +61,67 @@ function computeFontPx(chars: number, maxPx: number, minPx: number) {
  */
 export function AmountInput({
   value, onChange, dark, prefix, suffix, placeholder = "0", maxDecimals = 6,
-  disabled, autoFocus, className, id, maxFontPx = 36, minFontPx = 18, ...rest
+  disabled, autoFocus, className, id, maxFontPx = 36, minFontPx = 18,
+  shrinkStartChars = 6, shrinkStepPx = 3, ...rest
 }: AmountInputProps) {
-  const mirrorRef = useRef<HTMLSpanElement | null>(null);
-  const [inputWidthPx, setInputWidthPx] = useState(0);
-
+  const wholeDollars = maxDecimals <= 0;
   const displayValue = value && value.length > 0 ? value : placeholder;
   const charCount = displayValue.replace(/[^0-9.]/g, "").length || 1;
-  const fontPx = computeFontPx(charCount, maxFontPx, minFontPx);
+  const fontPx = computeFontPx(charCount, maxFontPx, minFontPx, shrinkStartChars, shrinkStepPx);
   const affixFontPx = Math.max(13, Math.round(fontPx * 0.55));
-  const gapPx = 6;
+  const textStyle = {
+    fontSize: `${fontPx}px`,
+    lineHeight: 1.15,
+    letterSpacing: "-0.04em",
+  } as const;
 
   useEffect(() => {
-    const el = mirrorRef.current;
-    if (!el) return;
-    setInputWidthPx(Math.ceil(el.getBoundingClientRect().width));
-  }, [displayValue, fontPx]);
+    if (!wholeDollars) return;
+    const next = sanitizeAmount(value, 0);
+    if (next !== value) onChange(next);
+  }, [wholeDollars, value, onChange]);
 
   return (
-    <div className={cn("flex items-baseline tabular-nums", className)}>
+    <div className={cn("flex max-w-full items-baseline tabular-nums", className)}>
       {prefix && (
         <span
-          className={cn("font-semibold mr-1", dark ? "text-slate-500" : "text-gray-400")}
-          style={{ fontSize: `${affixFontPx}px`, lineHeight: 1.05 }}
+          className={cn("font-semibold mr-1 shrink-0", dark ? "text-slate-500" : "text-gray-400")}
+          style={{ fontSize: `${affixFontPx}px`, lineHeight: 1.15 }}
         >
           {prefix}
         </span>
       )}
-      <span
-        ref={mirrorRef}
-        aria-hidden="true"
-        className="invisible absolute -z-50 font-medium tracking-tight tabular-nums"
-        style={{ fontSize: `${fontPx}px`, lineHeight: 1.05 }}
-      >
-        {displayValue}
+      {/* Grid sizer: the hidden span sets the box to the real glyph width (same weight as the
+          input). A measured pixel width was clipping the last digit — "50" rendered as "5C". */}
+      <span className="inline-grid">
+        <span
+          aria-hidden="true"
+          className="invisible col-start-1 row-start-1 whitespace-pre font-semibold tabular-nums pr-[0.12em]"
+          style={textStyle}
+        >
+          {displayValue}
+        </span>
+        <input
+          id={id}
+          inputMode={wholeDollars ? "numeric" : "decimal"}
+          value={value}
+          onBeforeInput={(e) => {
+            const data = (e.nativeEvent as InputEvent).data;
+            if (!data) return;
+            if (wholeDollars ? /[^0-9]/.test(data) : /[^0-9.,]/.test(data)) e.preventDefault();
+          }}
+          onChange={(e) => onChange(sanitizeAmount(e.target.value, maxDecimals))}
+          placeholder={placeholder}
+          disabled={disabled}
+          autoFocus={autoFocus}
+          className={cn(
+            "col-start-1 row-start-1 w-full min-w-0 font-semibold tabular-nums border-0 bg-transparent outline-none p-0 m-0 pr-[0.12em] disabled:opacity-50",
+            dark ? "text-white placeholder:text-slate-600" : "text-gray-900 placeholder:text-gray-300"
+          )}
+          style={textStyle}
+          {...rest}
+        />
       </span>
-      <input
-        id={id}
-        inputMode="decimal"
-        value={value}
-        onBeforeInput={(e) => {
-          const data = (e.nativeEvent as InputEvent).data;
-          if (data && /[^0-9.,]/.test(data)) e.preventDefault();
-        }}
-        onChange={(e) => onChange(sanitizeAmount(e.target.value, maxDecimals))}
-        placeholder={placeholder}
-        disabled={disabled}
-        autoFocus={autoFocus}
-        className={cn(
-          "font-semibold tracking-tight tabular-nums border-0 bg-transparent outline-none p-0 m-0 disabled:opacity-50",
-          dark ? "text-white placeholder:text-slate-600" : "text-gray-900 placeholder:text-gray-300"
-        )}
-        style={{
-          fontSize: `${fontPx}px`,
-          lineHeight: 1.05,
-          width: `${Math.max(inputWidthPx, Math.round(fontPx * 0.6)) + gapPx}px`,
-        }}
-        {...rest}
-      />
       {suffix && (
         <span
           className={cn("font-semibold ml-1.5", dark ? "text-slate-500" : "text-gray-400")}

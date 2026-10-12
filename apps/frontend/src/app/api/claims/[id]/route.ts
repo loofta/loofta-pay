@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { extractChainsFromAssets } from "@/lib/assetUtils";
 import { getVerifiedSolanaWallets } from "@/lib/serverAuth";
-import { verifySolanaUsdcPayment } from "@/lib/verifySolanaPayment";
+import { transactionSignedByWallet, verifySolanaUsdcPayment } from "@/lib/verifySolanaPayment";
 import { getUsdcAtaBalanceBaseUnits } from "@/services/solanaBalance";
 
 const PENDING_EMAIL_PREFIX = "PENDING_EMAIL:";
@@ -75,10 +75,18 @@ async function getVerifiedUserId(request: Request): Promise<string | null> {
  * (which still references to_symbol, to_chain, claim_burner_address) keeps working.
  */
 function normalisePayment(raw: Record<string, unknown>): Record<string, unknown> {
+  const mint = typeof raw.solana_mint === "string" ? raw.solana_mint.trim() : "";
+  const tokenSymbol = mint && typeof raw.to_token === "string" && raw.to_token.trim() ? raw.to_token.trim() : "USDC";
   return {
     ...raw,
-    // Destination is always USDC on Solana (real columns in payments, compat alias for UI)
-    to_symbol: "USDC",
+    // USDC claims stay USDC. A giveaway token prize sets solana_mint and to_token to the SPL symbol.
+    to_symbol: tokenSymbol,
+    to_chain: (raw.to_chain as string) || "solana",
+    solana_mint: mint || null,
+    token_amount: raw.token_amount ?? null,
+    token_decimals: raw.token_decimals ?? null,
+    token_base_units: raw.token_base_units ?? null,
+    token_program: raw.token_program ?? null,
     // Alias burner_address → claim_burner_address for legacy UI code
     claim_burner_address: raw.burner_address ?? null,
     // Compat aliases for old field names still consumed by page.tsx
@@ -100,11 +108,33 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   const params = await props.params;
   const supabase = getSupabaseAdmin();
 
-  const { data: paymentRow } = await supabase
+  // guest_sender_wallet is optional until migration 20261010160000 is applied. Selecting a
+  // missing column makes PostgREST error, and treating that as an empty row hid every payment
+  // behind "Payment not found".
+  const optionalColumns = ["guest_sender_wallet", "private_split", "private_max_delay_ms", "solana_mint", "token_amount", "token_decimals", "token_base_units", "token_program"];
+  let paymentSelect =
+    "id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, claimed_privately, merchant_name, merchant_logo_url, sender_user_id, guest_sender_email, guest_sender_wallet, private_split, private_max_delay_ms, solana_mint, token_amount, token_decimals, token_base_units, token_program";
+  let { data: paymentRow, error: paymentError } = await supabase
     .from("payments")
-    .select("id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, claimed_privately, merchant_name, merchant_logo_url, sender_user_id, guest_sender_email")
+    .select(paymentSelect)
     .eq("id", params.id)
     .maybeSingle();
+  // Optional columns (guest wallet, saved privacy delay) 404 the whole payment if selected
+  // before their migration is applied. Drop the missing one and retry.
+  for (let attempt = 0; attempt < optionalColumns.length && paymentError?.code === "42703"; attempt++) {
+    const missing = optionalColumns.find((col) => (paymentError?.message || "").includes(col));
+    if (!missing) break;
+    paymentSelect = paymentSelect.replace(`, ${missing}`, "");
+    ({ data: paymentRow, error: paymentError } = await supabase
+      .from("payments")
+      .select(paymentSelect)
+      .eq("id", params.id)
+      .maybeSingle());
+  }
+  if (paymentError) {
+    console.error("[claims/GET] payments query failed:", paymentError.message);
+    return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+  }
 
   if (!paymentRow) {
     return NextResponse.json({ error: "Payment not found" }, { status: 404 });
@@ -319,7 +349,10 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     if (process.env.NODE_ENV !== "production") {
       console.log("[payments/PATCH] Request body:", body);
     }
-    const { status: inputStatus, txHash, paidWith, paidWithChain, paidWithToken, depositReceivedAt, originAsset, destinationAsset, guest_email: guestEmail, isPrivate } = body || {};
+    const { status: inputStatus, txHash, paidWith, paidWithChain, paidWithToken, depositReceivedAt, originAsset, destinationAsset, guest_email: guestEmail, guest_sender_wallet: guestSenderWalletRaw, isPrivate } = body || {};
+    const guestSenderWallet = typeof guestSenderWalletRaw === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(guestSenderWalletRaw.trim())
+      ? guestSenderWalletRaw.trim()
+      : null;
 
     const statusMap: Record<string, string> = {
       "PROCESSING": "IN_FLIGHT",
@@ -427,7 +460,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
 
     const { data: existingPayment } = await supabase
       .from("payments")
-      .select("id, status, created_by, direction, sender_user_id, recipient_user_id, amount, burner_address, is_devnet")
+      .select("id, status, created_by, direction, sender_user_id, recipient_user_id, recipient_address, amount, burner_address, is_devnet")
       .eq("id", paymentId)
       .maybeSingle();
 
@@ -438,8 +471,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     {
       const ep = existingPayment as {
         created_by?: string | null; direction?: string; sender_user_id?: string | null; recipient_user_id?: string | null;
+        recipient_address?: string | null;
         amount?: number | string | null; burner_address?: string | null; is_devnet?: boolean | null;
       };
+      const recipientAddress = (ep.recipient_address || "").trim();
+      const directGuestDestination = !ep.burner_address && !!recipientAddress && !recipientAddress.startsWith("PENDING_");
 
       // Ownership check
       if (ep.direction === "from_recipient") {
@@ -512,7 +548,10 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         const isCreator   = !!ep.created_by && ep.created_by === userId;
         const isSender    = !!ep.sender_user_id && ep.sender_user_id === userId;
         const isRecipient = !!ep.recipient_user_id && ep.recipient_user_id === userId;
-        const isGuestSettlingOwnGuestClaim = isGuestAttempt && !ep.created_by && !!ep.burner_address;
+        // Burner claims (unregistered handle/email) and direct pays (registered handle, funds
+        // already at their wallet) are both created with created_by null. The second has no
+        // burner, so the burner-only check used to 403 every signed-out pay to a real account.
+        const isGuestSettlingOwnGuestClaim = isGuestAttempt && !ep.created_by && (!!ep.burner_address || (ep.direction !== "from_recipient" && directGuestDestination));
         if (!isCreator && !isSender && !isRecipient && !isGuestSettlingOwnGuestClaim) {
           return NextResponse.json({ error: "Not authorized to update this payment" }, { status: 403 });
         }
@@ -545,6 +584,33 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         // later signs up for real, a future reconciliation pass could backfill sender_user_id,
         // same idea as the pendingAddresses matching in the payments/history route.
         if (typeof guestEmail === "string" && guestEmail.trim()) updateData.guest_sender_email = guestEmail.trim().toLowerCase();
+        // Signed-out homepage/send pays pass the wallet that signed. Store it only when that
+        // wallet actually signed the transaction (or, for a direct pay, when the USDC landed).
+        if (guestSenderWallet && typeof txHash === "string" && txHash.trim()) {
+          const privatePay = isPrivate === true;
+          if (directGuestDestination && ep.direction !== "from_recipient" && !privatePay) {
+            const verification = await verifySolanaUsdcPayment({
+              txHash: txHash.trim(),
+              destinationWallet: recipientAddress,
+              minAmountUsd: Number(ep.amount) || 0,
+              callerWalletAddresses: [guestSenderWallet],
+              isDevnet: !!ep.is_devnet,
+            });
+            if (!verification.valid) {
+              return NextResponse.json({ error: verification.reason || "Could not verify this payment on-chain." }, { status: 400 });
+            }
+            updateData.guest_sender_wallet = guestSenderWallet;
+            updateData.status = "SUCCESS";
+          } else if (privatePay) {
+            // MagicBlock receipts land on the ephemeral rollup, so the base RPC often cannot
+            // see the signer. The wallet is the one that just signed in this same request.
+            updateData.guest_sender_wallet = guestSenderWallet;
+          } else if (await transactionSignedByWallet(txHash.trim(), guestSenderWallet, !!ep.is_devnet)) {
+            updateData.guest_sender_wallet = guestSenderWallet;
+          } else {
+            return NextResponse.json({ error: "Could not confirm the sending wallet on this transaction yet." }, { status: 400 });
+          }
+        }
       }
 
       const { data, error } = await supabase

@@ -972,7 +972,7 @@ export class SendPaymentService {
     // confirmation already happened, so the burner is guaranteed funded by the time we get here.
 
     const { data: rows, error: rowsErr } = await this.supabaseService.payments
-      .select('id, amount, burner_address, sender_tx_hash')
+      .select('id, amount, burner_address, sender_tx_hash, private_split, private_max_delay_ms')
       .eq('multi_send_batch_id', batchId)
       .eq('status', 'IN_FLIGHT');
     if (rowsErr) {
@@ -980,7 +980,7 @@ export class SendPaymentService {
       return;
     }
 
-    for (const row of (rows ?? []) as Array<{ id: string; amount: string; burner_address: string | null; sender_tx_hash: string | null }>) {
+    for (const row of (rows ?? []) as Array<{ id: string; amount: string; burner_address: string | null; sender_tx_hash: string | null; private_split: number | null; private_max_delay_ms: number | null }>) {
       const existingHash = (row.sender_tx_hash || '').trim() || null;
       try {
         let sig: string;
@@ -1018,6 +1018,10 @@ export class SendPaymentService {
             cluster: cluster === 'localhost' ? 'devnet' : cluster,
             exactOut: true,
             gasless: true,
+            ...(row.private_split != null ? { split: row.private_split } : {}),
+            ...(row.private_max_delay_ms != null
+              ? { maxDelayMs: row.private_max_delay_ms, minDelayMs: 0 }
+              : {}),
             ...(ENABLE_SINGLE_PAYMENT_PLATFORM_FEE
               ? { platformFeeBps: SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS, platformFeeAccount: feePayerUsdcAta.toBase58() }
               : {}),
@@ -1167,6 +1171,10 @@ export class SendPaymentService {
       // "registered recipient, burner used as intermediary" (claims.service.ts:1285-1286).
       const burner = Keypair.generate();
       const burnerEncryptedSecret = this.encryption.encrypt(Buffer.from(burner.secretKey));
+      const privacyTiming = {
+        ...(dto.split != null ? { private_split: Math.min(15, Math.round(dto.split)) } : {}),
+        ...(dto.maxDelayMs != null ? { private_max_delay_ms: Math.round(dto.maxDelayMs) } : {}),
+      };
       let paymentInsert: Record<string, unknown>;
 
       if (isRegistered && resolvedPubkey) {
@@ -1193,6 +1201,7 @@ export class SendPaymentService {
           is_multi_send: true,
           is_private: true,
           multi_send_batch_id: multiSendBatchId,
+          ...privacyTiming,
         };
       } else {
         const recipientAddress = recipient.recipient_type === 'email'
@@ -1221,6 +1230,7 @@ export class SendPaymentService {
           is_multi_send: true,
           is_private: true,
           multi_send_batch_id: multiSendBatchId,
+          ...privacyTiming,
         };
       }
 

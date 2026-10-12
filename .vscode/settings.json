@@ -1,0 +1,30 @@
+{
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/node_modules/**": true,
+    "**/.next/**": true,
+    "**/.expo/**": true,
+    "**/.gradle/**": true,
+    "**/target/**": true,
+    "apps/video/**": true,
+    "apps/mobile/android/**": true,
+    "apps/mobile/ios/**": true,
+    "apps/seeker-pay/android/**": true,
+    "apps/seeker-pay/dist/**": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/.expo": true,
+    "**/.gradle": true,
+    "**/target": true,
+    "**/*.map": true,
+    "apps/video": true,
+    "apps/mobile/android": true,
+    "apps/mobile/ios": true,
+    "apps/seeker-pay/android": true,
+    "apps/seeker-pay/dist": true,
+    "package-lock.json": true
+  }
+}

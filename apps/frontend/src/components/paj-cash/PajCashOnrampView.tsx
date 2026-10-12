@@ -23,6 +23,7 @@ type Step = "checking-link" | "link" | "amount" | "kyc" | "instructions" | "comp
 interface PajCashOnrampViewProps {
   dark: boolean;
   prefillEmail?: string | null;
+  prefillAmountUsd?: number;
   getAccessToken: () => Promise<string | null>;
   onBack: () => void;
   onComplete?: () => void;
@@ -30,10 +31,10 @@ interface PajCashOnrampViewProps {
 
 const POLL_INTERVAL_MS = 5_000;
 
-export function PajCashOnrampView({ dark, prefillEmail, getAccessToken, onBack, onComplete }: PajCashOnrampViewProps) {
+export function PajCashOnrampView({ dark, prefillEmail, prefillAmountUsd, getAccessToken, onBack, onComplete }: PajCashOnrampViewProps) {
   const { toast } = useToast();
   const [step, setStep] = useState<Step>("checking-link");
-  const [amount, setAmount] = useState("");
+  const [amount, setAmount] = useState(prefillAmountUsd && prefillAmountUsd > 0 ? prefillAmountUsd.toFixed(2) : "");
   const [quote, setQuote] = useState<number | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);

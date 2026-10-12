@@ -15,7 +15,6 @@
 // discipline as the ticket-purchase and Mystery Pack flows.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
@@ -23,8 +22,6 @@ import bs58 from "bs58";
 import { X, Loader2, CheckCircle2, Ticket } from "lucide-react";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { ChooseNumbers, randomTicket, type TicketNumbers } from "@/components/megapot/ChooseNumbers";
-
-const BalanceModal = dynamic(() => import("@/components/BalanceModal").then(m => ({ default: m.BalanceModal })), { ssr: false });
 
 // Must match the backend's MegapotSubscriptionService constants (SUBSCRIPTION_DAYS,
 // PRICE_USDC_PER_TICKET_PER_DAY, MIN/MAX_TICKETS_PER_DAY) — the backend is authoritative and
@@ -189,11 +186,8 @@ export default function MegapotSubscribePage() {
 
   const {
     balanceUSD: ownBalance,
-    walletAddress: ownSolanaAddress,
     isLoading: loadingOwnBalance,
-    refetch: refetchOwnBalance,
   } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated });
-  const [showBalanceModal, setShowBalanceModal] = useState(false);
 
   const [subscription, setSubscription] = useState<SubscriptionSummary | null>(null);
   const [loadingSubscription, setLoadingSubscription] = useState(true);
@@ -423,7 +417,7 @@ export default function MegapotSubscribePage() {
                   <p className="text-sm text-slate-400 mt-1">Top up your balance to subscribe.</p>
                 </div>
                 <button
-                  onClick={() => setShowBalanceModal(true)}
+                  onClick={() => window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab: "topup" } }))}
                   className="w-full py-2.5 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] font-semibold text-white hover:brightness-110 active:scale-[0.98] transition-[filter,transform]"
                 >
                   Top up balance
@@ -445,18 +439,6 @@ export default function MegapotSubscribePage() {
         )}
       </div>
 
-      <BalanceModal
-        open={showBalanceModal}
-        onClose={() => setShowBalanceModal(false)}
-        balanceUSD={ownBalance.toFixed(2)}
-        balanceExact={ownBalance}
-        loadingBalance={loadingOwnBalance}
-        solanaAddress={ownSolanaAddress}
-        onRefresh={() => refetchOwnBalance()}
-        dark
-        initialTab="topup"
-        lockInitialTab
-      />
     </div>
   );
 }

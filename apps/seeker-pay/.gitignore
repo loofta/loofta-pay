@@ -1,0 +1,21 @@
+# Dependencies / build output (root .gitignore already covers these, kept here too since this
+# app can be checked out/built standalone)
+node_modules
+dist
+.env
+
+# Gradle/Android build junk (lock + bin files from .gradle caches and app/build outputs —
+# android/.gradle/**/*.lock, *.bin, android/app/build/**/*.jar, etc.)
+*.lock
+*.bin
+*.jar
+android/.gradle/
+android/**/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+
+# Web bundle copied in by `cap sync`. Regenerated; leaving it unignored
+# makes every agent git-status snapshot hundreds of hashed JS files.
+android/app/src/main/assets/public/

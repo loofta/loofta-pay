@@ -57,7 +57,7 @@ export function useEmbeddedSolanaUsdcBalance(
   return {
     balanceUSD: query.data?.balanceUSD ?? 0,
     walletAddress: query.data?.walletAddress ?? address ?? null,
-    isLoading: query.isLoading,
+    isLoading: query.isLoading || (enabled && authenticated === true && !walletsReady),
     isFetching: query.isFetching,
     refetch: query.refetch,
   };

@@ -21,7 +21,8 @@ import {
   WalletMultiButton,
 } from "@/components/SolanaWalletConnect";
 import { buildUSDCTransferTransaction, sendSignedUSDCTransfer } from "@/services/solanaTransfer";
-import { buildMagicBlockPrivateTransferNoFee, totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
+import { buildMagicBlockPrivateTransferNoFee, signExternalWalletTransaction, totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
+import { getEphemeralRpcForMode } from "@/lib/per/constants";
 import { getSolanaHttpRpc, getSolanaCluster, isNonMainnetCluster } from "@/lib/solanaCluster";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { formatDelayDuration } from "@/lib/privacyDelay";
@@ -82,7 +83,7 @@ export function DirectWalletPayPanel({
   maxDelayMs: number;
   onReset: () => void;
 }) {
-  const { publicKey, signTransaction, connected, connecting, disconnect } = useSolanaWalletAdapter();
+  const { publicKey, signTransaction, signAllTransactions, connected, connecting, disconnect } = useSolanaWalletAdapter();
   const [status, setStatus] = useState<PayStatus>("idle");
   const [txSig, setTxSig] = useState<string | null>(null);
   const [sentPrivately, setSentPrivately] = useState(false);
@@ -112,9 +113,10 @@ export function DirectWalletPayPanel({
     try {
       const connection = new Connection(getSolanaHttpRpc(), "confirmed");
       let signature: string;
+      let confirmConnection = connection;
       if (isPrivate) {
         // No memo on purpose: a handle in the memo would undo the point of the private transfer.
-        const tx = await buildMagicBlockPrivateTransferNoFee({
+        const { transaction: tx, sendTo } = await buildMagicBlockPrivateTransferNoFee({
           from: publicKey.toBase58(),
           to: recipientAddress,
           amountUSDC: amountUsd,
@@ -122,9 +124,13 @@ export function DirectWalletPayPanel({
           maxDelayMs,
         });
         setStatus("awaiting_signature");
-        const signed = await signTransaction(tx);
+        const signed = await signExternalWalletTransaction(tx, { signTransaction, signAllTransactions });
         setStatus("broadcasting");
-        signature = await connection.sendRawTransaction(signed.serialize(), {
+        const broadcastConnection = sendTo === "ephemeral"
+          ? new Connection(getEphemeralRpcForMode("mainnet"), "confirmed")
+          : connection;
+        confirmConnection = broadcastConnection;
+        signature = await broadcastConnection.sendRawTransaction(signed.serialize(), {
           skipPreflight: false,
           preflightCommitment: "confirmed",
           maxRetries: 3,
@@ -141,7 +147,7 @@ export function DirectWalletPayPanel({
         setStatus("broadcasting");
         signature = await sendSignedUSDCTransfer(signed as VersionedTransaction, connection);
       }
-      await waitForSignatureConfirmation(connection, signature, 60_000, 1500, "directWalletPay");
+      await waitForSignatureConfirmation(confirmConnection, signature, 60_000, 1500, "directWalletPay");
       setTxSig(signature);
       setSentPrivately(isPrivate);
       setSentDelivery({ split, delayMs: maxDelayMs });

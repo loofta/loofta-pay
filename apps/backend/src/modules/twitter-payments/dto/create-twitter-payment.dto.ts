@@ -16,14 +16,14 @@ export class CreateTwitterPaymentDto {
   @Matches(TWITTER_HANDLE_REGEX)
   recipient_twitter: string;
 
-  // $1 minimum — both the auto-pay execution path and the manual fallback default to
-  // regular/public (isPrivate: false), so the private-payment $5 minimum in claims.service.ts's
+  // One-cent floor — both the auto-pay execution path and the manual fallback default to
+  // regular/public (isPrivate: false), so the private-payment $1 minimum in claims.service.ts's
   // buildPrivateTransferForPayer doesn't apply by default. It still applies if a sender
-  // specifically opts into private on the manual funding page below $5 — that throws there,
+  // specifically opts into private on the manual funding page below $1 — that throws there,
   // not silently, since that's a real constraint of the private-transfer mechanism itself.
   @ApiProperty({ description: 'Amount in USD', example: 5 })
   @IsNumber()
-  @Min(1)
+  @Min(0.01)
   @Max(10000)
   amount_usd: number;
 

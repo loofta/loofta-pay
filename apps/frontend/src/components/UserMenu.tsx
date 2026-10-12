@@ -15,6 +15,7 @@ import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Wallet, Info, Ke
 import { useTranslations } from "next-intl";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { ChangeUsernameModal } from "@/components/ChangeUsernameModal";
+import { UserAvatar } from "@/components/UserAvatar";
 /** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
 const TWITTER_TYPES = ["twitter_oauth", "twitter", "x"] as const;
 /** Exact Privy type strings for Discord/GitHub aren't publicly pinned down — check known variants defensively, same as Twitter above. */
@@ -50,7 +51,7 @@ function getSocialUsername(
 
 function formatVolume(n: number): string {
   if (n >= 1000000) return `$${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
-  if (n >= 1000) return `$${n / 1000}k`;
+  if (n >= 1000) return `$${(n / 1000).toFixed(1)}k`;
   return `$${n}`;
 }
 
@@ -135,6 +136,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const storeUsername = useAuthStore((s) => s.username ?? null);
   const storeLooUsername = useAuthStore((s) => s.looUsername ?? null);
   const storeTwitterUsername = useAuthStore((s) => s.twitterUsername ?? null);
+  const storeAvatarUrl = useAuthStore((s) => s.avatarUrl ?? null);
+  const setAvatarUrl = useAuthStore((s) => s.setAvatarUrl);
   const usernameResolved = useAuthStore((s) => s.username !== undefined);
   const setAuth = useAuthStore((s) => s.setAuth);
   const setUsername = useAuthStore((s) => s.setUsername);
@@ -192,6 +195,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [exportingWallet, setExportingWallet] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [requirePrivatePayments, setRequirePrivatePayments] = useState(false);
+  const [savingPrivatePayments, setSavingPrivatePayments] = useState(false);
   const [showRotateConfirm, setShowRotateConfirm] = useState(false);
   const [rotateState, setRotateState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [rotateError, setRotateError] = useState("");
@@ -242,7 +247,11 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
               body: JSON.stringify({ twitterUsername: handle }),
             });
-            if (res.ok) setTwitterUsername(handle);
+            if (res.ok) {
+              const saved = await res.json().catch(() => ({}));
+              setTwitterUsername(saved.twitterUsername ?? handle);
+              if (saved.avatarUrl) setAvatarUrl(saved.avatarUrl);
+            }
           } catch { /* non-critical */ }
         }
       }
@@ -330,6 +339,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     [linkedAccounts]
   );
   const twitterSubject = (twitterAccount as { subject?: string } | undefined)?.subject ?? null;
+  const twitterPicture = (twitterAccount as { profilePictureUrl?: string | null } | undefined)?.profilePictureUrl?.trim() || null;
+  const headerAvatarUrl = twitterPicture || storeAvatarUrl;
   const totalMethods = [hasEmail, hasTwitterLinked].filter(Boolean).length;
 
   // Discord/GitHub: connect-for-pay-by-handle, not counted toward the sign-in recovery total —
@@ -475,6 +486,14 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   };
   useEffect(() => {
     if (showSettingsModal && authenticated) {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      getAccessToken().then(async (token) => {
+        if (!token) return;
+        const r = await fetch(`${backendUrl}/users/me/private-payments`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok) return;
+        const body = (await r.json()) as { requirePrivatePayments?: boolean };
+        setRequirePrivatePayments(!!body.requirePrivatePayments);
+      }).catch(() => {});
       fetchTelegramHandle();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -650,6 +669,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       await unlinkOAuth.unlink({ provider: "twitter", subject: twitterSubject });
       setTwitterLinkedOptimistic(false);
       setTwitterUsername(null);
+      setAvatarUrl(null);
       try {
         const clearToken = await getAccessToken().catch(() => null);
         await fetch("/api/users/save-twitter-username", {
@@ -756,32 +776,40 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     }
   };
 
+  const menuLabel = username || email || "";
+  const menuInitial = (menuLabel.replace(/^@/, "").trim().charAt(0) || "?").toUpperCase();
+
   return (
     <div className="relative" ref={menuRef}>
       {/* Username Button */}
       <button
+        type="button"
         onClick={() => {
           setIsOpen(!isOpen);
           if (isOpen) {
             setShowFullAddress(false);
           }
         }}
-        className={`hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${isDarkPage
-          ? "text-white/90 hover:text-white hover:bg-white/10"
-          : "text-gray-700 hover:text-gray-900 hover:bg-gray-100"
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        className={`hidden sm:flex items-center gap-2 rounded-full py-1 pl-1 pr-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${isDarkPage
+          ? "text-white hover:bg-white/[0.06] focus-visible:ring-white/30 focus-visible:ring-offset-[#0B0B0E]"
+          : "text-gray-700 hover:bg-gray-100 focus-visible:ring-gray-400 focus-visible:ring-offset-white"
           }`}
       >
-        <span className="text-base md:text-sm font-medium">{username || email}</span>
+        <UserAvatar label={menuLabel || menuInitial} avatarUrl={headerAvatarUrl} className="h-8 w-8 text-sm" />
+        <span className="max-w-[140px] truncate text-sm font-medium">{menuLabel}</span>
         <svg
-          width="16"
-          height="16"
+          width="14"
+          height="14"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
-          strokeWidth="2"
+          strokeWidth="2.25"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className={`transition-transform ${isOpen ? "rotate-180" : ""}`}
+          className={`shrink-0 text-[#8E8C96] transition-transform ${isOpen ? "rotate-180" : ""}`}
+          aria-hidden
         >
           <polyline points="6 9 12 15 18 9"></polyline>
         </svg>
@@ -1492,6 +1520,41 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                             )}
                           </div>
                         </div>
+                      </div>
+
+                      <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
+                        <button
+                          type="button"
+                          disabled={savingPrivatePayments}
+                          onClick={async () => {
+                            const next = !requirePrivatePayments;
+                            setSavingPrivatePayments(true);
+                            try {
+                              const token = await getAccessToken();
+                              const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+                              const r = await fetch(`${backendUrl}/users/me/private-payments`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                                body: JSON.stringify({ enabled: next }),
+                              });
+                              if (!r.ok) throw new Error("Could not save");
+                              setRequirePrivatePayments(next);
+                            } catch {
+                              toast({ variant: "destructive", title: "Couldn't update private payments" });
+                            } finally {
+                              setSavingPrivatePayments(false);
+                            }
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-3.5 text-left"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-base font-semibold text-white">Only accept private payments</p>
+                            <p className="text-sm text-slate-400 mt-0.5">People paying your username can only send privately. They pay the privacy fee on top.</p>
+                          </div>
+                          <span className={`shrink-0 h-6 w-11 rounded-full p-0.5 transition-colors ${requirePrivatePayments ? "bg-[#FF7A2A]" : "bg-white/15"}`}>
+                            <span className={`block h-5 w-5 rounded-full bg-white transition-transform ${requirePrivatePayments ? "translate-x-5" : ""}`} />
+                          </span>
+                        </button>
                       </div>
 
                       {/* Payment link username toggle */}

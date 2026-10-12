@@ -34,7 +34,7 @@ export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => 
           <tr className="border-b border-white/5">
             <td className="py-2 pr-4"><code>amount</code></td>
             <td className="py-2 pr-4 text-slate-400">number</td>
-            <td className="py-2 text-slate-400">USD, $10,000 maximum. $1 minimum for a plain public transfer (the default), $5 minimum if <code>is_private</code> is <code>true</code>.</td>
+            <td className="py-2 text-slate-400">USD, $10,000 maximum. $0.01 minimum for a plain public transfer (the default), $1 minimum if <code>is_private</code> is <code>true</code>.</td>
           </tr>
           <tr className="border-b border-white/5">
             <td className="py-2 pr-4"><code>message</code></td>
@@ -44,7 +44,7 @@ export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => 
           <tr className="border-b border-white/5">
             <td className="py-2 pr-4"><code>is_private</code></td>
             <td className="py-2 pr-4 text-slate-400">boolean, optional</td>
-            <td className="py-2 text-slate-400">Defaults to <code>false</code> (plain public transfer). Pass <code>true</code> to require the payer to pay privately — shields the amount and that it went to your wallet on-chain, $5 minimum.</td>
+            <td className="py-2 text-slate-400">Defaults to <code>false</code> (plain public transfer). Pass <code>true</code> to require the payer to pay privately — shields the amount and that it went to your wallet on-chain, $1 minimum.</td>
           </tr>
           <tr className="border-b border-white/5">
             <td className="py-2 pr-4"><code>webhook_url</code></td>

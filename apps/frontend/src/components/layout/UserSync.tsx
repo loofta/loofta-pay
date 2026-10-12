@@ -175,6 +175,9 @@ export function UserSync({ suppressOnboarding = false }: { suppressOnboarding?: 
           },
           body: JSON.stringify({ email }),
         });
+        // A failed lookup is not a new user. Opening onboarding here is what
+        // re-prompts people who already finished it when Supabase is unreachable.
+        if (!userResponse.ok) return;
         const userData = await userResponse.json();
         if (cancelled || userData.user?.skipOnboarding) return;
 

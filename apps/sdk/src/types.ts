@@ -25,14 +25,14 @@ export interface PayHumanResult {
 }
 
 export interface CreatePaymentLinkParams {
-  /** USD amount the recipient (the API key owner) should net. $1 minimum for a plain public
-   *  transfer (the default); $5 minimum if isPrivate is true (MagicBlock's private-transfer floor). */
+  /** USD amount the recipient (the API key owner) should net. $0.01 minimum for a plain public
+   *  transfer (the default); $1 minimum if isPrivate is true. */
   amount: number;
   /** Shown to the payer on the checkout page. */
   message?: string;
   /** Defaults to false (a plain public transfer) — the recipient can still choose to claim
    *  privately at claim time regardless. Pass true to require the payer to pay privately instead
-   *  (shields the amount and that it went to you on-chain, $5 minimum). */
+   *  (shields the amount and that it went to you on-chain, $1 minimum). */
   isPrivate?: boolean;
   /** POSTed with a signed "payment.succeeded" event once this link is paid — see
    *  CreatePaymentLinkResult.webhookSecret for verifying the signature. */

@@ -1,4 +1,4 @@
-import { IsNumber, Min, Max, IsString, IsNotEmpty, MaxLength, IsOptional, IsIn } from 'class-validator';
+import { IsNumber, IsInt, Min, Max, IsString, IsNotEmpty, MaxLength, IsOptional, IsIn } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class BuildDirectDepositDto {
@@ -19,4 +19,18 @@ export class BuildDirectDepositDto {
   @IsString()
   @IsIn(['devnet', 'mainnet'])
   cluster?: 'devnet' | 'mainnet';
+
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(15)
+  split?: number;
+
+  @ApiPropertyOptional({ example: 300000 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(86_400_000)
+  max_delay_ms?: number;
 }

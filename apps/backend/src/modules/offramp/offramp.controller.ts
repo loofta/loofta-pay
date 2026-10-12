@@ -15,12 +15,39 @@ export class OfframpController {
   @Post('prepare')
   @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Prepare a Peer offramp — returns Near Intents bridge address to user\'s Base wallet' })
+  @ApiOperation({ summary: 'Prepare a Peer offramp — quotes a Relay bridge of Solana USDC to the user Base wallet' })
   async prepare(@Req() req: any, @Body() dto: CreateOfframpDto) {
     if (!dto.platform || !dto.identifier || !dto.solanaAddress || !dto.baseWalletAddress || !(dto.amountUSDC > 0)) {
       throw new BadRequestException('platform, identifier, solanaAddress, baseWalletAddress, and amountUSDC are required');
     }
     return this.offramp.prepareOfframp(req.user.id, dto);
+  }
+
+  @Post(':id/relay-tx')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Build the unsigned Relay Solana deposit for this offramp' })
+  async relayTx(@Req() req: any, @Param('id') id: string) {
+    return this.offramp.buildRelayDepositTx(id, req.user.id);
+  }
+
+  @Post(':id/relay-broadcast')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Co-sign and broadcast the user-signed Relay deposit' })
+  async relayBroadcast(@Req() req: any, @Param('id') id: string, @Body() body: { transaction?: string }) {
+    if (!body?.transaction) throw new BadRequestException('transaction is required');
+    return this.offramp.submitRelayDeposit(id, req.user.id, body.transaction);
+  }
+
+  @Get(':id/relay-status')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Poll the Relay bridge for this offramp' })
+  async relayStatus(@Req() req: any, @Param('id') id: string) {
+    return this.offramp.getRelayStatus(id, req.user.id);
   }
 
   @Post(':id/confirm-bridge')
@@ -79,6 +106,12 @@ export class OfframpController {
     return this.offramp.getUserOfframps(req.user.id);
   }
 
+  @Get('public/:shortId')
+  @ApiOperation({ summary: 'Public pay-to-app share preview — no wallets or user ids' })
+  async getPublicShare(@Param('shortId') shortId: string) {
+    return this.offramp.getPublicShare(shortId);
+  }
+
   @Get(':id')
   @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')
@@ -117,5 +150,14 @@ export class OfframpController {
   @ApiOperation({ summary: 'Mark offramp CANCELLED after frontend completes ZKP2P withdrawal + bridge signing' })
   async markCancelled(@Req() req: any, @Param('id') id: string) {
     return this.offramp.markCancelled(id, req.user.id);
+  }
+
+  @Post(':id/delete')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete a cancelled pay-to-app payment from the owner history' })
+  async deleteOfframp(@Req() req: any, @Param('id') id: string) {
+    return this.offramp.deleteOfframp(id, req.user.id);
   }
 }

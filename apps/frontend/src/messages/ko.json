@@ -182,7 +182,7 @@
       }
     },
     "signInToSendHandle": "핸들이나 이메일로 보내려면 로그인하세요",
-    "signInToSendHandleHint": "이메일 또는 소셜 로그인 — 지갑 주소 전송은 계정 불필요"
+    "signInToSendHandleHint": "이메일 또는 소셜 로그인. 지갑 주소 전송은 계정 불필요"
   },
   "MarketingPage": {
     "nav": {
@@ -562,8 +562,8 @@
       "headlineBefore": "어떤",
       "headlineAfter": "또는 이메일로 보내기",
       "headlineCashOut": "받는 사람이 원하는 방식으로 출금합니다.",
-      "support": "계정 없이 지갑으로 보내거나, 로그인 후 핸들로 전송 — Venmo, Cash App, Revolut, Zelle, Solana USDC 또는 모든 암호화폐로 수령합니다.",
-      "supportWithPaj": "계정 없이 지갑으로 보내거나, 로그인 후 핸들로 전송 — Venmo, Cash App, Revolut, Zelle, PAJ 나이라, Solana USDC 또는 모든 암호화폐로 수령합니다.",
+      "support": "계정 없이 지갑으로 보내거나, 로그인 후 핸들로 전송 . Venmo, Cash App, Revolut, Zelle, Solana USDC 또는 모든 암호화폐로 수령합니다.",
+      "supportWithPaj": "계정 없이 지갑으로 보내거나, 로그인 후 핸들로 전송 . Venmo, Cash App, Revolut, Zelle, PAJ 나이라, Solana USDC 또는 모든 암호화폐로 수령합니다.",
       "cashOutLabel": "출금 가능",
       "ctaStart": "무료로 보내기 시작",
       "ctaBusiness": "비즈니스용",
@@ -582,5 +582,17 @@
       "railAnyCryptoSub": "150+ 토큰",
       "railPajSub": "나이라 은행"
     }
+  },
+  "LaunchDeck": {
+    "eyebrow": "무엇이든 시작",
+    "title": "시작할 항목을 고르세요.",
+    "subtitle": "결제 보내기, 경품 시작, 또는 받기 링크 공유.",
+    "sendTitle": "결제 보내기",
+    "sendBody": "핸들, 이메일, 지갑으로 보내세요. 상대가 원하는 방식으로 현금화합니다.",
+    "giveawayTitle": "경품 시작",
+    "giveawayBody": "상금을 예치하고 링크를 공유하세요. 온체인 추첨.",
+    "receiveTitle": "받기",
+    "receiveBody": "받기 링크나 QR을 공유하세요 . 상대는 지갑이 필요 없습니다.",
+    "cta": "열기"
   }
 }

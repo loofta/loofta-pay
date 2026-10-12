@@ -304,6 +304,8 @@ export class PrivateBalanceProcessorService {
       cluster: row.cluster,
       exactOut: useExactOut,
       gasless: true,
+      ...(row.delivery_split ? { split: row.delivery_split } : {}),
+      ...(row.delivery_max_delay_ms != null ? { maxDelayMs: row.delivery_max_delay_ms } : {}),
       ...(platformFeeAccount ? { platformFeeBps: PRIVATE_BALANCE_PLATFORM_FEE_BPS, platformFeeAccount } : {}),
     });
 

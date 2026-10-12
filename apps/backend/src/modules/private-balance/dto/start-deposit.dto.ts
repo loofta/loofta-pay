@@ -1,4 +1,4 @@
-import { IsNumber, Min, Max, IsOptional, ValidateNested, IsIn, IsString } from 'class-validator';
+import { IsNumber, IsInt, Min, Max, IsOptional, ValidateNested, IsIn, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TokenRefDto } from './token-ref.dto';
@@ -31,4 +31,20 @@ export class StartPrivateDepositDto {
   @IsString()
   @IsIn(['devnet', 'mainnet'])
   cluster?: 'devnet' | 'mainnet';
+
+  /** MagicBlock delivery split for the burner → wallet hop. 1 = one payment. */
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(15)
+  split?: number;
+
+  /** Upper bound of MagicBlock's random delivery delay, in ms. */
+  @ApiPropertyOptional({ example: 300000 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(86_400_000)
+  max_delay_ms?: number;
 }

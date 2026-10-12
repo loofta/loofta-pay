@@ -1,0 +1,16 @@
+.loofta-app input::placeholder,
+.loofta-app textarea::placeholder { color: #5d5b66; }
+.loofta-app input,
+.loofta-app textarea,
+.loofta-app button { font-family: inherit; }
+.loofta-app .lh-4:hover { background: #2a2a33 !important; }
+.loofta-app .lh-5:hover { background: #2a2a33 !important; }
+.loofta-app .lh-6:hover { background: #1a1a20 !important; }
+.loofta-app .lh-7:hover { border-color: rgba(245, 183, 12, 0.5) !important; }
+.loofta-app .lh-8:hover { border-color: rgba(255, 90, 26, 0.5) !important; }
+.loofta-app .lh-9:hover { background: #18181e !important; border-color: rgba(255, 255, 255, 0.14) !important; }
+.loofta-app .lh-10:hover { border-color: rgba(255, 122, 42, 0.5) !important; }
+.loofta-app .lh-18:hover { background: #1c1c24 !important; }
+.loofta-app .lh-19:hover { background: #1c1c24 !important; color: #f2efe8 !important; }
+.loofta-app .lh-20:hover { border-color: rgba(255, 255, 255, 0.18) !important; color: #f2efe8 !important; }
+.loofta-app .lh-gw:hover { background: #18181e !important; }

@@ -128,6 +128,8 @@ export class PrivateBalanceService {
         burner_encrypted_secret: burner.encryptedSecret,
         amount_requested_usdc: dto.amount_usdc,
         cluster,
+        ...(dto.split ? { delivery_split: dto.split } : {}),
+        ...(dto.max_delay_ms != null ? { delivery_max_delay_ms: dto.max_delay_ms } : {}),
       }).select('id').single();
 
       if (error || !data) {
@@ -278,6 +280,8 @@ export class PrivateBalanceService {
         // signing/broadcast time is the natural "not enough funds" guard, no separate padding logic needed.
         exactOut: true,
         gasless: true,
+        ...(dto.split ? { split: dto.split } : {}),
+        ...(dto.max_delay_ms != null ? { maxDelayMs: dto.max_delay_ms } : {}),
         ...(platformFeeAccount ? { platformFeeBps: PRIVATE_BALANCE_PLATFORM_FEE_BPS, platformFeeAccount } : {}),
       });
     } catch (e: unknown) {

@@ -7,6 +7,7 @@ import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { GiveawayBurnerSweepService } from './giveaway-burner-sweep.service';
 import { isPrivyUserAdmin } from '@/common/admin-check';
 import { GiveawayFundingService } from './giveaway-funding.service';
+import { GiveawayTokenService } from './giveaway-token.service';
 import { EmailService } from '../email/email.service';
 import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 import { UsersService } from '../users/users.service';
@@ -45,11 +46,17 @@ function generateShortId(length = 8): string {
 // each caller defines its own address rather than a shared config, overridable via env for staging.
 const GIVEAWAY_REVIEW_ALERT_EMAIL = 'lisa.bechina@gmail.com';
 
-// Flat, deliberate platform fee for posting a giveaway — distinct from the old per-winner
-// MagicBlock buffer (removed; that was accidental overcharge with no real cost behind it). Lands
-// in the Solana fee payer's own wallet at giveaway completion, not refunded to the creator like
-// the rest of the burner's leftover. Waived for an official ("create as Loofta") giveaway.
-const GIVEAWAY_PLATFORM_FEE_USD = 5;
+// 10% of the prize pool, never under $5. Distinct from the old per-winner MagicBlock buffer
+// (removed; that was accidental overcharge with no real cost behind it). Lands in the Solana fee
+// payer's own wallet at giveaway completion, not refunded to the creator like the rest of the
+// burner's leftover. Waived for an official ("create as Loofta") giveaway.
+const GIVEAWAY_PLATFORM_FEE_MIN_USD = 5;
+const GIVEAWAY_PLATFORM_FEE_RATE = 0.1;
+
+function giveawayPlatformFeeUsd(prizePoolUsd: number): number {
+  const percent = Math.round(prizePoolUsd * GIVEAWAY_PLATFORM_FEE_RATE * 100) / 100;
+  return Math.max(GIVEAWAY_PLATFORM_FEE_MIN_USD, percent);
+}
 
 // Review-link session tokens are short-lived — long enough for one sitting of task review, short
 // enough that a link pasted somewhere and forgotten doesn't stay a live credential indefinitely.
@@ -73,6 +80,7 @@ export class GiveawaysService {
     private readonly redis: RedisService,
     private readonly solanaSponsor: SolanaSponsorService,
     private readonly usersService: UsersService,
+    private readonly tokenService: GiveawayTokenService,
   ) {
     this.isDevnet = isSolanaDevnetFromConfig(this.configService);
     const defaultUsdcMint = this.isDevnet
@@ -200,6 +208,38 @@ export class GiveawaysService {
     return prizeAmountUsd * winnerCount;
   }
 
+  /** Columns for a token prize. Empty (all null) for USDC and Megapot. The mint is re-checked
+   *  on-chain here so a client cannot invent a symbol or a token program. */
+  private async prizeColumns(dto: CreateGiveawayDto, rewardType: GiveawayRewardType) {
+    const empty = {
+      prize_mint: null,
+      prize_token_symbol: null,
+      prize_token_name: null,
+      prize_token_logo: null,
+      prize_token_decimals: null,
+      prize_token_program: null,
+      prize_token_base_units: null,
+      prize_swap_tx: null,
+    };
+    if (!dto.prize_mint?.trim()) return empty;
+    if (rewardType === GiveawayRewardType.MEGAPOT_TICKET) {
+      throw new BadRequestException('Ticket prizes cannot also pick a token.');
+    }
+    if (this.isDevnet) {
+      throw new BadRequestException('Token prizes are available on mainnet only.');
+    }
+    const token = await this.tokenService.resolveMint(dto.prize_mint);
+    return {
+      ...empty,
+      prize_mint: token.mint,
+      prize_token_symbol: token.symbol,
+      prize_token_name: token.name,
+      prize_token_logo: token.logo,
+      prize_token_decimals: token.decimals,
+      prize_token_program: token.tokenProgram,
+    };
+  }
+
   private async logEvent(giveawayId: string, type: string, payload?: Record<string, unknown>): Promise<void> {
     const { error } = await this.supabaseService.giveawayEvents.insert({ giveaway_id: giveawayId, type, payload: payload ?? null });
     if (error) this.logger.warn(`[GiveawayEvent] ${giveawayId} ${type}: failed to log (non-fatal): ${error.message}`);
@@ -228,6 +268,7 @@ export class GiveawaysService {
         throw new BadRequestException('Ticket prizes must be a whole dollar amount between $1 and $100 per winner.');
       }
     }
+    const prize = await this.prizeColumns(dto, rewardType);
 
     // "Create as Loofta" — never trust dto.is_official alone; re-check the caller is actually an
     // admin here, server-side, same as every other admin-gated action in this module. An official
@@ -239,7 +280,7 @@ export class GiveawaysService {
       throw new BadRequestException('Giveaway burner minting is not configured (SEND_PAYMENT_ENC_KEY missing). Contact an engineer.');
     }
 
-    const platformFeeUsd = isOfficial ? 0 : GIVEAWAY_PLATFORM_FEE_USD;
+    const platformFeeUsd = isOfficial ? 0 : giveawayPlatformFeeUsd(dto.prize_amount_usd * dto.winner_count);
     const funding_required_usd = this.computeFundingRequiredUsd(dto.prize_amount_usd, dto.winner_count) + platformFeeUsd;
 
     // A creator with no email linked to their Privy account is otherwise invisible once
@@ -262,6 +303,8 @@ export class GiveawaysService {
         winner_count: dto.winner_count,
         selection_mode: dto.selection_mode,
         prize_amount_usd: dto.prize_amount_usd,
+        reward_type: rewardType,
+        ...prize,
         entries_close_at: closeAt.toISOString(),
         eligibility: dto.eligibility ?? {},
         funding_required_usd,
@@ -351,6 +394,7 @@ export class GiveawaysService {
         throw new BadRequestException('Ticket prizes must be a whole dollar amount between $1 and $100 per winner.');
       }
     }
+    const prize = await this.prizeColumns(dto, rewardType);
 
     if (giveaway.status === GiveawayStatus.PENDING_FUNDING) {
       // Re-check on-chain rather than trusting the DB's (possibly stale) confirmed amount — same
@@ -360,7 +404,8 @@ export class GiveawaysService {
         Number(giveaway.prize_amount_usd) !== dto.prize_amount_usd ||
         giveaway.winner_count !== dto.winner_count ||
         giveaway.selection_mode !== dto.selection_mode ||
-        giveaway.reward_type !== rewardType;
+        giveaway.reward_type !== rewardType ||
+        (giveaway.prize_mint ?? null) !== (prize.prize_mint ?? null);
       if (fundingConfirmedUsd > 0 && moneyShapeChanged) {
         throw new BadRequestException(
           'Funds have already started arriving for this giveaway, so the prize amount, winner count, and ' +
@@ -388,6 +433,7 @@ export class GiveawaysService {
         selection_mode: dto.selection_mode,
         prize_amount_usd: dto.prize_amount_usd,
         reward_type: rewardType,
+        ...prize,
         entries_close_at: closeAt.toISOString(),
         eligibility: dto.eligibility ?? {},
         funding_required_usd,

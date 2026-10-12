@@ -52,7 +52,7 @@ export function TryIt({ onNavigate }: { onNavigate: (slug: string) => void }) {
     try {
       if (!apiKey.trim()) throw new Error("Paste your API key first (generate one above).");
       const amountNum = Number(amount);
-      if (!amountNum || amountNum < 1) throw new Error("Minimum is $1.");
+      if (!amountNum || amountNum < 0.01) throw new Error("Minimum is $0.01.");
       // No "private" toggle here — a payment link's own is_private only ever forces the *sender*
       // to pay privately. Privacy that actually matters, protecting the recipient's real wallet,
       // is a claim-time choice the recipient makes regardless of how it was sent.

@@ -14,6 +14,16 @@ import { randomBytes, randomUUID } from 'crypto';
 // RPC-load pacing for processGiveaway's payout loop — see the pause call further down.
 const PAYOUT_BATCH_SIZE = 5;
 const PAYOUT_BATCH_PAUSE_MS = 10_000;
+const CLASSIC_TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+
+function formatBaseUnits(units: bigint, decimals: number): string {
+  const neg = units < 0n;
+  const v = neg ? -units : units;
+  const s = v.toString().padStart(decimals + 1, '0');
+  const whole = s.slice(0, s.length - decimals);
+  const frac = s.slice(s.length - decimals).replace(/0+$/, '');
+  return `${neg ? '-' : ''}${whole}${frac ? `.${frac}` : ''}`;
+}
 
 // Same generator as ClaimsService/SendPaymentService — duplicated rather than shared per this
 // codebase's existing convention (see claims.service.ts, send-payment.service.ts).
@@ -97,9 +107,24 @@ export class GiveawayPayoutService {
     }
 
     const conn = this.solanaSponsor.getConnectionForCluster(this.cluster(giveaway));
-    const mint = new PublicKey(giveaway.mint);
+    const isTokenPrize = giveaway.reward_type !== GiveawayRewardType.MEGAPOT_TICKET && !!giveaway.prize_mint && !!giveaway.prize_token_base_units;
+    if (giveaway.prize_mint && !isTokenPrize && giveaway.reward_type !== GiveawayRewardType.MEGAPOT_TICKET) {
+      this.logger.warn(`[GiveawayPayout] ${giveaway.id}: token prize has no swap fill yet — skipping payout until prize_token_base_units is set`);
+      return;
+    }
+    const mint = new PublicKey(isTokenPrize ? giveaway.prize_mint! : giveaway.mint);
+    const tokenProgram = new PublicKey(isTokenPrize ? (giveaway.prize_token_program || CLASSIC_TOKEN_PROGRAM) : CLASSIC_TOKEN_PROGRAM);
     const burnerKeypair = this.burnerSweep.decryptBurner(giveaway.burner_address, giveaway.burner_encrypted_secret);
-    const amountBaseUnits = BigInt(Math.round(Number(giveaway.prize_amount_usd) * 1_000_000));
+    const amountBaseUnits = isTokenPrize
+      ? BigInt(giveaway.prize_token_base_units!) / BigInt(Math.max(1, giveaway.winner_count))
+      : BigInt(Math.round(Number(giveaway.prize_amount_usd) * 1_000_000));
+    if (isTokenPrize && amountBaseUnits <= 0n) {
+      this.logger.warn(`[GiveawayPayout] ${giveaway.id}: per-winner token amount is zero — not paying out`);
+      return;
+    }
+    const tokenDecimals = giveaway.prize_token_decimals ?? 0;
+    const tokenHuman = isTokenPrize ? formatBaseUnits(amountBaseUnits, tokenDecimals) : null;
+    const tokenSymbol = isTokenPrize ? (giveaway.prize_token_symbol || 'TOKEN') : 'USDC';
 
     // Winners no longer choose a payout destination upfront — each gets a normal /c/[id] claim
     // link (same mechanism as multi-send: a fresh dedicated burner, funded from this giveaway's
@@ -146,6 +171,7 @@ export class GiveawayPayoutService {
           giveawayBurnerKeypair: burnerKeypair,
           mint,
           amountBaseUnits,
+          ...(isTokenPrize ? { tokenProgram } : {}),
         });
 
         let claimUrl: string;
@@ -206,9 +232,18 @@ export class GiveawayPayoutService {
               sender_tx_hash: txHash,
               description,
               from_chain: 'solana',
-              from_token: 'USDC',
+              from_token: tokenSymbol,
               to_chain: 'solana',
-              to_token: 'USDC',
+              to_token: tokenSymbol,
+              ...(isTokenPrize
+                ? {
+                    solana_mint: giveaway.prize_mint,
+                    token_decimals: tokenDecimals,
+                    token_amount: tokenHuman,
+                    token_base_units: amountBaseUnits.toString(),
+                    token_program: tokenProgram.toBase58(),
+                  }
+                : {}),
               is_devnet: giveaway.is_devnet,
               short_id: shortId,
               burner_address: burner.address,
@@ -288,7 +323,31 @@ export class GiveawayPayoutService {
       const mint = new PublicKey(giveaway.mint);
       const burnerKeypair = this.burnerSweep.decryptBurner(giveaway.burner_address, giveaway.burner_encrypted_secret);
       const creatorWallet = await this.usersService.getSolanaWalletAddress(giveaway.created_by, { skipCache: true });
-      const platformFeeBaseUnits = BigInt(Math.round(Number(giveaway.platform_fee_usd) * 1_000_000));
+      if (giveaway.prize_mint && giveaway.prize_mint !== giveaway.mint) {
+        // Integer-division dust stays in the prize ATA. Send it back in the prize token.
+        // The $5 fee stays on the USDC ATA and is collected by the sweep below. A failure here
+        // must not mark the giveaway complete — the GC sweep only knows USDC, so this dust
+        // would otherwise sit in the burner.
+        try {
+          await this.burnerSweep.refundRemainingToCreator({
+            conn,
+            burnerKeypair,
+            creatorWallet,
+            mint: new PublicKey(giveaway.prize_mint),
+            context: `giveaway:${giveaway.id}:prize-refund`,
+            callerUserId: giveaway.created_by,
+            platformFeeBaseUnits: 0n,
+            tokenProgram: new PublicKey(giveaway.prize_token_program || CLASSIC_TOKEN_PROGRAM),
+          });
+        } catch (e) {
+          this.logger.warn(`[GiveawayPayout] ${giveaway.id}: prize-token refund failed (will retry, not completing): ${String(e)}`);
+          return;
+        }
+      }
+      // A direct token funding payment already sent this fee to the Loofta wallet in the same
+      // transaction as the prize. Withholding it again would take it out of any leftover USDC.
+      const feeAlreadyCollected = giveaway.prize_swap_tx?.startsWith('direct:') === true;
+      const platformFeeBaseUnits = feeAlreadyCollected ? 0n : BigInt(Math.round(Number(giveaway.platform_fee_usd) * 1_000_000));
       const refund = await this.burnerSweep.refundRemainingToCreator({
         conn,
         burnerKeypair,

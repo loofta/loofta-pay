@@ -9,6 +9,7 @@ import { useAuthStore } from "@/store/auth";
 import { UserMenu } from "@/components/UserMenu";
 import dynamic from "next/dynamic";
 const BalanceModal = dynamic(() => import("@/components/BalanceModal").then(m => ({ default: m.BalanceModal })), { ssr: false });
+const DepositSheet = dynamic(() => import("@/components/deposit/DepositSheet").then(m => ({ default: m.DepositSheet })), { ssr: false });
 import { LooftaPayLogoLink } from "@/components/layout/LooftaPayLogoLink";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { Switch } from "@/components/ui/switch";
@@ -51,7 +52,8 @@ function MobileMenu({
   if (!open) return null;
 
   const navLinks = [
-    { href: "/", label: "Send & Receive", description: "Send and receive payments" },
+    { href: "/app", label: "Home", description: "Your balance and recent activity" },
+    { href: "/app/send", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/terminal", label: "Terminal", description: "Send payments by chat — no wallet steps, just tell it who to pay" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
@@ -130,17 +132,24 @@ function MobileMenu({
         {/* Nav links */}
         <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
           {navLinks.map((link) => {
-            const active = pathname === link.href;
+            const active =
+              link.href === "/app"
+                ? pathname === "/app"
+                : link.href === "/app/send"
+                  ? !!pathname && (pathname.startsWith("/app/send") || pathname.startsWith("/app/receive") || pathname.startsWith("/app/history"))
+                  : pathname === link.href || (link.href !== "/" && pathname?.startsWith(link.href));
             return (
               <Link
                 key={link.href}
                 href={link.href}
                 onClick={onClose}
+                aria-current={active ? "page" : undefined}
                 className={[
-                  "flex items-center gap-3 px-3 py-2.5 rounded-xl text-base font-medium transition-colors",
+                  "flex items-center px-3.5 py-2.5 rounded-full text-sm font-medium transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30",
                   active
-                    ? "bg-white/10 text-white"
-                    : "text-slate-300 hover:text-white hover:bg-white/8",
+                    ? "bg-[#2A2A32] text-white"
+                    : "text-[#8E8C96] hover:text-white",
                 ].join(" ")}
               >
                 {link.label}
@@ -191,10 +200,15 @@ export function MinimalHeader() {
   const headerRef = useRef<HTMLElement>(null);
 
   const [showBalanceModal, setShowBalanceModal] = useState(false);
+  const [showDeposit, setShowDeposit] = useState(false);
   const [balanceModalTab, setBalanceModalTab] = useState<"topup" | "withdraw" | "history">("topup");
   // True when a CTA (e.g. "Add funds to your balance") asked for a specific tab — keeps
   // BalanceModal's own "resume a stuck withdrawal" auto-redirect from stealing focus back to Recent.
   const [balanceModalTabLocked, setBalanceModalTabLocked] = useState(false);
+  /** Optional deep-link into a withdraw rail: peer | paj | crypto (from ?method= or claim cash-out). */
+  const [balanceModalWithdrawMethod, setBalanceModalWithdrawMethod] = useState<"peer" | "paj" | "crypto" | "near" | undefined>(undefined);
+  const [balanceTopUpAmount, setBalanceTopUpAmount] = useState<number | undefined>(undefined);
+  const [peerPay, setPeerPay] = useState<{ platformId: string; identifier: string; amountUsd: number } | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const {
@@ -228,11 +242,32 @@ export function MinimalHeader() {
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ tab?: string }>).detail;
+      const detail = (e as CustomEvent<{
+        tab?: string;
+        method?: string;
+        amountUsd?: number;
+        peerPay?: { platformId: string; identifier: string; amountUsd: number };
+      }>).detail;
+      const wantsDeposit = !detail?.tab || detail.tab === "topup";
+      if (wantsDeposit) {
+        setShowDeposit(true);
+        setShowBalanceModal(false);
+      }
       const explicitTab = detail?.tab === "withdraw" || detail?.tab === "history" || detail?.tab === "topup";
       setBalanceModalTab(explicitTab ? (detail!.tab as "topup" | "withdraw" | "history") : "topup");
       setBalanceModalTabLocked(explicitTab);
-      setShowBalanceModal(true);
+      if (!wantsDeposit) setShowBalanceModal(true);
+      const m = detail?.method;
+      setBalanceModalWithdrawMethod(
+        m === "peer" || m === "paj" || m === "crypto" || m === "near" ? m : undefined,
+      );
+      setBalanceTopUpAmount(typeof detail?.amountUsd === "number" && detail.amountUsd > 0 ? detail.amountUsd : undefined);
+      const pay = detail?.peerPay;
+      setPeerPay(
+        pay && pay.platformId && pay.identifier && typeof pay.amountUsd === "number" && pay.amountUsd > 0
+          ? pay
+          : null,
+      );
       refreshBalance();
     };
     window.addEventListener("openBalanceModal", handler);
@@ -247,85 +282,68 @@ export function MinimalHeader() {
   const isRewardsActive = pathname?.startsWith("/rewards");
   const isWinActive = pathname?.includes("/megapot");
   const isTerminalActive = pathname?.startsWith("/terminal");
+  const isAppHome = pathname === "/app";
+  const isSendReceive =
+    !!pathname &&
+    (pathname.startsWith("/app/send") ||
+      pathname.startsWith("/app/receive") ||
+      pathname.startsWith("/app/history") ||
+      pathname.startsWith("/app/c/"));
+  const navItems = [
+    { href: "/app", label: "Home", active: isAppHome },
+    { href: "/app/send", label: "Send & Receive", active: isSendReceive },
+    { href: "/terminal", label: "Terminal", active: isTerminalActive },
+    { href: "/rewards", label: t("rewards"), active: isRewardsActive },
+    { href: "/megapot", label: "Megapot", active: isWinActive },
+  ];
 
   return (
     <>
       <header
         ref={headerRef}
-        className="sticky top-0 z-40 flex items-center bg-[#0f0f12]"
+        className="sticky top-0 z-40 flex items-center bg-[#0B0B0E] relative"
         style={{ height: HEADER_HEIGHT }}
       >
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[#4a3428]/80 to-transparent" />
         <div className="w-full max-w-7xl mx-auto px-4 md:px-8 flex items-center justify-between">
           <div className="flex items-center min-w-0">
-            <LooftaPayLogoLink imageWidth={120} imageHeight={36} imageClassName="h-9 w-auto" />
+            <LooftaPayLogoLink href={authenticated ? "/app" : "/"} imageWidth={140} imageHeight={34} imageClassName="h-[34px] w-auto" />
           </div>
 
           <div className="flex items-center shrink-0 gap-2">
             {authenticated ? (
               <>
-                {/* Desktop: Send & Receive link */}
-                <Link
-                  href="/"
-                  className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    pathname === "/"
-                      ? "text-orange-300 bg-orange-500/10"
-                      : "text-slate-300 hover:text-white hover:bg-white/10",
-                  ].join(" ")}
-                >
-                  <span>Send & Receive</span>
-                </Link>
-
-                {/* Desktop: Terminal link */}
-                <Link
-                  href="/terminal"
-                  className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isTerminalActive
-                      ? "text-sky-300 bg-sky-500/10"
-                      : "text-slate-300 hover:text-white hover:bg-white/10",
-                  ].join(" ")}
-                >
-                  <span>Terminal</span>
-                </Link>
-
-                {/* Desktop: Rewards link */}
-                <Link
-                  href="/rewards"
-                  className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isRewardsActive
-                      ? "text-amber-300 bg-amber-500/10"
-                      : "text-slate-300 hover:text-white hover:bg-white/10",
-                  ].join(" ")}
-                >
-                  <span>{t('rewards')}</span>
-                </Link>
-
-                {/* Desktop: Win (lottery) link */}
-                <Link
-                  href="/megapot"
-                  className={[
-                    "hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    isWinActive
-                      ? "text-yellow-300 bg-yellow-500/10"
-                      : "text-slate-300 hover:text-white hover:bg-white/10",
-                  ].join(" ")}
-                >
-                  <span>Megapot</span>
-                </Link>
+                <nav className="hidden sm:flex items-center gap-1">
+                  {navItems.map((item) => (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      aria-current={item.active ? "page" : undefined}
+                      className={[
+                        "rounded-full px-3.5 py-2 text-sm font-medium leading-none transition-colors",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30",
+                        item.active
+                          ? "bg-[#2A2A32] text-white"
+                          : "text-[#8E8C96] hover:text-white",
+                      ].join(" ")}
+                    >
+                      {item.label}
+                    </Link>
+                  ))}
+                </nav>
 
                 {/* Desktop: Balance button */}
                 <button
                   type="button"
-                  onClick={() => { setBalanceModalTabLocked(false); setShowBalanceModal(true); }}
-                  className="hidden sm:flex items-center gap-3 px-3 py-2 rounded-lg bg-white/10 text-slate-200 hover:text-white hover:bg-white/15 transition-colors border border-white/10 text-left"
+                  onClick={() => { setShowDeposit(true); refreshBalance(); }}
+                  className="hidden sm:flex items-center gap-2 ml-2 h-10 pl-3.5 pr-1 rounded-full bg-[#141418] border border-white/10 hover:border-white/20 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
                 >
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-sm font-medium leading-tight">{t('balance')}</span>
-                  </div>
-                  <span className="text-sm font-semibold tabular-nums shrink-0">
+                  <span className="text-sm font-medium text-[#8E8C96]">{t('balance')}</span>
+                  <span className="text-sm font-semibold text-white tabular-nums shrink-0">
                     {loadingBalance ? "…" : `$${balanceUSD}`}
+                  </span>
+                  <span className="grid h-7 w-7 place-items-center rounded-full bg-gradient-to-br from-[#FF3D12] to-[#F5B000] text-white text-base font-semibold leading-none">
+                    +
                   </span>
                 </button>
 
@@ -366,9 +384,28 @@ export function MinimalHeader() {
         </div>
 
         {authenticated && (
+          <DepositSheet
+            open={showDeposit}
+            onClose={() => {
+              setShowDeposit(false);
+              window.dispatchEvent(new CustomEvent("balanceModalClosed"));
+            }}
+            balanceUsd={balanceUSD}
+            solanaAddress={solanaAddress}
+            devnetMode={networkMode === "devnet"}
+            onRefresh={refreshBalance}
+          />
+        )}
+        {authenticated && (
           <BalanceModal
             open={showBalanceModal}
-            onClose={() => setShowBalanceModal(false)}
+            onClose={() => {
+              setShowBalanceModal(false);
+              setBalanceModalWithdrawMethod(undefined);
+              setBalanceTopUpAmount(undefined);
+              setPeerPay(null);
+              window.dispatchEvent(new CustomEvent("balanceModalClosed"));
+            }}
             balanceUSD={balanceUSD}
             balanceExact={balanceNumber}
             loadingBalance={loadingBalance}
@@ -377,6 +414,9 @@ export function MinimalHeader() {
             devnetMode={networkMode === "devnet"}
             initialTab={balanceModalTab}
             lockInitialTab={balanceModalTabLocked}
+            initialWithdrawMethod={balanceModalWithdrawMethod}
+            topUpAmountUsd={balanceTopUpAmount}
+            peerPay={peerPay}
             dark
           />
         )}
@@ -389,7 +429,7 @@ export function MinimalHeader() {
           onClose={() => setMobileMenuOpen(false)}
           balanceUSD={balanceUSD}
           loadingBalance={loadingBalance}
-          onOpenBalance={() => { setBalanceModalTabLocked(false); setShowBalanceModal(true); refreshBalance(); }}
+          onOpenBalance={() => { setShowDeposit(true); refreshBalance(); }}
           onLogout={() => logout()}
           username={username}
           email={email}

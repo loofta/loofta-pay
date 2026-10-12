@@ -105,7 +105,7 @@ export default function MyGiveawaysPage() {
           ) : !data || data.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
               <p className="text-base text-slate-400 mb-4">You haven't launched a giveaway yet.</p>
-              <GradientActionButton onClick={() => (window.location.href = "/rewards/giveaways/create")}>
+              <GradientActionButton onClick={() => (window.location.href = "/rewards-rail")}>
                 <span className="text-base">Launch a Giveaway</span>
               </GradientActionButton>
             </div>

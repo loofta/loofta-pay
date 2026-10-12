@@ -4,6 +4,9 @@ import { isNonMainnetCluster } from "@/lib/solanaCluster";
 import { getVerifiedSolanaWallets } from "@/lib/serverAuth";
 
 // recipient_address included only to detect PENDING_* prefixes — real wallet addresses are stripped in normalisePayment
+// guest_sender_wallet is left out until migration 20261010160000 is applied. Selecting a
+// missing column makes PostgREST error, and these queries ignore that error, so history
+// (and the home recent list) comes back empty.
 const PAYMENT_SELECT =
   "id, short_id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, recipient_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, is_private, claimed_privately, guest_sender_email";
 
@@ -43,7 +46,78 @@ export type PaymentHistoryClaim = {
    *  account — see the guest_sender_email migration comment. Stored purely for display; never used
    *  to verify identity, and no account-linking reconciliation reads it (not built yet). */
   guest_sender_email?: string | null;
+  /** Solana wallet that funded a signed-out send. */
+  guest_sender_wallet?: string | null;
+  /** Pay to Venmo, Cash App, or Revolut. The history row opens this receipt. */
+  receipt_path?: string | null;
 };
+
+function cashPayStatus(status: string): string {
+  const s = status.toUpperCase();
+  if (s === "COMPLETE" || s === "SUCCESS") return "SUCCESS";
+  if (s === "CANCELLED") return "CANCELLED";
+  if (s === "FAILED") return "EXPIRED";
+  return "IN_FLIGHT";
+}
+
+/** A row exists from the moment a quote is prepared. History only lists one that actually started, or was cancelled. */
+const VISIBLE_CASH_PAY_STATUSES = new Set([
+  "BRIDGING",
+  "BRIDGE_COMPLETE",
+  "DEPOSITED",
+  "CANCELLING",
+  "COMPLETE",
+  "SUCCESS",
+  "CANCELLED",
+]);
+
+/** Pays to Venmo, Cash App, or Revolut live on offramp_requests, not payments. */
+async function loadCashPays(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  userId: string,
+): Promise<PaymentHistoryClaim[]> {
+  const { data, error } = await supabase
+    .from("offramp_requests")
+    .select("id, status, amount_usdc, created_at, platform, platform_identifier, near_intents_status")
+    .eq("user_id", userId)
+    .in("platform", ["venmo", "cashapp", "revolut"])
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error || !data) return [];
+  return (data as Array<Record<string, unknown>>)
+    .filter((row) => VISIBLE_CASH_PAY_STATUSES.has(String(row.status ?? "").toUpperCase()))
+    .map((row) => {
+    const platform = String(row.platform ?? "");
+    const handle = String(row.platform_identifier ?? "").replace(/^[@$]/, "");
+    const marker = String(row.near_intents_status ?? "");
+    const shortId = marker.startsWith("sid:") ? marker.slice(4) : "";
+    const id = String(row.id ?? "");
+    return {
+      id,
+      short_id: shortId || null,
+      amount: String(row.amount_usdc ?? "0"),
+      direction: "from_sender" as const,
+      to_symbol: "USDC",
+      to_chain: "solana",
+      to_token: "USDC",
+      from_chain: "solana",
+      from_token: "USDC",
+      paid_with_chain: "solana",
+      paid_with_token: "USDC",
+      status: cashPayStatus(String(row.status ?? "")),
+      created_at: String(row.created_at ?? ""),
+      paid_at: null,
+      recipient_username: null,
+      recipient_email: null,
+      recipient_address: `PENDING_SOCIAL:${platform}:${handle}`,
+      creator_email: null,
+      created_by: null,
+      is_private: false,
+      description: null,
+      receipt_path: `/app/pay/${shortId || id}`,
+    };
+  });
+}
 
 const TERMINAL_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CANCELLED", "REFUNDED", "EXPIRED", "DELETED"];
 const RECEIVED_VISIBLE_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING"];
@@ -109,6 +183,7 @@ function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & {
     description: (row.description as string | null) ?? null,
     is_devnet: Boolean(row.is_devnet),
     guest_sender_email: (row.guest_sender_email as string | null) ?? null,
+    guest_sender_wallet: (row.guest_sender_wallet as string | null) ?? null,
     _recipient_user_id: (row.recipient_user_id as string | null) ?? null,
   };
 }
@@ -369,7 +444,9 @@ export async function GET(request: Request) {
       }
     }
 
-    const sentTotal = sumCountedAmount([...(sentTotalRows || []), ...(legacySentTotalRows || [])]);
+    const cashPaysForTotal = await loadCashPays(supabase, userId);
+    const sentTotal = sumCountedAmount([...(sentTotalRows || []), ...(legacySentTotalRows || [])])
+      + cashPaysForTotal.reduce((sum, row) => sum + (row.status === "SUCCESS" ? parseFloat(row.amount) || 0 : 0), 0);
     const receivedTotal = sumCountedAmount(receivedTotalRows);
 
     // Normalise and merge; deduplicate by ID (payments table takes precedence)
@@ -438,9 +515,10 @@ export async function GET(request: Request) {
       };
     };
 
-    const sent = normPaymentSent
-      .map(enrich)
-      .filter((c) => !isExpiredOpenPayment(c) && String(c.status || "").toUpperCase() !== "DELETED");
+    const cashPays = cashPaysForTotal;
+    const sent = [...normPaymentSent.map(enrich), ...cashPays]
+      .filter((c) => !isExpiredOpenPayment(c) && String(c.status || "").toUpperCase() !== "DELETED")
+      .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
 
     const received = normPaymentReceived
       .map(enrich)

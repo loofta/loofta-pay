@@ -30,6 +30,7 @@ const bs58 = bs58Module?.default ?? bs58Module;
 const ALLOWED_SPONSOR_PROGRAMS = new Set([
   '11111111111111111111111111111111',               // System Program
   'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',  // SPL Token
+  'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',  // Token-2022 (giveaway prize transfers)
   'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL', // Associated Token Program
   'ComputeBudget111111111111111111111111111111',    // Compute Budget
   'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo',  // Memo v1
@@ -44,6 +45,11 @@ const USDC_MINT_SET = new Set([
 
 const ATA_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 const TOKEN_PROGRAM_ID_STR = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const TOKEN_2022_PROGRAM_ID_STR = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+
+function isSponsoredTokenProgram(prog: string | undefined): boolean {
+  return prog === TOKEN_PROGRAM_ID_STR || prog === TOKEN_2022_PROGRAM_ID_STR;
+}
 
 // SPL Token instruction discriminators this flow actually needs — a plain USDC transfer (to a
 // recipient, or into our own fee-payer ATA for rent recovery). Everything else from the Token
@@ -1060,7 +1066,7 @@ export class SolanaSponsorService {
             throw new Error('ATA creation only allowed for USDC');
           }
         }
-        if (prog === TOKEN_PROGRAM_ID_STR) {
+        if (isSponsoredTokenProgram(prog)) {
           const discriminator = ix.data[0];
           if (!TOKEN_INSTRUCTION_ALLOWLIST.has(discriminator)) {
             this.logger.warn(`SolanaSponsor[sign-and-broadcast]: blocked disallowed Token instruction discriminator=${discriminator}`);
@@ -1150,7 +1156,7 @@ export class SolanaSponsorService {
           throw new Error('ATA creation only allowed for USDC');
         }
       }
-      if (prog === TOKEN_PROGRAM_ID_STR) {
+      if (isSponsoredTokenProgram(prog)) {
         const discriminator = ix.data[0];
         if (!TOKEN_INSTRUCTION_ALLOWLIST.has(discriminator)) {
           this.logger.warn(`SolanaSponsor[sign-and-broadcast]: blocked disallowed Token instruction discriminator (v0)=${discriminator}`);
@@ -1311,7 +1317,7 @@ export class SolanaSponsorService {
             throw new Error('ATA creation only allowed for USDC');
           }
         }
-        if (prog === TOKEN_PROGRAM_ID_STR) {
+        if (isSponsoredTokenProgram(prog)) {
           const discriminator = ix.data[0];
           if (!TOKEN_INSTRUCTION_ALLOWLIST.has(discriminator)) {
             this.logger.warn(`SolanaSponsor[sign-and-broadcast-per]: blocked disallowed Token instruction discriminator=${discriminator}`);
@@ -1376,7 +1382,7 @@ export class SolanaSponsorService {
         // Token-instruction allowlist — v0 compiled instructions are positional/immutable so a
         // CloseAccount (or Approve/SetAuthority/etc.) can't be stripped in place like the legacy
         // branch does; reject the whole transaction outright instead.
-        if (prog === TOKEN_PROGRAM_ID_STR) {
+        if (isSponsoredTokenProgram(prog)) {
           const discriminator = ix.data[0];
           if (!TOKEN_INSTRUCTION_ALLOWLIST.has(discriminator)) {
             this.logger.warn(`SolanaSponsor[sign-and-broadcast-per]: blocked disallowed Token instruction (v0) discriminator=${discriminator} — possible drain attempt`);
@@ -1467,6 +1473,72 @@ export class SolanaSponsorService {
     this.logger.log(`SolanaSponsor[sol-topup]: sent ${lamports} lamports to ${recipientWallet.slice(0, 8)}... sig=${sig.slice(0, 12)}... lastValidBlockHeight=${lastValidBlockHeight}`);
     await this.waitUntilSignatureVisible(sig, 60_000, 500, 'sol-topup');
     this.logger.log(`SolanaSponsor[sol-topup]: confirmed | sig=${sig.slice(0, 12)}...`);
+    return { signature: sig };
+  }
+
+  /**
+   * Co-sign a Solana → Base Relay deposit the user already signed.
+   * The instruction list must match the quote this server stored for the offramp.
+   * Relay's program is not on the general sponsor allowlist — this path only
+   * broadcasts that exact quote, and the fee payer must not be an account in it.
+   */
+  async broadcastMatchedRelayDeposit(params: {
+    transactionBase64: string;
+    userSolanaAddress: string;
+    instructions: { programId: string; keys: { pubkey: string; isSigner: boolean; isWritable: boolean }[]; data: string }[];
+  }): Promise<{ signature: string }> {
+    if (!this.feePayerKeypair || !this.feePayerAddress) throw new Error('Fee payer not configured');
+    const raw = Buffer.from(params.transactionBase64, 'base64');
+    let tx: VersionedTransaction;
+    try {
+      tx = VersionedTransaction.deserialize(raw);
+    } catch {
+      throw new Error('Relay deposit must be a versioned transaction');
+    }
+    const message = tx.message;
+    const staticKeys = message.staticAccountKeys;
+    if (!staticKeys[0] || staticKeys[0].toBase58() !== this.feePayerAddress) {
+      throw new Error('Invalid fee payer in Relay deposit');
+    }
+    if (message.addressTableLookups?.length) {
+      throw new Error('Relay deposit must not use address lookup tables');
+    }
+    const compiled = message.compiledInstructions;
+    if (compiled.length !== params.instructions.length) {
+      throw new Error('Relay deposit does not match the quoted bridge');
+    }
+    const user = params.userSolanaAddress.trim();
+    let userIsSigner = false;
+    for (let i = 0; i < compiled.length; i++) {
+      const ix = compiled[i];
+      const expected = params.instructions[i];
+      const programId = staticKeys[ix.programIdIndex]?.toBase58();
+      if (programId !== expected.programId) throw new Error('Relay deposit does not match the quoted bridge');
+      const dataHex = Buffer.from(ix.data).toString('hex');
+      if (dataHex !== expected.data.toLowerCase()) throw new Error('Relay deposit does not match the quoted bridge');
+      if (ix.accountKeyIndexes.length !== expected.keys.length) throw new Error('Relay deposit does not match the quoted bridge');
+      for (let k = 0; k < expected.keys.length; k++) {
+        const pubkey = staticKeys[ix.accountKeyIndexes[k]]?.toBase58();
+        if (pubkey !== expected.keys[k].pubkey) throw new Error('Relay deposit does not match the quoted bridge');
+        if (pubkey === this.feePayerAddress) throw new Error('Relay deposit must not include the fee payer');
+        if (pubkey === user && expected.keys[k].isSigner) userIsSigner = true;
+      }
+    }
+    if (!userIsSigner) throw new Error('Relay deposit is not signed by the paying wallet');
+    const userIndex = staticKeys.findIndex((k) => k.toBase58() === user);
+    if (userIndex < 0 || userIndex >= message.header.numRequiredSignatures) {
+      throw new Error('Paying wallet is not a required signer');
+    }
+    const userSig = tx.signatures[userIndex];
+    if (!userSig || userSig.every((b) => b === 0)) throw new Error('Paying wallet signature is missing');
+
+    tx.sign([this.feePayerKeypair]);
+    const sig = await this.connection.sendRawTransaction(tx.serialize(), {
+      skipPreflight: false,
+      maxRetries: 3,
+      preflightCommitment: 'confirmed',
+    });
+    this.logger.log(`SolanaSponsor[relay-deposit]: sig=${sig.slice(0, 12)}...`);
     return { signature: sig };
   }
 }

@@ -362,6 +362,24 @@ export class OfframpService {
     };
   }
 
+  /** Removes a cancelled pay from history. In-progress and completed pays stay. */
+  async deleteOfframp(offrampId: string, userId: string) {
+    const record = await this.getRecord(offrampId, userId);
+    if (record.status !== 'CANCELLED') {
+      throw new BadRequestException('Only a cancelled payment can be deleted');
+    }
+    const { data, error } = await this.supabase.getClient()
+      .from('offramp_requests')
+      .delete()
+      .eq('id', offrampId)
+      .eq('user_id', userId)
+      .eq('status', 'CANCELLED')
+      .select('id');
+    if (error) throw new BadRequestException('Could not delete this payment');
+    if (!data?.length) throw new BadRequestException('Only a cancelled payment can be deleted');
+    return { deleted: true };
+  }
+
   // Called by frontend after it has completed ZKP2P withdrawal + Base→Solana USDC transfer.
   async markCancelled(offrampId: string, userId: string) {
     const record = await this.getRecord(offrampId, userId);
@@ -455,12 +473,27 @@ export class OfframpService {
   private async checkFulfilment(record: any) {
     try {
       const cash = await this.getCashClient();
-      const order = await cash.order(record.zkp2p_deposit_id);
+      let state: string | null = null;
+      let filledUsdc = 0;
+      let inFlight = true;
+      try {
+        const order = await cash.order(record.zkp2p_deposit_id);
+        state = order.state;
+        filledUsdc = Number(order.filledAmount) / 1_000_000;
+        inFlight = order.isInFlight;
+      } catch {
+        // Deposits priced under the oracle are hidden from cash.order(). Read the indexer row directly.
+        const discounted = await this.readDiscountedDeposit(record.zkp2p_deposit_id);
+        if (!discounted) return;
+        state = discounted.state;
+        filledUsdc = discounted.filledUsdc;
+        inFlight = discounted.inFlight;
+      }
 
       // Completion detection must never be coupled to the fill-tracking columns below — if that
       // write fails for any reason (e.g. a migration lagging behind a deploy), status updates
       // should keep working independently.
-      if (order.state === 'delivered' && !order.isInFlight) {
+      if (state === 'delivered' && !inFlight) {
         await this.supabase.getClient()
           .from('offramp_requests')
           .update({ status: 'COMPLETE', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -470,8 +503,8 @@ export class OfframpService {
       await this.supabase.getClient()
         .from('offramp_requests')
         .update({
-          filled_amount_usdc: Number(order.filledAmount) / 1_000_000,
-          fill_state:         order.state,
+          filled_amount_usdc: filledUsdc,
+          fill_state:         state,
           updated_at:         new Date().toISOString(),
         })
         .eq('id', record.id)
@@ -479,6 +512,27 @@ export class OfframpService {
     } catch (err: any) {
       this.logger.debug(`checkFulfilment ${record.id}:`, err.message);
     }
+  }
+
+  /** Peer hides non-zero spreads from cash.order(). The indexer row still has the fill totals. */
+  private async readDiscountedDeposit(depositId: string): Promise<{ state: string; filledUsdc: number; inFlight: boolean } | null> {
+    const { IndexerClient, IndexerDepositService, defaultIndexerEndpoint } = await import('@zkp2p/sdk');
+    const service = new IndexerDepositService(new IndexerClient(defaultIndexerEndpoint('PRODUCTION')));
+    const rows = await service.fetchDepositsByIds([depositId]);
+    const deposit = rows[0];
+    if (!deposit) return null;
+    const remaining = BigInt(deposit.remainingDeposits ?? 0);
+    const outstanding = BigInt(deposit.outstandingIntentAmount ?? 0);
+    const taken = BigInt(deposit.totalAmountTaken ?? 0);
+    const withdrawn = BigInt(deposit.totalWithdrawn ?? 0);
+    const hasLiveFunds = remaining >= 10_000n || outstanding > 0n;
+    let state = 'awaiting-buyer';
+    if (outstanding > 0n) state = taken > 0n ? 'delivering' : 'matched';
+    else if (!hasLiveFunds && withdrawn > 0n) state = 'returned';
+    else if (taken > 0n && !hasLiveFunds) state = 'delivered';
+    else if (taken > 0n) state = 'delivering';
+    const inFlight = state === 'awaiting-buyer' || state === 'matched' || state === 'delivering';
+    return { state, filledUsdc: Number(taken) / 1_000_000, inFlight };
   }
 
   async getAllOfframps(page = 1, limit = 50) {

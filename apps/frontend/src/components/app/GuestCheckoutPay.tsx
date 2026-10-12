@@ -43,37 +43,81 @@ import { QRCodeSVG } from "qrcode.react";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { SolanaWalletConnectProvider, useWallet as useSolanaWalletAdapter, useWalletModal } from "@/components/SolanaWalletConnect";
 import { buildUSDCTransferTransaction, sendSignedUSDCTransfer } from "@/services/solanaTransfer";
-import { buildMagicBlockPrivateTransferNoFee, totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
+import { buildMagicBlockPrivateTransferNoFee, signExternalWalletTransaction, totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
+import { getEphemeralRpcForMode } from "@/lib/per/constants";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { privatePaymentAllPrivateLine } from "@/lib/privatePaymentCopy";
 import { formatDelayDuration } from "@/lib/privacyDelay";
+import { looftaPlatformFeeWallet } from "@/lib/unregisteredAccountFee";
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 3 * 60_000;
 
-async function confirmClaimPaid(claimId: string, email: string, txHash?: string, isPrivate?: boolean): Promise<boolean> {
-  // PRIVATE_TRANSFER_PENDING, not SUCCESS — a guest payment always lands in the claim's burner,
-  // never the recipient's real wallet (see NearIntentsCheckoutOption's privacy comment), so the
-  // recipient still has to claim/sweep it out. SUCCESS reads as "fully settled, nothing left to
-  // do", which stranded funds with no visible claim action once a recipient landed on their own
-  // claim page (incident 2026-08-26, payment 1352b7e4-c2f3-4e31-9bca-45ff88acc151).
+export type GuestSettleOptions = {
+  /** Wallet that signed the payment. Stored on the row after the chain confirms it signed. */
+  senderWallet?: string;
+  /** Registered recipient: USDC already landed in their wallet, so the row is SUCCESS, not a claim. */
+  direct?: boolean;
+};
+
+async function confirmClaimPaid(
+  claimId: string,
+  email: string,
+  txHash?: string,
+  isPrivate?: boolean,
+  settle?: GuestSettleOptions,
+): Promise<boolean> {
+  // PRIVATE_TRANSFER_PENDING, not SUCCESS — a guest payment into a burner still has to be
+  // claimed. SUCCESS reads as "fully settled, nothing left to do", which stranded funds with
+  // no visible claim action (incident 2026-08-26, payment 1352b7e4-c2f3-4e31-9bca-45ff88acc151).
+  // A direct pay to a registered wallet is already in their account, so that one is SUCCESS.
   const res = await fetch(`/api/claims/${claimId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status: "PRIVATE_TRANSFER_PENDING", guest_email: email, txHash, ...(isPrivate ? { isPrivate: true } : {}) }),
+    body: JSON.stringify({
+      status: settle?.direct ? "SUCCESS" : "PRIVATE_TRANSFER_PENDING",
+      guest_email: email,
+      guest_sender_wallet: settle?.senderWallet,
+      txHash,
+      ...(isPrivate ? { isPrivate: true } : {}),
+    }),
   });
   return res.ok;
 }
 
-async function pollUntilSettled(claimId: string, email: string, txHash: string | undefined, isPrivate: boolean, shouldAbort: () => boolean): Promise<boolean> {
+export async function pollUntilSettled(
+  claimId: string,
+  email: string,
+  txHash: string | undefined,
+  isPrivate: boolean,
+  shouldAbort: () => boolean,
+  settle?: GuestSettleOptions,
+): Promise<boolean> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (shouldAbort()) return false;
-    if (await confirmClaimPaid(claimId, email, txHash, isPrivate)) return true;
+    if (await confirmClaimPaid(claimId, email, txHash, isPrivate, settle)) return true;
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
   return false;
+}
+
+/** $0.10 claim-fee destination. Prefer the configured wallet; otherwise the public fee-payer
+ *  address (same wallet the signed-in pay path already sends this fee to). */
+async function resolveClaimFeeWallet(): Promise<string | null> {
+  const fromEnv = looftaPlatformFeeWallet();
+  if (fromEnv) return fromEnv;
+  try {
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+    const r = await fetch(`${backendUrl}/claims/solana-sponsor/fee-payer`);
+    if (!r.ok) return null;
+    const body = (await r.json()) as { feePayerAddress?: string | null };
+    const address = body.feePayerAddress?.trim();
+    return address && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address) ? address : null;
+  } catch {
+    return null;
+  }
 }
 
 function isValidEmail(value: string): boolean {
@@ -82,12 +126,114 @@ function isValidEmail(value: string): boolean {
 
 type PayFromWalletStatus = "idle" | "building" | "awaiting_signature" | "broadcasting" | "sent";
 
+type SignTx = <T extends Transaction | VersionedTransaction>(tx: T) => Promise<T>;
+type SignAllTx = <T extends Transaction | VersionedTransaction>(txs: T[]) => Promise<T[]>;
+
+/**
+ * Pays a guest claim's burner from a connected external wallet and resolves with the claim
+ * transfer's signature once confirmed. Private: MagicBlock Payments API transfer, then any flat
+ * platform fee as a separate best-effort public transfer. Public: one SPL transfer with the fee
+ * as an extra leg.
+ */
+export async function payGuestClaimFromWallet({
+  claimId,
+  burnerAddress,
+  amountUsd,
+  platformFeeUsd = 0,
+  isPrivate,
+  split = 1,
+  delayMs = 0,
+  senderAddress,
+  signTx,
+  signAllTransactions,
+  onStatus,
+}: {
+  claimId: string;
+  burnerAddress: string;
+  amountUsd: number;
+  platformFeeUsd?: number;
+  isPrivate: boolean;
+  split?: number;
+  delayMs?: number;
+  senderAddress: string;
+  signTx: SignTx;
+  /** Phantom rejects signTransaction when MagicBlock's sponsor is the fee payer. */
+  signAllTransactions?: SignAllTx;
+  onStatus: (s: "building" | "awaiting_signature" | "broadcasting") => void;
+}): Promise<string> {
+  onStatus("building");
+  const connection = new Connection(getSolanaHttpRpc(), "confirmed");
+  const feeWallet = platformFeeUsd > 0 ? await resolveClaimFeeWallet() : null;
+  const collectPlatformFee = platformFeeUsd > 0 && !!feeWallet;
+
+  if (isPrivate) {
+    const { transaction: tx, sendTo } = await buildMagicBlockPrivateTransferNoFee({
+      from: senderAddress,
+      to: burnerAddress,
+      amountUSDC: amountUsd,
+      memo: claimId,
+      split,
+      maxDelayMs: delayMs,
+    });
+    onStatus("awaiting_signature");
+    const signed = await signExternalWalletTransaction(tx, { signTransaction: signTx, signAllTransactions });
+    onStatus("broadcasting");
+    const broadcastConnection = sendTo === "ephemeral"
+      ? new Connection(getEphemeralRpcForMode("mainnet"), "confirmed")
+      : connection;
+    const signature = await broadcastConnection.sendRawTransaction(signed.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: "confirmed",
+      maxRetries: 3,
+    });
+    await waitForSignatureConfirmation(broadcastConnection, signature, 60_000, 1500, "guestCheckoutUsdcSolana");
+
+    // Best-effort: the claim amount already landed, so a rejected fee signature or an unfunded
+    // fee-wallet ATA must not fail the whole payment.
+    if (collectPlatformFee && feeWallet) {
+      try {
+        const feeTx = await buildUSDCTransferTransaction({
+          senderAddress,
+          recipientAddress: feeWallet,
+          amountUSDC: platformFeeUsd,
+          connection,
+        });
+        onStatus("awaiting_signature");
+        const feeSigned = await signTx(feeTx);
+        onStatus("broadcasting");
+        const feeSig = await sendSignedUSDCTransfer(feeSigned as VersionedTransaction, connection);
+        await waitForSignatureConfirmation(connection, feeSig, 60_000, 1500, "guestCheckoutPlatformFee");
+      } catch (feeErr) {
+        console.warn("[GuestCheckoutPay] platform fee transfer skipped/failed after private pay", feeErr);
+      }
+    }
+    return signature;
+  }
+
+  const tx = await buildUSDCTransferTransaction({
+    senderAddress,
+    recipientAddress: burnerAddress,
+    amountUSDC: amountUsd,
+    connection,
+    ...(collectPlatformFee && feeWallet
+      ? { extraTransfer: { recipientAddress: feeWallet, amountUSDC: platformFeeUsd } }
+      : {}),
+  });
+  onStatus("awaiting_signature");
+  const signed = await signTx(tx);
+  onStatus("broadcasting");
+  const signature = await sendSignedUSDCTransfer(signed as VersionedTransaction, connection);
+  await waitForSignatureConfirmation(connection, signature, 60_000, 1500, "guestCheckoutUsdcSolana");
+  return signature;
+}
+
 /** Single "Pay now" button for the USDC-on-Solana option — one click either way: if no wallet is
  *  connected yet it opens the wallet picker and auto-continues straight into the payment the
  *  moment a wallet connects, instead of making the guest connect, see a separate address readout,
  *  then click a second "Pay" button. Must render inside SolanaWalletConnectProvider. */
 function UsdcSolanaWalletPanel({
   amountUsd,
+  platformFeeUsd = 0,
   status,
   onPay,
   onViewQrInstead,
@@ -95,8 +241,10 @@ function UsdcSolanaWalletPanel({
   delayMs,
 }: {
   amountUsd: number;
+  /** Flat Loofta fee for unregistered (handle/email) claims — added to the button total. */
+  platformFeeUsd?: number;
   status: PayFromWalletStatus;
-  onPay: (senderAddress: string, signTransaction: <T extends Transaction | VersionedTransaction>(tx: T) => Promise<T>) => void;
+  onPay: (senderAddress: string, signTransaction: SignTx, signAllTransactions?: SignAllTx) => void;
   /** Undefined (not a no-op function) when there's no QR fallback to offer — a private transfer
    *  can't be represented as "send to this address", it has to go through the Payments API. */
   onViewQrInstead?: () => void;
@@ -105,7 +253,7 @@ function UsdcSolanaWalletPanel({
    *  private transfer with a delay doesn't land immediately. */
   delayMs?: number;
 }) {
-  const { publicKey, signTransaction, connected, connecting, wallet, connect } = useSolanaWalletAdapter();
+  const { publicKey, signTransaction, signAllTransactions, connected, connecting, wallet, connect } = useSolanaWalletAdapter();
   const { setVisible } = useWalletModal();
   // Set by clicking "Pay" before a wallet is connected — the wallet picker only calls the
   // adapter's select() when a wallet is clicked (see WalletModal's handleWalletClick), never
@@ -121,7 +269,7 @@ function UsdcSolanaWalletPanel({
     if (!pendingAutoPay) return;
     if (connected && publicKey && signTransaction) {
       setPendingAutoPay(false);
-      onPay(publicKey.toBase58(), signTransaction);
+      onPay(publicKey.toBase58(), signTransaction, signAllTransactions);
     } else if (wallet && !connecting && !connected) {
       connect().catch(() => setPendingAutoPay(false));
     }
@@ -143,7 +291,7 @@ function UsdcSolanaWalletPanel({
         type="button"
         onClick={() => {
           if (canPay) {
-            onPay(publicKey!.toBase58(), signTransaction!);
+            onPay(publicKey!.toBase58(), signTransaction!, signAllTransactions);
           } else {
             setPendingAutoPay(true);
             setVisible(true);
@@ -160,8 +308,8 @@ function UsdcSolanaWalletPanel({
           <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</>
         ) : (
           isPrivate
-            ? `Pay $${totalWithMagicBlockPrivateFee(amountUsd).toFixed(2)} privately`
-            : `Pay $${amountUsd.toFixed(2)} USDC`
+            ? `Pay $${(totalWithMagicBlockPrivateFee(amountUsd) + platformFeeUsd).toFixed(2)} privately`
+            : `Pay $${(amountUsd + platformFeeUsd).toFixed(2)} USDC`
         )}
       </button>
 
@@ -194,6 +342,7 @@ function UsdcSolanaOption({
   claimId,
   burnerAddress,
   amountUsd,
+  platformFeeUsd = 0,
   email,
   onSettled,
   setError,
@@ -204,6 +353,8 @@ function UsdcSolanaOption({
   claimId: string;
   burnerAddress: string;
   amountUsd: number;
+  /** Flat fee for unregistered handle/email claims — collected to the Loofta fee wallet when set. */
+  platformFeeUsd?: number;
   email: string;
   onSettled: () => void;
   setError: (e: string | null) => void;
@@ -246,54 +397,24 @@ function UsdcSolanaOption({
 
   const handlePayFromWallet = async (
     senderAddress: string,
-    signTx: <T extends Transaction | VersionedTransaction>(tx: T) => Promise<T>,
+    signTx: SignTx,
+    signAllTransactions?: SignAllTx,
   ) => {
     setError(null);
-    setPayStatus("building");
     try {
-      const connection = new Connection(getSolanaHttpRpc(), "confirmed");
-
-      let signature: string;
-      if (isPrivateMode) {
-        // No Loofta fee here — this is an unauthenticated guest paying from their own external
-        // wallet, not a Loofta-custodied balance, so there's nothing for Loofta to sponsor or take
-        // a cut on; MagicBlock's own sponsor already covers gas and collects its own relay fee.
-        // (buildMagicBlockPrivateTransferWithLooftaFee is for flows that DO take a Loofta cut, and
-        // requires NEXT_PUBLIC_SOLANA_FEE_ATA_WALLET to be configured — not needed or wanted here.)
-        const tx = await buildMagicBlockPrivateTransferNoFee({
-          from: senderAddress,
-          to: burnerAddress,
-          amountUSDC: amountUsd,
-          memo: claimId,
-          split,
-          maxDelayMs: delayMs,
-        });
-
-        setPayStatus("awaiting_signature");
-        const signed = await signTx(tx);
-
-        setPayStatus("broadcasting");
-        signature = await connection.sendRawTransaction(signed.serialize(), {
-          skipPreflight: false,
-          preflightCommitment: "confirmed",
-          maxRetries: 3,
-        });
-      } else {
-        const tx = await buildUSDCTransferTransaction({
-          senderAddress,
-          recipientAddress: burnerAddress,
-          amountUSDC: amountUsd,
-          connection,
-        });
-
-        setPayStatus("awaiting_signature");
-        const signed = await signTx(tx);
-
-        setPayStatus("broadcasting");
-        signature = await sendSignedUSDCTransfer(signed as VersionedTransaction, connection);
-      }
-      await waitForSignatureConfirmation(connection, signature, 60_000, 1500, "guestCheckoutUsdcSolana");
-
+      const signature = await payGuestClaimFromWallet({
+        claimId,
+        burnerAddress,
+        amountUsd,
+        platformFeeUsd,
+        isPrivate: !!isPrivateMode,
+        split,
+        delayMs,
+        senderAddress,
+        signTx,
+        signAllTransactions,
+        onStatus: setPayStatus,
+      });
       setSentTxHash(signature);
       setPayStatus("sent");
     } catch (e: any) {
@@ -309,6 +430,7 @@ function UsdcSolanaOption({
         <SolanaWalletConnectProvider rpcUrl={getSolanaHttpRpc()}>
           <UsdcSolanaWalletPanel
             amountUsd={amountUsd}
+            platformFeeUsd={platformFeeUsd}
             status={payStatus}
             onPay={handlePayFromWallet}
             onViewQrInstead={isPrivateMode ? undefined : () => setPayMethod("qr")}
@@ -322,6 +444,11 @@ function UsdcSolanaOption({
           <div>
             <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">Send exactly</p>
             <p className="text-lg font-semibold text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${amountUsd.toFixed(2)} USDC</p>
+            {platformFeeUsd > 0 && (
+              <p className="text-base text-amber-600 [@media(prefers-color-scheme:dark)]:text-amber-400 mt-1">
+                Then +${platformFeeUsd.toFixed(2)} claim fee via wallet pay (QR covers the claim amount only)
+              </p>
+            )}
             <p className="text-base text-gray-500 [@media(prefers-color-scheme:dark)]:text-slate-400">on Solana</p>
           </div>
           <div className="rounded-lg bg-white border border-gray-200 px-3 py-2 break-all text-base font-mono text-gray-700 [@media(prefers-color-scheme:dark)]:bg-black/20 [@media(prefers-color-scheme:dark)]:border-white/10 [@media(prefers-color-scheme:dark)]:text-slate-300">{burnerAddress}</div>
@@ -343,6 +470,7 @@ export function GuestCheckoutPay({
   claimId,
   burnerAddress,
   amountUsd,
+  platformFeeUsd = 0,
   onLogin,
   onSettled,
   authenticated = false,
@@ -357,6 +485,9 @@ export function GuestCheckoutPay({
   claimId: string;
   burnerAddress: string;
   amountUsd: number;
+  /** Flat $0.10 (or other) fee when paying an unregistered handle/email — collected alongside the
+   *  claim amount when NEXT_PUBLIC_SOLANA_FEE_ATA_WALLET is set. Wallet-to-wallet sends skip this. */
+  platformFeeUsd?: number;
   onLogin: () => void;
   onSettled: () => void;
   /** Checkout links show this card to every visitor, signed in or not (see c/[id]/page.tsx) — set
@@ -440,11 +571,18 @@ export function GuestCheckoutPay({
         <IncognitoModeToggle checked={!!isPrivateMode} onCheckedChange={onTogglePrivateMode} light />
       ) : null}
 
+      {platformFeeUsd > 0 && (
+        <p className="text-sm text-slate-400 text-center">
+          +${platformFeeUsd.toFixed(2)} claim fee for email / handle recipients
+        </p>
+      )}
+
       {emailValid ? (
         <UsdcSolanaOption
           claimId={claimId}
           burnerAddress={burnerAddress}
           amountUsd={amountUsd}
+          platformFeeUsd={platformFeeUsd}
           email={email}
           onSettled={onSettled}
           setError={setError}

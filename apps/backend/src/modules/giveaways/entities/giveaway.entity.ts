@@ -112,6 +112,18 @@ export interface Giveaway {
    *  (must be a whole dollar amount, TICKET_PRICE_USDC = 1) is gifted as that many Megapot tickets
    *  instead — see GiveawayPayoutService.processGiveaway. */
   reward_type: GiveawayRewardType;
+  /** SPL mint winners are paid in. Null means the prize is USDC (or Megapot tickets). The creator
+   *  can send this token straight to the burner and the platform fee in USDC to Loofta, in one
+   *  transaction. Funding in USDC still works and is swapped into this mint. */
+  prize_mint: string | null;
+  prize_token_symbol: string | null;
+  prize_token_name: string | null;
+  prize_token_logo: string | null;
+  prize_token_decimals: number | null;
+  prize_token_program: string | null;
+  /** Total output of the funding swap, in base units. Split evenly across winners at payout. */
+  prize_token_base_units: string | null;
+  prize_swap_tx: string | null;
   entries_close_at: string;
 
   eligibility: GiveawayEligibility;

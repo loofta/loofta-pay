@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { usePrivy } from "@privy-io/react-auth";
 import {
   useWallets as useSolanaWallets,
@@ -32,12 +33,13 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
-import { PlusIcon, XIcon, CheckCircle2, Check, Copy, ExternalLink, Loader2, ArrowLeft, UploadCloud, FileDown, AlertCircle, User, Mail, ChevronDown } from "lucide-react";
+import { XIcon, CheckCircle2, Check, Copy, ExternalLink, Loader2, ArrowLeft, UploadCloud, FileDown, AlertCircle, User, Mail, ChevronDown } from "lucide-react";
 import { MessageInput } from "@/components/MessageInput";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
 import { TELEGRAM_SEND_ENABLED } from "@/lib/socialPlatforms";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
+import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
 import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 import { useSolPrice } from "@/hooks/useSolPrice";
 import type { MultiSendRecipientType } from "@/store/multiSend";
@@ -212,6 +214,10 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   // Default OFF (normal/public) — matches the single-send claim page's incognito toggle default.
   // Private costs a MagicBlock fee per recipient; normal is a free plain on-chain transfer.
   const [sendPrivately, setSendPrivately] = useState(false);
+  // Same split/delay the single-send form offers. Applied to every recipient's private payout.
+  const [split, setSplit] = useState(1);
+  const [delayMs, setDelayMs] = useState(0);
+  const [privacyInfoOpen, setPrivacyInfoOpen] = useState(false);
   // Same "entering incognito mode" confetti moment as the single-send claim page — non-null key
   // mounts one <PrivacyConfettiBurst>; it clears itself via onDone.
   const [privacyBurstKey, setPrivacyBurstKey] = useState<number | null>(null);
@@ -435,7 +441,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       if (!user?.id) throw new Error("Not authenticated");
 
       const result: MultiCreateResult = await createMultiPayments(
-        { recipients, sender_wallet: senderWallet, cluster: apiCluster },
+        { recipients, sender_wallet: senderWallet, cluster: apiCluster, split, maxDelayMs: delayMs },
         user.id,
         accessToken,
       );
@@ -929,6 +935,30 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
               <IncognitoModeToggle checked={sendPrivately} onCheckedChange={handleToggleSendPrivately} />
 
+              <AnimatePresence initial={false}>
+                {sendPrivately && (
+                  <motion.div
+                    key="multi-send-privacy-controls"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                    className="overflow-hidden"
+                  >
+                    <PrivacyTimingControls
+                      idPrefix="multi-send"
+                      split={split}
+                      onSplitChange={setSplit}
+                      delayMs={delayMs}
+                      onDelayMsChange={setDelayMs}
+                      infoOpen={privacyInfoOpen}
+                      onInfoOpenChange={setPrivacyInfoOpen}
+                      theme="dark"
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <p className="text-slate-400 text-base">
                 {sendPrivately
                   ? "Private hides these payments from public on-chain view. Fees are estimated, exact breakdown confirmed before payment."
@@ -1046,17 +1076,25 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
 
   // ── Main form ──────────────────────────────────────────────────────────────
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-4">
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="text-slate-400 hover:text-white transition-colors"
-          aria-label="Back"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <p className="text-white text-xl font-semibold flex-1">Multi Send</p>
+    <div className="flex flex-col gap-5 rounded-[30px] border border-white/[0.07] bg-[#141419] p-7">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="grid h-9 w-9 place-items-center rounded-xl bg-[#1E1E25] text-lg font-extrabold text-white"
+            aria-label="Back"
+          >
+            ←
+          </button>
+          <div className="flex flex-col">
+            <p className="text-white" style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>Multi send</p>
+            <p style={{ fontSize: 13, fontWeight: 400, color: "#8A8893" }}>Pay up to 50 people in one go</p>
+          </div>
+        </div>
+        <span className="rounded-full border border-[rgba(255,122,42,0.35)] px-3 py-1.5 font-mono text-xs tracking-[0.12em] text-[#FF8A4A]">
+          {rows.length} / 50
+        </span>
         {process.env.NODE_ENV === "development" && (
           <button
             type="button"
@@ -1097,19 +1135,24 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           onDragLeave={() => setIsDragOver(false)}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
-          className={`cursor-pointer rounded-xl border-2 border-dashed p-5 text-center transition-all select-none ${
+          className={`flex cursor-pointer items-center gap-4 rounded-[20px] border-[1.5px] border-dashed bg-[#101014] p-4 text-left transition-all select-none ${
             isDragOver
-              ? "border-orange-400/60 bg-orange-500/10"
-              : "border-white/15 hover:border-white/30 hover:bg-white/5"
+              ? "border-orange-400/60"
+              : "border-white/15 hover:border-white/30"
           }`}
         >
-          <UploadCloud className={`w-6 h-6 mx-auto mb-2 transition-colors ${isDragOver ? "text-orange-400" : "text-slate-400"}`} />
-          <p className="text-white text-base font-semibold">Import from CSV</p>
-          <p className="text-slate-400 text-base mt-0.5">Drag & drop or click to browse</p>
-          <p className="text-slate-400 text-base font-mono mt-2">recipient, amount, message</p>
-          <p className="text-slate-500 text-base mt-1">
-            Prefix a recipient to set its platform, e.g. TELEGRAM:@handle or EMAIL:name@email.com
-          </p>
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[radial-gradient(120%_120%_at_28%_18%,#FFFFFF_0%,#ECEAF0_45%,#BDBAC6_100%)] shadow-[inset_0_2px_4px_rgba(255,255,255,0.5),0_4px_0_#8C8898]">
+            <UploadCloud className="h-[22px] w-[22px] text-[#16161C]" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-white" style={{ fontWeight: 700, fontSize: 15 }}>Import from CSV</span>
+            <span className="mt-0.5 block font-mono text-[13px] text-[#9A98A3]">recipient, amount, message</span>
+            <span className="mt-0.5 block text-[13px] text-[#6E6C78]">Prefix a platform: TELEGRAM:@handle, EMAIL:name@email.com</span>
+          </span>
+          <span className="shrink-0 text-right">
+            <span className="block text-[13px] font-bold text-[#FF7A2A]">Browse</span>
+            <span className="mt-1 block text-xs text-[#77757F]">Example .csv</span>
+          </span>
         </div>
 
         <div className="flex items-center justify-center gap-4">
@@ -1315,22 +1358,21 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
         ))}
       </div>
 
-      <div className="flex items-center justify-between">
-        {rows.length < 10 ? (
+      <div className="flex flex-col gap-2">
+        {rows.length < 10 && (
           <button
             type="button"
             onClick={addRow}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-base font-medium transition-colors"
+            className="w-full rounded-[14px] border-[1.5px] border-dashed border-white/15 py-3 text-sm font-bold text-[#C9C6CF] transition-colors hover:border-white/30 hover:text-white"
           >
-            <PlusIcon className="w-4 h-4" />
-            Add recipient
+            + Add recipient
           </button>
-        ) : <span />}
+        )}
         {rows.some((r) => r.recipient.trim() || r.amount !== "100" || r.message.trim()) && (
           <button
             type="button"
             onClick={() => { setRows(defaultRows()); setCsvErrors([]); setShowPaste(false); }}
-            className="text-slate-500 hover:text-red-400 text-base transition-colors"
+            className="self-end text-slate-500 hover:text-red-400 text-base transition-colors"
           >
             Clear all
           </button>
@@ -1352,7 +1394,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       <Button
         onClick={!authenticated ? () => login({ loginMethods: ["twitter", "email", "discord", "github"], disableSignup: false }) : handleRequestPayment}
         disabled={authenticated && !canReview}
-        className="w-full h-12 rounded-xl font-semibold text-lg bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
+        className="h-[58px] w-full rounded-[18px] bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] text-[17px] font-semibold text-white shadow-[0_14px_40px_rgba(255,70,10,0.3)] hover:opacity-90"
       >
         {!authenticated ? "Sign in to continue" : "Continue to pay"}
       </Button>

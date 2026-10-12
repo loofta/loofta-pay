@@ -97,3 +97,28 @@ export async function verifySolanaUsdcPayment(input: VerifySolanaUsdcPaymentInpu
 
   return { valid: true };
 }
+
+/** True when this confirmed transaction was signed by `wallet`. Used to record a signed-out
+ *  sender's address only when the chain agrees — a client-supplied string is not enough. */
+export async function transactionSignedByWallet(txHash: string, wallet: string, isDevnet: boolean): Promise<boolean> {
+  if (!txHash || txHash.length < 32 || !wallet) return false;
+  let walletKey: PublicKey;
+  try {
+    walletKey = new PublicKey(wallet);
+  } catch {
+    return false;
+  }
+  const connection = new Connection(getRpcForMode(isDevnet ? "devnet" : "mainnet"), "confirmed");
+  let tx;
+  try {
+    tx = await connection.getParsedTransaction(txHash, {
+      maxSupportedTransactionVersion: 0,
+      commitment: "confirmed",
+    });
+  } catch {
+    return false;
+  }
+  if (!tx || tx.meta?.err) return false;
+  const want = walletKey.toBase58();
+  return tx.transaction.message.accountKeys.some((k) => k.signer && k.pubkey.toBase58() === want);
+}
