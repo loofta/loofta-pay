@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Dialog,
   DialogContent,
@@ -17,6 +18,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { embeddedSolanaUsdcBalanceQueryKey } from "@/services/solanaBalance";
+import { sora } from "@/components/home-v4/fonts";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { TokenIcon } from "@/components/TokenIcon";
 import { findTokenBySelection } from "@/lib/tokens";
@@ -27,13 +29,13 @@ import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, type Pee
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
-import { usePrivy, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction, useFiatOnramp } from "@privy-io/react-auth";
+import { usePrivy, useUser, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction, useFiatOnramp } from "@privy-io/react-auth";
 import { useWallets, useSignTransaction, useSignAndSendTransaction, useFundWallet } from "@privy-io/react-auth/solana";
 import { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
 import { useReducedMotion } from "framer-motion";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
-import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
+import { cashoutFeeUsdc, cashoutPayoutUsdc } from "@/services/peerCash";
 
 /** Gate check before any EVM gas-sponsored transaction. Throws if rate-limited. */
 async function assertEvmSponsorAllowed(walletAddress: string, userId: string, accessToken: string | null) {
@@ -170,8 +172,7 @@ const PRIVATE_DEPOSIT_SESSION_KEY = "loofta_private_deposit_id";
 const PRIVATE_WITHDRAW_SESSION_KEY = "loofta_private_withdraw_id";
 const PRIVATE_TRANSFER_TERMINAL_STATUSES = new Set(["complete", "failed"]);
 const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
-const BRIDGE_FEE_PCT = 0.6; // Near Intents ~0.1% + 50 BPS Loofta referral fee (Solana → Base)
-
+const LOOFTA_FEE_WALLET = "0x50c236e3B93D3d69fe23F4D648A13901e6DdbC39" as const;
 // Withdraw-flow lottery ticket add-on. Mirrors megapot/page.tsx's handlePublicBuy/randomTicket
 // (numbers only matter for display — the backend accepts a quick-pick pick same as a manual one).
 const LOTTERY_TICKET_PRICE_USDC = 1;
@@ -357,30 +358,17 @@ function shortAddr(addr: string, h = 6, t = 4) {
 
 function IconBubble({ active, dark, children }: { active: boolean; dark: boolean; children: React.ReactNode }) {
   return (
-    <span className="relative shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-full">
-      <span
-        aria-hidden="true"
-        className={cn(
-          "absolute inset-0 rounded-full transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-          active
-            ? "bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_10px_24px_rgba(255,122,42,0.25)] scale-[1.02]"
-            : dark
-              ? "bg-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
-              : "bg-gray-100"
-        )}
-      />
-      {active && (
-        <span
-          aria-hidden="true"
-          className="absolute -inset-1 rounded-full blur-md opacity-60 bg-[radial-gradient(circle,rgba(255,122,42,0.55),transparent_60%)]"
-        />
+    <span
+      className={cn(
+        "grid h-[30px] w-[30px] place-items-center rounded-full text-white",
+        active
+          ? "bg-[linear-gradient(135deg,#FF2D0A,#F5B70C)]"
+          : dark
+            ? "bg-[#2A2A33] text-white"
+            : "bg-gray-200 text-gray-600"
       )}
-      <span className={cn(
-        "relative z-10 shrink-0 flex items-center justify-center",
-        "[&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:stroke-[2.25]",
-        "transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-        active ? "translate-y-[-0.5px] text-white" : dark ? "text-slate-400" : "text-gray-500"
-      )}>
+    >
+      <span className="flex items-center justify-center [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:stroke-[2.4]">
         {children}
       </span>
     </span>
@@ -482,6 +470,12 @@ export interface BalanceModalProps {
   /** When true, `initialTab` was explicitly requested by a CTA (e.g. "Add funds to your
    * balance") — skip the auto-redirect to Recent for a stuck withdrawal so that request wins. */
   lockInitialTab?: boolean;
+  /** Deep-link into a withdraw rail when opening the withdraw tab (claim cash-out / ?method=). */
+  initialWithdrawMethod?: "peer" | "paj" | "crypto";
+  /** Shortfall to prefill when opening from "Add funds & pay". */
+  topUpAmountUsd?: number;
+  /** Pay someone else's Venmo, Cash App, or Revolut handle. Opens the Peer cash-out form filled in. */
+  peerPay?: { platformId: string; identifier: string; amountUsd: number } | null;
 }
 
 export function BalanceModal({
@@ -496,8 +490,12 @@ export function BalanceModal({
   devnetMode = false,
   initialTab,
   lockInitialTab = false,
+  initialWithdrawMethod,
+  topUpAmountUsd,
+  peerPay,
 }: BalanceModalProps) {
   const { toast } = useToast();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const { data: tokens = [] } = useTokensQuery();
   const reduceMotion = useReducedMotion();
@@ -572,8 +570,11 @@ export function BalanceModal({
   const [peerIdentifier, setPeerIdentifier] = useState("");
   const [peerCurrency, setPeerCurrency] = useState("USD");
   const [peerStep, setPeerStep] = useState<PeerStep>("platform");
+  const [peerBasePending, setPeerBasePending] = useState(false);
+  const [peerFailMessage, setPeerFailMessage] = useState<string | null>(null);
   const [peerSubmitting, setPeerSubmitting] = useState(false);
   const [peerOfframpId, setPeerOfframpId] = useState<string | null>(null);
+  const [peerShareId, setPeerShareId] = useState<string | null>(null);
   const [peerBridgeDepositAddress, setPeerBridgeDepositAddress] = useState<string | null>(null);
   const [peerBridgeMemo, setPeerBridgeMemo] = useState<string | null>(null);
   const [peerBridgeTxSig, setPeerBridgeTxSig] = useState<string | null>(null);
@@ -585,6 +586,7 @@ export function BalanceModal({
   const peerBridgePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const peerStatusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const peerZkp2pSigningRef = useRef(false);
+  const peerPayKickRef = useRef(false);
   const [peerCancelSubStep, setPeerCancelSubStep] = useState<"getting-address" | "signing-withdraw" | "signing-transfer" | "bridging-back" | null>(null);
   const [peerBridgeBackDepositAddress, setPeerBridgeBackDepositAddress] = useState<string | null>(null);
   const [peerBridgeBackStatus, setPeerBridgeBackStatus] = useState<string | null>(null);
@@ -670,6 +672,7 @@ export function BalanceModal({
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { user, getAccessToken } = usePrivy();
+  const { refreshUser } = useUser();
   const { wallets: solanaWallets } = useWallets();
   const { signTransaction } = useSignTransaction();
   const { signAndSendTransaction: signAndSendLotteryTx } = useSignAndSendTransaction();
@@ -1213,10 +1216,13 @@ export function BalanceModal({
     localStorage.removeItem(PRIVATE_WITHDRAW_SESSION_KEY);
   }, []);
 
-  const wallet = useMemo(
-    () => (solanaAddress ? solanaWallets?.find((w) => w.address === solanaAddress) : undefined),
-    [solanaAddress, solanaWallets]
-  );
+  const wallet = useMemo(() => {
+    const list = solanaWallets ?? [];
+    const match = solanaAddress ? list.find((w) => w.address === solanaAddress) : undefined;
+    // Linked-account resolution can point at a wallet this signer list does not contain.
+    // The Privy embedded wallet is the one that can actually sign the payment.
+    return match ?? list.find((w) => w.walletClientType === "privy") ?? list[0];
+  }, [solanaAddress, solanaWallets]);
 
   // Withdraw-flow lottery ticket add-on: same /api/lottery/buy + buy-confirm public-route quick-pick
   // purchase as megapot/page.tsx's handlePublicBuy, using the embedded Solana wallet already in scope
@@ -1396,7 +1402,15 @@ export function BalanceModal({
     const poll = async () => {
       if (cancelled) return;
       try {
-        const result = await getExecutionStatus(peerBridgeDepositAddress);
+        const result = peerBridgeDepositAddress === "relay"
+          ? await (async () => {
+              const token = await getAccessToken();
+              const res = await fetch(`/api/offramp/${peerOfframpId}?action=relay-status`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              return res.json() as Promise<{ status?: string }>;
+            })()
+          : await getExecutionStatus(peerBridgeDepositAddress);
         const s = String(result?.status || result?.executionStatus || result?.state || "PENDING").toUpperCase();
         console.log(PEER_LOG, "bridge status", s);
         setPeerBridgeStatus(s);
@@ -1434,7 +1448,7 @@ export function BalanceModal({
     if (!platform) { setPeerStep("failed"); return; }
 
     const evmWalletForCheck = evmWalletsRef.current.find(
-      (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
+      (w) => w.address.toLowerCase() === peerBaseWalletAddress.toLowerCase() && typeof (w as any).getEthereumProvider === "function"
     );
     if (!evmWalletForCheck) {
       console.warn(PEER_LOG, "EOA wallet not ready yet, waiting...");
@@ -1443,6 +1457,7 @@ export function BalanceModal({
 
     peerZkp2pSigningRef.current = true;
     let cancelled = false;
+    let startedCashout = false;
 
     const run = async () => {
       try {
@@ -1454,7 +1469,7 @@ export function BalanceModal({
         const { createPublicClient: mkPublic, createWalletClient, custom, http: httpT, erc20Abi: _erc20Abi, encodeFunctionData } = await import("viem");
 
         const evmWallet = evmWalletsRef.current.find(
-          (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
+          (w) => w.address.toLowerCase() === peerBaseWalletAddress!.toLowerCase() && typeof (w as any).getEthereumProvider === "function"
         );
         if (!evmWallet) throw new Error("Base wallet not available — please try again.");
 
@@ -1485,19 +1500,53 @@ export function BalanceModal({
           account: peerBaseWalletAddress as `0x${string}`,
         });
 
-        // Use actual on-chain balance — bridge fee may have reduced the delivered amount
+        // Relay can report the bridge done before Base shows the USDC. Wait for the
+        // payout amount instead of failing the setup on the first zero read.
+        const { cashoutFeeAtomic, cashoutPayoutAtomic } = await import("@/services/peerCash");
+        const requestedAtomic = BigInt(Math.round(peerAmountUSDC * 1_000_000));
+        const feeAtomic = cashoutFeeAtomic(requestedAtomic);
+        const payoutAtomic = cashoutPayoutAtomic(requestedAtomic);
         const pubClient = mkPublic({ chain: base, transport: httpT("https://mainnet.base.org") });
-        const rawBalance = await pubClient.readContract({
+        const readBaseUsdc = () => pubClient.readContract({
           address: BASE_USDC_ADDRESS,
           abi: _erc20Abi,
           functionName: "balanceOf",
           args: [peerBaseWalletAddress as `0x${string}`],
-        }) as bigint;
-        if (rawBalance === 0n) throw new Error("No USDC found on Base wallet. It may still be bridging — please wait and retry.");
-        const atomicUsdc = rawBalance;
-        console.log(PEER_LOG, "Base USDC balance", rawBalance.toString(), "requested", Math.round(peerAmountUSDC * 1_000_000));
+        }) as Promise<bigint>;
+        setPeerBasePending(true);
+        let rawBalance = 0n;
+        for (let attempt = 0; attempt < 15 && !cancelled; attempt++) {
+          rawBalance = await readBaseUsdc();
+          console.log(PEER_LOG, "Base USDC balance", rawBalance.toString(), "payout", payoutAtomic.toString(), "attempt", attempt);
+          if (rawBalance >= payoutAtomic) break;
+          await new Promise((r) => setTimeout(r, 4000));
+        }
+        setPeerBasePending(false);
+        if (cancelled) return;
+        if (rawBalance < payoutAtomic) throw new Error("No USDC found on Base wallet. It may still be bridging — please wait and retry.");
+        const atomicUsdc = payoutAtomic;
+        if (feeAtomic > 0n && rawBalance >= payoutAtomic + feeAtomic) {
+          try {
+            const feeData = encodeFunctionData({
+              abi: _erc20Abi,
+              functionName: "transfer",
+              args: [LOOFTA_FEE_WALLET, feeAtomic],
+            });
+            const feeHash = await sponsoredClient.sendTransaction({
+              to: BASE_USDC_ADDRESS,
+              data: feeData,
+              chain: base,
+              account: peerBaseWalletAddress as `0x${string}`,
+            });
+            await pubClient.waitForTransactionReceipt({ hash: feeHash });
+            console.log(PEER_LOG, "cash-out fee sent", { feeAtomic: feeAtomic.toString(), feeHash });
+          } catch (feeErr) {
+            console.warn(PEER_LOG, "cash-out fee transfer failed", feeErr);
+          }
+        }
 
         if (cancelled) return;
+        startedCashout = true;
 
         // ZKP2P expects the raw username without display prefixes (@ for Revolut/Venmo, $ for Cash App)
         const zkp2pId = peerIdentifier.trim().replace(/^[@$]/, "");
@@ -1513,6 +1562,8 @@ export function BalanceModal({
           currency: peerCurrency,
           payee: zkp2pId,
           signer: sponsoredClient as any,
+          // Paying someone else's handle is one order, filled by one person.
+          exactFill: !!peerPay,
         });
 
         if (cancelled) return;
@@ -1538,6 +1589,7 @@ export function BalanceModal({
         const msg = err instanceof Error ? err.message : String(err);
         console.error(PEER_LOG, "Peer sign error", msg);
         peerZkp2pSigningRef.current = false;
+        setPeerBasePending(false);
 
         const isGasError = msg.includes("insufficient funds for gas") || msg.includes("exceeds the balance of the account");
         if (isGasError && peerBaseWalletAddress && peerOfframpId) {
@@ -1566,7 +1618,10 @@ export function BalanceModal({
     };
 
     run();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (!startedCashout) peerZkp2pSigningRef.current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerStep, peerOfframpId, peerBaseWalletAddress, peerAmountUSDC, peerPlatformId, evmWallets]);
 
@@ -1669,6 +1724,38 @@ export function BalanceModal({
 
   // Live oracle estimate + real fill-time ETA from @zkp2p/cash — see the effect below
   // withdrawAmountNum's declaration further down in this component.
+
+  useEffect(() => {
+    if (!open || !topUpAmountUsd || topUpAmountUsd <= 0) return;
+    const prefilled = topUpAmountUsd.toFixed(2);
+    setPeerDepositAmount(prefilled);
+    setDepositAmount(prefilled);
+  }, [open, topUpAmountUsd]);
+
+  const [privyTopUpLoading, setPrivyTopUpLoading] = useState(false);
+  const handlePrivyCrossChainTopUp = async () => {
+    if (!solanaAddress) return;
+    setPrivyTopUpLoading(true);
+    try {
+      recordDeposit("privy-funding", "pending", topUpAmountUsd);
+      await privyFundWallet({
+        address: solanaAddress,
+        options: {
+          asset: "USDC",
+          chain: devnetMode ? "solana:devnet" : "solana:mainnet",
+          ...(topUpAmountUsd && topUpAmountUsd > 0 ? { amount: topUpAmountUsd.toFixed(2) } : {}),
+        },
+      });
+      onRefresh?.();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Could not open funding.";
+      if (!/cancel|closed|dismiss/i.test(msg)) {
+        toast({ variant: "destructive", title: "Couldn't open funding", description: msg });
+      }
+    } finally {
+      setPrivyTopUpLoading(false);
+    }
+  };
 
   // Clear Blink error and reset states when modal closes
   useEffect(() => {
@@ -1933,12 +2020,36 @@ export function BalanceModal({
     }
   }, [devnetMode, tab, withdrawMethod]);
 
-  // On open: jump to requested tab (e.g. "withdraw" from UpdateJun26Modal)
+  // On open: jump to requested tab (e.g. "withdraw" from UpdateJun26Modal) and optional rail
+  // (claim Peer cash-out / ?method=peer|paj|crypto).
   useEffect(() => {
     if (!open) return;
     if (initialTab) setTab(initialTab);
+    if (peerPay?.platformId && peerPay.identifier && peerPay.amountUsd > 0) {
+      setTab("withdraw");
+      setShowFiatOfframpPicker(false);
+      setWithdrawMethod("peer-offramp");
+      setPeerPlatformId(peerPay.platformId);
+      setPeerIdentifier(peerPay.identifier);
+      setPeerCurrency("USD");
+      setWithdrawAmount(peerPay.amountUsd.toFixed(2).replace(/\.00$/, ""));
+      setPeerStep("form");
+      return;
+    }
+    if (initialTab === "withdraw" && initialWithdrawMethod) {
+      if (initialWithdrawMethod === "peer") {
+        setShowFiatOfframpPicker(false);
+        setWithdrawMethod("peer-offramp");
+      } else if (initialWithdrawMethod === "paj") {
+        setShowFiatOfframpPicker(false);
+        setWithdrawMethod("paj-cash");
+      } else if (initialWithdrawMethod === "crypto") {
+        setShowFiatOfframpPicker(false);
+        setWithdrawMethod("crypto-picker");
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, initialTab, initialWithdrawMethod, peerPay]);
 
   // On open: load history and resume any in-progress Near Intents withdrawal
   useEffect(() => {
@@ -1955,6 +2066,8 @@ export function BalanceModal({
       setTopUpView("near-intents-deposit");
     }
 
+    // A send-form pay-to-handle request owns this open. Don't resume an older cash-out over it.
+    if (peerPay?.platformId) return;
     // Restore active peer offramp session (survives page refresh)
     let restoredFromSession = false;
     try {
@@ -2143,10 +2256,12 @@ export function BalanceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [withdrawStep]);
 
-  // Initialise amount to full spendable balance when modal opens or balance changes
+  // Initialise amount to full spendable balance when modal opens or balance changes.
+  // A pay-to-app already has its own amount; overwriting it would send the whole balance.
   useEffect(() => {
+    if (peerPay) return;
     if (open && spendableBalance > 0) setWithdrawAmount(spendableBalance.toFixed(6).replace(/\.?0+$/, ""));
-  }, [open, spendableBalance]);
+  }, [open, spendableBalance, peerPay]);
 
   const withdrawAmountNum = parseFloat(withdrawAmount) || 0;
 
@@ -2176,9 +2291,8 @@ export function BalanceModal({
     setPeerEstimateLoading(true);
     const t = setTimeout(async () => {
       try {
-        const afterBridge = withdrawAmountNum * (1 - BRIDGE_FEE_PCT / 100);
         const { getPeerEstimate: fetchEstimate, usdc } = await import("@/services/peerCash");
-        const est = await fetchEstimate(usdc(afterBridge), peerCurrency, platform.processorName, true);
+        const est = await fetchEstimate(usdc(cashoutPayoutUsdc(withdrawAmountNum)), peerCurrency, platform.processorName, true);
         if (cancelled) return;
         setPeerEstimate({ receiveAmount: est.receiveAmount, eta: est.eta ?? null });
       } catch (err) {
@@ -2299,7 +2413,7 @@ export function BalanceModal({
     localStorage.removeItem(PEER_SESSION_KEY);
     peerZkp2pSigningRef.current = false;
     setPeerStep("platform"); setPeerPlatformId(null); setPeerIdentifier(""); setPeerCurrency("USD");
-    setPeerOfframpId(null); setPeerBridgeDepositAddress(null); setPeerBridgeMemo(null);
+    setPeerOfframpId(null); setPeerShareId(null); setPeerBridgeDepositAddress(null); setPeerBridgeMemo(null);
     setPeerBridgeTxSig(null); setPeerBridgeStatus(null);
     setPeerBaseWalletAddress(null); setPeerAmountUSDC(0); setPeerZkp2pDepositId(null);
     setPeerBridgeBackDepositAddress(null);
@@ -2307,6 +2421,7 @@ export function BalanceModal({
     setPeerCancelSubStep(null);
     setPeerEstimate(null);
     setPeerEstimateLoading(false);
+    setPeerFailMessage(null);
   };
 
   const fetchPeerHistory = async () => {
@@ -2490,13 +2605,22 @@ export function BalanceModal({
 
   const handlePeerSubmit = async () => {
     const platform = getPlatform(peerPlatformId ?? "");
-    if (!platform || !peerIdentifier.trim() || !solanaAddress || !wallet) return;
+    const payerAddress = wallet?.address || solanaAddress;
+    if (!platform || !peerIdentifier.trim() || !payerAddress || !wallet) {
+      if (peerPay) peerPayKickRef.current = false;
+      return;
+    }
     if (withdrawAmountNum < 1) {
       toast({ variant: "destructive", title: "Minimum $1", description: "Minimum offramp is $1.00 USDC." });
       return;
     }
     if (withdrawAmountNum > spendableBalance) {
+      if (peerPay && spendableBalance <= 0) {
+        peerPayKickRef.current = false;
+        return;
+      }
       toast({ variant: "destructive", title: "Insufficient balance" });
+      if (peerPay) setPeerStep("failed");
       return;
     }
     if (platform.maxUSDC != null && withdrawAmountNum > platform.maxUSDC) {
@@ -2511,22 +2635,37 @@ export function BalanceModal({
     setPeerSubmitting(true);
     console.log(PEER_LOG, "submit", { platform: platform.id, amount: withdrawAmountNum, currency: peerCurrency });
     try {
-      // Use Privy EOA embedded wallet — gas sponsored via Privy's gas management ({ sponsor: true })
-      const findEvmWallet = () => evmWalletsRef.current.find(
-        (w) => w.walletClientType === "privy" && typeof (w as any).getEthereumProvider === "function"
+      // Cash-out spends Base USDC from a wallet Privy has linked to this user. Peer does not
+      // pull Solana USDC itself, so this address is both the bridge destination and the signer.
+      const linkedEvmAddresses = (privyUser: typeof user) => {
+        const accounts = (privyUser?.linkedAccounts ?? []) as Array<{ address?: string; type?: string; chainType?: string }>;
+        return accounts
+          .filter((a) => {
+            const type = (a.type || "").toLowerCase();
+            const chain = (a.chainType || "").toLowerCase();
+            return !type.includes("solana") && chain !== "solana";
+          })
+          .map((a) => a.address?.trim() ?? "")
+          .filter((a) => /^0x[0-9a-fA-F]{40}$/.test(a));
+      };
+      const findOwnedEvmWallet = (addresses: string[]) => evmWalletsRef.current.find(
+        (w) => typeof (w as any).getEthereumProvider === "function"
+          && addresses.some((a) => a.toLowerCase() === w.address.toLowerCase()),
       );
-      let baseWallet = findEvmWallet();
+      let currentUser = user;
+      let baseWallet = findOwnedEvmWallet(linkedEvmAddresses(currentUser));
       if (!baseWallet) {
         try { await createEvmWallet(); } catch (e: any) {
           if (!String(e?.message).toLowerCase().includes("already has")) throw e;
         }
         for (let i = 0; i < 20; i++) {
-          await new Promise((r) => setTimeout(r, 300));
-          baseWallet = findEvmWallet();
+          try { currentUser = await refreshUser(); } catch { /* keep the last user */ }
+          baseWallet = findOwnedEvmWallet(linkedEvmAddresses(currentUser));
           if (baseWallet) break;
+          await new Promise((r) => setTimeout(r, 300));
         }
       }
-      if (!baseWallet) throw new Error("Could not load Base wallet. Please try again.");
+      if (!baseWallet) throw new Error("Could not load your Base wallet. Please try again.");
       const baseWalletAddr = baseWallet.address;
       setPeerBaseWalletAddress(baseWalletAddr);
       setPeerAmountUSDC(withdrawAmountNum);
@@ -2544,67 +2683,105 @@ export function BalanceModal({
           identifier: peerIdentifier.trim(),
           currency: peerCurrency,
           amountUSDC: withdrawAmountNum,
-          solanaAddress,
+          solanaAddress: payerAddress,
           baseWalletAddress: baseWalletAddr,
         }),
       });
-      const prep = await prepRes.json() as { id?: string; depositAddress?: string; memo?: string; message?: string };
-      console.log(PEER_LOG, "prepare response", { status: prepRes.status, id: prep.id, hasDepositAddr: !!prep.depositAddress });
-      if (!prepRes.ok || !prep.depositAddress) {
-        throw new Error((prep as any).message || "Failed to prepare offramp");
+      const prep = await prepRes.json() as {
+        id?: string; shortId?: string; bridge?: string; amountInUsdc?: number;
+        depositAddress?: string; memo?: string; message?: string;
+      };
+      console.log(PEER_LOG, "prepare response", { status: prepRes.status, id: prep.id, bridge: prep.bridge });
+      if (!prepRes.ok || !prep.id || prep.bridge !== "relay") {
+        throw new Error(prep.message || "Failed to prepare offramp");
       }
-      setPeerOfframpId(prep.id ?? null);
-      setPeerBridgeDepositAddress(prep.depositAddress);
-      setPeerBridgeMemo(prep.memo ?? null);
+      setPeerOfframpId(prep.id);
+      setPeerShareId(prep.shortId ?? null);
 
-      // 2. Send Solana USDC to bridge deposit address
-      console.log(PEER_LOG, "step 2 — send USDC to bridge", { depositAddress: prep.depositAddress, memo: prep.memo });
+      if (prep.amountInUsdc && spendableBalance + 0.000001 < prep.amountInUsdc) {
+        throw new Error(`This send needs $${prep.amountInUsdc.toFixed(2)} from your balance, including the bridge fee.`);
+      }
+
+      // 2. Sign the Relay deposit. It moves Solana USDC to Base; the fee payer covers the Solana fee.
+      console.log(PEER_LOG, "step 2 — Relay bridge to Base", { amountInUsdc: prep.amountInUsdc });
       setPeerStep("bridging");
       const mode = devnetMode ? "devnet" : "mainnet";
-      const { Connection: SolanaConnection } = await import("@solana/web3.js");
-      const connection = new SolanaConnection(getRpcForMode(mode), "confirmed");
-
-      const bridgeAccessToken = await getAccessToken();
-      const sig = await sendUsdcWithBackendFeePayer({
-        senderAddress: solanaAddress,
-        recipientAddress: prep.depositAddress,
-        amountUSDC: withdrawAmountNum,
-        connection,
-        wallet,
-        privyUserId: user!.id,
-        signTransaction,
-        memo: prep.memo ?? undefined,
-        usdcMint: getUsdcMintForMode(mode),
-        chain: getPrivySolanaChainForMode(mode),
-        accessToken: bridgeAccessToken,
-        network: devnetMode ? "devnet" : "mainnet",
-        offrampRequestId: prep.id,
+      const txRes = await fetch(`/api/offramp/${prep.id}?action=relay-tx`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
       });
+      const txBody = await txRes.json() as { transaction?: string; message?: string };
+      if (!txRes.ok || !txBody.transaction) throw new Error(txBody.message || "Could not build the bridge");
+      const rawTx = Uint8Array.from(atob(txBody.transaction), (c) => c.charCodeAt(0));
+      const { signedTransaction } = await signTransaction({
+        transaction: rawTx,
+        wallet,
+        chain: getPrivySolanaChainForMode(mode),
+        options: { uiOptions: { showWalletUIs: false } },
+      });
+      let signedBinary = "";
+      const signedBytes = signedTransaction instanceof Uint8Array ? signedTransaction : new Uint8Array(signedTransaction as ArrayBuffer);
+      for (let i = 0; i < signedBytes.length; i++) signedBinary += String.fromCharCode(signedBytes[i]);
+      const broadcastRes = await fetch(`/api/offramp/${prep.id}?action=relay-broadcast`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ transaction: btoa(signedBinary) }),
+      });
+      const broadcast = await broadcastRes.json() as { signature?: string; message?: string };
+      if (!broadcastRes.ok || !broadcast.signature) throw new Error(broadcast.message || "Bridge failed to send");
 
-      console.log(PEER_LOG, "USDC sent to bridge", { sig });
-      setPeerBridgeTxSig(sig);
+      console.log(PEER_LOG, "Relay deposit sent", { sig: broadcast.signature });
+      setPeerBridgeTxSig(broadcast.signature);
+      setPeerBridgeDepositAddress("relay");
       setPeerBridgeStatus("PENDING");
-      optimisticWithdrawBalance(withdrawAmountNum);
-
-      // Confirm bridge start on backend (fire-and-forget)
-      fetch(`/api/offramp/${prep.id}?action=confirm-bridge`, {
-        method: "POST", headers: { Authorization: `Bearer ${token}` },
-      }).catch(() => { });
+      optimisticWithdrawBalance(prep.amountInUsdc || withdrawAmountNum);
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(PEER_LOG, "submit error", msg);
       if (msg.includes("user rejected") || msg.includes("denied")) {
         toast({ variant: "destructive", title: "Cancelled" });
-        setPeerStep("form");
+        setPeerFailMessage(null);
+        setPeerStep(peerPay ? "failed" : "form");
       } else {
         toast({ variant: "destructive", title: "Failed", description: msg });
+        setPeerFailMessage(msg);
         setPeerStep("failed");
       }
     } finally {
       setPeerSubmitting(false);
     }
   };
+
+  // Paying a Venmo / Cash App / Revolut handle starts immediately. The withdraw
+  // form is for cashing out to yourself; this path should only show status.
+  useEffect(() => {
+    if (!open || !peerPay) {
+      peerPayKickRef.current = false;
+      return;
+    }
+    if (peerStep !== "form" || peerSubmitting || peerPayKickRef.current) return;
+    if (!wallet) return;
+    if (peerPlatformId !== peerPay.platformId || !peerIdentifier.trim()) return;
+    if (!(withdrawAmountNum >= 1)) return;
+    if (spendableBalance < withdrawAmountNum) return;
+    peerPayKickRef.current = true;
+    void handlePeerSubmit();
+  }, [open, peerPay, peerStep, peerSubmitting, wallet, peerPlatformId, peerIdentifier, withdrawAmountNum, spendableBalance, handlePeerSubmit]);
+
+  // Once the pay is actually sending, leave this modal and open the same kind of
+  // receipt page a normal payment uses. The share code is the receipt id.
+  const peerReceiptOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!open) peerReceiptOpenedRef.current = false;
+  }, [open]);
+  useEffect(() => {
+    if (!open || !peerPay || !peerShareId || peerReceiptOpenedRef.current) return;
+    if (peerStep !== "deposited" && peerStep !== "complete") return;
+    peerReceiptOpenedRef.current = true;
+    onClose();
+    router.push(`/app/pay/${peerShareId}`);
+  }, [open, peerPay, peerShareId, peerStep, onClose, router]);
 
   const handlePeerCancel = async () => {
     if (!peerOfframpId) { setWithdrawMethod(null); resetPeer(); return; }
@@ -3145,15 +3322,15 @@ export function BalanceModal({
   };
 
   const contentCls = dark
-    ? "sm:max-w-xl border-white/10 bg-[#0f0f12] text-white [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-gray-400]:!text-slate-500 [&_.bg-gray-100]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.border-gray-300]:!border-white/20 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&>button]:!text-slate-400 [&>button:hover]:!text-white"
-    : "sm:max-w-xl";
+    ? "sm:max-w-[520px] border-white/10 bg-[#121217] text-white shadow-[0_40px_120px_rgba(0,0,0,0.7)] [&_.text-gray-900]:!text-white [&_.text-gray-700]:!text-slate-200 [&_.text-gray-600]:!text-slate-300 [&_.text-gray-500]:!text-slate-400 [&_.text-gray-400]:!text-slate-500 [&_.bg-gray-100]:!bg-white/10 [&_.bg-gray-50]:!bg-white/5 [&_.bg-white]:!bg-white/10 [&_.border-gray-200]:!border-white/10 [&_.border-gray-300]:!border-white/20 [&_input]:!bg-white/10 [&_input]:!border-white/20 [&_input]:!text-white [&_input]:placeholder:!text-slate-400 [&>button]:!text-slate-400 [&>button:hover]:!text-white"
+    : "sm:max-w-[520px]";
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()} modal={false}>
       {/* modal={false} (see "fix modal blink") makes Radix's own DialogOverlay a no-op,
           so the backdrop is rendered by hand here instead. */}
       <DialogPortal>
-        <div className="fixed inset-0 z-[100] bg-black/80 animate-in fade-in-0" aria-hidden />
+        <div className="fixed inset-0 z-[100] bg-[rgba(5,5,7,0.72)] backdrop-blur-[10px] animate-in fade-in-0" aria-hidden />
       </DialogPortal>
       <DialogContent
         ref={dialogContentRef}
@@ -3167,10 +3344,29 @@ export function BalanceModal({
         className={cn(
           contentCls,
           "left-0 right-0 top-0 [transform:none] h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] rounded-none border-0 p-0 gap-0 overflow-hidden flex flex-col data-[state=open]:!zoom-in-100 data-[state=open]:!animate-none",
-          "sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-xl sm:rounded-2xl sm:border sm:p-7 sm:gap-4 sm:overflow-y-auto sm:flex-none sm:block",
-          "[&>button]:h-12 [&>button]:w-12 [&>button]:rounded-full [&>button_svg]:h-5 [&>button_svg]:w-5"
+          "sm:h-auto sm:max-h-[calc(100vh-32px)] sm:w-full sm:max-w-[520px] sm:rounded-[30px] sm:border sm:p-7 sm:gap-[22px] sm:overflow-y-auto sm:flex-none sm:block",
+          sora.variable,
+          peerPay
+            ? "[&>button:last-child]:hidden"
+            : dark
+              ? "[&>button]:!top-4 [&>button]:!right-4 [&>button]:!flex [&>button]:!h-9 [&>button]:!w-9 [&>button]:!items-center [&>button]:!justify-center [&>button]:!rounded-full [&>button]:!border-0 [&>button]:!bg-white/10 [&>button]:!opacity-100 [&>button]:!text-white [&>button]:!outline-none [&>button]:!ring-0 [&>button]:focus:!ring-0 [&>button]:focus:!ring-offset-0 [&>button]:focus-visible:!ring-0 [&>button_svg]:!m-0 [&>button_svg]:!h-4 [&>button_svg]:!w-4"
+              : "[&>button]:!top-4 [&>button]:!right-4 [&>button]:!flex [&>button]:!h-9 [&>button]:!w-9 [&>button]:!items-center [&>button]:!justify-center [&>button]:!rounded-full [&>button]:!border-0 [&>button]:!bg-black/5 [&>button]:!opacity-100 [&>button]:!outline-none [&>button]:!ring-0 [&>button]:focus:!ring-0 [&>button]:focus:!ring-offset-0 [&>button]:focus-visible:!ring-0 [&>button_svg]:!m-0 [&>button_svg]:!h-4 [&>button_svg]:!w-4"
         )}
       >
+
+        {peerPay && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className={cn(
+              "absolute right-4 top-4 z-30 flex h-10 w-10 items-center justify-center rounded-full outline-none",
+              dark ? "bg-white/10 text-white" : "bg-black/[0.06] text-gray-800"
+            )}
+          >
+            <X className="block h-4 w-4" strokeWidth={2} />
+          </button>
+        )}
 
         {/* Drag handle — mobile only */}
         <div className="sm:hidden flex justify-center pt-5 pb-2 shrink-0">
@@ -3183,20 +3379,48 @@ export function BalanceModal({
           style={{ flex: "1 1 0", height: 0, overflowY: "auto", WebkitOverflowScrolling: "touch" } as React.CSSProperties}
         >
 
+          {peerPay ? (
+            <DialogHeader className="pb-0 pt-2 sm:pt-0 pr-14">
+              <div className="flex items-center gap-3">
+                {getPlatform(peerPay.platformId)?.logo && (
+                  <img
+                    src={getPlatform(peerPay.platformId)!.logo}
+                    alt=""
+                    className="h-12 w-12 rounded-2xl object-cover shrink-0"
+                  />
+                )}
+                <div className="min-w-0">
+                  <DialogTitle
+                    className={cn("text-[28px] font-bold tracking-[-0.04em] leading-none", dark ? "text-white" : "text-gray-900")}
+                    style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif" }}
+                  >
+                    {`Pay to ${getPlatform(peerPay.platformId)?.name ?? "app"}`}
+                  </DialogTitle>
+                  <DialogDescription className={cn("text-base font-medium mt-1 truncate", dark ? "text-[#8A8893]" : "text-gray-500")}>
+                    {`$${peerPay.amountUsd.toFixed(2)} to ${peerPay.identifier.replace(/^[@$]/, "")}`}
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+          ) : (
           <DialogHeader className="pb-0 pt-2 sm:pt-0">
-            <DialogTitle className={cn("text-3xl sm:text-4xl font-bold tracking-tight", dark ? "text-white" : "text-gray-900")}>
-              Balance
+            <DialogTitle
+              className={cn("text-[34px] font-bold tracking-[-0.05em] leading-none", dark ? "text-white" : "text-gray-900")}
+              style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif" }}
+            >
+              {loadingBalance ? "…" : `$${balanceUSD}`}
             </DialogTitle>
-            <DialogDescription className={cn("text-base font-medium mt-0.5", dark ? "text-slate-400" : "text-gray-500")}>
-              {loadingBalance ? "Loading…" : `$${balanceUSD} USDC available`}
+            <DialogDescription className={cn("text-sm font-medium mt-1", dark ? "text-[#8A8893]" : "text-gray-500")}>
+              USDC available · Solana
             </DialogDescription>
           </DialogHeader>
+          )}
 
-          {/* Tabs — SendReceiveTabs style with sliding indicator */}
-          <div className={cn(
-            "relative flex rounded-2xl p-1 overflow-hidden",
+          {/* Tabs — hidden while paying someone's Venmo, Cash App, or Revolut */}
+          {!peerPay && <div className={cn(
+            "relative flex rounded-[18px] p-1 overflow-hidden",
             dark
-              ? "bg-white/[0.05] border border-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+              ? "bg-[#0B0B0E] border border-white/[0.06]"
               : "bg-gray-100 border border-gray-200"
           )}>
             {/* Sliding pill */}
@@ -3206,25 +3430,12 @@ export function BalanceModal({
                 "absolute inset-y-1 left-1 rounded-xl w-[calc(33.333%-0.167rem)]",
                 "transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
                 dark
-                  ? "bg-gradient-to-b from-white/[0.08] to-white/[0.03] shadow-[0_8px_24px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.08)] border border-white/[0.08]"
+                  ? "bg-[#1E1E25]"
                   : "bg-white shadow-sm border border-gray-200",
                 tab === "topup" ? "translate-x-0" : tab === "withdraw" ? "translate-x-full" : "translate-x-[200%]"
               )}
             />
-            {/* Orange glow — dark mode only */}
-            {dark && (
-              <div
-                aria-hidden="true"
-                className={cn(
-                  "pointer-events-none absolute inset-y-1 left-1 rounded-xl w-[calc(33.333%-0.167rem)] opacity-40",
-                  "bg-[radial-gradient(80%_140%_at_50%_0%,rgba(255,122,42,0.35),transparent_60%)]",
-                  "transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                  tab === "topup" ? "translate-x-0" : tab === "withdraw" ? "translate-x-full" : "translate-x-[200%]"
-                )}
-              />
-            )}
-
-            {/* Top Up */}
+            {/* Top up */}
             <button
               type="button"
               onClick={() => setTab("topup")}
@@ -3233,7 +3444,7 @@ export function BalanceModal({
               <IconBubble active={tab === "topup"} dark={dark}><ArrowDown /></IconBubble>
               <span className={cn("relative z-10 font-semibold text-base transition-colors duration-300",
                 tab === "topup" ? (dark ? "text-slate-100" : "text-gray-900") : (dark ? "text-slate-400" : "text-gray-500")
-              )}>Top Up</span>
+              )}>Top up</span>
             </button>
 
             {/* Withdraw */}
@@ -3271,7 +3482,7 @@ export function BalanceModal({
                 tab === "history" ? (dark ? "text-slate-100" : "text-gray-900") : (dark ? "text-slate-400" : "text-gray-500")
               )}>Recent</span>
             </button>
-          </div>
+          </div>}
 
           {/* Top Up tab — method cards */}
           {tab === "topup" && (topUpView === null || topUpView === "crypto-picker") && (
@@ -3329,34 +3540,10 @@ export function BalanceModal({
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>{isMobileDevice ? "Card" : "MoonPay"}</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Apple Pay · debit or credit card</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Apple Pay · debit or credit card. The card fee is shown before you pay.</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
-
-                  {/* PAJ Cash — Naira on-ramp, Nigeria only */}
-                  {PAJ_CASH_ENABLED && (
-                    <button
-                      type="button"
-                      disabled={!solanaAddress}
-                      onClick={() => { setShowFiatOnrampPicker(false); setTopUpView("paj-cash-onramp"); }}
-                      className={cn(
-                        "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                        dark
-                          ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                          : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      )}
-                    >
-                      <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                        <img src="/images/icons/paj-cash-logo.svg" alt="" className="w-10 h-10 object-contain" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>PAJ Cash</p>
-                        <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>NGN bank transfer · Nigeria only</p>
-                      </div>
-                      <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                    </button>
-                  )}
 
                   {/* Peer — Venmo/Cash App/Zelle/PayPal/Revolut checkout, settles USDC on Base
                       then bridges to your Solana balance via Near Intents (see peer-deposit view) */}
@@ -3376,7 +3563,7 @@ export function BalanceModal({
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Peer</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Venmo · Cash App · Zelle · PayPal · Revolut</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Venmo · Cash App · Zelle · PayPal · Revolut. Peer’s fee is in the checkout total.</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
@@ -3401,10 +3588,33 @@ export function BalanceModal({
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Coinbase</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Apple Pay · card · bank transfer</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Apple Pay · card · bank transfer. Coinbase shows its fee before you pay.</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
+
+                  {PAJ_CASH_ENABLED && (
+                    <button
+                      type="button"
+                      disabled={!solanaAddress}
+                      onClick={() => { setShowFiatOnrampPicker(false); setTopUpView("paj-cash-onramp"); }}
+                      className={cn(
+                        "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
+                        dark
+                          ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                          : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      )}
+                    >
+                      <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+                        <img src="/images/icons/paj-cash-logo.svg" alt="" className="w-10 h-10 object-contain" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>PAJ Cash</p>
+                        <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>NGN bank transfer · Nigeria only. The naira amount includes PAJ’s rate.</p>
+                      </div>
+                      <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
+                    </button>
+                  )}
                 </div>
               ) : topUpView === "crypto-picker" ? (
                 <div className="py-2 space-y-3">
@@ -3424,35 +3634,20 @@ export function BalanceModal({
                     Choose your network
                   </p>
 
-                  {/* USDC — direct deposit to your own Loofta Solana address (copy/QR only) */}
-                  <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("usdc-deposit")}
+                  <button type="button" disabled={!solanaAddress || privyTopUpLoading} onClick={() => void handlePrivyCrossChainTopUp()}
                     className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
                     <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      <img src="/images/icons/withdraw-usdc.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                      {privyTopUpLoading ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" /> : <Wallet className={`h-8 w-8 ${dark ? "text-slate-300" : "text-gray-700"}`} />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>USDC</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Solana · your wallet address</p>
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Any chain</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        {topUpAmountUsd && topUpAmountUsd > 0 ? `$${topUpAmountUsd.toFixed(2)} USDC · ` : ""}Wallet or exchange. The network fee is shown before you confirm.
+                      </p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
-
-                  {/* Blink */}
-                  <button type="button" disabled={!solanaAddress || blinkDepositing || coinbaseLoading} onClick={handleBlinkDeposit}
-                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
-                  >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      {blinkDepositing ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" /> : <img src="/images/blink/icon-yellow.png" alt="" className="w-10 h-10 object-contain drop-shadow-md" />}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Blink</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>USDC · USDT · SOL · ETH · BNB</p>
-                    </div>
-                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                  </button>
-
-                  {blinkError && <p className="text-base text-orange-500 text-center px-1">{blinkError}</p>}
 
                   {/* Near */}
                   <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("near-intents-deposit")}
@@ -3463,7 +3658,9 @@ export function BalanceModal({
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Near</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>ZEC · TON · BTC — cross-chain</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                        {topUpAmountUsd && topUpAmountUsd > 0 ? `$${topUpAmountUsd.toFixed(2)} · ` : ""}ZEC · TON · BTC. You receive the quoted USDC after the bridge fee.
+                      </p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
@@ -3473,45 +3670,31 @@ export function BalanceModal({
 
                   {/* 1. Crypto deposit — USDC, Blink, or Near */}
                   <button type="button" disabled={!solanaAddress} onClick={() => setTopUpView("crypto-picker")}
-                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
+                    className={cn("w-full flex items-center gap-4 p-[18px] rounded-[22px] text-left transition-all", dark ? "border border-white/[0.07] bg-[#1A1A20] hover:border-[rgba(255,122,42,0.5)] disabled:opacity-50 disabled:cursor-not-allowed" : "border border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
-                    <div className="w-14 h-12 shrink-0 flex items-center justify-center -space-x-2">
-                      {/* Fixed pixel width/height as both the HTML attribute AND a Tailwind class
-                          on every <img>, absolutely positioned to fill its own wrapper via
-                          inset-0 — not size-via-flex (w-full/h-full on a flex child can get
-                          squashed by flex-shrink/min-width:auto) and not size-via-CSS-only on an
-                          SVG source (an <img>'s CSS width/height can be ignored in favor of the
-                          SVG's own intrinsic size when nothing else pins it down, which is what
-                          let Solana's wide 128x128 mark render at some other aspect entirely).
-                          overflow-hidden + rounded-full on the wrapper still does the circular
-                          clipping, now against a guaranteed-square filled box. */}
-                      <span className={cn("relative shrink-0 w-9 h-9 rounded-full bg-white overflow-hidden ring-2", dark ? "ring-[#0a0a0c]" : "ring-white")}>
-                        <img src="/images/icons/near-logo.png" alt="" width={36} height={36} className="absolute inset-0 w-9 h-9 object-contain" />
-                      </span>
-                      <span className={cn("relative shrink-0 w-9 h-9 rounded-full bg-white overflow-hidden ring-2", dark ? "ring-[#0a0a0c]" : "ring-white")}>
-                        <img src="/images/blink/icon-yellow.png" alt="" width={36} height={36} className="absolute inset-0 w-9 h-9 object-contain" />
-                      </span>
-                      <span className={cn("relative shrink-0 w-9 h-9 rounded-full bg-white overflow-hidden ring-2", dark ? "ring-[#0a0a0c]" : "ring-white")}>
-                        <img src="/images/logo/solana-mark.svg" alt="" width={36} height={36} className="absolute inset-0 w-9 h-9 object-contain" />
-                      </span>
+                    <div className="w-[76px] shrink-0 flex items-center">
+                      <span className="grid h-10 w-10 place-items-center rounded-full border-[3px] border-[#1A1A20] bg-[#2775CA] text-base font-extrabold text-white">$</span>
+                      <span className="-ml-[18px] grid h-10 w-10 place-items-center rounded-full border-[3px] border-[#1A1A20] bg-[#00EC97] text-[15px] font-extrabold text-[#0B0B0E]">N</span>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Crypto deposit</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>USDC · Blink · Near</p>
+                      <p className={`text-lg font-bold ${dark ? "text-white" : "text-gray-900"}`} style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif" }}>Crypto deposit</p>
+                      <p className={`text-sm mt-0.5 ${dark ? "text-[#8A8893]" : "text-gray-500"}`}>Any chain · Near</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
 
                   {/* 2. Bank & Card — MoonPay, Coinbase, PAJ Cash */}
                   <button type="button" disabled={!solanaAddress || blinkDepositing} onClick={() => setShowFiatOnrampPicker(true)}
-                    className={cn("w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all", dark ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed" : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
+                    className={cn("w-full flex items-center gap-4 p-[18px] rounded-[22px] text-left transition-all", dark ? "border border-white/[0.07] bg-[#1A1A20] hover:border-[rgba(255,122,42,0.5)] disabled:opacity-50 disabled:cursor-not-allowed" : "border border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
+                    <div className="grid w-[76px] shrink-0 place-items-center">
+                      <div className="relative h-[38px] w-[54px] -rotate-6 rounded-[10px] bg-[radial-gradient(120%_140%_at_25%_10%,#FFC79A_0%,#FF5A1A_45%,#D23806_100%)] shadow-[inset_0_2px_4px_rgba(255,255,255,0.5),0_4px_0_#9C2802,0_10px_20px_rgba(0,0,0,0.4)]">
+                        <div className="absolute left-2 top-2.5 h-2.5 w-3.5 rounded-[3px] bg-[#FFE0B0]" />
+                      </div>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Bank & Card</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>MoonPay · Coinbase · PAJ Cash</p>
+                      <p className={`text-lg font-bold ${dark ? "text-white" : "text-gray-900"}`} style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif" }}>Bank & Card</p>
+                      <p className={`text-sm mt-0.5 ${dark ? "text-[#8A8893]" : "text-gray-500"}`}>Card · Peer · Coinbase · PAJ Cash</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
@@ -4556,9 +4739,9 @@ export function BalanceModal({
                   <img src="/images/icons/deposit-bank.svg" alt="" className="w-10 h-10 object-contain drop-shadow-md" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Bank</p>
+                  <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cash / bank</p>
                   <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                    Peer · Coinbase · PAJ Cash
+                    Venmo · Cash App · Revolut · Zelle · PAJ Cash
                   </p>
                 </div>
                 <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
@@ -4788,7 +4971,7 @@ export function BalanceModal({
                   <div className="min-w-0 flex-1">
                     <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cash out with Peer</p>
                     <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                      Venmo · Cash App
+                      Venmo · Cash App · Revolut · Zelle
                     </p>
                   </div>
                   <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
@@ -4853,6 +5036,7 @@ export function BalanceModal({
             <PajCashOnrampView
               dark={dark}
               prefillEmail={pajPrefillEmail}
+              prefillAmountUsd={topUpAmountUsd}
               getAccessToken={getAccessToken}
               onBack={() => setTopUpView(null)}
               onComplete={() => { fetchPajCashHistory(); onRefresh?.(); }}
@@ -5288,17 +5472,60 @@ export function BalanceModal({
             </div>
           )}
 
+          {/* Paying someone's app handle — no cash-out form, just status until the bridge starts. */}
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerPay && peerStep === "form" && (
+            <div className="py-6 flex flex-col items-center gap-4 text-center">
+              {!loadingBalance && spendableBalance + 1e-6 < peerPay.amountUsd ? (
+                <div className="w-full space-y-3 text-left">
+                  <div className={cn("flex items-center justify-between gap-3 rounded-2xl border px-4 py-3.5", dark ? "border-white/10 bg-[#0E0E12]" : "border-gray-200 bg-white")}>
+                    <div className="min-w-0">
+                      <div className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>Loofta balance</div>
+                      <div className={cn("mt-0.5 text-xl font-semibold", dark ? "text-white" : "text-gray-900")}>${spendableBalance.toFixed(2)}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className={cn("text-base", dark ? "text-[#8A8893]" : "text-gray-500")}>Add to pay</div>
+                      <div className={cn("mt-0.5 text-xl font-semibold", dark ? "text-white" : "text-gray-900")}>${Math.max(0, peerPay.amountUsd - spendableBalance).toFixed(2)}</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const shortfall = Math.max(0, peerPay.amountUsd - spendableBalance).toFixed(2);
+                      setDepositAmount(shortfall);
+                      setPeerDepositAmount(shortfall);
+                      setTopUpView(null);
+                      setTab("topup");
+                    }}
+                    className="w-full h-12 rounded-xl font-semibold text-base border border-white/20 bg-white/10 text-white hover:bg-white/15 transition-colors"
+                  >
+                    Add funds & pay
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <span className="relative block h-8 w-8" aria-hidden>
+                    <span className={cn("absolute inset-0 rounded-full border-2", dark ? "border-white/15" : "border-black/10")} />
+                    <span className={cn("absolute inset-0 rounded-full border-2 border-transparent animate-spin", dark ? "border-t-white" : "border-t-gray-900")} />
+                  </span>
+                  <p className={cn("text-lg font-medium", dark ? "text-white" : "text-gray-900")}>Sending</p>
+                </>
+              )}
+            </div>
+          )}
+
           {/* ── Peer offramp: form ── */}
-          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "form" && (() => {
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "form" && !peerPay && (() => {
             const platform = getPlatform(peerPlatformId ?? "");
             if (!platform) return null;
             const platformCap = platform.maxUSDC ?? Infinity; // null = no Loofta-side cap
             return (
               <div className="space-y-4 py-2">
+                {!peerPay && (
                 <button type="button" onClick={() => setPeerStep("platform")}
                   className={cn("flex items-center gap-1 text-base font-medium transition-colors", dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900")}>
                   <ChevronLeft className="h-4 w-4" />Back
                 </button>
+                )}
 
                 {/* Platform badge */}
                 <div className={`flex items-center gap-3 rounded-2xl px-4 py-3 ${dark ? "bg-white/5 border border-white/10" : "bg-orange-50/60 border border-orange-100"}`}>
@@ -5357,7 +5584,7 @@ export function BalanceModal({
                 {withdrawAmountNum >= 1 && (
                   <div className={`rounded-xl border px-4 py-3 space-y-1.5 ${dark ? "border-white/10 bg-white/5" : "border-orange-100 bg-orange-50/50"}`}>
                     <div className="flex items-center justify-between">
-                      <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>You'll receive</span>
+                      <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>{peerPay ? "They receive" : "You'll receive"}</span>
                       {peerEstimateLoading ? (
                         <span className={`text-base flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-400"}`}>
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />Fetching rate…
@@ -5372,31 +5599,41 @@ export function BalanceModal({
                     </div>
                     {peerEstimate?.eta && (
                       <div className="flex items-center justify-between">
-                        <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>Time to fill</span>
+                        <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>{peerPay ? "Arrives in" : "Time to fill"}</span>
                         <span className={`text-base ${dark ? "text-slate-300" : "text-gray-700"}`}>{peerEstimate.eta.label}</span>
                       </div>
                     )}
+                    <div className="flex items-center justify-between">
+                      <span className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>Fee</span>
+                      <span className={`text-base ${dark ? "text-slate-300" : "text-gray-700"}`}>${cashoutFeeUsdc(withdrawAmountNum).toFixed(2)}</span>
+                    </div>
                   </div>
                 )}
 
                 <div className={`rounded-xl border p-3 ${dark ? "border-white/10 bg-white/5" : "border-blue-100 bg-blue-50/60"}`}>
                   <p className={`text-base ${dark ? "text-slate-400" : "text-blue-700"}`}>
-                    A peer sends you {peerCurrency} via {platform.name}. You can cancel anytime to get your USDC back.
+                    {peerPay
+                      ? `A peer sends ${peerCurrency} to ${peerIdentifier.trim() || "this handle"} on ${platform.name}. You can cancel anytime to get your USDC back.`
+                      : `A peer sends ${peerCurrency} to ${peerIdentifier.trim() || "this handle"} on ${platform.name}. You can cancel anytime to get your USDC back.`}
                   </p>
                 </div>
 
                 <div className="flex gap-2 pt-1">
+                  {!peerPay && (
                   <Button variant="outline" onClick={() => setPeerStep("platform")}
                     className={dark ? "flex-1 border-white/20 bg-white/90 !text-black hover:bg-white hover:!text-black" : "flex-1"}>
                     Back
                   </Button>
+                  )}
                   <Button
                     onClick={handlePeerSubmit}
                     disabled={peerSubmitting || !peerIdentifier.trim() || withdrawAmountNum < (devnetMode ? 0.01 : 1) || withdrawAmountNum > Math.min(spendableBalance, platformCap)}
                     className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50">
                     {peerSubmitting
                       ? <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Preparing…</span>
-                      : `Cash out $${withdrawAmountNum > 0 ? withdrawAmountNum.toFixed(2) : "0.00"} → ${platform.name}`}
+                      : peerPay
+                        ? `Pay $${withdrawAmountNum > 0 ? withdrawAmountNum.toFixed(2) : "0.00"} to ${platform.name}`
+                        : `Cash out $${withdrawAmountNum > 0 ? withdrawAmountNum.toFixed(2) : "0.00"} → ${platform.name}`}
                   </Button>
                 </div>
               </div>
@@ -5414,6 +5651,19 @@ export function BalanceModal({
               { label: "Confirming receipt", sublabel: isSuccess ? "USDC received" : s === "PROCESSING" ? "Processing…" : "Waiting for confirmation…", status: isSuccess ? "done" : peerBridgeTxSig ? "active" : "pending" },
               { label: "Setting up your cash out", sublabel: "Registering your payment details", status: isSuccess ? "active" : "pending" },
             ] as const;
+            if (peerPay) {
+              return (
+                <div className="py-8 flex flex-col items-center gap-3 text-center">
+                  <span className="relative block h-7 w-7" aria-hidden>
+                    <span className={cn("absolute inset-0 rounded-full border-[1.5px]", dark ? "border-white/15" : "border-black/10")} />
+                    <span className={cn("absolute inset-0 rounded-full border-[1.5px] border-transparent animate-spin", dark ? "border-t-white" : "border-t-gray-900")} />
+                  </span>
+                  <p className={cn("text-sm", dark ? "text-[#8A8893]" : "text-gray-500")}>
+                    {isSuccess ? `Sending to ${platform?.name ?? "them"}` : peerBridgeTxSig ? "Confirming" : "Sending"}
+                  </p>
+                </div>
+              );
+            }
             return (
               <div className="py-2 space-y-4">
                 <div className="space-y-3">
@@ -5451,9 +5701,15 @@ export function BalanceModal({
           {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerStep === "creating-deposit" && (
             <div className="py-6 flex flex-col items-center gap-4">
               <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-              <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>Approve signing in your wallet</p>
+              <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>
+                {peerBasePending ? "Waiting for your USDC" : peerPay ? "Approve to send" : "Approve signing in your wallet"}
+              </p>
               <p className={`text-base text-center ${dark ? "text-slate-400" : "text-gray-500"}`}>
-                Almost there — approve the wallet prompt to finalize your cash out.
+                {peerBasePending
+                  ? "The transfer to Base is still landing. This retries on its own."
+                  : peerPay
+                  ? `One approval sends $${cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum).toFixed(2)} to ${peerIdentifier.replace(/^[@$]/, "")}.`
+                  : "Almost there — approve the wallet prompt to finalize your cash out."}
               </p>
               {peerBaseWalletAddress && (
                 <Button
@@ -5504,20 +5760,56 @@ export function BalanceModal({
                 <div className={`rounded-2xl border p-4 space-y-1 ${dark ? "border-white/10 bg-white/5" : "border-emerald-100 bg-emerald-50/60"}`}>
                   <div className="flex items-center gap-2">
                     <Loader2 className="h-5 w-5 animate-spin text-emerald-500 shrink-0" />
-                    <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Cash out request sent</p>
+                    <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
+                      {peerPay ? `Sending to ${peerIdentifier}` : "Cash out request sent"}
+                    </p>
                   </div>
                   <p className={`text-base ${dark ? "text-slate-400" : "text-gray-600"}`}>
-                    A peer will send <strong>{peerCurrency}</strong> to your {platform?.name} account (<span className="font-medium">{peerIdentifier}</span>).
-                    {peerEstimate?.eta
-                      ? ` Typical fill time: ${peerEstimate.eta.label}.`
-                      : " This usually takes a few minutes, but may take longer depending on availability."}
+                    {peerPay
+                      ? <>A peer sends <strong>{peerCurrency}</strong> to {peerIdentifier} on {platform?.name}.{peerEstimate?.eta ? ` ${peerEstimate.eta.label}.` : ""}</>
+                      : <>A peer will send <strong>{peerCurrency}</strong> to your {platform?.name} account (<span className="font-medium">{peerIdentifier}</span>).{peerEstimate?.eta ? ` Typical fill time: ${peerEstimate.eta.label}.` : " This usually takes a few minutes, but may take longer depending on availability."}</>}
                   </p>
                 </div>
+                {peerPay && peerShareId && (() => {
+                  const shareUrl = typeof window !== "undefined"
+                    ? `${window.location.origin}/share/${peerShareId}`
+                    : `https://pay.loofta.xyz/share/${peerShareId}`;
+                  return (
+                  <div className="space-y-2">
+                    <div className={`flex items-center gap-2 rounded-xl border px-4 py-3 ${dark ? "border-white/10 bg-white/[0.03]" : "border-gray-200 bg-white"}`}>
+                      <a
+                        href={shareUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`flex-1 min-w-0 truncate text-base hover:underline underline-offset-2 ${dark ? "text-slate-300 hover:text-white" : "text-gray-700 hover:text-gray-900"}`}
+                      >
+                        {shareUrl.replace(/^https?:\/\//, "")}
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(shareUrl).then(() => toast({ title: "Link copied" })).catch(() => {});
+                        }}
+                        className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold ${dark ? "bg-white/10 text-slate-200 hover:bg-white/15" : "bg-gray-100 text-gray-800"}`}
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <p className={`text-sm ${dark ? "text-slate-400" : "text-gray-500"}`}>
+                      {peerEstimate?.eta ? `${peerEstimate.eta.label}. ` : ""}Share this link so they can follow it.
+                    </p>
+                  </div>
+                  );
+                })()}
 
                 <div className={`rounded-xl border p-3 flex items-center justify-between ${dark ? "border-white/10 bg-white/5" : "border-gray-200 bg-white"}`}>
                   <div>
                     <p className={`text-base ${dark ? "text-slate-400" : "text-gray-500"}`}>Amount</p>
-                    <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>${(peerAmountUSDC || withdrawAmountNum).toFixed(2)} USDC → {peerCurrency}</p>
+                    <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>
+                      {peerPay
+                        ? `$${cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum).toFixed(2)} to ${peerIdentifier.replace(/^[@$]/, "")}`
+                        : `$${cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum).toFixed(2)} ${peerCurrency}`}
+                    </p>
                     {typeof peerFilledAmountUSDC === "number" && peerFilledAmountUSDC > 0 && peerFilledAmountUSDC < (peerAmountUSDC || withdrawAmountNum) && (
                       <p className={`text-xs mt-0.5 ${dark ? "text-amber-300" : "text-amber-600"}`}>
                         ${peerFilledAmountUSDC.toFixed(2)} funded so far, partial fill in progress
@@ -5532,16 +5824,19 @@ export function BalanceModal({
                     href={`https://app.peer.xyz/deposit/${escrowAddress}/${onchainDepositId}`}
                     target="_blank"
                     rel="noreferrer"
-                    className={`block text-xs -mt-2 ${dark ? "text-slate-500 hover:text-slate-300" : "text-gray-400 hover:text-gray-600"}`}
+                    className={`block text-sm -mt-2 ${dark ? "text-slate-500 hover:text-slate-300" : "text-gray-400 hover:text-gray-600"}`}
                   >
-                    View deposit on Peer →
+                    {peerPay ? "Status link" : "View deposit on Peer →"}
                   </a>
                 )}
 
+                {!peerPay && (
                 <div className={`rounded-xl border p-3 text-base ${dark ? "border-amber-400/20 bg-amber-400/5 text-amber-300" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
                   Taking too long? You can cancel to get your USDC back.{peerEstimate?.eta ? ` Typical fill time for ${platform?.name} is ${peerEstimate.eta.label}.` : " Cash outs usually complete within minutes, but can take longer if peers are busy."}
                 </div>
+                )}
 
+                {!peerPay && (
                 <Button
                   onClick={handlePeerCancel}
                   variant="outline"
@@ -5549,6 +5844,16 @@ export function BalanceModal({
                 >
                   <X className="h-4 w-4 mr-2" />Cancel and get USDC back
                 </Button>
+                )}
+                {peerPay ? (
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className={`w-full text-base text-center ${dark ? "text-slate-500 hover:text-slate-300" : "text-gray-400 hover:text-gray-600"}`}
+                  >
+                    Done
+                  </button>
+                ) : (
                 <button
                   type="button"
                   onClick={() => { resetPeer(); }}
@@ -5556,6 +5861,7 @@ export function BalanceModal({
                 >
                   Start a new cash out
                 </button>
+                )}
               </div>
             );
           })()}
@@ -5569,7 +5875,7 @@ export function BalanceModal({
                   <CheckCircle2 className="h-10 w-10 text-emerald-400" />
                   <p className={`text-xl font-bold ${dark ? "text-white" : "text-gray-900"}`}>Cash out complete!</p>
                   <p className={`text-base ${dark ? "text-slate-400" : "text-gray-600"}`}>
-                    ${(peerAmountUSDC || withdrawAmountNum).toFixed(2)} USDC was successfully sent to your {platform?.name} account as {peerCurrency}.
+                    ${cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum).toFixed(2)} {peerCurrency} was sent to your {platform?.name} account.
                   </p>
                 </div>
                 <Button onClick={() => { resetPeer(); setWithdrawMethod(null); onRefresh(); }}
@@ -5670,20 +5976,35 @@ export function BalanceModal({
                 <AlertTriangle className="h-10 w-10 text-red-400" />
                 <p className={`text-xl font-bold ${dark ? "text-white" : "text-gray-900"}`}>Something went wrong</p>
                 <p className={`text-base ${dark ? "text-slate-400" : "text-gray-600"}`}>
-                  {peerBaseWalletAddress && !peerZkp2pDepositId
+                  {peerFailMessage
+                    ? peerFailMessage
+                    : peerPay
+                    ? "The payment didn't go through. Your USDC is still in your balance if it never left, or you can cancel to get it back."
+                    : peerBaseWalletAddress && !peerZkp2pDepositId
                     ? "Your cash out couldn't be set up, but your USDC is safe. Try again or cancel to get it back."
                     : "Your USDC will be returned automatically. Contact support if it doesn't arrive within a few minutes."
                   }
                 </p>
               </div>
-              {peerBaseWalletAddress && !peerZkp2pDepositId && (
+              {peerBaseWalletAddress && !peerZkp2pDepositId && peerOfframpId && (
                 <>
                   <Button
-                    onClick={() => { peerZkp2pSigningRef.current = false; setPeerStep("creating-deposit"); }}
+                    onClick={() => {
+                      peerZkp2pSigningRef.current = false;
+                      if (peerBridgeTxSig) {
+                        setPeerStep("creating-deposit");
+                        return;
+                      }
+                      setPeerFailMessage(null);
+                      setPeerOfframpId(null);
+                      setPeerStep("form");
+                      peerPayKickRef.current = false;
+                    }}
                     className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white"
                   >
                     Try again
                   </Button>
+                  {peerBridgeTxSig && (
                   <Button
                     onClick={handlePeerBridgeBackDirect}
                     variant="outline"
@@ -5691,10 +6012,11 @@ export function BalanceModal({
                   >
                     <X className="h-4 w-4 mr-2" />Cancel and get USDC back
                   </Button>
+                  )}
                 </>
               )}
-              {(!peerBaseWalletAddress || peerZkp2pDepositId) && (
-                <Button onClick={() => { resetPeer(); setWithdrawMethod(null); }}
+              {(!peerOfframpId || !peerBaseWalletAddress || peerZkp2pDepositId) && (
+                <Button onClick={() => { resetPeer(); setWithdrawMethod(null); if (peerPay) onClose(); }}
                   className="w-full bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white">
                   Close
                 </Button>
@@ -5704,8 +6026,8 @@ export function BalanceModal({
 
         </div>{/* end scrollable content */}
 
-        {/* Large close button — mobile only, always visible at bottom */}
-        <div className={`sm:hidden shrink-0 px-4 pt-3 pb-8 border-t ${dark ? "border-white/10 bg-[#0f0f12]" : "border-gray-100 bg-white"}`}>
+        {/* Large close button — mobile only, always visible at bottom. Pay status has its own close. */}
+        <div className={`${peerPay ? "hidden" : "sm:hidden"} shrink-0 px-4 pt-3 pb-8 border-t ${dark ? "border-white/10 bg-[#0f0f12]" : "border-gray-100 bg-white"}`}>
           <button
             type="button"
             onClick={onClose}

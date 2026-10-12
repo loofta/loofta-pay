@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createPublicClient, http, type Address } from 'viem';
@@ -5,10 +6,55 @@ import { base } from 'viem/chains';
 import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { UsersService } from '@/modules/users/users.service';
+import { RelayService } from '../lottery/relay.service';
+import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { CreateOfframpDto } from './dto/create-offramp.dto';
+import { PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 
 const BASE_USDC: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const DEFAULT_BASE_RPC = 'https://mainnet.base.org';
+const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const SHORT_ID_MAX_VALID = Math.floor(256 / SHORT_ID_ALPHABET.length) * SHORT_ID_ALPHABET.length;
+const PLATFORM_NAMES: Record<string, string> = { venmo: 'Venmo', cashapp: 'Cash App', revolut: 'Revolut' };
+
+function generateShortId(length = 8): string {
+  let result = '';
+  while (result.length < length) {
+    const bytes = randomBytes(length - result.length + 4);
+    for (const byte of bytes) {
+      if (byte < SHORT_ID_MAX_VALID && result.length < length) {
+        result += SHORT_ID_ALPHABET[byte % SHORT_ID_ALPHABET.length];
+      }
+    }
+  }
+  return result;
+}
+
+interface StoredRelayQuote {
+  bridge: 'relay';
+  requestId: string;
+  instructions: { programId: string; keys: { pubkey: string; isSigner: boolean; isWritable: boolean }[]; data: string }[];
+  addressLookupTableAddresses: string[];
+  requiredInputUnits: string;
+}
+
+function parseRelayQuote(memo: string | null | undefined): StoredRelayQuote | null {
+  if (!memo) return null;
+  try {
+    const parsed = JSON.parse(memo) as StoredRelayQuote;
+    if (parsed?.bridge !== 'relay' || !parsed.requestId || !parsed.instructions?.length) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function peerDepositUrl(depositId: string | null | undefined): string | null {
+  if (!depositId) return null;
+  const escrowIdx = depositId.lastIndexOf('_');
+  if (escrowIdx <= 0) return null;
+  return `https://app.peer.xyz/deposit/${depositId.slice(0, escrowIdx)}/${depositId.slice(escrowIdx + 1)}`;
+}
 
 @Injectable()
 export class OfframpService {
@@ -19,6 +65,8 @@ export class OfframpService {
     private readonly supabase: SupabaseService,
     private readonly nearIntents: NearIntentsService,
     private readonly usersService: UsersService,
+    private readonly relay: RelayService,
+    private readonly solanaSponsor: SolanaSponsorService,
   ) {}
 
   private getPublicClient() {
@@ -82,52 +130,161 @@ export class OfframpService {
     if (!isOwnWallet) {
       throw new ForbiddenException('baseWalletAddress must be one of your own linked wallets');
     }
-    const [solanaUsdcId, baseUsdcId] = await Promise.all([
-      this.nearIntents.getDefuseAssetId('USDC', 'solana'),
-      this.nearIntents.getDefuseAssetId('USDC', 'base'),
-    ]);
-
-    const quote = await this.nearIntents.getDepositQuote({
-      fromToken: { tokenId: solanaUsdcId, chain: 'solana', symbol: 'USDC', decimals: 6 },
-      toToken:   { tokenId: baseUsdcId,   chain: 'base',   symbol: 'USDC', decimals: 6 },
-      amountIn:  dto.amountUSDC.toString(),
-      recipient: dto.baseWalletAddress,
-      refundAddress: dto.solanaAddress,
-    });
-
-    if (!quote.depositAddress) {
-      throw new BadRequestException('Failed to get Near Intents bridge address');
+    const outputUnits = BigInt(Math.round(dto.amountUSDC * 1_000_000));
+    let relayQuote;
+    try {
+      relayQuote = await this.relay.getSolToBaseQuote({
+        fromAddress: dto.solanaAddress,
+        toAddress: dto.baseWalletAddress,
+        outputUnits,
+      });
+    } catch (err: any) {
+      this.logger.error('Relay quote failed:', err?.message ?? err);
+      throw new BadRequestException(err?.message || 'Failed to quote the bridge to Base');
     }
 
-    // Pre-fund user's Base wallet with gas so ZKP2P signing doesn't fail (fire-and-forget)
+    // Pre-fund user's Base wallet with gas so the cash-out signature doesn't fail.
     this.ensureBaseGas(dto.baseWalletAddress).catch(e => this.logger.warn('ensureBaseGas:', e.message));
 
-    const { data, error } = await this.supabase.getClient()
+    const shortId = generateShortId();
+    const stored: StoredRelayQuote = {
+      bridge: 'relay',
+      requestId: relayQuote.requestId,
+      instructions: relayQuote.instructions,
+      addressLookupTableAddresses: relayQuote.addressLookupTableAddresses,
+      requiredInputUnits: relayQuote.requiredInputUnits.toString(),
+    };
+    const row = {
+      user_id:                      userId,
+      platform:                     dto.platform,
+      platform_identifier:          dto.identifier,
+      currency:                     dto.currency.toUpperCase(),
+      amount_usdc:                  dto.amountUSDC,
+      user_solana_address:          dto.solanaAddress,
+      near_intents_deposit_address: null,
+      near_intents_memo:            JSON.stringify(stored),
+      // Share code lives here too, so the public link works before the short_id column exists.
+      near_intents_status:          `sid:${shortId}`,
+      status:                       'PENDING_BRIDGE',
+    };
+    const client = this.supabase.getClient();
+    let { data, error } = await client
       .from('offramp_requests')
-      .insert({
-        user_id:                      userId,
-        platform:                     dto.platform,
-        platform_identifier:          dto.identifier,
-        currency:                     dto.currency.toUpperCase(),
-        amount_usdc:                  dto.amountUSDC,
-        user_solana_address:          dto.solanaAddress,
-        near_intents_deposit_address: quote.depositAddress,
-        near_intents_memo:            quote.memo ?? null,
-        status:                       'PENDING_BRIDGE',
-      })
+      .insert({ ...row, short_id: shortId })
       .select('id')
       .single();
 
+    if (error && /short_id/i.test(error.message ?? '')) {
+      this.logger.warn('offramp_requests.short_id missing — share code stored on near_intents_status');
+      ({ data, error } = await client
+        .from('offramp_requests')
+        .insert(row)
+        .select('id')
+        .single());
+    }
+
     if (error || !data) {
       this.logger.error('Failed to insert offramp record:', error);
-      throw new BadRequestException('Failed to create offramp record');
+      throw new BadRequestException(error?.message || 'Failed to create offramp record');
     }
 
     return {
       id:             data.id,
-      depositAddress: quote.depositAddress,
-      memo:           quote.memo ?? null,
+      shortId,
+      bridge:         'relay' as const,
+      requestId:      relayQuote.requestId,
+      amountInUsdc:   Number(relayQuote.requiredInputUnits) / 1_000_000,
       baseWallet:     dto.baseWalletAddress,
+    };
+  }
+
+  private async loadRelayQuote(offrampId: string, userId: string): Promise<{ record: any; quote: StoredRelayQuote }> {
+    const record = await this.getRecord(offrampId, userId);
+    const quote = parseRelayQuote(record.near_intents_memo as string | null);
+    if (!quote) throw new BadRequestException('This payment is not a Relay bridge');
+    return { record, quote };
+  }
+
+  /** Unsigned Solana deposit for the stored Relay quote. Backend fee payer covers the fee. */
+  async buildRelayDepositTx(offrampId: string, userId: string) {
+    const { quote } = await this.loadRelayQuote(offrampId, userId);
+    const feePayer = this.solanaSponsor.getFeePayerAddress();
+    if (!feePayer) throw new BadRequestException('Fee payer not configured');
+    const conn = this.solanaSponsor.getConnection();
+    const { blockhash } = await conn.getLatestBlockhash('confirmed');
+    const ixs = quote.instructions.map(ix => new TransactionInstruction({
+      programId: new PublicKey(ix.programId),
+      keys: ix.keys.map(k => ({ pubkey: new PublicKey(k.pubkey), isSigner: k.isSigner, isWritable: k.isWritable })),
+      data: Buffer.from(ix.data, 'hex'),
+    }));
+    const message = new TransactionMessage({
+      payerKey: new PublicKey(feePayer),
+      recentBlockhash: blockhash,
+      instructions: ixs,
+    }).compileToV0Message();
+    const tx = new VersionedTransaction(message);
+    return { transaction: Buffer.from(tx.serialize()).toString('base64'), requestId: quote.requestId };
+  }
+
+  async submitRelayDeposit(offrampId: string, userId: string, transactionBase64: string) {
+    const { record, quote } = await this.loadRelayQuote(offrampId, userId);
+    let signature: string;
+    try {
+      ({ signature } = await this.solanaSponsor.broadcastMatchedRelayDeposit({
+        transactionBase64,
+        userSolanaAddress: String(record.user_solana_address),
+        instructions: quote.instructions,
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.toLowerCase().includes('insufficient funds')) {
+        throw new BadRequestException('Not enough USDC in your wallet for this cash out, including the bridge fee.');
+      }
+      throw err;
+    }
+    await this.updateStatus(offrampId, 'BRIDGING');
+    return { signature, requestId: quote.requestId };
+  }
+
+  async getRelayStatus(offrampId: string, userId: string) {
+    const { quote } = await this.loadRelayQuote(offrampId, userId);
+    const status = await this.relay.getStatus(quote.requestId);
+    return {
+      status: status === 'DONE' ? 'SUCCESS' : status === 'FAILED' ? 'FAILED' : 'PENDING',
+      requestId: quote.requestId,
+    };
+  }
+
+  /** Public preview for a pay-to-Venmo/Cash App/Revolut share link. No wallets or user ids. */
+  async getPublicShare(shortId: string) {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shortId);
+    const isShort = /^[0-9a-zA-Z]{8}$/.test(shortId);
+    if (!isUuid && !isShort) throw new NotFoundException('Payment not found');
+    const cols = 'id, platform, platform_identifier, currency, amount_usdc, status, eta_seconds, eta_label, zkp2p_deposit_id';
+    const client = this.supabase.getClient();
+    let data: any = null;
+    let error: { message?: string } | null = null;
+    if (isUuid) {
+      ({ data, error } = await client.from('offramp_requests').select(cols).eq('id', shortId).maybeSingle());
+    } else {
+      ({ data, error } = await client.from('offramp_requests').select(cols).eq('short_id', shortId).maybeSingle());
+      if (error && /short_id/i.test(error.message ?? '')) {
+        ({ data, error } = await client.from('offramp_requests').select(cols).eq('near_intents_status', `sid:${shortId}`).maybeSingle());
+      }
+    }
+    if (error || !data) throw new NotFoundException('Payment not found');
+    const platform = String(data.platform);
+    return {
+      id: data.id as string,
+      platform,
+      platformName: PLATFORM_NAMES[platform] ?? platform,
+      identifier: data.platform_identifier as string,
+      currency: data.currency as string,
+      amountUsdc: Number(data.amount_usdc),
+      status: data.status as string,
+      etaSeconds: data.eta_seconds ?? null,
+      etaLabel: data.eta_label ?? null,
+      peerDepositUrl: peerDepositUrl(data.zkp2p_deposit_id as string | null),
     };
   }
 
