@@ -45,8 +45,8 @@ export async function lookupPayTarget(
 ): Promise<PayTarget> {
   const q = new URLSearchParams({ kind: params.kind, value: params.value });
   if (params.platform) q.set("platform", params.platform);
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-  const r = await fetch(`${backendUrl}/users/pay-target?${q}`, { signal });
+  // Same-origin Next route — never hit Railway from the browser (CORS / CORP block it).
+  const r = await fetch(`/api/users/pay-target?${q}`, { signal });
   if (!r.ok) return EMPTY;
   const body = (await r.json()) as Partial<PayTarget>;
   return {

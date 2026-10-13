@@ -30,8 +30,12 @@ async function bootstrap() {
   // non-production Solana fee payer, or vice versa.
   assertEnvironmentCoherence(configService);
 
-  // HTTP security headers
-  app.use(helmet());
+  // HTTP security headers. CORP must be cross-origin: this API is called from
+  // pay.loofta.xyz / the Vercel app. Helmet's default same-origin CORP turns a
+  // 200 into a browser CORS error even when CORS_ORIGIN matches.
+  app.use(helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  }));
 
   // Global validation pipe
   app.useGlobalPipes(
@@ -45,9 +49,18 @@ async function bootstrap() {
     }),
   );
 
-  // CORS configuration — no localhost fallback in production
+  // CORS configuration — no localhost fallback in production. Also allow the
+  // public app origins so send-form lookups from pay.loofta.xyz are not blocked
+  // when CORS_ORIGIN is missing a host.
   const rawCorsOrigins = configService.get<string>('CORS_ORIGIN', isProduction ? '' : 'http://localhost:3000');
-  const corsOrigins = rawCorsOrigins.split(',').map((o) => o.trim()).filter(Boolean);
+  const corsOrigins = [
+    ...rawCorsOrigins.split(',').map((o) => o.trim()).filter(Boolean),
+    configService.get<string>('NEXT_PUBLIC_BASE_URL')?.replace(/\/$/, ''),
+    configService.get<string>('NEXT_PUBLIC_APP_URL')?.replace(/\/$/, ''),
+    'https://pay.loofta.xyz',
+    'https://loofta.com',
+    'https://www.loofta.com',
+  ].filter((o, i, all): o is string => !!o && all.indexOf(o) === i);
   if (isProduction && corsOrigins.length === 0) {
     logger.warn('CORS_ORIGIN is not set — all cross-origin requests will be blocked');
   }
