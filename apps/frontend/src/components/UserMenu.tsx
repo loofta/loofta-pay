@@ -836,12 +836,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       {/* Username Button */}
       <button
         type="button"
-        onClick={() => {
-          setIsOpen(!isOpen);
-          if (isOpen) {
-            setShowFullAddress(false);
-          }
-        }}
+        onClick={() => setIsOpen(!isOpen)}
         aria-expanded={isOpen}
         aria-haspopup="menu"
         className={`hidden sm:flex items-center gap-2 rounded-full py-1 pl-1 pr-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${isDarkPage
