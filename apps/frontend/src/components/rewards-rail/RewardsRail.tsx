@@ -133,13 +133,36 @@ function SpecEl({
   children?: ReactNode;
 }) {
   const [hot, setHot] = useState(false);
+  const ref = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!hot) return;
+    const move = (event: PointerEvent) => {
+      const el = ref.current;
+      if (!el) return;
+      const box = el.getBoundingClientRect();
+      const inside = event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+      if (!inside) setHot(false);
+    };
+    window.addEventListener("pointermove", move);
+    return () => window.removeEventListener("pointermove", move);
+  }, [hot]);
   return createElement(
     tag,
     {
       ...domProps,
+      ref: (node: HTMLElement | null) => {
+        ref.current = node;
+        const userRef = domProps.ref;
+        if (typeof userRef === "function") userRef(node);
+      },
       style: hot && hover ? { ...style, ...hover } : style,
       onMouseEnter: () => setHot(true),
       onMouseLeave: () => setHot(false),
+      onMouseDown: (event: { preventDefault: () => void; currentTarget: { blur?: () => void } }) => {
+        if (tag !== "button") return;
+        event.preventDefault();
+        event.currentTarget.blur?.();
+      },
     },
     children,
   );
@@ -155,9 +178,43 @@ function renderNodes(nodes: Array<SpecNode | string>, scope: Scope, key: string)
   return out;
 }
 
+const LOGIN_METHODS = ["email", "twitter", "discord", "github"] as const;
+
+function HeaderLogin() {
+  const { authenticated, login, user } = usePrivy();
+  const handle = user?.twitter?.username?.replace(/^@/, "");
+  const label = !authenticated ? "Sign in" : handle ? `@${handle}` : "Account";
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (authenticated) {
+          window.location.href = "/app";
+          return;
+        }
+        login({ loginMethods: [...LOGIN_METHODS], disableSignup: false });
+      }}
+      style={{
+        flexShrink: 0,
+        padding: "8px 16px",
+        borderRadius: 999,
+        background: "#F2EFE8",
+        color: "#0B0B0E",
+        fontWeight: 700,
+        fontSize: 14,
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
 function renderNode(node: SpecNode | string, scope: Scope, key: string): ReactNode {
   if (typeof node === "string") return resolve(node, scope) as string;
   if (node.t === "x-region-select") return <RegionSelect key={key} />;
+  if (node.t === "x-header-login") return <HeaderLogin key={key} />;
 
   if (node.t === "sc-for") {
     const list = resolve(node.a.list || "", scope);
@@ -410,7 +467,10 @@ export function RewardsRail() {
         .loofta-rewards-spec a:hover { color:#F5B70C; }
         .loofta-rewards-spec input::placeholder,
         .loofta-rewards-spec textarea::placeholder { color:#5D5B66; }
-        .loofta-rewards-spec button { font-family:inherit; color:inherit; background:transparent; border:0; padding:0; cursor:pointer; }
+        .loofta-rewards-spec button { font-family:inherit; color:inherit; background:transparent; border:0; padding:0; cursor:pointer; appearance:none; -webkit-appearance:none; outline:none; }
+        .loofta-rewards-spec button:focus,
+        .loofta-rewards-spec button:focus-visible,
+        .loofta-rewards-spec button:active { outline:none; box-shadow:none; }
         .loofta-rewards-spec input,
         .loofta-rewards-spec textarea { font-family:inherit; color:inherit; }
       `}</style>

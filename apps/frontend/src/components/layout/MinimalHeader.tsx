@@ -307,7 +307,7 @@ export function MinimalHeader() {
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-[#4a3428]/80 to-transparent" />
         <div className="w-full max-w-7xl mx-auto px-4 md:px-8 flex items-center justify-between">
           <div className="flex items-center min-w-0">
-            <LooftaPayLogoLink href={authenticated ? "/app" : "/"} imageWidth={140} imageHeight={34} imageClassName="h-[34px] w-auto" />
+            <LooftaPayLogoLink imageWidth={140} imageHeight={34} imageClassName="h-[34px] w-auto" />
           </div>
 
           <div className="flex items-center shrink-0 gap-2">

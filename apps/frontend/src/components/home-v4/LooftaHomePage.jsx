@@ -281,7 +281,7 @@ class HomePage extends React.Component {
     return (
       <div className={`loofta-home ${sora.variable} ${manrope.variable} ${jetbrainsMono.variable}`} style={{ position: "relative", minHeight: "100vh", overflowX: "hidden" }}>
       <nav style={{ position: "sticky", top: "0", zIndex: "60", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "20px", padding: "16px clamp(20px,4vw,64px)", background: "rgba(7,7,10,0.8)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}>
-        <a href="/" style={{ display: "flex", alignItems: "center" }}>
+        <a href="https://www.loofta.xyz/" style={{ display: "flex", alignItems: "center" }}>
           <img src="/loofta_white.svg" alt="loofta" style={{ height: "30px", display: "block" }} />
         </a>
         <div style={{ display: "flex", alignItems: "center", gap: "32px", fontSize: "16px", fontWeight: "500", flexWrap: "wrap", justifyContent: "center" }}>

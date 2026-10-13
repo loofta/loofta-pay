@@ -1,7 +1,8 @@
 'use client'
 
 import Image from "next/image";
-import Link from "next/link";
+
+const LOOFTA_HOME = "https://www.loofta.xyz/";
 
 type LooftaPayLogoLinkProps = {
   href?: string;
@@ -11,13 +12,13 @@ type LooftaPayLogoLinkProps = {
 };
 
 export function LooftaPayLogoLink({
-  href = "/",
+  href = LOOFTA_HOME,
   imageWidth,
   imageHeight,
   imageClassName,
 }: LooftaPayLogoLinkProps) {
   return (
-    <Link href={href} prefetch className="inline-flex items-center hover:opacity-90 transition-opacity">
+    <a href={href} className="inline-flex items-center hover:opacity-90 transition-opacity">
       <Image
         src="/loofta-white.svg"
         alt="loofta"
@@ -25,6 +26,6 @@ export function LooftaPayLogoLink({
         height={imageHeight}
         className={imageClassName}
       />
-    </Link>
+    </a>
   );
 }

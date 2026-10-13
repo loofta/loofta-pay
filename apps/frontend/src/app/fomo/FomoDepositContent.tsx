@@ -134,9 +134,9 @@ function FomoHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-white/5 bg-[#111114]/80 backdrop-blur-xl">
       <div className="max-w-6xl mx-auto px-4 md:px-8 h-16 flex items-center justify-between">
-        <Link href="/" className={`inline-flex items-center rounded ${FOCUS_RING}`} aria-label="Loofta home">
+        <a href="https://www.loofta.xyz/" className={`inline-flex items-center rounded ${FOCUS_RING}`} aria-label="Loofta home">
           <Image src="/loofta_white.svg" alt="Loofta" width={110} height={24} priority />
-        </Link>
+        </a>
         <Link
           href={APP_URL}
           className={`group inline-flex items-center gap-2 rounded-full px-5 py-2.5 font-display text-base font-medium text-white shadow-[0_20px_50px_-15px_rgba(255,19,1,0.55),inset_0_1px_0_rgba(255,255,255,0.25)] transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-[0_28px_60px_-15px_rgba(255,19,1,0.65),inset_0_1px_0_rgba(255,255,255,0.25)] ${BRAND_GRADIENT} ${FOCUS_RING}`}
