@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction, VersionedTransaction } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { useCreateWallet, usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
+import { useSignTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { ChevronDown, ChevronLeft, Copy, Loader2, Shield, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
@@ -11,12 +13,21 @@ import { useTokensQuery } from "@/hooks/useTokensQuery";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { SolanaWalletConnectProvider, useWallet, WalletMultiButton } from "@/components/SolanaWalletConnect";
 import { PajCashOnrampView } from "@/components/paj-cash/PajCashOnrampView";
+import { PajCashOfframpView } from "@/components/paj-cash/PajCashOfframpView";
+import { PEER_PLATFORMS } from "@/lib/peerPlatforms";
+import { usePerPrivateSelfTransfer } from "@/hooks/usePerPrivateSelfTransfer";
+import { useSolDomain } from "@/hooks/useSolDomain";
+import { useSolPriceOrNull } from "@/hooks/useSolPrice";
+import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
+import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
+import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
+import { addWithdrawal } from "@/lib/withdrawalHistory";
 import { sora, manrope } from "@/components/home-v4/fonts";
-import { getDepositInfo, getExecutionStatus, type NearToken } from "@/services/nearIntents";
+import { getAccurateQuote, getDepositInfo, getExecutionStatus, type NearToken } from "@/services/nearIntents";
 import { buildDirectPrivateDeposit, type PrivateTransferStatus } from "@/services/api/privateBalance";
 import { buildUSDCTransferTransaction } from "@/services/solanaTransfer";
 import { getEphemeralRpcForMode } from "@/lib/per/constants";
-import { getRpcForMode, getUsdcMintForMode } from "@/lib/solanaRpc";
+import { getPrivySolanaChainForMode, getRpcForMode, getUsdcMintForMode } from "@/lib/solanaRpc";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { cn } from "@/lib/utils";
@@ -69,6 +80,8 @@ export type DepositLaunch = {
   receiveExactly?: boolean;
 };
 
+export type CashOutRequest = { platformId: string; identifier: string; amountUsd: number };
+
 export function DepositSheet({
   open,
   onClose,
@@ -77,6 +90,10 @@ export function DepositSheet({
   devnetMode,
   onRefresh,
   launch,
+  showModeSwitch = false,
+  initialMode = "deposit",
+  initialScreen = "home",
+  onCashOut,
 }: {
   open: boolean;
   onClose: () => void;
@@ -85,12 +102,20 @@ export function DepositSheet({
   devnetMode: boolean;
   onRefresh?: () => void;
   launch?: DepositLaunch | null;
+  /** Balance sheet can switch between adding funds and sending them out. */
+  showModeSwitch?: boolean;
+  initialMode?: "deposit" | "withdraw";
+  initialScreen?: Screen;
+  /** Bank-app cash-out continues in the existing Peer flow. */
+  onCashOut?: (pay: CashOutRequest) => void;
 }) {
   const { toast } = useToast();
   const { user, getAccessToken } = usePrivy();
   const { data: tokens = [] } = useTokensQuery();
   const [screen, setScreen] = useState<Screen>("home");
+  const [mode, setMode] = useState<"deposit" | "withdraw">(initialMode);
   const [privately, setPrivately] = useState(true);
+  const balanceNum = Number(balanceUsd) || 0;
   const [solanaAmount, setSolanaAmount] = useState("");
   const [delayId, setDelayId] = useState<(typeof DELAYS)[number]["id"]>("5m");
   const [split, setSplit] = useState<number>(1);
@@ -105,6 +130,12 @@ export function DepositSheet({
     }
     setPrivately(readDepositPrivately());
   }, [open, launch]);
+
+  useEffect(() => {
+    if (!open || launch) return;
+    setMode(initialMode);
+    if (initialMode === "withdraw" && initialScreen !== "home") setScreen(initialScreen);
+  }, [open, launch, initialMode, initialScreen]);
 
   const setPrivate = (on: boolean) => {
     setPrivately(on);
@@ -130,11 +161,13 @@ export function DepositSheet({
         )}
         style={{ fontFamily: "var(--font-home-manrope), Manrope, sans-serif" }}
       >
-        <DialogTitle className="sr-only">Deposit</DialogTitle>
-        <DialogDescription className="sr-only">Add USDC to your Loofta balance.</DialogDescription>
+        <DialogTitle className="sr-only">{mode === "withdraw" ? "Withdraw" : "Deposit"}</DialogTitle>
+        <DialogDescription className="sr-only">
+          {mode === "withdraw" ? "Send USDC from your Loofta balance." : "Add USDC to your Loofta balance."}
+        </DialogDescription>
         <Header
           balanceUsd={balanceUsd}
-          title={screen === "solana" ? "USDC on Solana" : screen === "address" ? "Send to an address" : screen === "card" || screen === "paj" ? "Card, bank or exchange" : null}
+          title={screen === "solana" ? "USDC on Solana" : screen === "address" ? (mode === "withdraw" ? "Any crypto" : "Send to an address") : screen === "card" || screen === "paj" ? (mode === "withdraw" ? "Bank app" : "Card, bank or exchange") : null}
           privately={privately}
           showPrivacy={screen === "solana" || screen === "address"}
           onBack={screen === "home" ? null : () => setScreen(screen === "paj" ? "card" : "home")}
@@ -143,17 +176,69 @@ export function DepositSheet({
 
         {screen === "home" && (
           <div className="mt-4 flex flex-col gap-3">
+            {showModeSwitch && (
+              <div className="grid grid-cols-2 rounded-full bg-[#0E0E12] p-1">
+                {(["deposit", "withdraw"] as const).map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => { setMode(id); setScreen("home"); }}
+                    className={cn(
+                      "rounded-full py-2 text-sm font-semibold",
+                      mode === id ? "bg-[#2A2A32] text-white" : "text-[#8A8893] hover:text-white",
+                    )}
+                  >
+                    {id === "deposit" ? "Deposit" : "Withdraw"}
+                  </button>
+                ))}
+              </div>
+            )}
             <IncognitoModeToggle
               checked={privately}
               onCheckedChange={setPrivate}
-              onLabel="Deposit privately"
-              offLabel="Deposit privately"
-              description={privately
-                ? "On. Deposits are shielded, so they can't be linked to your Loofta account."
-                : "Off. A deposit can be linked to your Loofta account."}
-              ariaLabel="Deposit privately"
+              onLabel={mode === "withdraw" ? "Withdraw privately" : "Deposit privately"}
+              offLabel={mode === "withdraw" ? "Withdraw privately" : "Deposit privately"}
+              description={mode === "withdraw"
+                ? (privately
+                  ? "On. Solana and crypto withdrawals are shielded, so they can't be linked to your Loofta account."
+                  : "Off. A withdrawal can be linked to your Loofta account.")
+                : (privately
+                  ? "On. Deposits are shielded, so they can't be linked to your Loofta account."
+                  : "Off. A deposit can be linked to your Loofta account.")}
+              ariaLabel={mode === "withdraw" ? "Withdraw privately" : "Deposit privately"}
             />
-            <p className="mt-2 text-sm font-semibold tracking-[0.14em] text-[#8A8893]">ADD FUNDS FROM</p>
+            <p className="mt-2 text-sm font-semibold tracking-[0.14em] text-[#8A8893]">{mode === "withdraw" ? "SEND FUNDS TO" : "ADD FUNDS FROM"}</p>
+            {mode === "withdraw" ? (
+              <>
+                <MethodRow
+                  title="USDC on Solana"
+                  hint={privately ? "To any Solana wallet, privately" : "To any Solana wallet"}
+                  badge="Fastest"
+                  onClick={() => setScreen("solana")}
+                  icons={[{ src: "/images/usdc.svg", bg: "#2775CA" }, { src: "/images/logo/solana-mark.svg", bg: "#111" }]}
+                />
+                <MethodRow
+                  title="Any crypto"
+                  hint="BTC, ETH, SOL, and other chains"
+                  onClick={() => setScreen("address")}
+                  icons={[
+                    { src: "/images/sol.png", bg: "#14F195" },
+                    { src: "/images/btc.svg", bg: "#F7931A" },
+                  ]}
+                />
+                <MethodRow
+                  title="Bank app"
+                  hint={privately ? "Coinbase, Revolut, Venmo, Cash App. Not private." : "Coinbase, PAJ Cash, Revolut, Venmo, Cash App"}
+                  onClick={() => setScreen("card")}
+                  icons={[
+                    { src: "/images/platforms/revolut.png", bg: "#1C1C22" },
+                    { src: "/images/platforms/venmo.png", bg: "#008CFF" },
+                  ]}
+                />
+              </>
+            ) : null}
+            {mode === "deposit" && (
+            <>
             <MethodRow
               title="USDC on Solana"
               hint={privately ? "Connect a wallet. Private deposits can't be sent to an address." : "Scan the QR or connect a wallet"}
@@ -179,10 +264,12 @@ export function DepositSheet({
                 { src: "/images/icons/coinbase-logo.png", bg: "#0052FF" },
               ]}
             />
+            </>
+            )}
           </div>
         )}
 
-        {screen === "solana" && solanaAddress && (
+        {mode === "deposit" && screen === "solana" && solanaAddress && (
           <SolanaDeposit
             privately={privately}
             amount={solanaAmount}
@@ -201,7 +288,7 @@ export function DepositSheet({
           />
         )}
 
-        {screen === "address" && solanaAddress && (
+        {mode === "deposit" && screen === "address" && solanaAddress && (
           <AddressDeposit
             privately={privately}
             tokens={tokens}
@@ -213,7 +300,7 @@ export function DepositSheet({
           />
         )}
 
-        {screen === "card" && solanaAddress && (
+        {mode === "deposit" && screen === "card" && solanaAddress && (
           <CardDeposit
             tokens={tokens}
             solanaAddress={solanaAddress}
@@ -227,13 +314,61 @@ export function DepositSheet({
           />
         )}
 
-        {screen === "paj" && (
+        {mode === "deposit" && screen === "paj" && (
           <PajCashOnrampView
             dark
             getAccessToken={getAccessToken}
             onBack={() => setScreen("card")}
             onComplete={onRefresh}
             prefillAmountUsd={launch?.screen === "paj" ? Number(launch.amount) : undefined}
+          />
+        )}
+
+        {mode === "withdraw" && screen === "solana" && solanaAddress && (
+          <SolanaWithdraw
+            privately={privately}
+            balanceNum={balanceNum}
+            solanaAddress={solanaAddress}
+            devnetMode={devnetMode}
+            userId={user?.id}
+            getAccessToken={getAccessToken}
+            onRefresh={onRefresh}
+          />
+        )}
+
+        {mode === "withdraw" && screen === "address" && solanaAddress && (
+          <CryptoWithdraw
+            privately={privately}
+            balanceNum={balanceNum}
+            tokens={tokens}
+            solanaAddress={solanaAddress}
+            devnetMode={devnetMode}
+            userId={user?.id}
+            getAccessToken={getAccessToken}
+            onRefresh={onRefresh}
+          />
+        )}
+
+        {mode === "withdraw" && screen === "card" && (
+          <BankWithdraw
+            devnetMode={devnetMode}
+            solanaAddress={solanaAddress}
+            balanceNum={balanceNum}
+            getAccessToken={getAccessToken}
+            onPaj={() => setScreen("paj")}
+            onCashOut={onCashOut}
+          />
+        )}
+
+        {mode === "withdraw" && screen === "paj" && (
+          <PajWithdraw
+            devnetMode={devnetMode}
+            solanaAddress={solanaAddress}
+            balanceNum={balanceNum}
+            userId={user?.id}
+            getAccessToken={getAccessToken}
+            onBack={() => setScreen("card")}
+            onRefresh={onRefresh}
           />
         )}
       </DialogContent>
@@ -1030,6 +1165,659 @@ function Waiting({ status, bridge }: { status?: PrivateTransferStatus | null; br
     <div className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-[#1A1A20] py-3.5 text-sm font-semibold text-white">
       <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
       {label}
+    </div>
+  );
+}
+
+const ATA_RENT_SOL = 0.00203928;
+const ATA_FEE_BUFFER = 1.25;
+const ATA_SETUP_FEE_FALLBACK_USDC = 0.2;
+
+function useLooftaSigner(solanaAddress: string | null) {
+  const { wallets } = useSolanaWallets();
+  const { signTransaction } = useSignTransaction();
+  const wallet = useMemo(() => {
+    const list = wallets ?? [];
+    const match = solanaAddress ? list.find((w) => w.address === solanaAddress) : undefined;
+    return match ?? list.find((w) => (w as { walletClientType?: string }).walletClientType === "privy") ?? list[0];
+  }, [wallets, solanaAddress]);
+  return { wallet, signTransaction };
+}
+
+function useAtaSetupFee() {
+  const solPriceUsd = useSolPriceOrNull();
+  return solPriceUsd ? Math.ceil(ATA_RENT_SOL * ATA_FEE_BUFFER * solPriceUsd * 100) / 100 : ATA_SETUP_FEE_FALLBACK_USDC;
+}
+
+async function saveWithdrawal(item: Parameters<typeof addWithdrawal>[0], access: string | null, devnet: boolean) {
+  addWithdrawal(item);
+  if (!access) return;
+  await fetch("/api/withdrawals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${access}` },
+    body: JSON.stringify({ ...item, isDevnet: devnet }),
+  }).catch(() => {});
+}
+
+async function addressIsSafe(address: string) {
+  const res = await fetch(`/api/risk/address?address=${encodeURIComponent(address)}&network=solana`);
+  const data = await res.json().catch(() => ({}));
+  return (data as { safe?: boolean }).safe !== false;
+}
+
+function AmountField({
+  label,
+  value,
+  onChange,
+  onMax,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onMax?: () => void;
+}) {
+  return (
+    <label className="block">
+      <span className="text-sm font-semibold text-[#C8C6D0]">{label}</span>
+      <span className="mt-1.5 flex gap-2">
+        <input
+          inputMode="decimal"
+          value={value}
+          onChange={(e) => onChange(e.target.value.replace(/[^0-9.]/g, ""))}
+          placeholder="0"
+          className="w-full rounded-xl border border-white/10 bg-[#0E0E12] px-3 py-3 text-base text-white outline-none focus:border-[#FF7A2A]/60"
+        />
+        {onMax && (
+          <button type="button" onClick={onMax} className="shrink-0 rounded-xl border border-white/10 px-3 text-sm font-semibold text-[#C8C6D0] hover:bg-white/[0.06]">
+            Max
+          </button>
+        )}
+      </span>
+    </label>
+  );
+}
+
+function SendButton({ busy, disabled, label, busyLabel, onClick }: { busy: boolean; disabled: boolean; label: string; busyLabel: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled || busy}
+      onClick={onClick}
+      className="w-full rounded-2xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-3.5 text-base font-semibold text-white hover:opacity-90 disabled:opacity-50"
+    >
+      {busy ? <span className="inline-flex items-center justify-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />{busyLabel}</span> : label}
+    </button>
+  );
+}
+
+function SolanaWithdraw({
+  privately,
+  balanceNum,
+  solanaAddress,
+  devnetMode,
+  userId,
+  getAccessToken,
+  onRefresh,
+}: {
+  privately: boolean;
+  balanceNum: number;
+  solanaAddress: string;
+  devnetMode: boolean;
+  userId?: string;
+  getAccessToken: () => Promise<string | null>;
+  onRefresh?: () => void;
+}) {
+  const { toast } = useToast();
+  const { withdraw: withdrawPrivately } = usePerPrivateSelfTransfer();
+  const { wallet, signTransaction } = useLooftaSigner(solanaAddress);
+  const ataFee = useAtaSetupFee();
+  const cluster = devnetMode ? "devnet" : "mainnet";
+  const [amount, setAmount] = useState("");
+  const [destination, setDestination] = useState("");
+  const [risk, setRisk] = useState<"idle" | "checking" | "safe" | "unsafe">("idle");
+  const [needsAccount, setNeedsAccount] = useState(false);
+  const [confirmFee, setConfirmFee] = useState<number | null>(null);
+  const [privateFee, setPrivateFee] = useState<number | null>(null);
+  const confirmRef = useRef<null | { resolve: () => void; reject: (err: Error) => void }>(null);
+  const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState("Sending…");
+  const [sent, setSent] = useState<string | null>(null);
+  const domain = useSolDomain(destination, cluster);
+  const amountNum = Number(amount);
+  const resolved = domain.status === "resolved" ? domain.address : destination.trim();
+  const validAddress = isValidAddressForChain(resolved, "solana");
+  const over = amountNum > balanceNum;
+
+  useEffect(() => {
+    if (!validAddress) { setRisk("idle"); setNeedsAccount(false); return; }
+    setRisk("checking");
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const safe = await addressIsSafe(resolved);
+      if (cancelled) return;
+      setRisk(safe ? "safe" : "unsafe");
+      if (privately) { setNeedsAccount(false); return; }
+      try {
+        const conn = new Connection(getRpcForMode(cluster), "confirmed");
+        const ata = getAssociatedTokenAddressSync(getUsdcMintForMode(cluster), new PublicKey(resolved));
+        const info = await conn.getAccountInfo(ata);
+        if (!cancelled) setNeedsAccount(!info);
+      } catch {
+        if (!cancelled) setNeedsAccount(false);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [resolved, validAddress, privately, cluster]);
+
+  const sendPublic = async (ataAcknowledged: boolean) => {
+    if (!wallet || !userId) throw new Error("Your Loofta wallet is not ready yet.");
+    const mode = cluster;
+    const connection = new Connection(getRpcForMode(mode), "confirmed");
+    const mint = getUsdcMintForMode(mode);
+    let rent = 0;
+    if (!ataAcknowledged) {
+      const ata = getAssociatedTokenAddressSync(mint, new PublicKey(resolved));
+      if (!(await connection.getAccountInfo(ata))) {
+        if (ataFee >= amountNum) throw new Error(`This wallet needs a one-time $${ataFee.toFixed(2)} USDC account setup, which is more than you're sending.`);
+        setNeedsAccount(true);
+        setConfirmFee(ataFee);
+        return;
+      }
+    } else {
+      rent = ataFee;
+    }
+    setBusyLabel("Approve in your wallet…");
+    const access = await getAccessToken();
+    const sig = await sendUsdcWithBackendFeePayer({
+      senderAddress: solanaAddress,
+      recipientAddress: resolved,
+      amountUSDC: amountNum - rent,
+      connection,
+      wallet,
+      privyUserId: userId,
+      signTransaction,
+      usdcMint: mint,
+      chain: getPrivySolanaChainForMode(mode),
+      accessToken: access,
+      network: mode,
+      looftaFeeUsdc: rent > 0 ? rent : undefined,
+    });
+    await saveWithdrawal({
+      id: sig,
+      amountUSDC: amountNum,
+      txSignature: sig,
+      destinationAddress: resolved,
+      destinationChain: "solana",
+      destinationToken: "USDC",
+      isNearIntents: false,
+      nearIntentsComplete: true,
+    }, access, devnetMode);
+    setSent(sig);
+    onRefresh?.();
+  };
+
+  const sendPrivate = async () => {
+    if (!wallet || !userId) throw new Error("Your Loofta wallet is not ready yet.");
+    setBusyLabel("Preparing private withdrawal…");
+    const access = await getAccessToken();
+    const anchor = privyStandardWalletToAnchorWallet(wallet, signTransaction, getPrivySolanaChainForMode(cluster));
+    const result = await withdrawPrivately(anchor, {
+      privyUserId: userId,
+      accessToken: access,
+      amountUsdc: amountNum,
+      destinationAddress: resolved,
+      onTxBuilt: ({ feeAmountUsdc }) => new Promise<void>((resolve, reject) => {
+        setPrivateFee(feeAmountUsdc);
+        setBusy(false);
+        confirmRef.current = { resolve, reject };
+      }),
+    });
+    await saveWithdrawal({
+      id: result.signature,
+      amountUSDC: amountNum,
+      txSignature: result.signature,
+      destinationAddress: resolved,
+      destinationChain: "solana",
+      destinationToken: "USDC",
+      isNearIntents: false,
+      nearIntentsComplete: false,
+    }, access, devnetMode);
+    setSent(result.signature);
+    onRefresh?.();
+  };
+
+  const go = async (ataAcknowledged = false) => {
+    if (!(amountNum > 0) || over || !validAddress || risk !== "safe") return;
+    setBusy(true);
+    setBusyLabel(privately ? "Preparing private withdrawal…" : "Sending…");
+    try {
+      if (privately) await sendPrivate();
+      else await sendPublic(ataAcknowledged);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Withdrawal failed";
+      if (msg !== "CANCELLED_BY_USER" && !/reject|cancel|denied/i.test(msg)) {
+        toast({ variant: "destructive", title: "Withdrawal failed", description: msg });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="mt-4 flex flex-col gap-3">
+        <p className="text-base font-bold text-white">{privately ? "On its way, privately" : "Sent"}</p>
+        <p className="break-all text-sm text-[#8A8893]">{sent}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 flex flex-col gap-4">
+      <AmountField label="Amount (USDC)" value={amount} onChange={setAmount} onMax={() => setAmount(balanceNum > 0 ? balanceNum.toFixed(2) : "")} />
+      {over && <p className="text-sm text-red-400">That is more than your ${balanceNum.toFixed(2)} balance.</p>}
+      <label className="block">
+        <span className="text-sm font-semibold text-[#C8C6D0]">Solana address or .sol name</span>
+        <input
+          value={destination}
+          onChange={(e) => { setDestination(e.target.value); setConfirmFee(null); }}
+          placeholder="Wallet address"
+          className="mt-1.5 w-full rounded-xl border border-white/10 bg-[#0E0E12] px-3 py-3 text-base text-white outline-none focus:border-[#FF7A2A]/60"
+        />
+      </label>
+      {domain.status === "resolved" && <p className="text-sm text-[#8A8893]">Sends to {domain.address}</p>}
+      {domain.status === "not-found" && <p className="text-sm text-red-400">That .sol name doesn&apos;t resolve.</p>}
+      {destination.trim() && !validAddress && domain.status !== "resolving" && domain.status !== "not-found" && (
+        <p className="text-sm text-red-400">Enter a Solana address.</p>
+      )}
+      {risk === "checking" && <p className="text-sm text-[#8A8893]">Checking this address…</p>}
+      {risk === "unsafe" && <p className="text-sm text-red-400">This address didn&apos;t pass the compliance check.</p>}
+      {needsAccount && confirmFee != null && !privately && (
+        <div className="rounded-2xl border border-white/10 bg-[#1A1A20] p-3 text-sm text-[#C8C6D0]">
+          This wallet has never held USDC, so ${confirmFee.toFixed(2)} is used once to open the account. They receive ${(Math.max(0, amountNum - confirmFee)).toFixed(2)}.
+          <div className="mt-3 flex gap-2">
+            <button type="button" onClick={() => setConfirmFee(null)} className="flex-1 rounded-xl border border-white/10 py-2 font-semibold text-white">Cancel</button>
+            <button type="button" onClick={() => { setConfirmFee(null); void go(true); }} className="flex-1 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-2 font-semibold text-white">Confirm</button>
+          </div>
+        </div>
+      )}
+      {privateFee != null && (
+        <div className="rounded-2xl border border-white/10 bg-[#1A1A20] p-3 text-sm text-[#C8C6D0]">
+          Privacy fee ${privateFee.toFixed(2)}. They receive ${Math.max(0, amountNum - privateFee).toFixed(2)} USDC.
+          <div className="mt-3 flex gap-2">
+            <button type="button" onClick={() => { setPrivateFee(null); confirmRef.current?.reject(new Error("CANCELLED_BY_USER")); confirmRef.current = null; }} className="flex-1 rounded-xl border border-white/10 py-2 font-semibold text-white">Cancel</button>
+            <button type="button" onClick={() => { setPrivateFee(null); setBusy(true); setBusyLabel("Approve in your wallet…"); confirmRef.current?.resolve(); confirmRef.current = null; }} className="flex-1 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-2 font-semibold text-white">Confirm</button>
+          </div>
+        </div>
+      )}
+      <SendButton
+        busy={busy}
+        disabled={!(amountNum > 0) || over || !validAddress || risk !== "safe" || domain.status === "resolving" || (needsAccount && confirmFee != null) || privateFee != null}
+        label={privately ? "Withdraw privately" : "Withdraw USDC"}
+        busyLabel={busyLabel}
+        onClick={() => { void go(false); }}
+      />
+    </div>
+  );
+}
+
+function CryptoWithdraw({
+  privately,
+  balanceNum,
+  tokens,
+  solanaAddress,
+  devnetMode,
+  userId,
+  getAccessToken,
+  onRefresh,
+}: {
+  privately: boolean;
+  balanceNum: number;
+  tokens: NearToken[];
+  solanaAddress: string;
+  devnetMode: boolean;
+  userId?: string;
+  getAccessToken: () => Promise<string | null>;
+  onRefresh?: () => void;
+}) {
+  const { toast } = useToast();
+  const { withdraw: withdrawPrivately } = usePerPrivateSelfTransfer();
+  const { wallet, signTransaction } = useLooftaSigner(solanaAddress);
+  const [selection, setSelection] = useState<TokenSelection | undefined>(undefined);
+  const [amount, setAmount] = useState("");
+  const [destination, setDestination] = useState("");
+  const [quote, setQuote] = useState<string | null>(null);
+  const [quoting, setQuoting] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [privateFee, setPrivateFee] = useState<number | null>(null);
+  const [sent, setSent] = useState<string | null>(null);
+  const confirmRef = useRef<null | { resolve: () => void; reject: (err: Error) => void }>(null);
+  const usdc = findUsdcOnSolana(tokens);
+  const token = findTokenBySelection(tokens, selection);
+  const choices = tokens.filter((t) => !usdc || t.tokenId !== usdc.tokenId);
+  const amountNum = Number(amount);
+  const addressOk = !!token && isValidAddressForChain(destination.trim(), token.chain);
+  const over = amountNum > balanceNum;
+
+  useEffect(() => {
+    if (selection || choices.length === 0) return;
+    const first = choices.find((t) => t.symbol.toUpperCase() === "SOL" && isSolanaChain(t.chain)) ?? choices[0];
+    if (first) setSelection({ symbol: first.symbol, chain: first.chain });
+  }, [selection, choices]);
+
+  useEffect(() => {
+    setQuote(null);
+    if (!token || !usdc || !(amountNum > 0)) return;
+    let cancelled = false;
+    setQuoting(true);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await getAccurateQuote({
+          fromToken: usdc,
+          toToken: token,
+          amount: String(amountNum),
+          slippageBps: 100,
+          dryRun: true,
+        });
+        if (!cancelled) setQuote(result.amountOut && !result.error ? result.amountOut : null);
+      } catch {
+        if (!cancelled) setQuote(null);
+      } finally {
+        if (!cancelled) setQuoting(false);
+      }
+    }, 500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [token?.tokenId, usdc?.tokenId, amountNum, token, usdc]);
+
+  const go = async () => {
+    if (!wallet || !userId || !token || !usdc || !addressOk || !(amountNum > 0) || over) return;
+    setBusy(true);
+    try {
+      const access = await getAccessToken();
+      const cluster = devnetMode ? "devnet" : "mainnet";
+      if (privately) {
+        const anchor = privyStandardWalletToAnchorWallet(wallet, signTransaction, getPrivySolanaChainForMode(cluster));
+        const result = await withdrawPrivately(anchor, {
+          privyUserId: userId,
+          accessToken: access,
+          amountUsdc: amountNum,
+          destinationAddress: destination.trim(),
+          destinationToken: { symbol: token.symbol, chain: token.chain },
+          onTxBuilt: ({ feeAmountUsdc }) => new Promise<void>((resolve, reject) => {
+            setPrivateFee(feeAmountUsdc);
+            setBusy(false);
+            confirmRef.current = { resolve, reject };
+          }),
+        });
+        await saveWithdrawal({
+          id: result.signature,
+          amountUSDC: amountNum,
+          txSignature: result.signature,
+          destinationAddress: destination.trim(),
+          destinationChain: token.chain,
+          destinationToken: token.symbol,
+          isNearIntents: true,
+          estimatedOut: quote ?? undefined,
+          nearIntentsComplete: false,
+        }, access, devnetMode);
+        setSent(result.signature);
+      } else {
+        const order = await prepareNearIntentsWithdrawal({
+          fromToken: usdc,
+          toToken: token,
+          amountUsdc: String(amountNum),
+          destinationAddress: destination.trim(),
+          refundAddress: solanaAddress,
+          isDevnet: devnetMode,
+        }, access);
+        if (!order.depositAddress || !isValidAddressForChain(order.depositAddress, "solana")) {
+          throw new Error("Couldn't get a deposit address for that token.");
+        }
+        const connection = new Connection(getRpcForMode(cluster), "confirmed");
+        const sig = await sendUsdcWithBackendFeePayer({
+          senderAddress: solanaAddress,
+          recipientAddress: order.depositAddress,
+          amountUSDC: amountNum,
+          connection,
+          wallet,
+          privyUserId: userId,
+          signTransaction,
+          memo: order.memo ?? undefined,
+          usdcMint: getUsdcMintForMode(cluster),
+          chain: getPrivySolanaChainForMode(cluster),
+          accessToken: access,
+          network: cluster,
+          nearIntentsOrderId: order.id,
+        });
+        await saveWithdrawal({
+          id: sig,
+          amountUSDC: amountNum,
+          txSignature: sig,
+          destinationAddress: destination.trim(),
+          destinationChain: token.chain,
+          destinationToken: token.symbol,
+          isNearIntents: true,
+          depositAddress: order.depositAddress,
+          estimatedOut: quote ?? undefined,
+          nearIntentsStatus: "PENDING",
+          nearIntentsComplete: false,
+        }, access, devnetMode);
+        setSent(sig);
+      }
+      onRefresh?.();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Withdrawal failed";
+      if (msg !== "CANCELLED_BY_USER" && !/reject|cancel|denied/i.test(msg)) {
+        toast({ variant: "destructive", title: "Withdrawal failed", description: msg });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="mt-4 flex flex-col gap-3">
+        <p className="text-base font-bold text-white">{privately ? "On its way, privately" : "Sent"}</p>
+        <p className="text-sm text-[#8A8893]">{token ? `${token.symbol} on ${formatChainLabel(token.chain)}` : "Crypto"} is bridging from your USDC balance.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 flex flex-col gap-4">
+      <label className="block">
+        <span className="text-sm text-[#8A8893]">You receive</span>
+        <div className="mt-1">
+          <TokenCombobox tokens={choices} value={selection} defaultShowAllChains placeholder="Search a token" onChange={(next) => { setSelection(next); setDestination(""); }} />
+        </div>
+      </label>
+      <AmountField label="Amount to send (USDC)" value={amount} onChange={setAmount} onMax={() => setAmount(balanceNum > 0 ? balanceNum.toFixed(2) : "")} />
+      {over && <p className="text-sm text-red-400">That is more than your ${balanceNum.toFixed(2)} balance.</p>}
+      {quoting && <p className="text-sm text-[#8A8893]">Getting a quote…</p>}
+      {quote && token && <p className="text-sm text-[#C8C6D0]">You receive about {quote} {token.symbol}</p>}
+      <label className="block">
+        <span className="text-sm font-semibold text-[#C8C6D0]">{token ? `${formatChainLabel(token.chain)} address` : "Destination address"}</span>
+        <input
+          value={destination}
+          onChange={(e) => setDestination(e.target.value)}
+          placeholder={token ? `Your ${token.chain} address` : "Address"}
+          className="mt-1.5 w-full rounded-xl border border-white/10 bg-[#0E0E12] px-3 py-3 text-base text-white outline-none focus:border-[#FF7A2A]/60"
+        />
+      </label>
+      {destination.trim() && token && !addressOk && <p className="text-sm text-red-400">That address doesn&apos;t match {formatChainLabel(token.chain)}.</p>}
+      {privateFee != null && (
+        <div className="rounded-2xl border border-white/10 bg-[#1A1A20] p-3 text-sm text-[#C8C6D0]">
+          Privacy fee ${privateFee.toFixed(2)}. Confirm to sign the withdrawal.
+          <div className="mt-3 flex gap-2">
+            <button type="button" onClick={() => { setPrivateFee(null); confirmRef.current?.reject(new Error("CANCELLED_BY_USER")); confirmRef.current = null; }} className="flex-1 rounded-xl border border-white/10 py-2 font-semibold text-white">Cancel</button>
+            <button type="button" onClick={() => { setPrivateFee(null); setBusy(true); confirmRef.current?.resolve(); confirmRef.current = null; }} className="flex-1 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-2 font-semibold text-white">Confirm</button>
+          </div>
+        </div>
+      )}
+      <SendButton
+        busy={busy}
+        disabled={!token || !addressOk || !(amountNum > 0) || over || privateFee != null || !wallet}
+        label={privately ? "Withdraw privately" : `Withdraw${token ? ` to ${token.symbol}` : ""}`}
+        busyLabel="Sending…"
+        onClick={() => { void go(); }}
+      />
+    </div>
+  );
+}
+
+function BankWithdraw({
+  devnetMode,
+  solanaAddress,
+  balanceNum,
+  getAccessToken,
+  onPaj,
+  onCashOut,
+}: {
+  devnetMode: boolean;
+  solanaAddress: string | null;
+  balanceNum: number;
+  getAccessToken: () => Promise<string | null>;
+  onPaj: () => void;
+  onCashOut?: (pay: CashOutRequest) => void;
+}) {
+  const { toast } = useToast();
+  const { user } = usePrivy();
+  const [app, setApp] = useState<string | null>(null);
+  const [amount, setAmount] = useState("");
+  const [identifier, setIdentifier] = useState("");
+  const [busy, setBusy] = useState(false);
+  const platform = PEER_PLATFORMS.find((p) => p.id === app);
+  const amountNum = Number(amount);
+
+  const openCoinbase = async () => {
+    if (!solanaAddress) return;
+    setBusy(true);
+    try {
+      const access = await getAccessToken();
+      const sessionRes = await fetch("/api/coinbase/offramp-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(access ? { Authorization: `Bearer ${access}` } : {}) },
+        body: JSON.stringify({ walletAddress: solanaAddress, blockchains: ["solana"] }),
+      });
+      if (!sessionRes.ok) {
+        const err = await sessionRes.json().catch(() => ({})) as { error?: string; detail?: string };
+        throw new Error(err.detail || err.error || "Could not start Coinbase");
+      }
+      const { token } = await sessionRes.json();
+      if (!token) throw new Error("No Coinbase session");
+      const params = new URLSearchParams({
+        appId: "68e3c83a-3d5a-49aa-a8fa-7ef26d824de1",
+        sessionToken: token,
+        defaultNetwork: "solana",
+        defaultAsset: "USDC",
+        redirectUrl: window.location.origin,
+      });
+      if (user?.id) params.set("partnerUserRef", user.id.slice(0, 50));
+      window.open(`https://pay.coinbase.com/v3/sell/input?${params.toString()}`, "_blank");
+    } catch (err) {
+      toast({ variant: "destructive", title: "Couldn't open Coinbase", description: err instanceof Error ? err.message : "Try again." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (devnetMode) {
+    return <p className="mt-4 text-sm text-[#C8C6D0]">Bank cash-out is available on mainnet. Switch networks to send to Coinbase, PAJ Cash, or a bank app.</p>;
+  }
+
+  if (platform) {
+    return (
+      <div className="mt-4 flex flex-col gap-4">
+        <button type="button" onClick={() => setApp(null)} className="self-start text-sm font-semibold text-[#C8C6D0] hover:text-white">{platform.name}</button>
+        <AmountField label="Amount (USDC)" value={amount} onChange={setAmount} onMax={() => setAmount(balanceNum > 0 ? balanceNum.toFixed(2) : "")} />
+        {amountNum > balanceNum && <p className="text-sm text-red-400">That is more than your ${balanceNum.toFixed(2)} balance.</p>}
+        <label className="block">
+          <span className="text-sm font-semibold text-[#C8C6D0]">{platform.idLabel}</span>
+          <input
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
+            placeholder={platform.placeholder}
+            className="mt-1.5 w-full rounded-xl border border-white/10 bg-[#0E0E12] px-3 py-3 text-base text-white outline-none focus:border-[#FF7A2A]/60"
+          />
+        </label>
+        <SendButton
+          busy={false}
+          disabled={!(amountNum > 0) || amountNum > balanceNum || identifier.trim().length < 2}
+          label={`Continue with ${platform.name}`}
+          busyLabel="Opening…"
+          onClick={() => onCashOut?.({ platformId: platform.id, identifier: identifier.trim(), amountUsd: amountNum })}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 flex flex-col gap-2">
+      <button type="button" disabled={!solanaAddress || busy} onClick={() => { void openCoinbase(); }} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20 disabled:opacity-50">
+        <img src="/images/icons/coinbase-logo.png" alt="" className="h-9 w-9 rounded-xl bg-[#0052FF] object-contain p-1.5" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-base font-bold text-white">Coinbase</span>
+          <span className="block text-sm text-[#8A8893]">Bank, card, or Apple Pay</span>
+        </span>
+      </button>
+      {PAJ_CASH_ENABLED && (
+        <button type="button" onClick={onPaj} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20">
+          <img src="/images/icons/paj-cash-logo.svg" alt="" className="h-9 w-9 rounded-xl object-contain" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-base font-bold text-white">PAJ Cash</span>
+            <span className="block text-sm text-[#8A8893]">Naira bank transfer</span>
+          </span>
+        </button>
+      )}
+      {PEER_PLATFORMS.map((item) => (
+        <button key={item.id} type="button" onClick={() => setApp(item.id)} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20">
+          <img src={item.logo} alt="" className="h-9 w-9 rounded-xl bg-[#1C1C22] object-contain p-1.5" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-base font-bold text-white">{item.name}</span>
+            <span className="block text-sm text-[#8A8893]">{item.idLabel}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PajWithdraw({
+  devnetMode,
+  solanaAddress,
+  balanceNum,
+  userId,
+  getAccessToken,
+  onBack,
+  onRefresh,
+}: {
+  devnetMode: boolean;
+  solanaAddress: string | null;
+  balanceNum: number;
+  userId?: string;
+  getAccessToken: () => Promise<string | null>;
+  onBack: () => void;
+  onRefresh?: () => void;
+}) {
+  const { wallet, signTransaction } = useLooftaSigner(solanaAddress);
+  if (!wallet || !solanaAddress) {
+    return <p className="mt-4 text-sm text-[#C8C6D0]">Your Loofta wallet is still loading.</p>;
+  }
+  return (
+    <div className="mt-4">
+      <PajCashOfframpView
+        dark
+        devnetMode={devnetMode}
+        solanaAddress={solanaAddress}
+        wallet={wallet}
+        signTransaction={signTransaction}
+        userId={userId}
+        maxAmountUsdc={balanceNum}
+        getAccessToken={getAccessToken}
+        onBack={onBack}
+        onComplete={onRefresh}
+      />
     </div>
   );
 }
