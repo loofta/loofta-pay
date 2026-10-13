@@ -201,6 +201,8 @@ export function MinimalHeader() {
 
   const [showBalanceModal, setShowBalanceModal] = useState(false);
   const [showDeposit, setShowDeposit] = useState(false);
+  const [depositMode, setDepositMode] = useState<"deposit" | "withdraw">("deposit");
+  const [depositScreen, setDepositScreen] = useState<"home" | "solana" | "address" | "card" | "paj">("home");
   const [balanceModalTab, setBalanceModalTab] = useState<"topup" | "withdraw" | "history">("topup");
   // True when a CTA (e.g. "Add funds to your balance") asked for a specific tab — keeps
   // BalanceModal's own "resume a stuck withdrawal" auto-redirect from stealing focus back to Recent.
@@ -248,26 +250,34 @@ export function MinimalHeader() {
         amountUsd?: number;
         peerPay?: { platformId: string; identifier: string; amountUsd: number };
       }>).detail;
-      const wantsDeposit = !detail?.tab || detail.tab === "topup";
-      if (wantsDeposit) {
-        setShowDeposit(true);
-        setShowBalanceModal(false);
-      }
-      const explicitTab = detail?.tab === "withdraw" || detail?.tab === "history" || detail?.tab === "topup";
-      setBalanceModalTab(explicitTab ? (detail!.tab as "topup" | "withdraw" | "history") : "topup");
-      setBalanceModalTabLocked(explicitTab);
-      if (!wantsDeposit) setShowBalanceModal(true);
       const m = detail?.method;
+      const pay = detail?.peerPay;
+      const peerPayDetail = pay && pay.platformId && pay.identifier && typeof pay.amountUsd === "number" && pay.amountUsd > 0
+        ? pay
+        : null;
+      const legacyWithdraw = detail?.tab === "history" || m === "peer" || m === "paj" || !!peerPayDetail;
+      setBalanceTopUpAmount(typeof detail?.amountUsd === "number" && detail.amountUsd > 0 ? detail.amountUsd : undefined);
+      setPeerPay(peerPayDetail);
       setBalanceModalWithdrawMethod(
         m === "peer" || m === "paj" || m === "crypto" || m === "near" ? m : undefined,
       );
-      setBalanceTopUpAmount(typeof detail?.amountUsd === "number" && detail.amountUsd > 0 ? detail.amountUsd : undefined);
-      const pay = detail?.peerPay;
-      setPeerPay(
-        pay && pay.platformId && pay.identifier && typeof pay.amountUsd === "number" && pay.amountUsd > 0
-          ? pay
-          : null,
-      );
+      if (legacyWithdraw) {
+        const explicitTab = detail?.tab === "withdraw" || detail?.tab === "history";
+        setBalanceModalTab(detail?.tab === "history" ? "history" : "withdraw");
+        setBalanceModalTabLocked(explicitTab);
+        setShowDeposit(false);
+        setShowBalanceModal(true);
+      } else if (detail?.tab === "withdraw") {
+        setShowBalanceModal(false);
+        setDepositMode("withdraw");
+        setDepositScreen(m === "crypto" || m === "near" ? "address" : "home");
+        setShowDeposit(true);
+      } else {
+        setShowBalanceModal(false);
+        setDepositMode("deposit");
+        setDepositScreen("home");
+        setShowDeposit(true);
+      }
       refreshBalance();
     };
     window.addEventListener("openBalanceModal", handler);
@@ -335,7 +345,7 @@ export function MinimalHeader() {
                 {/* Desktop: Balance button */}
                 <button
                   type="button"
-                  onClick={() => { setShowDeposit(true); refreshBalance(); }}
+                  onClick={() => { setDepositMode("deposit"); setDepositScreen("home"); setShowDeposit(true); refreshBalance(); }}
                   className="hidden sm:flex items-center gap-2 ml-2 h-10 pl-3.5 pr-1 rounded-full bg-[#141418] border border-white/10 hover:border-white/20 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
                 >
                   <span className="text-sm font-medium text-[#8E8C96]">{t('balance')}</span>
@@ -394,6 +404,17 @@ export function MinimalHeader() {
             solanaAddress={solanaAddress}
             devnetMode={networkMode === "devnet"}
             onRefresh={refreshBalance}
+            showModeSwitch
+            initialMode={depositMode}
+            initialScreen={depositScreen}
+            onCashOut={(pay) => {
+              setShowDeposit(false);
+              setPeerPay(pay);
+              setBalanceModalTab("withdraw");
+              setBalanceModalWithdrawMethod("peer");
+              setBalanceModalTabLocked(true);
+              setShowBalanceModal(true);
+            }}
           />
         )}
         {authenticated && (
@@ -429,7 +450,7 @@ export function MinimalHeader() {
           onClose={() => setMobileMenuOpen(false)}
           balanceUSD={balanceUSD}
           loadingBalance={loadingBalance}
-          onOpenBalance={() => { setShowDeposit(true); refreshBalance(); }}
+          onOpenBalance={() => { setDepositMode("deposit"); setDepositScreen("home"); setShowDeposit(true); refreshBalance(); }}
           onLogout={() => logout()}
           username={username}
           email={email}
