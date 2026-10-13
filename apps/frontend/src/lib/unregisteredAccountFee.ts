@@ -16,3 +16,15 @@ export function looftaPlatformFeeWallet(): string | null {
 export function totalWithUnregisteredAccountFee(amountUsd: number, applies: boolean): number {
   return applies ? amountUsd + UNREGISTERED_ACCOUNT_FEE_USD : amountUsd;
 }
+
+/** $0.10 only after lookup confirms this handle/email is not a Loofta account.
+ *  Do not assume unregistered while the request is in flight or after it fails. */
+export function unregisteredClaimFeeUsd(opts: {
+  destApplies: boolean;
+  registered: boolean;
+  lookupResolved: boolean;
+}): number {
+  return opts.destApplies && opts.lookupResolved && !opts.registered
+    ? UNREGISTERED_ACCOUNT_FEE_USD
+    : 0;
+}

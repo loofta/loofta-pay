@@ -30,8 +30,8 @@ import { createClaimFromUsername } from "@/lib/createClaimFromUsername";
 import { createClaimFromSocial } from "@/lib/createClaimFromSocial";
 import { createClaimFromEmailGuest, createClaimFromSocialGuest, createClaimFromUsernameGuest } from "@/lib/createClaimGuest";
 import { GuestSendPayButton } from "@/components/app/GuestSendPayButton";
-import { UNREGISTERED_ACCOUNT_FEE_USD } from "@/lib/unregisteredAccountFee";
-import { lookupPayTarget, type PayTarget } from "@/lib/lookupPayTarget";
+import { UNREGISTERED_ACCOUNT_FEE_USD, unregisteredClaimFeeUsd } from "@/lib/unregisteredAccountFee";
+import { isEmailRecipient, lookupPayTarget, payTargetQueryKey, resolvePayTargetQuery, type PayTarget } from "@/lib/lookupPayTarget";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
@@ -131,9 +131,9 @@ function Header() {
   return (
     <header className={`sticky top-0 z-50 border-b ${BORDER_LINE_2} bg-[rgba(11,11,15,0.72)] px-6 py-5 backdrop-blur-[14px] md:px-10`}>
       <div className="mx-auto grid max-w-[1240px] grid-cols-[1fr_auto_1fr] items-center">
-        <Link href="/" className="col-start-1 justify-self-start">
+        <a href="https://www.loofta.xyz/" className="col-start-1 justify-self-start">
           <Image src="/loofta_white.svg" alt="Loofta" width={138} height={30} priority className="h-[30px] w-auto" />
-        </Link>
+        </a>
 
         <nav className="col-start-2 hidden gap-[34px] justify-self-center md:flex">
           {navItems.map((item) => (
@@ -295,6 +295,7 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
   const [privacyInfoOpen, setPrivacyInfoOpen] = useState(false);
   const [draftHydrated, setDraftHydrated] = useState(false);
   const [payTarget, setPayTarget] = useState<PayTarget>({ registered: false, requirePrivatePayments: false });
+  const [resolvedQueryKey, setResolvedQueryKey] = useState("");
 
   const trimmedRecipient = recipient.trim().replace(/^@+/, "");
   const amountNum = Number(amount);
@@ -302,47 +303,53 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
   const walletAddressValid = destKind === "wallet" && isValidSolanaAddress(walletAddress);
   const isHandleDest = destKind === "handle";
   const isCashDest = destKind === "cash";
+  const treatingAsEmail = handleKind === "email" || isEmailRecipient(trimmedRecipient);
+  const payTargetQuery = isHandleDest
+    ? resolvePayTargetQuery({
+        recipient: trimmedRecipient,
+        method: treatingAsEmail ? "email" : socialPlatform === "loofta" ? "username" : "social",
+        socialPlatform,
+      })
+    : null;
+  const currentQueryKey = payTargetQueryKey(payTargetQuery);
+  const payTargetResolved = !!payTargetQuery && currentQueryKey === resolvedQueryKey;
   // Private payments floor at $1. A public payment only needs a cent.
   const minAmountUsd = isCashDest || isPrivateMode ? 1 : 0.01;
   const canSend = (isHandleDest || isCashDest) && trimmedRecipient.length > 0 && amountNum >= minAmountUsd;
   // Flat claim fee for email / social handle, public or private. A Loofta username
-  // and a direct wallet pay skip it.
-  const isLooftaUsername = handleKind === "social" && socialPlatform === "loofta";
-  const platformFeeUsd = isHandleDest && !isLooftaUsername && !payTarget.registered ? UNREGISTERED_ACCOUNT_FEE_USD : 0;
+  // and a direct wallet pay skip it. An email typed on the Social tab still counts as email.
+  const isLooftaUsername = handleKind === "social" && socialPlatform === "loofta" && !treatingAsEmail;
+  const platformFeeUsd = unregisteredClaimFeeUsd({
+    destApplies: isHandleDest && !isLooftaUsername && trimmedRecipient.length > 0,
+    registered: payTarget.registered,
+    lookupResolved: payTargetResolved,
+  });
   const payingPrivate = isPrivateMode || payTarget.requirePrivatePayments;
   const payTotal = payingPrivate
     ? totalWithMagicBlockPrivateFee(amountNum) + platformFeeUsd
     : amountNum + platformFeeUsd;
 
   useEffect(() => {
-    if (!isHandleDest) {
+    if (!payTargetQuery) {
       setPayTarget({ registered: false, requirePrivatePayments: false });
+      setResolvedQueryKey("");
       return;
     }
-    if (trimmedRecipient.length < 2) {
-      setPayTarget({ registered: false, requirePrivatePayments: false });
-      return;
-    }
-    const kind = handleKind === "email"
-      ? "email"
-      : socialPlatform === "loofta"
-        ? "username"
-        : socialPlatform === "twitter"
-          ? "twitter"
-          : "social";
-    const lookupValue = kind === "username" ? `loo-${trimmedRecipient.replace(/^loo-/i, "")}` : trimmedRecipient;
+    const key = payTargetQueryKey(payTargetQuery);
     const ac = new AbortController();
     const timer = setTimeout(() => {
-      lookupPayTarget(
-        { kind, value: lookupValue, platform: kind === "social" ? socialPlatform : undefined },
-        ac.signal,
-      ).then((target) => {
+      lookupPayTarget(payTargetQuery, ac.signal).then((target) => {
         setPayTarget(target);
+        setResolvedQueryKey(key);
         if (target.requirePrivatePayments) setIsPrivateMode(true);
-      }).catch(() => {});
+      }).catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setPayTarget({ registered: false, requirePrivatePayments: false });
+        setResolvedQueryKey("");
+      });
     }, 350);
     return () => { clearTimeout(timer); ac.abort(); };
-  }, [isHandleDest, handleKind, socialPlatform, trimmedRecipient]);
+  }, [currentQueryKey]);
 
   // Restore draft after mount, then persist on further edits (skip the first paint write so we
   // don't clobber a saved draft with defaults before restore runs).
@@ -406,11 +413,11 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
     }
     setSending(true);
     try {
-      const isTwitter = handleKind === "social" && socialPlatform === "twitter";
-      const isLoofta = handleKind === "social" && socialPlatform === "loofta";
+      const isTwitter = handleKind === "social" && socialPlatform === "twitter" && !treatingAsEmail;
+      const isLoofta = handleKind === "social" && socialPlatform === "loofta" && !treatingAsEmail;
       const privacyChoice = payingPrivate ? { split, maxDelayMs: delayMs } : {};
       const accessToken = await getAccessToken();
-      const created = handleKind === "email"
+      const created = treatingAsEmail
         ? await createClaimFromEmail({ email: trimmedRecipient.toLowerCase(), amount, userId: user?.id, accessToken, isPrivate: payingPrivate, ...privacyChoice })
         : isTwitter
           ? await createClaimFromUsername({ username: trimmedRecipient, amount, userId: user?.id, accessToken, isPrivate: payingPrivate, treatUnregisteredAsTwitter: true, ...privacyChoice })
@@ -432,7 +439,7 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
   // fee is taken out of what they receive and the transfer is built server-side.
   const guestHandlePay = !authenticated && !payTarget.requirePrivatePayments && !(payTarget.registered && isPrivateMode);
   const guestBlocker = !trimmedRecipient
-    ? handleKind === "email" ? "Enter an email" : "Enter a handle"
+    ? treatingAsEmail ? "Enter an email" : "Enter a handle"
     : !Number.isFinite(amountNum) || amountNum < minAmountUsd
       ? `Enter an amount of at least $${minAmountUsd.toFixed(2)}`
       : null;
@@ -444,7 +451,7 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
       ...(isPrivateMode ? { split, maxDelayMs: delayMs } : {}),
     };
     const created =
-      handleKind === "email"
+      treatingAsEmail
         ? await createClaimFromEmailGuest({ ...base, email: trimmedRecipient.toLowerCase() })
         : socialPlatform === "twitter"
           ? await createClaimFromUsernameGuest({ ...base, username: trimmedRecipient.toLowerCase(), treatUnregisteredAsTwitter: true })
@@ -659,7 +666,7 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
               style={{ fontSize: "20px" }}
             />
           </div>
-          {platformFeeUsd > 0 && (
+          {platformFeeUsd > 0 && trimmedRecipient.length > 0 && amountNum >= minAmountUsd && (
             <p className={`mt-3 text-sm ${INK_3}`}>
               {`+$${UNREGISTERED_ACCOUNT_FEE_USD.toFixed(2)} claim fee · they don't need an account yet`}
             </p>

@@ -25,8 +25,8 @@ import { createClaimFromUsername } from "@/lib/createClaimFromUsername";
 import { createClaimFromSocial } from "@/lib/createClaimFromSocial";
 import { createClaimFromEmailGuest, createClaimFromSocialGuest, createClaimFromUsernameGuest } from "@/lib/createClaimGuest";
 import { GuestSendPayButton } from "@/components/app/GuestSendPayButton";
-import { UNREGISTERED_ACCOUNT_FEE_USD } from "@/lib/unregisteredAccountFee";
-import { lookupPayTarget, type PayTarget } from "@/lib/lookupPayTarget";
+import { UNREGISTERED_ACCOUNT_FEE_USD, unregisteredClaimFeeUsd } from "@/lib/unregisteredAccountFee";
+import { isEmailRecipient, lookupPayTarget, payTargetQueryKey, resolvePayTargetQuery, type PayTarget } from "@/lib/lookupPayTarget";
 import { totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, AtSign, Check, ChevronDown, Copy, LinkIcon, Lock, Mail, PlusIcon, Wallet } from "lucide-react";
@@ -220,6 +220,7 @@ export default function Home() {
   const [cashPlatform, setCashPlatform] = useState<DirectCashPlatformId>("venmo");
   const [isPrivateMode, setIsPrivateMode] = useState(false);
   const [payTarget, setPayTarget] = useState<PayTarget>({ registered: false, requirePrivatePayments: false });
+  const [resolvedQueryKey, setResolvedQueryKey] = useState("");
 
   // Keep the draft in sync so a mid-login page reload (see SEND_DRAFT_KEY above) can restore it.
   useEffect(() => {
@@ -240,33 +241,38 @@ export default function Home() {
     if (amt && Number(amt) > 0) setAmount(amt);
   }, [searchParams]);
 
+  const sendPayTargetQuery = destKind === "handle" && !lockedRecipient
+    ? resolvePayTargetQuery({
+        recipient,
+        method: isEmailRecipient(recipient) ? "email" : sendMethod,
+        socialPlatform,
+      })
+    : null;
+  const sendQueryKey = payTargetQueryKey(sendPayTargetQuery);
+  const payTargetResolved = !!sendPayTargetQuery && sendQueryKey === resolvedQueryKey;
+
   useEffect(() => {
-    if (destKind !== "handle" || lockedRecipient) {
+    if (!sendPayTargetQuery) {
       setPayTarget({ registered: false, requirePrivatePayments: false });
+      setResolvedQueryKey("");
       return;
     }
-    const value = recipient.replace(/^@/, "").trim();
-    if (value.length < 2) {
-      setPayTarget({ registered: false, requirePrivatePayments: false });
-      return;
-    }
-    const kind = sendMethod === "email"
-      ? "email"
-      : sendMethod === "username" || socialPlatform === "loofta"
-        ? "username"
-        : !socialPlatform || socialPlatform === "twitter"
-          ? "twitter"
-          : "social";
-    const lookupValue = kind === "username" ? `loo-${value.replace(/^loo-/i, "")}` : value;
+    const key = sendQueryKey;
     const ac = new AbortController();
     const timer = setTimeout(() => {
-      lookupPayTarget(
-        { kind, value: lookupValue, platform: kind === "social" ? socialPlatform ?? undefined : undefined },
-        ac.signal,
-      ).then(setPayTarget).catch(() => {});
+      lookupPayTarget(sendPayTargetQuery, ac.signal)
+        .then((target) => {
+          setPayTarget(target);
+          setResolvedQueryKey(key);
+        })
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          setPayTarget({ registered: false, requirePrivatePayments: false });
+          setResolvedQueryKey("");
+        });
     }, 350);
     return () => { clearTimeout(timer); ac.abort(); };
-  }, [destKind, lockedRecipient, recipient, sendMethod, socialPlatform]);
+  }, [sendQueryKey]);
 
   useEffect(() => {
     if (payTarget.requirePrivatePayments) setIsPrivateMode(true);
@@ -441,14 +447,17 @@ export default function Home() {
   const walletAddressValid = destKind === "wallet" && isValidSolanaAddress(walletAddress);
   // Flat claim fee for an email / social handle that is not a Loofta account yet.
   // A registered user, a Loofta username, and a direct wallet pay skip it.
+  // An email typed on the Social tab still counts as email.
+  const treatingAsEmail = sendMethod === "email" || isEmailRecipient(recipient);
   const isLooftaUsernameDest =
     !!lockedRecipient ||
     sendMethod === "username" ||
-    (sendMethod === "social" && socialPlatform === "loofta");
-  const platformFeeUsd =
-    destKind === "handle" && !isLooftaUsernameDest && !payTarget.registered
-      ? UNREGISTERED_ACCOUNT_FEE_USD
-      : 0;
+    (sendMethod === "social" && socialPlatform === "loofta" && !treatingAsEmail);
+  const platformFeeUsd = unregisteredClaimFeeUsd({
+    destApplies: destKind === "handle" && !isLooftaUsernameDest && recipient.replace(/^@/, "").trim().length > 0,
+    registered: payTarget.registered,
+    lookupResolved: payTargetResolved,
+  });
   const basePay = Number.isFinite(amountNum) ? amountNum : 0;
   const payTotal = (payingPrivate ? totalWithMagicBlockPrivateFee(basePay) : basePay) + platformFeeUsd;
   const canSend = lockedRecipient
@@ -473,7 +482,7 @@ export default function Home() {
   const guestOneStep = !authenticated && destKind === "handle" && !lockedRecipient && sendMethod !== "username" && !payTarget.requirePrivatePayments && !(payTarget.registered && isPrivateMode);
   const guestTrimmed = recipient.replace(/^@/, "").trim();
   const guestBlocker = !guestTrimmed
-    ? sendMethod === "email" ? "Enter an email" : "Enter a handle"
+    ? treatingAsEmail ? "Enter an email" : "Enter a handle"
     : sendMethod === "social" && !socialPlatform
       ? "Pick a platform"
       : !Number.isFinite(amountNum) || amountNum < minAmountUsd
@@ -490,7 +499,7 @@ export default function Home() {
       ...(isPrivateMode ? { split, maxDelayMs: delayMs } : {}),
     };
     const result =
-      sendMethod === "email"
+      treatingAsEmail
         ? await createClaimFromEmailGuest({ ...base, email: guestTrimmed.toLowerCase() })
         : socialPlatform === "loofta"
           ? await createClaimFromUsernameGuest({ ...base, username: `loo-${guestTrimmed.replace(/^loo-/i, "").toLowerCase()}` })
@@ -546,6 +555,17 @@ export default function Home() {
           cluster: apiCluster,
           ...privacyChoice,
         });
+      } else if (treatingAsEmail) {
+        result = await createClaimFromEmail({
+          email: trimmed.toLowerCase(),
+          amount,
+          userId: user?.id,
+          accessToken,
+          isPrivate: isPrivateMode || payTarget.requirePrivatePayments,
+          description: fullDescription,
+          cluster: apiCluster,
+          ...privacyChoice,
+        });
       } else if (sendMethod === "social" && socialPlatform === "loofta") {
         // Same "loo-" username namespace the old dedicated Username pill used — normalize either
         // way in case the recipient typed it with or without the prefix themselves.
@@ -568,17 +588,6 @@ export default function Home() {
           accessToken,
           // Locks this claim's privacy in upfront when toggled on here — leave it off and the
           // payer (self or a guest, on /c/[id]) still decides at pay time either way.
-          isPrivate: isPrivateMode || payTarget.requirePrivatePayments,
-          description: fullDescription,
-          cluster: apiCluster,
-          ...privacyChoice,
-        });
-      } else if (sendMethod === "email") {
-        result = await createClaimFromEmail({
-          email: trimmed.toLowerCase(),
-          amount,
-          userId: user?.id,
-          accessToken,
           isPrivate: isPrivateMode || payTarget.requirePrivatePayments,
           description: fullDescription,
           cluster: apiCluster,
@@ -950,7 +959,7 @@ export default function Home() {
                     />
                   </div>
                   )}
-                  {destKind === "handle" && (
+                  {destKind === "handle" && payTargetResolved && recipient.replace(/^@/, "").trim().length >= 2 && (
                     <p className="-mt-2" style={{ fontSize: 13, fontWeight: 400, color: "#77757F" }}>
                       {payTarget.requirePrivatePayments
                         ? "They only accept private payments. The privacy fee is added on top of what you pay."

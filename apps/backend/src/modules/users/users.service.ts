@@ -302,7 +302,11 @@ export class UsersService {
       this.logger.error('Error querying user by email:', error);
       throw new NotFoundException('User not found');
     }
-    if (!user?.username) throw new NotFoundException('User not found');
+    // A Loofta account is registered once it has a Privy id — username is optional
+    // (email-only signups, or users who haven't picked one yet). Requiring username
+    // here made pay-target / createFromEmail treat them as unregistered and add the
+    // $0.10 claim fee.
+    if (!user?.privy_user_id) throw new NotFoundException('User not found');
     return {
       id: user.id,
       privyUserId: user.privy_user_id,
