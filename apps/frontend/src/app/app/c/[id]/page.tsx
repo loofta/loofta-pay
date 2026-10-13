@@ -66,7 +66,7 @@ import {
 } from "@/services/pajCash";
 import { computeLooftaFeeUsdc } from "@/lib/pajCashFee";
 import { PEER_PLATFORMS } from "@/lib/peerPlatforms";
-import { getPeerEstimate, usdc as peerUsdc } from "@/services/peerCash";
+import { cashoutPayoutUsdc, getPeerEstimate, usdc as peerUsdc } from "@/services/peerCash";
 import { SolanaWalletConnectProvider, useWallet, WalletMultiButton } from "@/components/SolanaWalletConnect";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { isGuestSentClaim } from "@/lib/guestSentClaims";
@@ -86,6 +86,8 @@ const PAYOUT_METHOD_LABEL: Record<string, string> = {
   coinbase: "Coinbase",
   paj: "PAJ Cash",
 };
+
+const PEER_PAYOUT_METHODS = new Set(["venmo", "cashapp", "revolut", "zelle"]);
 
 function payoutStatusCopy(status: string): string {
   if (status === "in_wallet") return "In your Loofta wallet";
@@ -705,9 +707,6 @@ function ClaimPageSenderShareView({
               {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
             </button>
           </div>
-          <GradientActionButton type="button" onClick={handleCopy}>
-            {copied ? "Copied" : "Copy link"}
-          </GradientActionButton>
           <ShareLinkMenu
             url={claimLink}
             title="Payment for you"
@@ -2269,6 +2268,17 @@ export function ClaimPayView({
   }, [peerPlatform, claim?.amount]);
 
   const keepClaimCard = !!payoutReceipt && payoutReceipt.method !== "wallet";
+  const peerCashoutReceipt = payoutReceipt && PEER_PAYOUT_METHODS.has(payoutReceipt.method) ? payoutReceipt : null;
+
+  const openPeerReceive = (platformId: string, identifier: string, amountUsd: number, autoStart: boolean) => {
+    window.dispatchEvent(new CustomEvent("openBalanceModal", {
+      detail: {
+        tab: "withdraw",
+        method: "peer",
+        peerPay: { platformId, identifier, amountUsd, intent: "receive", autoStart },
+      },
+    }));
+  };
 
   const persistPayout = async (next: { method: string; status: string; eta: string | null; detail: string | null }) => {
     setPayoutReceipt(next);
@@ -2676,25 +2686,76 @@ export function ClaimPayView({
   };
   const confirmPrivateClaimAmount = parseFloat(claim?.amount || "0") || 0;
   const confirmPrivateClaimEstimate = estimateClaimPrivatelyNet(confirmPrivateClaimAmount);
+  const renderPeerReceiveClaim = () => {
+    if (!peerCashoutReceipt) return null;
+    const platform = PEER_PLATFORMS.find((p) => p.id === peerCashoutReceipt.method);
+    const name = platform?.name ?? "Revolut";
+    const amountUsd = parseFloat(claim?.amount || "0") || 0;
+    const receiveUsd = cashoutPayoutUsdc(amountUsd);
+    const feeUsd = Math.max(0, amountUsd - receiveUsd);
+    const sending = claimAsRecipientMutation.isPending;
+    return (
+      <div className="w-full max-w-md mx-auto text-left">
+        <div className="flex items-center gap-3 pr-2">
+          {platform?.logo && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={platform.logo} alt="" className="h-12 w-12 rounded-2xl object-cover shrink-0" />
+          )}
+          <div className="min-w-0">
+            <p className="text-[28px] font-bold tracking-[-0.04em] leading-none text-white">To {name}</p>
+            <p className="text-base font-medium mt-1 text-[#8A8893]">You receive ${receiveUsd.toFixed(2)}</p>
+          </div>
+        </div>
+        {sending && (
+          <div className="mt-8 flex flex-col items-center gap-3 text-center">
+            <span className="relative block h-7 w-7" aria-hidden>
+              <span className="absolute inset-0 rounded-full border-[1.5px] border-white/15" />
+              <span className="absolute inset-0 rounded-full border-[1.5px] border-transparent border-t-white animate-spin" />
+            </span>
+            <p className="text-sm text-[#8A8893]">Sending to {name}</p>
+          </div>
+        )}
+        <div className={cn("rounded-2xl border border-white/10 bg-[#0E0E12] px-4 py-3.5 space-y-2", sending ? "mt-6" : "mt-8")}>
+          <div className="flex items-center justify-between">
+            <span className="text-base text-[#B5B2BC]">This payment</span>
+            <span className="text-base font-semibold text-white">${amountUsd.toFixed(2)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-base text-[#B5B2BC]">Fill incentive</span>
+            <span className="text-base text-slate-300">${feeUsd.toFixed(2)}</span>
+          </div>
+          <div className="flex items-center justify-between border-t border-white/10 pt-2">
+            <span className="text-base text-[#B5B2BC]">You receive</span>
+            <span className="text-xl font-semibold text-white">${receiveUsd.toFixed(2)}</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={sending || !peerCashoutReceipt.detail}
+          onClick={() => openPeerReceive(peerCashoutReceipt.method, peerCashoutReceipt.detail || "", amountUsd, true)}
+          className="mt-3 w-full h-12 rounded-xl font-semibold text-base bg-gradient-to-r from-orange-500 to-red-500 text-white disabled:opacity-60"
+        >
+          {sending ? "Sending…" : `Cash out to ${name}`}
+        </button>
+      </div>
+    );
+  };
+
   /** Shared claim panel — replaces the old single hardcoded "claim to wallet" button (and the
    *  first-claim-only "claim privately" button) with the full set of choices, for every claim. */
   const renderClaimPanel = (mobile: boolean) => {
     if (keepClaimCard && payoutReceipt) {
+      if (PEER_PAYOUT_METHODS.has(payoutReceipt.method)) {
+        return (
+          <div className={mobile ? "w-full" : "hidden md:flex flex-col w-full max-w-md mx-auto"}>
+            {renderPeerReceiveClaim()}
+          </div>
+        );
+      }
       const method = payoutReceipt.method;
       const resume = () => {
         const amountUsd = parseFloat(claim?.amount || "0");
-        if (method === "venmo" || method === "cashapp" || method === "revolut" || method === "zelle") {
-          window.dispatchEvent(new CustomEvent("openBalanceModal", {
-            detail: {
-              tab: "withdraw",
-              method: "peer",
-              amountUsd,
-              peerPay: payoutReceipt.detail
-                ? { platformId: method, identifier: payoutReceipt.detail, amountUsd }
-                : undefined,
-            },
-          }));
-        } else if (method === "coinbase") {
+        if (method === "coinbase") {
           openCoinbaseOfframp().catch((err: unknown) => {
             toast({ variant: "destructive", title: "Coinbase", description: err instanceof Error ? err.message : "Could not open Coinbase" });
           });
@@ -2918,23 +2979,16 @@ export function ClaimPayView({
                       toast({ variant: "destructive", title: `Add your ${peerPlatform.name} ${peerPlatform.idLabel}` });
                       return;
                     }
-                    const receipt = { method: peerPlatform.id, status: "in_wallet", eta: peerEtaLabel, detail: handle };
+                    const receipt = { method: peerPlatform.id, status: "cashing_out", eta: peerEtaLabel, detail: handle };
+                    const amountUsd = parseFloat(claim?.amount || "0");
+                    setPayoutReceipt(receipt);
                     setClaimInitiated(true);
+                    openPeerReceive(peerPlatform.id, handle, amountUsd, true);
                     claimAsRecipientMutation.mutate(
-                      { payoutMethod: peerPlatform.id, payoutStatus: "in_wallet", payoutEtaLabel: peerEtaLabel, payoutDetail: handle },
+                      { payoutMethod: peerPlatform.id, payoutStatus: "cashing_out", payoutEtaLabel: peerEtaLabel, payoutDetail: handle },
                       {
-                        onSuccess: () => {
-                          void persistPayout(receipt);
-                          const amountUsd = parseFloat(claim?.amount || "0");
-                          window.dispatchEvent(new CustomEvent("openBalanceModal", {
-                            detail: {
-                              tab: "withdraw",
-                              method: "peer",
-                              amountUsd,
-                              peerPay: { platformId: peerPlatform.id, identifier: handle, amountUsd },
-                            },
-                          }));
-                        },
+                        onSuccess: () => { void persistPayout(receipt); },
+                        onError: () => setPayoutReceipt(null),
                       },
                     );
                   }}
@@ -5549,17 +5603,6 @@ export function ClaimPayView({
                         triggerClassName="px-5 py-2"
                       />
                     </div>
-                    <div className="mb-4 flex items-center justify-between">
-                      <span className="text-base text-gray-500">Status link</span>
-                      <a
-                        href={claimLink}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-base font-medium text-gray-900 underline-offset-2 hover:underline"
-                      >
-                        Open
-                      </a>
-                    </div>
                     </>
                   );
                 })()}
@@ -5681,7 +5724,7 @@ export function ClaimPayView({
                   );
                 })()}
               </div>
-            ) : user?.id && (claimAsRecipientMutation.isPending || previewOverride?.forceClaimingScreen) && !claimCompleted && !keepClaimCard ? (
+            ) : user?.id && (claimAsRecipientMutation.isPending || previewOverride?.forceClaimingScreen) && !claimCompleted && !keepClaimCard && !PEER_PAYOUT_METHODS.has(claimAsRecipientMutation.variables?.payoutMethod ?? "") ? (
               (() => {
                 const amt = parseFloat(claim?.amount || "0").toFixed(2);
                 return (
@@ -6224,6 +6267,10 @@ export function ClaimPayView({
                   </div>
                 );
               })()
+            ) : peerCashoutReceipt ? (
+              <div className="mt-6 px-2 pb-4">
+                {renderPeerReceiveClaim()}
+              </div>
             ) : (isRecipient || isMerchantRecipientView) &&
               (!["SUCCESS", "CLAIMED"].includes(String(claim?.status || "").toUpperCase()) ||
                 // Merchant/registered-at-creation recipient whose status went SUCCESS before

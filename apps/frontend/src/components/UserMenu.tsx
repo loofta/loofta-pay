@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { usePrivy, useUser, useWallets, useLinkAccount, useUnlinkOAuth, useUnlinkEmail } from "@privy-io/react-auth";
@@ -11,7 +11,7 @@ import { createPortal } from "react-dom";
 import { useAuthStore } from "@/store/auth";
 import { TIERS, getTierForVolume } from "@/lib/tiers";
 import { useToast } from "@/components/ui/use-toast";
-import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Wallet, Info, KeyRound } from "lucide-react";
+import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Info, KeyRound, Copy, ChevronRight, RefreshCw } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { ChangeUsernameModal } from "@/components/ChangeUsernameModal";
@@ -47,6 +47,62 @@ function getSocialUsername(
     || "";
   const s = String(raw).replace(/^@/, "").toLowerCase().trim();
   return s.length >= 1 ? s : null;
+}
+
+function SettingsRadio({ selected }: { selected: boolean }) {
+  return (
+    <span
+      className={`shrink-0 h-[18px] w-[18px] rounded-full border-2 flex items-center justify-center ${selected ? "border-white" : "border-white/30"}`}
+      aria-hidden
+    >
+      {selected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
+    </span>
+  );
+}
+
+const settingsPillClass =
+  "shrink-0 inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-full border border-white/15 text-sm font-medium text-slate-200 hover:bg-white/[0.06] transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+
+const settingsRemoveClass =
+  "shrink-0 text-sm font-medium text-slate-400 hover:text-white transition-colors disabled:opacity-40";
+
+const settingsSectionLabelClass =
+  "mb-2.5 text-sm font-medium uppercase tracking-[0.14em] text-slate-500";
+
+function SettingsIconTile({ className, children }: { className: string; children: ReactNode }) {
+  return (
+    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+function SettingsAccountRow({
+  icon,
+  title,
+  subtitle,
+  action,
+  note,
+}: {
+  icon: ReactNode;
+  title: string;
+  subtitle: string;
+  action?: ReactNode;
+  note?: ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-3.5 py-3">
+      <div className="flex items-center gap-3">
+        {icon}
+        <div className="flex-1 min-w-0">
+          <p className="text-base font-medium text-white truncate">{title}</p>
+          <p className="text-sm text-slate-500 leading-snug">{subtitle}</p>
+        </div>
+        {action}
+      </div>
+      {note}
+    </div>
+  );
 }
 
 function formatVolume(n: number): string {
@@ -188,7 +244,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
 
   const [isOpen, setIsOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [showFullAddress, setShowFullAddress] = useState(false);
   const [copied, setCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
@@ -201,10 +256,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [rotateState, setRotateState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [rotateError, setRotateError] = useState("");
   const [newWalletAddress, setNewWalletAddress] = useState("");
-  const [isLocalhost, setIsLocalhost] = useState(false);
-  useEffect(() => {
-    setIsLocalhost(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  }, []);
   const [updatingToTwitter, setUpdatingToTwitter] = useState(false);
   const [twitterLinkedOptimistic, setTwitterLinkedOptimistic] = useState(false);
   const [linkingMethod, setLinkingMethod] = useState<"twitter" | "email" | "discord" | "github" | null>(null);
@@ -444,11 +495,6 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [isOpen]);
-
-  const formatAddress = (address: string) => {
-    if (!address) return "";
-    return `${address.slice(0, 4)}...${address.slice(-4)}`;
-  };
 
   const copyToClipboard = (text: string, isLink: boolean = false) => {
     navigator.clipboard.writeText(text);
@@ -775,6 +821,12 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       setUnlinkingEmail(false);
     }
   };
+
+  const paymentLink = getPaymentLink();
+  const paymentLinkLabel = paymentLink?.replace(/^https?:\/\//, "") ?? null;
+  const looActive = !!storeLooUsername && username === storeLooUsername;
+  const xActive = !!storeTwitterUsername && hasTwitterLinked && username === storeTwitterUsername;
+  const walletRotateBlocked = balanceUSD >= 0.1;
 
   const menuLabel = username || email || "";
   const menuInitial = (menuLabel.replace(/^@/, "").trim().charAt(0) || "?").toUpperCase();
@@ -1241,11 +1293,21 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 20 }}
-              className="bg-[#0f0f12] sm:border sm:border-white/10 sm:rounded-2xl w-full sm:max-w-lg shadow-2xl flex flex-col h-full sm:h-auto overflow-hidden"
+              className="bg-[#141418] sm:border sm:border-white/10 sm:rounded-[28px] w-full sm:max-w-lg shadow-2xl flex flex-col h-full sm:h-auto sm:max-h-[90vh] overflow-hidden text-white"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Scrollable content */}
-              <div className="flex-1 overflow-y-auto p-6 text-white">
+              <div className="shrink-0 flex items-center justify-between px-5 pt-5 pb-2">
+                <h2 className="text-xl font-bold tracking-tight text-white">{t('settingsTitle')}</h2>
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsModal(false)}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors border border-white/10 bg-white/[0.04]"
+                  aria-label={t('close')}
+                >
+                  <XClose className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto px-5 pt-2 pb-6">
 
                 {/* Rotate wallet confirmation view — replaces main content */}
                 {showRotateConfirm ? (
@@ -1348,588 +1410,396 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   </div>
                 ) : (
                   <>
-                    {/* Hero header */}
-                    <div className="text-center mb-6 pt-1">
-                      <div className="mb-4 flex justify-center">
-                        <div className="relative">
-                          <div
-                            className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                            style={{
-                              background: "linear-gradient(135deg, rgba(255,74,38,0.18) 0%, rgba(225,160,65,0.18) 100%)",
-                              border: "1px solid rgba(255,122,42,0.25)",
-                              boxShadow: "0 0 32px rgba(255,122,42,0.12)",
-                            }}
-                          >
-                            <Settings className="w-7 h-7 text-orange-400" />
-                          </div>
-                          <div
-                            className="absolute inset-0 rounded-2xl blur-2xl opacity-20 -z-10"
-                            style={{ background: "linear-gradient(135deg, #FF4A26, #E1A041)" }}
-                          />
-                        </div>
-                      </div>
-                      <h2 className="text-xl font-bold text-white mb-1">{t('settingsTitle')}</h2>
-                      <p className="text-base text-slate-400">{t('settingsSubtitle')}</p>
-                    </div>
+                    <div className="space-y-6">
 
-                    <div className="space-y-3">
-
-                      {/* Sign-in methods card */}
-                      <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
-                        <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-3 border-b border-white/[0.06]">
-                          <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
-                            <Shield className="w-3.5 h-3.5 text-slate-300" />
-                          </div>
-                          <span className="text-base font-semibold text-white">{t('signInMethods')}</span>
-                        </div>
-
-                        <div className="px-4 pt-3 pb-4 space-y-2.5">
-                          {/* Connected accounts */}
-                          {(hasEmail || hasTwitterLinked) && (
-                            <div className="rounded-xl bg-white/[0.06] border border-white/[0.10] overflow-hidden">
-                              <div className="divide-y divide-white/[0.05]">
-                                {hasEmail && linkedEmailAddress && (
-                                  <div className="flex items-center gap-3 px-3 py-2.5">
-                                    <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
-                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-300">
-                                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                                        <polyline points="22,6 12,13 2,6" />
-                                      </svg>
-                                    </div>
-                                    <span className="flex-1 text-base text-white/90 truncate">{linkedEmailAddress}</span>
-                                    {totalMethods > 1 ? (
-                                      <button
-                                        type="button"
-                                        onClick={handleUnlinkEmail}
-                                        disabled={unlinkingEmail}
-                                        className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
-                                      >
-                                        {unlinkingEmail ? <Loader2 className="w-3 h-3 animate-spin" /> : "Remove"}
-                                      </button>
-                                    ) : (
-                                      <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
-                                    )}
-                                  </div>
-                                )}
-                                {hasTwitterLinked && twitterHandle && (
-                                  <div className="flex flex-col gap-0 px-3 py-2.5">
-                                    <div className="flex items-center gap-3">
-                                      <div className="w-7 h-7 rounded-lg bg-white/15 flex items-center justify-center shrink-0">
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-white">
-                                          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                                        </svg>
-                                      </div>
-                                      <span className="flex-1 text-base text-white/90">@{twitterHandle}</span>
-                                      {totalMethods > 1 ? (
-                                        confirmUnlinkTwitter ? (
-                                          <div className="flex items-center gap-1 shrink-0">
-                                            <button
-                                              type="button"
-                                              onClick={() => setConfirmUnlinkTwitter(false)}
-                                              className="px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/8 transition-colors"
-                                            >
-                                              Cancel
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={handleUnlinkTwitter}
-                                              disabled={unlinkingTwitter}
-                                              className="px-2 py-1 rounded-lg text-base text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-40"
-                                            >
-                                              {unlinkingTwitter ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes, remove"}
-                                            </button>
-                                          </div>
-                                        ) : (
-                                          <button
-                                            type="button"
-                                            onClick={() => setConfirmUnlinkTwitter(true)}
-                                            disabled={unlinkingTwitter}
-                                            className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
-                                          >
-                                            Remove
-                                          </button>
-                                        )
-                                      ) : (
-                                        <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
-                                      )}
-                                    </div>
-                                    {confirmUnlinkTwitter && (
-                                      <div className="mt-2 ml-10 px-3 py-2 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
-                                        <p className="text-base text-amber-300/90 leading-snug">
-                                          {username?.toLowerCase() === twitterHandle.toLowerCase()
-                                            ? `Your payment link will switch to @${storeLooUsername ?? `loo-${username?.slice(0, 16)}`}.`
-                                            : "Your payment link username stays the same."}
-                                          {" "}Are you sure?
-                                        </p>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Recovery warning */}
-                          {totalMethods < 2 && (
-                            <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
-                              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
-                              <p className="text-base text-amber-300/90 leading-snug">{t('addSecondMethod')}</p>
-                            </div>
-                          )}
-
-                          {/* Add methods */}
-                          <div className="space-y-1.5">
-                            {!hasTwitterLinked && (
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  setShowSettingsModal(false);
-                                  setLinkingMethod("twitter");
-                                  try { await linkTwitter(); } catch { /* surfaced via onError */ }
-                                }}
-                                title="You'll be redirected to Twitter to log in"
-                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-base text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors border border-white/[0.05]"
-                              >
-                                <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-slate-500">
-                                    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                                  </svg>
-                                </div>
-                                <span className="flex-1 text-left">{t('addTwitter')}</span>
-                                <span className="text-slate-600 text-base leading-none">+</span>
+                      <section>
+                        <p className={settingsSectionLabelClass}>Payment link</p>
+                        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3 space-y-3">
+                          {paymentLinkLabel ? (
+                            <div className="flex items-center gap-2 rounded-xl bg-black/25 border border-white/[0.06] pl-3.5 pr-1.5 py-1.5">
+                              <span className="flex-1 min-w-0 truncate text-base text-slate-200">{paymentLinkLabel}</span>
+                              <button type="button" onClick={copyPaymentLink} className={settingsPillClass}>
+                                {linkCopied ? t('copied') : 'Copy'}
                               </button>
-                            )}
-                            {!hasEmail && (
+                            </div>
+                          ) : null}
+
+                          {(storeLooUsername || (storeTwitterUsername && hasTwitterLinked)) && (
+                            <div className={`grid gap-2 ${storeLooUsername && storeTwitterUsername && hasTwitterLinked ? "grid-cols-2" : "grid-cols-1"}`}>
+                              {storeLooUsername && (
+                                <button
+                                  type="button"
+                                  disabled={switchingUsername}
+                                  onClick={() => { if (!looActive) void handleSwitchUsername("loo"); }}
+                                  className={`flex items-center gap-2.5 min-w-0 rounded-xl border px-2.5 py-2.5 text-left transition-colors disabled:opacity-60 ${looActive ? "bg-white/[0.08] border-white/15" : "bg-white/[0.03] border-white/10 hover:bg-white/[0.06]"}`}
+                                >
+                                  <SettingsIconTile className="bg-[#2A2A32] text-white text-sm font-bold">L</SettingsIconTile>
+                                  <span className="flex-1 min-w-0">
+                                    <span className="block truncate text-sm font-semibold text-white">@{storeLooUsername}</span>
+                                    <span className="block text-sm text-slate-500 leading-snug">Loofta username</span>
+                                  </span>
+                                  {switchingUsername && !looActive ? <Loader2 className="w-4 h-4 animate-spin text-slate-400 shrink-0" /> : <SettingsRadio selected={looActive} />}
+                                </button>
+                              )}
+                              {storeTwitterUsername && hasTwitterLinked && (
+                                <button
+                                  type="button"
+                                  disabled={switchingUsername}
+                                  onClick={() => { if (!xActive) void handleSwitchUsername("twitter"); }}
+                                  className={`flex items-center gap-2.5 min-w-0 rounded-xl border px-2.5 py-2.5 text-left transition-colors disabled:opacity-60 ${xActive ? "bg-white/[0.08] border-white/15" : "bg-white/[0.03] border-white/10 hover:bg-white/[0.06]"}`}
+                                >
+                                  <SettingsIconTile className="bg-black border border-white/10 text-white">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                                    </svg>
+                                  </SettingsIconTile>
+                                  <span className="flex-1 min-w-0">
+                                    <span className="block truncate text-sm font-semibold text-white">@{storeTwitterUsername}</span>
+                                    <span className="block text-sm text-slate-500 leading-snug">X username</span>
+                                  </span>
+                                  {switchingUsername && !xActive ? <Loader2 className="w-4 h-4 animate-spin text-slate-400 shrink-0" /> : <SettingsRadio selected={xActive} />}
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          {canUpdateToTwitter && twitterHandle && !storeTwitterUsername && (
+                            <button
+                              type="button"
+                              disabled={updatingToTwitter || !privyUser?.id}
+                              onClick={async () => {
+                                if (!privyUser?.id || !twitterHandle) return;
+                                setUpdatingToTwitter(true);
+                                try {
+                                  const token = await getAccessToken().catch(() => null);
+                                  const res = await fetch("/api/users/setup-username", {
+                                    method: "POST",
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                                    },
+                                    body: JSON.stringify({ username: twitterHandle }),
+                                  });
+                                  const data = await res.json();
+                                  if (!res.ok) {
+                                    toast({ variant: "destructive", title: "Update failed", description: data.error || "Try again." });
+                                    return;
+                                  }
+                                  window.location.reload();
+                                } catch {
+                                  toast({ variant: "destructive", title: "Update failed", description: "Try again." });
+                                } finally {
+                                  setUpdatingToTwitter(false);
+                                }
+                              }}
+                              className="text-sm font-medium text-slate-300 hover:text-white transition-colors disabled:opacity-50"
+                            >
+                              {updatingToTwitter ? "Setting…" : `Use @${twitterHandle} as your payment link`}
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => setShowChangeUsername(true)}
+                            className="px-1 text-sm font-medium text-slate-400 hover:text-white transition-colors"
+                          >
+                            Change Loofta username
+                          </button>
+                        </div>
+                      </section>
+
+                      <button
+                        type="button"
+                        disabled={savingPrivatePayments}
+                        onClick={async () => {
+                          const next = !requirePrivatePayments;
+                          setSavingPrivatePayments(true);
+                          try {
+                            const token = await getAccessToken();
+                            const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+                            const r = await fetch(`${backendUrl}/users/me/private-payments`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                              body: JSON.stringify({ enabled: next }),
+                            });
+                            if (!r.ok) throw new Error("Could not save");
+                            setRequirePrivatePayments(next);
+                          } catch {
+                            toast({ variant: "destructive", title: "Couldn't update private payments" });
+                          } finally {
+                            setSavingPrivatePayments(false);
+                          }
+                        }}
+                        aria-pressed={requirePrivatePayments}
+                        className="w-full flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-3.5 text-left disabled:opacity-60"
+                      >
+                        <SettingsIconTile className="bg-gradient-to-b from-[#FF6A2A] to-[#E23B12] text-white">
+                          <Shield className="w-5 h-5" fill="currentColor" />
+                        </SettingsIconTile>
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-base font-semibold text-white">Only accept private payments</span>
+                          <span className="block text-sm text-slate-500 mt-0.5">Senders must pay privately and cover the privacy fee.</span>
+                        </span>
+                        <span className={`shrink-0 h-7 w-12 rounded-full p-0.5 transition-colors ${requirePrivatePayments ? "bg-gradient-to-r from-[#FF4D1C] to-[#FF9A1E]" : "bg-white/15"}`}>
+                          <span className={`block h-6 w-6 rounded-full bg-white shadow transition-transform ${requirePrivatePayments ? "translate-x-5" : ""}`} />
+                        </span>
+                      </button>
+
+                      <section>
+                        <p className={settingsSectionLabelClass}>Accounts</p>
+                        <p className="mb-3 text-sm text-slate-500 leading-snug">People can pay you by handle on any connected account.</p>
+                        {totalMethods < 2 && (
+                          <div className="mb-3 flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
+                            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                            <p className="text-sm text-amber-300/90 leading-snug">{t('addSecondMethod')}</p>
+                          </div>
+                        )}
+                        <div className="space-y-2">
+                          <SettingsAccountRow
+                            icon={
+                              <SettingsIconTile className="bg-[#2A2A32] text-slate-200">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                                  <polyline points="22,6 12,13 2,6" />
+                                </svg>
+                              </SettingsIconTile>
+                            }
+                            title={hasEmail && linkedEmailAddress ? linkedEmailAddress : "Email"}
+                            subtitle={hasEmail && linkedEmailAddress ? "Sign-in" : "Not connected"}
+                            action={hasEmail && linkedEmailAddress ? (
+                              totalMethods > 1 ? (
+                                <button type="button" onClick={handleUnlinkEmail} disabled={unlinkingEmail} className={settingsRemoveClass}>
+                                  {unlinkingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Remove"}
+                                </button>
+                              ) : null
+                            ) : (
                               <button
                                 type="button"
                                 onClick={async () => {
                                   setLinkingMethod("email");
                                   try { await linkEmail(); } catch { /* surfaced via onError */ }
                                 }}
-                                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-base text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors border border-white/[0.05]"
+                                className={settingsPillClass}
                               >
-                                <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
-                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-500">
-                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                                    <polyline points="22,6 12,13 2,6" />
-                                  </svg>
-                                </div>
-                                <span className="flex-1 text-left">{t('addEmail')}</span>
-                                <span className="text-slate-600 text-base leading-none">+</span>
+                                Connect
                               </button>
                             )}
-                          </div>
-                        </div>
-                      </div>
+                          />
 
-                      <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
-                        <button
-                          type="button"
-                          disabled={savingPrivatePayments}
-                          onClick={async () => {
-                            const next = !requirePrivatePayments;
-                            setSavingPrivatePayments(true);
-                            try {
-                              const token = await getAccessToken();
-                              const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
-                              const r = await fetch(`${backendUrl}/users/me/private-payments`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                                body: JSON.stringify({ enabled: next }),
-                              });
-                              if (!r.ok) throw new Error("Could not save");
-                              setRequirePrivatePayments(next);
-                            } catch {
-                              toast({ variant: "destructive", title: "Couldn't update private payments" });
-                            } finally {
-                              setSavingPrivatePayments(false);
-                            }
-                          }}
-                          className="w-full flex items-center gap-3 px-4 py-3.5 text-left"
-                        >
-                          <div className="flex-1 min-w-0">
-                            <p className="text-base font-semibold text-white">Only accept private payments</p>
-                            <p className="text-sm text-slate-400 mt-0.5">People paying your username can only send privately. They pay the privacy fee on top.</p>
-                          </div>
-                          <span className={`shrink-0 h-6 w-11 rounded-full p-0.5 transition-colors ${requirePrivatePayments ? "bg-[#FF7A2A]" : "bg-white/15"}`}>
-                            <span className={`block h-5 w-5 rounded-full bg-white transition-transform ${requirePrivatePayments ? "translate-x-5" : ""}`} />
-                          </span>
-                        </button>
-                      </div>
-
-                      {/* Payment link username toggle */}
-                      {(storeLooUsername || storeTwitterUsername) ? (
-                        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
-                          <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-3 border-b border-white/[0.06]">
-                            <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300">
-                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                              </svg>
-                            </div>
-                            <span className="text-base font-semibold text-white">Payment link</span>
-                          </div>
-                          <div className="px-4 pt-3 pb-4 space-y-2">
-                            <p className="text-base text-slate-400">Choose which username your payment link uses.</p>
-                            <div className="rounded-xl bg-white/[0.06] border border-white/[0.10] overflow-hidden divide-y divide-white/[0.08]">
-                              {storeLooUsername && (
-                                <div className="flex items-center gap-3 px-3 py-2.5">
-                                  <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
-                                    <span className="text-base font-bold text-slate-400 leading-none">L</span>
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-base text-white/90 truncate">@{storeLooUsername}</p>
-                                    <p className="text-base text-slate-500">Your Loofta username</p>
-                                  </div>
-                                  {username === storeLooUsername ? (
-                                    <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSwitchUsername("loo")}
-                                      disabled={switchingUsername}
-                                      className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors disabled:opacity-40"
-                                    >
-                                      {switchingUsername ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Use"}
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowChangeUsername(true)}
-                                    className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-colors"
-                                  >
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                                    </svg>
-                                  </button>
-                                </div>
-                              )}
-                              {storeTwitterUsername && hasTwitterLinked && (
-                                <div className="flex items-center gap-3 px-3 py-2.5">
-                                  <div className="w-7 h-7 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-slate-300">
-                                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                                    </svg>
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <p className="text-base text-white/90 truncate">@{storeTwitterUsername}</p>
-                                    <p className="text-base text-slate-500">Your X username</p>
-                                  </div>
-                                  {username === storeTwitterUsername ? (
-                                    <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Active</span>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSwitchUsername("twitter")}
-                                      disabled={switchingUsername || !hasTwitterLinked}
-                                      className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors disabled:opacity-40"
-                                      title={!hasTwitterLinked ? "Re-link X to use this username" : undefined}
-                                    >
-                                      {switchingUsername ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Use"}
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ) : canUpdateToTwitter && twitterHandle ? (
-                        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-4 py-3.5 flex items-center justify-between gap-3">
-                          <span className="text-base text-slate-300">
-                            Use <span className="font-semibold text-white">@{twitterHandle}</span> as your payment link
-                          </span>
-                          <button
-                            type="button"
-                            disabled={updatingToTwitter || !privyUser?.id}
-                            onClick={async () => {
-                              if (!privyUser?.id || !twitterHandle) return;
-                              setUpdatingToTwitter(true);
-                              try {
-                                const token = await getAccessToken().catch(() => null);
-                                const res = await fetch("/api/users/setup-username", {
-                                  method: "POST",
-                                  headers: {
-                                    "Content-Type": "application/json",
-                                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                                  },
-                                  body: JSON.stringify({ username: twitterHandle }),
-                                });
-                                const data = await res.json();
-                                if (!res.ok) {
-                                  toast({ variant: "destructive", title: "Update failed", description: data.error || "Try again." });
-                                  return;
-                                }
-                                // Reload instead of patching the store in place — guarantees every
-                                // page reflects the new username at once instead of catching up on its own.
-                                window.location.reload();
-                              } catch {
-                                toast({ variant: "destructive", title: "Update failed", description: "Try again." });
-                              } finally {
-                                setUpdatingToTwitter(false);
-                              }
-                            }}
-                            className="shrink-0 inline-flex items-center justify-center rounded-lg bg-white text-black px-3 py-1.5 text-sm font-semibold hover:opacity-80 disabled:opacity-50 transition-opacity"
-                          >
-                            {updatingToTwitter ? "Setting…" : "Set username"}
-                          </button>
-                        </div>
-                      ) : null}
-
-                      {/* Connect accounts card — every platform people can pay you by handle on. X mirrors the Sign-in methods card above (read-only here, remove it there); Discord/GitHub link+unlink directly; Telegram is connected via its own flow (see loofta.com relay). */}
-                      <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
-                        <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-3 border-b border-white/[0.06]">
-                          <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300">
-                              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                            </svg>
-                          </div>
-                          <span className="text-base font-semibold text-white">Connect accounts</span>
-                        </div>
-                        <div className="px-4 pt-3 pb-4 space-y-2">
-                          <p className="text-base text-slate-400">People can pay you by handle on any of these — connect the rest to cover them all.</p>
-                          <div className="rounded-xl bg-white/[0.06] border border-white/[0.10] overflow-hidden divide-y divide-white/[0.08]">
-                            <div className="flex items-center gap-3 px-3 py-2.5">
-                              <div className="w-7 h-7 rounded-lg bg-white/15 flex items-center justify-center shrink-0">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-white">
+                          <SettingsAccountRow
+                            icon={
+                              <SettingsIconTile className="bg-black border border-white/10 text-white">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                                   <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
                                 </svg>
-                              </div>
-                              {hasTwitterLinked && twitterHandle ? (
-                                <>
-                                  <span className="flex-1 text-base text-white/90 truncate">@{twitterHandle}</span>
-                                  <span className="shrink-0 px-2 py-0.5 rounded-full text-base bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">Connected</span>
-                                </>
-                              ) : (
-                                <>
-                                  <span className="flex-1 text-base text-white/60">X (Twitter)</span>
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      setLinkingMethod("twitter");
-                                      try { await linkTwitter(); } catch { /* surfaced via onError */ }
-                                    }}
-                                    className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors"
-                                  >
-                                    Connect
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-3 px-3 py-2.5">
-                              <div className="w-7 h-7 rounded-lg bg-[#5865F2]/20 flex items-center justify-center shrink-0">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-[#5865F2]">
-                                  <path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.076.076 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.947 2.418-2.157 2.418z" />
-                                </svg>
-                              </div>
-                              {hasDiscordLinked && discordHandle ? (
-                                <>
-                                  <span className="flex-1 text-base text-white/90 truncate">@{discordHandle}</span>
-                                  <button
-                                    type="button"
-                                    onClick={handleUnlinkDiscord}
-                                    disabled={unlinkingDiscord}
-                                    className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
-                                  >
-                                    {unlinkingDiscord ? <Loader2 className="w-3 h-3 animate-spin" /> : "Remove"}
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <span className="flex-1 text-base text-white/60">Discord</span>
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      setLinkingMethod("discord");
-                                      try { await linkDiscord(); } catch { /* surfaced via onError */ }
-                                    }}
-                                    className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors"
-                                  >
-                                    Connect
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-3 px-3 py-2.5">
-                              <div className="w-7 h-7 rounded-lg bg-white/15 flex items-center justify-center shrink-0">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-white">
-                                  <path d="M12 0C5.37 0 0 5.373 0 12c0 5.303 3.438 9.8 8.207 11.387.6.113.793-.26.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.91 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.303 24 12c0-6.627-5.373-12-12-12z" />
-                                </svg>
-                              </div>
-                              {hasGithubLinked && githubHandle ? (
-                                <>
-                                  <span className="flex-1 text-base text-white/90 truncate">@{githubHandle}</span>
-                                  <button
-                                    type="button"
-                                    onClick={handleUnlinkGithub}
-                                    disabled={unlinkingGithub}
-                                    className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
-                                  >
-                                    {unlinkingGithub ? <Loader2 className="w-3 h-3 animate-spin" /> : "Remove"}
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <span className="flex-1 text-base text-white/60">GitHub</span>
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      setLinkingMethod("github");
-                                      try { await linkGithub(); } catch { /* surfaced via onError */ }
-                                    }}
-                                    className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors"
-                                  >
-                                    Connect
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-3 px-3 py-2.5">
-                              <div className="w-7 h-7 rounded-lg bg-[#26A5E4]/20 flex items-center justify-center shrink-0">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-[#26A5E4]">
-                                  <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.831-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" />
-                                </svg>
-                              </div>
-                              {telegramHandle ? (
-                                <>
-                                  <span className="flex-1 text-base text-white/90 truncate">@{telegramHandle}</span>
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      const token = await getAccessToken().catch(() => null);
-                                      try {
-                                        await fetch("/api/users/save-social-handle", {
-                                          method: "POST",
-                                          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                                          body: JSON.stringify({ platform: "telegram", handle: null }),
-                                        });
-                                        setTelegramHandle(null);
-                                        toast({ title: "Telegram disconnected", description: "Your Telegram handle has been removed." });
-                                      } catch { /* non-critical */ }
-                                    }}
-                                    className="shrink-0 px-2 py-1 rounded-lg text-base text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-                                  >
+                              </SettingsIconTile>
+                            }
+                            title={hasTwitterLinked && twitterHandle ? `@${twitterHandle}` : "X"}
+                            subtitle={hasTwitterLinked && twitterHandle ? "Sign-in · Get paid by handle" : "Not connected"}
+                            action={hasTwitterLinked && twitterHandle ? (
+                              totalMethods > 1 ? (
+                                confirmUnlinkTwitter ? (
+                                  <span className="flex items-center gap-2 shrink-0">
+                                    <button type="button" onClick={() => setConfirmUnlinkTwitter(false)} className={settingsRemoveClass}>Cancel</button>
+                                    <button type="button" onClick={handleUnlinkTwitter} disabled={unlinkingTwitter} className="shrink-0 text-sm font-medium text-red-400 hover:text-red-300 transition-colors disabled:opacity-40">
+                                      {unlinkingTwitter ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Remove"}
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button type="button" onClick={() => setConfirmUnlinkTwitter(true)} disabled={unlinkingTwitter} className={settingsRemoveClass}>
                                     Remove
                                   </button>
-                                </>
-                              ) : (
-                                <>
-                                  <span className="flex-1 text-base text-white/60">Telegram</span>
-                                  <button
-                                    type="button"
-                                    onClick={handleConnectTelegram}
-                                    disabled={connectingTelegram}
-                                    className="shrink-0 px-3 py-1 rounded-lg text-base font-medium text-white/90 hover:text-white bg-white/10 hover:bg-white/15 transition-colors disabled:opacity-40"
-                                  >
-                                    {connectingTelegram ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Connect"}
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Wallet card */}
-                      {walletAddress ? (
-                        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden">
-                          <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-3 border-b border-white/[0.06]">
-                            <div className="w-6 h-6 rounded-lg bg-white/8 flex items-center justify-center shrink-0">
-                              <Wallet className="w-3.5 h-3.5 text-slate-300" />
-                            </div>
-                            <span className="text-base font-semibold text-white">{t('walletAddress')}</span>
-                          </div>
-                          <div className="px-4 pt-3 pb-4 space-y-2">
-                            <div className="flex items-center gap-2 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                              <p
-                                className="flex-1 text-base font-mono break-all cursor-pointer text-white/70 hover:text-white/90 transition-colors"
-                                onClick={() => {
-                                  setShowFullAddress(!showFullAddress);
-                                  if (!showFullAddress) copyToClipboard(walletAddress, false);
-                                }}
-                                title="Click to toggle full address"
-                              >
-                                {showFullAddress ? walletAddress : formatAddress(walletAddress)}
-                              </p>
+                                )
+                              ) : null
+                            ) : (
                               <button
-                                onClick={() => copyToClipboard(walletAddress, false)}
-                                className="p-1.5 rounded-lg hover:bg-white/10 shrink-0 text-slate-500 hover:text-white transition-colors"
-                                title={copied ? t('copied') : t('copyLink')}
+                                type="button"
+                                onClick={async () => {
+                                  setLinkingMethod("twitter");
+                                  try { await linkTwitter(); } catch { /* surfaced via onError */ }
+                                }}
+                                className={settingsPillClass}
                               >
+                                Connect
+                              </button>
+                            )}
+                            note={confirmUnlinkTwitter && twitterHandle ? (
+                              <p className="mt-2 ml-12 text-sm text-amber-300/90 leading-snug">
+                                {username?.toLowerCase() === twitterHandle.toLowerCase()
+                                  ? `Your payment link will switch to @${storeLooUsername ?? `loo-${username?.slice(0, 16)}`}.`
+                                  : "Your payment link username stays the same."}
+                                {" "}Are you sure?
+                              </p>
+                            ) : null}
+                          />
+
+                          <SettingsAccountRow
+                            icon={
+                              <SettingsIconTile className="bg-[#2AABEE] text-white">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                                  <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.831-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" />
+                                </svg>
+                              </SettingsIconTile>
+                            }
+                            title={telegramHandle ? `@${telegramHandle}` : "Telegram"}
+                            subtitle={telegramHandle ? "Get paid by handle" : "Not connected"}
+                            action={telegramHandle ? (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const token = await getAccessToken().catch(() => null);
+                                  try {
+                                    await fetch("/api/users/save-social-handle", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                                      body: JSON.stringify({ platform: "telegram", handle: null }),
+                                    });
+                                    setTelegramHandle(null);
+                                    toast({ title: "Telegram disconnected", description: "Your Telegram handle has been removed." });
+                                  } catch { /* non-critical */ }
+                                }}
+                                className={settingsRemoveClass}
+                              >
+                                Remove
+                              </button>
+                            ) : (
+                              <button type="button" onClick={handleConnectTelegram} disabled={connectingTelegram} className={settingsPillClass}>
+                                {connectingTelegram ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Connect"}
+                              </button>
+                            )}
+                          />
+
+                          <SettingsAccountRow
+                            icon={
+                              <SettingsIconTile className="bg-[#2A2A32] text-white">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                                  <path d="M12 0C5.37 0 0 5.373 0 12c0 5.303 3.438 9.8 8.207 11.387.6.113.793-.26.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.605-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.91 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.303 24 12c0-6.627-5.373-12-12-12z" />
+                                </svg>
+                              </SettingsIconTile>
+                            }
+                            title={hasGithubLinked && githubHandle ? `@${githubHandle}` : "GitHub"}
+                            subtitle={hasGithubLinked && githubHandle ? "Get paid by handle" : "Not connected"}
+                            action={hasGithubLinked && githubHandle ? (
+                              <button type="button" onClick={handleUnlinkGithub} disabled={unlinkingGithub} className={settingsRemoveClass}>
+                                {unlinkingGithub ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Remove"}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setLinkingMethod("github");
+                                  try { await linkGithub(); } catch { /* surfaced via onError */ }
+                                }}
+                                className={settingsPillClass}
+                              >
+                                Connect
+                              </button>
+                            )}
+                          />
+
+                          <SettingsAccountRow
+                            icon={
+                              <SettingsIconTile className="bg-[#5865F2] text-white">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                                  <path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.076.076 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.947 2.418-2.157 2.418z" />
+                                </svg>
+                              </SettingsIconTile>
+                            }
+                            title={hasDiscordLinked && discordHandle ? `@${discordHandle}` : "Discord"}
+                            subtitle={hasDiscordLinked && discordHandle ? "Get paid by handle" : "Not connected"}
+                            action={hasDiscordLinked && discordHandle ? (
+                              <button type="button" onClick={handleUnlinkDiscord} disabled={unlinkingDiscord} className={settingsRemoveClass}>
+                                {unlinkingDiscord ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Remove"}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setLinkingMethod("discord");
+                                  try { await linkDiscord(); } catch { /* surfaced via onError */ }
+                                }}
+                                className={settingsPillClass}
+                              >
+                                Connect
+                              </button>
+                            )}
+                          />
+                        </div>
+                      </section>
+
+                      <section>
+                        <p className={settingsSectionLabelClass}>Wallet</p>
+                        {walletAddress ? (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-3">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm text-slate-500">Solana address</p>
+                                <p className="mt-0.5 text-base font-medium text-white break-all">{walletAddress}</p>
+                              </div>
+                              <button type="button" onClick={() => copyToClipboard(walletAddress, false)} className={settingsPillClass}>
                                 {copied ? (
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400">
-                                    <polyline points="20 6 9 17 4 12" />
-                                  </svg>
+                                  t('copied')
                                 ) : (
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                                  </svg>
+                                  <>
+                                    <Copy className="w-3.5 h-3.5" />
+                                    Copy
+                                  </>
                                 )}
                               </button>
                             </div>
-                            <p className="text-base text-slate-500">{showFullAddress ? t('clickToHide') : t('clickToCopy')}</p>
 
                             <button
                               type="button"
                               disabled={exportingWallet}
                               onClick={handleExportWallet}
-                              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-base text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors disabled:opacity-50"
+                              className="w-full flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-3 text-left hover:bg-white/[0.06] transition-colors disabled:opacity-50"
                             >
-                              {exportingWallet ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <KeyRound className="w-3.5 h-3.5" />
-                              )}
-                              {exportingWallet ? t('exportingWallet') : t('exportWallet')}
+                              <SettingsIconTile className="bg-[#2A2A32] text-slate-200">
+                                {exportingWallet ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+                              </SettingsIconTile>
+                              <span className="flex-1 min-w-0">
+                                <span className="block text-base font-medium text-white">{exportingWallet ? t('exportingWallet') : "Export wallet"}</span>
+                                <span className="block text-sm text-slate-500">Reveal your private key</span>
+                              </span>
+                              <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
                             </button>
 
-                            {walletAddress && isLocalhost && (
-                              <div className="flex items-center justify-between gap-3 pt-2 border-t border-white/[0.06]">
-                                <div>
-                                  <p className="text-base text-slate-400">New wallet address</p>
-                                  {balanceUSD >= 0.1 && (
-                                    <p className="text-base text-amber-400/80 mt-0.5">Withdraw below $0.10 first</p>
-                                  )}
-                                </div>
-                                <button
-                                  type="button"
-                                  disabled={balanceUSD >= 0.1}
-                                  onClick={() => setShowRotateConfirm(true)}
-                                  className="shrink-0 px-3 py-1.5 rounded-lg text-base font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-white/10 hover:bg-white/15 text-white"
-                                >
-                                  Generate new
-                                </button>
+                            <div className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-3">
+                              <SettingsIconTile className="bg-[#2A2A32] text-slate-200">
+                                <RefreshCw className="w-4 h-4" />
+                              </SettingsIconTile>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-base font-medium text-white">New wallet address</p>
+                                {walletRotateBlocked && (
+                                  <p className="text-sm text-amber-400 leading-snug">Withdraw until your balance is below $0.10 first</p>
+                                )}
                               </div>
+                              <button
+                                type="button"
+                                disabled={walletRotateBlocked}
+                                onClick={() => setShowRotateConfirm(true)}
+                                className={settingsPillClass}
+                              >
+                                Generate
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-4 py-5 text-center">
+                            {!privyReady ? (
+                              <p className="text-base text-slate-500">{t('loadingWallet')}</p>
+                            ) : (
+                              <p className="text-base text-slate-500">{t('walletAutoCreated')}</p>
                             )}
                           </div>
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-4 py-5 text-center">
-                          {!privyReady ? (
-                            <p className="text-base text-slate-500">{t('loadingWallet')}</p>
-                          ) : (
-                            <p className="text-base text-slate-500">{t('walletAutoCreated')}</p>
-                          )}
-                        </div>
-                      )}
+                        )}
+                      </section>
 
                     </div>
                   </>
                 )}
               </div>
 
-              {/* Sticky close footer */}
-              <div className="shrink-0 px-6 pb-8 sm:pb-5 pt-3 border-t border-white/10 bg-[#0f0f12]">
-                <button
-                  type="button"
-                  onClick={() => setShowSettingsModal(false)}
-                  className="w-full py-3.5 rounded-xl font-semibold text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors"
-                >
-                  {t('close')}
-                </button>
-              </div>
             </motion.div>
           </motion.div>
         </AnimatePresence>,

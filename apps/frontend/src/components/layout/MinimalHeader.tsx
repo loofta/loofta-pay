@@ -15,6 +15,7 @@ import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalan
 import { Switch } from "@/components/ui/switch";
 import { useTranslations } from "next-intl";
 import { TIERS, getTierForVolume } from "@/lib/tiers";
+import type { PeerPayRequest } from "@/lib/peerPlatforms";
 
 const HEADER_HEIGHT = 64;
 
@@ -210,7 +211,7 @@ export function MinimalHeader() {
   /** Optional deep-link into a withdraw rail: peer | paj | crypto (from ?method= or claim cash-out). */
   const [balanceModalWithdrawMethod, setBalanceModalWithdrawMethod] = useState<"peer" | "paj" | "crypto" | "near" | undefined>(undefined);
   const [balanceTopUpAmount, setBalanceTopUpAmount] = useState<number | undefined>(undefined);
-  const [peerPay, setPeerPay] = useState<{ platformId: string; identifier: string; amountUsd: number } | null>(null);
+  const [peerPay, setPeerPay] = useState<PeerPayRequest | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const {
@@ -248,7 +249,7 @@ export function MinimalHeader() {
         tab?: string;
         method?: string;
         amountUsd?: number;
-        peerPay?: { platformId: string; identifier: string; amountUsd: number };
+        peerPay?: PeerPayRequest;
       }>).detail;
       const m = detail?.method;
       const pay = detail?.peerPay;

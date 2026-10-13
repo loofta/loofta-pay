@@ -18,6 +18,16 @@ export function getPeerCurrency(code: string): PeerCurrency | undefined {
   return PEER_CURRENCIES.find(c => c.code === code);
 }
 
+/** Opens the Peer cash-out modal. "receive" is a claimed payment cashing out to the user's own app. */
+export type PeerPayRequest = {
+  platformId: string;
+  identifier: string;
+  amountUsd: number;
+  intent?: "pay" | "receive";
+  /** Start the cash-out as soon as the claimed USDC is in the Loofta wallet. */
+  autoStart?: boolean;
+};
+
 export interface PeerPlatform {
   id: string;
   name: string;

@@ -25,7 +25,7 @@ import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X, VenetianMask, Ticket, Wallet, CreditCard } from "lucide-react";
-import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, clearPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
+import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, type PeerPayRequest, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, clearPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
@@ -473,8 +473,8 @@ export interface BalanceModalProps {
   initialWithdrawMethod?: "peer" | "paj" | "crypto" | "near";
   /** Shortfall to prefill when opening from "Add funds & pay". */
   topUpAmountUsd?: number;
-  /** Pay someone else's Venmo, Cash App, or Revolut handle. Opens the Peer cash-out form filled in. */
-  peerPay?: { platformId: string; identifier: string; amountUsd: number } | null;
+  /** Pay someone else's handle, or cash a claimed payment out to the user's own handle. */
+  peerPay?: PeerPayRequest | null;
 }
 
 export function BalanceModal({
@@ -584,6 +584,7 @@ export function BalanceModal({
   const peerStatusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const peerZkp2pSigningRef = useRef(false);
   const peerPayKickRef = useRef(false);
+  const peerReceiveAutoRef = useRef(false);
   const [peerCancelSubStep, setPeerCancelSubStep] = useState<"getting-address" | "signing-withdraw" | "signing-transfer" | "bridging-back" | null>(null);
   const [peerBridgeBackDepositAddress, setPeerBridgeBackDepositAddress] = useState<string | null>(null);
   const [peerBridgeBackStatus, setPeerBridgeBackStatus] = useState<string | null>(null);
@@ -2250,8 +2251,14 @@ export function BalanceModal({
   }, [open, spendableBalance, peerPay, topUpAmountUsd]);
 
   const withdrawAmountNum = parseFloat(withdrawAmount) || 0;
-  const peerPayGrossUsd = peerPay ? cashoutGrossUsdc(peerPay.amountUsd) : 0;
-  const peerPayFeeUsd = peerPay ? Math.max(0, peerPayGrossUsd - peerPay.amountUsd) : 0;
+  const peerReceive = peerPay?.intent === "receive";
+  const peerPayGrossUsd = peerPay ? (peerReceive ? peerPay.amountUsd : cashoutGrossUsdc(peerPay.amountUsd)) : 0;
+  const peerPayFeeUsd = peerPay
+    ? (peerReceive
+      ? Math.max(0, peerPay.amountUsd - cashoutPayoutUsdc(peerPay.amountUsd))
+      : Math.max(0, peerPayGrossUsd - peerPay.amountUsd))
+    : 0;
+  const peerReceiveUsd = peerPay ? (peerReceive ? cashoutPayoutUsdc(peerPay.amountUsd) : peerPay.amountUsd) : 0;
 
   // Private withdrawals debit the sender for amount + fees ON TOP (MagicBlock exactOut) — see
   // PRIVATE_WITHDRAW_FEE_HEADROOM_USDC. This is the real max the form should ever offer/allow.
@@ -2280,7 +2287,7 @@ export function BalanceModal({
     const t = setTimeout(async () => {
       try {
         const { getPeerEstimate: fetchEstimate, usdc } = await import("@/services/peerCash");
-        const estimateUsdc = peerPay ? cashoutGrossUsdc(withdrawAmountNum) : withdrawAmountNum;
+        const estimateUsdc = peerPay?.intent === "receive" ? withdrawAmountNum : peerPay ? cashoutGrossUsdc(withdrawAmountNum) : withdrawAmountNum;
         const est = await fetchEstimate(usdc(estimateUsdc), peerCurrency, platform.processorName, true);
         if (cancelled) return;
         setPeerEstimate({ receiveAmount: est.receiveAmount, eta: est.eta ?? null });
@@ -2568,8 +2575,12 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "Minimum $1", description: "Minimum offramp is $1.00 USDC." });
       return;
     }
-    const depositUsdc = peerPay ? cashoutGrossUsdc(withdrawAmountNum) : withdrawAmountNum;
+    const depositUsdc = peerPay?.intent === "receive" ? withdrawAmountNum : peerPay ? cashoutGrossUsdc(withdrawAmountNum) : withdrawAmountNum;
     if (depositUsdc > spendableBalance) {
+      if (peerPay?.intent === "receive") {
+        peerReceiveAutoRef.current = false;
+        return;
+      }
       if (peerPay && spendableBalance <= 0) {
         peerPayKickRef.current = false;
         return;
@@ -2719,14 +2730,38 @@ export function BalanceModal({
     }
   };
 
-  // Once the pay is actually sending, leave this modal and open the same kind of
-  // receipt page a normal payment uses. The share code is the receipt id.
+  // A claimed cash-out waits here until the burner sweep lands in the Loofta wallet, then
+  // starts the same Peer withdrawal. Paying someone still grosses the amount up so they
+  // receive the full figure; receiving spends only the claimed USDC.
+  const handlePeerSubmitRef = useRef(handlePeerSubmit);
+  handlePeerSubmitRef.current = handlePeerSubmit;
+  useEffect(() => {
+    if (!open) peerReceiveAutoRef.current = false;
+  }, [open]);
+  useEffect(() => {
+    if (!open || peerPay?.intent !== "receive" || peerStep !== "form") return;
+    const amountReady = Math.abs(withdrawAmountNum - peerPay.amountUsd) < 0.001
+      && peerIdentifier.trim() === peerPay.identifier.trim()
+      && peerPlatformId === peerPay.platformId;
+    if (!amountReady) return;
+    const fundsLanded = !loadingBalance && spendableBalance + 1e-6 >= peerPay.amountUsd;
+    if (!fundsLanded) {
+      const id = window.setInterval(() => onRefresh(), 2500);
+      return () => window.clearInterval(id);
+    }
+    if (!peerPay.autoStart || peerSubmitting || peerReceiveAutoRef.current) return;
+    peerReceiveAutoRef.current = true;
+    void handlePeerSubmitRef.current();
+  }, [open, peerPay, peerStep, peerPlatformId, peerIdentifier, withdrawAmountNum, loadingBalance, spendableBalance, peerSubmitting, onRefresh]);
+
+  // Once a payment to someone else is actually sending, leave this modal and open the same
+  // kind of receipt page a normal payment uses. A claimed cash-out stays in this modal.
   const peerReceiptOpenedRef = useRef(false);
   useEffect(() => {
     if (!open) peerReceiptOpenedRef.current = false;
   }, [open]);
   useEffect(() => {
-    if (!open || !peerPay || !peerShareId || peerReceiptOpenedRef.current) return;
+    if (!open || !peerPay || peerPay.intent === "receive" || !peerShareId || peerReceiptOpenedRef.current) return;
     if (peerStep !== "deposited" && peerStep !== "complete") return;
     peerReceiptOpenedRef.current = true;
     onClose();
@@ -3344,10 +3379,14 @@ export function BalanceModal({
                     className={cn("text-[28px] font-bold tracking-[-0.04em] leading-none", dark ? "text-white" : "text-gray-900")}
                     style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif" }}
                   >
-                    {`Pay to ${getPlatform(peerPay.platformId)?.name ?? "app"}`}
+                    {peerReceive
+                      ? `To ${getPlatform(peerPay.platformId)?.name ?? "app"}`
+                      : `Pay to ${getPlatform(peerPay.platformId)?.name ?? "app"}`}
                   </DialogTitle>
                   <DialogDescription className={cn("text-base font-medium mt-1 truncate", dark ? "text-[#8A8893]" : "text-gray-500")}>
-                    {`They receive $${peerPay.amountUsd.toFixed(2)}`}
+                    {peerReceive
+                      ? `You receive $${peerReceiveUsd.toFixed(2)}`
+                      : `They receive $${peerPay.amountUsd.toFixed(2)}`}
                   </DialogDescription>
                 </div>
               </div>
@@ -5380,7 +5419,48 @@ export function BalanceModal({
           )}
 
           {/* Paying someone's app handle — no cash-out form, just status until the bridge starts. */}
-          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerPay && peerStep === "form" && (
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerPay && peerStep === "form" && peerReceive && (
+            <div className="py-6 flex flex-col items-center gap-4 text-center">
+              {loadingBalance || spendableBalance + 1e-6 < peerPay.amountUsd || peerPay.autoStart ? (
+                <>
+                  <span className="relative block h-7 w-7" aria-hidden>
+                    <span className={cn("absolute inset-0 rounded-full border-[1.5px]", dark ? "border-white/15" : "border-black/10")} />
+                    <span className={cn("absolute inset-0 rounded-full border-[1.5px] border-transparent animate-spin", dark ? "border-t-white" : "border-t-gray-900")} />
+                  </span>
+                  <p className={cn("text-sm", dark ? "text-[#8A8893]" : "text-gray-500")}>
+                    {`Sending to ${getPlatform(peerPay.platformId)?.name ?? "your account"}`}
+                  </p>
+                </>
+              ) : (
+                <div className="w-full space-y-3 text-left">
+                  <div className={cn("rounded-2xl border px-4 py-3.5 space-y-2", dark ? "border-white/10 bg-[#0E0E12]" : "border-gray-200 bg-white")}>
+                    <div className="flex items-center justify-between">
+                      <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>This payment</span>
+                      <span className={cn("text-base font-semibold", dark ? "text-white" : "text-gray-900")}>${peerPay.amountUsd.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>Fill incentive</span>
+                      <span className={cn("text-base", dark ? "text-slate-300" : "text-gray-700")}>${peerPayFeeUsd.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-white/10 pt-2">
+                      <span className={cn("text-base", dark ? "text-[#B5B2BC]" : "text-gray-500")}>You receive</span>
+                      <span className={cn("text-xl font-semibold", dark ? "text-white" : "text-gray-900")}>${peerReceiveUsd.toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { void handlePeerSubmit(); }}
+                    disabled={peerSubmitting}
+                    className="w-full h-12 rounded-xl font-semibold text-base bg-gradient-to-r from-orange-500 to-red-500 text-white disabled:opacity-60"
+                  >
+                    {peerSubmitting ? "Preparing…" : `Cash out to ${getPlatform(peerPay.platformId)?.name ?? "app"}`}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === "withdraw" && withdrawMethod === "peer-offramp" && peerPay && peerStep === "form" && !peerReceive && (
             <div className="py-6 flex flex-col items-center gap-4 text-center">
               {!loadingBalance && spendableBalance + 1e-6 < peerPayGrossUsd ? (
                 <div className="w-full space-y-3 text-left">
@@ -5686,7 +5766,7 @@ export function BalanceModal({
                   <div className="flex items-center gap-2">
                     <Loader2 className="h-5 w-5 animate-spin text-emerald-500 shrink-0" />
                     <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
-                      {peerPay ? `Sending to ${peerIdentifier}` : "Cash out request sent"}
+                      {peerReceive ? `Sending to your ${platform?.name ?? "account"}` : peerPay ? `Sending to ${peerIdentifier}` : "Cash out request sent"}
                     </p>
                   </div>
                   <p className={`text-base ${dark ? "text-slate-400" : "text-gray-600"}`}>
@@ -5695,7 +5775,7 @@ export function BalanceModal({
                       : <>A peer will send <strong>{peerCurrency}</strong> to your {platform?.name} account (<span className="font-medium">{peerIdentifier}</span>).{peerEstimate?.eta ? ` Typical fill time: ${peerEstimate.eta.label}.` : " This usually takes a few minutes, but may take longer depending on availability."}</>}
                   </p>
                 </div>
-                {peerPay && peerShareId && (() => {
+                {peerPay && peerPay.intent !== "receive" && peerShareId && (() => {
                   const shareUrl = typeof window !== "undefined"
                     ? `${window.location.origin}/share/${peerShareId}`
                     : `https://pay.loofta.xyz/share/${peerShareId}`;
