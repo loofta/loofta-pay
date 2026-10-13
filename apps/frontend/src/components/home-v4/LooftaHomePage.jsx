@@ -291,7 +291,7 @@ class HomePage extends React.Component {
           <a href="#send" style={{ color: "#C9C6CF" }}>Send</a>
           <a href="#business" style={{ color: "#C9C6CF" }}>Business</a>
         </div>
-        <a href="/app" style={{ padding: "13px 26px", borderRadius: "999px", background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: "600", fontSize: "15px", boxShadow: "0 8px 30px rgba(255,70,10,0.4)" }}>Open app</a>
+        <a href="https://pay.loofta.xyz" style={{ padding: "13px 26px", borderRadius: "999px", background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: "600", fontSize: "15px", boxShadow: "0 8px 30px rgba(255,70,10,0.4)" }}>Open app</a>
       </nav>
       <section id="send" data-screen-label="Hero" style={{ position: "relative", maxWidth: "1520px", margin: "0 auto", padding: "72px clamp(24px,5vw,96px) 110px", display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,420px),1fr))", gap: "72px 64px", alignItems: "start" }}>
         <div className="lh-hero-copy" style={{ position: "relative", display: "flex", flexDirection: "column", gap: "26px", minWidth: "0" }}>
