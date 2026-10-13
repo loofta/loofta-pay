@@ -14,7 +14,7 @@ export default function LooftaHomePage() {
 }
 
 class HomePage extends React.Component {
-  state = { typed: '', emailOn: false, caret: true, drawing: false, hi: -1, winner: -1, shield: true, now: null, tilesOut: false };
+  state = { typed: '', emailOn: false, caret: true, drawing: false, hi: -1, winner: -1, shield: true, now: null, tilesOut: false, menuOpen: false };
   entr = ['@satoshi', '@mira.eth', '@kofi', '@ana_b', '@dev0x', '@lena', '@tunde', '@yuki', '@marco', '@zara', '@obi', '@ines'];
 
   heroRef = el => { if (el === this._heroEl) return; this.disposeScene(); this._heroEl = el; if (el) this.initScene(el); };
@@ -280,18 +280,52 @@ class HomePage extends React.Component {
     const v = this.renderVals();
     return (
       <div className={`loofta-home ${sora.variable} ${manrope.variable} ${jetbrainsMono.variable}`} style={{ position: "relative", minHeight: "100vh", overflowX: "hidden" }}>
-      <nav style={{ position: "sticky", top: "0", zIndex: "60", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "20px", padding: "16px clamp(20px,4vw,64px)", background: "rgba(7,7,10,0.8)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}>
-        <a href="https://www.loofta.xyz/" style={{ display: "flex", alignItems: "center" }}>
-          <img src="/loofta_white.svg" alt="loofta" style={{ height: "30px", display: "block" }} />
-        </a>
-        <div style={{ display: "flex", alignItems: "center", gap: "32px", fontSize: "16px", fontWeight: "500", flexWrap: "wrap", justifyContent: "center" }}>
-          <a href="#giveaways" style={{ color: "#C9C6CF" }}>Giveaways</a>
-          <a href="#cashout" style={{ color: "#C9C6CF" }}>Cash out</a>
-          <a href="#how" style={{ color: "#C9C6CF" }}>How it works</a>
-          <a href="#send" style={{ color: "#C9C6CF" }}>Send</a>
-          <a href="#business" style={{ color: "#C9C6CF" }}>Business</a>
+      <nav className="lh-nav" style={{ position: "sticky", top: "0", zIndex: "60", background: "rgba(7,7,10,0.8)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}>
+        <div className="lh-nav-bar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "20px", padding: "16px clamp(20px,4vw,64px)" }}>
+          <a href="https://www.loofta.xyz/" style={{ display: "flex", alignItems: "center" }}>
+            <img src="/loofta_white.svg" alt="loofta" style={{ height: "30px", display: "block" }} />
+          </a>
+          <div className="lh-nav-links" style={{ display: "flex", alignItems: "center", gap: "32px", fontSize: "16px", fontWeight: "500", justifyContent: "center" }}>
+            <a href="#giveaways" style={{ color: "#C9C6CF" }}>Giveaways</a>
+            <a href="#cashout" style={{ color: "#C9C6CF" }}>Cash out</a>
+            <a href="#how" style={{ color: "#C9C6CF" }}>How it works</a>
+            <a href="#send" style={{ color: "#C9C6CF" }}>Send</a>
+            <a href="#business" style={{ color: "#C9C6CF" }}>Business</a>
+          </div>
+          <div className="lh-nav-actions" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <a className="lh-nav-cta" href="https://pay.loofta.xyz" style={{ padding: "13px 26px", borderRadius: "999px", background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: "600", fontSize: "15px", boxShadow: "0 8px 30px rgba(255,70,10,0.4)" }}>Open app</a>
+            <button
+              type="button"
+              className="lh-nav-burger"
+              aria-label={this.state.menuOpen ? "Close menu" : "Open menu"}
+              aria-expanded={this.state.menuOpen}
+              aria-controls="lh-mobile-menu"
+              onClick={() => this.setState(s => ({ menuOpen: !s.menuOpen }))}
+            >
+              {this.state.menuOpen ? (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              ) : (
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
-        <a href="https://pay.loofta.xyz" style={{ padding: "13px 26px", borderRadius: "999px", background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: "600", fontSize: "15px", boxShadow: "0 8px 30px rgba(255,70,10,0.4)" }}>Open app</a>
+        {this.state.menuOpen ? (
+          <div className="lh-mobile-menu" id="lh-mobile-menu" role="dialog" aria-modal="true" aria-label="Site menu">
+            <a href="#giveaways" onClick={() => this.setState({ menuOpen: false })}>Giveaways</a>
+            <a href="#cashout" onClick={() => this.setState({ menuOpen: false })}>Cash out</a>
+            <a href="#how" onClick={() => this.setState({ menuOpen: false })}>How it works</a>
+            <a href="#send" onClick={() => this.setState({ menuOpen: false })}>Send</a>
+            <a href="#business" onClick={() => this.setState({ menuOpen: false })}>Business</a>
+            <a className="lh-mobile-cta" href="https://pay.loofta.xyz" onClick={() => this.setState({ menuOpen: false })}>Open app</a>
+          </div>
+        ) : null}
       </nav>
       <section id="send" data-screen-label="Hero" style={{ position: "relative", maxWidth: "1520px", margin: "0 auto", padding: "72px clamp(24px,5vw,96px) 110px", display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,420px),1fr))", gap: "72px 64px", alignItems: "start" }}>
         <div className="lh-hero-copy" style={{ position: "relative", display: "flex", flexDirection: "column", gap: "26px", minWidth: "0" }}>

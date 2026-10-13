@@ -94,3 +94,68 @@
   background: #ff4a12;
   color: #fff;
 }
+
+/* Landing nav: desktop links, mobile burger */
+.loofta-home .lh-nav-burger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #c9c6cf;
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+.loofta-home .lh-nav-burger:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+.loofta-home .lh-mobile-menu {
+  display: none;
+}
+@media (max-width: 767px) {
+  .loofta-home .lh-nav-links {
+    display: none !important;
+  }
+  .loofta-home .lh-nav-burger {
+    display: flex;
+  }
+  .loofta-home .lh-nav-cta {
+    padding: 10px 16px !important;
+    font-size: 14px !important;
+  }
+  .loofta-home .lh-mobile-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px clamp(20px, 4vw, 64px) 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .loofta-home .lh-mobile-menu a {
+    display: block;
+    padding: 14px 12px;
+    border-radius: 14px;
+    font-size: 16px;
+    font-weight: 500;
+    color: #c9c6cf;
+  }
+  .loofta-home .lh-mobile-menu a:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .loofta-home .lh-mobile-menu .lh-mobile-cta {
+    margin-top: 8px;
+    text-align: center;
+    color: #fff !important;
+    background: linear-gradient(90deg, #ff2d0a, #f5b70c);
+    box-shadow: 0 8px 30px rgba(255, 70, 10, 0.35);
+  }
+  .loofta-home .lh-mobile-menu .lh-mobile-cta:hover {
+    color: #fff;
+    background: linear-gradient(90deg, #ff2d0a, #f5b70c);
+    opacity: 0.92;
+  }
+}
