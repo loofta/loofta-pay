@@ -32,6 +32,7 @@ import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 import { usePrivy, useUser, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction, useFiatOnramp } from "@privy-io/react-auth";
 import { useWallets, useSignTransaction, useSignAndSendTransaction, useFundWallet } from "@privy-io/react-auth/solana";
 import { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
+import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import bs58 from "bs58";
 import { useReducedMotion } from "framer-motion";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
@@ -1217,7 +1218,7 @@ export function BalanceModal({
     const match = solanaAddress ? list.find((w) => w.address === solanaAddress) : undefined;
     // Linked-account resolution can point at a wallet this signer list does not contain.
     // The Privy embedded wallet is the one that can actually sign the payment.
-    return match ?? list.find((w) => w.walletClientType === "privy") ?? list[0];
+    return match ?? list.find((w) => (w as { walletClientType?: string }).walletClientType === "privy") ?? list[0];
   }, [solanaAddress, solanaWallets]);
 
   // Withdraw-flow lottery ticket add-on: same /api/lottery/buy + buy-confirm public-route quick-pick

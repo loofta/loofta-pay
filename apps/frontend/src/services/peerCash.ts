@@ -143,7 +143,7 @@ async function applyFillerIncentive(opts: {
   await client.setOracleRateConfig({
     depositId: opts.depositId,
     paymentMethodHash,
-    currencyHash,
+    currencyHash: currencyHash as `0x${string}`,
     config: {
       adapter: oracle.adapter,
       adapterConfig: oracle.adapterConfig,

@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
   const fetched = await fetchLogo(logoCandidates(logo));
   if (!fetched) return new NextResponse(null, { status: 404 });
 
-  return new NextResponse(fetched.bytes, {
+  return new NextResponse(Buffer.from(fetched.bytes), {
     headers: {
       "Content-Type": fetched.type,
       "Cache-Control": "public, max-age=86400",

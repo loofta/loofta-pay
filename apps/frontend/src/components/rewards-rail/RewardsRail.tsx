@@ -14,6 +14,28 @@ import { useAuthStore } from "@/store/auth";
 
 type SpecNode = { t: string; a: Record<string, string>; c: Array<SpecNode | string> };
 type Scope = Record<string, unknown>;
+type SpecGw = { tokQ?: string; prize?: string; tickets?: string; amount?: string; winners?: string | number; tasks?: unknown[] };
+type SpecState = {
+  gw?: SpecGw | null;
+  mode?: string;
+  reward?: string;
+  raidTokQ?: string;
+  scope?: string;
+  xConnected?: boolean;
+  xHandle?: string;
+  tokHits?: unknown[] | null;
+  tokStatus?: string;
+  xPostsFor?: string;
+  [key: string]: unknown;
+};
+type SpecInstance = {
+  _privyHandle: string;
+  state: SpecState;
+  setState: (update: unknown) => void;
+  componentDidMount: () => void;
+  componentWillUnmount: () => void;
+  renderVals: () => Scope;
+};
 
 const IMAGES: Record<string, string> = {
   "1ac1c4b2-ce57-406f-a26e-001273c631a5": "/images/loofta-rewards-logo.svg",
@@ -222,7 +244,7 @@ function renderNode(node: SpecNode | string, scope: Scope, key: string): ReactNo
   return createElement(node.t, { ...domProps, style }, childArg);
 }
 
-const SPEC = template as SpecNode[];
+const SPEC = template as unknown as SpecNode[];
 
 function linkedXHandle(user: { twitter?: { username?: string | null }; linkedAccounts?: Array<{ type?: string; username?: string | null }> } | null): string {
   const direct = user?.twitter?.username;
@@ -247,8 +269,8 @@ export function RewardsRail() {
   const networkMode = useAuthStore((s) => s.networkMode);
   const { balanceUSD } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated });
   const solanaAddress = deriveSolanaEmbeddedAddress(user ?? null);
-  const inst = useRef<SpecComponent | null>(null);
-  if (!inst.current) inst.current = new SpecComponent();
+  const inst = useRef<SpecInstance | null>(null);
+  if (!inst.current) inst.current = new SpecComponent() as unknown as SpecInstance;
   inst.current._privyHandle = linkedXHandle(user);
   const [, bump] = useState(0);
   const tokQ = String(inst.current.state.gw?.tokQ || "");

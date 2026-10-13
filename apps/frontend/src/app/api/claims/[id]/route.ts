@@ -139,7 +139,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   if (!paymentRow) {
     return NextResponse.json({ error: "Payment not found" }, { status: 404 });
   }
-  const rawPayment: Record<string, unknown> = normalisePayment(paymentRow as Record<string, unknown>);
+  const rawPayment: Record<string, unknown> = normalisePayment(paymentRow as unknown as Record<string, unknown>);
 
   const status = String((rawPayment?.status as string) || "").toUpperCase();
   if (status === "DELETED") {
@@ -181,7 +181,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     }
 
     // Access control: only the creator or the intended recipient may view a claim.
-    const recipientUserId = String((paymentRow as Record<string, unknown> | null)?.recipient_user_id ?? "");
+    const recipientUserId = String((paymentRow as unknown as Record<string, unknown> | null)?.recipient_user_id ?? "");
     const isCreator = !!createdBy && createdBy === requestingUserId;
     const isKnownRecipient = !!recipientUserId && recipientUserId === requestingUserId;
     if (!isCreator && !isKnownRecipient) {

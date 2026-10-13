@@ -120,7 +120,7 @@ function Inner({
       const paidClaim = claim;
       claimRef.current = null;
       const settled = await pollUntilSettled(paidClaim.id, "", signature, isPrivate, () => false, {
-        senderWallet,
+        senderWallet: senderAddress,
         direct: !!paidClaim.direct,
       });
       if (!settled) {
