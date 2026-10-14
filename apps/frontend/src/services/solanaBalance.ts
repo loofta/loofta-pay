@@ -109,7 +109,11 @@ export async function getSolanaUSDCBalance(walletAddress: string, networkMode?: 
       return 0;
     }
 
-    const account = data.result.value[0];
+    // Transfers debit the owner's associated token account, so report that account's balance.
+    // value[0] can be a different USDC token account, which would show funds a send can't spend.
+    const ataAddress = getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(walletAddress)).toBase58();
+    const account = data.result.value.find((a: { pubkey: string }) => a.pubkey === ataAddress);
+    if (!account) return 0;
     const balance = account.account.data.parsed.info.tokenAmount.uiAmount;
 
     if (process.env.NODE_ENV === "development") {
