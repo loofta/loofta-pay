@@ -6,7 +6,8 @@ import { Connection, PublicKey, Transaction, VersionedTransaction } from "@solan
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { useCreateWallet, usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import { useSignTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
-import { ChevronDown, ChevronLeft, Copy, Loader2, Shield, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, Copy, ExternalLink, Loader2, Shield, X } from "lucide-react";
+import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { useTokensQuery } from "@/hooks/useTokensQuery";
@@ -1514,8 +1515,21 @@ function SolanaWithdraw({
   if (sent) {
     return (
       <div className="mt-4 flex flex-col gap-3">
-        <p className="text-base font-bold text-white">{privately ? "On its way, privately" : "Sent"}</p>
-        <p className="break-all text-sm text-[#8A8893]">{sent}</p>
+        <p className="text-base font-bold text-white">{privately ? "On its way, privately" : "Your USDC was sent"}</p>
+        <p className="text-sm text-[#8A8893]">
+          {privately
+            ? "Your private transfer is being relayed and should arrive shortly."
+            : "The transfer is confirmed on Solana. It should show up in the destination wallet right away."}
+        </p>
+        <a
+          href={getExplorerTxUrl("solana", sent)}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-2 text-base font-medium text-white underline underline-offset-4"
+        >
+          <ExternalLink className="h-4 w-4 shrink-0" />
+          View transaction
+        </a>
       </div>
     );
   }
