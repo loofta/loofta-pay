@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -15,7 +16,7 @@ import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 
 const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  clientApiBase();
 
 export interface SolanaPaymentConfig {
   amount: number;

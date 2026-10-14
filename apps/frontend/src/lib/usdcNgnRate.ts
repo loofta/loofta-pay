@@ -1,4 +1,4 @@
-import { BACKEND_URL } from '@/services/api/client';
+import { clientApiBase } from '@/services/api/client';
 
 const FETCH_TIMEOUT_MS = 8_000;
 
@@ -44,7 +44,7 @@ async function fetchBankRateNgn(): Promise<number | null> {
 
 async function fetchLooftaRateNgn(): Promise<number | null> {
   try {
-    const res = await fetch(`${BACKEND_URL}/paj-cash/public-rate`, {
+    const res = await fetch(`${clientApiBase()}/paj-cash/public-rate`, {
       cache: 'no-store',
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });

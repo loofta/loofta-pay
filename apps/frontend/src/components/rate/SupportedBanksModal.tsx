@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { BACKEND_URL } from "@/services/api/client";
+import { clientApiBase } from "@/services/api/client";
 
 interface PajBank {
   id: string;
@@ -24,7 +24,7 @@ export function SupportedBanksModal({ open, onOpenChange }: { open: boolean; onO
   useEffect(() => {
     if (!open || cachedBanks) return;
     let cancelled = false;
-    fetch(`${BACKEND_URL}/paj-cash/public-banks`)
+    fetch(`${clientApiBase()}/paj-cash/public-banks`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
       .then((data: PajBank[]) => {
         if (cancelled) return;

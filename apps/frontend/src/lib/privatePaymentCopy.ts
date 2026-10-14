@@ -1,36 +1,45 @@
 import { formatDelayDuration } from "@/lib/privacyDelay";
 
 /**
- * Keep in sync with MagicBlock Payments API: devnet private `maxDelayMs` ≤ 600_000 (10 minutes).
- * Backend: `MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS` in `magicblock-private-transfer.ts`. Used only
- * as the fallback below when the actual delay a sender chose isn't known yet — never state this
- * number when a real delayMs is on hand, since the sender's own slider can go well past it (up to
- * DELAY_UI_MAX_MS, see @/lib/privacyDelay) and this app has no fixed cap of its own to quote.
+ * Fallback phrase only when the sender's delay has not loaded yet. A known delay — including
+ * the 10-minute default, a longer spread up to 31 days, or no delay — is quoted as chosen.
  */
 export const PRIVATE_PAYMENT_MAX_WAIT_MINUTES = 10;
+
+/** The delay the sender actually picked. Null only when that choice is not available yet. */
+function chosenDelayPhrase(delayMs?: number | null): string | null {
+  if (typeof delayMs !== "number" || !Number.isFinite(delayMs)) return null;
+  if (delayMs <= 0) return "right away";
+  return formatDelayDuration(delayMs);
+}
 
 /** "All payments are private..." banner, e.g. shown when a link forces private mode and the
  *  sender's own split/delay choice can't be toggled off. Reflects the actual delay the sender
  *  picked (via formatDelayDuration) whenever it's known; falls back to the generic ~10-minute
  *  estimate only when no delayMs is available at all (e.g. delay hasn't been chosen/loaded yet). */
+function fundsEta(delayMs?: number | null): string {
+  return chosenDelayPhrase(delayMs) ?? `up to ${PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes`;
+}
+
 export function privatePaymentAllPrivateLine(delayMs?: number | null): string {
-  const eta = typeof delayMs === "number" && delayMs > 0
-    ? formatDelayDuration(delayMs)
-    : `up to ${PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes`;
+  const eta = fundsEta(delayMs);
+  if (eta === "right away") {
+    return "All payments are private. Funds land in the recipient's wallet right away and may arrive in parts.";
+  }
   return `All payments are private. Funds can take ${eta} to land entirely in recipient's wallet and may arrive in parts.`;
 }
 
 export function privatePaymentFundsAppearCopy(delayMs?: number | null): string {
-  const eta = typeof delayMs === "number" && delayMs > 0
-    ? formatDelayDuration(delayMs)
-    : `up to ${PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes`;
+  const eta = fundsEta(delayMs);
+  if (eta === "right away") {
+    return "Funds land in the recipient's wallet right away and may arrive in parts.";
+  }
   return `Funds can take ${eta} to land entirely in recipient's wallet and may arrive in parts.`;
 }
 
 export function privatePaymentWaitingAfterSenderCopy(delayMs?: number | null): string {
-  const eta = typeof delayMs === "number" && delayMs > 0
-    ? formatDelayDuration(delayMs)
-    : `up to ${PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes`;
+  const eta = fundsEta(delayMs);
+  if (eta === "right away") return "Waiting for the payment to land — it should arrive right away.";
   return `Waiting for the payment to land — can take ${eta}.`;
 }
 
@@ -66,8 +75,7 @@ export function privateFundsLandedAt(
 
 export function waitingForFundsCopy(isPrivate: boolean | null | undefined, delayMs?: number | null): string {
   if (!isPrivate) return "Waiting for the payment to land.";
-  const eta = typeof delayMs === "number" && delayMs > 0
-    ? formatDelayDuration(delayMs)
-    : `up to ${PRIVATE_PAYMENT_MAX_WAIT_MINUTES} minutes`;
+  const eta = fundsEta(delayMs);
+  if (eta === "right away") return "This is a private payment. Waiting for the payment to land — it should arrive right away.";
   return `This is a private payment. Waiting for the payment to land, this can take ${eta}.`;
 }

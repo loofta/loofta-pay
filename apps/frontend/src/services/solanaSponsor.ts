@@ -1,10 +1,11 @@
+import { clientApiBase } from "@/services/api/client";
 /**
  * Loofta backend Solana fee payer (SOLANA_FEE_PAYER_PRIVATE_KEY) — used when Privy
  * dashboard gas sponsorship is not enabled for devnet/custom RPC.
  */
 
 const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  clientApiBase();
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   if (typeof Buffer !== "undefined") {

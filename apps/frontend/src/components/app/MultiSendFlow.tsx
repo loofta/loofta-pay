@@ -40,6 +40,7 @@ import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/Social
 import { TELEGRAM_SEND_ENABLED } from "@/lib/socialPlatforms";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
+import { DEFAULT_SPREAD_MS, randomPrivacySplit } from "@/lib/privacyDelay";
 import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 import { useSolPrice } from "@/hooks/useSolPrice";
 import type { MultiSendRecipientType } from "@/store/multiSend";
@@ -215,8 +216,8 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   // Private costs a MagicBlock fee per recipient; normal is a free plain on-chain transfer.
   const [sendPrivately, setSendPrivately] = useState(false);
   // Same split/delay the single-send form offers. Applied to every recipient's private payout.
-  const [split, setSplit] = useState(1);
-  const [delayMs, setDelayMs] = useState(0);
+  const [split, setSplit] = useState(randomPrivacySplit);
+  const [delayMs, setDelayMs] = useState(DEFAULT_SPREAD_MS);
   const [privacyInfoOpen, setPrivacyInfoOpen] = useState(false);
   // Same "entering incognito mode" confetti moment as the single-send claim page — non-null key
   // mounts one <PrivacyConfettiBurst>; it clears itself via onDone.

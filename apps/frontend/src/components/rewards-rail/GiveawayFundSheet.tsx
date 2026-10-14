@@ -218,6 +218,7 @@ export function GiveawayFundSheet({
         launch={deposit}
         onClose={() => setDeposit(null)}
         balanceUsd={balanceUsd.toFixed(2)}
+        balanceExact={balanceUsd}
         solanaAddress={solanaAddress}
         devnetMode={devnetMode}
       />

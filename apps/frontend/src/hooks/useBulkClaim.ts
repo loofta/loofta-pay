@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -33,7 +34,7 @@ export function useBulkClaim() {
 
   const claimOne = useCallback(
     async (payment: UnclaimedPayment): Promise<boolean> => {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       const token = await getAccessToken().catch(() => null);
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;

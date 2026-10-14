@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import Image from "next/image";
 import { useQuery } from "@tanstack/react-query";
@@ -7,8 +8,6 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useWallets } from "@privy-io/react-auth/solana";
 import { useState, useEffect, useMemo } from "react";
 import { deriveSolanaEmbeddedAddress } from "@/lib/privySolanaEmbeddedAddress";
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
 
 const BLINK_START_DATE = new Date("2026-07-02T12:00:00.000Z");
 // Aug 15, 5pm CEST (Central Europe is on daylight time in August, UTC+2) = 15:00 UTC.
@@ -38,9 +37,8 @@ const TASK_META: Record<BlinkTaskKey, { icon: string; demoLink?: string }> = {
 };
 
 async function fetchBlinkCampaign(token: string | null, solanaAddress: string | null): Promise<BlinkCampaignData> {
-  const url = new URL(`${BACKEND_URL}/rewards/blink/me`);
-  if (solanaAddress) url.searchParams.set("address", solanaAddress);
-  const res = await fetch(url.toString(), {
+  const q = solanaAddress ? `?address=${encodeURIComponent(solanaAddress)}` : "";
+  const res = await fetch(`${clientApiBase()}/rewards/blink/me${q}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error("Failed to load Blink campaign");

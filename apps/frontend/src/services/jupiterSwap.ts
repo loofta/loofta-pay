@@ -1,3 +1,4 @@
+import { clientApiBase } from "@/services/api/client";
 /**
  * USDC -> native SOL withdrawal via Jupiter's v2 order/execute API. Stateless on the backend —
  * no DB row (see project memory: sol withdrawal via jupiter). The user's own embedded wallet
@@ -6,7 +7,7 @@
  * confirms the signed transaction, so there's no separate client-side RPC send/confirm step.
  */
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = clientApiBase();
 
 async function parseErrorDetail(r: Response, fallback: string): Promise<string> {
   const errText = await r.text().catch(() => "");

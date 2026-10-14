@@ -28,6 +28,7 @@ import { GuestSendPayButton } from "@/components/app/GuestSendPayButton";
 import { UNREGISTERED_ACCOUNT_FEE_USD, unregisteredClaimFeeUsd } from "@/lib/unregisteredAccountFee";
 import { isEmailRecipient, lookupPayTarget, payTargetQueryKey, resolvePayTargetQuery, type PayTarget } from "@/lib/lookupPayTarget";
 import { totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
+import { DEFAULT_SPREAD_MS, randomPrivacySplit } from "@/lib/privacyDelay";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, AtSign, Check, ChevronDown, Copy, LinkIcon, Lock, Mail, PlusIcon, Wallet } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -283,8 +284,8 @@ export default function Home() {
   /** Same split/delay timing-obfuscation sliders as /fomo — chosen here, carried to /c/[id] via
    *  ?split=&delayMin= so the pay-time sliders there start from this choice instead of resetting
    *  to 1/0 (see the redirect below and the query-param read in c/[id]/page.tsx). */
-  const [split, setSplit] = useState(1);
-  const [delayMs, setDelayMs] = useState(0);
+  const [split, setSplit] = useState(randomPrivacySplit);
+  const [delayMs, setDelayMs] = useState(DEFAULT_SPREAD_MS);
   const [privacyInfoOpen, setPrivacyInfoOpen] = useState(false);
   const { showMultiSend, setShowMultiSend } = useMultiSendStore();
   const [linkCopied, setLinkCopied] = useState(false);

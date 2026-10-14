@@ -43,6 +43,7 @@ import { DIRECT_CASH_PLATFORMS, type DirectCashPlatformId } from "@/lib/peerPlat
 import { cashoutGrossUsdc } from "@/services/peerCash";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
+import { DEFAULT_SPREAD_MS, randomPrivacySplit } from "@/lib/privacyDelay";
 import { useToast } from "@/components/ui/use-toast";
 import {
   Icon3DArrowUser,
@@ -290,8 +291,8 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
   const [amount, setAmount] = useState("50");
   const [sending, setSending] = useState(false);
   const [isPrivateMode, setIsPrivateMode] = useState(false);
-  const [split, setSplit] = useState(1);
-  const [delayMs, setDelayMs] = useState(0);
+  const [split, setSplit] = useState(randomPrivacySplit);
+  const [delayMs, setDelayMs] = useState(DEFAULT_SPREAD_MS);
   const [privacyInfoOpen, setPrivacyInfoOpen] = useState(false);
   const [draftHydrated, setDraftHydrated] = useState(false);
   const [payTarget, setPayTarget] = useState<PayTarget>({ registered: false, requirePrivatePayments: false });

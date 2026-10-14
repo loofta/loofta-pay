@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import Link from "next/link";
 import Image from "next/image";
@@ -6,7 +7,7 @@ import { useState, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { useQuery } from "@tanstack/react-query";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = clientApiBase();
 
 async function fetchOpenGiveawayCount(): Promise<number> {
   const res = await fetch(`${BACKEND_URL}/giveaways/public`);

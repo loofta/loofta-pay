@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import Link from "next/link";
 import Image from "next/image";
@@ -8,7 +9,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = clientApiBase();
 
 const GETPAID_START_DATE = new Date("2026-07-09T00:00:00.000Z");
 const GETPAID_END_DATE = new Date("2026-07-23T00:00:00.000Z");

@@ -24,6 +24,7 @@ import {
   AddressLookupTableAccount,
   TransactionInstruction,
 } from "@solana/web3.js";
+import { DELAY_UI_MAX_MS } from "@/lib/privacyDelay";
 import {
   getAssociatedTokenAddressSync,
   createTransferInstruction,
@@ -78,12 +79,8 @@ export interface MagicBlockPrivacyOptions {
    *  (POST /v1/spl/transfer): "Must be between 1 and 15 and cannot exceed `amount`." — a real,
    *  documented API limit, unlike maxDelayMs below. */
   split?: number;
-  /** Upper bound of the random delivery delay in ms. MagicBlock's transfer endpoint documents no
-   *  maximum at all — its field table just says "Defaults to '0' or minDelayMs." The 600_000
-   *  (10 min) figure floated around this codebase belongs to the SWAP endpoint
-   *  (POST /v1/swap/swap: "Must be ≤ 600000 (10 minutes)"), confirmed straight from
-   *  .claude/skills/magicblock/private-payments.md — not this one. See DELAY_UI_MAX_MS in
-   *  @/lib/privacyDelay for the deliberate UI ceiling this app chooses instead. */
+  /** Upper bound of the random delivery delay in ms. The private transfer API allows up to
+   *  31 days (DELAY_UI_MAX_MS). The 600_000 (10 min) figure belongs to the swap endpoint. */
   maxDelayMs?: number;
 }
 
@@ -96,10 +93,8 @@ async function buildMagicBlockPrivateTransfer(params: {
   memo?: string;
 } & MagicBlockPrivacyOptions): Promise<MagicBlockTransferResponse> {
   const split = Math.min(MAGICBLOCK_MAX_SPLIT, Math.max(1, Math.round(params.split ?? 1)));
-  // No min() clamp here — MagicBlock's transfer endpoint documents no maximum for maxDelayMs
-  // (unlike split, which is really capped at 15). Pass whatever the caller asks for; the UI-side
-  // ceiling (DELAY_UI_MAX_MS in @/lib/privacyDelay) is a deliberate app choice, not enforced here.
-  const maxDelayMs = Math.max(0, Math.round(params.maxDelayMs ?? 0));
+  // Private transfer API maximum is 31 days (DELAY_UI_MAX_MS). The 10-minute figure is the swap endpoint.
+  const maxDelayMs = Math.min(DELAY_UI_MAX_MS, Math.max(0, Math.round(params.maxDelayMs ?? 0)));
   const amount = Math.round(params.amountUSDC * 10 ** USDC_DECIMALS);
   if (amount <= 0) throw new Error("Amount must be greater than 0");
 

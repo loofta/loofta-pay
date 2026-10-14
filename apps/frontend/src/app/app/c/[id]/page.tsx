@@ -1,4 +1,5 @@
 'use client'
+import { clientApiBase } from "@/services/api/client";
 
 import React, { useEffect, useMemo, useRef, useState, type SVGProps } from "react";
 import Link from "next/link";
@@ -149,7 +150,7 @@ import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 import { usePerPrivateTransfer, type PerTransferProgress } from "@/hooks/usePerPrivateTransfer";
 import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
-import { formatDelayDuration } from "@/lib/privacyDelay";
+import { DEFAULT_SPREAD_MS, formatDelayDuration, randomPrivacySplit } from "@/lib/privacyDelay";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
 import { getSolanaCluster } from "@/lib/solanaCluster";
@@ -571,7 +572,7 @@ function ClaimPageSenderShareView({
     setEditSubmitting(true);
     setEditError(null);
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       const token = await getSenderAccessToken();
       const r = await fetch(`${backendUrl}/claims/${claimId}/recipient`, {
         method: "POST",
@@ -611,7 +612,7 @@ function ClaimPageSenderShareView({
       setCanReclaim(false);
       return;
     }
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+    const backendUrl = clientApiBase();
     getSenderAccessToken().then((token) => {
       fetch(`${backendUrl}/claims/${claimId}/reclaim-eligibility`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -635,7 +636,7 @@ function ClaimPageSenderShareView({
     }
     setReclaiming(true);
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       const senderToken = await getSenderAccessToken();
       const r = await fetch(`${backendUrl}/claims/${claimId}/reclaim`, {
         method: "POST",
@@ -955,7 +956,7 @@ async function prepareDeposit(input: {
   const isPrivateCrossChain = input.isPrivate && isCrossChain && (destChain === 'solana' || destChain === 'sol') && input.claim.to_symbol === 'USDC';
 
   if (isPrivateCrossChain) {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+    const backendUrl = clientApiBase();
 
     if (!input.fromToken.symbol) {
       throw new Error('Token symbol is required for private cross-chain payments');
@@ -1043,7 +1044,7 @@ async function updateClaimStatus(
     : {};
   try {
     // Try backend API first (more reliable)
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+    const backendUrl = clientApiBase();
     const r = await fetch(`${backendUrl}/claims/${claimId}/status`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeader },
@@ -1573,7 +1574,7 @@ export function ClaimPayView({
 
   const bustPrivyCacheOnce = async () => {
     const token = await getAccessToken();
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+    const backendUrl = clientApiBase();
     await fetch(`${backendUrl}/users/refresh-privy-cache`, {
       method: "POST",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1843,7 +1844,7 @@ export function ClaimPayView({
     queryKey: ["claim", id, "recipient-check", user?.id],
     queryFn: async () => {
       if (!user?.id) return { isRecipient: false };
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       const token = await getAccessToken();
       const r = await fetch(`${backendUrl}/claims/${id}/recipient-check`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1983,7 +1984,7 @@ export function ClaimPayView({
   };
   const claimAsRecipientMutation = useMutation({
     mutationFn: async (opts?: { claimPrivately?: boolean; destinationAddress?: string; claimToNaira?: boolean; split?: number; maxDelayMs?: number; payoutMethod?: string; payoutStatus?: string; payoutEtaLabel?: string | null; payoutDetail?: string | null }) => {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       console.info("[Claim] Initiating claim for:", id, "user:", user?.id?.slice(0, 12), "opts:", opts);
       const claimToken = await getAccessToken();
       const claimResp = await fetch(`${backendUrl}/claims/${id}/claim`, {
@@ -2202,13 +2203,10 @@ export function ClaimPayView({
   // crypto/cash picker) but never sets it, so picking "Cash" then backing out still lands on the
   // same picker rather than needing a third state to reconstruct it.
   const [cashOptionsOpen, setCashOptionsOpen] = useState(false);
-  // Recipient's own private-claim timing-obfuscation choice — same split/delay concept as the
-  // payer's Pay Now sliders (privateSplit/privateDelayMs above) but a separate pair of state, since
-  // this is a different person (recipient, not sender) choosing on a different mutation
-  // (claimAsRecipientMutation, not the payer's private-transfer build). Defaults to no
-  // obfuscation (1 part, no delay) — same "opt into more privacy" default as the Pay Now sliders.
-  const [claimPrivateSplit, setClaimPrivateSplit] = useState<number>(1);
-  const [claimPrivateDelayMs, setClaimPrivateDelayMs] = useState<number>(0);
+  // Recipient's own private-claim timing. Same defaults as a send: random split, 10-minute
+  // spread, collapsed under Advanced options until they change it.
+  const [claimPrivateSplit, setClaimPrivateSplit] = useState(randomPrivacySplit);
+  const [claimPrivateDelayMs, setClaimPrivateDelayMs] = useState(DEFAULT_SPREAD_MS);
   const [claimPrivateInfoOpen, setClaimPrivateInfoOpen] = useState(false);
   // Off by default — same default as the old two-button layout's primary action being the public
   // claim, "Claim privately" was the opt-in secondary button. The switch just exposes the same
@@ -2283,7 +2281,7 @@ export function ClaimPayView({
   const persistPayout = async (next: { method: string; status: string; eta: string | null; detail: string | null }) => {
     setPayoutReceipt(next);
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       const token = await getAccessToken();
       await fetch(`${backendUrl}/claims/${id}/payout`, {
         method: "POST",
@@ -3510,7 +3508,7 @@ export function ClaimPayView({
     }
     setBurnerDiagLoading(true);
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       const diagToken = await getAccessToken();
       const r = await fetch(`${backendUrl}/claims/${id}/troubleshoot-burner`, {
         headers: diagToken ? { Authorization: `Bearer ${diagToken}` } : {},
@@ -3535,7 +3533,7 @@ export function ClaimPayView({
     }
     setRetrySweepLoading(true);
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       const sweepToken = await getAccessToken();
       const r = await fetch(`${backendUrl}/claims/${id}/claim-retry-sweep`, {
         method: "POST",
@@ -3570,7 +3568,7 @@ export function ClaimPayView({
     }
     setReclaimingSenderFunds(true);
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       const reclaimToken = await getAccessToken();
       const r = await fetch(`${backendUrl}/claims/${id}/reclaim`, {
         method: "POST",
@@ -3682,11 +3680,11 @@ export function ClaimPayView({
   // (app/app/page.tsx's privacyQuery()) instead of resetting to 1/0 here.
   const [privateSplit, setPrivateSplit] = useState<number>(() => {
     const v = Number(searchParams.get("split"));
-    return Number.isFinite(v) && v >= 1 ? Math.min(15, Math.round(v)) : 1;
+    return Number.isFinite(v) && v >= 1 ? Math.min(15, Math.round(v)) : randomPrivacySplit();
   });
   const [privateDelayMs, setPrivateDelayMs] = useState<number>(() => {
     const v = Number(searchParams.get("delayMs"));
-    return Number.isFinite(v) && v >= 0 ? v : 0;
+    return Number.isFinite(v) && v >= 0 ? v : DEFAULT_SPREAD_MS;
   });
   // Keep the spread locked to ?delayMs= on the link. A later client navigation that only
   // changes the query (or a slider edit that rewrites it) has to move this state too —
@@ -3734,7 +3732,10 @@ export function ClaimPayView({
   }, [id]);
   const delayFromUrl = urlDelayMs != null && Number.isFinite(urlDelayMs) && urlDelayMs >= 0 ? urlDelayMs : null;
   const delayFromClaim = savedDelayRaw != null && Number.isFinite(savedDelayMs) && savedDelayMs >= 0 ? savedDelayMs : null;
-  const knownDelayMs = delayFromUrl ?? delayFromClaim ?? (privateDelayMs > 0 ? privateDelayMs : null) ?? rememberedDelayMs;
+  // URL and the saved payment win. The slider default (10 min) must not flash over a
+  // longer delay that is still loading. Once the payment is loaded and has no saved
+  // delay, the slider value — default or what the sender just picked — is the real one.
+  const knownDelayMs = delayFromUrl ?? delayFromClaim ?? rememberedDelayMs ?? (claim ? privateDelayMs : null);
   const landingDelayMs = knownDelayMs ?? 0;
   useEffect(() => {
     if (!id || knownDelayMs == null) return;
@@ -3897,7 +3898,7 @@ export function ClaimPayView({
   const exposureCheckQuery = useQuery({
     queryKey: ["claim", id, "exposure-check", claim?.recipient_user_id],
     queryFn: async () => {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       const token = await getAccessToken();
       const r = await fetch(
         `${backendUrl}/claims/exposure-check?recipientUserId=${encodeURIComponent(claim!.recipient_user_id!)}`,
@@ -4542,7 +4543,7 @@ export function ClaimPayView({
       });
       console.log("[PrivateTransfer] Calling private transfer…", { isBurnerRecipient });
       const perToken = await getAccessToken();
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       const authHeader: Record<string, string> = perToken
         ? { Authorization: `Bearer ${perToken}` }
         : {};
@@ -7086,7 +7087,7 @@ export function ClaimPayView({
                             onTogglePrivateMode={handleTogglePrivateMode}
                             requiresPrivate={requiresPrivate}
                             initialSplit={privateSplit}
-                            initialDelayMs={privateDelayMs}
+                            initialDelayMs={knownDelayMs ?? privateDelayMs}
                             onSettled={() => {
                               // Not "SUCCESS" — a guest payment always lands in the burner, never the
                               // recipient's real wallet, so it still needs an explicit claim. Setting
@@ -7599,8 +7600,8 @@ export function ClaimPayView({
                 </h2>
                 <p className="pt-2 text-base text-center text-muted-foreground">
                   Your payment is submitted. We're waiting for Solana to confirm — usually 10–30 seconds.
-                  {isPrivateMode && !requiresPrivate && privateDelayMs > 0 && (
-                    <> It can then take {formatDelayDuration(privateDelayMs)} to actually appear, since you chose a spread delay.</>
+                  {payingPrivately && landingDelayMs > 0 && (
+                    <> It can then take {formatDelayDuration(landingDelayMs)} to actually appear.</>
                   )}
                 </p>
                 {confirmingTxSource && (

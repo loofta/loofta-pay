@@ -1,3 +1,4 @@
+import { clientApiBase } from "@/services/api/client";
 /**
  * Create a claim from a recipient username (wallet resolved server-side).
  * Used by /me/[username] page and the in-app send flow.
@@ -19,7 +20,7 @@ export async function createClaimFromUsername(input: {
   split?: number;
   maxDelayMs?: number;
 }): Promise<{ id: string; short_id?: string | null }> {
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  const backendUrl = clientApiBase();
   const authHeader: Record<string, string> = input.accessToken
     ? { Authorization: `Bearer ${input.accessToken}` }
     : input.userId

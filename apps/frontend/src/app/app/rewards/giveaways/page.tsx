@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -6,7 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { sora, manrope, jetbrainsMono } from "@/components/home-v4/fonts";
 import "@/components/app-home/loofta-app.css";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = clientApiBase();
 
 interface PublicGiveawayListItem {
   id: string;

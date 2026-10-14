@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import { use, useCallback, useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Lock } from "lucide-react";
@@ -8,7 +9,7 @@ import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { Input } from "@/components/ui/input";
 import { ReviewQueueItem, ReviewQueueItemData } from "@/components/giveaways/ReviewQueueItem";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = clientApiBase();
 const PAGE_SIZE = 10;
 
 // No Privy anywhere on this page, deliberately — it's reached via a password-protected link

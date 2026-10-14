@@ -14,6 +14,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Info, KeyRound, Copy, ChevronRight, RefreshCw } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
+import { clientApiBase } from "@/services/api/client";
 import { ChangeUsernameModal } from "@/components/ChangeUsernameModal";
 import { UserAvatar } from "@/components/UserAvatar";
 /** Privy uses type "twitter_oauth" for Twitter (not "twitter" or "x"). */
@@ -532,7 +533,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   };
   useEffect(() => {
     if (showSettingsModal && authenticated) {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+      const backendUrl = clientApiBase();
       getAccessToken().then(async (token) => {
         if (!token) return;
         const r = await fetch(`${backendUrl}/users/me/private-payments`, { headers: { Authorization: `Bearer ${token}` } });
@@ -618,7 +619,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     if (!authenticated || !getAccessToken || !privyUser?.id) return;
     const fetchTier = async () => {
       try {
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+        const backendUrl = clientApiBase();
         const token = await getAccessToken();
         const res = await fetch(`${backendUrl}/users/me/tier`, {
           headers: { Authorization: `Bearer ${token}` },
@@ -1511,7 +1512,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                           setSavingPrivatePayments(true);
                           try {
                             const token = await getAccessToken();
-                            const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+                            const backendUrl = clientApiBase();
                             const r = await fetch(`${backendUrl}/users/me/private-payments`, {
                               method: "POST",
                               headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },

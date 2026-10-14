@@ -1,4 +1,5 @@
 'use client'
+import { clientApiBase } from "@/services/api/client";
 
 import React, { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
@@ -108,7 +109,7 @@ export default function TwitterPaymentPage({ params }: { params: Promise<{ short
     setError(null)
     try {
       const token = await getAccessToken()
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'
+      const backendUrl = clientApiBase()
       const res = await fetch(`${backendUrl}/twitter-payments/${short_id}/fund`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },

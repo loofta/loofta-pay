@@ -8,12 +8,12 @@
  * maximum on the transfer endpoint — see @/lib/privacyDelay) and split range (1-15, MagicBlock's
  * real documented cap) only need to be correct in one place.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Info, ChevronDown } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { MAGICBLOCK_MAX_SPLIT } from "@/services/magicblockPrivateTransfer";
-import { DELAY_UNITS, DELAY_UNIT_MAX, DELAY_UNIT_MS, DELAY_UNIT_LABEL, type DelayUnit, unitForDelayMs } from "@/lib/privacyDelay";
+import { DELAY_UNITS, DELAY_UNIT_MAX, DELAY_UNIT_MS, DELAY_UNIT_LABEL, type DelayUnit, formatDelayDuration, unitForDelayMs } from "@/lib/privacyDelay";
 
 const easeBrand = [0.16, 1, 0.3, 1] as const;
 
@@ -68,8 +68,18 @@ export function PrivacyTimingControls({
   className?: string;
 }) {
   const t = TEXT[theme];
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [unit, setUnit] = useState<DelayUnit>(() => unitForDelayMs(delayMs));
+  useEffect(() => {
+    setUnit((current) => {
+      const inUnit = delayMs / DELAY_UNIT_MS[current];
+      if (delayMs > 0 && Number.isInteger(inUnit) && inUnit <= DELAY_UNIT_MAX[current]) return current;
+      return unitForDelayMs(delayMs);
+    });
+  }, [delayMs]);
   const amountInUnit = Math.min(DELAY_UNIT_MAX[unit], Math.round(delayMs / DELAY_UNIT_MS[unit]));
+  const summary = `${split} ${split === 1 ? "part" : "parts"} · ${delayMs <= 0 ? "no delay" : formatDelayDuration(delayMs)}`;
+  const divider = theme === "dark" ? "border-white/10" : "border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10";
 
   const changeUnit = (next: DelayUnit) => {
     if (next === unit) return;
@@ -182,11 +192,34 @@ export function PrivacyTimingControls({
     </>
   );
 
-  if (!wrapInCard) return <div className="space-y-5">{content}</div>;
+  const disclosure = (
+    <div>
+      <button
+        type="button"
+        onClick={() => setAdvancedOpen((open) => !open)}
+        aria-expanded={advancedOpen}
+        aria-controls={`${idPrefix}-advanced`}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <span>
+          <span className={`block text-base font-semibold ${t.label}`}>Advanced options</span>
+          <span className={`block text-base ${t.hint}`}>{summary}</span>
+        </span>
+        <ChevronDown className={`h-4 w-4 shrink-0 transition-transform duration-200 ${t.hint} ${advancedOpen ? "rotate-180" : ""}`} aria-hidden />
+      </button>
+      {advancedOpen && (
+        <div id={`${idPrefix}-advanced`} className={`mt-4 space-y-5 border-t pt-4 ${divider}`}>
+          {content}
+        </div>
+      )}
+    </div>
+  );
+
+  if (!wrapInCard) return disclosure;
 
   return (
-    <div className={`rounded-2xl border ${t.card} px-4 py-4 space-y-5 ${className ?? ""}`}>
-      {content}
+    <div className={`rounded-2xl border ${t.card} px-4 py-4 ${className ?? ""}`}>
+      {disclosure}
     </div>
   );
 }

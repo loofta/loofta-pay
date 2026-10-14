@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import { createElement, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { usePrivy } from "@privy-io/react-auth";
@@ -384,7 +385,7 @@ export function RewardsRail() {
     if (postsInflight.current === raidHandle || current.state.xPostsFor === raidHandle) return;
     postsInflight.current = raidHandle;
     current.setState({ postsNote: "Loading your last 5 posts…" });
-    const url = `${process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001"}/giveaways/public/x-posts?handle=${encodeURIComponent(raidHandle)}`;
+    const url = `${clientApiBase()}/giveaways/public/x-posts?handle=${encodeURIComponent(raidHandle)}`;
     let cancel = false;
     fetch(url)
       .then((res) => res.json())
@@ -425,7 +426,7 @@ export function RewardsRail() {
     }
     if (current.state.tokStatus !== "loading") current.setState({ tokStatus: "loading" });
     const handle = window.setTimeout(() => {
-      const url = `${process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001"}/giveaways/public/tokens?q=${encodeURIComponent(q)}`;
+      const url = `${clientApiBase()}/giveaways/public/tokens?q=${encodeURIComponent(q)}`;
       fetch(url)
         .then((res) => res.json())
         .then((body: { tokens?: unknown[] }) => {

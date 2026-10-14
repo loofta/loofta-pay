@@ -402,6 +402,7 @@ export function MinimalHeader() {
               window.dispatchEvent(new CustomEvent("balanceModalClosed"));
             }}
             balanceUsd={balanceUSD}
+            balanceExact={balanceNumber}
             solanaAddress={solanaAddress}
             devnetMode={networkMode === "devnet"}
             onRefresh={refreshBalance}

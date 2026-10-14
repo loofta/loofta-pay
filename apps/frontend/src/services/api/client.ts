@@ -18,6 +18,17 @@ const getBackendUrl = (): string => {
 
 export const BACKEND_URL = getBackendUrl();
 
+/**
+ * Base URL for a Nest call made from UI code.
+ * In the browser this is a same-origin Next route, so the page can live on
+ * www.loofta.xyz, pay.loofta.xyz, or a preview host without a CORS allowlist.
+ * Server code keeps calling Railway directly.
+ */
+export function clientApiBase(): string {
+  if (typeof window === "undefined") return getBackendUrl();
+  return "/api/backend";
+}
+
 export interface RequestOptions {
   headers?: Record<string, string>;
   signal?: AbortSignal;
@@ -50,7 +61,8 @@ export async function fetchApi<T>(
     requestHeaders['x-privy-user-id'] = userId;
   }
 
-  const url = `${BACKEND_URL}${endpoint}`;
+  const path = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  const url = `${clientApiBase()}${path}`;
 
   try {
     const response = await fetch(url, {

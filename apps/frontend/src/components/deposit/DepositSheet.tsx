@@ -36,6 +36,7 @@ import { totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTrans
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { findTokenBySelection, formatChainLabel } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
+import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
 
 const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
 const SORA = "var(--font-home-sora), Sora, sans-serif";
@@ -82,10 +83,16 @@ export type DepositLaunch = {
 
 export type CashOutRequest = { platformId: string; identifier: string; amountUsd: number };
 
+/** MagicBlock exactOut private withdrawals debit amount + fees ON TOP of the typed amount.
+ *  Reserve this headroom on Max / validation so Max never builds an on-chain overdraft.
+ *  Mirrors BalanceModal's PRIVATE_WITHDRAW_FEE_HEADROOM_USDC. */
+const PRIVATE_WITHDRAW_FEE_HEADROOM_USDC = 0.3;
+
 export function DepositSheet({
   open,
   onClose,
   balanceUsd,
+  balanceExact,
   solanaAddress,
   devnetMode,
   onRefresh,
@@ -98,6 +105,8 @@ export function DepositSheet({
   open: boolean;
   onClose: () => void;
   balanceUsd: string;
+  /** Unrounded chain balance. Prefer this for withdraw Max/validation — balanceUsd is display-only (2dp). */
+  balanceExact?: number;
   solanaAddress: string | null;
   devnetMode: boolean;
   onRefresh?: () => void;
@@ -115,10 +124,16 @@ export function DepositSheet({
   const [screen, setScreen] = useState<Screen>("home");
   const [mode, setMode] = useState<"deposit" | "withdraw">(initialMode);
   const [privately, setPrivately] = useState(true);
-  const balanceNum = Number(balanceUsd) || 0;
+  // Floor to micro-USDC so Max never asks for more than the token account can spend.
+  // balanceUsd alone is toFixed(2) and can round UP (e.g. 10.006 → "10.01"), which then
+  // fails Token Program 0x1 / insufficient funds on simulation.
+  const balanceNum = Math.floor((balanceExact ?? (Number(balanceUsd) || 0)) * 1_000_000) / 1_000_000;
   const [solanaAmount, setSolanaAmount] = useState("");
   const [delayId, setDelayId] = useState<(typeof DELAYS)[number]["id"]>("5m");
   const [split, setSplit] = useState<number>(1);
+  const [blinkDepositing, setBlinkDepositing] = useState(false);
+  const [blinkError, setBlinkError] = useState<string | null>(null);
+  const blinkDepositRef = useRef<BlinkDeposit | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -137,9 +152,74 @@ export function DepositSheet({
     if (initialMode === "withdraw" && initialScreen !== "home") setScreen(initialScreen);
   }, [open, launch, initialMode, initialScreen]);
 
+  useEffect(() => {
+    if (open) return;
+    setBlinkError(null);
+    blinkDepositRef.current?.destroy();
+    blinkDepositRef.current = null;
+    setBlinkDepositing(false);
+  }, [open]);
+
   const setPrivate = (on: boolean) => {
     setPrivately(on);
     writeDepositPrivately(on);
+  };
+
+  const handleBlinkDeposit = async () => {
+    if (!solanaAddress || blinkDepositing) return;
+    setBlinkDepositing(true);
+    setBlinkError(null);
+    try {
+      blinkDepositRef.current?.destroy();
+      const { Deposit } = await import("@swype-org/deposit");
+      blinkDepositRef.current = new Deposit({
+        signer: async (data: unknown) => {
+          const token = await getAccessToken();
+          const res = await fetch("/api/blink/sign", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(data),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({})) as { error?: string };
+            throw new Error(err.error ?? "Signer request failed");
+          }
+          return res.json();
+        },
+        debug: true,
+        containerElement: document.body,
+      });
+      const depositResult = await blinkDepositRef.current.requestDeposit({
+        amount: null,
+        chainId: 792703809,
+        address: solanaAddress,
+        token: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      });
+      toast({ title: "Deposit complete!", description: "USDC will appear in your balance shortly." });
+      const depositedAmount = depositResult?.transfer?.amount?.amount;
+      try {
+        const token = await getAccessToken();
+        if (token) {
+          await fetch("/api/users/deposits", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ type: "blink", status: "complete", amount_usdc: depositedAmount }),
+          });
+        }
+      } catch { /* non-fatal */ }
+      onRefresh?.();
+      close();
+    } catch (err: unknown) {
+      const { DepositError, getDisplayMessage } = await import("@swype-org/deposit");
+      setBlinkError(err instanceof DepositError ? getDisplayMessage(err) : "Deposit failed. Please try again.");
+    } finally {
+      blinkDepositRef.current?.destroy();
+      blinkDepositRef.current = null;
+      setBlinkDepositing(false);
+    }
   };
 
   const close = () => {
@@ -151,7 +231,19 @@ export function DepositSheet({
   const delay = DELAYS.find((d) => d.id === delayId) ?? DELAYS[0];
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) close(); }}>
+    // modal={false} (same as BalanceModal "fix modal blink"): Blink mounts on document.body
+    // above this sheet. Radix modal dismiss/focus-trap treats those clicks as outside and would
+    // close the sheet / steal focus from Blink's iframe and passkeys.
+    // Unmount DialogContent while Blink is open — the sheet's overflow-y-auto portal still
+    // intercepts wheel/touch scroll even under Blink's max z-index iframe.
+    <Dialog
+      open={open}
+      modal={false}
+      onOpenChange={(next) => {
+        if (!next && !blinkDepositing) close();
+      }}
+    >
+      {open && !blinkDepositing ? (
       <DialogContent
         wrapperZIndexClassName="z-[120]"
         className={cn(
@@ -167,7 +259,7 @@ export function DepositSheet({
         </DialogDescription>
         <Header
           balanceUsd={balanceUsd}
-          title={screen === "solana" ? "USDC on Solana" : screen === "address" ? (mode === "withdraw" ? "Any crypto" : "Send to an address") : screen === "card" || screen === "paj" ? (mode === "withdraw" ? "Bank app" : "Card, bank or exchange") : null}
+          title={screen === "solana" ? "USDC on Solana" : screen === "address" ? (mode === "withdraw" ? "Any crypto" : "Send to an address") : screen === "card" || screen === "paj" ? (mode === "withdraw" ? "Bank app" : "Card") : null}
           privately={privately}
           showPrivacy={screen === "solana" || screen === "address"}
           onBack={screen === "home" ? null : () => setScreen(screen === "paj" ? "card" : "home")}
@@ -193,20 +285,18 @@ export function DepositSheet({
                 ))}
               </div>
             )}
-            <IncognitoModeToggle
-              checked={privately}
-              onCheckedChange={setPrivate}
-              onLabel={mode === "withdraw" ? "Withdraw privately" : "Deposit privately"}
-              offLabel={mode === "withdraw" ? "Withdraw privately" : "Deposit privately"}
-              description={mode === "withdraw"
-                ? (privately
+            {mode === "withdraw" && (
+              <IncognitoModeToggle
+                checked={privately}
+                onCheckedChange={setPrivate}
+                onLabel="Withdraw privately"
+                offLabel="Withdraw privately"
+                description={privately
                   ? "On. Solana and crypto withdrawals are shielded, so they can't be linked to your Loofta account."
-                  : "Off. A withdrawal can be linked to your Loofta account.")
-                : (privately
-                  ? "On. Deposits are shielded, so they can't be linked to your Loofta account."
-                  : "Off. A deposit can be linked to your Loofta account.")}
-              ariaLabel={mode === "withdraw" ? "Withdraw privately" : "Deposit privately"}
-            />
+                  : "Off. A withdrawal can be linked to your Loofta account."}
+                ariaLabel="Withdraw privately"
+              />
+            )}
             <p className="mt-2 text-sm font-semibold tracking-[0.14em] text-[#8A8893]">{mode === "withdraw" ? "SEND FUNDS TO" : "ADD FUNDS FROM"}</p>
             {mode === "withdraw" ? (
               <>
@@ -240,30 +330,24 @@ export function DepositSheet({
             {mode === "deposit" && (
             <>
             <MethodRow
-              title="USDC on Solana"
-              hint={privately ? "Connect a wallet. Private deposits can't be sent to an address." : "Scan the QR or connect a wallet"}
-              badge="Fastest"
-              onClick={() => setScreen("solana")}
-              icons={[{ src: "/images/usdc.svg", bg: "#2775CA" }, { src: "/images/logo/solana-mark.svg", bg: "#111" }]}
+              title="Crypto deposit"
+              hint="USDC · USDT · SOL · ETH · BNB"
+              onClick={() => { void handleBlinkDeposit(); }}
+              disabled={!solanaAddress || blinkDepositing}
+              busy={blinkDepositing}
+              icons={[{ src: "/images/blink/icon-yellow.png", bg: "#1C1C22" }]}
             />
             <MethodRow
-              title="Send to an address"
-              hint="Solana, Base, Ethereum, BTC, ZEC, TON"
-              onClick={() => setScreen("address")}
-              icons={[
-                { src: "/images/sol.png", bg: "#14F195" },
-                { src: "/images/btc.svg", bg: "#F7931A" },
-              ]}
-            />
-            <MethodRow
-              title="Card or bank"
+              title="Card"
               hint="MoonPay, Coinbase, PAJ Cash, Revolut, Venmo, Cash App"
               onClick={() => setScreen("card")}
+              disabled={blinkDepositing}
               icons={[
                 { src: "/images/icons/moonpay-logo.svg", bg: "#1C1C22" },
                 { src: "/images/icons/coinbase-logo.png", bg: "#0052FF" },
               ]}
             />
+            {blinkError && <p className="text-sm text-orange-500 text-center px-1">{blinkError}</p>}
             </>
             )}
           </div>
@@ -372,6 +456,7 @@ export function DepositSheet({
           />
         )}
       </DialogContent>
+      ) : null}
     </Dialog>
   );
 }
@@ -430,21 +515,36 @@ function MethodRow({
   badge,
   icons,
   onClick,
+  disabled,
+  busy,
 }: {
   title: string;
   hint: string;
   badge?: string;
   icons: { src: string; bg: string }[];
   onClick: () => void;
+  disabled?: boolean;
+  busy?: boolean;
 }) {
   return (
-    <button type="button" onClick={onClick} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3.5 text-left hover:border-white/20">
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3.5 text-left hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
+    >
       <span className="flex shrink-0">
-        {icons.map((icon, i) => (
-          <span key={icon.src} className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl border-2 border-[#1A1A20]" style={{ background: icon.bg, marginLeft: i ? -10 : 0 }}>
-            <img src={icon.src} alt="" className="h-5 w-5 object-contain" />
+        {busy ? (
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#1C1C22]">
+            <Loader2 className="h-5 w-5 animate-spin text-orange-400" />
           </span>
-        ))}
+        ) : (
+          icons.map((icon, i) => (
+            <span key={icon.src} className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl border-2 border-[#1A1A20]" style={{ background: icon.bg, marginLeft: i ? -10 : 0 }}>
+              <img src={icon.src} alt="" className="h-5 w-5 object-contain" />
+            </span>
+          ))
+        )}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
@@ -1286,7 +1386,13 @@ function SolanaWithdraw({
   const amountNum = Number(amount);
   const resolved = domain.status === "resolved" ? domain.address : destination.trim();
   const validAddress = isValidAddressForChain(resolved, "solana");
-  const over = amountNum > balanceNum;
+  // Private (MagicBlock exactOut): sender is debited amount + fees on top — never Max the full balance.
+  const maxSendable = privately
+    ? Math.max(0, balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC)
+    : balanceNum;
+  const over = amountNum > maxSendable;
+  const privateFeeExceedsBalance =
+    privately && privateFee != null && amountNum + privateFee > balanceNum + 1e-6;
 
   useEffect(() => {
     if (!validAddress) { setRisk("idle"); setNeedsAccount(false); return; }
@@ -1308,6 +1414,8 @@ function SolanaWithdraw({
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [resolved, validAddress, privately, cluster]);
+
+  const formatMax = (n: number) => (n > 0 ? n.toFixed(6).replace(/\.?0+$/, "") : "");
 
   const sendPublic = async (ataAcknowledged: boolean) => {
     if (!wallet || !userId) throw new Error("Your Loofta wallet is not ready yet.");
@@ -1414,8 +1522,19 @@ function SolanaWithdraw({
 
   return (
     <div className="mt-4 flex flex-col gap-4">
-      <AmountField label="Amount (USDC)" value={amount} onChange={setAmount} onMax={() => setAmount(balanceNum > 0 ? balanceNum.toFixed(2) : "")} />
-      {over && <p className="text-sm text-red-400">That is more than your ${balanceNum.toFixed(2)} balance.</p>}
+      <AmountField label="Amount (USDC)" value={amount} onChange={setAmount} onMax={() => setAmount(formatMax(maxSendable))} />
+      {privately && (
+        <p className="text-sm text-[#8A8893]">
+          Available to send privately: ${maxSendable.toFixed(2)} USDC (${PRIVATE_WITHDRAW_FEE_HEADROOM_USDC.toFixed(2)} reserved for the relay fee)
+        </p>
+      )}
+      {over && (
+        <p className="text-sm text-red-400">
+          {privately
+            ? `That exceeds the $${maxSendable.toFixed(2)} you can send privately from your $${balanceNum.toFixed(2)} balance.`
+            : `That is more than your $${balanceNum.toFixed(2)} balance.`}
+        </p>
+      )}
       <label className="block">
         <span className="text-sm font-semibold text-[#C8C6D0]">Solana address or .sol name</span>
         <input
@@ -1443,10 +1562,23 @@ function SolanaWithdraw({
       )}
       {privateFee != null && (
         <div className="rounded-2xl border border-white/10 bg-[#1A1A20] p-3 text-sm text-[#C8C6D0]">
-          Privacy fee ${privateFee.toFixed(2)}. They receive ${Math.max(0, amountNum - privateFee).toFixed(2)} USDC.
+          {/* exactOut: destination gets the typed amount; fees are debited from the sender on top */}
+          They receive ${amountNum.toFixed(2)} USDC. You pay ${privateFee.toFixed(2)} privacy fee on top (total ${(amountNum + privateFee).toFixed(2)}).
+          {privateFeeExceedsBalance && (
+            <p className="mt-2 text-red-400">
+              Amount plus the ${privateFee.toFixed(2)} relay fee exceeds your ${balanceNum.toFixed(2)} balance — cancel and lower the amount.
+            </p>
+          )}
           <div className="mt-3 flex gap-2">
             <button type="button" onClick={() => { setPrivateFee(null); confirmRef.current?.reject(new Error("CANCELLED_BY_USER")); confirmRef.current = null; }} className="flex-1 rounded-xl border border-white/10 py-2 font-semibold text-white">Cancel</button>
-            <button type="button" onClick={() => { setPrivateFee(null); setBusy(true); setBusyLabel("Approve in your wallet…"); confirmRef.current?.resolve(); confirmRef.current = null; }} className="flex-1 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-2 font-semibold text-white">Confirm</button>
+            <button
+              type="button"
+              disabled={privateFeeExceedsBalance}
+              onClick={() => { setPrivateFee(null); setBusy(true); setBusyLabel("Approve in your wallet…"); confirmRef.current?.resolve(); confirmRef.current = null; }}
+              className="flex-1 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-2 font-semibold text-white disabled:opacity-50"
+            >
+              Confirm
+            </button>
           </div>
         </div>
       )}
@@ -1497,7 +1629,13 @@ function CryptoWithdraw({
   const choices = tokens.filter((t) => !usdc || t.tokenId !== usdc.tokenId);
   const amountNum = Number(amount);
   const addressOk = !!token && isValidAddressForChain(destination.trim(), token.chain);
-  const over = amountNum > balanceNum;
+  const maxSendable = privately
+    ? Math.max(0, balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC)
+    : balanceNum;
+  const over = amountNum > maxSendable;
+  const privateFeeExceedsBalance =
+    privately && privateFee != null && amountNum + privateFee > balanceNum + 1e-6;
+  const formatMax = (n: number) => (n > 0 ? n.toFixed(6).replace(/\.?0+$/, "") : "");
 
   useEffect(() => {
     if (selection || choices.length === 0) return;
@@ -1632,8 +1770,19 @@ function CryptoWithdraw({
           <TokenCombobox tokens={choices} value={selection} defaultShowAllChains placeholder="Search a token" onChange={(next) => { setSelection(next); setDestination(""); }} />
         </div>
       </label>
-      <AmountField label="Amount to send (USDC)" value={amount} onChange={setAmount} onMax={() => setAmount(balanceNum > 0 ? balanceNum.toFixed(2) : "")} />
-      {over && <p className="text-sm text-red-400">That is more than your ${balanceNum.toFixed(2)} balance.</p>}
+      <AmountField label="Amount to send (USDC)" value={amount} onChange={setAmount} onMax={() => setAmount(formatMax(maxSendable))} />
+      {privately && (
+        <p className="text-sm text-[#8A8893]">
+          Available to send privately: ${maxSendable.toFixed(2)} USDC (${PRIVATE_WITHDRAW_FEE_HEADROOM_USDC.toFixed(2)} reserved for the relay fee)
+        </p>
+      )}
+      {over && (
+        <p className="text-sm text-red-400">
+          {privately
+            ? `That exceeds the $${maxSendable.toFixed(2)} you can send privately from your $${balanceNum.toFixed(2)} balance.`
+            : `That is more than your $${balanceNum.toFixed(2)} balance.`}
+        </p>
+      )}
       {quoting && <p className="text-sm text-[#8A8893]">Getting a quote…</p>}
       {quote && token && <p className="text-sm text-[#C8C6D0]">You receive about {quote} {token.symbol}</p>}
       <label className="block">
@@ -1648,10 +1797,22 @@ function CryptoWithdraw({
       {destination.trim() && token && !addressOk && <p className="text-sm text-red-400">That address doesn&apos;t match {formatChainLabel(token.chain)}.</p>}
       {privateFee != null && (
         <div className="rounded-2xl border border-white/10 bg-[#1A1A20] p-3 text-sm text-[#C8C6D0]">
-          Privacy fee ${privateFee.toFixed(2)}. Confirm to sign the withdrawal.
+          Privacy fee ${privateFee.toFixed(2)} is charged on top of ${amountNum.toFixed(2)} (total ${(amountNum + privateFee).toFixed(2)}).
+          {privateFeeExceedsBalance && (
+            <p className="mt-2 text-red-400">
+              Amount plus the ${privateFee.toFixed(2)} relay fee exceeds your ${balanceNum.toFixed(2)} balance — cancel and lower the amount.
+            </p>
+          )}
           <div className="mt-3 flex gap-2">
             <button type="button" onClick={() => { setPrivateFee(null); confirmRef.current?.reject(new Error("CANCELLED_BY_USER")); confirmRef.current = null; }} className="flex-1 rounded-xl border border-white/10 py-2 font-semibold text-white">Cancel</button>
-            <button type="button" onClick={() => { setPrivateFee(null); setBusy(true); confirmRef.current?.resolve(); confirmRef.current = null; }} className="flex-1 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-2 font-semibold text-white">Confirm</button>
+            <button
+              type="button"
+              disabled={privateFeeExceedsBalance}
+              onClick={() => { setPrivateFee(null); setBusy(true); confirmRef.current?.resolve(); confirmRef.current = null; }}
+              className="flex-1 rounded-xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-2 font-semibold text-white disabled:opacity-50"
+            >
+              Confirm
+            </button>
           </div>
         </div>
       )}
@@ -1730,7 +1891,12 @@ function BankWithdraw({
     return (
       <div className="mt-4 flex flex-col gap-4">
         <button type="button" onClick={() => setApp(null)} className="self-start text-sm font-semibold text-[#C8C6D0] hover:text-white">{platform.name}</button>
-        <AmountField label="Amount (USDC)" value={amount} onChange={setAmount} onMax={() => setAmount(balanceNum > 0 ? balanceNum.toFixed(2) : "")} />
+        <AmountField
+          label="Amount (USDC)"
+          value={amount}
+          onChange={setAmount}
+          onMax={() => setAmount(balanceNum > 0 ? balanceNum.toFixed(6).replace(/\.?0+$/, "") : "")}
+        />
         {amountNum > balanceNum && <p className="text-sm text-red-400">That is more than your ${balanceNum.toFixed(2)} balance.</p>}
         <label className="block">
           <span className="text-sm font-semibold text-[#C8C6D0]">{platform.idLabel}</span>

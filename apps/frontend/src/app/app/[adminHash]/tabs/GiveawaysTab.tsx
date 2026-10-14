@@ -1,9 +1,9 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 // Self-contained (fetches/holds its own state) — same convention as OrganizationsTab.tsx / PacksTab.tsx.
-// Calls the NestJS backend directly (not a Next.js API proxy route) because approval triggers
-// real business logic (minting the giveaway's burner wallet) that only lives in GiveawaysService —
-// a raw Supabase status-flip route (like /api/admin/organizations) would silently skip that.
+// Goes through /api/backend, which forwards to Nest. Approval still runs GiveawaysService
+// (minting the giveaway burner). Do not replace this with a Supabase status flip.
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Textarea } from "@/components/ui/textarea";
 import { RichTextEditor } from "@/components/RichTextEditor";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = clientApiBase();
 const TERMINAL_STATUSES = new Set(["COMPLETED", "CANCELLED", "REJECTED", "REFUNDED", "UNDERFUNDED_EXPIRED"]);
 // Mirrors GiveawaysService.adminCancel's CANCELLABLE list — only a giveaway that's already past
 // approval and hasn't started drawing yet. PENDING_APPROVAL uses reject instead; DRAWING/

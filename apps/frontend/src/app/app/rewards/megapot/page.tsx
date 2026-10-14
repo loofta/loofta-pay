@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import Link from "next/link";
 import Image from "next/image";
@@ -8,7 +9,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = clientApiBase();
 
 const MEGAPOT_START_DATE = new Date("2026-07-07T15:00:00.000Z"); // Jul 7 2026, 5pm CET
 const MEGAPOT_END_DATE = new Date("2026-09-30T00:00:00.000Z"); // through Aug 30 2026

@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import Link from "next/link";
 import Image from "next/image";
@@ -8,7 +9,7 @@ import { useRef, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = clientApiBase();
 const ACCENT = "#f97316"; // Loofta primary brand orange (--primary in globals.css)
 const MAGICBLOCK_PROJECT_URL = "https://quests.magicblock.app/projects/loofta-pay";
 

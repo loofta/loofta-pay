@@ -7,6 +7,7 @@ import { Logger } from '@nestjs/common';
 import { PublicKey, Transaction, VersionedTransaction, TransactionMessage, AddressLookupTableAccount } from '@solana/web3.js';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import type { Connection } from '@solana/web3.js';
+import { PRIVACY_TRANSFER_MAX_DELAY_MS } from './privacy-transfer-limit';
 
 const log = new Logger('MagicblockPrivateTransfer');
 
@@ -155,15 +156,17 @@ export function estimateMagicblockGrossUp(netBaseUnits: number, totalBpsOverride
 /**
  * Delivery delays break timing correlation between send and receive events.
  *
- * Mainnet: 1 min–10 min random window — breaks timing analysis while keeping funds in transit ≤10 min (API max).
- * Devnet:  30s–300s (5 min window for testing the full delay range).
+ * Mainnet fallback when the caller omits a delay: 1–10 min. Not an API cap —
+ * private transfers accept maxDelayMs up to 31 days (PRIVACY_TRANSFER_MAX_DELAY_MS).
+ * Devnet:  30s–300s (5 min window for testing).
  * Localhost: no delay.
  */
-export const MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS = 600_000;      // API hard limit
+export const MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS = 31 * 24 * 60 * 60 * 1000;
 export const MAGICBLOCK_PRIVATE_DEVNET_MIN_DELAY_MS = 30_000;
 export const MAGICBLOCK_PRIVATE_DEVNET_MAX_DELAY_MS = 300_000;  // 5 min
 export const MAGICBLOCK_PRIVATE_MAINNET_MIN_DELAY_MS = 60_000;   // 1 min
-export const MAGICBLOCK_PRIVATE_MAINNET_MAX_DELAY_MS = 600_000;  // 10 min (API max)
+/** Used only when the caller does not pass maxDelayMs. The API maximum is 31 days. */
+export const MAGICBLOCK_PRIVATE_MAINNET_MAX_DELAY_MS = 600_000;
 
 export function magicblockPrivateDelayForCluster(cluster: 'devnet' | 'mainnet' | 'localhost'): {
   minDelayMs: string;
@@ -284,8 +287,10 @@ export async function requestMagicblockPrivateTransfer(params: {
   platformFeeAccount?: string;
 }): Promise<MagicblockPrivateTransferTxResponse> {
   const defaults = magicblockPrivateDelayForCluster(params.cluster);
-  const minDelayMs = params.minDelayMs !== undefined ? String(params.minDelayMs) : defaults.minDelayMs;
-  const maxDelayMs = params.maxDelayMs !== undefined ? String(params.maxDelayMs) : defaults.maxDelayMs;
+  const minDelayMs = params.minDelayMs !== undefined ? String(Math.max(0, Math.round(params.minDelayMs))) : defaults.minDelayMs;
+  const maxDelayMs = params.maxDelayMs !== undefined
+    ? String(Math.min(PRIVACY_TRANSFER_MAX_DELAY_MS, Math.max(0, Math.round(params.maxDelayMs))))
+    : defaults.maxDelayMs;
   const body: Record<string, unknown> = {
     from: params.from,
     to: params.to,

@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -43,7 +44,7 @@ import { signAndBroadcastSponsoredTx } from "@/services/solanaSponsor";
 import { FormattedText } from "@/components/FormattedText";
 import posthog from "posthog-js";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = clientApiBase();
 // Mirrors giveaways-public.controller.ts's ENTRIES_VISIBLE_STATUSES — the entry list (and
 // therefore the winners list) only exists server-side once entries have closed.
 const ENTRIES_VISIBLE_STATUSES = ["ENTRIES_CLOSED", "DRAWING", "WINNERS_SELECTED", "PAYOUT_IN_PROGRESS", "COMPLETED"];

@@ -1,24 +1,18 @@
 /**
- * MagicBlock's transfer endpoint (POST /v1/spl/transfer) documents no maximum for maxDelayMs —
- * its own field table just says "Private only. Max delay. Defaults to '0' or minDelayMs." (see
- * .claude/skills/magicblock/private-payments.md, the "POST /v1/spl/transfer" section). The
- * `≤ 600000 (10 min)` figure that's floated around this codebase belongs to a DIFFERENT endpoint,
- * `/v1/swap/swap` — confirmed straight from that same doc's swap section, not inferred. Don't
- * reintroduce a 10-minute ceiling here without a fresh, verified reason (an actual reproduced
- * transfer-endpoint rejection, quoted in full) — a stray backend comment or a paraphrased error
- * isn't enough; this file was wrongly capped that way once already this way from exactly that.
- * DELAY_UI_MAX_MS below is this app's own deliberate ceiling, not an API limit, chosen so the
- * slider stays usable rather than because MagicBlock requires it.
+ * MagicBlock's private transfer endpoint accepts maxDelayMs up to 31 days. The
+ * `≤ 600000 (10 min)` figure elsewhere in this repo belongs to `/v1/swap/swap`, not this
+ * transfer. DELAY_UI_MAX_MS is that 31-day API maximum, and the days slider stops there.
+ * Ten minutes is only the default spread on a send form, not a ceiling.
  */
 export type DelayUnit = "minutes" | "hours" | "days";
 
 export const DELAY_UNITS: DelayUnit[] = ["minutes", "hours", "days"];
 
-/** Slider max within each unit — e.g. "days" goes 0-7, not 0-10080 minutes on one linear track. */
+/** Slider max within each unit. Days stops at the private-transfer API maximum (31). */
 export const DELAY_UNIT_MAX: Record<DelayUnit, number> = {
   minutes: 59,
   hours: 23,
-  days: 7,
+  days: 31,
 };
 
 export const DELAY_UNIT_MS: Record<DelayUnit, number> = {
@@ -33,8 +27,18 @@ export const DELAY_UNIT_LABEL: Record<DelayUnit, string> = {
   days: "day",
 };
 
-/** Deliberate UI ceiling (7 days), not an API limit — see file header. */
+/** Private-transfer API maximum (31 days). */
 export const DELAY_UI_MAX_MS = DELAY_UNIT_MAX.days * DELAY_UNIT_MS.days;
+
+/** Default spread on every send form until the sender opens Advanced options and changes it. */
+export const DEFAULT_SPREAD_MS = 10 * DELAY_UNIT_MS.minutes;
+
+/** Default split is a random count in 2–15. The slider still lets the sender pick 1–15. */
+export function randomPrivacySplit(max = 15): number {
+  const min = 2;
+  const cap = Math.max(min, Math.round(max));
+  return min + Math.floor(Math.random() * (cap - min + 1));
+}
 
 /** Human copy for how long a private transfer may take to land, e.g. "up to 6 hours" — used both
  *  on the slider itself and as the payment-page ETA (see PrivacyTimingControls, GuestCheckoutPay,

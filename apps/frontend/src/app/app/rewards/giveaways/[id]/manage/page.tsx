@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import { use, useCallback, useState } from "react";
 import Link from "next/link";
@@ -21,7 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ReviewQueueItem, ReviewQueueItemData } from "@/components/giveaways/ReviewQueueItem";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = clientApiBase();
 const ENTRIES_PER_PAGE = 20;
 const REVIEW_PAGE_SIZE = 10;
 const searchInputClass = "pl-9 bg-white/[0.06] border-white/15 text-white placeholder:text-slate-500";

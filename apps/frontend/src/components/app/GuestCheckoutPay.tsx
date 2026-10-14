@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 /**
  * Two tabs: "Pay with Loofta" triggers a real login (the normal authenticated pay flow takes over
@@ -109,7 +110,7 @@ async function resolveClaimFeeWallet(): Promise<string | null> {
   const fromEnv = looftaPlatformFeeWallet();
   if (fromEnv) return fromEnv;
   try {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+    const backendUrl = clientApiBase();
     const r = await fetch(`${backendUrl}/claims/solana-sponsor/fee-payer`);
     if (!r.ok) return null;
     const body = (await r.json()) as { feePayerAddress?: string | null };

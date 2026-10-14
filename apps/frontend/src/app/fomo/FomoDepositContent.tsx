@@ -10,15 +10,14 @@ import { Footer } from "@/components/layout/Footer";
 import { AmountInput } from "@/components/AmountInput";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
-import { Slider } from "@/components/ui/slider";
+import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
 import { SocialPlatformIcon, type SocialIconPlatform } from "@/components/SocialPlatformIcon";
 import { SolanaWalletConnectProvider } from "@/components/SolanaWalletConnect";
 import { DirectWalletPayPanel } from "@/components/app/DirectWalletPayPanel";
-import { MAGICBLOCK_MAX_SPLIT, totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
-import { privatePaymentFundsAppearCopy } from "@/lib/privatePaymentCopy";
+import { totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { resolveFomoHandle, type FomoResolution } from "@/services/api/fomo";
-import { DELAY_UNITS, DELAY_UNIT_MAX, DELAY_UNIT_MS, DELAY_UNIT_LABEL, type DelayUnit, formatDelayDuration } from "@/lib/privacyDelay";
+import { DEFAULT_SPREAD_MS, formatDelayDuration, randomPrivacySplit } from "@/lib/privacyDelay";
 
 const BRAND_GRADIENT = "bg-gradient-to-r from-[#FF1301] to-[#EAB308]";
 const BRAND_SHADOW = "shadow-[0_8px_32px_rgba(255,74,38,0.28)]";
@@ -28,9 +27,6 @@ const easeBrand = [0.16, 1, 0.3, 1] as const;
 const FOCUS_RING =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#111114]";
 const CARD_LABEL = "text-base font-medium uppercase tracking-[0.18em] text-slate-500";
-// shadcn Slider is themed with light shadcn tokens; recolor track/range/thumb for the dark card.
-const SLIDER_DARK =
-  "[&>span:first-child]:bg-white/10 [&>span:first-child>span]:bg-[#FF7A2A] [&_[role=slider]]:border-[#FF7A2A] [&_[role=slider]]:bg-[#16161a] [&_[role=slider]]:h-5 [&_[role=slider]]:w-5 [&_[role=slider]]:focus-visible:ring-orange-400 [&_[role=slider]]:focus-visible:ring-offset-[#16161a]";
 
 const PLATFORMS: { id: SocialIconPlatform | "email"; label: string }[] = [
   { id: "twitter", label: "X handle" },
@@ -153,9 +149,8 @@ function PayCard() {
   const [amount, setAmount] = useState("");
   const [handle, setHandle] = useState("");
   const [isPrivate, setIsPrivate] = useState(false);
-  const [split, setSplit] = useState(3);
-  const [delayMs, setDelayMs] = useState(5 * 60_000);
-  const [delayUnit, setDelayUnit] = useState<DelayUnit>("minutes");
+  const [split, setSplit] = useState(randomPrivacySplit);
+  const [delayMs, setDelayMs] = useState(DEFAULT_SPREAD_MS);
   const [infoOpen, setInfoOpen] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [resolution, setResolution] = useState<FomoResolution | null>(null);
@@ -359,88 +354,17 @@ function PayCard() {
                 transition={{ duration: 0.25, ease: easeBrand }}
                 className="overflow-hidden"
               >
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 space-y-5">
-                  <p className="text-base leading-[1.5] text-slate-400">
-                    MagicBlock hides the link between your wallet and theirs on-chain. Split the amount and
-                    spread it over time to make it harder to trace. Gasless: you don&apos;t need SOL, MagicBlock
-                    takes its fee in USDC. Loofta takes nothing.
-                  </p>
-
-                  <div>
-                    <div className="flex items-baseline justify-between mb-3">
-                      <label htmlFor="fomo-split" className="text-base text-slate-200">Split into</label>
-                      <span className="font-display text-lg font-semibold text-slate-100 tabular-nums">
-                        {split} {split === 1 ? "part" : "parts"}
-                      </span>
-                    </div>
-                    <Slider
-                      id="fomo-split"
-                      min={1}
-                      max={MAGICBLOCK_MAX_SPLIT}
-                      step={1}
-                      value={[split]}
-                      onValueChange={([v]) => setSplit(v)}
-                      aria-label="Number of parts"
-                      className={SLIDER_DARK}
-                    />
-                    {amountValid && split > 1 && (
-                      <p className="mt-2 text-base text-slate-500 tabular-nums">
-                        About ${(amountNum / split).toFixed(2)} per part
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    {(() => {
-                      const amountInUnit = Math.min(DELAY_UNIT_MAX[delayUnit], Math.round(delayMs / DELAY_UNIT_MS[delayUnit]));
-                      const changeUnit = (next: DelayUnit) => {
-                        if (next === delayUnit) return;
-                        const nextAmount = Math.min(DELAY_UNIT_MAX[next], Math.round(delayMs / DELAY_UNIT_MS[next]));
-                        setDelayUnit(next);
-                        setDelayMs(nextAmount * DELAY_UNIT_MS[next]);
-                      };
-                      return (
-                        <>
-                          <div className="flex items-baseline justify-between mb-3">
-                            <label htmlFor="fomo-delay" className="text-base text-slate-200">Spread over</label>
-                            <span className="font-display text-lg font-semibold text-slate-100 tabular-nums">
-                              {amountInUnit === 0 ? "No delay" : `up to ${amountInUnit} ${DELAY_UNIT_LABEL[delayUnit]}${amountInUnit === 1 ? "" : "s"}`}
-                            </span>
-                          </div>
-                          <div className="mb-3 inline-flex items-center gap-1 rounded-full bg-white/[0.06] p-1">
-                            {DELAY_UNITS.map((u) => (
-                              <button
-                                key={u}
-                                type="button"
-                                onClick={() => changeUnit(u)}
-                                className={`rounded-full px-3 py-1 text-sm font-medium capitalize transition-colors ${
-                                  delayUnit === u ? "bg-white/[0.14] text-white" : "text-slate-500 hover:text-slate-200"
-                                }`}
-                              >
-                                {u}
-                              </button>
-                            ))}
-                          </div>
-                          <Slider
-                            id="fomo-delay"
-                            min={0}
-                            max={DELAY_UNIT_MAX[delayUnit]}
-                            step={1}
-                            value={[amountInUnit]}
-                            onValueChange={([v]) => setDelayMs(v * DELAY_UNIT_MS[delayUnit])}
-                            aria-label={`Maximum delivery delay in ${delayUnit}`}
-                            className={SLIDER_DARK}
-                          />
-                          <p className="mt-2 text-base text-slate-500">
-                            {amountInUnit === 0
-                              ? "Every part is delivered right away."
-                              : `Each part lands at a random moment within ${amountInUnit} ${DELAY_UNIT_LABEL[delayUnit]}${amountInUnit === 1 ? "" : "s"}.`}
-                          </p>
-                        </>
-                      );
-                    })()}
-                  </div>
-                </div>
+                <PrivacyTimingControls
+                  idPrefix="fomo"
+                  split={split}
+                  onSplitChange={setSplit}
+                  delayMs={delayMs}
+                  onDelayMsChange={setDelayMs}
+                  amountUsd={amountNum}
+                  infoOpen={infoOpen}
+                  onInfoOpenChange={setInfoOpen}
+                  theme="dark"
+                />
               </motion.div>
             )}
           </AnimatePresence>

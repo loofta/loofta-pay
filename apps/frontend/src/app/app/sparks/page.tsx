@@ -1,4 +1,5 @@
 "use client";
+import { clientApiBase } from "@/services/api/client";
 
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
@@ -6,7 +7,7 @@ import { usePrivy } from "@privy-io/react-auth";
 import { useState, useEffect } from "react";
 import confetti from "canvas-confetti";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = clientApiBase();
 const MAGICBLOCK_SPARKS_THRESHOLD = 3000;
 // Campaign ended July 1 2026 at 18:00 CET (CEST = UTC+2) = 16:00 UTC
 const SPARKS_CUTOFF = new Date("2026-07-01T16:00:00.000Z");

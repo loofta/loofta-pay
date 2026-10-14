@@ -18,6 +18,7 @@ import {
   ValidationArguments,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PRIVACY_TRANSFER_MAX_DELAY_MS } from '../../../common/privacy-transfer-limit';
 
 const MULTI_SEND_MIN_TOTAL_USD = 5;
 
@@ -101,11 +102,11 @@ export class BuildMultiSendDto {
   @Max(15)
   split?: number;
 
-  @ApiPropertyOptional({ description: 'MagicBlock max delivery delay in ms, applied to every recipient payout. 0 means no delay. UI ceiling is 7 days.', minimum: 0, maximum: 604_800_000 })
+  @ApiPropertyOptional({ description: 'MagicBlock max delivery delay in ms, applied to every recipient payout. 0 means no delay. The privacy API allows up to 31 days.', minimum: 0, maximum: PRIVACY_TRANSFER_MAX_DELAY_MS })
   @IsOptional()
   @IsInt()
   @Min(0)
-  @Max(604_800_000)
+  @Max(PRIVACY_TRANSFER_MAX_DELAY_MS)
   maxDelayMs?: number;
 }
 

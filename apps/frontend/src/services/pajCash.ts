@@ -7,7 +7,7 @@
  * and would lose the `code` field.
  */
 
-import { BACKEND_URL } from './api/client';
+import { clientApiBase } from './api/client';
 
 export class PajCashApiError extends Error {
   code?: string;
@@ -23,7 +23,7 @@ async function pajCashFetch<T>(
   opts: (RequestInit & { accessToken?: string | null }) = {},
 ): Promise<T> {
   const { accessToken, headers, ...rest } = opts;
-  const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+  const res = await fetch(`${clientApiBase()}${endpoint}`, {
     ...rest,
     headers: {
       'Content-Type': 'application/json',

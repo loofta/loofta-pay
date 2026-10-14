@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PRIVACY_TRANSFER_MAX_DELAY_MS } from '../../../common/privacy-transfer-limit';
 import { IsString, IsNotEmpty, IsNumber, IsOptional, Min, Max, IsInt, IsBoolean, MaxLength, IsIn } from 'class-validator';
 
 export class CreateClaimFromSocialDto {
@@ -40,11 +41,11 @@ export class CreateClaimFromSocialDto {
   @Max(15)
   split?: number;
 
-  @ApiPropertyOptional({ description: "MagicBlock private-transfer max delivery delay in ms — the transfer endpoint documents no maximum; this app's own UI ceiling is 7 days (604800000ms), chosen on the Send form and persisted for the same reason as split.", minimum: 0, maximum: 604_800_000 })
+  @ApiPropertyOptional({ description: "MagicBlock private-transfer max delivery delay in ms. The privacy API allows up to 31 days. Chosen on the Send form and persisted so later views quote that same wait.", minimum: 0, maximum: PRIVACY_TRANSFER_MAX_DELAY_MS })
   @IsOptional()
   @IsInt()
   @Min(0)
-  @Max(604_800_000)
+  @Max(PRIVACY_TRANSFER_MAX_DELAY_MS)
   maxDelayMs?: number;
 
   // Server-side only — stripped from request body by ValidationPipe whitelist.

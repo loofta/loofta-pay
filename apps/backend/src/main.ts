@@ -58,6 +58,8 @@ async function bootstrap() {
     configService.get<string>('NEXT_PUBLIC_BASE_URL')?.replace(/\/$/, ''),
     configService.get<string>('NEXT_PUBLIC_APP_URL')?.replace(/\/$/, ''),
     'https://pay.loofta.xyz',
+    'https://loofta.xyz',
+    'https://www.loofta.xyz',
     'https://loofta.com',
     'https://www.loofta.com',
   ].filter((o, i, all): o is string => !!o && all.indexOf(o) === i);

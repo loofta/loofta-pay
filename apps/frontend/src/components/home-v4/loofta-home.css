@@ -21,7 +21,8 @@
 .loofta-home .lh-hero-title {
   font-size: clamp(40px, 9.5vw, 88px);
 }
-/* Icons and the send card share one entrance, then the icons fade on their own. */
+/* Icons and the send card share one entrance, then the icons fade on their own.
+   Desktop only — mobile skips the 3D pay-in for faster first paint. */
 .loofta-home .lh-pay-cluster {
   transform-origin: 50% 46%;
   animation: lh-pay-in 1.05s cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -41,7 +42,7 @@
     transform: none;
   }
 }
-@media (prefers-reduced-motion: reduce) {
+@media (max-width: 768px), (prefers-reduced-motion: reduce) {
   .loofta-home .lh-pay-cluster {
     animation: none;
   }
@@ -50,6 +51,9 @@
   }
   .loofta-home .lh-email-line {
     transition: none;
+  }
+  .loofta-home .lh-hero-tiles {
+    display: none;
   }
 }
 .loofta-home .lh-caret {

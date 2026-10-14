@@ -1,3 +1,4 @@
+import { clientApiBase } from "@/services/api/client";
 /**
  * Guest (no Loofta account) claim creation — hits the unauthenticated
  * POST /claims/create-from-email-guest / create-from-social-guest routes (protected by
@@ -34,7 +35,7 @@ export async function createClaimFromEmailGuest(input: {
   cluster?: "devnet" | "mainnet";
   turnstileToken: string;
 } & PrivacyChoice): Promise<{ id: string; link: string; burnerAddress: string; direct: boolean }> {
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  const backendUrl = clientApiBase();
   const r = await fetch(`${backendUrl}/claims/create-from-email-guest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -64,7 +65,7 @@ export async function createClaimFromSocialGuest(input: {
   cluster?: "devnet" | "mainnet";
   turnstileToken: string;
 } & PrivacyChoice): Promise<{ id: string; link: string; burnerAddress: string; direct: boolean }> {
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  const backendUrl = clientApiBase();
   const r = await fetch(`${backendUrl}/claims/create-from-social-guest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -97,7 +98,7 @@ export async function createClaimFromUsernameGuest(input: {
   treatUnregisteredAsTwitter?: boolean;
   turnstileToken: string;
 } & PrivacyChoice): Promise<{ id: string; link: string; burnerAddress: string; direct: boolean }> {
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3001";
+  const backendUrl = clientApiBase();
   const r = await fetch(`${backendUrl}/claims/create-from-username-guest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

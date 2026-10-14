@@ -8,25 +8,75 @@ const SORA = 'var(--font-home-sora), system-ui, sans-serif';
 const MONO = 'var(--font-home-mono), ui-monospace, monospace';
 const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === 'true';
 
+/** Mobile / reduced-motion: skip WebGL, float rAF, and the 3D pay-in entrance. */
+function prefersLiteMotion() {
+  if (typeof window === 'undefined') return true;
+  return (
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
+    window.matchMedia('(max-width: 768px)').matches
+  );
+}
+
 export default function LooftaHomePage() {
   useBalanceDeepLinkRedirect();
   return <HomePage />;
 }
 
 class HomePage extends React.Component {
-  state = { typed: '', emailOn: false, caret: true, drawing: false, hi: -1, winner: -1, shield: true, now: null, tilesOut: false, menuOpen: false };
   entr = ['@satoshi', '@mira.eth', '@kofi', '@ana_b', '@dev0x', '@lena', '@tunde', '@yuki', '@marco', '@zara', '@obi', '@ines'];
 
-  heroRef = el => { if (el === this._heroEl) return; this.disposeScene(); this._heroEl = el; if (el) this.initScene(el); };
-  tilt = e => { const el = e.currentTarget, r = el.getBoundingClientRect(); const x = (e.clientX - r.left) / r.width - 0.5, y = (e.clientY - r.top) / r.height - 0.5; el.style.transform = `perspective(1000px) rotateY(${x * 8}deg) rotateX(${-y * 8}deg)`; };
-  untilt = e => { e.currentTarget.style.transform = ''; };
+  constructor(props) {
+    super(props);
+    // SSR + first client paint both start lite so markup matches; desktop upgrades in didMount.
+    this._lite = true;
+    this.state = {
+      typed: '', emailOn: false, caret: true, drawing: false, hi: -1, winner: -1,
+      shield: true, now: null, tilesOut: true, menuOpen: false, lite: true,
+    };
+  }
+
+  // Desktop only: lazy-mount Three.js when the giveaways visual nears the viewport.
+  heroRef = el => {
+    if (el === this._heroEl) return;
+    this.disposeScene();
+    this._sceneIO?.disconnect();
+    this._heroEl = el;
+    this._armScene(el);
+  };
+
+  _armScene(el) {
+    if (!el || this._lite || !this._mounted) return;
+    this._sceneIO = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      this._sceneIO?.disconnect();
+      this._sceneIO = null;
+      this.initScene(el);
+    }, { rootMargin: '160px' });
+    this._sceneIO.observe(el);
+  }
+  tilt = e => {
+    if (this._lite) return;
+    const el = e.currentTarget, r = el.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width - 0.5, y = (e.clientY - r.top) / r.height - 0.5;
+    el.style.transform = `perspective(1000px) rotateY(${x * 8}deg) rotateX(${-y * 8}deg)`;
+  };
+  untilt = e => { if (!this._lite) e.currentTarget.style.transform = ''; };
 
   componentDidMount() {
-    this.setState({ now: Date.now() });
+    this._mounted = true;
+    const lite = prefersLiteMotion();
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    this.startTypewriter(reduce);
-    this._tilesT = setTimeout(this.hideTiles, reduce ? 0 : 3400);
+    this._lite = lite;
+    this.setState({ now: Date.now(), lite, tilesOut: lite });
+    this.startTypewriter(reduce || lite);
     this._clockT = setInterval(() => this.setState({ now: Date.now() }), 1000);
+
+    // Float loop + pointer parallax are desktop-only — continuous rAF is the main mobile cost.
+    if (lite) return;
+
+    this._tilesT = setTimeout(this.hideTiles, 3400);
+    this._armScene(this._heroEl);
+
     this._onMove = e => { this._px = e.clientX; this._py = e.clientY; };
     window.addEventListener('pointermove', this._onMove);
     const io = this._io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting && !e.target._inT) e.target._inT = performance.now() + Math.random() * 180; }), { threshold: 0.15 });
@@ -54,12 +104,24 @@ class HomePage extends React.Component {
   }
   hideTiles = () => { if (!this.state.tilesOut) this.setState({ tilesOut: true }); };
   onPayIn = e => {
-    if (e.animationName !== 'lh-pay-in') return;
+    if (this._lite || e.animationName !== 'lh-pay-in') return;
     clearTimeout(this._tilesT);
     this._tilesT = setTimeout(this.hideTiles, 2200);
   };
 
-  componentWillUnmount() { clearTimeout(this._tilesT); cancelAnimationFrame(this._fraf); clearInterval(this._scanT); this._io && this._io.disconnect(); clearTimeout(this._wordT); this._typeStop = true; clearInterval(this._clockT); clearTimeout(this._dt); window.removeEventListener('pointermove', this._onMove); this.disposeScene(); }
+  componentWillUnmount() {
+    clearTimeout(this._tilesT);
+    cancelAnimationFrame(this._fraf);
+    clearInterval(this._scanT);
+    this._io?.disconnect();
+    this._sceneIO?.disconnect();
+    clearTimeout(this._wordT);
+    this._typeStop = true;
+    clearInterval(this._clockT);
+    clearTimeout(this._dt);
+    if (this._onMove) window.removeEventListener('pointermove', this._onMove);
+    this.disposeScene();
+  }
 
   startTypewriter(reduce) {
     const word = 'username';
@@ -91,6 +153,7 @@ class HomePage extends React.Component {
   }
 
   async initScene(el) {
+    if (this._lite) return;
     const gen = this._gen = (this._gen || 0) + 1;
     window.__looftaThree = window.__looftaThree || Promise.all([
       import('three'),
@@ -98,7 +161,7 @@ class HomePage extends React.Component {
       import('three/examples/jsm/geometries/RoundedBoxGeometry.js')
     ]);
     let mods; try { mods = await window.__looftaThree; } catch (e) { console.warn('three load failed', e); return; }
-    if (gen !== this._gen || !el.isConnected) return;
+    if (gen !== this._gen || !el.isConnected || this._lite) return;
     try { this._build(el, mods); } catch (e) { console.error('hero scene failed', e); }
   }
   _build(el, mods) {
@@ -260,7 +323,7 @@ class HomePage extends React.Component {
         tf: won ? 'translateY(-6px) scale(1.06)' : (on ? 'translateY(-3px)' : 'none') };
     });
     return {
-      typed: S.typed, emailOn: S.emailOn, caret: S.caret, heroRef: this.heroRef, tilesOut: S.tilesOut, hideTiles: this.hideTiles, tilt: this.tilt, untilt: this.untilt,
+      typed: S.typed, emailOn: S.emailOn, caret: S.caret, heroRef: this.heroRef, tilesOut: S.tilesOut, hideTiles: this.hideTiles, tilt: this.tilt, untilt: this.untilt, lite: S.lite,
       countdown: now == null ? '--:--:--' : `${p(Math.floor(d / 3.6e6))}:${p(Math.floor(d / 6e4) % 60)}:${p(Math.floor(d / 1e3) % 60)}`,
       tokens, entrants, draw: this.draw,
       drawLabel: S.drawing ? 'Drawing…' : (S.winner >= 0 ? 'Draw again' : 'Draw a winner'),
@@ -341,7 +404,8 @@ class HomePage extends React.Component {
         <div style={{ position: "relative", display: "flex", justifyContent: "center" }}>
           <div style={{ position: "absolute", inset: "-18% -14%", background: "radial-gradient(closest-side,rgba(255,80,20,0.24),rgba(255,80,20,0))", pointerEvents: "none" }}></div>
           <div className="lh-pay-cluster" onAnimationEnd={this.onPayIn} style={{ position: "relative", width: "100%", maxWidth: "500px" }}>
-            <div aria-hidden style={{ position: "absolute", inset: "0", pointerEvents: "none", transition: "opacity .55s ease, transform .55s ease", opacity: v.tilesOut ? 0 : 1, transform: v.tilesOut ? "scale(0.92)" : "none" }}>
+            {!v.lite ? (
+            <div className="lh-hero-tiles" aria-hidden style={{ position: "absolute", inset: "0", pointerEvents: "none", transition: "opacity .55s ease, transform .55s ease", opacity: v.tilesOut ? 0 : 1, transform: v.tilesOut ? "scale(0.92)" : "none" }}>
             <span data-float="" data-hero-tile="" style={{ position: "absolute", top: "-30px", left: "-96px", zIndex: "0", width: "104px", height: "104px", borderRadius: "32px", transform: "rotate(-10deg)", background: "radial-gradient(120% 120% at 28% 18%,#FFFFFF 0%,#ECEAF0 45%,#BDBAC6 100%)", boxShadow: "inset 0 4px 7px rgba(255,255,255,0.55),inset 0 -8px 14px rgba(0,0,0,0.22),0 9px 0 #8C8898,0 30px 50px rgba(255,90,26,0.25)", display: "grid", placeItems: "center", pointerEvents: "none" }}>
               <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#16161C" strokeWidth="2.4" strokeLinecap="round">
                 <circle cx="12" cy="12" r="4"></circle>
@@ -364,6 +428,7 @@ class HomePage extends React.Component {
               <span style={{ fontFamily: SORA, fontWeight: "800", fontStyle: "italic", fontSize: "56px", color: "#fff", textShadow: "0 3px 0 rgba(0,0,0,0.15)" }}>V</span>
             </span>
             </div>
+            ) : null}
             <div style={{ position: "relative", zIndex: "1" }} onPointerDownCapture={v.hideTiles} onFocusCapture={v.hideTiles}>
               <SendWidget still />
             </div>
@@ -521,7 +586,20 @@ class HomePage extends React.Component {
             </div>
             <div style={{ position: "relative", width: "100%", height: "clamp(380px,36vw,540px)" }}>
               <div style={{ position: "absolute", inset: "10% 5%", background: "radial-gradient(closest-side,rgba(255,80,20,0.22),rgba(255,80,20,0))", pointerEvents: "none" }}></div>
-              <div ref={v.heroRef} title="Click to open" style={{ position: "absolute", inset: "0", cursor: "pointer" }}></div>
+              {/* Mobile / reduced-motion: static gift. Desktop mounts WebGL into the ref below. */}
+              {v.lite ? (
+                <div className="lh-gift-static" aria-hidden style={{ position: "absolute", inset: "0", display: "grid", placeItems: "center", pointerEvents: "none" }}>
+                  <div style={{ width: "min(52%,220px)", aspectRatio: "1", borderRadius: "28%", background: "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)", boxShadow: "inset 0 6px 10px rgba(255,255,255,0.45),inset 0 -10px 18px rgba(0,0,0,0.28),0 14px 0 #9C2802,0 36px 60px rgba(255,70,10,0.35)", display: "grid", placeItems: "center", transform: "rotate(-6deg)" }}>
+                    <svg width="42%" height="42%" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="8" width="18" height="13" rx="2" />
+                      <path d="M12 8v13M3 12h18" />
+                      <path d="M12 8c-1.5-3-4-4-6-3.5S4 8 6.5 9.5 12 8 12 8zM12 8c1.5-3 4-4 6-3.5S20 8 17.5 9.5 12 8 12 8z" />
+                    </svg>
+                  </div>
+                </div>
+              ) : (
+                <div ref={v.heroRef} title="Click to open" style={{ position: "absolute", inset: "0", cursor: "pointer" }}></div>
+              )}
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,300px),1fr))", gap: "20px" }}>
