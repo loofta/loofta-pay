@@ -115,13 +115,19 @@ export async function peerCashout(opts: {
     },
     { signer },
   );
-  await applyFillerIncentive({
-    depositId: result.depositId,
-    platform,
-    currency,
-    grossAtomicUsdc,
-    signer,
-  });
+  try {
+    await applyFillerIncentive({
+      depositId: result.depositId,
+      platform,
+      currency,
+      grossAtomicUsdc,
+      signer,
+    });
+  } catch (err) {
+    // The deposit already exists on-chain at this point. Hand it back with the error so a caller can
+    // still record it instead of losing track of the money.
+    throw Object.assign(err instanceof Error ? err : new Error(String(err)), { cashout: result });
+  }
   return result;
 }
 

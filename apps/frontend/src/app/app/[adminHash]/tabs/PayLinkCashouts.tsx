@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
+import { cashoutStatusLabel } from "./cashoutStatusLabel";
 
 const STATUS_COLOR: Record<string, string> = {
   COMPLETE: "text-emerald-400",
   DEPOSITED: "text-blue-400",
   BRIDGING: "text-amber-400",
+  "AWAITING APPROVAL": "text-orange-400",
   PENDING_BRIDGE: "text-gray-400",
   CANCELLED: "text-gray-500",
   FAILED: "text-red-400",
@@ -85,7 +87,7 @@ export function PayLinkCashouts({ authHeaders }: { authHeaders: () => Promise<Re
                     </td>
                     <td className="px-3 py-2"><span className="capitalize">{r.platform}</span> <span className="font-mono text-gray-400">{r.platform_identifier}</span></td>
                     <td className="px-3 py-2 text-right tabular-nums font-medium">${Number(r.amount_usdc).toFixed(2)}</td>
-                    <td className={`px-3 py-2 font-medium ${STATUS_COLOR[r.status] ?? "text-gray-400"}`}>{r.status}</td>
+                    <td className={`px-3 py-2 font-medium ${STATUS_COLOR[cashoutStatusLabel(r)] ?? "text-gray-400"}`}>{cashoutStatusLabel(r)}</td>
                   </tr>
                 ))}
               </tbody>

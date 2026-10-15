@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
+import { useResumePeerCashout } from "@/hooks/useResumePeerCashout";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
 import { UserMenu } from "@/components/UserMenu";
@@ -284,6 +285,9 @@ export function MinimalHeader() {
     window.addEventListener("openBalanceModal", handler);
     return () => window.removeEventListener("openBalanceModal", handler);
   }, [refreshBalance]);
+
+  // Finishes a pay / cash out whose tab was closed after the bridge, silently.
+  useResumePeerCashout(authenticated);
 
   // Close mobile menu on route change
   useEffect(() => {

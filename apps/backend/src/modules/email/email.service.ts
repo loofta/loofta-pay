@@ -244,6 +244,24 @@ export class EmailService {
     }
   }
 
+  /** Sent when a cash out's bridge finished but the user never approved the Peer deposit on Base.
+   *  That last step is signed in their open browser, so they have to come back to finish it. */
+  async sendCashoutResumeEmail(data: { recipientEmail: string; amountUsd: number; platformName: string; identifier: string; shortId: string }): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `Finish your $${data.amountUsd.toFixed(2)} ${data.platformName} payment on Loofta`,
+        html: this.buildCashoutResumeHtml(data),
+      });
+      this.logger.log(`Cash out resume email sent to ${data.recipientEmail} ($${data.amountUsd})`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send cash out resume email to ${data.recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
   /** Sent when an admin grants a free Mystery Pack spin — a notification, not a claim link (the
    *  spin already shows up in-app the next time the recipient opens the Mystery Pack page, see
    *  PackService.hasFreeSpin), so the CTA just points straight at the pack page itself. */
@@ -1438,6 +1456,54 @@ export class EmailService {
             </td>
           </tr>
           <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildCashoutResumeHtml(data: { amountUsd: number; platformName: string; identifier: string; shortId: string }): string {
+    const amountStr = `$${data.amountUsd.toFixed(2)}`;
+    const url = `https://pay.loofta.xyz/pay/${encodeURIComponent(data.shortId)}`;
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Finish your payment</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <tr>
+            <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">Your ${amountStr} payment needs one more step</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 40px 32px;color:#d1d5db;font-size:15px;line-height:1.7;">
+              <p style="margin:0 0 16px;">hey, this is Lisa from Loofta.</p>
+              <p style="margin:0 0 16px;">Your ${amountStr} payment to ${data.identifier} on ${data.platformName} didn't finish. The transfer went through and your money is safe in your wallet, but the last step needs you to approve it on screen, and it looks like the page was closed before that happened.</p>
+              <p style="margin:0 0 28px;">Open your payment below while logged in and it finishes by itself. Keep the page open for a moment until it says it's done.</p>
+              <div style="text-align:center;margin-bottom:24px;">
+                <a href="${url}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  View my payment
+                </a>
+              </div>
+              <p style="margin:0;">Please use the same browser and login as before. If anything looks off, reply here and I'll sort it out.</p>
+              <p style="margin:16px 0 0;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
               <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>

@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { sora } from "@/components/home-v4/fonts";
 import { getPlatform } from "@/lib/peerPlatforms";
 import { cashoutPayoutUsdc } from "@/services/peerCash";
+import { useResumePeerCashout } from "@/hooks/useResumePeerCashout";
 
 const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 
@@ -52,6 +53,9 @@ export default function PaySharePage() {
   const [depositId, setDepositId] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // The email for a stuck payment lands here. If it bridged but was never finished, finish it silently.
+  useResumePeerCashout(authenticated, () => router.push("/?balance=withdraw&method=peer"));
 
   useEffect(() => {
     if (!shortId) return;
@@ -305,6 +309,15 @@ export default function PaySharePage() {
               <p className="text-base text-gray-500">This payment was cancelled.</p>
             ) : arrived ? (
               <p className="text-base text-gray-500">{payment.currency} is in their {payment.platformName}.</p>
+            ) : payment.status.toUpperCase() === "BRIDGING" ? (
+              authenticated ? (
+                <p className="text-base text-gray-500">Finishing your payment. Keep this page open for a moment.</p>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-base text-gray-500">This payment needs one more step. Log in to finish it.</p>
+                  <Button onClick={() => login()} className="bg-gradient-to-r from-orange-500 to-red-500 text-white hover:opacity-90">Log in to finish</Button>
+                </div>
+              )
             ) : etaLabel ? (
               <p className="text-base text-gray-500">{etaLabel}</p>
             ) : null}

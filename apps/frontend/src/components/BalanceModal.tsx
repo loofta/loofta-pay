@@ -1392,6 +1392,15 @@ export function BalanceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerStep, peerBridgeStatus, peerBridgeTxSig, peerOfframpId, peerZkp2pDepositId, peerBridgeBackDepositAddress]);
 
+  // A resumed cash out has no Base wallet in state until Privy has loaded its wallets, which can be
+  // after the restore ran. Without it the signing step would wait forever.
+  useEffect(() => {
+    if (peerBaseWalletAddress || !peerOfframpId) return;
+    if (peerStep !== "bridging" && peerStep !== "creating-deposit" && peerStep !== "deposit-error") return;
+    const w = evmWallets.find((x) => x.walletClientType === "privy" && typeof (x as any).getEthereumProvider === "function");
+    if (w) setPeerBaseWalletAddress(w.address);
+  }, [evmWallets, peerBaseWalletAddress, peerOfframpId, peerStep]);
+
   // Peer offramp: bridge polling
   useEffect(() => {
     if (peerStep !== "bridging" || !peerBridgeDepositAddress) {
@@ -5677,6 +5686,9 @@ export function BalanceModal({
                   <p className={cn("text-sm", dark ? "text-[#8A8893]" : "text-gray-500")}>
                     {isSuccess ? `Sending to ${platform?.name ?? "them"}` : peerBridgeTxSig ? "Confirming" : "Sending"}
                   </p>
+                  <p className={cn("text-base", dark ? "text-amber-300" : "text-amber-700")}>
+                    Keep this screen open until it finishes.
+                  </p>
                 </div>
               );
             }
@@ -5697,6 +5709,9 @@ export function BalanceModal({
                     </div>
                   ))}
                 </div>
+                <p className={cn("text-base text-center", dark ? "text-amber-300" : "text-amber-700")}>
+                  Keep this screen open until it finishes. If you close it, your cash out pauses and your USDC stays safe.
+                </p>
                 {peerBridgeTxSig && (
                   <a href={getExplorerTxUrl("solana", peerBridgeTxSig)} target="_blank" rel="noreferrer"
                     className={`flex items-center gap-2 text-base rounded-lg border px-3 py-2 ${dark ? "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10" : "border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100"}`}>
@@ -5726,6 +5741,9 @@ export function BalanceModal({
                   : peerPay
                   ? `One approval sends $${cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum).toFixed(2)} to ${peerIdentifier.replace(/^[@$]/, "")}.`
                   : "Almost there — approve the wallet prompt to finalize your cash out."}
+              </p>
+              <p className={cn("text-base text-center", dark ? "text-amber-300" : "text-amber-700")}>
+                Keep this screen open until it finishes.
               </p>
             </div>
           )}

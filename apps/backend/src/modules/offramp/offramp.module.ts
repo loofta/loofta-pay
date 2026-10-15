@@ -6,9 +6,10 @@ import { IntentsModule } from '../intents/intents.module';
 import { UsersModule } from '@/modules/users/users.module';
 import { LotteryModule } from '../lottery/lottery.module';
 import { ClaimsModule } from '@/modules/claims/claims.module';
+import { EmailModule } from '@/modules/email/email.module';
 
 @Module({
-  imports: [IntentsModule, UsersModule, LotteryModule, ClaimsModule],
+  imports: [IntentsModule, UsersModule, LotteryModule, ClaimsModule, EmailModule],
   controllers: [OfframpController],
   providers: [OfframpService, OfframpProcessorService],
   exports: [OfframpService],

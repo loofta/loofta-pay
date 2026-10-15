@@ -3,6 +3,7 @@
 import { Fragment, useState } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { AddressCell, SolAddressCell, TxCell } from "../admin-shared";
+import { cashoutStatusLabel } from "./cashoutStatusLabel";
 
 type CashoutKind = "peer" | "crypto" | "naira";
 
@@ -178,6 +179,7 @@ export function CashoutTab({
                       COMPLETE: "text-emerald-400",
                       DEPOSITED: "text-blue-400",
                       BRIDGING: "text-amber-400",
+                      "AWAITING APPROVAL": "text-orange-400",
                       PENDING_BRIDGE: "text-gray-400",
                       CANCELLED: "text-gray-500",
                       FAILED: "text-red-400",
@@ -204,7 +206,7 @@ export function CashoutTab({
                           {row.fill_state && <span className="block text-sm text-gray-600 capitalize">{row.fill_state}</span>}
                         </td>
                         <td className="px-4 py-2.5">{row.currency}</td>
-                        <td className={`px-4 py-2.5 font-medium ${statusColors[row.status] ?? "text-gray-400"}`}>{row.status}</td>
+                        <td className={`px-4 py-2.5 font-medium ${statusColors[cashoutStatusLabel(row)] ?? "text-gray-400"}`}>{cashoutStatusLabel(row)}</td>
                         <td className="px-4 py-2.5 text-gray-400">
                           {row.eta_label ?? <span className="text-gray-700">—</span>}
                         </td>

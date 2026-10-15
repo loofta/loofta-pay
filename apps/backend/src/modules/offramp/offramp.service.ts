@@ -7,11 +7,12 @@ import { SupabaseService } from '@/database/supabase.service';
 import { NearIntentsService } from '../intents/near-intents.service';
 import { UsersService } from '@/modules/users/users.service';
 import { RelayService } from '../lottery/relay.service';
+import { EmailService } from '@/modules/email/email.service';
 import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { CreateOfframpDto } from './dto/create-offramp.dto';
 import { PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { cashoutLooftaFeeAtomic } from '@/common/offramp-fee';
+import { cashoutFeeAtomic, cashoutLooftaFeeAtomic } from '@/common/offramp-fee';
 
 const SOLANA_USDC_MINT_MAINNET = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const BASE_USDC: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -72,6 +73,7 @@ export class OfframpService {
     private readonly usersService: UsersService,
     private readonly relay: RelayService,
     private readonly solanaSponsor: SolanaSponsorService,
+    private readonly email: EmailService,
   ) {}
 
   private getPublicClient() {
@@ -541,6 +543,63 @@ export class OfframpService {
       return;
     }
     if (data?.length) this.logger.log(`Expired ${data.length} stale PENDING_BRIDGE offramp(s)`);
+  }
+
+  /**
+   * The last step of a cash out (signing the Peer deposit on Base) only runs in the user's open
+   * browser, so a closed tab strands the row at BRIDGING with the USDC sitting on their Base wallet.
+   * Once Relay confirms the bridge landed and no deposit exists, email the user once to come back.
+   * The stranded_notified_at claim happens before the send so two instances can't both email.
+   */
+  async notifyStrandedBridges(minAgeMinutes = 15) {
+    const client = this.supabase.getClient();
+    const cutoff = new Date(Date.now() - minAgeMinutes * 60_000).toISOString();
+    const oldest = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
+    const { data, error } = await client
+      .from('offramp_requests')
+      .select('id, user_id, short_id, platform, platform_identifier, amount_usdc, near_intents_memo')
+      .eq('status', 'BRIDGING')
+      .is('zkp2p_deposit_id', null)
+      .is('stranded_notified_at', null)
+      .lt('created_at', cutoff)
+      .gt('created_at', oldest)
+      .limit(20);
+    if (error) {
+      this.logger.warn(`notifyStrandedBridges failed: ${error.message}`);
+      return;
+    }
+    for (const row of data ?? []) {
+      try {
+        const quote = parseRelayQuote(row.near_intents_memo as string | null);
+        if (!quote) continue;
+        if ((await this.relay.getStatus(quote.requestId)) !== 'DONE') continue;
+
+        const { data: claimed } = await client
+          .from('offramp_requests')
+          .update({ stranded_notified_at: new Date().toISOString() })
+          .eq('id', row.id)
+          .is('stranded_notified_at', null)
+          .select('id');
+        if (!claimed?.length) continue;
+
+        const grossAtomic = BigInt(Math.round(Number(row.amount_usdc) * 1_000_000));
+        const recipientEmail = await this.usersService.getEmailByPrivyId(row.user_id as string);
+        if (!recipientEmail) {
+          this.logger.warn(`Stranded cash out ${row.id} has no email on file, nothing sent`);
+          continue;
+        }
+        await this.email.sendCashoutResumeEmail({
+          recipientEmail,
+          amountUsd: Number(grossAtomic - cashoutFeeAtomic(grossAtomic)) / 1_000_000,
+          platformName: PLATFORM_NAMES[String(row.platform)] ?? String(row.platform),
+          identifier: String(row.platform_identifier).replace(/^[@$]/, ''),
+          shortId: String(row.short_id),
+        });
+        this.logger.log(`Emailed stranded cash out ${row.id} to ${recipientEmail}`);
+      } catch (err: any) {
+        this.logger.warn(`notifyStrandedBridges ${row.id}: ${err?.message ?? err}`);
+      }
+    }
   }
 
   // Poll active DEPOSITED offramps for fulfilment (called by cron).
