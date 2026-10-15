@@ -1358,7 +1358,7 @@ export function BalanceModal({
   // downstream (validation, risk check, ATA lookup, the transfer itself) works off
   // `effectiveWithdrawAddress`, which is the resolved wallet whenever a domain resolved and the
   // raw input otherwise. Solana destinations only — a domain means nothing on another chain.
-  const solDomain = useSolDomain(isUSDCOnSolana ? withdrawAddress : "", devnetMode ? "devnet" : "mainnet");
+  const solDomain = useSolDomain(isUSDCOnSolana || withdrawMethod === "sol-jupiter" ? withdrawAddress : "", devnetMode ? "devnet" : "mainnet");
   const effectiveWithdrawAddress = solDomain.address ?? withdrawAddress;
   const destinationAddressValid = isValidAddressForChain(effectiveWithdrawAddress, isUSDCOnSolana ? "solana" : destChain);
 
@@ -4506,12 +4506,13 @@ export function BalanceModal({
                 <Label htmlFor="sol-withdraw-address" className={dark ? "text-slate-300" : undefined}>Destination Solana wallet</Label>
                 <Input
                   id="sol-withdraw-address"
-                  placeholder="Enter a Solana address"
+                  placeholder="Enter Solana address or .sol domain"
                   value={withdrawAddress}
                   onChange={(e) => setWithdrawAddress(e.target.value)}
                   disabled={solWithdrawStep !== "form"}
                   className={`mt-1 font-mono text-base ${dark ? "bg-white/10 border-white/20 text-white placeholder:text-slate-400" : ""}`}
                 />
+                <SolDomainHint domain={solDomain} input={withdrawAddress} dark={dark} />
                 {addressRiskStatus === "checking" && (
                   <p className={`text-base mt-1.5 flex items-center gap-1.5 ${dark ? "text-slate-400" : "text-gray-500"}`}>
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />Checking address…
