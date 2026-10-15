@@ -31,14 +31,15 @@ export function getPeerEstimate(amountAtomicUsdc: bigint, currency: string, plat
 }
 
 /**
- * 2% of the gross USDC, never under $0.30. Half is Loofta's cut (taken in the Solana bridge transaction by
- * the backend), half is the peer's fill incentive. Keep in sync with backend common/offramp-fee.ts.
+ * Total fee: 2% of the gross USDC, never under $0.10. The peer always gets a 1% (1 : 0.99) rate on the Base
+ * deposit; Loofta keeps the rest of the fee, taken in the Solana bridge transaction by the backend.
+ * Keep in sync with backend common/offramp-fee.ts.
  */
 export const CASHOUT_FEE_RATE = 0.02;
-export const CASHOUT_MIN_FEE_USDC = 0.3;
-const CASHOUT_MIN_FEE_ATOMIC = 300_000n;
+const CASHOUT_MIN_FEE_ATOMIC = 100_000n;
+const PEER_SPREAD_BPS = 100;
 
-/** Fee taken out of the fiat a peer sends for this USDC deposit. */
+/** Total fee the sender pays out of the gross amount. */
 export function cashoutFeeAtomic(amountAtomicUsdc: bigint): bigint {
   if (amountAtomicUsdc <= 0n) return 0n;
   const percent = (amountAtomicUsdc * 2n) / 100n;
@@ -46,33 +47,29 @@ export function cashoutFeeAtomic(amountAtomicUsdc: bigint): bigint {
   return fee > amountAtomicUsdc ? amountAtomicUsdc : fee;
 }
 
-/** Loofta's half of the fee. */
-export function cashoutLooftaFeeAtomic(grossAtomicUsdc: bigint): bigint {
-  return cashoutFeeAtomic(grossAtomicUsdc) / 2n;
-}
-
-/** USDC that actually reaches the Base deposit once Loofta's cut is taken on Solana. */
+/** USDC that reaches the Base deposit: sized so the peer's 1% spread leaves exactly gross minus the total fee. */
 export function cashoutDepositAtomic(grossAtomicUsdc: bigint): bigint {
-  return grossAtomicUsdc - cashoutLooftaFeeAtomic(grossAtomicUsdc);
+  if (grossAtomicUsdc <= 0n) return 0n;
+  const payout = grossAtomicUsdc - cashoutFeeAtomic(grossAtomicUsdc);
+  const deposit = (payout * 10_000n + 9_899n) / 9_900n;
+  return deposit > grossAtomicUsdc ? grossAtomicUsdc : deposit;
 }
 
-/** Negative oracle spread on the Base deposit: the peer's half of the fee, so the peer sends less fiat. */
+/** Loofta's share of the fee: whatever isn't the peer's 1%. */
+export function cashoutLooftaFeeAtomic(grossAtomicUsdc: bigint): bigint {
+  return grossAtomicUsdc - cashoutDepositAtomic(grossAtomicUsdc);
+}
+
+/** Negative oracle spread on the Base deposit: always 1%, so the peer sends 0.99 per 1 USDC. */
 export function fillerIncentiveSpreadBps(grossAtomicUsdc: bigint): number {
-  const deposit = cashoutDepositAtomic(grossAtomicUsdc);
-  if (deposit <= 0n) return 0;
-  const peerFee = cashoutFeeAtomic(grossAtomicUsdc) - cashoutLooftaFeeAtomic(grossAtomicUsdc);
-  if (peerFee <= 0n) return 0;
-  return -Number((peerFee * 10_000n + deposit - 1n) / deposit);
+  return cashoutDepositAtomic(grossAtomicUsdc) > 0n ? -PEER_SPREAD_BPS : 0;
 }
 
 export function cashoutPayoutAtomic(amountAtomicUsdc: bigint): bigint {
   return amountAtomicUsdc - cashoutFeeAtomic(amountAtomicUsdc);
 }
 
-/**
- * USDC the sender must deposit so a peer still pays `payout` fiat after the fill incentive.
- * Sized so `cashoutPayoutAtomic(gross) === payout` (up to 1 micro-USDC of integer rounding).
- */
+/** USDC the sender must deposit so the recipient still gets `payout` after the total fee. */
 export function cashoutGrossAtomic(payoutAtomicUsdc: bigint): bigint {
   if (payoutAtomicUsdc <= 0n) return 0n;
   const withMin = payoutAtomicUsdc + CASHOUT_MIN_FEE_ATOMIC;
