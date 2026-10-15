@@ -76,6 +76,18 @@ export class OfframpController {
     );
   }
 
+  @Post('rescue-bridge-back')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Bridge USDC stranded in the user\'s own Base wallet back to their Solana wallet' })
+  async rescueBridgeBack(@Req() req: any, @Body() body: { baseWalletAddress: string; amountUsdc: number }) {
+    if (!body?.baseWalletAddress || !(Number(body.amountUsdc) > 0)) {
+      throw new BadRequestException('baseWalletAddress and amountUsdc are required');
+    }
+    return this.offramp.getRescueBridgeBack(req.user.id, body.baseWalletAddress, Number(body.amountUsdc));
+  }
+
   @Post(':id/bridge-back')
   @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')

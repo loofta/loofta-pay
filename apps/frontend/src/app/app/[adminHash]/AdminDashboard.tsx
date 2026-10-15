@@ -1052,7 +1052,7 @@ export default function AdminDashboard() {
           expandedId={expandedId} expandedDetail={expandedDetail} loadingDetail={loadingDetail} toggleExpand={toggleExpand}
           copyText={copyText} openEdit={openEdit} fetchPayments={fetchPayments} appliedSearch={appliedSearch}
           editTarget={editTarget} setEditTarget={setEditTarget} editForm={editForm} setEditForm={setEditForm}
-          saving={saving} saveEdit={saveEdit}
+          saving={saving} saveEdit={saveEdit} authHeaders={authHeaders}
         />
       )}
     </div>

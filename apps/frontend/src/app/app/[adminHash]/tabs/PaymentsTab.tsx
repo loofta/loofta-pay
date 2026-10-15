@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { PayLinkCashouts } from "./PayLinkCashouts";
 import { ChevronDown, ChevronRight, Loader2, Pencil, Search } from "lucide-react";
 import {
   DetailPanel, EditForm, fmtFull, fmtShort, LIMIT, Payment, PaymentDetail,
@@ -21,7 +22,7 @@ export function PaymentsTab({
   colWidths, resizeRef,
   expandedId, expandedDetail, loadingDetail, toggleExpand,
   copyText, openEdit, fetchPayments, appliedSearch,
-  editTarget, setEditTarget, editForm, setEditForm, saving, saveEdit,
+  editTarget, setEditTarget, editForm, setEditForm, saving, saveEdit, authHeaders,
 }: {
   payments: Payment[];
   total: number;
@@ -52,6 +53,7 @@ export function PaymentsTab({
   setEditForm: React.Dispatch<React.SetStateAction<EditForm>>;
   saving: boolean;
   saveEdit: () => void;
+  authHeaders: () => Promise<Record<string, string>>;
 }) {
   return (
     <>
@@ -109,6 +111,8 @@ export function PaymentsTab({
           Search
         </Button>
       </div>
+
+      <PayLinkCashouts authHeaders={authHeaders} />
 
       {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-gray-800">

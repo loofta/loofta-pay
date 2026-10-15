@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAdmin } from "@/lib/admin";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { getVerifiedUserId } from "@/lib/serverAuth";
+import { attachUsers } from "@/lib/adminUsers";
 
 const PAGE_SIZE = 50;
 
@@ -31,21 +32,7 @@ export async function GET(request: NextRequest) {
   const { data, count, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const rows = data ?? [];
-  const userIds = [...new Set(rows.map((r: any) => r.user_id).filter(Boolean))];
-
-  const userMap: Record<string, { username: string | null; email: string | null }> = {};
-  if (userIds.length > 0) {
-    const { data: users } = await supabase
-      .from("app_users")
-      .select("privy_user_id, username, email")
-      .in("privy_user_id", userIds);
-    for (const u of users ?? []) {
-      userMap[(u as any).privy_user_id] = { username: (u as any).username, email: (u as any).email };
-    }
-  }
-
-  const enriched = rows.map((r: any) => ({ ...r, user: userMap[r.user_id] ?? null }));
+  const enriched = await attachUsers(data ?? []);
 
   return NextResponse.json({ data: enriched, total: count ?? 0, page, limit: PAGE_SIZE });
 }

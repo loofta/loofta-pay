@@ -36,7 +36,7 @@ import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import bs58 from "bs58";
 import { useReducedMotion } from "framer-motion";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
-import { cashoutGrossUsdc, cashoutPayoutUsdc } from "@/services/peerCash";
+import { cashoutDepositAtomic, cashoutGrossUsdc, cashoutPayoutUsdc } from "@/services/peerCash";
 
 /** Gate check before any EVM gas-sponsored transaction. Throws if rate-limited. */
 async function assertEvmSponsorAllowed(walletAddress: string, userId: string, accessToken: string | null) {
@@ -1500,7 +1500,9 @@ export function BalanceModal({
 
         // Relay can report the bridge done before Base shows the USDC. Wait for the
         // payout amount instead of failing the setup on the first zero read.
-        const requestedAtomic = BigInt(Math.round(peerAmountUSDC * 1_000_000));
+        const grossAtomic = BigInt(Math.round(peerAmountUSDC * 1_000_000));
+        // Loofta's cut was already taken on Solana, so only this much lands on Base.
+        const requestedAtomic = cashoutDepositAtomic(grossAtomic);
         const pubClient = mkPublic({ chain: base, transport: httpT("https://mainnet.base.org") });
         const readBaseUsdc = () => pubClient.readContract({
           address: BASE_USDC_ADDRESS,
@@ -1534,6 +1536,7 @@ export function BalanceModal({
         const { peerCashout } = await import("@/services/peerCash");
         const { depositId, txHash: depositTxHash, accessPolicyTxHash } = await peerCashout({
           amountAtomicUsdc: atomicUsdc,
+          grossAtomicUsdc: grossAtomic,
           platform: platform.processorName,
           currency: peerCurrency,
           payee: zkp2pId,
@@ -5816,7 +5819,7 @@ export function BalanceModal({
                         ? `$${cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum).toFixed(2)} to ${peerIdentifier.replace(/^[@$]/, "")}`
                         : `$${cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum).toFixed(2)} ${peerCurrency}`}
                     </p>
-                    {typeof peerFilledAmountUSDC === "number" && peerFilledAmountUSDC > 0 && peerFilledAmountUSDC < (peerAmountUSDC || withdrawAmountNum) && (
+                    {typeof peerFilledAmountUSDC === "number" && peerFilledAmountUSDC > 0 && peerFilledAmountUSDC < Number(cashoutDepositAtomic(BigInt(Math.round((peerAmountUSDC || withdrawAmountNum) * 1_000_000)))) / 1_000_000 && (
                       <p className={`text-xs mt-0.5 ${dark ? "text-amber-300" : "text-amber-600"}`}>
                         ${peerFilledAmountUSDC.toFixed(2)} funded so far, partial fill in progress
                       </p>

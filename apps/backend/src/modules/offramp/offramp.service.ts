@@ -10,7 +10,10 @@ import { RelayService } from '../lottery/relay.service';
 import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { CreateOfframpDto } from './dto/create-offramp.dto';
 import { PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
+import { cashoutLooftaFeeAtomic } from '@/common/offramp-fee';
 
+const SOLANA_USDC_MINT_MAINNET = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const BASE_USDC: Address = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const DEFAULT_BASE_RPC = 'https://mainnet.base.org';
 const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -36,6 +39,8 @@ interface StoredRelayQuote {
   instructions: { programId: string; keys: { pubkey: string; isSigner: boolean; isWritable: boolean }[]; data: string }[];
   addressLookupTableAddresses: string[];
   requiredInputUnits: string;
+  /** Loofta's cut, sent as a USDC transfer to the fee payer ATA in the same transaction. */
+  looftaFeeUnits?: string;
 }
 
 function parseRelayQuote(memo: string | null | undefined): StoredRelayQuote | null {
@@ -130,7 +135,10 @@ export class OfframpService {
     if (!isOwnWallet) {
       throw new ForbiddenException('baseWalletAddress must be one of your own linked wallets');
     }
-    const outputUnits = BigInt(Math.round(dto.amountUSDC * 1_000_000));
+    const grossUnits = BigInt(Math.round(dto.amountUSDC * 1_000_000));
+    const looftaFeeUnits = cashoutLooftaFeeAtomic(grossUnits);
+    // Loofta's share is taken on Solana, so the bridge only has to land the rest on Base.
+    const outputUnits = grossUnits - looftaFeeUnits;
     let relayQuote;
     try {
       relayQuote = await this.relay.getSolToBaseQuote({
@@ -153,6 +161,7 @@ export class OfframpService {
       instructions: relayQuote.instructions,
       addressLookupTableAddresses: relayQuote.addressLookupTableAddresses,
       requiredInputUnits: relayQuote.requiredInputUnits.toString(),
+      looftaFeeUnits: looftaFeeUnits.toString(),
     };
     const row = {
       user_id:                      userId,
@@ -193,7 +202,7 @@ export class OfframpService {
       shortId,
       bridge:         'relay' as const,
       requestId:      relayQuote.requestId,
-      amountInUsdc:   Number(relayQuote.requiredInputUnits) / 1_000_000,
+      amountInUsdc:   Number(relayQuote.requiredInputUnits + looftaFeeUnits) / 1_000_000,
       baseWallet:     dto.baseWalletAddress,
     };
   }
@@ -205,9 +214,26 @@ export class OfframpService {
     return { record, quote };
   }
 
+  /** USDC transfer of Loofta's cut from the paying wallet to the fee payer ATA, or null when there is none. */
+  private looftaFeeTransfer(userSolanaAddress: string, quote: StoredRelayQuote) {
+    const amountUnits = BigInt(quote.looftaFeeUnits ?? '0');
+    if (amountUnits <= 0n) return null;
+    const feePayer = this.solanaSponsor.getFeePayerAddress();
+    if (!feePayer) throw new BadRequestException('Fee payer not configured');
+    const mint = new PublicKey(this.config.get<string>('SOLANA_USDC_MINT_MAINNET') || SOLANA_USDC_MINT_MAINNET);
+    const owner = new PublicKey(userSolanaAddress);
+    return {
+      mint,
+      owner,
+      sourceAta: getAssociatedTokenAddressSync(mint, owner),
+      destAta: getAssociatedTokenAddressSync(mint, new PublicKey(feePayer)),
+      amountUnits,
+    };
+  }
+
   /** Unsigned Solana deposit for the stored Relay quote. Backend fee payer covers the fee. */
   async buildRelayDepositTx(offrampId: string, userId: string) {
-    const { quote } = await this.loadRelayQuote(offrampId, userId);
+    const { record, quote } = await this.loadRelayQuote(offrampId, userId);
     const feePayer = this.solanaSponsor.getFeePayerAddress();
     if (!feePayer) throw new BadRequestException('Fee payer not configured');
     const conn = this.solanaSponsor.getConnection();
@@ -217,6 +243,8 @@ export class OfframpService {
       keys: ix.keys.map(k => ({ pubkey: new PublicKey(k.pubkey), isSigner: k.isSigner, isWritable: k.isWritable })),
       data: Buffer.from(ix.data, 'hex'),
     }));
+    const fee = this.looftaFeeTransfer(record.user_solana_address, quote);
+    if (fee) ixs.push(createTransferCheckedInstruction(fee.sourceAta, fee.mint, fee.destAta, fee.owner, fee.amountUnits, 6));
     const message = new TransactionMessage({
       payerKey: new PublicKey(feePayer),
       recentBlockhash: blockhash,
@@ -234,6 +262,7 @@ export class OfframpService {
         transactionBase64,
         userSolanaAddress: String(record.user_solana_address),
         instructions: quote.instructions,
+        looftaFee: this.looftaFeeTransfer(record.user_solana_address, quote),
       }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -272,7 +301,7 @@ export class OfframpService {
         ({ data, error } = await client.from('offramp_requests').select(cols).eq('near_intents_status', `sid:${shortId}`).maybeSingle());
       }
     }
-    if (error || !data) throw new NotFoundException('Payment not found');
+    if (error || !data || data.status === 'DELETED') throw new NotFoundException('Payment not found');
     const platform = String(data.platform);
     return {
       id: data.id as string,
@@ -352,8 +381,8 @@ export class OfframpService {
       return { status: 'CANCELLED', refundNote: 'Bridge refunds automatically via Near Intents if funds were sent' };
     }
 
-    // A peer who already locked or paid this deposit can no longer be cancelled out from under them.
-    await this.assertNotLockedByPeer(record);
+    // A locked but unpaid deposit can be cancelled; one a peer has already paid cannot.
+    await this.assertNotLockedByPeer(record, false);
 
     // DEPOSITED: user must sign ZKP2P withdrawDeposit + USDC bridge on Base.
     // Mark CANCELLING and let frontend drive the signing.
@@ -365,7 +394,10 @@ export class OfframpService {
     };
   }
 
-  /** Removes a cancelled pay from history. In-progress and completed pays stay. */
+  /**
+   * Hides a cancelled pay from the owner's history. In-progress and completed pays stay.
+   * Soft delete: the row is kept (status DELETED) so admin can still see who created it.
+   */
   async deleteOfframp(offrampId: string, userId: string) {
     const record = await this.getRecord(offrampId, userId);
     if (record.status !== 'CANCELLED') {
@@ -373,7 +405,7 @@ export class OfframpService {
     }
     const { data, error } = await this.supabase.getClient()
       .from('offramp_requests')
-      .delete()
+      .update({ status: 'DELETED', updated_at: new Date().toISOString() })
       .eq('id', offrampId)
       .eq('user_id', userId)
       .eq('status', 'CANCELLED')
@@ -389,7 +421,8 @@ export class OfframpService {
     if (['COMPLETE', 'FAILED'].includes(record.status)) {
       throw new BadRequestException(`Cannot mark cancelled from status ${record.status}`);
     }
-    await this.assertNotLockedByPeer(record);
+    // Funds still locked by an unpaid peer stay in escrow until the lock expires, so don't finalise yet.
+    await this.assertNotLockedByPeer(record, true);
     await this.supabase.getClient()
       .from('offramp_requests')
       .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -412,7 +445,9 @@ export class OfframpService {
       this.nearIntents.getDefuseAssetId('USDC', 'solana'),
     ]);
 
-    const amountUsdc = amountUsdcOverride ?? record.amount_usdc;
+    // Only the Base deposit can come back; Loofta's cut was already taken on Solana.
+    const grossUnits = BigInt(Math.round(Number(record.amount_usdc) * 1_000_000));
+    const amountUsdc = amountUsdcOverride ?? Number(grossUnits - cashoutLooftaFeeAtomic(grossUnits)) / 1_000_000;
     const quote = await this.nearIntents.getDepositQuote({
       fromToken: { tokenId: baseUsdcId,   chain: 'base',   symbol: 'USDC', decimals: 6 },
       toToken:   { tokenId: solanaUsdcId, chain: 'solana', symbol: 'USDC', decimals: 6 },
@@ -428,6 +463,34 @@ export class OfframpService {
       memo:           quote.memo ?? null,
       amountUsdc,
     };
+  }
+
+  /**
+   * Rescue for USDC stranded in the user's own Base wallet (e.g. a cancelled cash out whose bridge-back never
+   * finished, or whose row is gone). Needs no offramp row: the user sends USDC from their own wallet to the
+   * returned deposit address and it lands on their own Solana wallet. Both ends are resolved server-side.
+   */
+  async getRescueBridgeBack(userId: string, baseWalletAddress: string, amountUsdc: number) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(baseWalletAddress)) throw new BadRequestException('Invalid Base wallet address');
+    if (!(amountUsdc > 0) || amountUsdc > 10_000) throw new BadRequestException('Invalid amount');
+    if (!(await this.usersService.isEvmAddressInLinkedAccounts(userId, baseWalletAddress))) {
+      throw new ForbiddenException('baseWalletAddress must be one of your own linked wallets');
+    }
+    const solanaAddress = await this.usersService.getSolanaWalletAddress(userId, { skipCache: true });
+    const [baseUsdcId, solanaUsdcId] = await Promise.all([
+      this.nearIntents.getDefuseAssetId('USDC', 'base'),
+      this.nearIntents.getDefuseAssetId('USDC', 'solana'),
+    ]);
+    const quote = await this.nearIntents.getDepositQuote({
+      fromToken: { tokenId: baseUsdcId,   chain: 'base',   symbol: 'USDC', decimals: 6 },
+      toToken:   { tokenId: solanaUsdcId, chain: 'solana', symbol: 'USDC', decimals: 6 },
+      amountIn:  amountUsdc.toString(),
+      recipient: solanaAddress,
+      refundAddress: baseWalletAddress,
+    });
+    if (!quote.depositAddress) throw new BadRequestException('Could not get a bridge address');
+    this.logger.log(`rescue bridge-back: user=${userId} base=${baseWalletAddress} amount=${amountUsdc}`);
+    return { depositAddress: quote.depositAddress, memo: quote.memo ?? null, amountUsdc };
   }
 
   // Returns the latest non-terminal offramp record for a user (for session recovery on the frontend).
@@ -474,15 +537,22 @@ export class OfframpService {
     }
   }
 
-  /** Throws if a peer has locked or filled the deposit. Re-reads Peer first so a stale DB row can't let it through. */
-  private async assertNotLockedByPeer(record: any) {
+  /**
+   * Re-reads Peer first so a stale DB row can't let a paid deposit through. Always blocks once a peer has paid.
+   * A lock with nothing paid yet only blocks when `blockLocked` is set (finalising a cancel), because the locked
+   * USDC cannot leave escrow until the lock expires or the buyer backs out.
+   */
+  private async assertNotLockedByPeer(record: any, blockLocked: boolean) {
     if (!record.zkp2p_deposit_id) return;
     const live = await this.checkFulfilment(record);
     const state = live?.state ?? record.fill_state;
     const filled = live?.filledUsdc ?? Number(record.filled_amount_usdc ?? 0);
     if (state === 'returned') return;
-    if (filled > 0 || ['matched', 'delivering', 'delivered'].includes(state ?? '')) {
-      throw new BadRequestException('A peer has already locked or paid this payment, so it can no longer be cancelled.');
+    if (filled > 0 || ['delivering', 'delivered'].includes(state ?? '')) {
+      throw new BadRequestException('A peer has already paid this payment, so it can no longer be cancelled.');
+    }
+    if (blockLocked && state === 'matched') {
+      throw new BadRequestException('A buyer has locked this payment but not paid yet. Your funds are released when their lock expires, then try again.');
     }
   }
 

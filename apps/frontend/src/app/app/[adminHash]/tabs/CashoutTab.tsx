@@ -1,9 +1,52 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Fragment, useState } from "react";
+import { ChevronRight, Loader2 } from "lucide-react";
 import { AddressCell, SolAddressCell, TxCell } from "../admin-shared";
 
 type CashoutKind = "peer" | "crypto" | "naira";
+
+function UserCell({ row }: { row: any }) {
+  if (row.user?.username) return <span className="text-gray-200">@{row.user.username}</span>;
+  if (row.user?.email) return <span className="text-gray-300">{row.user.email}</span>;
+  return <span className="text-gray-600 font-mono text-sm">{row.user_id}</span>;
+}
+
+function formatDetail(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "object") return JSON.stringify(v, null, 2);
+  return String(v);
+}
+
+function DetailsRow({ row, colSpan }: { row: any; colSpan: number }) {
+  const entries = Object.entries(row).filter(([k]) => k !== "user");
+  return (
+    <tr className="border-b border-gray-800/50 bg-gray-900/30">
+      <td colSpan={colSpan} className="px-4 py-3">
+        <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+          {row.user && (
+            <div>
+              <dt className="text-sm text-gray-500">user</dt>
+              <dd className="text-sm text-gray-200 break-all">
+                {[row.user.username && `@${row.user.username}`, row.user.email].filter(Boolean).join(" · ") || "—"}
+              </dd>
+            </div>
+          )}
+          {entries.map(([k, v]) => (
+            <div key={k}>
+              <dt className="text-sm text-gray-500">{k}</dt>
+              <dd className="text-sm text-gray-300 font-mono break-all whitespace-pre-wrap">{formatDetail(v)}</dd>
+            </div>
+          ))}
+        </dl>
+      </td>
+    </tr>
+  );
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return <ChevronRight className={`w-4 h-4 text-gray-500 transition-transform ${open ? "rotate-90" : ""}`} />;
+}
 
 export function CashoutTab({
   cashoutKind, setCashoutKind,
@@ -49,6 +92,14 @@ export function CashoutTab({
   setPajCashDirectionFilter: (v: string) => void;
   fetchPajCash: (page?: number, status?: string, direction?: string) => void;
 }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+
   return (
     <div className="space-y-3">
       {/* Kind switcher */}
@@ -89,6 +140,7 @@ export function CashoutTab({
               <option value="COMPLETE">Complete</option>
               <option value="CANCELLED">Cancelled</option>
               <option value="FAILED">Failed</option>
+              <option value="DELETED">Deleted by user</option>
             </select>
             <span className="text-base text-gray-500">{total} total</span>
           </div>
@@ -104,6 +156,7 @@ export function CashoutTab({
               <table className="w-full text-base text-gray-300">
                 <thead>
                   <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                    <th className="w-8 px-2 py-2.5" />
                     <th className="text-left px-4 py-2.5">Date</th>
                     <th className="text-left px-4 py-2.5">Platform</th>
                     <th className="text-left px-4 py-2.5">Identifier</th>
@@ -113,12 +166,12 @@ export function CashoutTab({
                     <th className="text-left px-4 py-2.5">Status</th>
                     <th className="text-left px-4 py-2.5">Time to fill</th>
                     <th className="text-left px-4 py-2.5">Deposit ID</th>
-                    <th className="text-left px-4 py-2.5 max-w-[120px]">User ID</th>
+                    <th className="text-left px-4 py-2.5 max-w-[160px]">User</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.length === 0 && (
-                    <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-600">No cash out requests found.</td></tr>
+                    <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-600">No cash out requests found.</td></tr>
                   )}
                   {data.map((row: any) => {
                     const statusColors: Record<string, string> = {
@@ -130,8 +183,12 @@ export function CashoutTab({
                       FAILED: "text-red-400",
                       CANCELLING: "text-orange-400",
                     };
+                    const rowKey = `peer:${row.id}`;
+                    const open = expanded.has(rowKey);
                     return (
-                      <tr key={row.id} className="border-b border-gray-800/50 hover:bg-gray-900/40">
+                      <Fragment key={row.id}>
+                      <tr onClick={() => toggle(rowKey)} className="border-b border-gray-800/50 hover:bg-gray-900/40 cursor-pointer">
+                        <td className="px-2 py-2.5"><Chevron open={open} /></td>
                         <td className="px-4 py-2.5 whitespace-nowrap tabular-nums text-gray-500">
                           {new Date(row.created_at).toLocaleDateString()} {new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                         </td>
@@ -154,8 +211,10 @@ export function CashoutTab({
                         <td className="px-4 py-2.5 font-mono text-gray-400">
                           {row.zkp2p_deposit_id ?? <span className="text-gray-700">—</span>}
                         </td>
-                        <td className="px-4 py-2.5 max-w-[120px] truncate text-gray-600 font-mono text-sm">{row.user_id}</td>
+                        <td className="px-4 py-2.5 max-w-[160px] truncate"><UserCell row={row} /></td>
                       </tr>
+                      {open && <DetailsRow row={row} colSpan={11} />}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -209,6 +268,7 @@ export function CashoutTab({
               <table className="w-full text-base text-gray-300">
                 <thead>
                   <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                    <th className="w-8 px-2 py-2.5" />
                     <th className="text-left px-4 py-2.5">Date</th>
                     <th className="text-left px-4 py-2.5">Type</th>
                     <th className="text-right px-4 py-2.5">Amount</th>
@@ -220,10 +280,15 @@ export function CashoutTab({
                 </thead>
                 <tbody>
                   {withdrawalsData.length === 0 && (
-                    <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-600">No withdrawals found.</td></tr>
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-600">No withdrawals found.</td></tr>
                   )}
-                  {withdrawalsData.map((row: any) => (
-                    <tr key={row.id} className="border-b border-gray-800/50 hover:bg-gray-900/40">
+                  {withdrawalsData.map((row: any) => {
+                    const rowKey = `crypto:${row.id}`;
+                    const open = expanded.has(rowKey);
+                    return (
+                    <Fragment key={row.id}>
+                    <tr onClick={() => toggle(rowKey)} className="border-b border-gray-800/50 hover:bg-gray-900/40 cursor-pointer">
+                      <td className="px-2 py-2.5"><Chevron open={open} /></td>
                       <td className="px-4 py-2.5 whitespace-nowrap tabular-nums text-gray-500">
                         {new Date(row.created_at).toLocaleDateString()} {new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </td>
@@ -257,16 +322,13 @@ export function CashoutTab({
                         ) : <span className="text-gray-700">—</span>}
                       </td>
                       <td className="px-4 py-2.5 max-w-[160px] truncate">
-                        {row.user?.username ? (
-                          <span className="text-gray-200">@{row.user.username}</span>
-                        ) : row.user?.email ? (
-                          <span className="text-gray-300">{row.user.email}</span>
-                        ) : (
-                          <span className="text-gray-600 font-mono text-sm">{row.user_id}</span>
-                        )}
+                        <UserCell row={row} />
                       </td>
                     </tr>
-                  ))}
+                    {open && <DetailsRow row={row} colSpan={8} />}
+                    </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -333,18 +395,19 @@ export function CashoutTab({
               <table className="w-full text-base text-gray-300">
                 <thead>
                   <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                    <th className="w-8 px-2 py-2.5" />
                     <th className="text-left px-4 py-2.5">Date</th>
                     <th className="text-left px-4 py-2.5">Direction</th>
                     <th className="text-right px-4 py-2.5">Fiat</th>
                     <th className="text-right px-4 py-2.5">USDC</th>
                     <th className="text-right px-4 py-2.5">Fee</th>
                     <th className="text-left px-4 py-2.5">Status</th>
-                    <th className="text-left px-4 py-2.5 max-w-[120px]">User ID</th>
+                    <th className="text-left px-4 py-2.5 max-w-[160px]">User</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pajCashData.length === 0 && (
-                    <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-600">No Naira orders found.</td></tr>
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-600">No Naira orders found.</td></tr>
                   )}
                   {pajCashData.map((row: any) => {
                     const statusColors: Record<string, string> = {
@@ -357,8 +420,12 @@ export function CashoutTab({
                       CANCELLED: "text-gray-500",
                       EXPIRED: "text-gray-500",
                     };
+                    const rowKey = `naira:${row.id}`;
+                    const open = expanded.has(rowKey);
                     return (
-                      <tr key={row.id} className="border-b border-gray-800/50 hover:bg-gray-900/40">
+                      <Fragment key={row.id}>
+                      <tr onClick={() => toggle(rowKey)} className="border-b border-gray-800/50 hover:bg-gray-900/40 cursor-pointer">
+                        <td className="px-2 py-2.5"><Chevron open={open} /></td>
                         <td className="px-4 py-2.5 whitespace-nowrap tabular-nums text-gray-500">
                           {new Date(row.created_at).toLocaleDateString()} {new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                         </td>
@@ -378,8 +445,10 @@ export function CashoutTab({
                           {row.status}
                           {row.error_message && <span className="block text-sm text-red-400/70 font-normal max-w-[180px] truncate" title={row.error_message}>{row.error_message}</span>}
                         </td>
-                        <td className="px-4 py-2.5 max-w-[120px] truncate text-gray-600 font-mono text-sm">{row.user_id}</td>
+                        <td className="px-4 py-2.5 max-w-[160px] truncate"><UserCell row={row} /></td>
                       </tr>
+                      {open && <DetailsRow row={row} colSpan={8} />}
+                      </Fragment>
                     );
                   })}
                 </tbody>

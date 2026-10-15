@@ -30,7 +30,10 @@ export function getPeerEstimate(amountAtomicUsdc: bigint, currency: string, plat
   return getPeerCashClient().estimate({ amount: amountAtomicUsdc, currency: currency as any, platform }, { includeEta });
 }
 
-/** 2% of the deposited USDC, never under $0.30 — the sender pays this on top so a peer fills cheaper. */
+/**
+ * 2% of the gross USDC, never under $0.30. Half is Loofta's cut (taken in the Solana bridge transaction by
+ * the backend), half is the peer's fill incentive. Keep in sync with backend common/offramp-fee.ts.
+ */
 export const CASHOUT_FEE_RATE = 0.02;
 export const CASHOUT_MIN_FEE_USDC = 0.3;
 const CASHOUT_MIN_FEE_ATOMIC = 300_000n;
@@ -43,12 +46,23 @@ export function cashoutFeeAtomic(amountAtomicUsdc: bigint): bigint {
   return fee > amountAtomicUsdc ? amountAtomicUsdc : fee;
 }
 
-/** Negative oracle spread: the peer sends less fiat for the full USDC amount. */
-export function fillerIncentiveSpreadBps(amountAtomicUsdc: bigint): number {
-  if (amountAtomicUsdc <= 0n) return 0;
-  const fee = cashoutFeeAtomic(amountAtomicUsdc);
-  if (fee <= 0n) return 0;
-  return -Number((fee * 10_000n + amountAtomicUsdc - 1n) / amountAtomicUsdc);
+/** Loofta's half of the fee. */
+export function cashoutLooftaFeeAtomic(grossAtomicUsdc: bigint): bigint {
+  return cashoutFeeAtomic(grossAtomicUsdc) / 2n;
+}
+
+/** USDC that actually reaches the Base deposit once Loofta's cut is taken on Solana. */
+export function cashoutDepositAtomic(grossAtomicUsdc: bigint): bigint {
+  return grossAtomicUsdc - cashoutLooftaFeeAtomic(grossAtomicUsdc);
+}
+
+/** Negative oracle spread on the Base deposit: the peer's half of the fee, so the peer sends less fiat. */
+export function fillerIncentiveSpreadBps(grossAtomicUsdc: bigint): number {
+  const deposit = cashoutDepositAtomic(grossAtomicUsdc);
+  if (deposit <= 0n) return 0;
+  const peerFee = cashoutFeeAtomic(grossAtomicUsdc) - cashoutLooftaFeeAtomic(grossAtomicUsdc);
+  if (peerFee <= 0n) return 0;
+  return -Number((peerFee * 10_000n + deposit - 1n) / deposit);
 }
 
 export function cashoutPayoutAtomic(amountAtomicUsdc: bigint): bigint {
@@ -84,7 +98,10 @@ export function cashoutGrossUsdc(payoutUsdc: number): number {
 }
 
 export async function peerCashout(opts: {
+  /** USDC being deposited on Base (gross minus Loofta's cut). */
   amountAtomicUsdc: bigint;
+  /** What the sender was charged; the fill incentive is sized from this. */
+  grossAtomicUsdc: bigint;
   platform: string;
   currency: string;
   payee: string;
@@ -92,7 +109,7 @@ export async function peerCashout(opts: {
   /** One buyer must take the whole amount — no partial fills. */
   exactFill?: boolean;
 }) {
-  const { amountAtomicUsdc, platform, currency, payee, signer, exactFill } = opts;
+  const { amountAtomicUsdc, grossAtomicUsdc, platform, currency, payee, signer, exactFill } = opts;
   const result = await getPeerCashClient().cashout(
     {
       amount: amountAtomicUsdc,
@@ -105,7 +122,7 @@ export async function peerCashout(opts: {
     depositId: result.depositId,
     platform,
     currency,
-    amountAtomicUsdc,
+    grossAtomicUsdc,
     signer,
   });
   return result;
@@ -116,10 +133,10 @@ async function applyFillerIncentive(opts: {
   depositId: string;
   platform: string;
   currency: string;
-  amountAtomicUsdc: bigint;
+  grossAtomicUsdc: bigint;
   signer: WalletClient;
 }) {
-  const spreadBps = fillerIncentiveSpreadBps(opts.amountAtomicUsdc);
+  const spreadBps = fillerIncentiveSpreadBps(opts.grossAtomicUsdc);
   if (spreadBps === 0) return;
   const {
     Zkp2pClient,

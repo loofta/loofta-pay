@@ -1486,6 +1486,8 @@ export class SolanaSponsorService {
     transactionBase64: string;
     userSolanaAddress: string;
     instructions: { programId: string; keys: { pubkey: string; isSigner: boolean; isWritable: boolean }[]; data: string }[];
+    /** Loofta's cut: one trailing USDC TransferChecked from the paying wallet to the fee payer ATA. */
+    looftaFee?: { sourceAta: PublicKey; destAta: PublicKey; mint: PublicKey; owner: PublicKey; amountUnits: bigint } | null;
   }): Promise<{ signature: string }> {
     if (!this.feePayerKeypair || !this.feePayerAddress) throw new Error('Fee payer not configured');
     const raw = Buffer.from(params.transactionBase64, 'base64');
@@ -1504,7 +1506,8 @@ export class SolanaSponsorService {
       throw new Error('Relay deposit must not use address lookup tables');
     }
     const compiled = message.compiledInstructions;
-    if (compiled.length !== params.instructions.length) {
+    const fee = params.looftaFee ?? null;
+    if (compiled.length !== params.instructions.length + (fee ? 1 : 0)) {
       throw new Error('Relay deposit does not match the quoted bridge');
     }
     const user = params.userSolanaAddress.trim();
@@ -1522,6 +1525,24 @@ export class SolanaSponsorService {
         if (pubkey !== expected.keys[k].pubkey) throw new Error('Relay deposit does not match the quoted bridge');
         if (pubkey === this.feePayerAddress) throw new Error('Relay deposit must not include the fee payer');
         if (pubkey === user && expected.keys[k].isSigner) userIsSigner = true;
+      }
+    }
+    if (fee) {
+      // Exactly the fee transfer we built: token program, [source, mint, dest, owner], TransferChecked(amount, 6).
+      const ix = compiled[params.instructions.length];
+      const expectedData = Buffer.alloc(10);
+      expectedData.writeUInt8(12, 0);
+      expectedData.writeBigUInt64LE(fee.amountUnits, 1);
+      expectedData.writeUInt8(6, 9);
+      const keys = ix.accountKeyIndexes.map((i) => staticKeys[i]?.toBase58());
+      const wantKeys = [fee.sourceAta, fee.mint, fee.destAta, fee.owner].map((k) => k.toBase58());
+      if (
+        staticKeys[ix.programIdIndex]?.toBase58() !== TOKEN_PROGRAM_ID_STR
+        || Buffer.from(ix.data).compare(expectedData) !== 0
+        || keys.length !== wantKeys.length
+        || keys.some((k, i) => k !== wantKeys[i])
+      ) {
+        throw new Error('Relay deposit fee transfer does not match');
       }
     }
     if (!userIsSigner) throw new Error('Relay deposit is not signed by the paying wallet');
