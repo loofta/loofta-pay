@@ -59,10 +59,6 @@ const FEE_WALLET_REALERT_MS = 24 * 60 * 60_000;
 // destination-side activity means the bridge tool's solver network has abandoned the order,
 // not that it's "just slow". Past this, stop waiting and make the user whole ourselves.
 const BRIDGE_STALL_TIMEOUT_MS = 20 * 60_000;
-// New private purchases stop 5 min before the draw (draw is 7:00 PM CET daily) — a purchase
-// started right at the wire could still be mid-bridge when the round is drawn, buying a ticket
-// that can never win. Reopens automatically once Megapot's API reports the next round.
-const DRAW_PURCHASE_CUTOFF_MS = 5 * 60_000;
 // A ticket that never captured round_id/draw_time at purchase time (see checkDailyResultsInner)
 // is invisible to both staleness checks below it — draws are daily, so once a ticket has sat in
 // 'active' this long with no round info at all, its round has certainly already drawn and it's
@@ -276,25 +272,6 @@ export class LotteryService {
 
   // ─── Purchase initiation ───────────────────────────────────────────────────
 
-  /** Blocks new purchases in the last DRAW_PURCHASE_CUTOFF_MS before the active round draws. */
-  private async assertNotInDrawCutoff(): Promise<void> {
-    let drawTime: string | null = null;
-    try {
-      drawTime = (await this.megapot.getActiveRound())?.drawTime ?? null;
-    } catch (e: any) {
-      this.logger.warn(`assertNotInDrawCutoff: could not fetch active round, allowing purchase: ${e.message}`);
-      return;
-    }
-    if (!drawTime) return;
-
-    const msUntilDraw = new Date(drawTime).getTime() - Date.now();
-    if (msUntilDraw > 0 && msUntilDraw <= DRAW_PURCHASE_CUTOFF_MS) {
-      throw new BadRequestException(
-        `Ticket sales are paused for the next few minutes while this round finishes — the draw is at ${new Date(drawTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'Europe/Paris' })} CET. Try again just after.`,
-      );
-    }
-  }
-
   async initiatePurchase(opts: {
     userId: string;
     numTickets: number;
@@ -314,7 +291,6 @@ export class LotteryService {
     const requestedNumbers = pickedTickets && pickedTickets.length === numTickets && numTickets <= MAX_CUSTOM_TICKETS_PER_BUY
       ? pickedTickets
       : null;
-    await this.assertNotInDrawCutoff();
     if (numTickets < 1 || numTickets > 100) throw new BadRequestException('1–100 tickets per private purchase');
 
     // Load protection: each initiation creates wallets, calls MagicBlock, and builds sponsored
@@ -503,7 +479,6 @@ export class LotteryService {
   }): Promise<{ giftId: string; txBase64: string; requiredSigners: string[] }> {
     const { userId, userSolanaAddress, numTickets } = opts;
     const route = opts.route ?? 'solana_private';
-    await this.assertNotInDrawCutoff();
     if (!numTickets || numTickets < 1 || numTickets > 100) throw new BadRequestException('1–100 tickets per gift');
     if (!['email', 'handle'].includes(opts.recipientType)) throw new BadRequestException('recipientType must be "email" or "handle"');
     const recipientIdentifier = this.normalizeGiftIdentifier(opts.recipientType, opts.recipientIdentifier);
@@ -1174,7 +1149,6 @@ export class LotteryService {
    */
   private async purchaseGiftTickets(gift: any, claimantPrivyUserId: string): Promise<{ ticketId: string; numTickets: number }> {
     try {
-      await this.assertNotInDrawCutoff();
       const userSolanaAddress = await this.usersService.getSolanaWalletAddress(claimantPrivyUserId);
 
       const companionPrivKey = generatePrivateKey();
@@ -1314,7 +1288,6 @@ export class LotteryService {
    * because a picked-numbers request was malformed.
    */
   async purchaseTicketsForUser(userId: string, numTickets: number, pickedTickets?: TicketPick[]): Promise<{ ticketId: string }> {
-    await this.assertNotInDrawCutoff();
     const userSolanaAddress = await this.usersService.getSolanaWalletAddress(userId);
     const requestedNumbers = pickedTickets && pickedTickets.length === numTickets && numTickets <= MAX_CUSTOM_TICKETS_PER_BUY
       ? pickedTickets
@@ -1677,7 +1650,6 @@ export class LotteryService {
   }): Promise<InitiatePublicPurchaseResult> {
     const { userId, numTickets, userSolanaAddress } = opts;
     if (numTickets < 1 || numTickets > 500) throw new BadRequestException('1–500 tickets per public purchase');
-    await this.assertNotInDrawCutoff();
 
     // Bridge SOL USDC → Base ETH directly to companion.
     // ETH covers gas for Uniswap swap + ticket purchase. 15% buffer over ticket cost.

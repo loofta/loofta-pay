@@ -41,10 +41,8 @@ const DUE_BATCH_BATCH_SIZE = 20;
 const RETRY_BATCH_BATCH_SIZE = 10;
 
 // Megapot's daily draw runs at a fixed real-world time (~7pm CET/CEST, i.e. ~17:00-18:00 UTC
-// depending on DST). purchaseTicketsForUser already hard-blocks any purchase within 5 minutes of
-// the ACTUAL live draw time (LotteryService.assertNotInDrawCutoff, read fresh from Megapot's API
-// every call — not hardcoded here), so a batch can never buy during the cutoff itself. What this
-// constant guards against is different: scheduling. If "next batch due" were computed as "whenever
+// depending on DST). Megapot no longer pauses sales before a draw (purchases just roll into the next
+// draw), so there is no cutoff to avoid. What this constant guards against is scheduling. If "next batch due" were computed as "whenever
 // this batch happened to buy + 24h" (a retry delay, cron jitter, etc.), that time-of-day would
 // drift a little further every day and could eventually creep into that 5-minute cutoff window,
 // causing repeated failures right as the schedule reaches ~7pm CET. Anchoring every batch to this

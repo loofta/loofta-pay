@@ -869,23 +869,6 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
   const pollingStartedRef = useRef(false);
   const suppressedTicketIdRef = useRef<string | null>(null);
 
-  // Sales pause DRAW_PURCHASE_CUTOFF_MS before the draw — backend enforces this for real
-  // (assertNotInDrawCutoff), this just keeps the UI from letting someone start a purchase
-  // the backend is about to reject.
-  const [drawCutoff, setDrawCutoff] = useState(false);
-  const [drawTimeLabel, setDrawTimeLabel] = useState<string | null>(null);
-  useEffect(() => {
-    const compute = () => {
-      const drawTime = nextDraw?.drawTime ? new Date(nextDraw.drawTime) : nextParisDrawDate();
-      const msUntil = drawTime.getTime() - Date.now();
-      setDrawCutoff(msUntil > 0 && msUntil <= DRAW_PURCHASE_CUTOFF_MS);
-      setDrawTimeLabel(drawTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Europe/Paris" }));
-    };
-    compute();
-    const id = setInterval(compute, 1000);
-    return () => clearInterval(id);
-  }, [nextDraw?.drawTime]);
-
   // Dev-only: jump directly to any purchase-flow screen via ?preview=... (see DevPreviewPanel)
   const previewParam = useSearchParams().get("preview");
   useEffect(() => {
@@ -1569,17 +1552,11 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             <p className="text-base text-red-400">{giftError}</p>
           )}
 
-          {drawCutoff && (
-            <p className="text-sm text-amber-400 text-center">
-              Sales pause a few minutes before each draw{drawTimeLabel ? ` (${drawTimeLabel} CET)` : ""} — back right after.
-            </p>
-          )}
-
           {authenticated && ((giftMode ? giftErrorIsBalance : stepErrorIsBalance) || (!isBalanceLoading && insufficientBalance)) ? (
             <InsufficientBalanceCard balanceUSD={balanceUSD} neededUSD={totalCostUsd} />
           ) : giftMode ? (
             <button onClick={!authenticated ? () => login() : () => handleGiftBuy()}
-              disabled={authenticated && (drawCutoff || giftStep === "signing" || !giftIdentifier.trim())}
+              disabled={authenticated && (giftStep === "signing" || !giftIdentifier.trim())}
               className="flex h-[58px] w-full items-center justify-center gap-2.5 rounded-[18px] bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] text-[17px] font-semibold text-white shadow-[0_14px_40px_rgba(255,70,10,0.3)] transition-all hover:opacity-90 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100">
               {!authenticated ? (
                 <>
@@ -1589,20 +1566,19 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
               ) : giftStep === "signing" ? "Signing…" : (
                 <>
                   <Gift className="w-5 h-5" />
-                  {drawCutoff ? "Sales paused" : `Gift${sendPrivately ? " privately" : ""} · ${fmt(totalCostUsd)}`}
+                  {`Gift${sendPrivately ? " privately" : ""} · ${fmt(totalCostUsd)}`}
                 </>
               )}
             </button>
           ) : (
             <button onClick={!authenticated ? () => login() : () => (sendPrivately ? handlePrivateBuy() : handlePublicBuy())}
-              disabled={authenticated && drawCutoff}
               className="flex h-[58px] w-full items-center justify-center gap-2.5 rounded-[18px] bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] text-[17px] font-semibold text-white shadow-[0_14px_40px_rgba(255,70,10,0.3)] transition-all hover:opacity-90 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100">
               {!authenticated ? (
                 <>
                   <LogIn className="w-5 h-5" />
                   Sign in to continue
                 </>
-              ) : (drawCutoff ? "Sales paused" : `Buy${sendPrivately ? " privately" : ""} · ${fmt(totalCostUsd)}`)}
+              ) : `Buy${sendPrivately ? " privately" : ""} · ${fmt(totalCostUsd)}`}
             </button>
           )}
         </>
@@ -2273,11 +2249,6 @@ function nextParisDrawDate(after = new Date()): Date {
   }
   return new Date(after.getTime() + 86_400_000);
 }
-
-// Purchases pause this long before the draw — mirrors DRAW_PURCHASE_CUTOFF_MS in
-// lottery.service.ts (backend is the real enforcement; this is just so the UI doesn't let
-// someone start a purchase the backend is about to reject).
-const DRAW_PURCHASE_CUTOFF_MS = 5 * 60_000;
 
 function TicketGlyph({ stroke = "#fff", size = 24 }: { stroke?: string; size?: number }) {
   return (
