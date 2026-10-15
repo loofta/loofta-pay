@@ -516,6 +516,33 @@ export class OfframpService {
     return data ?? null;
   }
 
+  /**
+   * PENDING_BRIDGE rows are created at prepare time, before the Solana deposit is signed. When the
+   * build/sign/broadcast step fails the user just retries and a new row is made, so the old ones
+   * sit there forever. Nothing has moved on-chain at that point, so cancelling them is safe.
+   * The status filter on the update keeps a row that just advanced to BRIDGING untouched.
+   */
+  async expireStalePendingBridges(maxAgeMinutes = 30) {
+    const cutoff = new Date(Date.now() - maxAgeMinutes * 60_000).toISOString();
+    const now = new Date().toISOString();
+    const { data, error } = await this.supabase.getClient()
+      .from('offramp_requests')
+      .update({
+        status: 'CANCELLED',
+        cancelled_at: now,
+        updated_at: now,
+        error_message: 'Expired: the bridge deposit was never sent',
+      })
+      .eq('status', 'PENDING_BRIDGE')
+      .lt('created_at', cutoff)
+      .select('id');
+    if (error) {
+      this.logger.warn(`expireStalePendingBridges failed: ${error.message}`);
+      return;
+    }
+    if (data?.length) this.logger.log(`Expired ${data.length} stale PENDING_BRIDGE offramp(s)`);
+  }
+
   // Poll active DEPOSITED offramps for fulfilment (called by cron).
   async processActiveOfframps() {
     const { data: active } = await this.supabase.getClient()

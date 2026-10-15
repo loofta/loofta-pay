@@ -310,11 +310,11 @@ export function DepositSheet({
                 />
                 <MethodRow
                   title="Any crypto"
-                  hint="BTC, ETH, SOL, and other chains"
+                  hint="BTC, ETH, ZEC, and other chains"
                   onClick={() => setScreen("address")}
                   icons={[
-                    { src: "/images/sol.png", bg: "#14F195" },
                     { src: "/images/btc.svg", bg: "#F7931A" },
+                    { src: "/images/eth.svg", bg: "#627EEA" },
                   ]}
                 />
                 <MethodRow
@@ -1640,7 +1640,7 @@ function CryptoWithdraw({
   const confirmRef = useRef<null | { resolve: () => void; reject: (err: Error) => void }>(null);
   const usdc = findUsdcOnSolana(tokens);
   const token = findTokenBySelection(tokens, selection);
-  const choices = tokens.filter((t) => !usdc || t.tokenId !== usdc.tokenId);
+  const choices = tokens.filter((t) => !isSolanaChain(t.chain) && (!usdc || t.tokenId !== usdc.tokenId));
   const amountNum = Number(amount);
   const addressOk = !!token && isValidAddressForChain(destination.trim(), token.chain);
   const maxSendable = privately
@@ -1653,7 +1653,7 @@ function CryptoWithdraw({
 
   useEffect(() => {
     if (selection || choices.length === 0) return;
-    const first = choices.find((t) => t.symbol.toUpperCase() === "SOL" && isSolanaChain(t.chain)) ?? choices[0];
+    const first = choices.find((t) => t.symbol.toUpperCase() === "ETH") ?? choices[0];
     if (first) setSelection({ symbol: first.symbol, chain: first.chain });
   }, [selection, choices]);
 
@@ -1794,7 +1794,7 @@ function CryptoWithdraw({
       <label className="block">
         <span className="text-sm text-[#8A8893]">You receive</span>
         <div className="mt-1">
-          <TokenCombobox tokens={choices} value={selection} defaultShowAllChains placeholder="Search a token" onChange={(next) => { setSelection(next); setDestination(""); }} />
+          <TokenCombobox tokens={choices} value={selection} defaultShowAllChains searchPlaceholder="Search BTC, ETH, ZEC…" placeholder="Search a token" onChange={(next) => { setSelection(next); setDestination(""); }} />
         </div>
       </label>
       <AmountField label="Amount to send (USDC)" value={amount} onChange={setAmount} onMax={() => setAmount(formatMax(maxSendable))} />

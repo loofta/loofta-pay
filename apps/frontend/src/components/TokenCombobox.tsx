@@ -29,6 +29,8 @@ type Props = {
 	className?: string;
 	onQuery?: (q: string) => Promise<NearToken[]>;
 	hideChains?: string[];
+	/** Placeholder for the search input inside the popup. */
+	searchPlaceholder?: string;
 	/** When true, "All networks" is selected by default so all chains are visible (e.g. for withdraw token picker). */
 	defaultShowAllChains?: boolean;
 	/**
@@ -52,6 +54,7 @@ export function TokenCombobox({
 	className,
 	onQuery,
 	hideChains = EMPTY_CHAINS,
+	searchPlaceholder = "Search token or network…",
 	defaultShowAllChains = false,
 	light = false,
 }: Props) {
@@ -306,7 +309,7 @@ export function TokenCombobox({
 								"[&_[cmdk-item]]:text-white [&_[cmdk-item]]:rounded-xl [&_[cmdk-item]]:px-3 [&_[cmdk-item]]:py-2.5",
 								"[&_[cmdk-item][data-selected='true']]:bg-white/10",
 							)}>
-								<CommandInput ref={inputRef} placeholder="Search token or network…" value={query} onValueChange={setQuery} />
+								<CommandInput ref={inputRef} placeholder={searchPlaceholder} value={query} onValueChange={setQuery} />
 								<CommandList className="flex-1 max-h-none overflow-y-auto px-2 py-2">
 									{loading ? (
 										<div className="py-6 text-center text-sm text-white/40">Searching…</div>

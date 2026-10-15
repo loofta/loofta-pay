@@ -5074,7 +5074,9 @@ export function BalanceModal({
                       tokens={withdrawTokens}
                       value={fromSel}
                       onChange={setFromSel}
+                      hideChains={["sol", "solana"]}
                       placeholder="Select token and chain"
+                      searchPlaceholder="Search BTC, ETH, ZEC…"
                       className={dark ? "w-full h-11 rounded-xl border border-white/20 bg-white/10 text-white placeholder:text-slate-400" : "w-full h-11 rounded-xl border border-gray-200 bg-white"}
                       defaultShowAllChains
                     />

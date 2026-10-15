@@ -35,6 +35,7 @@ export class OfframpProcessorService {
     this.isProcessing = true;
     try {
       await this.offramp.processActiveOfframps();
+      await this.offramp.expireStalePendingBridges();
     } catch (e) {
       this.logger.error(`cron error: ${String(e)}`);
     } finally {
