@@ -54,6 +54,9 @@ const ATTR_NAME: Record<string, string> = {
   "sc-camel-on-click": "onClick",
   "sc-camel-on-change": "onChange",
   "sc-camel-on-focus": "onFocus",
+  "sc-camel-on-drag-over": "onDragOver",
+  "sc-camel-on-drag-leave": "onDragLeave",
+  "sc-camel-on-drop": "onDrop",
   inputmode: "inputMode",
   maxlength: "maxLength",
 };
@@ -316,7 +319,7 @@ function walletNeed(gw: { prize?: string; tickets?: string; amount?: string; win
   const prize = gw?.prize === "tickets"
     ? (parseInt(String(gw.tickets ?? ""), 10) || 0) * winners
     : (parseFloat(String(gw?.amount ?? "")) || 0);
-  const fee = prize > 0 ? Math.max(5, prize * 0.1) : 0;
+  const fee = prize > 0 ? Math.min(80, Math.max(5, prize * 0.1)) : 0;
   return { prize, fee, ready: prize > 0 && Array.isArray(gw?.tasks) && gw.tasks.length > 0 };
 }
 

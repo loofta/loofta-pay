@@ -646,6 +646,62 @@ export class MegapotService {
     };
   }
 
+  async getLatestBlockNumber(): Promise<number> {
+    return Number(await this.getPublicClient().getBlockNumber());
+  }
+
+  /**
+   * Scan on-chain `ReferralFeesClaimed` events for `referrer` (indexed userAddress) so claims made
+   * outside the admin UI (e.g. straight from Basescan) still show up in the ledger. Scans in
+   * chunks from `fromBlock`; the caller persists results, so later runs only scan new blocks.
+   */
+  async getReferralFeeClaimEvents(referrer: Address, fromBlock: bigint): Promise<{
+    txHash: Hash;
+    claimerAddress: Address;
+    amountUsdc: number;
+    blockNumber: bigint;
+    claimedAt: Date;
+  }[]> {
+    const client = this.getPublicClient();
+    const latest = await client.getBlockNumber();
+    const CHUNK = 100_000n;
+    const found: { txHash: Hash; claimerAddress: Address; amountUsdc: number; blockNumber: bigint }[] = [];
+    const ranges: [bigint, bigint][] = [];
+    for (let start = fromBlock; start <= latest; start += CHUNK) {
+      ranges.push([start, start + CHUNK - 1n > latest ? latest : start + CHUNK - 1n]);
+    }
+    for (let i = 0; i < ranges.length; i += 5) {
+      const batch = await Promise.all(
+        ranges.slice(i, i + 5).map(([from, to]) =>
+          client.getContractEvents({
+            address: MEGAPOT_JACKPOT,
+            abi: JACKPOT_ABI,
+            eventName: 'ReferralFeesClaimed',
+            args: { userAddress: referrer },
+            fromBlock: from,
+            toBlock: to,
+          }),
+        ),
+      );
+      for (const logs of batch) {
+        for (const log of logs) {
+          found.push({
+            txHash: log.transactionHash as Hash,
+            claimerAddress: log.args.userAddress as Address,
+            amountUsdc: Number(log.args.amount) / 1_000_000,
+            blockNumber: log.blockNumber as bigint,
+          });
+        }
+      }
+    }
+    const out = [];
+    for (const f of found) {
+      const block = await client.getBlock({ blockNumber: f.blockNumber });
+      out.push({ ...f, claimedAt: new Date(Number(block.timestamp) * 1000) });
+    }
+    return out;
+  }
+
   /**
    * Fetch actual ticket ball numbers for a companion wallet by scanning on-chain Transfer mint
    * events on the Megapot NFT contract, then reading each token's metadata via tokenURI.

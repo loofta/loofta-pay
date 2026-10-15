@@ -105,13 +105,15 @@ export function AppHome() {
   const greet = (username || "there").replace(/^@/, "").toUpperCase();
   const goSend = () => router.push("/app/send");
   const goReceive = () => router.push("/app/receive");
-  const goDeposit = () => {
+  const openBalance = (tab: "topup" | "withdraw") => {
     if (!authenticated) {
       login();
       return;
     }
-    window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab: "topup" } }));
+    window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab } }));
   };
+  const goDeposit = () => openBalance("topup");
+  const goWithdraw = () => openBalance("withdraw");
 
   const actions = [
     { title: "Send payment", body: "Pay a handle, email, or wallet. They cash out their way.", glyph: "↑", ink: "#fff", go: goSend, tile: "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)", rim: "#9C2802" },
@@ -135,7 +137,7 @@ export function AppHome() {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 10, position: "relative", marginTop: "auto" }}>
               <button type="button" onClick={goDeposit} style={{ cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: 16, border: 0, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontWeight: 700, fontSize: 15, boxShadow: "0 10px 30px rgba(255,70,10,0.3)" }}>+ Deposit</button>
-              <button type="button" onClick={goSend} className="lh-4" style={{ cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: 16, background: "#22222A", border: "1px solid rgba(255,255,255,0.08)", color: "#F2EFE8", fontWeight: 700, fontSize: 15 }}>↑ Send</button>
+              <button type="button" onClick={goWithdraw} className="lh-4" style={{ cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: 16, background: "#22222A", border: "1px solid rgba(255,255,255,0.08)", color: "#F2EFE8", fontWeight: 700, fontSize: 15 }}>↑ Withdraw</button>
               <button type="button" onClick={goReceive} className="lh-5" style={{ cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: 16, background: "#22222A", border: "1px solid rgba(255,255,255,0.08)", color: "#F2EFE8", fontWeight: 700, fontSize: 15 }}>↓ Receive</button>
             </div>
           </div>

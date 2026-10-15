@@ -352,6 +352,9 @@ export class OfframpService {
       return { status: 'CANCELLED', refundNote: 'Bridge refunds automatically via Near Intents if funds were sent' };
     }
 
+    // A peer who already locked or paid this deposit can no longer be cancelled out from under them.
+    await this.assertNotLockedByPeer(record);
+
     // DEPOSITED: user must sign ZKP2P withdrawDeposit + USDC bridge on Base.
     // Mark CANCELLING and let frontend drive the signing.
     await this.updateStatus(offrampId, 'CANCELLING');
@@ -386,6 +389,7 @@ export class OfframpService {
     if (['COMPLETE', 'FAILED'].includes(record.status)) {
       throw new BadRequestException(`Cannot mark cancelled from status ${record.status}`);
     }
+    await this.assertNotLockedByPeer(record);
     await this.supabase.getClient()
       .from('offramp_requests')
       .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -470,7 +474,19 @@ export class OfframpService {
     }
   }
 
-  private async checkFulfilment(record: any) {
+  /** Throws if a peer has locked or filled the deposit. Re-reads Peer first so a stale DB row can't let it through. */
+  private async assertNotLockedByPeer(record: any) {
+    if (!record.zkp2p_deposit_id) return;
+    const live = await this.checkFulfilment(record);
+    const state = live?.state ?? record.fill_state;
+    const filled = live?.filledUsdc ?? Number(record.filled_amount_usdc ?? 0);
+    if (state === 'returned') return;
+    if (filled > 0 || ['matched', 'delivering', 'delivered'].includes(state ?? '')) {
+      throw new BadRequestException('A peer has already locked or paid this payment, so it can no longer be cancelled.');
+    }
+  }
+
+  private async checkFulfilment(record: any): Promise<{ state: string | null; filledUsdc: number } | null> {
     try {
       const cash = await this.getCashClient();
       let state: string | null = null;
@@ -484,7 +500,7 @@ export class OfframpService {
       } catch {
         // Deposits priced under the oracle are hidden from cash.order(). Read the indexer row directly.
         const discounted = await this.readDiscountedDeposit(record.zkp2p_deposit_id);
-        if (!discounted) return;
+        if (!discounted) return null;
         state = discounted.state;
         filledUsdc = discounted.filledUsdc;
         inFlight = discounted.inFlight;
@@ -509,8 +525,10 @@ export class OfframpService {
         })
         .eq('id', record.id)
         .then(({ error }) => { if (error) this.logger.debug(`checkFulfilment fill columns ${record.id}:`, error.message); });
+      return { state, filledUsdc };
     } catch (err: any) {
       this.logger.debug(`checkFulfilment ${record.id}:`, err.message);
+      return null;
     }
   }
 
@@ -525,7 +543,9 @@ export class OfframpService {
     const outstanding = BigInt(deposit.outstandingIntentAmount ?? 0);
     const taken = BigInt(deposit.totalAmountTaken ?? 0);
     const withdrawn = BigInt(deposit.totalWithdrawn ?? 0);
-    const hasLiveFunds = remaining >= 10_000n || outstanding > 0n;
+    // Leftover spread smaller than one more fill can never be taken, so it isn't live funds.
+    const minFill = BigInt(deposit.intentAmountMin ?? 0);
+    const hasLiveFunds = remaining >= (minFill > 10_000n ? minFill : 10_000n) || outstanding > 0n;
     let state = 'awaiting-buyer';
     if (outstanding > 0n) state = taken > 0n ? 'delivering' : 'matched';
     else if (!hasLiveFunds && withdrawn > 0n) state = 'returned';

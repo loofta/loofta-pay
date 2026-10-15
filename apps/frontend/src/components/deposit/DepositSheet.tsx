@@ -1770,8 +1770,21 @@ function CryptoWithdraw({
   if (sent) {
     return (
       <div className="mt-4 flex flex-col gap-3">
-        <p className="text-base font-bold text-white">{privately ? "On its way, privately" : "Sent"}</p>
-        <p className="text-sm text-[#8A8893]">{token ? `${token.symbol} on ${formatChainLabel(token.chain)}` : "Crypto"} is bridging from your USDC balance.</p>
+        <p className="text-base font-bold text-white">{privately ? "On its way, privately" : "Your crypto is on its way"}</p>
+        <p className="text-sm text-[#8A8893]">
+          {privately
+            ? `Your private transfer is being relayed. ${token ? `${token.symbol} on ${formatChainLabel(token.chain)}` : "Your crypto"} should arrive shortly.`
+            : `Your USDC was sent and is being bridged. ${token ? `${token.symbol} on ${formatChainLabel(token.chain)}` : "Your crypto"} usually arrives within a few minutes.`}
+        </p>
+        <a
+          href={getExplorerTxUrl("solana", sent)}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-2 text-base font-medium text-white underline underline-offset-4"
+        >
+          <ExternalLink className="h-4 w-4 shrink-0" />
+          View transaction
+        </a>
       </div>
     );
   }

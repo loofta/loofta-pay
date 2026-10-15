@@ -2,7 +2,7 @@
 
 export class SpecComponent {
   _privyHandle = '';
-  state = { cap: 20, tokHits: null, tokStatus: '', split: 'top10', reward: 'tickets', raidToken: '', raidTokenMint: '', raidTokenLogo: '', raidTokenPrice: null, raidTokQ: '', raidTokOpen: false, usdBudget: '250', earnUsd: { like: 0.05, repost: 0.1, quote: 0.25, reply: 0.25 }, picked: [0], pickedIds: [], xPosts: [], xPostsFor: '', xHandle: '', postLink: '', postsNote: '', mode: 'oneoff', xConnected: false, scope: 'all', plan: 'growth', freq: '1w', annual: false, earn: { like: 1, repost: 2, quote: 5, reply: 3 }, streak: '2x', faq: 0, w: 1200, gw: null, savedAt: 0, launchStep: null, signMethod: null, fundMethod: 'card', goal: null, goalBase: null };
+  state = { cap: 20, tokHits: null, tokStatus: '', split: 'top10', reward: 'tickets', raidToken: '', raidTokenMint: '', raidTokenLogo: '', raidTokenPrice: null, raidTokQ: '', raidTokOpen: false, usdBudget: '50', earnUsd: { like: 0.05, repost: 0.1, quote: 0.25, reply: 0.25 }, picked: [0], pickedIds: [], xPosts: [], xPostsFor: '', xHandle: '', postLink: '', postsNote: '', mode: 'oneoff', xConnected: false, scope: 'all', plan: 'growth', freq: '1w', annual: false, earn: { like: 1, repost: 2, quote: 5, reply: 3 }, streak: '2x', faq: 0, w: 1200, gw: null, savedAt: 0, launchStep: null, signMethod: null, fundMethod: 'card', goal: null, goalBase: null };
   createRef = el => { this._c = el; };
   componentDidMount() {
     this._r = () => this.setState({ w: window.innerWidth, now: Date.now() }); this._r(); window.addEventListener('resize', this._r);
@@ -13,13 +13,25 @@ export class SpecComponent {
   gwVals(s, set, money) {
     const g = { minF: '', maxP: '', minTier: '', age: '', regions: '', requiredCountries: [], excludedCountries: [], requiredContinents: [], kyc: false, title: '', project: '', desc: '', prize: 'usdc', token: 'BONK', amount: '100', tickets: '1', winners: 10, tasks: [{ type: 'follow', val: '@looftaxyz' }], tokQ: '', tokOpen: false, close: '1w', more: false, pick: 'random', verified: false, email: 'lisa.bechina@gmail.com', submitted: false, ...(s.gw || {}) };
     const up = o => this.setState(st => { const gw = { ...g, ...(st.gw || {}), ...o }; try { localStorage.setItem('loofta-gw-draft', JSON.stringify(gw)); } catch (e) {} return { gw, savedAt: Date.now() }; });
+    const readLogo = f => {
+      if (!f || !/^image\//.test(f.type)) return;
+      const img = new Image(), url = URL.createObjectURL(f);
+      img.onload = () => {
+        const side = Math.min(img.width, img.height), cv = document.createElement('canvas'); cv.width = cv.height = 256;
+        cv.getContext('2d').drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, 256, 256);
+        URL.revokeObjectURL(url);
+        try { up({ logo: cv.toDataURL('image/png') }); } catch (err) {}
+      };
+      img.onerror = () => URL.revokeObjectURL(url);
+      img.src = url;
+    };
     const sel = on => ({ bg: on ? 'rgba(255,90,26,0.12)' : '#0E0E12', color: on ? '#F2EFE8' : '#9A98A3', border: on ? 'rgba(255,122,42,0.7)' : 'rgba(255,255,255,0.08)' });
     const isT = g.prize === 'tickets', isTok = g.prize === 'token';
     const amt = parseFloat(g.amount) || 0, tix = parseInt(g.tickets) || 0;
     const winnersN = Math.min(500, Math.max(1, parseInt(g.winners, 10) || 1));
     const per = isT ? tix : amt / winnersN;
     const cost = isT ? tix * winnersN : amt;
-    const fee = cost > 0 ? Math.max(5, cost * 0.10) : 0;
+    const fee = cost > 0 ? Math.min(80, Math.max(5, cost * 0.10)) : 0;
     const PRICE = { SOL: 152.3, BONK: 0.0000214, JUP: 0.82, WIF: 1.94, USDT: 1, JTO: 2.31, PYTH: 0.29, RAY: 3.12, POPCAT: 0.41, TRUMP: 9.6 };
     const px = (typeof g.tokenPrice === 'number' && g.tokenPrice > 0) ? g.tokenPrice : (PRICE[g.token] || 1), fmtTok = n => n >= 1000 ? Math.round(n).toLocaleString('en-US') : n >= 1 ? n.toFixed(2) : n.toPrecision(3);
     const TOK = { SOL: '#9945FF', BONK: '#F7A400', JUP: '#22C4A5', WIF: '#C8A27C', USDT: '#26A17B', JTO: '#6CC4A1', PYTH: '#7142CF', RAY: '#3A6BE0', POPCAT: '#E0B33A', TRUMP: '#C9A04A' };
@@ -83,13 +95,22 @@ export class SpecComponent {
         onVal: e => { const v = t.type === 'post' ? e.target.value.slice(0, 280) : e.target.value; setTasks(l => l.map((x, j) => j === i ? { ...x, val: v } : x)); }, remove: () => setTasks(l => l.filter((_, j) => j !== i)) }; }),
       gwTaskAdd: Object.keys(TT).map(k => ({ label: TT[k][0], ...ic(k), add: () => setTasks(l => l.length < 10 ? [...l, k === 'engage' ? { type: k, val: '', instructions: '', acts: ['like', 'repost'] } : k === 'post' ? { type: k, val: '', postMode: 'exact', instructions: '', requireProof: false } : { type: k, val: '', requireProof: false }] : l) })),
       gwCloseOpts: CLOSE.map(([k, label]) => ({ label, ...sel(g.close === k), set: () => up({ close: k }) })),
+      whoOpen: !!g.whoOpen, toggleWho: () => up({ whoOpen: !g.whoOpen }), whoBtnLabel: g.whoOpen ? 'Done' : 'Edit',
+      advOpen: !!g.advOpen, toggleAdv: () => up({ advOpen: !g.advOpen }), advEditLabel: g.advOpen ? 'Done' : 'Edit',
+      advSummary: 'Closes ' + closeAtStr + ' · ' + PICK.find(p => p[0] === g.pick)[1],
       gwMore: g.more, gwMoreLabel: g.more ? 'Hide' : 'Show', gwToggleMore: () => up({ more: !g.more }),
+      gwLogo: g.logo || '', gwHasLogo: !!g.logo, gwNoLogo: !g.logo, removeLogo: () => up({ logo: '' }),
+      logoBorder: s.logoDrag ? '#FF7A2A' : 'rgba(255,255,255,0.18)', logoBg: s.logoDrag ? 'rgba(255,122,42,0.1)' : '#0E0E12',
+      onLogoDragOver: e => { e.preventDefault(); if (!s.logoDrag) set({ logoDrag: true }); },
+      onLogoDragLeave: () => set({ logoDrag: false }),
+      onLogoDrop: e => { e.preventDefault(); set({ logoDrag: false }); readLogo(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]); },
+      onLogoFile: e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; readLogo(f); },
       gwDesc: g.desc, onGwDesc: e => up({ desc: e.target.value }), gwHasDesc: !!g.desc,
       gwProject: g.project, onGwProject: e => up({ project: e.target.value }),
       gwPickOpts: PICK.map(([k, label]) => ({ label, ...sel(g.pick === k), set: () => up({ pick: k }) })),
       gwToggleVerified: () => up({ verified: !g.verified }), gwVerBg: g.verified ? 'linear-gradient(90deg,#FF2D0A,#F5B70C)' : '#3A3A44', gwVerKnob: g.verified ? '25px' : '3px',
       gwPrizeCost: isT ? (tix * winnersN) + ' tickets · ' + money(cost) : isTok ? '≈ ' + fmtTok(cost / px) + ' ' + g.token + ' · ' + money(cost) : money(cost), gwTotal: money(cost + fee),
-      feeLabel: 'Platform fee (10%, $5 minimum, paid in USDC)', feeStr: money(fee),
+      feeLabel: 'Platform fee (10%, $5 minimum, $80 maximum, paid in USDC)', feeStr: money(fee),
       kyc: g.kyc, toggleKyc: () => up({ kyc: !g.kyc }), kycBg: g.kyc ? 'linear-gradient(90deg,#FF2D0A,#F5B70C)' : '#3A3A44', kycKnob: g.kyc ? '25px' : '3px', kycFeeTag: '+$1 per entrant', kycRowBg: g.kyc ? 'rgba(245,183,12,0.06)' : 'transparent', kycEdge: g.kyc ? 'rgba(255,122,42,0.7)' : 'transparent',
       toggleOnePer: () => up({ onePer: !g.onePer }), onePerBg: g.onePer ? 'linear-gradient(90deg,#FF2D0A,#F5B70C)' : '#3A3A44', onePerKnob: g.onePer ? '25px' : '3px',
       maxPOpts: (() => { const cap = String(g.maxP ?? ''); const key = cap === '100' || cap === '1000' || cap === '' ? cap : 'custom'; return [['100', '100'], ['1000', '1,000'], ['custom', 'Custom'], ['', 'No limit']].map(([k, label]) => ({ label, ...sel(key === k), set: () => up({ maxP: k === 'custom' ? (key === 'custom' && cap !== 'custom' ? cap : 'custom') : k }) })); })(),
@@ -111,7 +132,7 @@ export class SpecComponent {
       gwEmail: g.email, onGwEmail: e => up({ email: e.target.value }),
       gwSubmitOpacity: cost > 0 && tasks.length ? 1 : 0.45,
       gwSubmit: () => { if (g.title && cost > 0 && tasks.length) { up({ submitted: true }); window.scrollTo(0, 0); } },
-      gwProjectShow: g.project || 'Your project', gwTitleShow: g.title || 'Your giveaway title',
+      gwProjectShow: g.project || 'Giveaway', gwTitleShow: g.title || 'Your giveaway title',
       gwPrevBig: isT ? String(tix * winnersN) : money(cost).replace(/\.00$/, ''), gwPrevUnit: isT ? 'tickets' : isTok ? 'in ' + g.token : 'USDC',
       gwPrevChips: [isT ? tix + ' each' : money(per).replace(/\.00$/, '') + ' each', winnersN + (winnersN === 1 ? ' winner' : ' winners'), PICK.find(p => p[0] === g.pick)[1]],
       gwPrevBg: '#0E0E12',
@@ -158,17 +179,17 @@ export class SpecComponent {
       writeGw({ ...cur, ...goalBase, ...o, tokOpen: false }, { goal: i, goalBase });
     };
     const TPL = [
-      ['Grow your X following', 'More followers and reach from one post.', '$100 USDC · 10 winners · follow + like & repost · 1 week', '𝕏', tile('#5A5A66 0%,#26262E 55%,#0B0B0E 100%', '#000'), '#fff', { prize: 'usdc', amount: '100', winners: 10, close: '1w', pick: 'random', tasks: [{ type: 'follow', val: '@' }, { type: 'engage', val: '', acts: ['like', 'repost'], quote: false }] }],
-      ['Boost a launch post', 'Push one post up the feed with quotes and comments.', '$50 USDC · 5 winners · quote + comment · 3 days', '↻', tile('#9CC8FF 0%,#2775CA 48%,#1A55A0 100%', '#123E78'), '#fff', { prize: 'usdc', amount: '50', winners: 5, close: '3d', pick: 'random', tasks: [{ type: 'engage', val: '', instructions: 'Quote this post and add your own line', acts: ['like', 'repost', 'comment'] }] }],
-      ['Grow your community', 'New Telegram and Discord members for the price of a few tickets.', '2 Jackpot tickets × 50 winners · join TG + Discord · 1 week', 'T', tile('#9FDBFF 0%,#229ED9 50%,#17699A 100%', '#0F4C70'), '#fff', { prize: 'tickets', tickets: '2', winners: 50, close: '1w', pick: 'random', tasks: [{ type: 'tg', val: '' }, { type: 'discord', val: '' }] }],
-      ['Creator contest', 'The best posts win. You choose who.', '$200 USDC · 3 winners · post on X · I’ll pick · 1 week', '★', tile('#FFC79A 0%,#FF5A1A 45%,#D23806 100%', '#9C2802'), '#fff', { prize: 'usdc', amount: '200', winners: 3, close: '1w', pick: 'manual', tasks: [{ type: 'follow', val: '@' }, { type: 'post', val: '', postMode: 'free', instructions: '' }] }],
+      ['Grow your X following', 'More followers and reach from one post.', '$100 · 10 winners · 1 week', '𝕏', tile('#5A5A66 0%,#26262E 55%,#0B0B0E 100%', '#000'), '#fff', { prize: 'usdc', amount: '100', winners: 10, close: '1w', pick: 'random', tasks: [{ type: 'follow', val: '@' }, { type: 'engage', val: '', acts: ['like', 'repost'], quote: false }] }],
+      ['Boost a launch post', 'Push one post up the feed with quotes and comments.', '$50 · 5 winners · 1 week', '↻', tile('#9CC8FF 0%,#2775CA 48%,#1A55A0 100%', '#123E78'), '#fff', { prize: 'usdc', amount: '50', winners: 5, close: '1w', pick: 'random', tasks: [{ type: 'engage', val: '', instructions: 'Quote this post and add your own line', acts: ['like', 'repost', 'comment'] }] }],
+      ['Grow your community', 'New Telegram and Discord members for the price of a few tickets.', '2 tickets each · 50 winners', 'T', tile('#9FDBFF 0%,#229ED9 50%,#17699A 100%', '#0F4C70'), '#fff', { prize: 'tickets', tickets: '2', winners: 50, close: '1w', pick: 'random', tasks: [{ type: 'tg', val: '' }, { type: 'discord', val: '' }] }],
+      ['Creator contest', 'The best posts win. You choose who.', '$200 · 3 winners · you pick', '★', tile('#FFC79A 0%,#FF5A1A 45%,#D23806 100%', '#9C2802'), '#fff', { prize: 'usdc', amount: '200', winners: 3, close: '1w', pick: 'manual', tasks: [{ type: 'follow', val: '@' }, { type: 'post', val: '', postMode: 'free', instructions: '' }] }],
     ];
     const FAQ = [
       ['How is the winner picked?', 'Random draws use MagicBlock VRF: verifiable randomness generated on-chain. Anyone can check the draw from the proof link on the results page, so the host can’t hand-pick a winner.'],
       ['Do entrants need a crypto wallet?', 'No. Entrants sign in with X or email. Winners receive their prize in a Loofta balance and can cash out to Venmo, Cash App, Revolut or a crypto wallet.'],
       ['What are Jackpot tickets?', 'Each ticket is an entry into the daily Megapot draw, a lottery with a $1.1M+ Jackpot Prize. Give tickets instead of cash, from $1 each. Every winner gets a real chance at the $1.1M+ Jackpot Prize, and you don’t need a big budget.'],
       ['How fast is approval?', 'Pools under $250 from verified hosts go live straight away, unless you require KYC. KYC giveaways, and anything larger, are reviewed before they are shown live. You get an email or Telegram message when it’s approved.'],
-      ['What does it cost?', 'USDC and token giveaways cost the prize plus a 10% admin fee, with a $5 minimum. A recurring raid uses the same weekly pool whether you pay in USDC or Jackpot tickets ($1 each), plus a management fee: $29 for 1 week, $99 for 4 weeks, or $299 for 3 months. Packages start at $50 a week in USDC, or 50 Jackpot tickets a week. The leaderboard still pays every week. Your own token uses that same weekly dollar amount. The fee is always paid in USDC. KYC checks add $1 per verified entrant. You see the full total before you pay.'],
+      ['What does it cost?', 'USDC and token giveaways cost the prize plus a 10% admin fee, with a $5 minimum and an $80 maximum. A raid is billed now for 1, 2 or 4 weeks: your weekly reward pool (USDC or Jackpot tickets at $1 each) for each week, plus a management fee of $29 for 1 week, $50 for 2 weeks or $79 for 4 weeks. The pool is then distributed every week. Set any weekly budget from $50 (that is 50 Jackpot tickets, since each is $1). Your own token uses that same weekly dollar amount, and the fee is always paid in USDC. KYC checks add $1 per verified entrant. You see the full total before you pay.'],
       ['How are entries verified?', 'Loofta checks each task automatically, for example follows, likes, reposts, quotes, comments and Telegram or Discord joins. Your restrictions apply too: Sorsa score tier, account age, verified only, regions and optional KYC. A participant cap closes entries early.'],
     ];
     const step = s.launchStep;
@@ -177,17 +198,17 @@ export class SpecComponent {
     const EARN = [['like', 'Like'], ['repost', 'Repost'], ['quote', 'Quote'], ['reply', 'Reply']];
     const tw = n => n + (n === 1 ? ' ticket' : ' tickets');
     const isAuto = s.mode === 'auto';
-    const TERMS = { '1w': [1, 'Billed every week', ' / week'], '4w': [4, 'Billed every 4 weeks', ' / 4 wk'], '3m': [12, 'Billed every 3 months', ' / 3 mo'] };
+    const TERMS = { '1w': [1, 'Billed now', ''], '2w': [2, 'Billed now', ''], '4w': [4, 'Billed now', ''] };
     const freq = TERMS[s.freq] ? s.freq : '1w';
     const [weeks, billHow, priceSuffix] = TERMS[freq];
-    const MGMT = { '1w': 29, '4w': 99, '3m': 299 };
+    const MGMT = { '1w': 29, '2w': 50, '4w': 79 };
     const mgmt = MGMT[freq];
-    const usd = s.reward === 'usdc', tix = s.reward === 'tickets', tokReward = s.reward === 'token', ub = parseFloat(s.usdBudget) || 0;
+    const usd = s.reward === 'usdc', tix = s.reward === 'tickets', tokReward = s.reward === 'token', ubRaw = tix ? Math.floor(parseFloat(s.usdBudget) || 0) : (parseFloat(s.usdBudget) || 0), ub = Math.max(50, ubRaw);
     const weeklyTickets = Math.max(0, Math.round(ub));
     const termTickets = weeklyTickets * weeks;
     const usePlan = tix || usd;
-    const planRow = PLANS[s.plan] || PLANS.starter;
-    const weeklyPlan = planRow[1];
+    const planRow = [tix ? 'Jackpot tickets' : 'USDC rewards'];
+    const weeklyPlan = ub;
     const packagePrice = weeklyPlan * weeks;
     const fmtCount = n => (Math.round(n * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
     const planDetail = tix ? weeklyPlan + ' tickets every week' : money(weeklyPlan) + ' every week';
@@ -206,8 +227,8 @@ export class SpecComponent {
     const pickRaid = (sym, mint, logo, price) => set({ raidToken: sym, raidTokenMint: mint, raidTokenLogo: logo || '', raidTokenPrice: typeof price === 'number' ? price : null, raidTokQ: '', raidTokOpen: false });
     return {
       ...gv,
-      isOneOff: !isAuto, isAuto, whoNum: isAuto ? '4' : '3', whoTitle: isAuto ? 'Who can raid?' : 'Who can enter?',
-      modes: [['oneoff', 'One-off giveaway', 'Fund a prize, set tasks, draw winners once.', '🎁', 'radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)', '#9C2802', ''], ['auto', 'Auto-pilot raids', 'A subscription that rewards your community for boosting your posts on X. The leaderboard pays every week.', '⚡', 'radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)', '#8E5202', 'Recurring']].map(([k, title, sub, glyph, tile, rim, tag]) => { const on = s.mode === k; return { title, sub, glyph: k === 'oneoff' ? '1×' : '∞', tile, shadow: 'inset 0 2px 4px rgba(255,255,255,0.5),0 4px 0 ' + rim, hasTag: !!tag, tag, set: () => set({ mode: k }), bg: on ? '#1E1E25' : 'transparent', shadow: on ? '0 6px 18px rgba(0,0,0,0.35)' : 'none', color: on ? '#F2EFE8' : '#9A98A3' }; }),
+      isOneOff: !isAuto, isAuto, whoNum: '3', whoTitle: isAuto ? 'Who can raid?' : 'Who can enter?',
+      modes: [['oneoff', 'One-off giveaway', 'Fund a prize, draw winners once.', '🎁', 'radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)', '#9C2802', ''], ['auto', 'Auto-pilot raids', 'Reward your community every week for boosting your X posts.', '⚡', 'radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)', '#8E5202', 'Recurring']].map(([k, title, sub, glyph, tile, rim, tag]) => { const on = s.mode === k; return { title, sub, glyph: k === 'oneoff' ? '1×' : '∞', tile, shadow: 'inset 0 2px 4px rgba(255,255,255,0.5),0 4px 0 ' + rim, hasTag: !!tag, tag, set: () => set({ mode: k }), bg: on ? '#1E1E25' : 'transparent', shadow: on ? '0 6px 18px rgba(0,0,0,0.35)' : 'none', color: on ? '#F2EFE8' : '#9A98A3' }; }),
       xLabel: s.xConnected ? '@' + ((s.xHandle || this._privyHandle || 'looftaxyz').replace(/^@/, '')) : 'Connect X', xSub: s.xConnected ? (s.scope === 'manual' ? 'Connected · you pick which posts to raid' : 'Connected · new posts become raids') : 'Read-only access to your posts', xBtn: s.xConnected ? 'Disconnect' : 'Connect', xBtnBg: s.xConnected ? '#26262E' : '#F2EFE8', xBtnColor: s.xConnected ? '#C9C6CF' : '#0B0B0E', xBorder: s.xConnected ? 'rgba(60,200,120,0.4)' : 'rgba(255,255,255,0.08)', toggleX: () => { const next = !s.xConnected; const handle = (this._privyHandle || s.xHandle || 'looftaxyz').replace(/^@/, ''); set(next ? { xConnected: true, xHandle: handle } : { xConnected: false }); }, xHandle: s.xConnected ? '@' + ((s.xHandle || 'looftaxyz').replace(/^@/, '')) : '@yourproject',
       raidScope: [['all', 'Every new post', 'Automatic. Each post you publish from @' + (s.xConnected ? (s.xHandle || 'looftaxyz').replace(/^@/, '') : 'yourproject') + ' starts a raid. Replies and reposts don’t count.'], ['tagged', 'Only posts with #raid', 'Add #raid to a post on X when you want it boosted. Others are ignored.'], ['manual', 'I choose the posts', 'Pick from your last 5 posts, or paste another link. Switch back to every new post any time.']].map(([k, label, sub]) => { const on = s.scope === k; return { label, sub, set: () => set({ scope: k }), bg: on ? 'rgba(255,90,26,0.08)' : '#0E0E12', border: on ? 'rgba(255,122,42,0.55)' : 'rgba(255,255,255,0.07)', ring: on ? '#FF7A2A' : '#4A4A55', dot: on ? '#FF7A2A' : 'transparent' }; }),
       scopeManual: s.scope === 'manual',
@@ -229,8 +250,8 @@ export class SpecComponent {
       backToEvery: () => set({ scope: 'all', postsNote: '' }),
       recentPosts: (Array.isArray(s.xPosts) ? s.xPosts : []).map(p => { const ids = Array.isArray(s.pickedIds) ? s.pickedIds : []; const on = ids.includes(p.id); return { text: p.text, when: p.when, btn: on ? 'Raiding ✓' : 'Raid this', bg: on ? 'rgba(255,90,26,0.08)' : 'transparent', btnBg: on ? 'linear-gradient(90deg,#FF2D0A,#F5B70C)' : '#26262E', btnColor: on ? '#fff' : '#C9C6CF', toggle: () => set({ pickedIds: on ? ids.filter(x => x !== p.id) : [...ids, p.id] }) }; }),
       raidFlow: [{ isPost: true, t: 'You post on X', d: 'Your post becomes a raid, automatically or when you choose.' }, { isRepost: true, t: 'Raiders engage', d: 'Your community likes, reposts, quotes and replies in the first hours.' }, { isCheck: true, t: 'Leaderboard pays out', d: 'Verified actions earn points. The top raiders share the pool every week.' }],
-      rewardTypes: [['tickets', 'Jackpot tickets'], ['usdc', 'USDC'], ['token', 'Your token']].map(([k, label]) => ({ label, set: () => set({ reward: k, raidTokOpen: k === 'token' }), bg: s.reward === k ? '#F2EFE8' : 'transparent', color: s.reward === k ? '#0B0B0E' : '#9A98A3' })),
-      rewardTix: usePlan, rewardUsd: usd, rewardTok: tokReward, rewardBudget: tokReward, showBudgetNote: tokReward,
+      rewardTypes: [['tickets', 'Jackpot tickets'], ['usdc', 'USDC'], ['token', 'Your token']].map(([k, label]) => ({ label, set: () => set({ reward: k, raidTokOpen: k === 'token', ...(k === 'tickets' ? { usdBudget: String(Math.floor(parseFloat(s.usdBudget) || 0)) } : {}) }), bg: s.reward === k ? '#F2EFE8' : 'transparent', color: s.reward === k ? '#0B0B0E' : '#9A98A3' })),
+      rewardTix: false, rewardUsd: usd, rewardTok: tokReward, rewardBudget: true, showBudgetNote: true,
       raidTokQ: s.raidTokQ || '', onRaidTokQ: e => set({ raidTokQ: e.target.value, raidTokOpen: true }), raidTokFocus: () => set({ raidTokOpen: true }),
       raidTokOpen: !!s.raidTokOpen, raidTokPicked: !!s.raidToken && (!s.raidTokOpen || !raidQ), raidTokBorder: s.raidTokOpen ? 'rgba(255,122,42,0.6)' : 'rgba(255,255,255,0.08)',
       raidToken: raidSym, raidTokLogo: s.raidTokenLogo || iconFor(s.raidTokenMint), raidHasTokLogo: !!(s.raidTokenLogo || iconFor(s.raidTokenMint)), raidNoTokLogo: !(s.raidTokenLogo || iconFor(s.raidTokenMint)), raidTokDot: '#9945FF',
@@ -246,28 +267,30 @@ export class SpecComponent {
         return RAID_TOKL.filter(t => !q || t[0].toLowerCase().includes(q) || t[1].toLowerCase().includes(q)).map(([sym, name, dot, mint]) => asRow(sym, name, dot, mint, iconFor(mint), RAID_PRICE[sym] || null));
       })(),
       raidTokNone: raidQ.length >= 2 && s.tokStatus !== 'loading' && Array.isArray(s.tokHits) && s.tokHits.length === 0 && raidQ.length < 32,
-      raidTokPayLine: tix ? weeklyTickets.toLocaleString('en-US') + ' Jackpot tickets each week · ' + termTickets.toLocaleString('en-US') + ' tickets for this bill, plus $' + mgmt + ' management' : !s.raidToken ? 'Search for your token. The weekly pool is the same dollar amount as USDC, then paid in that token. Management is $' + mgmt + ' in USDC.' : raidPx > 0 ? '≈ ' + tokAmt(weeklyTok) + ' each week · ' + tokAmt(termTok) + ' for this bill, plus $' + mgmt + ' management' : 'Live price unavailable, so the pool stays in USD until a price comes back. Management is $' + mgmt + '.',
-      usdBudget: s.usdBudget, onUsdBudget: e => set({ usdBudget: e.target.value.replace(/[^0-9.]/g, '').slice(0, 7) }),
-      usdQuick: [100, 250, 500, 1000].map(v => ({ label: '$' + v, ...pk(String(v) === s.usdBudget), set: () => set({ usdBudget: String(v) }) })),
-      periodUpper: 'WEEK',
+      raidTokPayLine: (ubRaw < 50 ? 'Minimum is ' + (tix ? '50 tickets' : '$50') + ' a week. ' : '') + (tix ? weeklyTickets.toLocaleString('en-US') + ' Jackpot tickets each week ($1 = 1 ticket) · ' + termTickets.toLocaleString('en-US') + ' tickets billed now · each ticket is a chance to win up to $200K' : usd ? money(ub) + ' USDC each week · ' + money(packagePrice) + ' billed now, plus $' + mgmt + ' management' : !s.raidToken ? 'Search for your token. The weekly pool is the same dollar amount as USDC, then paid in that token. Management is $' + mgmt + ' in USDC.' : raidPx > 0 ? '≈ ' + tokAmt(weeklyTok) + ' each week · ' + tokAmt(termTok) + ' billed now, plus $' + mgmt + ' management' : 'Live price unavailable, so the pool stays in USD until a price comes back. Management is $' + mgmt + '.'),
+      usdBudget: s.usdBudget, onUsdBudget: e => set({ usdBudget: e.target.value.replace(tix ? /[^0-9]/g : /[^0-9.]/g, '').slice(0, 7) }),
+      usdQuick: [50, 100, 250, 500].map(v => ({ label: tix ? String(v) : '$' + v, ...pk(String(v) === s.usdBudget), set: () => set({ usdBudget: String(v) }) })),
+      periodUpper: 'WEEK', budgetLabel: tix ? 'TICKETS PER WEEK' : usd ? 'USDC PER WEEK' : 'BUDGET PER WEEK, PAID IN ' + (s.raidToken || 'YOUR TOKEN').toUpperCase(), budgetIsDollar: !tix, budgetIsTickets: tix,
       freqTabs: [['1w', '1 week'], ['4w', '4 weeks'], ['3m', '3 months']].map(([k, label]) => ({ label, set: () => set({ freq: k }), bg: freq === k ? '#F2EFE8' : 'transparent', color: freq === k ? '#0B0B0E' : '#9A98A3' })),
       plans: Object.keys(PLANS).map(k => { const weekly = PLANS[k][1]; return { name: PLANS[k][0], price: money(weekly * weeks), tickets: tix ? weekly + ' tickets every week' : money(weekly) + ' every week', set: () => set({ plan: k }), bg: s.plan === k ? 'rgba(255,90,26,0.1)' : '#0E0E12', border: s.plan === k ? 'rgba(255,122,42,0.75)' : 'rgba(255,255,255,0.07)' }; }),
-      freqOpts: [['1w', '1 week', 1], ['4w', '4 weeks', 4], ['3m', '3 months', 12]].map(([k, label, w]) => { const pool = ub * w; const on = freq === k; const cardDetail = tokReward && raidPx > 0 ? tokAmt(ub / raidPx) + ' every week' : money(ub) + ' every week'; return { label, price: money(pool + MGMT[k]), detail: cardDetail, ...pk(on), bg: on ? 'rgba(255,90,26,0.1)' : '#0E0E12', border: on ? 'rgba(255,122,42,0.75)' : 'rgba(255,255,255,0.07)', set: () => set({ freq: k }) }; }),
+      freqOpts: [['1w', '1 week', 1], ['2w', '2 weeks', 2], ['4w', '4 weeks', 4]].map(([k, label, w]) => { const on = freq === k; return { label, price: money(MGMT[k]), detail: 'management', ...pk(on), bg: on ? 'rgba(255,90,26,0.1)' : '#0E0E12', border: on ? 'rgba(255,122,42,0.75)' : 'rgba(255,255,255,0.07)', set: () => set({ freq: k }) }; }),
       toggleAnnual: () => {}, annualBg: '#3A3A44', annualKnob: '3px',
+      autoAdvOpen: !!s.autoAdvOpen, toggleAutoAdv: () => set({ autoAdvOpen: !s.autoAdvOpen }), autoAdvEditLabel: s.autoAdvOpen ? 'Done' : 'Edit',
+      autoAdvSummary: (({ all: 'Every new post', tagged: 'Posts with #raid', manual: 'Posts you pick' })[s.scope] || 'Every new post') + ' · ' + (({ top10: 'Top 10 share the pool', top25: 'Top 25 share the pool', share: 'Pool shared by points' })[s.split] || 'Top 10 share the pool'),
       earnRules: EARN.map(([k, label], i) => ({ label, val: s.earn[k] + (s.earn[k] === 1 ? ' pt' : ' pts'), line: i ? 'rgba(255,255,255,0.06)' : 'transparent', down: () => set({ earn: { ...s.earn, [k]: Math.max(0, s.earn[k] - 1) } }), up: () => set({ earn: { ...s.earn, [k]: Math.min(20, s.earn[k] + 1) } }) })),
       capOpts: [10, 20, 50].map(n => ({ label: n + ' pts', ...pk(s.cap === n), set: () => set({ cap: n }) })),
       streakOpts: [['none', 'None'], ['1.5x', '1.5× at 4 weeks'], ['2x', '2× at 4 weeks']].map(([k, label]) => ({ label, ...pk(s.streak === k), set: () => set({ streak: k }) })),
       planName: tokReward ? raidSym + ' rewards' : planRow[0], planTickets: tokReward ? (raidPx > 0 ? tokAmt(weeklyTok) + ' / week' : 'Pick a token') : planDetail, spreadNote: money(mgmt), spreadLabel: 'Management',
       billLabel: billHow, planPrice: tokReward ? ((raidPx > 0 ? tokAmt(termTok) + ' + ' : '') + money(mgmt)) + priceSuffix : money(packagePrice + mgmt) + priceSuffix,
       showAnnual: false,
-      subOpacity: s.xConnected && ub > 0 && (!tokReward || raidPx > 0) ? 1 : 0.45, subscribe: () => { if (s.xConnected && ub > 0 && (!tokReward || raidPx > 0)) set({ launchStep: 'signin' }); },
+      subOpacity: s.xConnected && ubRaw >= 50 && (!tokReward || raidPx > 0) ? 1 : 0.45, subscribe: () => { if (s.xConnected && ubRaw >= 50 && (!tokReward || raidPx > 0)) set({ launchStep: 'signin' }); },
       earnChips: EARN.filter(([k]) => s.earn[k] > 0).map(([k, label]) => label + ' +' + s.earn[k] + ' pts'),
-      board: [['@kofi.sol', 412], ['@nova_studio', 356], ['@mayabuilds', 298], ['@tunde.eth', 240]].map(([who, p], i) => { const pool = tokReward && raidPx > 0 ? weeklyTok : usePlan ? weeklyPlan : ub; const shares = s.split === 'share' ? p / 1306 : [0.25, 0.18, 0.14, 0.11][i]; const amt = pool * shares; return { rank: String(i + 1), who, pts: p + ' pts', tix: tokReward && raidPx > 0 ? fmtTok(amt) + ' ' + raidSym : tix ? fmtCount(amt) + ' tix' : '$' + amt.toFixed(2) }; }),
+      board: [['@kofi.sol', 412], ['@nova_studio', 356], ['@mayabuilds', 298], ['@tunde.eth', 240]].map(([who, p], i) => { const pool = tokReward && raidPx > 0 ? weeklyTok : usePlan ? weeklyPlan : ub; const shares = s.split === 'share' ? p / 1306 : [0.25, 0.18, 0.14, 0.11][i]; const amt = pool * shares; return { rank: String(i + 1), who, pts: p + ' pts', tix: tokReward && raidPx > 0 ? fmtTok(amt) + ' ' + raidSym : tix ? Math.floor(amt).toLocaleString('en-US') + ' tix' : '$' + amt.toFixed(2) }; }),
       boardTitle: 'THIS WEEK’S LEADERBOARD', periodWord: 'week',
       splitOpts: [['top10', 'Top 10'], ['top25', 'Top 25'], ['share', 'Everyone, by share of points']].map(([k, label]) => ({ label, ...pk(s.split === k), set: () => set({ split: k }) })),
       splitNote: s.split === 'share' ? 'Every raider gets a slice in proportion to their points. 10% of points = 10% of the pool.' : 'Higher ranks get a bigger share. #1 gets about 25% of the pool, sliding down to #' + (s.split === 'top10' ? '10' : '25') + '.',
       leftLabel: 'Pool paid out Sunday',
-      fA: isAuto ? (tokReward ? raidSym + ' rewards' : planRow[0] + (tix ? ' tickets' : ' USDC')) : 'Prize', fAv: isAuto ? (tokReward ? (raidPx > 0 ? tokAmt(weeklyTok) + ' / week' : 'Pick a token') : planDetail) : gv.gwPrizeCost, fB: isAuto ? 'Management' : gv.feeLabel, fBv: isAuto ? money(mgmt) : gv.feeStr,
+      fA: isAuto ? (tokReward ? raidSym + ' rewards' : planRow[0]) : 'Prize', fAv: isAuto ? (tokReward ? (raidPx > 0 ? tokAmt(weeklyTok) + ' / week' : 'Pick a token') : planDetail) : gv.gwPrizeCost, fB: isAuto ? 'Management' : gv.feeLabel, fBv: isAuto ? money(mgmt) : gv.feeStr,
       fTotal: isAuto ? (tokReward ? ((raidPx > 0 ? tokAmt(termTok) + ' + ' : '') + money(mgmt)) : money(packagePrice + mgmt)) : gv.gwTotal, payLabel: isAuto ? 'Subscribe and start' : 'Pay ' + gv.gwTotal + ' and launch',
       leftNote: tokReward ? (raidPx > 0 ? tokAmt(weeklyTok) + ' pool' : 'token pool') : tix ? fmtCount(weeklyPlan) + ' tickets' : usePlan ? money(weeklyPlan) + ' pool' : '$' + ub + ' pool',
       createRef: this.createRef, toCreate: this.toCreate,

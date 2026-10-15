@@ -46,16 +46,17 @@ function generateShortId(length = 8): string {
 // each caller defines its own address rather than a shared config, overridable via env for staging.
 const GIVEAWAY_REVIEW_ALERT_EMAIL = 'lisa.bechina@gmail.com';
 
-// 10% of the prize pool, never under $5. Distinct from the old per-winner MagicBlock buffer
+// 10% of the prize pool, never under $5 and never over $80 (the cap kicks in at an $800 pool). Distinct from the old per-winner MagicBlock buffer
 // (removed; that was accidental overcharge with no real cost behind it). Lands in the Solana fee
 // payer's own wallet at giveaway completion, not refunded to the creator like the rest of the
 // burner's leftover. Waived for an official ("create as Loofta") giveaway.
 const GIVEAWAY_PLATFORM_FEE_MIN_USD = 5;
+const GIVEAWAY_PLATFORM_FEE_MAX_USD = 80;
 const GIVEAWAY_PLATFORM_FEE_RATE = 0.1;
 
 function giveawayPlatformFeeUsd(prizePoolUsd: number): number {
   const percent = Math.round(prizePoolUsd * GIVEAWAY_PLATFORM_FEE_RATE * 100) / 100;
-  return Math.max(GIVEAWAY_PLATFORM_FEE_MIN_USD, percent);
+  return Math.min(GIVEAWAY_PLATFORM_FEE_MAX_USD, Math.max(GIVEAWAY_PLATFORM_FEE_MIN_USD, percent));
 }
 
 // Review-link session tokens are short-lived — long enough for one sitting of task review, short

@@ -1212,7 +1212,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     updateDraft((prev) => (prev.tasks.length >= MAX_TASKS ? prev : { tasks: [...prev.tasks, newRow(category)] }));
   }, [updateDraft]);
 
-  const platformFee = mode === "create" && createAsAdmin ? 0 : (totalPool > 0 ? Math.max(5, Math.round(totalPool * 10) / 100) : 0);
+  const platformFee = mode === "create" && createAsAdmin ? 0 : (totalPool > 0 ? Math.min(80, Math.max(5, Math.round(totalPool * 10) / 100)) : 0);
   const ticketsEach = Math.max(0, Math.round(prizeAmount) || 0);
 
   const goNext = useCallback(() => {
@@ -1772,7 +1772,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                       <span style={{ fontWeight: 700 }}>{isTickets ? `${ticketsEach * winnerCount} tickets · ${usd(totalPool)}` : usd(totalPool)}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15 }}>
-                      <span style={{ color: "#B5B2BC" }}>Platform fee (10%, $5 min)</span>
+                      <span style={{ color: "#B5B2BC" }}>Platform fee (10%, $5 min, $80 max)</span>
                       <span style={{ fontWeight: 700 }}>{usd(platformFee)}</span>
                     </div>
                     <div style={{ height: 1, background: "rgba(255,255,255,0.07)" }} />

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, Request, UseGuards, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, Query, Request, UseGuards, HttpCode, HttpStatus, BadRequestException, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 import { AdminGuard } from '@/common/guards';
@@ -62,6 +62,8 @@ class GrantFreeSpinDto {
 @UseGuards(AdminGuard)
 @ApiSecurity('privy-auth')
 export class AdminLotteryController {
+  private readonly logger = new Logger(AdminLotteryController.name);
+
   constructor(
     private readonly lottery: LotteryService,
     private readonly megapot: MegapotService,
@@ -84,6 +86,42 @@ export class AdminLotteryController {
     const balanceUsdc = referrerWallet ? await this.megapot.getReferralFeesBalanceUsdc(referrerWallet) : 0;
 
     const db = this.supabase.getClient();
+
+    // Backfill claims made outside the admin UI (e.g. directly on Basescan) from on-chain events.
+    // Incremental: only scans past the newest block already recorded. First run looks back ~90 days
+    // of Base blocks (2s each); override with MEGAPOT_REFERRAL_SCAN_FROM_BLOCK.
+    if (referrerWallet) {
+      try {
+        const { data: lastRow } = await db
+          .from('megapot_referral_fee_claims')
+          .select('block_number')
+          .order('block_number', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const envStart = process.env.MEGAPOT_REFERRAL_SCAN_FROM_BLOCK;
+        const fromBlock = lastRow?.block_number
+          ? BigInt(lastRow.block_number) + 1n
+          : envStart
+            ? BigInt(envStart)
+            : BigInt(Math.max(0, (await this.megapot.getLatestBlockNumber()) - 3_900_000));
+        const events = await this.megapot.getReferralFeeClaimEvents(referrerWallet as `0x${string}`, fromBlock);
+        if (events.length > 0) {
+          await db.from('megapot_referral_fee_claims').upsert(
+            events.map((e) => ({
+              tx_hash: e.txHash.toLowerCase(),
+              claimer_address: e.claimerAddress,
+              amount_usdc: e.amountUsdc,
+              block_number: Number(e.blockNumber),
+              claimed_at: e.claimedAt.toISOString(),
+            })),
+            { onConflict: 'tx_hash', ignoreDuplicates: true },
+          );
+        }
+      } catch (e: any) {
+        this.logger.warn(`Referral fee on-chain sync failed: ${e.message}`);
+      }
+    }
+
     // Sum across every recorded claim, not just the page below — same "don't undercount" fix as
     // the lottery ticket totals.
     const { data: allClaims } = await db.from('megapot_referral_fee_claims').select('amount_usdc');
