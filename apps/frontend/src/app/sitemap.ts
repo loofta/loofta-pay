@@ -14,6 +14,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/usdc-to-ngn",
     "/dollar-to-naira-today",
     "/blog",
+    "/about",
     "/careers",
     "/brand",
     "/privacy",

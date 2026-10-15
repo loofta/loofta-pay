@@ -65,7 +65,8 @@ export function Footer() {
             <ul className="space-y-2">
               <li><a href={looftaXyz.about} className="text-slate-400 hover:text-white transition-colors">{t('about')}</a></li>
               <li><a href="/careers" className="text-slate-400 hover:text-white transition-colors">Careers</a></li>
-              <li><a href="https://t.me/looftapay" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Contact support</a></li>
+              <li><a href="mailto:hello@loofta.xyz" className="text-slate-400 hover:text-white transition-colors">Support</a></li>
+              <li><a href="https://t.me/looftapay" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">Telegram support chat</a></li>
               <li><a href="/terms" className="text-slate-400 hover:text-white transition-colors">Terms of Service</a></li>
               <li><a href="/privacy" className="text-slate-400 hover:text-white transition-colors">Privacy Policy</a></li>
             </ul>

@@ -157,7 +157,7 @@ export default function TermsPage() {
               Authentication and identity management for the Service is provided by Privy, Inc. ("Privy"). You may register and log in using your email address or your X (formerly Twitter) account. By logging in, you authorize Privy to create and manage an embedded Solana wallet on your behalf, and you agree to Privy's own terms of service and privacy policy.
             </P>
             <P>
-              You are responsible for maintaining the confidentiality of any credentials used to access your account and for all activities that occur under your account. You agree to notify us immediately at contact@loofta.xyz if you suspect any unauthorized use of your account.
+              You are responsible for maintaining the confidentiality of any credentials used to access your account and for all activities that occur under your account. You agree to notify us immediately at hello@loofta.xyz if you suspect any unauthorized use of your account.
             </P>
             <P>
               We link your Privy user identifier to your Loofta profile and transaction history stored in our database. You may also connect an external Solana wallet (e.g., Phantom). You are solely responsible for the security and backup of any external wallet private keys.
@@ -378,6 +378,12 @@ export default function TermsPage() {
             <P>
               You agree to defend, indemnify, and hold harmless Loofta and its affiliates, officers, directors, employees, and agents from and against any claims, damages, obligations, losses, liabilities, costs, and expenses (including reasonable attorneys' fees) arising from: (a) your use of the Service; (b) your violation of these Terms; (c) your violation of any third-party rights; or (d) any claim that content you submitted caused damage to a third party.
             </P>
+            <P>
+              <strong className="text-white font-medium">Release.</strong> To the maximum extent permitted by law, you release Loofta Inc. from all claims, demands and damages, known or unknown, arising out of or relating to your use of the Service or any dispute with another user or third party. If you are a California resident, you waive California Civil Code Section 1542, which says: "A general release does not extend to claims that the creditor or releasing party does not know or suspect to exist in his or her favor at the time of executing the release and that, if known by him or her, would have materially affected his or her settlement with the debtor or released party."
+            </P>
+            <P>
+              <strong className="text-white font-medium">No fiduciary duty or registration.</strong> Loofta Inc. is not a bank, broker-dealer, exchange or investment adviser, and is not registered with the U.S. Securities and Exchange Commission. We owe you no fiduciary duties, we do not guarantee best execution, and you are solely responsible for safeguarding your wallet keys and recovery phrases. Blockchain transactions are irreversible.
+            </P>
           </Section>
 
           <Section id="termination" title="20. Termination">
@@ -394,7 +400,7 @@ export default function TermsPage() {
               These Terms are governed by and construed in accordance with the laws of the State of Delaware, United States, without regard to conflict of law principles. Any dispute arising from these Terms or the Service shall be resolved exclusively in the state or federal courts located in Delaware, and you consent to personal jurisdiction in those courts.
             </P>
             <P>
-              <strong className="text-white font-medium">Informal resolution.</strong> Before filing any formal claim, you agree to try to resolve the dispute informally by contacting us at contact@loofta.xyz. We will try to resolve the dispute informally within 30 days.
+              <strong className="text-white font-medium">Informal resolution.</strong> Before filing any formal claim, you agree to try to resolve the dispute informally by contacting us at hello@loofta.xyz. We will try to resolve the dispute informally within 30 days.
             </P>
           </Section>
 
@@ -412,7 +418,8 @@ export default function TermsPage() {
               <p className="text-white font-medium mb-1">Loofta Inc.</p>
               <p>131 Continental Dr, Suite 305</p>
               <p>Newark, DE 19713, USA</p>
-              <p className="mt-1">Email: <a href="mailto:contact@loofta.xyz" className="text-[#FF1301] hover:underline">contact@loofta.xyz</a></p>
+              <p className="mt-1">Email: <a href="mailto:hello@loofta.xyz" className="text-[#FF1301] hover:underline">hello@loofta.xyz</a></p>
+              <p className="mt-1">Support: <a href="mailto:hello@loofta.xyz" className="text-[#FF1301] hover:underline">hello@loofta.xyz</a></p>
               <p className="mt-1">Website: <a href="https://loofta.xyz" className="text-[#FF1301] hover:underline">loofta.xyz</a></p>
             </div>
           </Section>

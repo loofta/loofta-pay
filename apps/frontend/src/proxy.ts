@@ -76,6 +76,7 @@ export function proxy(request: NextRequest) {
     "/brand",
     "/terms",
     "/privacy",
+    "/about",
     "/careers",
     "/payment-links",
     "/pay-with-email",
