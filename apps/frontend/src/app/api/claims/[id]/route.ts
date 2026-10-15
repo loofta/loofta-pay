@@ -113,7 +113,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   // behind "Payment not found".
   const optionalColumns = ["guest_sender_wallet", "private_split", "private_max_delay_ms", "solana_mint", "token_amount", "token_decimals", "token_base_units", "token_program"];
   let paymentSelect =
-    "id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, claimed_privately, merchant_name, merchant_logo_url, sender_user_id, guest_sender_email, guest_sender_wallet, private_split, private_max_delay_ms, solana_mint, token_amount, token_decimals, token_base_units, token_program";
+    "id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, claimed_privately, merchant_name, merchant_logo_url, integrator_id, expires_at, sender_user_id, guest_sender_email, guest_sender_wallet, private_split, private_max_delay_ms, solana_mint, token_amount, token_decimals, token_base_units, token_program";
   let { data: paymentRow, error: paymentError } = await supabase
     .from("payments")
     .select(paymentSelect)
@@ -147,6 +147,18 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   }
 
   const direction = String((rawPayment?.direction as string) || "from_sender");
+
+  // A payment request nobody paid is dead once it expires: 404 it like a deleted one instead of
+  // rendering a live-looking "+$X incoming" page for a request that can never settle. Only
+  // never-paid from_recipient rows — from_sender claims can be expired while still holding funds
+  // the sender needs to see and reclaim.
+  if (direction === "from_recipient" && !rawPayment?.paid_at && !rawPayment?.sender_tx_hash) {
+    const expiresAtMs = rawPayment?.expires_at ? new Date(String(rawPayment.expires_at)).getTime() : NaN;
+    const lapsed = status === "OPEN" && Number.isFinite(expiresAtMs) && expiresAtMs < Date.now();
+    if (status === "EXPIRED" || lapsed) {
+      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+    }
+  }
 
   const createdBy = String(rawPayment?.created_by ?? "");
 
@@ -257,6 +269,12 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     creator_username: creator_username ?? null,
     recipient_username: (rawPayment?.recipient_username as string | null | undefined) ?? resolvedRecipientUsername ?? null,
     sender_username,
+    // Only links minted through the payment-links API carry an integrator_id. The "Merchant
+    // payment" label keys off this, not direction: a human "Get Paid" request is also
+    // direction='from_recipient' and must not be labelled as a merchant sale. The raw
+    // integrator id stays server-side.
+    is_api_payment: !!rawPayment?.integrator_id,
+    integrator_id: undefined,
     // Raw Privy ID, only ever fetched above to resolve sender_username — this is a public,
     // no-auth-required endpoint for from_recipient links, so it must never reach the client.
     sender_user_id: undefined,

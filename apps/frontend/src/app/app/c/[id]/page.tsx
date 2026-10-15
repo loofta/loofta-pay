@@ -921,7 +921,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
     isRegistered: !!(c as { recipient_is_registered?: boolean }).recipient_is_registered,
   });
   return {
-    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; recipient_user_id?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_pending_social?: boolean; recipient_pending_social_platform?: string | null; recipient_pending_social_value?: string | null; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; claimed_privately?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null; merchant_name?: string | null; merchant_logo_url?: string | null; private_split?: number | null; private_max_delay_ms?: number | null },
+    claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; recipient_user_id?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_pending_social?: boolean; recipient_pending_social_platform?: string | null; recipient_pending_social_value?: string | null; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; claimed_privately?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null; merchant_name?: string | null; merchant_logo_url?: string | null; is_api_payment?: boolean; private_split?: number | null; private_max_delay_ms?: number | null },
     latestIntent: data.latestIntent || null,
     pendingEmail: false,
     pendingSocialPlatform: null,
@@ -1133,8 +1133,10 @@ function DepositProgressSteps({ status }: { status: string | null }) {
 function MerchantPaymentBadge({
   claim,
 }: {
-  claim: { merchant_name?: string | null; merchant_logo_url?: string | null } | null;
+  claim: { merchant_name?: string | null; merchant_logo_url?: string | null; is_api_payment?: boolean } | null;
 }) {
+  // Human "Get Paid" requests are also from_recipient; only API-created links are merchant sales.
+  if (!claim?.is_api_payment) return null;
   return (
     <div className="flex items-center justify-center gap-2 mb-3">
       {claim?.merchant_logo_url ? (
@@ -5190,6 +5192,10 @@ export function ClaimPayView({
     return null;
   }
 
+  const claimPayerLegSettled =
+    !!claim?.paid_at ||
+    ["SUCCESS", "CLAIMED", "PRIVATE_TRANSFER_PENDING", "FUNDED", "IN_FLIGHT"].includes(String(status || claim?.status || "").toUpperCase());
+
   function getSenderDisplay(claim: PaymentHistoryClaim): string {
     // creator_username/creator_email correctly identify the sender ONLY for direction ===
     // "from_sender" (the creator sent this to someone). For "from_recipient" (a payment request
@@ -6291,11 +6297,15 @@ export function ClaimPayView({
                   ) : null}
                   {tokenPrizeAmount != null && String(tokenPrizeAmount) !== ""
                     ? `+ ${tokenPrizeAmount} ${tokenPrizeSymbol}`
-                    : `+ $${parseFloat(claim?.amount || "0").toFixed(2)}`}
+                    : `${claimPayerLegSettled ? "+ " : ""}$${parseFloat(claim?.amount || "0").toFixed(2)}`}
                 </div>
                 <div className="text-xl text-gray-500 mt-3 mb-5">
                   {isCreatorView && claim?.direction !== "from_recipient" ? (
                     "Payment to yourself — you're logged in as the account that created this link."
+                  ) : claim?.direction === "from_recipient" && !claimPayerLegSettled ? (
+                    // sender_user_id is stamped when someone merely builds the pay transaction, so
+                    // an unpaid request can carry a stranger's name. Never call them the payer.
+                    "Waiting for payment"
                   ) : (
                     <>from {getSenderDisplay(claim)}</>
                   )}
@@ -6604,7 +6614,7 @@ export function ClaimPayView({
                       </div>
                     )}
                     <div className="min-w-0">
-                    {claim?.direction === "from_recipient" && (
+                    {claim?.direction === "from_recipient" && (claim as { is_api_payment?: boolean }).is_api_payment && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-sm font-medium text-slate-300 mb-1.5">
                         <ShoppingBag className="w-3 h-3" /> Merchant payment
                       </span>
