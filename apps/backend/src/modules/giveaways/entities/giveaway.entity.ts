@@ -4,6 +4,27 @@ export enum GiveawaySelectionMode {
   MANUAL = 'manual',
 }
 
+export enum GiveawayType {
+  STANDARD = 'standard',
+  /** Quick X giveaway: qualifying public posts are found by search, nobody clicks Enter. */
+  QUICK_POST = 'quick_post',
+}
+
+export interface QuickCriteria {
+  /** Handles (no @) every qualifying post must tag. */
+  required_mentions: string[];
+  /** Hashtags (no #) every qualifying post must contain. */
+  required_hashtags: string[];
+  /** Optional free text the post must contain (case-insensitive). */
+  required_text?: string;
+  /** Post must carry an image or video ("post a meme"). */
+  require_media?: boolean;
+  /** The creator's announcement post, shown on the page. */
+  announcement_url?: string;
+  /** Only posts at or after this time count. ISO 8601. */
+  start_at: string;
+}
+
 export enum GiveawayRewardType {
   USDC = 'usdc',
   MEGAPOT_TICKET = 'megapot_ticket',
@@ -152,6 +173,14 @@ export interface Giveaway {
   /** True for an admin-created "Loofta official" giveaway — auto-approved, shown with the Loofta brand, pinned to the top of public listings. */
   is_official: boolean;
 
+  giveaway_type: GiveawayType;
+  quick_criteria: QuickCriteria | null;
+  quick_last_synced_at: string | null;
+  /** Quick giveaways: draw from every qualifying post or only the creator's shortlist. */
+  quick_draw_pool: 'all' | 'shortlist';
+  quick_duration_hours: number | null;
+  quick_window_started_at: string | null;
+
   status: GiveawayStatus;
 
   /** Password-protected public review link — see GiveawaysService.generateReviewLink. Null until a creator generates one; regenerating overwrites all three. */
@@ -194,6 +223,14 @@ export interface GiveawayEntry {
   claim_payment_id: string | null;
   /** lottery_gifts.id once a megapot_ticket giveaway's prize has been gifted as tickets — already 'claimed', winner goes straight to /gift/[shortId]. Null for usdc giveaways. */
   claim_gift_id: string | null;
+  /** Quick X giveaways only: the qualifying post this entry was built from. */
+  post_id: string | null;
+  post_url: string | null;
+  post_text: string | null;
+  post_created_at: string | null;
+  post_media: Array<{ type: string; preview?: string; link?: string }> | null;
+  /** Quick giveaways: starred by the creator, public. */
+  shortlisted: boolean;
 }
 
 export enum GiveawayTaskCompletionStatus {

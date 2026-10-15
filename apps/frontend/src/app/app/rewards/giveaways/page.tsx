@@ -165,7 +165,7 @@ export default function GiveawaysListPage() {
             </span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: "none" }}>
-            <Link href="/rewards-rail" style={{ padding: "15px 22px", borderRadius: 16, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: 600, fontSize: 15, boxShadow: "0 12px 34px rgba(255,70,10,0.3)", textAlign: "center" }}>
+            <Link href="/app/rewards/giveaways/quick" style={{ padding: "15px 22px", borderRadius: 16, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: 600, fontSize: 15, boxShadow: "0 12px 34px rgba(255,70,10,0.3)", textAlign: "center" }}>
               Launch a giveaway
             </Link>
             {authenticated && (

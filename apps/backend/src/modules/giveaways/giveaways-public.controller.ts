@@ -7,6 +7,7 @@ import { GiveawayEntriesService } from './giveaway-entries.service';
 import { Giveaway, GiveawayStatus } from './entities/giveaway.entity';
 import { GiveawayTokenService } from './giveaway-token.service';
 import { XVerificationService } from './x-verification.service';
+import { QuickGiveawayService } from './quick-giveaway.service';
 
 // Entries (and who won) go public once the pool is frozen — before that, revealing who's in the
 // running would leak the live entrant list while people can still act on it. This is also
@@ -56,6 +57,7 @@ export class GiveawaysPublicController {
     private readonly entriesService: GiveawayEntriesService,
     private readonly tokens: GiveawayTokenService,
     private readonly xVerification: XVerificationService,
+    private readonly quick: QuickGiveawayService,
   ) {}
 
   @Get('x-posts')
@@ -194,6 +196,9 @@ export class GiveawaysPublicController {
     // giveaway_tasks/giveaway_entries are keyed on the real giveaway id, not the short code.
     const realId = giveaway.id as string;
     const tasks = await this.giveawaysService.getTasks(realId);
+    // giveaways_safe predates the quick-giveaway columns; the raw row is safe to read here
+    // because only the three non-secret fields below are ever copied out of it.
+    const raw = await this.giveawaysService.findOneOrThrow(realId);
 
     const { count: entryCount } = await this.supabaseService.giveawayEntries
       .select('id', { count: 'exact', head: true })
@@ -256,8 +261,27 @@ export class GiveawaysPublicController {
       vrf_fulfilled_at: giveaway.vrf_fulfilled_at,
       vrf_request_slot: drawRequestPda ? giveaway.vrf_request_slot : null,
       draw_request_pda: drawRequestPda,
+      giveaway_type: raw.giveaway_type,
+      quick_criteria: raw.quick_criteria,
+      quick_last_synced_at: raw.quick_last_synced_at,
       tasks: tasks.map((t) => ({ id: t.id, task_type: t.task_type, config: t.config, order_index: t.order_index, verification_mode: t.verification_mode })),
     };
+  }
+
+  @Get(':id/posts')
+  @ApiOperation({ summary: 'Quick X giveaway: the live feed of qualifying public posts. No auth required.' })
+  async quickPosts(@Param('id') id: string) {
+    const giveaway = await this.fetchGiveawayByIdOrShortId(id);
+    if (!giveaway) throw new NotFoundException('Giveaway not found');
+    return this.quick.listPosts(giveaway.id as string);
+  }
+
+  @Get(':id/eligibility')
+  @ApiOperation({ summary: 'Quick X giveaway: check whether an X username already has a qualifying post. No auth required.' })
+  async quickEligibility(@Param('id') id: string, @Query('handle') handle?: string) {
+    const giveaway = await this.fetchGiveawayByIdOrShortId(id);
+    if (!giveaway) throw new NotFoundException('Giveaway not found');
+    return this.quick.checkEligibility(giveaway.id as string, handle ?? '');
   }
 
   /** Full entry list (X handle + status per entry) — the other half of the "provably fair" claim

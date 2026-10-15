@@ -12,6 +12,7 @@ import { EmailService } from '../email/email.service';
 import { SolanaSponsorService } from '../claims/solana-sponsor.service';
 import { UsersService } from '../users/users.service';
 import { CreateGiveawayDto } from './dto/create-giveaway.dto';
+import { GiveawayType, QuickCriteria } from './entities/giveaway.entity';
 import { AdminReviewGiveawayDto } from './dto/admin-review-giveaway.dto';
 import { AdminEditGiveawayDto } from './dto/admin-edit-giveaway.dto';
 import {
@@ -254,11 +255,40 @@ export class GiveawaysService {
     return (emailAccount?.address as string | undefined) ?? null;
   }
 
+  /** Quick X giveaways: no tasks, one cleaned-up criteria object. Handles/hashtags are stored
+   *  lowercase without @/# so the sync query and the local match check agree exactly. */
+  private normalizeQuickCriteria(dto: CreateGiveawayDto): QuickCriteria {
+    const c = dto.quick_criteria;
+    if (!c) throw new BadRequestException('A quick giveaway needs quick_criteria.');
+    const clean = (v: string, re: RegExp) => v.trim().replace(re, '').toLowerCase();
+    const mentions = Array.from(new Set((c.required_mentions ?? []).map((m) => clean(m, /^@/)).filter((m) => /^[a-z0-9_]{1,15}$/.test(m))));
+    const hashtags = Array.from(new Set((c.required_hashtags ?? []).map((h) => clean(h, /^#/)).filter((h) => /^[a-z0-9_]{1,60}$/.test(h))));
+    const requiredText = c.required_text?.trim() || undefined;
+    const requireMedia = c.require_media === true;
+    if (!mentions.length && !hashtags.length && !requiredText && !requireMedia) {
+      throw new BadRequestException('Add at least one required @mention, #hashtag or phrase so we know which posts qualify.');
+    }
+    const startAt = new Date(c.start_at);
+    if (Number.isNaN(startAt.getTime())) throw new BadRequestException('start_at must be a valid date');
+    return {
+      required_mentions: mentions,
+      required_hashtags: hashtags,
+      ...(requiredText ? { required_text: requiredText } : {}),
+      ...(requireMedia ? { require_media: true } : {}),
+      ...(c.announcement_url ? { announcement_url: c.announcement_url.trim() } : {}),
+      start_at: startAt.toISOString(),
+    };
+  }
+
   async create(userId: string, dto: CreateGiveawayDto): Promise<Giveaway> {
     const closeAt = new Date(dto.entries_close_at);
     if (Number.isNaN(closeAt.getTime()) || closeAt.getTime() <= Date.now()) {
       throw new BadRequestException('entries_close_at must be a valid future date');
     }
+
+    const isQuick = dto.giveaway_type === GiveawayType.QUICK_POST;
+    const quickCriteria = isQuick ? this.normalizeQuickCriteria(dto) : null;
+    if (!isQuick && !dto.tasks?.length) throw new BadRequestException('Add at least one task.');
 
     const rewardType = dto.reward_type ?? GiveawayRewardType.USDC;
     // Megapot tickets are $1 each (TICKET_PRICE_USDC) — prize_amount_usd becomes numTickets
@@ -308,6 +338,9 @@ export class GiveawaysService {
         ...prize,
         entries_close_at: closeAt.toISOString(),
         eligibility: dto.eligibility ?? {},
+        giveaway_type: isQuick ? GiveawayType.QUICK_POST : GiveawayType.STANDARD,
+        quick_criteria: quickCriteria,
+        quick_duration_hours: isQuick ? dto.quick_duration_hours ?? null : null,
         funding_required_usd,
         platform_fee_usd: platformFeeUsd,
         is_devnet: this.isDevnet,
@@ -329,7 +362,7 @@ export class GiveawaysService {
       throw new BadRequestException(`Failed to create giveaway: ${error?.message ?? 'unknown error'}`);
     }
 
-    const taskRows = dto.tasks.map((t, index) => ({
+    const taskRows = (dto.tasks ?? []).map((t, index) => ({
       giveaway_id: giveaway.id,
       order_index: index,
       task_type: t.task_type,
@@ -337,14 +370,14 @@ export class GiveawaysService {
       // Fixed per-task-type, never client-supplied — see GIVEAWAY_TASK_VERIFICATION_MODE.
       verification_mode: GIVEAWAY_TASK_VERIFICATION_MODE[t.task_type],
     }));
-    const { error: tasksError } = await this.supabaseService.giveawayTasks.insert(taskRows);
+    const { error: tasksError } = taskRows.length ? await this.supabaseService.giveawayTasks.insert(taskRows) : { error: null };
     if (tasksError) {
       // Roll back the giveaway row rather than leave a task-less giveaway stuck in PENDING_APPROVAL.
       await this.supabaseService.giveaways.delete().eq('id', giveaway.id);
       throw new BadRequestException(`Failed to create giveaway tasks: ${tasksError.message}`);
     }
 
-    await this.logEvent(giveaway.id, 'submitted', { winner_count: dto.winner_count, task_count: dto.tasks.length });
+    await this.logEvent(giveaway.id, 'submitted', { winner_count: dto.winner_count, task_count: dto.tasks?.length ?? 0, giveaway_type: isQuick ? 'quick_post' : 'standard' });
     if (isOfficial) {
       await this.logEvent(giveaway.id, 'approved', { admin: userId, auto: true, burner_address: officialBurner!.address });
     } else {
@@ -388,6 +421,10 @@ export class GiveawaysService {
     ) {
       throw new BadRequestException(`Cannot edit — giveaway is ${giveaway.status}, already funded or beyond`);
     }
+
+    const isQuick = giveaway.giveaway_type === GiveawayType.QUICK_POST;
+    const quickCriteria = isQuick ? this.normalizeQuickCriteria({ ...dto, giveaway_type: GiveawayType.QUICK_POST }) : null;
+    if (!isQuick && !dto.tasks?.length) throw new BadRequestException('Add at least one task.');
 
     const rewardType = dto.reward_type ?? GiveawayRewardType.USDC;
     if (rewardType === GiveawayRewardType.MEGAPOT_TICKET) {
@@ -437,6 +474,7 @@ export class GiveawaysService {
         ...prize,
         entries_close_at: closeAt.toISOString(),
         eligibility: dto.eligibility ?? {},
+        ...(isQuick ? { quick_criteria: quickCriteria } : {}),
         funding_required_usd,
       })
       .eq('id', id)
@@ -448,14 +486,14 @@ export class GiveawaysService {
     // yet for a giveaway that hasn't reached OPEN (entries only start once OPEN).
     const { error: deleteError } = await this.supabaseService.giveawayTasks.delete().eq('giveaway_id', id);
     if (deleteError) throw new BadRequestException(`Failed to update tasks: ${deleteError.message}`);
-    const taskRows = dto.tasks.map((t, index) => ({
+    const taskRows = (dto.tasks ?? []).map((t, index) => ({
       giveaway_id: id,
       order_index: index,
       task_type: t.task_type,
       config: t.config ?? {},
       verification_mode: GIVEAWAY_TASK_VERIFICATION_MODE[t.task_type],
     }));
-    const { error: tasksError } = await this.supabaseService.giveawayTasks.insert(taskRows);
+    const { error: tasksError } = taskRows.length ? await this.supabaseService.giveawayTasks.insert(taskRows) : { error: null };
     if (tasksError) throw new BadRequestException(`Failed to update giveaway tasks: ${tasksError.message}`);
 
     await this.logEvent(id, 'edited', { by: userId, status: giveaway.status });

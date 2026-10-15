@@ -43,6 +43,7 @@ import { buildGiveawayFundingPrivateTransfer } from "@/services/api/claims";
 import { signAndBroadcastSponsoredTx } from "@/services/solanaSponsor";
 import { FormattedText } from "@/components/FormattedText";
 import posthog from "posthog-js";
+import { QuickPostFeed, type QuickCriteria } from "./QuickPostFeed";
 
 const BACKEND_URL = clientApiBase();
 // Mirrors giveaways-public.controller.ts's ENTRIES_VISIBLE_STATUSES — the entry list (and
@@ -264,6 +265,8 @@ interface PublicGiveaway {
   funding_required_usd: string | null; funding_confirmed_usd: string; entry_count: number;
   entry_snapshot_hash: string | null; vrf_randomness: string | null; vrf_fulfilled_at: string | null; vrf_request_slot: number | null; draw_request_pda: string | null;
   is_official: boolean;
+  giveaway_type?: "standard" | "quick_post";
+  quick_criteria?: QuickCriteria | null;
   tasks: PublicTask[];
 }
 
@@ -761,7 +764,8 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   // right before it flips to the real state. Both queries are disabled while logged out, so this
   // only waits while `authenticated` is true (otherwise it'd wait forever on a disabled query).
   const identityPending = authenticated && (isOwner === undefined || myEntry === undefined);
-  const canEnter = giveaway.status === "OPEN" && !myEntry && !isOwner;
+  const isQuick = giveaway.giveaway_type === "quick_post" && !!giveaway.quick_criteria;
+  const canEnter = !isQuick && giveaway.status === "OPEN" && !myEntry && !isOwner;
   const giveawayEnded = giveaway.status !== "OPEN";
   const canShare = giveaway.status !== "REJECTED" && giveaway.status !== "CANCELLED";
   // Matches the current environment (localhost in dev, pay.loofta.xyz in prod) instead of a
@@ -1039,7 +1043,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
           {/* Logged-out visitors land here from a shared link — get them to the entry CTA
               immediately instead of making them scroll past the full task checklist first
               (that checklist is only useful once there's an entry to track progress against). */}
-          {!authenticated && !giveawayEnded && (
+          {!isQuick && !authenticated && !giveawayEnded && (
             <div className="mb-5">
               <GradientActionButton onClick={() => login({ loginMethods: ["twitter"], disableSignup: false })}>
                 Sign in with X to enter
@@ -1495,7 +1499,24 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               );
             })()}
 
-          {(giveaway.eligibility?.min_followers || giveaway.eligibility?.min_account_age_days || giveaway.eligibility?.verified_only) && (
+          {isQuick && giveaway.quick_criteria && giveaway.status !== "PENDING_FUNDING" && giveaway.status !== "PENDING_APPROVAL" && (
+            <QuickPostFeed
+              giveawayId={resolvedId}
+              title={giveaway.title}
+              status={giveaway.status}
+              winnerCount={giveaway.winner_count}
+              prizePerWinner={Number(giveaway.prize_amount_usd)}
+              tokenSymbol={giveaway.prize_token_symbol ?? null}
+              criteria={giveaway.quick_criteria}
+              eligibility={giveaway.eligibility}
+              isOwner={!!isOwner}
+              winners={winners}
+              vrfRandomness={giveaway.vrf_randomness}
+              shareUrl={giveawayUrl}
+            />
+          )}
+
+          {!isQuick && (giveaway.eligibility?.min_followers || giveaway.eligibility?.min_account_age_days || giveaway.eligibility?.verified_only) && (
             <p className="text-base text-slate-500 mb-3">
               To enter: linked X account
               {giveaway.eligibility?.min_followers ? `, ${giveaway.eligibility.min_followers}+ followers` : ""}
@@ -1508,7 +1529,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             Winners will have 30 days to claim their payment once announced.
           </p>
 
-          {identityPending ? (
+          {isQuick ? null : identityPending ? (
             <div className="h-12 rounded-xl bg-white/5 animate-pulse" />
           ) : !authenticated ? (
             // The live "sign in to enter" CTA already rendered right below the prize card above —

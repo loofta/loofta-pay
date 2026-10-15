@@ -667,6 +667,12 @@ export class GiveawayEntriesService {
     const entryIds = entries.map((e) => e.id);
     if (!entryIds.length) return [];
 
+    // A giveaway with no tasks (quick X giveaway) has nothing to verify per entry: every entry
+    // that wasn't excluded by the creator is eligible. Without this the per-task map below stays
+    // empty and nobody would ever be drawable.
+    const tasks = await this.giveawaysService.getTasks(giveawayId);
+    if (!tasks.length) return entries.filter((e) => e.status === GiveawayEntryStatus.ENTERED);
+
     const { data, error } = await this.supabaseService.giveawayTaskCompletions
       .select('giveaway_entry_id, verification_status')
       .in('giveaway_entry_id', entryIds);

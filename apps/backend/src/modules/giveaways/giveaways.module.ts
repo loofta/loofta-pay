@@ -19,6 +19,8 @@ import { GiveawayPayoutService } from './giveaway-payout.service';
 import { GiveawayGiphyService } from './giveaway-giphy.service';
 import { GiveawayCronService } from './giveaway-cron.service';
 import { GiveawayTokenService } from './giveaway-token.service';
+import { QuickGiveawayService } from './quick-giveaway.service';
+import { QuickRulesParserService } from './quick-rules-parser.service';
 
 @Module({
   imports: [ClaimsModule, SendPaymentModule, EmailModule, IntentsModule, UsersModule],
@@ -44,6 +46,8 @@ import { GiveawayTokenService } from './giveaway-token.service';
     GiveawayGiphyService,
     GiveawayCronService,
     GiveawayTokenService,
+    QuickGiveawayService,
+    QuickRulesParserService,
   ],
   exports: [
     GiveawaysService,

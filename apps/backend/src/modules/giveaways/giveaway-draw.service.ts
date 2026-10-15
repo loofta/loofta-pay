@@ -5,7 +5,8 @@ import { SupabaseService } from '@/database/supabase.service';
 import { GiveawaysService } from './giveaways.service';
 import { GiveawayEntriesService } from './giveaway-entries.service';
 import { GiveawayVrfService } from './giveaway-vrf.service';
-import { Giveaway, GiveawayStatus, GiveawaySelectionMode, GiveawayEntryStatus } from './entities/giveaway.entity';
+import { QuickGiveawayService } from './quick-giveaway.service';
+import { Giveaway, GiveawayType, GiveawayStatus, GiveawaySelectionMode, GiveawayEntryStatus } from './entities/giveaway.entity';
 import { hashEntrySnapshot, selectRandomWinners, selectFirstComeWinners } from './giveaway-draw-selection';
 
 const DEFAULT_VRF_STALL_MINUTES = 15;
@@ -29,6 +30,7 @@ export class GiveawayDrawService {
     private readonly giveawaysService: GiveawaysService,
     private readonly entriesService: GiveawayEntriesService,
     private readonly vrf: GiveawayVrfService,
+    private readonly quick: QuickGiveawayService,
     private readonly config: ConfigService,
   ) {}
 
@@ -45,7 +47,7 @@ export class GiveawayDrawService {
   /** Cron entry point — advances a giveaway exactly one step per call, based on its current
    *  status. Idempotent: calling it again when there's nothing to do is a no-op. */
   async advance(giveawayId: string): Promise<void> {
-    const giveaway = await this.giveawaysService.findOneOrThrow(giveawayId);
+    const giveaway = await this.quick.ensureWindowStarted(await this.giveawaysService.findOneOrThrow(giveawayId));
     switch (giveaway.status) {
       case GiveawayStatus.OPEN:
         if (Date.now() >= new Date(giveaway.entries_close_at).getTime()) {
@@ -151,6 +153,15 @@ export class GiveawayDrawService {
     // testing/iteration, where the same giveaway gets force-closed repeatedly and each call
     // re-paid for a full live X sweep (confirmed cost driver, 2026-08-16). The guard now applies
     // unconditionally.
+    // Quick X giveaways: one last search so posts made right up to the close are in the pool.
+    // Only when the last sync predates the close, so a retry of this step never pays twice.
+    if (
+      giveaway.giveaway_type === GiveawayType.QUICK_POST &&
+      (!giveaway.quick_last_synced_at || new Date(giveaway.quick_last_synced_at).getTime() < new Date(giveaway.entries_close_at).getTime())
+    ) {
+      await this.quick.sync(giveaway, { force: true, includeClosed: true });
+    }
+
     if (!(await this.hasSweptAlready(giveaway.id))) {
       await this.entriesService.runFinalXVerificationSweep(giveaway);
       await this.logEvent(giveaway.id, 'final_sweep_ran');
@@ -175,7 +186,11 @@ export class GiveawayDrawService {
       return;
     }
 
-    const eligible = await this.entriesService.getEligibleVerifiedEntries(giveaway.id);
+    let eligible = await this.entriesService.getEligibleVerifiedEntries(giveaway.id);
+    // Quick giveaways can draw from the creator's public shortlist instead of every qualifying post.
+    if (giveaway.giveaway_type === GiveawayType.QUICK_POST && giveaway.quick_draw_pool === 'shortlist') {
+      eligible = eligible.filter((e) => e.shortlisted === true);
+    }
     const entryIds = eligible.map((e) => e.id);
 
     if (entryIds.length === 0) {

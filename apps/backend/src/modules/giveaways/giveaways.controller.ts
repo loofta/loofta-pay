@@ -5,6 +5,8 @@ import { GiveawaysService } from './giveaways.service';
 import { GiveawayFundingService } from './giveaway-funding.service';
 import { GiveawayEntriesService } from './giveaway-entries.service';
 import { GiveawayDrawService } from './giveaway-draw.service';
+import { QuickGiveawayService } from './quick-giveaway.service';
+import { QuickRulesParserService } from './quick-rules-parser.service';
 import { CreateGiveawayDto } from './dto/create-giveaway.dto';
 import { SubmitTaskCompletionDto } from './dto/submit-task-completion.dto';
 import { ReviewTaskCompletionDto } from './dto/review-task-completion.dto';
@@ -22,6 +24,8 @@ export class GiveawaysController {
     private readonly fundingService: GiveawayFundingService,
     private readonly entriesService: GiveawayEntriesService,
     private readonly drawService: GiveawayDrawService,
+    private readonly quick: QuickGiveawayService,
+    private readonly quickRules: QuickRulesParserService,
   ) {}
 
   @Post()
@@ -222,5 +226,52 @@ export class GiveawaysController {
   async forceRunDraw(@Req() req: { user?: { id: string } }, @Param('id') id: string): Promise<{ giveaway: Giveaway }> {
     const giveaway = await this.drawService.forceRunDrawNow(id, req.user!.id);
     return { giveaway };
+  }
+
+  @Post(':id/posts/refresh')
+  @ApiOperation({ summary: 'Quick X giveaway, creator only: look for new qualifying posts now (throttled to once per 30s)' })
+  async refreshPosts(@Req() req: { user?: { id: string } }, @Param('id') id: string) {
+    return this.quick.refresh(id, req.user!.id);
+  }
+
+  @Put(':id/posts/:entryId/exclude')
+  @ApiOperation({ summary: 'Quick X giveaway, creator only: hide a post from the pool (spam / off-topic)' })
+  async excludePost(@Req() req: { user?: { id: string } }, @Param('id') id: string, @Param('entryId') entryId: string) {
+    await this.quick.setExcluded(id, entryId, req.user!.id, true);
+    return { ok: true };
+  }
+
+  @Put(':id/posts/:entryId/restore')
+  @ApiOperation({ summary: 'Quick X giveaway, creator only: put a hidden post back in the pool' })
+  async restorePost(@Req() req: { user?: { id: string } }, @Param('id') id: string, @Param('entryId') entryId: string) {
+    await this.quick.setExcluded(id, entryId, req.user!.id, false);
+    return { ok: true };
+  }
+
+  @Post('quick/parse')
+  @ApiOperation({ summary: 'Read a pasted X announcement and return the giveaway rules (AI when configured, patterns otherwise)' })
+  async parseQuickRules(@Req() req: { user?: { id: string } }, @Body() body: { text?: string }) {
+    return this.quickRules.parse(req.user!.id, body?.text ?? '');
+  }
+
+  @Put(':id/posts/:entryId/shortlist')
+  @ApiOperation({ summary: 'Quick X giveaway, creator only: star a post so the draw can pick it' })
+  async shortlistPost(@Req() req: { user?: { id: string } }, @Param('id') id: string, @Param('entryId') entryId: string) {
+    await this.quick.setShortlisted(id, entryId, req.user!.id, true);
+    return { ok: true };
+  }
+
+  @Put(':id/posts/:entryId/unshortlist')
+  @ApiOperation({ summary: 'Quick X giveaway, creator only: remove a post from the shortlist' })
+  async unshortlistPost(@Req() req: { user?: { id: string } }, @Param('id') id: string, @Param('entryId') entryId: string) {
+    await this.quick.setShortlisted(id, entryId, req.user!.id, false);
+    return { ok: true };
+  }
+
+  @Put(':id/draw-pool')
+  @ApiOperation({ summary: 'Quick X giveaway, creator only: draw from every qualifying post or only the shortlist' })
+  async setDrawPool(@Req() req: { user?: { id: string } }, @Param('id') id: string, @Body() body: { pool?: string }) {
+    await this.quick.setDrawPool(id, req.user!.id, body?.pool === 'shortlist' ? 'shortlist' : 'all');
+    return { ok: true };
   }
 }

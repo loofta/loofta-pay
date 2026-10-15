@@ -7,6 +7,7 @@ import {
   IsInt,
   IsBoolean,
   Min,
+  Max,
   IsEnum,
   IsUrl,
   IsISO8601,
@@ -15,9 +16,10 @@ import {
   ValidateNested,
   ArrayMinSize,
   ArrayMaxSize,
+  ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { GiveawayRewardType, GiveawaySelectionMode, GiveawayTaskType } from '../entities/giveaway.entity';
+import { GiveawayRewardType, GiveawaySelectionMode, GiveawayTaskType, GiveawayType } from '../entities/giveaway.entity';
 
 const MAX_TASKS_PER_GIVEAWAY = 8;
 
@@ -111,7 +113,62 @@ export class GiveawayEligibilityDto {
   excluded_countries?: string[];
 }
 
+export class QuickCriteriaDto {
+  @ApiProperty({ type: [String], example: ['looftapay', 'tipansem'] })
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(15, { each: true })
+  @ArrayMaxSize(5)
+  required_mentions: string[];
+
+  @ApiProperty({ type: [String], example: ['halloweengiveaway'] })
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(60, { each: true })
+  @ArrayMaxSize(5)
+  required_hashtags: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  required_text?: string;
+
+  @ApiPropertyOptional({ description: 'Post must include an image or video.' })
+  @IsOptional()
+  @IsBoolean()
+  require_media?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  announcement_url?: string;
+
+  @ApiProperty({ description: 'Only posts at or after this ISO 8601 time count.' })
+  @IsISO8601()
+  start_at: string;
+}
+
 export class CreateGiveawayDto {
+  @ApiPropertyOptional({ enum: GiveawayType, description: "'quick_post': no Enter button, qualifying X posts are found by search. Needs quick_criteria and no tasks." })
+  @IsOptional()
+  @IsEnum(GiveawayType)
+  giveaway_type?: GiveawayType;
+
+  @ApiPropertyOptional({ description: 'Quick giveaways: contest length in hours (1-72). The clock starts when the giveaway goes live.' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(72)
+  quick_duration_hours?: number;
+
+  @ApiPropertyOptional({ type: QuickCriteriaDto })
+  @ValidateIf((o: CreateGiveawayDto) => o.giveaway_type === GiveawayType.QUICK_POST)
+  @ValidateNested()
+  @Type(() => QuickCriteriaDto)
+  quick_criteria?: QuickCriteriaDto;
+
   @ApiProperty({ example: 'Launch Week Giveaway' })
   @IsString()
   @IsNotEmpty()
@@ -167,12 +224,13 @@ export class CreateGiveawayDto {
   entries_close_at: string;
 
   @ApiProperty({ type: [CreateGiveawayTaskDto], minItems: 1, maxItems: MAX_TASKS_PER_GIVEAWAY })
+  @ValidateIf((o: CreateGiveawayDto) => o.giveaway_type !== GiveawayType.QUICK_POST)
   @IsArray()
   @ValidateNested({ each: true })
   @ArrayMinSize(1)
   @ArrayMaxSize(MAX_TASKS_PER_GIVEAWAY)
   @Type(() => CreateGiveawayTaskDto)
-  tasks: CreateGiveawayTaskDto[];
+  tasks?: CreateGiveawayTaskDto[];
 
   @ApiPropertyOptional({ type: GiveawayEligibilityDto })
   @IsOptional()

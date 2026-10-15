@@ -244,6 +244,26 @@ export class XVerificationService {
     return posts;
   }
 
+  /**
+   * One bounded page of a raw tweet search, for quick X giveaways (qualifying-post discovery).
+   * Every call burns one daily-cap unit, so callers page explicitly and stop on their own —
+   * there is deliberately no "fetch everything" loop here (see the 2026-08-16 pagination incident
+   * in the class doc). Returns the raw Sorsa tweets plus the cursor for the next page.
+   */
+  async searchTweetsPage(
+    query: string,
+    cursor?: string,
+  ): Promise<{ tweets: Array<Record<string, any>>; nextCursor: string | null }> {
+    if (!this.sorsaApiKey) throw new Error('SORSA_API_KEY not configured');
+    await this.consumeDailyCapOrThrow(`quick-search:${query.slice(0, 40)}`);
+    const res = await this.sorsaRequest<{ tweets?: Array<Record<string, any>>; next_cursor?: string | null }>(
+      'POST',
+      '/search-tweets',
+      { query, order: 'latest', ...(cursor ? { next_cursor: cursor } : {}) },
+    );
+    return { tweets: res?.tweets ?? [], nextCursor: res?.next_cursor || null };
+  }
+
   /** Thin wrapper over Sorsa's REST API — ApiKey header auth, GET params as query string, POST
    *  params as a JSON body (matches sorsa_api_v3_documentation_en.txt). Mirrors the fetch+timeout+
    *  {message} error-shape pattern already used for PajCashService. */

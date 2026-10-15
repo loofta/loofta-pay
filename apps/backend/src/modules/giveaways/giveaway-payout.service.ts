@@ -165,7 +165,26 @@ export class GiveawayPayoutService {
         continue;
       }
       try {
-        const winnerWallet = await this.usersService.getSolanaWalletAddress(entry.user_id);
+        // Quick X giveaways: the entry is a qualifying post, user_id is 'x:<x id>' and the author
+        // may have no Loofta account. Pay by X username, same as any pay-by-handle payment: a
+        // registered handle gets its real wallet, anyone else gets a pending-social claim they
+        // pick up from /c/[id] after signing in with X.
+        const isXHandleWinner = entry.user_id.startsWith('x:');
+        let recipientUserId: string | null = isXHandleWinner ? null : entry.user_id;
+        let winnerWallet: string | null = null;
+        if (isXHandleWinner) {
+          try {
+            const registered = await this.usersService.findByTwitterOrUsername(entry.x_handle);
+            recipientUserId = registered.privyUserId;
+            winnerWallet = await this.usersService.getSolanaWalletAddress(registered.privyUserId);
+          } catch {
+            recipientUserId = null;
+            winnerWallet = null;
+          }
+        } else {
+          winnerWallet = await this.usersService.getSolanaWalletAddress(entry.user_id);
+        }
+        const pendingSocialRecipient = isXHandleWinner && !winnerWallet;
         const { burner, txHash } = await this.burnerSweep.fundNewClaimBurner({
           conn,
           giveawayBurnerKeypair: burnerKeypair,
@@ -222,9 +241,9 @@ export class GiveawayPayoutService {
             .insert({
               amount: giveaway.prize_amount_usd,
               direction: 'from_sender',
-              recipient_address: winnerWallet,
-              recipient_user_id: entry.user_id,
-              recipient_was_unregistered: false,
+              recipient_address: pendingSocialRecipient ? `PENDING_SOCIAL:twitter:${entry.x_handle.replace(/^@/, '').toLowerCase()}` : winnerWallet,
+              recipient_user_id: recipientUserId,
+              recipient_was_unregistered: pendingSocialRecipient,
               created_by: giveaway.created_by,
               sender_user_id: giveaway.created_by,
               status: 'PRIVATE_TRANSFER_PENDING',
@@ -271,7 +290,7 @@ export class GiveawayPayoutService {
 
         // Fire-and-forget, only if they've actually linked an email — never blocks/fails the
         // payout itself (matches send-payment.service.ts's multi-send email convention).
-        const winnerEmail = await this.usersService.getEmailByPrivyId(entry.user_id).catch(() => null);
+        const winnerEmail = recipientUserId ? await this.usersService.getEmailByPrivyId(recipientUserId).catch(() => null) : null;
         if (winnerEmail) {
           this.emailService
             .sendGiveawayWonEmail({ recipientEmail: winnerEmail, title: giveaway.title, amountUsd: giveaway.prize_amount_usd, claimUrl })
