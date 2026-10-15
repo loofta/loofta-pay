@@ -147,6 +147,8 @@ export function DirectWalletPayPanel({
         setStatus("broadcasting");
         signature = await sendSignedUSDCTransfer(signed as VersionedTransaction, connection);
       }
+      // Phantom's domain-warning review asks for a Solscan link to a completed transaction.
+      console.log("[DirectWalletPayPanel] sent. Solscan link for Phantom review:", explorerTxUrl(signature));
       await waitForSignatureConfirmation(confirmConnection, signature, 60_000, 1500, "directWalletPay");
       setTxSig(signature);
       setSentPrivately(isPrivate);
@@ -155,6 +157,7 @@ export function DirectWalletPayPanel({
     } catch (e: any) {
       setStatus("idle");
       const msg = e?.message;
+      console.error("[DirectWalletPayPanel] payment failed", { name: e?.name, message: msg, code: e?.code, logs: e?.logs, cause: e?.cause });
       // Declining the signature is a choice, not an error: return to idle quietly.
       if (isUserRejection(msg)) return;
       setError(typeof msg === "string" && msg.length < 200 ? msg : "Payment failed. Please try again.");

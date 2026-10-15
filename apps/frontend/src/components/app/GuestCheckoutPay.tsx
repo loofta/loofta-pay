@@ -187,6 +187,8 @@ export async function payGuestClaimFromWallet({
       preflightCommitment: "confirmed",
       maxRetries: 3,
     });
+    // Phantom's domain-warning review asks for a Solscan link to a completed transaction.
+    console.log("[GuestCheckoutPay] sent. Solscan link for Phantom review:", `https://solscan.io/tx/${signature}`);
     await waitForSignatureConfirmation(broadcastConnection, signature, 60_000, 1500, "guestCheckoutUsdcSolana");
 
     // Best-effort: the claim amount already landed, so a rejected fee signature or an unfunded

@@ -211,15 +211,42 @@ export async function signExternalWalletTransaction<T extends Transaction | Vers
   },
 ): Promise<T> {
   const before = snapshotSignatures(tx);
-  let signed: T;
-  if (sign.signAllTransactions) {
-    const batch = await sign.signAllTransactions([tx]);
-    signed = batch[0];
-  } else if (sign.signTransaction) {
-    signed = await sign.signTransaction(tx);
-  } else {
-    throw new Error("This wallet cannot sign the payment.");
+  let signed: T | undefined;
+  const wallet = typeof window !== "undefined" ? (window as any).phantom?.solana?.isPhantom ? "phantom" : "other" : "ssr";
+  console.log("[signExternalWalletTransaction] signing", {
+    host: typeof window !== "undefined" ? window.location.host : null,
+    wallet,
+    hasSignAll: !!sign.signAllTransactions,
+    hasSign: !!sign.signTransaction,
+    requiredSignatures: before.length,
+    sponsorPresigned: before.map((sig) => !signatureIsEmpty(sig)),
+    bytes: (() => { try { return tx.serialize().length; } catch { return null; } })(),
+  });
+  // Try the path that keeps the sponsor signature first, then fall back to the other one: wallets
+  // differ, and a flagged-domain or simulation failure on one path surfaces as "Unexpected error".
+  const attempts: Array<[string, () => Promise<T>]> = [];
+  if (sign.signAllTransactions) attempts.push(["signAllTransactions", async () => (await sign.signAllTransactions!([tx]))[0]]);
+  if (sign.signTransaction) attempts.push(["signTransaction", () => sign.signTransaction!(tx)]);
+  if (attempts.length === 0) throw new Error("This wallet cannot sign the payment.");
+  let lastError: unknown;
+  for (const [name, run] of attempts) {
+    try {
+      signed = await run();
+      console.log(`[signExternalWalletTransaction] signed via ${name}`);
+      break;
+    } catch (e: any) {
+      lastError = e;
+      console.error(`[signExternalWalletTransaction] ${name} failed`, {
+        name: e?.name,
+        message: e?.message,
+        code: e?.code ?? e?.error?.code,
+        cause: e?.cause ?? e?.error,
+      });
+      // A deliberate decline must not trigger a second prompt.
+      if (/reject|cancel|denied|declined/i.test(String(e?.message ?? ""))) throw e;
+    }
   }
+  if (!signed) throw lastError instanceof Error ? lastError : new Error("The wallet could not sign the payment.");
   restoreSponsorSignatures(signed, before);
   return signed;
 }
