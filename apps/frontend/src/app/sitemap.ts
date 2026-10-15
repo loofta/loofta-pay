@@ -17,8 +17,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/about",
     "/careers",
     "/brand",
-    "/privacy",
-    "/terms",
   ];
   const priority: Record<string, number> = {
     "/": 1,
