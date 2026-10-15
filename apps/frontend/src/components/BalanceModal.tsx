@@ -5727,16 +5727,6 @@ export function BalanceModal({
                   ? `One approval sends $${cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum).toFixed(2)} to ${peerIdentifier.replace(/^[@$]/, "")}.`
                   : "Almost there — approve the wallet prompt to finalize your cash out."}
               </p>
-              {peerBaseWalletAddress && (
-                <Button
-                  onClick={handlePeerBridgeBackDirect}
-                  variant="outline"
-                  className={cn("mt-2", dark ? "border-white/20 !bg-transparent text-slate-200 hover:!bg-white/10 hover:text-white" : "border-gray-300 !bg-transparent text-gray-900 hover:!bg-gray-100 hover:text-gray-900")}
-                >
-                  <X className="h-4 w-4 mr-2" />Cancel and get USDC back
-                </Button>
-              )}
-              <p className={`text-sm text-center ${dark ? "text-slate-500" : "text-gray-500"}`}>Getting your USDC back costs a bridge fee.</p>
             </div>
           )}
 
@@ -5756,6 +5746,8 @@ export function BalanceModal({
               >
                 Try again
               </Button>
+              {!peerPay && (
+                <>
               <Button
                 onClick={handlePeerBridgeBackDirect}
                 variant="outline"
@@ -5764,6 +5756,8 @@ export function BalanceModal({
                 Cancel and get USDC back
               </Button>
               <p className={`text-sm text-center ${dark ? "text-slate-500" : "text-gray-500"}`}>Getting your USDC back costs a bridge fee.</p>
+                </>
+              )}
             </div>
           )}
 
@@ -6022,7 +6016,7 @@ export function BalanceModal({
                   >
                     Try again
                   </Button>
-                  {peerBridgeTxSig && (
+                  {peerBridgeTxSig && !peerPay && (
                     <>
                       <Button
                         onClick={handlePeerBridgeBackDirect}
