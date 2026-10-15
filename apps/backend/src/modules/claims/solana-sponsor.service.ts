@@ -1512,7 +1512,7 @@ export class SolanaSponsorService {
     }
     const user = params.userSolanaAddress.trim();
     let userIsSigner = false;
-    for (let i = 0; i < compiled.length; i++) {
+    for (let i = 0; i < params.instructions.length; i++) {
       const ix = compiled[i];
       const expected = params.instructions[i];
       const programId = staticKeys[ix.programIdIndex]?.toBase58();

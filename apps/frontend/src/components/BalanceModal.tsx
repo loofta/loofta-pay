@@ -475,6 +475,8 @@ export interface BalanceModalProps {
   topUpAmountUsd?: number;
   /** Pay someone else's handle, or cash a claimed payment out to the user's own handle. */
   peerPay?: PeerPayRequest | null;
+  /** When set, "Add funds & pay" hands off to the deposit sheet instead of this modal's legacy Top up tab. */
+  onAddFunds?: (shortfallUsd: number) => void;
 }
 
 export function BalanceModal({
@@ -492,6 +494,7 @@ export function BalanceModal({
   initialWithdrawMethod,
   topUpAmountUsd,
   peerPay,
+  onAddFunds,
 }: BalanceModalProps) {
   const { toast } = useToast();
   const router = useRouter();
@@ -5484,6 +5487,10 @@ export function BalanceModal({
                     type="button"
                     onClick={() => {
                       const shortfall = Math.max(0, peerPayGrossUsd - spendableBalance).toFixed(2);
+                      if (onAddFunds) {
+                        onAddFunds(Number(shortfall));
+                        return;
+                      }
                       setDepositAmount(shortfall);
                       setPeerDepositAmount(shortfall);
                       setTopUpView(null);

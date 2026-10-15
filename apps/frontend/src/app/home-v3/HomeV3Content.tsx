@@ -73,6 +73,18 @@ const GUEST_SOCIAL_PICKS: { id: SocialIconPlatform; name: string }[] = [
 
 const BRAND_GRADIENT = "bg-gradient-to-r from-[#FF1301] to-[#EAB308]";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "/app";
+const PAY_ORIGIN = "https://pay.loofta.xyz";
+
+/** Hand off to the app subdomain (clean paths, no /app prefix). Localhost mirrors prod via proxy.ts, so stay relative there. */
+function goToPay(router: ReturnType<typeof useRouter>, path: string, replace = false) {
+  const host = typeof window !== "undefined" ? window.location.hostname : "";
+  if (!host || host === "localhost" || host.startsWith("pay.")) {
+    const local = host === "localhost" && path.startsWith("/?") ? `/app${path.slice(1)}` : path;
+    replace ? router.replace(local) : router.push(local);
+    return;
+  }
+  window.location.assign(`${PAY_ORIGIN}${path}`);
+}
 
 const INK = "text-[#F4F2EC]";
 const INK_2 = "text-[#A9A7A0]";
@@ -396,7 +408,7 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
         to: trimmedRecipient,
         amount: String(amountNum),
       });
-      router.push(`/app/send?${params.toString()}`);
+      goToPay(router, `/send?${params.toString()}`);
       return;
     }
     // Handle/email requires Privy login; wallet-address pays stay guest via DirectWalletPayPanel.
@@ -426,7 +438,7 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
             ? await createClaimFromUsername({ username: `loo-${trimmedRecipient.replace(/^loo-/i, "").toLowerCase()}`, amount, userId: user?.id, accessToken, isPrivate: payingPrivate, ...privacyChoice })
             : await createClaimFromSocial({ platform: socialPlatform as "discord" | "github" | "telegram", handle: trimmedRecipient, amount, userId: user?.id, accessToken, isPrivate: payingPrivate, ...privacyChoice });
       sessionStorage.removeItem(HOME_V3_SEND_DRAFT_KEY);
-      router.push(`/c/${created.id}?pay=1${payingPrivate ? `&split=${split}&delayMs=${delayMs}` : ""}`);
+      goToPay(router, `/c/${created.id}?pay=1${payingPrivate ? `&split=${split}&delayMs=${delayMs}` : ""}`);
     } catch (e: unknown) {
       setSending(false);
       const msg = e instanceof Error ? e.message : undefined;
@@ -761,7 +773,7 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
                 blocker={guestBlocker}
                 claimKey={[handleKind, socialPlatform, trimmedRecipient, amount, isPrivateMode, split, delayMs].join("|")}
                 createClaim={createGuestClaim}
-                onPaid={(id) => router.push(`/c/${id}${payingPrivate ? `?split=${split}&delayMs=${delayMs}` : ""}`)}
+                onPaid={(id) => goToPay(router, `/c/${id}${payingPrivate ? `?split=${split}&delayMs=${delayMs}` : ""}`)}
                 onError={(message) => toast({ variant: "destructive", title: "Payment failed", description: message })}
                 renderButton={({ onClick, disabled, loading, label }) => (
                   <button
@@ -1652,7 +1664,7 @@ export function useBalanceDeepLinkRedirect() {
     if (methodRaw === "peer" || methodRaw === "paj" || methodRaw === "crypto") {
       qs.set("method", methodRaw);
     }
-    router.replace(`/app?${qs.toString()}`);
+    goToPay(router, `/?${qs.toString()}`, true);
   }, [router]);
 }
 

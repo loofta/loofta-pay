@@ -440,6 +440,16 @@ export function MinimalHeader() {
             initialWithdrawMethod={balanceModalWithdrawMethod}
             topUpAmountUsd={balanceTopUpAmount}
             peerPay={peerPay}
+            onAddFunds={() => {
+              setShowBalanceModal(false);
+              setBalanceModalWithdrawMethod(undefined);
+              setBalanceTopUpAmount(undefined);
+              setPeerPay(null);
+              setDepositMode("deposit");
+              setDepositScreen("home");
+              setShowDeposit(true);
+              refreshBalance();
+            }}
             dark
           />
         )}

@@ -9,6 +9,9 @@ import { useAuthStore } from "@/store/auth";
 import { sora, manrope, jetbrainsMono } from "@/components/home-v4/fonts";
 import "./loofta-app.css";
 
+// Giveaway card is hidden while the Megapot ticket card is being tested. Flip to true to restore it.
+const SHOW_GIVEAWAY_CARD = false;
+
 type HistoryRow = {
   id: string;
   amount: string;
@@ -167,6 +170,20 @@ export function AppHome() {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <span style={{ fontFamily: MONO, fontSize: 14, letterSpacing: "0.2em", color: "#77757F" }}>START SOMETHING</span>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,420px),1fr))", gap: 20 }}>
+            <Link href="/app/megapot" className="lh-7" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A1A0C,#16110D 60%)", border: "1px solid rgba(245,183,12,0.22)" }}>
+              <div style={{ flex: "none", width: 96, height: 96, borderRadius: 30, transform: "rotate(-6deg)", background: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.55), inset 0 -8px 14px rgba(120,60,0,0.3), 0 8px 0 #8E5202, 0 26px 44px rgba(0,0,0,0.5)", display: "grid", placeItems: "center" }}>
+                <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#6A3500" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M3 9a2 2 0 0 0 0 6v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-3a2 2 0 0 1 0-6V6a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1z" />
+                  <path d="M14 5v14" strokeDasharray="2 3" />
+                </svg>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 26, letterSpacing: "-0.04em" }}>Buy a Megapot ticket</span>
+                <span style={{ fontSize: 15, lineHeight: 1.5, color: "#B9B3A6" }}>$200K jackpot to win every day from a $1.1M prize pool.</span>
+                <span style={{ fontWeight: 700, fontSize: 14, color: "#F5B70C" }}>Buy a ticket →</span>
+              </div>
+            </Link>
+            {SHOW_GIVEAWAY_CARD && (
             <Link href="/rewards-rail" className="lh-7" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A1A0C,#16110D 60%)", border: "1px solid rgba(245,183,12,0.22)" }}>
               <div style={{ flex: "none", width: 96, height: 96, borderRadius: 30, transform: "rotate(-6deg)", background: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.55), inset 0 -8px 14px rgba(120,60,0,0.3), 0 8px 0 #8E5202, 0 26px 44px rgba(0,0,0,0.5)", display: "grid", placeItems: "center" }}>
                 <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#6A3500" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -180,6 +197,7 @@ export function AppHome() {
                 <span style={{ fontWeight: 700, fontSize: 14, color: "#F5B70C" }}>Create giveaway →</span>
               </div>
             </Link>
+            )}
             <Link href="/app/card" className="lh-8" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A120C,#160F0D 60%)", border: "1px solid rgba(255,90,26,0.22)" }}>
               <div style={{ flex: "none", width: 96, height: 96, borderRadius: 30, transform: "rotate(5deg)", background: "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.5), inset 0 -8px 14px rgba(0,0,0,0.22), 0 8px 0 #9C2802, 0 26px 44px rgba(0,0,0,0.5)", display: "grid", placeItems: "center" }}>
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
