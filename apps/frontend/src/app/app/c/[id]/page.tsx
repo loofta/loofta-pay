@@ -136,7 +136,7 @@ function ConnectExternalWalletButton({ onAddress }: { onAddress: (address: strin
 }
 const EVM_CHAIN_SET = new Set(["eth", "ethereum", "arb", "arbitrum", "base", "op", "optimism", "bsc", "avax", "avalanche", "polygon", "matic", "fantom", "ftm", "gnosis", "linea", "scroll", "zksync", "zk", "blast", "pol"]);
 function isEvmChainId(chain?: string): boolean { return EVM_CHAIN_SET.has(String(chain || "").toLowerCase()); }
-import { usePrivy, useWallets as useEvmWallets, useLinkAccount } from "@privy-io/react-auth";
+import { usePrivy, useWallets as useEvmWallets, useLinkAccount, useLoginWithOAuth } from "@privy-io/react-auth";
 import {
   useWallets as useSolanaWallets,
   useSignTransaction as usePrivySolanaSignTransaction,
@@ -1554,7 +1554,12 @@ export function ClaimPayView({
   };
   // Signing in with Telegram links it on the Privy user directly, so persist the verified handle
   // (server re-checks it against Privy) and re-run the recipient check.
-  const startTelegramLogin = () => login({ loginMethods: ["telegram"], disableSignup: false });
+  // Telegram via Privy's OAuth (initOAuth) instead of the modal's Telegram button, which throws
+  // "Telegram Auth configuration is not loaded" for this app. Returns to this same claim page.
+  const { initOAuth } = useLoginWithOAuth({
+    onError: (e) => toast({ variant: "destructive", title: "Couldn't sign in with Telegram", description: String(e) }),
+  });
+  const startTelegramLogin = () => { void initOAuth({ provider: "telegram" }); };
   const savedLoginTelegramRef = useRef(false);
   useEffect(() => {
     const tgAccount = ((user?.linkedAccounts || []) as Array<{ type?: string; username?: string | null }>).find(
