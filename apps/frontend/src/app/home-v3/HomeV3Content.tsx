@@ -193,7 +193,7 @@ function Header() {
 const CARD_LABEL = `text-[13px] font-semibold uppercase tracking-[0.18em] ${INK_3}`;
 
 /** Same Privy methods as /app — wallet login is not enabled (see AuthProvider). */
-const PRIVY_LOGIN_METHODS = ["email", "twitter", "discord", "github"] as const;
+const PRIVY_LOGIN_METHODS = ["email", "twitter", "discord", "github", "telegram"] as const;
 
 /** Top-level destination: handle/email, raw Solana wallet, or a Venmo / Cash App / Revolut handle. */
 type DestKind = "handle" | "wallet" | "cash";

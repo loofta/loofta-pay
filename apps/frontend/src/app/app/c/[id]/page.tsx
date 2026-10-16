@@ -47,7 +47,7 @@ import { GuestCheckoutPay } from "@/components/app/GuestCheckoutPay";
 import { UNREGISTERED_ACCOUNT_FEE_USD } from "@/lib/unregisteredAccountFee";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock, ShoppingBag, CreditCard, Globe, Users, Info } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock, ShoppingBag, CreditCard, Globe, Users } from "lucide-react";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -675,39 +675,17 @@ function ClaimPageSenderShareView({
   const shareText = `You have a payment of $${amount.toFixed(2)} to claim${shareRecipientSuffix}. Sign in or sign up on Loofta to claim it.`;
 
   const ready = ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(status);
-  const recipientKindId: EditRecipientKind | null =
-    recipientType === "social"
-      ? ((recipientPlatform as EditRecipientKind | undefined) || null)
-      : recipientType || null;
-  const recipientKindOpt = EDIT_RECIPIENT_KIND_OPTIONS.find((o) => o.id === recipientKindId) ?? (recipientKindId === "telegram" ? { id: "telegram" as const, label: "Telegram", icon: "telegram" as const } : null);
-  const recipientIcon: "user" | "mail" | SocialIconPlatform = recipientKindOpt?.icon ?? "user";
-  const recipientKindLabel = recipientKindOpt?.label ?? "recipient";
-  const recipientDisplay = recipientValue
-    ? recipientKindId === "email"
-      ? recipientValue
-      : `@${recipientValue.replace(/^@/, "")}`
-    : recipientLabel || "";
+  const who = recipientLabel ? ` to ${recipientLabel}` : "";
 
   return (
     <div className="py-2 text-center">
       <p className="text-base text-slate-400">{isCancelled ? "Cancelled" : ready ? "Paid" : "Link ready"}</p>
       <p className="mt-2 text-5xl font-semibold tracking-tight tabular-nums text-white">${amount.toFixed(2)}</p>
-      {!isCancelled && recipientDisplay && (
-        <div className="mt-5 mx-auto max-w-sm flex items-center gap-3 rounded-2xl bg-white/[0.04] border border-white/10 px-4 py-3 text-left">
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-white">
-            <EditRecipientKindIcon icon={recipientIcon} className="h-6 w-6" />
-          </span>
-          <span className="min-w-0">
-            <span className="block text-sm text-slate-400">{ready ? "Paid to" : "Pay to"} {recipientKindLabel}</span>
-            <span className="block truncate text-lg font-semibold text-white">{recipientDisplay}</span>
-          </span>
-        </div>
-      )}
       {!isCancelled && (
         <p className="mt-3 text-base text-slate-300 max-w-sm mx-auto">
           {ready
-            ? "Send them this link. They claim it on Loofta."
-            : "Share this link. They can claim it once the payment lands."}
+            ? `Send this link${who}. They claim it on Loofta.`
+            : `Share this link${who}. They can claim it once the payment lands.`}
         </p>
       )}
       {!isCancelled && (
@@ -776,7 +754,6 @@ function ClaimPageSenderShareView({
                   />
                 </div>
               </div>
-              <p className="text-sm text-slate-400">Each update costs $0.10, paid to Loofta from this payment.</p>
               {editError && <p className="text-sm text-red-400">{editError}</p>}
               <div className="flex gap-2">
                 <button
@@ -785,7 +762,7 @@ function ClaimPageSenderShareView({
                   disabled={editSubmitting || !editValue.trim()}
                   className="flex-1 h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
                 >
-                  {editSubmitting ? "Saving…" : "Save · $0.10"}
+                  {editSubmitting ? "Saving…" : "Save"}
                 </button>
                 <button
                   type="button"
@@ -799,25 +776,14 @@ function ClaimPageSenderShareView({
             </div>
           ) : (
             <>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="flex items-start gap-3">
-                  <Info className="h-5 w-5 shrink-0 mt-0.5 text-slate-400" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-base font-medium text-slate-100">Sent to the wrong recipient?</p>
-                    <p className="mt-1 text-sm text-slate-400">
-                      You can change who this is for. Each update costs $0.10, paid to Loofta from this payment.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={startEditRecipient}
-                      disabled={!!claimLocked}
-                      className="mt-3 h-9 px-4 rounded-xl text-base font-medium text-slate-200 border border-white/10 hover:bg-white/[0.06] hover:text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      Update recipient · $0.10
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={startEditRecipient}
+                disabled={!!claimLocked}
+                className="w-full h-9 rounded-xl text-base font-medium text-slate-400 hover:text-white border border-white/10 hover:bg-white/[0.06] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-slate-400 disabled:hover:bg-transparent"
+              >
+                Edit recipient
+              </button>
               {claimLocked && (
                 <p className="mt-1 text-sm text-slate-500">
                   The recipient is currently claiming this payment — try again in a minute.
@@ -1565,20 +1531,9 @@ export function ClaimPayView({
   };
   // Signing in with Telegram links it on the Privy user directly, so persist the verified handle
   // (server re-checks it against Privy) and re-run the recipient check.
-  const startTelegramLogin = () => {
-    try {
-      sessionStorage.setItem("tg_login_return", `${window.location.pathname}${window.location.search}`);
-    } catch {
-      // storage unavailable, the sign-in page falls back to home
-    }
-    window.location.href = "/telegram-login";
-  };
   const savedLoginTelegramRef = useRef(false);
   useEffect(() => {
-    const tgAccount = ((user?.linkedAccounts || []) as Array<{ type?: string; username?: string | null }>).find(
-      (a) => a.type === "telegram" || a.type === "telegram_oauth",
-    );
-    const tgUsername = tgAccount?.username;
+    const tgUsername = (user?.telegram as { username?: string | null } | undefined)?.username;
     if (!authenticated || !tgUsername || savedLoginTelegramRef.current) return;
     savedLoginTelegramRef.current = true;
     (async () => {
@@ -5499,7 +5454,7 @@ export function ClaimPayView({
                 if (pendingEmailHint) login({ loginMethods: ["email"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "github") login({ loginMethods: ["github"], disableSignup: false });
-                else if (pendingSocialPlatformHint === "telegram") startTelegramLogin();
+                else if (pendingSocialPlatformHint === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
                 else login();
               }}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white hover:opacity-90 transition-opacity"
@@ -6182,7 +6137,7 @@ export function ClaimPayView({
                           const platform = claim?.recipient_pending_social_platform;
                           if (platform === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                           else if (platform === "github") login({ loginMethods: ["github"], disableSignup: false });
-                          else if (platform === "telegram") startTelegramLogin();
+                          else if (platform === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
                           else login({ disableSignup: false });
                         }}
                         className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
@@ -6259,7 +6214,7 @@ export function ClaimPayView({
                               const platform = claim?.recipient_pending_social_platform;
                               if (platform === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                               else if (platform === "github") login({ loginMethods: ["github"], disableSignup: false });
-                              else if (platform === "telegram") startTelegramLogin();
+                              else if (platform === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
                               else login({ disableSignup: false });
                             }}
                             className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
