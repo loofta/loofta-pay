@@ -59,14 +59,14 @@ function ShellContent({ children }: { children: ReactNode }) {
       {/* Checkout is meant to feel like a self-contained payment page (Stripe-style) — none of
           these promo/update overlays belong on top of someone else's embedded payment flow. */}
       {!isCheckoutPage && !isRewardsRail && <UpdateJun26Modal show={updateShow} />}
-      {!isCheckoutPage && !isRewardsRail && (unclaimed || unclaimedGifts || (hasFreeSpin && !isImmersivePage) || showAddEmail || showTerminalPromo) && (
+      {!isCheckoutPage && !isRewardsRail && (unclaimed || unclaimedGifts || (false && hasFreeSpin && !isImmersivePage) || showAddEmail || showTerminalPromo) && (
         <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:bottom-4 z-[100] sm:max-w-sm flex flex-col-reverse gap-3">
           {unclaimed && <UnclaimedPaymentToast payments={unclaimed} onDismiss={dismissUnclaimed} />}
           {unclaimedGifts && <UnclaimedGiftToast gifts={unclaimedGifts} onDismiss={dismissUnclaimedGifts} />}
           {/* Suppressed on the Mystery Pack page itself (isImmersivePage) — nudging someone to go
               open a free spin while they're already there is redundant, and the page's own
               SlideToPay gate already surfaces it (see packs/page.tsx). */}
-          {hasFreeSpin && !isImmersivePage && <FreeSpinToast onDismiss={dismissFreeSpin} />}
+          {false && hasFreeSpin && !isImmersivePage && <FreeSpinToast onDismiss={dismissFreeSpin} />}
           {showAddEmail && (
             <AddEmailToast
               onAddEmail={addEmail}

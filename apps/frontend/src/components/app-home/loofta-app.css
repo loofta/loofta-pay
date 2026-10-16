@@ -14,3 +14,7 @@
 .loofta-app .lh-19:hover { background: #1c1c24 !important; color: #f2efe8 !important; }
 .loofta-app .lh-20:hover { border-color: rgba(255, 255, 255, 0.18) !important; color: #f2efe8 !important; }
 .loofta-app .lh-gw:hover { background: #18181e !important; }
+
+/* Phones: grid cards must be able to shrink below their content, and nothing may widen the page. */
+.loofta-app { overflow-x: clip; }
+.loofta-app [style*="display: grid"] > * { min-width: 0; }

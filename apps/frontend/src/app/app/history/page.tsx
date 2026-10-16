@@ -3,7 +3,8 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/components/ui/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
@@ -203,17 +204,32 @@ async function fetchPaymentHistory(
   userId: string,
   accessToken?: string | null,
   networkMode?: string,
+  pages = 1,
 ): Promise<{ sent: PaymentHistoryClaim[]; received: PaymentHistoryClaim[]; sentTotal: number; receivedTotal: number }> {
   const headers: Record<string, string> = accessToken
     ? { authorization: `Bearer ${accessToken}` }
     : {};
-  const params = networkMode ? `?network=${networkMode}` : "";
-  const r = await fetch(`/api/payments/history${params}`, { headers, cache: "no-store" });
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    throw new Error(err?.error || "Failed to load history");
+  // 200 per page (the server max), so a pile of open payments no longer pushes real history off the list.
+  let sent: PaymentHistoryClaim[] = [];
+  let received: PaymentHistoryClaim[] = [];
+  let sentTotal = 0;
+  let receivedTotal = 0;
+  for (let page = 1; page <= pages; page++) {
+    const params = new URLSearchParams({ limit: "200", page: String(page) });
+    if (networkMode) params.set("network", networkMode);
+    const r = await fetch(`/api/payments/history?${params.toString()}`, { headers, cache: "no-store" });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err?.error || "Failed to load history");
+    }
+    const d = await r.json();
+    const seen = new Set([...sent, ...received].map((c) => c.id));
+    sent = [...sent, ...(d.sent ?? []).filter((c: PaymentHistoryClaim) => !seen.has(c.id))];
+    received = [...received, ...(d.received ?? []).filter((c: PaymentHistoryClaim) => !seen.has(c.id))];
+    sentTotal = d.sentTotal ?? sentTotal;
+    receivedTotal = d.receivedTotal ?? receivedTotal;
   }
-  return r.json();
+  return { sent, received, sentTotal, receivedTotal };
 }
 
 const PAYMENT_HISTORY_GC_MS = 5 * 60 * 1000;
@@ -225,6 +241,14 @@ export default function HistoryPage() {
   const { authenticated, userId } = useAuth();
   const { login: privyLogin, getAccessToken } = usePrivy();
   const networkMode = useAuthStore((s) => s.networkMode);
+  const [pages, setPages] = useState(1);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | "done" | "open">("all");
   const { start: startBulkClaim, statuses: bulkClaimStatuses, isRunning: bulkClaimRunning } = useBulkClaim();
 
   const getStatusLabel = (status: string): string => {
@@ -242,11 +266,12 @@ export default function HistoryPage() {
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ["payments", "history", userId ?? "", networkMode],
+    queryKey: ["payments", "history", userId ?? "", networkMode, pages],
     queryFn: async () => {
       const token = await getAccessToken().catch(() => null);
-      return fetchPaymentHistory(userId!, token, networkMode);
+      return fetchPaymentHistory(userId!, token, networkMode, pages);
     },
+    placeholderData: (prev) => prev,
     enabled: Boolean(authenticated && userId),
     staleTime: 30_000,
     gcTime: PAYMENT_HISTORY_GC_MS,
@@ -315,6 +340,13 @@ export default function HistoryPage() {
     if (typeFilter !== "all") {
       list = list.filter(({ type }) => type === typeFilter);
     }
+    if (statusFilter !== "all") {
+      const OPENISH = new Set(["OPEN", "PENDING_DEPOSIT"]);
+      list = list.filter(({ claim }) => {
+        const st = String(claim.status).toUpperCase();
+        return statusFilter === "open" ? OPENISH.has(st) : !OPENISH.has(st);
+      });
+    }
     const q = searchQuery.trim().toLowerCase();
     if (!q) return list;
     return list.filter(({ claim, type }) => {
@@ -322,7 +354,35 @@ export default function HistoryPage() {
       const message = (claim.description || "").toLowerCase();
       return senderOrPayee.toLowerCase().includes(q) || message.includes(q);
     });
-  }, [allPayments, searchQuery, typeFilter, anonymous]);
+  }, [allPayments, searchQuery, typeFilter, statusFilter, anonymous]);
+
+  // Open / pending payments can be deleted; the API only allows the creator, so any other row fails and is counted.
+  const isDeletable = (claim: PaymentHistoryClaim, type: "sent" | "received") =>
+    type === "sent" &&
+    !claim.receipt_path &&
+    ["OPEN", "PENDING_DEPOSIT"].includes(String(claim.status).toUpperCase());
+  const deletableIds = filteredPayments.filter(({ claim, type }) => isDeletable(claim, type)).map(({ claim }) => claim.id);
+  const exitSelect = () => { setSelectMode(false); setSelected(new Set()); setConfirmDelete(false); };
+  const deleteSelected = async () => {
+    if (deleting || selected.size === 0) return;
+    setDeleting(true);
+    const token = await getAccessToken().catch(() => null);
+    let ok = 0;
+    for (const id of selected) {
+      try {
+        const r = await fetch(`/api/claims/${id}`, { method: "DELETE", headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (r.ok) ok++;
+      } catch { /* counted as failed below */ }
+    }
+    setDeleting(false);
+    toast(ok === selected.size
+      ? { title: `Deleted ${ok} ${ok === 1 ? "payment" : "payments"}` }
+      : { variant: "destructive", title: `Deleted ${ok} of ${selected.size}`, description: "The rest could not be deleted. Try again." });
+    exitSelect();
+    void queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
+  };
+
+  const hasMore = sent.length < (data?.sentTotal ?? 0) || received.length < (data?.receivedTotal ?? 0);
 
   if (!authenticated) {
     return (
@@ -499,6 +559,34 @@ export default function HistoryPage() {
                 ) : filteredPayments.length === 0 ? (
                   <p className="text-slate-500 text-base">{t('noPaymentsMatch')}</p>
                 ) : (
+                  <>
+                  <div className="mb-3 flex gap-2">
+                    {([["all", "All"], ["done", "Completed"], ["open", "Open"]] as const).map(([key, label]) => (
+                      <button key={key} type="button" onClick={() => setStatusFilter(key)}
+                        className={`rounded-full border px-3.5 py-1.5 text-sm font-semibold ${statusFilter === key ? "border-[#FF7A2A]/60 bg-white/10 text-white" : "border-white/10 text-slate-400"}`}>
+                        {label}
+                      </button>
+                    ))}
+                    {deletableIds.length > 0 && (
+                      <button type="button" onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+                        className="ml-auto rounded-full border border-white/10 px-3.5 py-1.5 text-sm font-semibold text-slate-300">
+                        {selectMode ? "Cancel" : "Select"}
+                      </button>
+                    )}
+                  </div>
+                  {selectMode && (
+                    <div className="sticky top-2 z-10 mb-3 flex items-center gap-2 rounded-2xl border border-white/10 bg-[#17171D]/95 p-2 backdrop-blur">
+                      <button type="button" onClick={() => setSelected(selected.size === deletableIds.length ? new Set() : new Set(deletableIds))}
+                        className="rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold text-white">
+                        {selected.size === deletableIds.length ? "Clear" : `Select all open (${deletableIds.length})`}
+                      </button>
+                      <button type="button" disabled={selected.size === 0 || deleting}
+                        onClick={() => { if (confirmDelete) void deleteSelected(); else setConfirmDelete(true); }}
+                        className="ml-auto rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">
+                        {deleting ? "Deleting…" : confirmDelete ? `Tap again to delete ${selected.size}` : `Delete${selected.size ? ` (${selected.size})` : ""}`}
+                      </button>
+                    </div>
+                  )}
                   <ul className="space-y-2">
                     {filteredPayments.map(({ claim, type }) => {
                       const amount = parseFloat(claim.amount || "0");
@@ -549,9 +637,19 @@ export default function HistoryPage() {
                         <li key={`${type}-${claim.id}`} className="overflow-hidden rounded-[18px] border border-white/[0.06] bg-[#0F0F13]">
                           <Link
                             href={claim.receipt_path || `/c/${claim.id}?from=history`}
-                            className="block p-3.5 transition-colors hover:bg-white/[0.03]"
+                            className={`block p-3.5 transition-colors hover:bg-white/[0.03] ${selectMode && !isDeletable(claim, type) ? "opacity-40" : ""}`}
+                            onClick={(e) => {
+                              if (!selectMode) return;
+                              e.preventDefault();
+                              if (!isDeletable(claim, type)) return;
+                              setConfirmDelete(false);
+                              setSelected((prev) => { const n = new Set(prev); if (n.has(claim.id)) n.delete(claim.id); else n.add(claim.id); return n; });
+                            }}
                           >
                             <div className="flex items-center gap-3">
+                              {selectMode && isDeletable(claim, type) && (
+                                <span aria-hidden className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border text-sm font-bold ${selected.has(claim.id) ? "border-red-500 bg-red-600 text-white" : "border-white/25 text-transparent"}`}>✓</span>
+                              )}
                               <span
                                 className="grid h-10 w-10 shrink-0 place-items-center rounded-[13px] text-base font-semibold"
                                 style={{
@@ -615,6 +713,13 @@ export default function HistoryPage() {
                       );
                     })}
                   </ul>
+                  {hasMore && (
+                    <button type="button" onClick={() => setPages((n) => n + 1)} disabled={isFetching}
+                      className="mt-3 w-full rounded-2xl border border-white/10 bg-white/[0.05] py-3 text-base font-semibold text-white disabled:opacity-60">
+                      {isFetching ? "Loading…" : "Load older payments"}
+                    </button>
+                  )}
+                  </>
                 )}
                 </div>
               </>

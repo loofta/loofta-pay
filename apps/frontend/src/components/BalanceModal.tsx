@@ -1,5 +1,7 @@
 "use client";
 
+import posthog from "posthog-js";
+import { ChanceUpsellCard } from "@/components/ChanceUpsellCard";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -1574,6 +1576,7 @@ export function BalanceModal({
           if (depositId) setPeerZkp2pDepositId(depositId);
           // Only record cooldown after ZKP2P deposit is confirmed created
           recordPlatformWithdraw(platform.id);
+          posthog.capture("cashout_deposit_created", { platform: platform.id });
           setPeerStep("deposited");
         }
       } catch (err: unknown) {
@@ -2608,12 +2611,24 @@ export function BalanceModal({
       toast({ variant: "destructive", title: `${platform.name} limit is $${platform.maxUSDC} USDC` });
       return;
     }
+    const wantsChance = addLotteryTicket && !peerPay;
+    if (wantsChance && depositUsdc + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
+      toast({ variant: "destructive", title: "Insufficient balance", description: "Lower the amount a little to keep $1 for your chance to win." });
+      return;
+    }
     const cooldownRemaining = getPlatformCooldownRemaining(platform.id, platform.cooldownHours);
     if (cooldownRemaining > 0) {
       toast({ variant: "destructive", title: `${platform.name} is in cooldown`, description: `${formatCooldown(cooldownRemaining)}` });
       return;
     }
     setPeerSubmitting(true);
+    // The chance goes first and never blocks the cash out: a failed purchase just means no
+    // chance, the cash out proceeds for the full amount.
+    if (wantsChance) {
+      const added = await buyQuickLotteryTicket();
+      if (added) toast({ title: "You're in for today's draw", description: "Good luck, your chance to win $200K is in." });
+      setAddLotteryTicket(false);
+    }
     console.log(PEER_LOG, "submit", { platform: platform.id, amount: withdrawAmountNum, depositUsdc, currency: peerCurrency });
     try {
       // Cash-out spends Base USDC from a wallet Privy has linked to this user. Peer does not
@@ -2997,10 +3012,10 @@ export function BalanceModal({
         if (ticketAdded) {
           toast({
             duration: Infinity,
-            title: "Ticket added! 🎟️",
+            title: "You're in for today's draw",
             description: (
               <span className="text-base">
-                Good luck — you're in for today&apos;s draw, a shot at {lotteryPrizePoolDisplay}.
+                Good luck, your chance to win $200K is in.
               </span>
             ),
             action: (
@@ -3253,10 +3268,10 @@ export function BalanceModal({
         if (ticketAdded) {
           toast({
             duration: Infinity,
-            title: "Ticket added! 🎟️",
+            title: "You're in for today's draw",
             description: (
               <span className="text-base">
-                Good luck — you&apos;re in for today&apos;s draw, a shot at {lotteryPrizePoolDisplay}.
+                Good luck, your chance to win $200K is in.
               </span>
             ),
             action: (
@@ -4566,10 +4581,10 @@ export function BalanceModal({
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
-                          Multiply your win — add a Megapot ticket
+                          Keep $1 for a chance to win $200K
                         </p>
                         <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                          The Loofta Megapot draws every day. $1 = 1 ticket, a shot at {lotteryPrizePoolDisplay} prize pool.
+                          $1 stays in the draw instead of leaving. Winners are paid straight to the balance.
                         </p>
                       </div>
                       <Switch
@@ -4590,7 +4605,7 @@ export function BalanceModal({
                         "mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-base font-semibold",
                         dark ? "bg-white/10 text-white" : "bg-orange-50 text-gray-900"
                       )}>
-                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 Megapot ticket added</span>
+                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 chance to win today added</span>
                         <span>+${LOTTERY_TICKET_PRICE_USDC.toFixed(2)}</span>
                       </div>
                     )}
@@ -5231,10 +5246,10 @@ export function BalanceModal({
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
-                          Multiply your win — add a Megapot ticket
+                          Keep $1 for a chance to win $200K
                         </p>
                         <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                          The Loofta Megapot draws every day. $1 = 1 ticket, a shot at {lotteryPrizePoolDisplay} prize pool.
+                          $1 stays in the draw instead of leaving. Winners are paid straight to the balance.
                         </p>
                       </div>
                       <Switch
@@ -5254,7 +5269,7 @@ export function BalanceModal({
                         "mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-base font-semibold",
                         dark ? "bg-white/10 text-white" : "bg-orange-50 text-gray-900"
                       )}>
-                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 Megapot ticket added to your withdrawal</span>
+                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 chance to win today added</span>
                         <span>+${LOTTERY_TICKET_PRICE_USDC.toFixed(2)}</span>
                       </div>
                     )}
@@ -5593,7 +5608,7 @@ export function BalanceModal({
                       className="flex-1"
                     />
                     <Button type="button" variant="outline" size="sm"
-                      onClick={() => setWithdrawAmount(Math.min(spendableBalance, platformCap).toFixed(2).replace(/\.00$/, ""))}
+                      onClick={() => setWithdrawAmount(Math.min(Math.max(0, spendableBalance - (addLotteryTicket ? LOTTERY_TICKET_PRICE_USDC : 0)), platformCap).toFixed(2).replace(/\.00$/, ""))}
                       className={`shrink-0 px-3 ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}>
                       Max
                     </Button>
@@ -5608,6 +5623,23 @@ export function BalanceModal({
                     <p className="text-base text-red-400 mt-1">Exceeds your balance.</p>
                   )}
                 </div>
+
+                {!peerPay && spendableBalance >= LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC && withdrawAmountNum > 0 && (
+                  <ChanceUpsellCard
+                    dark={dark}
+                    reduceMotion={!!reduceMotion}
+                    price={LOTTERY_TICKET_PRICE_USDC}
+                    disabled={peerSubmitting}
+                    checked={addLotteryTicket}
+                    onCheckedChange={(checked) => {
+                      setAddLotteryTicket(checked);
+                      if (checked && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
+                        const adjusted = Math.max(0, spendableBalance - LOTTERY_TICKET_PRICE_USDC);
+                        setWithdrawAmount(adjusted.toFixed(2).replace(/\.00$/, ""));
+                      }
+                    }}
+                  />
+                )}
 
                 {/* Estimated receive + real fill-time ETA (live oracle rate, zero spread) */}
                 {withdrawAmountNum >= 1 && (

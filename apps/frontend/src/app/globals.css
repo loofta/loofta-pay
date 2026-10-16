@@ -150,7 +150,10 @@ body {
   color: rgb(var(--foreground-rgb));
   background: #0f0f12;
   min-height: 100vh;
+  /* Nothing may widen the page sideways on phones (clip, not hidden, so sticky/fixed keep working). */
+  overflow-x: clip;
 }
+html { overflow-x: clip; }
 
 .tg-webview {
   height: var(--tg-viewport-stable-height, 100vh);

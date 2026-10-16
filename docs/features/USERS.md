@@ -176,6 +176,8 @@ current Privy dashboard state before assuming Telegram send is live.
 
 ## Deposit
 
+> NOTE: the live UI is now `components/deposit/DepositSheet.tsx`; `BalanceModal.tsx` is legacy (Peer handoff + history only).
+
 Unified in **`BalanceModal.tsx`** (~4,250 lines) with parallel provider paths, plus
 `PaymentDepositView.tsx` as a shared "waiting for deposit" status UI (handles pending/
 processing/success/failed/expired, with a manual tx-hash "speed up" fallback).
