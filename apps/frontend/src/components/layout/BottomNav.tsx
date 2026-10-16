@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ArrowDown, ArrowUp, Clock, Settings, Ticket } from "lucide-react";
+import { ArrowDown, ArrowUp, Clock, House, Settings, Ticket } from "lucide-react";
 import { useTranslations } from "next-intl";
 
-type NavKey = 'send' | 'receive' | 'history' | 'settings' | 'megapot-buy' | 'megapot-redeem' | 'megapot-history';
+type NavKey = 'home' | 'send' | 'receive' | 'history' | 'settings' | 'megapot-buy' | 'megapot-redeem' | 'megapot-history';
 
 function IconBubble({
     active,
@@ -99,13 +99,17 @@ export function BottomNav() {
         activeKey = "history";
     } else if (pathname === "/settings" || pathname === "/app/settings" || pathname === "/app/profile") {
         activeKey = "settings";
-    } else if ((pathname === "/" || pathname === "/app") && tab === "receive") {
+    } else if (((pathname === "/" || pathname === "/app") && tab === "receive") || pathname === "/app/receive" || pathname === "/receive") {
         activeKey = "receive";
-    } else {
+    } else if (pathname === "/app/send" || pathname === "/send" || pathname?.startsWith("/app/c/")) {
         activeKey = "send";
+    } else {
+        // "/app" (the dashboard) is Home, not Send.
+        activeKey = "home";
     }
 
-    const sendHref = isAppPath ? '/app' : '/';
+    const homeHref = isAppPath ? '/app' : '/';
+    const sendHref = isAppPath ? '/app/send' : '/send';
     const receiveHref = isAppPath ? '/app?tab=receive' : '/?tab=receive';
     const historyHref = isAppPath ? '/app/history' : '/history';
     const settingsHref = isAppPath ? '/app/profile' : '/settings';
@@ -114,6 +118,7 @@ export function BottomNav() {
         <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-pb bg-[#0f0f12]/70 backdrop-blur-xl border-t border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.35)]">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
             <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-1 mt-1">
+                <NavItem href={homeHref} label={t.has('home') ? t('home') : 'Home'} active={activeKey === 'home'} icon={<House />} />
                 <NavItem href={sendHref} label={t('send')} active={activeKey === 'send'} icon={<ArrowUp />} />
                 <NavItem href={receiveHref} label={t('receive')} active={activeKey === 'receive'} icon={<ArrowDown />} />
                 <NavItem href={historyHref} label={t('history')} active={activeKey === 'history'} icon={<Clock />} />

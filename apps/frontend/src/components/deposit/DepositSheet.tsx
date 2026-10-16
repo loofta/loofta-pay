@@ -32,6 +32,8 @@ import { getPrivySolanaChainForMode, getRpcForMode, getUsdcMintForMode } from "@
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { cn } from "@/lib/utils";
+import { ChanceUpsellCard } from "@/components/ChanceUpsellCard";
+import { CHANCE_PRICE_USDC, CHANCE_MIN_BALANCE_USDC, useChanceTicket } from "@/hooks/useChanceTicket";
 import { findUsdcOnBase, findUsdcOnSolana, readDepositPrivately, writeDepositPrivately } from "@/lib/depositRails";
 import { totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
 import { TokenCombobox } from "@/components/TokenCombobox";
@@ -1388,9 +1390,13 @@ function SolanaWithdraw({
   const resolved = domain.status === "resolved" ? domain.address : destination.trim();
   const validAddress = isValidAddressForChain(resolved, "solana");
   // Private (MagicBlock exactOut): sender is debited amount + fees on top — never Max the full balance.
-  const maxSendable = privately
-    ? Math.max(0, balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC)
-    : balanceNum;
+  const [chance, setChance] = useState(false);
+  const buyChance = useChanceTicket(getAccessToken);
+  const chanceCost = chance ? CHANCE_PRICE_USDC : 0;
+  const maxSendable = Math.max(
+    0,
+    (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - chanceCost,
+  );
   const over = amountNum > maxSendable;
   const privateFeeExceedsBalance =
     privately && privateFee != null && amountNum + privateFee > balanceNum + 1e-6;
@@ -1417,6 +1423,13 @@ function SolanaWithdraw({
   }, [resolved, validAddress, privately, cluster]);
 
   const formatMax = (n: number) => (n > 0 ? n.toFixed(6).replace(/\.?0+$/, "") : "");
+  const takeChance = async () => {
+    if (!chance) return;
+    setBusyLabel("Adding your chance…");
+    const ok = await buyChance(wallet);
+    setChance(false);
+    if (ok) toast({ title: "You're in for today's draw", description: "Good luck, your chance to win $200K is in." });
+  };
 
   const sendPublic = async (ataAcknowledged: boolean) => {
     if (!wallet || !userId) throw new Error("Your Loofta wallet is not ready yet.");
@@ -1435,6 +1448,7 @@ function SolanaWithdraw({
     } else {
       rent = ataFee;
     }
+    await takeChance();
     setBusyLabel("Approve in your wallet…");
     const access = await getAccessToken();
     const sig = await sendUsdcWithBackendFeePayer({
@@ -1467,6 +1481,7 @@ function SolanaWithdraw({
 
   const sendPrivate = async () => {
     if (!wallet || !userId) throw new Error("Your Loofta wallet is not ready yet.");
+    await takeChance();
     setBusyLabel("Preparing private withdrawal…");
     const access = await getAccessToken();
     const anchor = privyStandardWalletToAnchorWallet(wallet, signTransaction, getPrivySolanaChainForMode(cluster));
@@ -1560,7 +1575,8 @@ function SolanaWithdraw({
       </label>
       {domain.status === "resolved" && <p className="text-sm text-[#8A8893]">Sends to {domain.address}</p>}
       {domain.status === "not-found" && <p className="text-sm text-red-400">That .sol name doesn&apos;t resolve.</p>}
-      {destination.trim() && !validAddress && domain.status !== "resolving" && domain.status !== "not-found" && (
+      {domain.status === "error" && <p className="text-sm text-red-400">Couldn&apos;t look up that .sol name. Try again.</p>}
+      {destination.trim() && !validAddress && domain.status !== "resolving" && domain.status !== "not-found" && domain.status !== "error" && (
         <p className="text-sm text-red-400">Enter a Solana address.</p>
       )}
       {risk === "checking" && <p className="text-sm text-[#8A8893]">Checking this address…</p>}
@@ -1595,6 +1611,20 @@ function SolanaWithdraw({
             </button>
           </div>
         </div>
+      )}
+      {balanceNum >= CHANCE_MIN_BALANCE_USDC && amountNum > 0 && (
+        <ChanceUpsellCard
+          dark
+          price={CHANCE_PRICE_USDC}
+          disabled={busy}
+          checked={chance}
+          onCheckedChange={(checked) => {
+            setChance(checked);
+            if (checked && amountNum + CHANCE_PRICE_USDC > (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum)) {
+              setAmount(formatMax(Math.max(0, (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - CHANCE_PRICE_USDC)));
+            }
+          }}
+        />
       )}
       <SendButton
         busy={busy}
@@ -1643,13 +1673,23 @@ function CryptoWithdraw({
   const choices = tokens.filter((t) => !isSolanaChain(t.chain) && (!usdc || t.tokenId !== usdc.tokenId));
   const amountNum = Number(amount);
   const addressOk = !!token && isValidAddressForChain(destination.trim(), token.chain);
-  const maxSendable = privately
-    ? Math.max(0, balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC)
-    : balanceNum;
+  const [chance, setChance] = useState(false);
+  const buyChance = useChanceTicket(getAccessToken);
+  const chanceCost = chance ? CHANCE_PRICE_USDC : 0;
+  const maxSendable = Math.max(
+    0,
+    (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - chanceCost,
+  );
   const over = amountNum > maxSendable;
   const privateFeeExceedsBalance =
     privately && privateFee != null && amountNum + privateFee > balanceNum + 1e-6;
   const formatMax = (n: number) => (n > 0 ? n.toFixed(6).replace(/\.?0+$/, "") : "");
+  const takeChance = async () => {
+    if (!chance) return;
+        const ok = await buyChance(wallet);
+    setChance(false);
+    if (ok) toast({ title: "You're in for today's draw", description: "Good luck, your chance to win $200K is in." });
+  };
 
   useEffect(() => {
     if (selection || choices.length === 0) return;
@@ -1685,6 +1725,7 @@ function CryptoWithdraw({
     if (!wallet || !userId || !token || !usdc || !addressOk || !(amountNum > 0) || over) return;
     setBusy(true);
     try {
+      await takeChance();
       const access = await getAccessToken();
       const cluster = devnetMode ? "devnet" : "mainnet";
       if (privately) {
@@ -1843,6 +1884,20 @@ function CryptoWithdraw({
           </div>
         </div>
       )}
+      {balanceNum >= CHANCE_MIN_BALANCE_USDC && amountNum > 0 && (
+        <ChanceUpsellCard
+          dark
+          price={CHANCE_PRICE_USDC}
+          disabled={busy}
+          checked={chance}
+          onCheckedChange={(checked) => {
+            setChance(checked);
+            if (checked && amountNum + CHANCE_PRICE_USDC > (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum)) {
+              setAmount(formatMax(Math.max(0, (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - CHANCE_PRICE_USDC)));
+            }
+          }}
+        />
+      )}
       <SendButton
         busy={busy}
         disabled={!token || !addressOk || !(amountNum > 0) || over || privateFee != null || !wallet}
@@ -1875,8 +1930,24 @@ function BankWithdraw({
   const [amount, setAmount] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [busy, setBusy] = useState(false);
+  const [chance, setChance] = useState(false);
+  const { wallet: chanceWallet } = useLooftaSigner(solanaAddress);
+  const buyChance = useChanceTicket(getAccessToken);
   const platform = PEER_PLATFORMS.find((p) => p.id === app);
   const amountNum = Number(amount);
+  const maxCashOut = Math.max(0, balanceNum - (chance ? CHANCE_PRICE_USDC : 0));
+
+  const continueCashOut = async () => {
+    if (!platform) return;
+    if (chance) {
+      setBusy(true);
+      const ok = await buyChance(chanceWallet);
+      setBusy(false);
+      setChance(false);
+      if (ok) toast({ title: "You're in for today's draw", description: "Good luck, your chance to win $200K is in." });
+    }
+    onCashOut?.({ platformId: platform.id, identifier: identifier.trim(), amountUsd: amountNum });
+  };
 
   const openCoinbase = async () => {
     if (!solanaAddress) return;
@@ -1922,9 +1993,9 @@ function BankWithdraw({
           label="Amount (USDC)"
           value={amount}
           onChange={setAmount}
-          onMax={() => setAmount(balanceNum > 0 ? balanceNum.toFixed(6).replace(/\.?0+$/, "") : "")}
+          onMax={() => setAmount(maxCashOut > 0 ? maxCashOut.toFixed(6).replace(/\.?0+$/, "") : "")}
         />
-        {amountNum > balanceNum && <p className="text-sm text-red-400">That is more than your ${balanceNum.toFixed(2)} balance.</p>}
+        {amountNum > maxCashOut && <p className="text-sm text-red-400">That is more than your ${balanceNum.toFixed(2)} balance.</p>}
         <label className="block">
           <span className="text-sm font-semibold text-[#C8C6D0]">{platform.idLabel}</span>
           <input
@@ -1934,12 +2005,26 @@ function BankWithdraw({
             className="mt-1.5 w-full rounded-xl border border-white/10 bg-[#0E0E12] px-3 py-3 text-base text-white outline-none focus:border-[#FF7A2A]/60"
           />
         </label>
+        {balanceNum >= CHANCE_MIN_BALANCE_USDC && amountNum > 0 && (
+          <ChanceUpsellCard
+            dark
+            price={CHANCE_PRICE_USDC}
+            disabled={busy}
+            checked={chance}
+            onCheckedChange={(checked) => {
+              setChance(checked);
+              if (checked && amountNum + CHANCE_PRICE_USDC > balanceNum) {
+                setAmount(Math.max(0, balanceNum - CHANCE_PRICE_USDC).toFixed(6).replace(/\.?0+$/, ""));
+              }
+            }}
+          />
+        )}
         <SendButton
-          busy={false}
-          disabled={!(amountNum > 0) || amountNum > balanceNum || identifier.trim().length < 2}
+          busy={busy}
+          disabled={!(amountNum > 0) || amountNum > maxCashOut || identifier.trim().length < 2}
           label={`Continue with ${platform.name}`}
-          busyLabel="Opening…"
-          onClick={() => onCashOut?.({ platformId: platform.id, identifier: identifier.trim(), amountUsd: amountNum })}
+          busyLabel="Adding your chance…"
+          onClick={() => { void continueCashOut(); }}
         />
       </div>
     );

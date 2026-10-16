@@ -5351,7 +5351,7 @@ export function ClaimPayView({
                           queryClient.setQueryData(["claim", id], undefined);
                           queryClient.invalidateQueries({ queryKey: ["payments", "history"] });
                           toast({ title: "Payment deleted" });
-                          router.replace("/");
+                          router.replace(window.location.pathname.startsWith("/app") ? "/app/history" : "/history");
                         } catch (e) {
                           toast({ variant: "destructive", title: "Could not delete", description: (e as Error)?.message || "Try again." });
                         } finally {

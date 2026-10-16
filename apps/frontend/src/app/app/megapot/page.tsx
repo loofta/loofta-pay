@@ -3330,8 +3330,6 @@ export default function MegapotPage() {
               onPrizeTiers={() => setPrizeTiersOpen(true)}
             />
             <div className="grid grid-cols-1 gap-3 min-[560px]:grid-cols-2">
-              <MysteryPackBanner />
-              <SubscriptionBanner />
             </div>
             <BuyTab accessToken={accessToken.current} solPriceUsd={solPriceUsd} onPurchased={fetchDashboard} activeTickets={dashboard?.activeTickets ?? []} dashboardLoading={dashboardLoading} nextDraw={dashboard?.nextDraw} />
           </>

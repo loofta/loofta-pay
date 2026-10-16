@@ -4,6 +4,7 @@ import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 import { toSolanaWalletConnectors, useSolanaFundingPlugin } from "@privy-io/react-auth/solana";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
 import { getSolanaCluster, getSolanaHttpRpc, getSolanaWsRpc } from "@/lib/solanaCluster";
+import { useDashboardStore } from "@/store/dashboard";
 import posthog from "posthog-js";
 import React, { useEffect, useRef } from "react";
 
@@ -37,6 +38,8 @@ function PostHogIdentity() {
 
     if (identifiedUserId.current && posthogConfigured) posthog.reset();
     identifiedUserId.current = null;
+    // Logged out (Privy is ready): drop the cached dashboard numbers so a shared device never shows them.
+    useDashboardStore.getState().reset();
   }, [ready, authenticated, userId, email, posthogConfigured]);
 
   return null;
