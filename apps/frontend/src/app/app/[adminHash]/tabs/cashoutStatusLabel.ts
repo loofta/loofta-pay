@@ -11,3 +11,11 @@ export function cashoutStatusLabel(row: { status: string; zkp2p_deposit_id?: str
   }
   return row.status;
 }
+
+/** Peer deposit page for a stored zkp2p_deposit_id ("<escrow>_<id>"). */
+export function peerDepositUrl(depositId: string | null | undefined): string | null {
+  if (!depositId) return null;
+  const i = depositId.lastIndexOf("_");
+  if (i <= 0) return null;
+  return `https://app.peer.xyz/deposit/${depositId.slice(0, i)}/${depositId.slice(i + 1)}`;
+}

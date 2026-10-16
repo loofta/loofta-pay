@@ -3,7 +3,7 @@
 import { Fragment, useState } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { AddressCell, SolAddressCell, TxCell } from "../admin-shared";
-import { cashoutStatusLabel } from "./cashoutStatusLabel";
+import { cashoutStatusLabel, peerDepositUrl } from "./cashoutStatusLabel";
 
 type CashoutKind = "peer" | "crypto" | "naira";
 
@@ -211,7 +211,13 @@ export function CashoutTab({
                           {row.eta_label ?? <span className="text-gray-700">—</span>}
                         </td>
                         <td className="px-4 py-2.5 font-mono text-gray-400">
-                          {row.zkp2p_deposit_id ?? <span className="text-gray-700">—</span>}
+                          {row.zkp2p_deposit_id ? (
+                            peerDepositUrl(row.zkp2p_deposit_id) ? (
+                              <a href={peerDepositUrl(row.zkp2p_deposit_id)!} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-blue-400 hover:underline">
+                                {row.zkp2p_deposit_id} ↗
+                              </a>
+                            ) : row.zkp2p_deposit_id
+                          ) : <span className="text-gray-700">—</span>}
                         </td>
                         <td className="px-4 py-2.5 max-w-[160px] truncate"><UserCell row={row} /></td>
                       </tr>

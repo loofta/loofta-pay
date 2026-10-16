@@ -298,7 +298,7 @@ function PrizeTiersModal({ onClose, totalPool, withdrawMinUsdc }: { onClose: () 
 // ─── Megapot tabs (desktop only — mobile uses bottom nav) ─────────────────────
 
 function MegapotTabs({ activeTab, wonCount }: { activeTab: Tab; wonCount: number }) {
-  // On pay.loofta.xyz, proxy.ts redirects any literal "/app/*" URL back to the clean path —
+  // On pay.loofta.com, proxy.ts redirects any literal "/app/*" URL back to the clean path —
   // hardcoding "/app/megapot" here turns every tab click into an extra redirect round trip.
   const isAppPath = usePathname()?.startsWith("/app");
   const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
@@ -1630,6 +1630,130 @@ function SubscriptionBanner() {
   );
 }
 
+/** Glowing "buy more" card under the winnings: pick a count with − / + and buy right here. Same
+ *  /buy → sign → /buy-confirm flow as the Buy tab (quick-pick numbers), and the same route the win
+ *  was bought with (private stays private). Backend finishes bridging + buying in the background. */
+function WinningsUpsell({ defaultCount, sendPrivately, onPurchased }: { defaultCount: number; sendPrivately: boolean; onPurchased: () => void }) {
+  const reduceMotion = useReducedMotion();
+  const [count, setCount] = useState(defaultCount);
+  const [phase, setPhase] = useState<"idle" | "signing" | "done" | "error">("idle");
+  const [error, setError] = useState("");
+  const [bought, setBought] = useState(0);
+  const { wallets } = useWallets();
+  const { signAndSendTransaction } = useSignAndSendTransaction();
+  const { user, getAccessToken, authenticated } = usePrivy();
+  const { balanceUSD, isLoading: isBalanceLoading } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated === true });
+  const embeddedSolAddress = ((user?.linkedAccounts ?? [])
+    .find((a: any) => a.type === "wallet" && a.chainType === "solana" &&
+      (a.walletClientType === "privy" || a.walletClientType === "privy-v2")) as any)?.address ?? "";
+  const embeddedWallet = wallets.find(w => w.address === embeddedSolAddress) ?? wallets[0];
+  const totalCostUsd = sendPrivately ? count + mbFee(count) : count;
+  const insufficient = authenticated === true && !isBalanceLoading && balanceUSD < totalCostUsd;
+  const step = (d: number) => setCount(c => Math.max(1, Math.min(100, c + d)));
+
+  async function buy() {
+    if (!embeddedWallet?.address) { setError("Wallet not ready, try again in a moment."); setPhase("error"); return; }
+    setPhase("signing"); setError("");
+    let ticketId: string | undefined;
+    let paymentBroadcast = false;
+    try {
+      const token = await getAccessToken();
+      const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const initRes = await fetch("/api/lottery/buy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ numTickets: count, userSolanaAddress: embeddedWallet.address, route: sendPrivately ? "solana_private" : "solana_public" }),
+      });
+      if (!initRes.ok) throw new Error((await initRes.json()).message ?? "Failed to initiate");
+      const initData = await initRes.json();
+      ticketId = initData.ticketId;
+      let signature: string;
+      try {
+        const { signature: sigBytes } = await signAndSendTransaction({
+          transaction: Buffer.from(initData.txBase64, "base64") as unknown as Uint8Array,
+          wallet: embeddedWallet as any,
+        });
+        signature = bs58.encode(sigBytes as Uint8Array);
+        paymentBroadcast = true;
+      } catch (signErr: any) {
+        // Privy can throw a confirmation timeout AFTER it already broadcast — treat as in flight.
+        if (/confirmation (timed out|failed)/i.test(signErr?.message ?? "")) paymentBroadcast = true;
+        throw signErr;
+      }
+      await fetch("/api/lottery/buy-confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ ticketId, senderTxHash: signature }),
+      });
+      posthog.capture("megapot_ticket_purchased", { num_tickets: count, private: sendPrivately, source: "winnings_upsell" });
+      setBought(count);
+      setPhase("done");
+      onPurchased();
+    } catch (err: any) {
+      const message = err?.message ?? "Unknown error";
+      if (ticketId && paymentBroadcast) {
+        // Payment really was sent; the backend recovers the ticket from the burner balance itself.
+        setBought(count);
+        setPhase("done");
+        onPurchased();
+        return;
+      }
+      setError(isInsufficientSolOrNoPriorCreditError(message) ? "Not enough balance for that many tickets." : privatePayErrorMessageForUser(message, getSolanaCluster()));
+      setPhase("error");
+    }
+  }
+
+  return (
+    <div className="relative">
+      <style>{`
+        @keyframes looftaGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+        @keyframes looftaGlowPulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+      `}</style>
+      <div
+        aria-hidden
+        className="absolute -inset-[2.5px] rounded-[22px] blur-[7px]"
+        style={{
+          background: "linear-gradient(110deg,#FF0F00,#FF7A2A,#EAB308,#FF7A2A,#FF0F00)",
+          backgroundSize: "220% 100%",
+          animation: reduceMotion ? undefined : "looftaGlowShift 2.4s linear infinite, looftaGlowPulse 2.4s ease-in-out infinite",
+          opacity: reduceMotion ? 0.7 : undefined,
+        }}
+      />
+      <div className="relative rounded-[20px] border border-white/10 bg-[#0d0d11] p-4 space-y-3">
+        {phase === "done" ? (
+          <div className="py-4 text-center space-y-1">
+            <p className="text-xl font-bold text-white">{bought} ticket{bought === 1 ? "" : "s"} locked in</p>
+            <p className="text-base text-slate-400">You are in the next draw. Find them under My tickets.</p>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 rounded-[20px] border border-white/[0.07] bg-[#0E0E12] p-2">
+              <button onClick={() => step(-1)} disabled={phase === "signing"} aria-label="Fewer tickets"
+                className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[15px] bg-[#1E1E25] text-[22px] font-bold text-white disabled:opacity-40">
+                −
+              </button>
+              <span className="flex flex-1 flex-col items-center">
+                <span className="text-[34px] font-extrabold leading-none tracking-[-0.04em] tabular-nums text-white" style={{ fontFamily: "var(--font-home-sora), sans-serif" }}>{count}</span>
+                <span className="text-sm text-[#8A8894]">ticket{count === 1 ? "" : "s"} · ${count}.00</span>
+              </span>
+              <button onClick={() => step(1)} disabled={phase === "signing"} aria-label="More tickets"
+                className="grid h-[52px] w-[52px] shrink-0 place-items-center rounded-[15px] bg-[#1E1E25] text-[22px] font-bold text-white disabled:opacity-40">
+                +
+              </button>
+            </div>
+            {phase === "error" && error && <p className="text-base text-red-400">{error}</p>}
+            {insufficient && phase !== "signing" && <p className="text-sm text-slate-400">Your balance is ${balanceUSD.toFixed(2)}. Your winnings may still be on the way.</p>}
+            <button onClick={buy} disabled={phase === "signing" || insufficient || !authenticated}
+              className="block w-full rounded-2xl bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] py-4 text-center text-lg font-bold text-white active:scale-[0.99] transition-transform disabled:opacity-50 disabled:cursor-not-allowed">
+              {phase === "signing" ? "Confirming…" : `Buy ${count} ticket${count === 1 ? "" : "s"} for the next draw`}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Last draw winnings ───────────────────────────────────────────────────────
 
 /** Winnings are withdrawn automatically by the backend the moment a draw settles (privately if the
@@ -1644,7 +1768,6 @@ function WithdrawTab({ tickets, withdrawals, accessToken, onWithdrawn, dashboard
   withdrawMinUsdc?: number;
 }) {
   const reduceMotion = useReducedMotion();
-  const buyHref = usePathname()?.startsWith("/app") ? "/app/megapot" : "/megapot";
   const minWithdraw = withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC;
   const [estimateReceive, setEstimateReceive] = useState<number | null>(null);
   const [playingAgain, setPlayingAgain] = useState(false);
@@ -1659,13 +1782,17 @@ function WithdrawTab({ tickets, withdrawals, accessToken, onWithdrawn, dashboard
   const groupWithdrawals = withdrawals.filter(w => groupIds.has(w.ticketId));
   const sendPrivately = group.some(t => t.fundedPrivately);
   const grossTotal = group.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
-  const isFreeTicket = group.length > 0 && grossTotal < minWithdraw && groupWithdrawals.length === 0;
+  const isFreeTicket = group.length > 0 && grossTotal < minWithdraw && groupWithdrawals.length === 0 && !group.every(t => t.status === "withdrawn");
   const failed = groupWithdrawals.some(w => w.status === "failed");
-  const arrived = previewArrived || (groupWithdrawals.length > 0 && groupWithdrawals.every(w => w.status === "complete"));
+  // A ticket's status flips to 'withdrawn' only after the transfer landed (and its win amount is
+  // then reconciled to the delivered figure), so that is authoritative even when the withdrawal
+  // row isn't in the dashboard payload (older redeems, or rows past the dashboard's row limit).
+  const allWithdrawn = group.length > 0 && group.every(t => t.status === "withdrawn");
+  const arrived = previewArrived || allWithdrawn || (groupWithdrawals.length > 0 && groupWithdrawals.every(w => w.status === "complete"));
   // Won but the automatic withdrawal hasn't been created yet (it starts on the backend's next
   // results pass), so nothing is travelling. Don't claim it is.
   const queued = !previewDone && !previewArrived && groupWithdrawals.length === 0;
-  const delivered = groupWithdrawals.reduce((sum, w) => sum + (w.amountUsdc ?? 0), 0);
+  const delivered = allWithdrawn ? grossTotal : groupWithdrawals.reduce((sum, w) => sum + (w.amountUsdc ?? 0), 0);
 
   // Net estimate while the transfer is still travelling: same quote the redeem button used to show.
   useEffect(() => {
@@ -1789,14 +1916,7 @@ function WithdrawTab({ tickets, withdrawals, accessToken, onWithdrawn, dashboard
 
       {!arrived && !failed && <p className="text-sm text-slate-500">You can safely leave this page, it continues in the background.</p>}
 
-      {/* Upsell: the prize is already on its way, so offer to put some of it straight into the next draw. */}
-      <div className="rounded-xl border border-[#FF7A2A]/30 bg-[#FF7A2A]/[0.06] p-4 space-y-3">
-        <p className="text-base font-semibold text-white">Feeling lucky? Run it back.</p>
-        <p className="text-sm text-slate-400">Use some of your winnings to buy tickets for the next draw.</p>
-        <Link href={buyHref} className="inline-block rounded-full bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] px-5 py-2.5 text-base font-bold text-white">
-          Buy tickets
-        </Link>
-      </div>
+      <WinningsUpsell sendPrivately={sendPrivately} onPurchased={onWithdrawn} defaultCount={Math.max(1, Math.min(10, Math.floor(shownAmount ?? 1)))} />
     </div>
   );
 }

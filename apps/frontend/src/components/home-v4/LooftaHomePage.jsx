@@ -32,6 +32,8 @@ class HomePage extends React.Component {
     this.state = {
       typed: '', emailOn: false, caret: true, drawing: false, hi: -1, winner: -1,
       shield: true, now: null, tilesOut: true, menuOpen: false, lite: true,
+      // Production app domain by default (matches SSR); swapped to the local app on localhost in didMount.
+      appUrl: 'https://pay.loofta.com',
     };
   }
 
@@ -67,7 +69,9 @@ class HomePage extends React.Component {
     const lite = prefersLiteMotion();
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     this._lite = lite;
-    this.setState({ now: Date.now(), lite, tilesOut: lite });
+    const host = window.location.hostname;
+    const appUrl = host === 'localhost' || host === '127.0.0.1' ? `${window.location.origin}/app` : this.state.appUrl;
+    this.setState({ now: Date.now(), lite, tilesOut: lite, appUrl });
     this.startTypewriter(reduce || lite);
     this._clockT = setInterval(() => this.setState({ now: Date.now() }), 1000);
 
@@ -345,7 +349,7 @@ class HomePage extends React.Component {
       <div className={`loofta-home ${sora.variable} ${manrope.variable} ${jetbrainsMono.variable}`} style={{ position: "relative", minHeight: "100vh", overflowX: "hidden" }}>
       <nav className="lh-nav" style={{ position: "sticky", top: "0", zIndex: "60", background: "rgba(7,7,10,0.8)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}>
         <div className="lh-nav-bar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "20px", padding: "16px clamp(20px,4vw,64px)" }}>
-          <a href="https://www.loofta.xyz/" style={{ display: "flex", alignItems: "center" }}>
+          <a href="https://loofta.com/" style={{ display: "flex", alignItems: "center" }}>
             <img src="/loofta_white.svg" alt="loofta" style={{ height: "30px", display: "block" }} />
           </a>
           <div className="lh-nav-links" style={{ display: "flex", alignItems: "center", gap: "32px", fontSize: "16px", fontWeight: "500", justifyContent: "center" }}>
@@ -356,7 +360,7 @@ class HomePage extends React.Component {
             <a href="#business" style={{ color: "#C9C6CF" }}>Business</a>
           </div>
           <div className="lh-nav-actions" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <a className="lh-nav-cta" href="https://pay.loofta.xyz" style={{ padding: "13px 26px", borderRadius: "999px", background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: "600", fontSize: "15px", boxShadow: "0 8px 30px rgba(255,70,10,0.4)" }}>Open app</a>
+            <a className="lh-nav-cta" href={this.state.appUrl} style={{ padding: "13px 26px", borderRadius: "999px", background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: "600", fontSize: "15px", boxShadow: "0 8px 30px rgba(255,70,10,0.4)" }}>Open app</a>
             <button
               type="button"
               className="lh-nav-burger"
@@ -386,7 +390,7 @@ class HomePage extends React.Component {
             <a href="#how" onClick={() => this.setState({ menuOpen: false })}>How it works</a>
             <a href="#send" onClick={() => this.setState({ menuOpen: false })}>Send</a>
             <a href="#business" onClick={() => this.setState({ menuOpen: false })}>Business</a>
-            <a className="lh-mobile-cta" href="https://pay.loofta.xyz" onClick={() => this.setState({ menuOpen: false })}>Open app</a>
+            <a className="lh-mobile-cta" href={this.state.appUrl} onClick={() => this.setState({ menuOpen: false })}>Open app</a>
           </div>
         ) : null}
       </nav>

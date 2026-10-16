@@ -45,7 +45,10 @@ export function useSolDomain(input: string, networkMode: NetworkMode): SolDomain
     const timer = setTimeout(async () => {
       try {
         const conn = new Connection(getRpcForMode("mainnet"), "confirmed");
-        const owner = await resolve(conn, domain);
+        // SDK 4.x refuses the ".sol" suffix (SNS moved to ".sns" and the SDK pauses ".sol" after a
+        // cutoff slot, throwing UnsupportedTld). Both suffixes share one registry, so resolve the
+        // same label under ".sns".
+        const owner = await resolve(conn, domain.replace(/\.sol$/, ".sns"));
         if (requestRef.current !== requestId) return;
         setState({ status: "resolved", address: owner.toBase58() });
       } catch (e) {

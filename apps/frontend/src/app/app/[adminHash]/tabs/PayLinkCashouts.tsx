@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
-import { cashoutStatusLabel } from "./cashoutStatusLabel";
+import { cashoutStatusLabel, peerDepositUrl } from "./cashoutStatusLabel";
 
 const STATUS_COLOR: Record<string, string> = {
   COMPLETE: "text-emerald-400",
@@ -66,11 +66,12 @@ export function PayLinkCashouts({ authHeaders }: { authHeaders: () => Promise<Re
                   <th className="text-left px-3 py-2">Pays out to</th>
                   <th className="text-right px-3 py-2">Amount</th>
                   <th className="text-left px-3 py-2">Status</th>
+                  <th className="text-left px-3 py-2">Peer</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-600">No pay links yet.</td></tr>
+                  <tr><td colSpan={7} className="px-3 py-4 text-center text-gray-600">No pay links yet.</td></tr>
                 )}
                 {rows.map((r) => (
                   <tr key={r.id} className="border-b border-gray-800/50 hover:bg-gray-900/40">
@@ -88,6 +89,11 @@ export function PayLinkCashouts({ authHeaders }: { authHeaders: () => Promise<Re
                     <td className="px-3 py-2"><span className="capitalize">{r.platform}</span> <span className="font-mono text-gray-400">{r.platform_identifier}</span></td>
                     <td className="px-3 py-2 text-right tabular-nums font-medium">${Number(r.amount_usdc).toFixed(2)}</td>
                     <td className={`px-3 py-2 font-medium ${STATUS_COLOR[cashoutStatusLabel(r)] ?? "text-gray-400"}`}>{cashoutStatusLabel(r)}</td>
+                    <td className="px-3 py-2">
+                      {peerDepositUrl(r.zkp2p_deposit_id)
+                        ? <a href={peerDepositUrl(r.zkp2p_deposit_id)!} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">View on Peer ↗</a>
+                        : <span className="text-gray-700">—</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
