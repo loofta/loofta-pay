@@ -549,7 +549,7 @@ export class MegapotService {
         }) as any;
         const referralWinShare = BigInt(state.referralWinShare ?? 0n);
         const factor = 1 - Number(referralWinShare) / 1e18;
-        this.logger.log(`getWinClaimFactor drawing=${drawingId}: referralWinShare=${Number(referralWinShare) / 1e18} → factor=${factor}`);
+        this.logger.debug(`getWinClaimFactor drawing=${drawingId}: referralWinShare=${Number(referralWinShare) / 1e18} → factor=${factor}`);
         return Math.max(0, Math.min(1, factor));
       } catch (e: any) {
         if (attempt < attempts - 1) {
@@ -958,7 +958,9 @@ export class MegapotService {
           }
         }
 
-        this.logger.log(`NFT ${tokenId}: tier=${tier} rawWin=${rawWin} drawingId=${drawingId} → $${winAmountUsdc}`);
+        // Only winners are worth an info line; losing NFTs are re-read every 15 min by the reconcile sweep.
+        if (winAmountUsdc > 0) this.logger.log(`NFT ${tokenId}: tier=${tier} rawWin=${rawWin} drawingId=${drawingId} → $${winAmountUsdc}`);
+        else this.logger.debug(`NFT ${tokenId}: tier=${tier} rawWin=${rawWin} drawingId=${drawingId} → $0`);
         results.push({ tokenId, tier, winAmountUsdc, drawingId });
       } catch (e: any) {
         this.logger.warn(`checkTicketResultsFromNft failed for token ${tokenId}: ${e.message}`);

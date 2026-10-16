@@ -3145,7 +3145,13 @@ export class LotteryService {
       const groups = new Map<string, { userId: string; destination: string; route: 'solana_private' | 'solana_public'; ids: string[]; total: number }>();
       for (const t of won) {
         const amount = parseFloat(t.win_amount_usdc ?? '0');
-        if (taken.has(t.id) || !t.user_solana_address || !(amount > 0)) continue;
+        if (taken.has(t.id) || !t.user_solana_address || !(amount > 0)) {
+          // Silent skips are how won tickets sat unwithdrawn unnoticed — say why, once per tick.
+          const why = taken.has(t.id) ? 'a withdrawal row already exists (in flight/complete/failed — needs a human if failed)'
+            : !t.user_solana_address ? 'no user_solana_address on the ticket' : 'win amount is 0';
+          this.logger.warn(`autoWithdraw: skipping won ticket ${t.id} ($${amount}) — ${why}`);
+          continue;
+        }
         const route = t.funded_privately ? 'solana_private' : 'solana_public';
         const key = `${t.user_id}|${t.user_solana_address}|${route}`;
         const g = groups.get(key) ?? { userId: t.user_id, destination: t.user_solana_address, route, ids: [] as string[], total: 0 };
@@ -3155,7 +3161,10 @@ export class LotteryService {
       }
 
       for (const g of groups.values()) {
-        if (g.total < WITHDRAW_MIN_USDC) continue; // free ticket: play-again only
+        if (g.total < WITHDRAW_MIN_USDC) {
+          this.logger.debug(`autoWithdraw: user ${g.userId} total $${g.total.toFixed(2)} below $${WITHDRAW_MIN_USDC} — free ticket, play-again only`);
+          continue;
+        }
         try {
           await this.initiateWithdrawalBatch({ ticketIds: g.ids, userId: g.userId, destinationAddress: g.destination, route: g.route });
           this.logger.log(`autoWithdraw: user ${g.userId} ${g.ids.length} ticket(s) $${g.total.toFixed(2)} route=${g.route}`);
