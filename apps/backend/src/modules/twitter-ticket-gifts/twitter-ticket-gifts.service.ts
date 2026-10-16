@@ -55,12 +55,17 @@ export class TwitterTicketGiftsService {
     // /app/twitter-bot are eligible. Doubly important here: unlike payments (sender's own
     // money), gifted tickets are funded from Loofta's own treasury, so this gate is the only
     // thing standing between "anyone can tweet a command" and real, uncapped Loofta spend.
-    const enrollment = await this.autopay.getEnrollmentByHandle(senderTwitter);
+    const enrollment = await this.autopay.resolvePayer(senderTwitter);
     if (!enrollment) {
       throw new ForbiddenException(`@${senderTwitter} is not enrolled in Twitter auto-pay`);
     }
+    // Treasury-funded, so being enrolled is not enough now that auto-pay can be open to everyone
+    // and to team approvers: only an admin wallet owner may spend Loofta's own tickets.
+    if (!(await this.autopay.canSpendTreasury(enrollment))) {
+      throw new ForbiddenException('Ticket gifts are not available for this account');
+    }
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://pay.loofta.xyz';
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://pay.loofta.com';
 
     // Dedup by tweet_id
     if (dto.tweet_id) {

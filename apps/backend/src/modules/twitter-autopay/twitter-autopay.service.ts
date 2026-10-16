@@ -9,10 +9,47 @@ import { isPrivyUserAdmin } from '@/common/admin-check';
 
 export interface TwitterAutopayStatus {
   isAdmin: boolean;
+  /** Whether this user may turn auto-pay on: admins always, everyone once TWITTER_AUTOPAY_OPEN=true. */
+  canEnable: boolean;
   twitterHandle: string | null;
   enrolled: boolean;
   signerGranted: boolean;
+  perPaymentCapUsd: number;
+  /** Highest per-payment limit an owner can set (matches the Privy policy). */
+  maxPerPaymentCapUsd: number;
+  dailyCapUsd: number;
+  approvers: string[];
 }
+
+/** Who a mention's author is allowed to spend as: the wallet owner themselves, or a named approver. */
+export interface ResolvedPayer {
+  enrollmentId: string;
+  userId: string;
+  ownerHandle: string;
+  /** Set when the author is a team approver rather than the wallet owner. */
+  approverHandle: string | null;
+  signerGranted: boolean;
+  perPaymentCapUsd: number;
+  dailyCapUsd: number;
+}
+
+export const DEFAULT_PER_PAYMENT_CAP_USD = 25;
+export const DEFAULT_DAILY_CAP_USD = 100;
+// Ceiling on what an owner can set per payment. Must not exceed the Privy policy "Twitter Bot
+// spend cap" (TransferChecked.amount lte 50 USDC): the policy is the real backstop, anything above
+// it would be accepted here and then rejected at signing. To raise it, change BOTH the policy in
+// Privy and TWITTER_AUTOPAY_MAX_PER_PAYMENT_USD (default 50).
+export const DEFAULT_MAX_PER_PAYMENT_CAP_USD = 50;
+export const MAX_DAILY_CAP_USD = 5_000;
+
+function maxPerPaymentCapUsd(): number {
+  const v = Number(process.env.TWITTER_AUTOPAY_MAX_PER_PAYMENT_USD);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_MAX_PER_PAYMENT_CAP_USD;
+}
+export const MAX_APPROVERS = 20;
+
+const normHandle = (h: string) => h.replace(/^@/, '').trim().toLowerCase();
+const HANDLE_RE = /^[a-z0-9_]{1,50}$/;
 
 export interface TwitterAutopayResult {
   paymentId: string;
@@ -21,10 +58,11 @@ export interface TwitterAutopayResult {
 }
 
 /**
- * Admin-only for now (see isPrivyUserAdmin gate on enroll/unenroll) — the plan is to open this
- * up once the bot has run for a while under a small, hand-picked set of users, same rollout
- * shape as the integrators system. Only enrolled handles are ever eligible for the bot to act
- * on — see TwitterPaymentsService.create()'s enrollment check.
+ * Auto-pay on X. A wallet owner (a person or a business) enrolls, sets per-payment and daily
+ * limits, and optionally names team "approvers": X handles allowed to tell @looftapay to spend
+ * from that wallet. Admin-only until TWITTER_AUTOPAY_OPEN=true, same rollout shape as the
+ * integrators system. Only enrolled owners and their approvers are ever eligible for the bot to
+ * act on — see TwitterPaymentsService.create().
  */
 @Injectable()
 export class TwitterAutopayService {
@@ -39,18 +77,39 @@ export class TwitterAutopayService {
     private readonly emailService: EmailService,
   ) {}
 
+  private get isOpen(): boolean {
+    return this.configService.get<string>('TWITTER_AUTOPAY_OPEN') === 'true';
+  }
+
   async getStatus(userId: string): Promise<TwitterAutopayStatus> {
     const [isAdmin, identity, enrollment] = await Promise.all([
       isPrivyUserAdmin(this.supabaseService, this.configService, userId),
       this.usersService.findIdentityByPrivyId(userId),
-      this.supabaseService.twitterAutopayEnrollments.select('enabled, signer_granted').eq('user_id', userId).maybeSingle(),
+      this.supabaseService.twitterAutopayEnrollments
+        .select('id, enabled, signer_granted, per_payment_cap_usd, daily_cap_usd')
+        .eq('user_id', userId)
+        .maybeSingle(),
     ]);
+
+    let approvers: string[] = [];
+    if (enrollment.data?.id) {
+      const { data } = await this.supabaseService.twitterAutopayApprovers
+        .select('approver_handle')
+        .eq('enrollment_id', enrollment.data.id)
+        .order('created_at', { ascending: true });
+      approvers = (data ?? []).map((r) => r.approver_handle as string);
+    }
 
     return {
       isAdmin,
+      canEnable: isAdmin || this.isOpen,
       twitterHandle: identity?.twitterUsername ?? null,
       enrolled: !!enrollment.data?.enabled,
       signerGranted: !!enrollment.data?.signer_granted,
+      perPaymentCapUsd: Number(enrollment.data?.per_payment_cap_usd ?? DEFAULT_PER_PAYMENT_CAP_USD),
+      maxPerPaymentCapUsd: maxPerPaymentCapUsd(),
+      dailyCapUsd: Number(enrollment.data?.daily_cap_usd ?? DEFAULT_DAILY_CAP_USD),
+      approvers,
     };
   }
 
@@ -75,7 +134,7 @@ export class TwitterAutopayService {
 
   /** Called after the client successfully completes useSigners().addSigners() on their wallet. */
   async enroll(userId: string): Promise<TwitterAutopayStatus> {
-    await this.assertAdmin(userId);
+    await this.assertAllowed(userId);
 
     const identity = await this.usersService.findIdentityByPrivyId(userId);
     const twitterHandle = identity?.twitterUsername?.replace(/^@/, '').toLowerCase();
@@ -93,29 +152,32 @@ export class TwitterAutopayService {
   }
 
   async unenroll(userId: string): Promise<TwitterAutopayStatus> {
-    await this.assertAdmin(userId);
+    await this.assertAllowed(userId);
     await this.supabaseService.twitterAutopayEnrollments.update({ enabled: false }).eq('user_id', userId);
     return this.getStatus(userId);
   }
 
-  /** What the bot's create() flow checks — silently ignore anyone not on this list. */
+  /** What the bot's create() flow checks — silently ignore anyone who is neither an enrolled
+   *  owner nor a named approver of one. */
   async isHandleEnrolled(twitterHandle: string): Promise<boolean> {
-    const clean = twitterHandle.replace(/^@/, '').toLowerCase();
-    const { data } = await this.supabaseService.twitterAutopayEnrollments
-      .select('id')
-      .eq('twitter_handle', clean)
-      .eq('enabled', true)
-      .maybeSingle();
-    return !!data;
+    return (await this.resolvePayer(twitterHandle)) !== null;
   }
 
   /** Bot pre-filter: fetch once per poll cycle so it can skip non-enrolled mentions before
-   *  parsing their text, instead of parsing everything and only rejecting at create() time. */
+   *  parsing their text. Includes team approvers, who may command the bot on an owner's behalf. */
   async listEnrolledHandles(): Promise<string[]> {
-    const { data } = await this.supabaseService.twitterAutopayEnrollments
-      .select('twitter_handle')
+    const { data: owners } = await this.supabaseService.twitterAutopayEnrollments
+      .select('id, twitter_handle')
       .eq('enabled', true);
-    return (data ?? []).map((r) => r.twitter_handle as string);
+    const handles = new Set<string>((owners ?? []).map((r) => r.twitter_handle as string));
+    const ids = (owners ?? []).map((r) => r.id as string);
+    if (ids.length > 0) {
+      const { data: approvers } = await this.supabaseService.twitterAutopayApprovers
+        .select('approver_handle')
+        .in('enrollment_id', ids);
+      for (const a of approvers ?? []) handles.add(a.approver_handle as string);
+    }
+    return [...handles];
   }
 
   /**
@@ -138,17 +200,133 @@ export class TwitterAutopayService {
     );
   }
 
-  /** Used by TwitterPaymentsService.create() to decide whether to attempt real auto-execution
-   *  vs. falling back to the manual create-then-fund flow. */
-  async getEnrollmentByHandle(twitterHandle: string): Promise<{ userId: string; signerGranted: boolean } | null> {
-    const clean = twitterHandle.replace(/^@/, '').toLowerCase();
-    const { data } = await this.supabaseService.twitterAutopayEnrollments
-      .select('user_id, signer_granted')
+  /**
+   * Resolves whose wallet a mention author may spend from. The author's own enrollment wins; else
+   * the first enabled enrollment that lists them as an approver. Used by
+   * TwitterPaymentsService.create() to decide between real auto-execution and the manual flow.
+   */
+  async resolvePayer(twitterHandle: string): Promise<ResolvedPayer | null> {
+    const clean = normHandle(twitterHandle);
+    const cols = 'id, user_id, twitter_handle, signer_granted, per_payment_cap_usd, daily_cap_usd';
+    const toPayer = (row: any, approverHandle: string | null): ResolvedPayer => ({
+      enrollmentId: row.id,
+      userId: row.user_id,
+      ownerHandle: row.twitter_handle,
+      approverHandle,
+      signerGranted: !!row.signer_granted,
+      perPaymentCapUsd: Number(row.per_payment_cap_usd ?? DEFAULT_PER_PAYMENT_CAP_USD),
+      dailyCapUsd: Number(row.daily_cap_usd ?? DEFAULT_DAILY_CAP_USD),
+    });
+
+    const { data: own } = await this.supabaseService.twitterAutopayEnrollments
+      .select(cols)
       .eq('twitter_handle', clean)
       .eq('enabled', true)
       .maybeSingle();
-    if (!data) return null;
-    return { userId: data.user_id, signerGranted: !!data.signer_granted };
+    if (own) return toPayer(own, null);
+
+    const { data: link } = await this.supabaseService.twitterAutopayApprovers
+      .select('enrollment_id')
+      .eq('approver_handle', clean)
+      .limit(20);
+    for (const l of link ?? []) {
+      const { data: owner } = await this.supabaseService.twitterAutopayEnrollments
+        .select(cols)
+        .eq('id', l.enrollment_id)
+        .eq('enabled', true)
+        .maybeSingle();
+      if (owner) return toPayer(owner, clean);
+    }
+    return null;
+  }
+
+  /**
+   * Hard limits checked before any auto-pay, whoever issued the command. A breach throws rather
+   * than falling back to anything: an approver's command can never be turned into a different
+   * kind of spend. Daily spend is summed over the last 24h of requests this wallet funded.
+   */
+  async assertWithinLimits(payer: ResolvedPayer, amountUsd: number): Promise<void> {
+    if (amountUsd > payer.perPaymentCapUsd) {
+      throw new BadRequestException(
+        `$${amountUsd} is over the $${payer.perPaymentCapUsd} per-payment limit set on @${payer.ownerHandle}'s wallet`,
+      );
+    }
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data } = await this.supabaseService.getClient()
+      .from('twitter_payment_requests')
+      .select('amount_usd')
+      .eq('funded_by_user_id', payer.userId)
+      .not('payment_id', 'is', null)
+      .gte('created_at', since);
+    const spent = (data ?? []).reduce((sum, r) => sum + Number(r.amount_usd ?? 0), 0);
+    if (spent + amountUsd > payer.dailyCapUsd) {
+      throw new BadRequestException(
+        `That would take @${payer.ownerHandle}'s wallet past its $${payer.dailyCapUsd} daily limit ($${spent.toFixed(2)} already sent in the last 24h)`,
+      );
+    }
+  }
+
+  /** Loofta-treasury-funded actions (ticket gifts) are limited to admin wallet owners, never approvers. */
+  async canSpendTreasury(payer: ResolvedPayer): Promise<boolean> {
+    if (payer.approverHandle) return false;
+    return isPrivyUserAdmin(this.supabaseService, this.configService, payer.userId);
+  }
+
+  /** Owner-only: change the spend limits on their own enrollment. */
+  async updateLimits(userId: string, limits: { perPaymentCapUsd: number; dailyCapUsd: number }): Promise<TwitterAutopayStatus> {
+    await this.assertAllowed(userId);
+    const { perPaymentCapUsd, dailyCapUsd } = limits;
+    if (!Number.isFinite(perPaymentCapUsd) || perPaymentCapUsd <= 0 || perPaymentCapUsd > maxPerPaymentCapUsd()) {
+      throw new BadRequestException(`Per-payment limit must be between $0.01 and $${maxPerPaymentCapUsd()}`);
+    }
+    if (!Number.isFinite(dailyCapUsd) || dailyCapUsd <= 0 || dailyCapUsd > MAX_DAILY_CAP_USD) {
+      throw new BadRequestException(`Daily limit must be between $0.01 and $${MAX_DAILY_CAP_USD}`);
+    }
+    if (perPaymentCapUsd > dailyCapUsd) {
+      throw new BadRequestException('Per-payment limit cannot be higher than the daily limit');
+    }
+    const { data, error } = await this.supabaseService.twitterAutopayEnrollments
+      .update({ per_payment_cap_usd: perPaymentCapUsd, daily_cap_usd: dailyCapUsd })
+      .eq('user_id', userId)
+      .select('id')
+      .maybeSingle();
+    if (error) throw new Error(`Failed to update limits: ${error.message}`);
+    if (!data) throw new BadRequestException('Enable auto-pay first, then set your limits');
+    return this.getStatus(userId);
+  }
+
+  async addApprover(userId: string, handle: string): Promise<TwitterAutopayStatus> {
+    await this.assertAllowed(userId);
+    const clean = normHandle(handle);
+    if (!HANDLE_RE.test(clean)) throw new BadRequestException('Enter a valid X handle');
+    const enrollment = await this.getOwnEnrollment(userId);
+    if (clean === enrollment.twitter_handle) throw new BadRequestException('You are already the owner of this wallet');
+    const { count } = await this.supabaseService.twitterAutopayApprovers
+      .select('id', { count: 'exact', head: true })
+      .eq('enrollment_id', enrollment.id);
+    if ((count ?? 0) >= MAX_APPROVERS) throw new BadRequestException(`At most ${MAX_APPROVERS} approvers`);
+    const { error } = await this.supabaseService.twitterAutopayApprovers
+      .upsert({ enrollment_id: enrollment.id, approver_handle: clean }, { onConflict: 'enrollment_id,approver_handle' });
+    if (error) throw new Error(`Failed to add approver: ${error.message}`);
+    return this.getStatus(userId);
+  }
+
+  async removeApprover(userId: string, handle: string): Promise<TwitterAutopayStatus> {
+    const enrollment = await this.getOwnEnrollment(userId);
+    await this.supabaseService.twitterAutopayApprovers
+      .delete()
+      .eq('enrollment_id', enrollment.id)
+      .eq('approver_handle', normHandle(handle));
+    return this.getStatus(userId);
+  }
+
+  private async getOwnEnrollment(userId: string): Promise<{ id: string; twitter_handle: string }> {
+    const { data } = await this.supabaseService.twitterAutopayEnrollments
+      .select('id, twitter_handle')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (!data) throw new BadRequestException('Enable auto-pay first');
+    return data as { id: string; twitter_handle: string };
   }
 
   /**
@@ -206,8 +384,9 @@ export class TwitterAutopayService {
     return { paymentId: payment.id, shortId: payment.short_id, claimLink: payment.link };
   }
 
-  private async assertAdmin(userId: string): Promise<void> {
+  private async assertAllowed(userId: string): Promise<void> {
+    if (this.isOpen) return;
     const admin = await isPrivyUserAdmin(this.supabaseService, this.configService, userId);
-    if (!admin) throw new ForbiddenException('Twitter auto-pay is admin-only for now');
+    if (!admin) throw new ForbiddenException('Twitter auto-pay is invite-only for now');
   }
 }

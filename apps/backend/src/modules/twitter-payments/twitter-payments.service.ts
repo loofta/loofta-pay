@@ -50,7 +50,7 @@ export class TwitterPaymentsService {
   async create(
     dto: CreateTwitterPaymentDto,
     integrator: AuthenticatedIntegrator,
-  ): Promise<{ short_id: string; link: string; already_exists?: boolean; funded?: boolean }> {
+  ): Promise<{ short_id: string; link: string; already_exists?: boolean; funded?: boolean; paid_by_handle?: string }> {
     const supabase = this.db.getClient();
 
     const senderTwitter = normaliseHandle(dto.sender_twitter);
@@ -66,12 +66,14 @@ export class TwitterPaymentsService {
     // already treats any non-2xx here as "log and skip reply", so this alone is enough — no
     // bot-side change needed). This bounds reply volume to consented, enrolled senders only,
     // which is the compliance lever that actually matters (see the bankr.bot precedent).
-    const enrollment = await this.autopay.getEnrollmentByHandle(senderTwitter);
+    // The author is either an enrolled wallet owner or a team approver named by one; approvers
+    // spend from the owner's wallet, within the owner's limits.
+    const enrollment = await this.autopay.resolvePayer(senderTwitter);
     if (!enrollment) {
       throw new ForbiddenException(`@${senderTwitter} is not enrolled in Twitter auto-pay`);
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://pay.loofta.xyz';
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://pay.loofta.com';
 
     // Dedup by tweet_id — same tweet reprocessed after bot restart, skip re-reply
     if (dto.tweet_id) {
@@ -139,6 +141,10 @@ export class TwitterPaymentsService {
     // erroring the whole create() call — a legitimate enrolled user shouldn't lose their payment
     // over a transient auto-pay failure, they just get the "click to confirm" flow instead.
     if (enrollment.signerGranted) {
+      // Limits are a hard stop, deliberately outside the try/catch below: a breach must not fall
+      // through to the manual flow, and an approver's command can never become anything but a
+      // capped payment from the owner's wallet.
+      await this.autopay.assertWithinLimits(enrollment, dto.amount_usd);
       try {
         const result = await this.autopay.executeAutoPay({
           senderUserId: enrollment.userId,
@@ -159,6 +165,8 @@ export class TwitterPaymentsService {
             is_devnet: isDevnet,
             integrator_id: integrator.id,
             payment_id: result.paymentId,
+            funded_by_user_id: enrollment.userId,
+            approved_by_handle: enrollment.approverHandle,
           })
           .select('short_id')
           .single();
@@ -169,12 +177,23 @@ export class TwitterPaymentsService {
           this.logger.error(`Auto-pay succeeded (payment ${result.paymentId}) but failed to link twitter_payment_requests row`, linkError);
         }
         this.logger.log(`Auto-pay funded $${dto.amount_usd} from @${senderTwitter} to @${recipientTwitter} — payment ${result.paymentId}`);
-        return { short_id: shortId, link: `${baseUrl}/tw/${shortId}`, funded: true };
+        return {
+          short_id: shortId,
+          link: `${baseUrl}/tw/${shortId}`,
+          funded: true,
+          ...(enrollment.approverHandle ? { paid_by_handle: enrollment.ownerHandle } : {}),
+        };
       } catch (autoPayError) {
         this.logger.warn(
           `Auto-pay failed for @${senderTwitter} -> @${recipientTwitter} ($${dto.amount_usd}), falling back to manual flow: ${(autoPayError as Error).message}`,
         );
       }
+    }
+
+    // A manual "click to confirm" link only works for the wallet owner; an approver has no way
+    // to sign for someone else's wallet, so their command simply doesn't go through.
+    if (enrollment.approverHandle) {
+      throw new BadRequestException(`Could not pay from @${enrollment.ownerHandle}'s wallet right now`);
     }
 
     const { data, error } = await supabase
@@ -242,7 +261,7 @@ export class TwitterPaymentsService {
         .maybeSingle();
 
       if (existing && existing.status?.toUpperCase() !== 'DELETED') {
-        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://pay.loofta.xyz';
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://pay.loofta.com';
         const path = existing.short_id ?? existing.id;
         return { payment_id: existing.id, payment_link: `${baseUrl}/c/${path}` };
       }

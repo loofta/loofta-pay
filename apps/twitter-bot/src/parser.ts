@@ -115,3 +115,49 @@ export function parseTicketGift(
 
   return { senderHandle: sender, recipientHandle: recipient, numTickets }
 }
+
+/**
+ * Reply-to-pay: "@looftapay pay $5" (also "send" / "tip") posted as a reply, with no "to @handle".
+ * The recipient is whoever wrote the tweet being replied to, which the caller resolves from the
+ * mention's parent tweet. A team approver can reward a good reply under their brand's thread with
+ * one short reply instead of typing a handle.
+ *
+ *   @looftapay pay $5            ✓  (pays the parent tweet's author)
+ *   @looftapay tip 2.50 usdc     ✓
+ *   @looftapay pay $5 to @alice  ✗  (explicit command, handled by parseTweet)
+ *   @looftapay send 3 tickets    ✗  (not a payment)
+ */
+function buildReplyPayRe(botHandle: string): RegExp {
+  const escaped = botHandle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(
+    `@${escaped}\\s+(?:send|pay|tip)\\s+\\$?([\\d]+(?:\\.[\\d]{1,2})?)\\$?(?:\\s*(?:usdc|usd|dollars?))?(?!\\w)(?!\\.\\d)(?!\\s+(?:to\\s+@|tickets?\\b))`,
+    'i',
+  )
+}
+
+export function parseReplyPay(
+  tweetText: string,
+  authorHandle: string,
+  parentHandle: string | null | undefined,
+): ParsedPayment | null {
+  if (!parentHandle) return null
+  const botHandle = (process.env.TWITTER_BOT_HANDLE ?? 'looftapay').toLowerCase()
+  const match = buildReplyPayRe(botHandle).exec(tweetText)
+  if (!match) return null
+
+  const amount = parseFloat(match[1])
+  if (isNaN(amount) || amount < MIN_AMOUNT_USD || amount > 10_000) return null
+
+  const recipient = parentHandle.replace(/^@/, '').toLowerCase()
+  const sender = authorHandle.replace(/^@/, '').toLowerCase()
+  if (recipient === sender || recipient === botHandle) return null
+
+  const extra = tweetText
+    .replace(match[0], '')
+    .replace(/@\w+/g, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .trim()
+  if (extra.split(/\s+/).filter(w => w.length >= 3).length > 4) return null
+
+  return { senderHandle: sender, recipientHandle: recipient, amountUsd: amount }
+}

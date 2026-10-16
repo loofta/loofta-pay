@@ -26,7 +26,7 @@ export class TwitterAutopayController {
   @Post('enroll')
   @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Admin-only: enable Twitter auto-pay after granting the Privy authorization key' })
+  @ApiOperation({ summary: 'Enable Twitter auto-pay (invite-only until opened) after granting the Privy authorization key' })
   async enroll(@PrivyUser() user: { id: string }) {
     return this.autopay.enroll(user.id);
   }
@@ -34,9 +34,39 @@ export class TwitterAutopayController {
   @Post('unenroll')
   @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Admin-only: disable Twitter auto-pay' })
+  @ApiOperation({ summary: 'Disable Twitter auto-pay' })
   async unenroll(@PrivyUser() user: { id: string }) {
     return this.autopay.unenroll(user.id);
+  }
+
+  @Post('limits')
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(20, 3600, 'twitter-autopay:limits')
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Owner: set per-payment and daily spend limits for bot payments from their wallet' })
+  async limits(@PrivyUser() user: { id: string }, @Body() body: { per_payment_cap_usd: number; daily_cap_usd: number }) {
+    return this.autopay.updateLimits(user.id, {
+      perPaymentCapUsd: Number(body?.per_payment_cap_usd),
+      dailyCapUsd: Number(body?.daily_cap_usd),
+    });
+  }
+
+  @Post('approvers')
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(30, 3600, 'twitter-autopay:approvers-add')
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Owner: let a teammate\'s X handle command the bot to pay from this wallet' })
+  async addApprover(@PrivyUser() user: { id: string }, @Body() body: { handle: string }) {
+    return this.autopay.addApprover(user.id, String(body?.handle ?? ''));
+  }
+
+  @Post('approvers/remove')
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(30, 3600, 'twitter-autopay:approvers-remove')
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Owner: remove a teammate approver' })
+  async removeApprover(@PrivyUser() user: { id: string }, @Body() body: { handle: string }) {
+    return this.autopay.removeApprover(user.id, String(body?.handle ?? ''));
   }
 
   @Post('request-access')

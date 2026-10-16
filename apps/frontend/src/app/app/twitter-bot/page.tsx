@@ -1,0 +1,257 @@
+'use client'
+
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { usePrivy, useSigners } from '@privy-io/react-auth'
+import { useWallets } from '@privy-io/react-auth/solana'
+import { Loader2, AlertCircle, CheckCircle2, ShieldCheck, Users, X } from 'lucide-react'
+import { GradientActionButton } from '@/components/ui/GradientActionButton'
+import { deriveSolanaEmbeddedAddress } from '@/lib/privySolanaEmbeddedAddress'
+import { fetchApi } from '@/services/api/client'
+
+// Set once the authorization key + spend policy exist in Privy's dashboard. Both are required:
+// an empty policyIds array would grant the signer unrestricted power on the wallet.
+const BOT_SIGNER_ID = process.env.NEXT_PUBLIC_LOOFTA_BOT_SIGNER_ID
+const BOT_POLICY_ID = process.env.NEXT_PUBLIC_LOOFTA_BOT_POLICY_ID
+
+interface AutopayStatus {
+  isAdmin: boolean
+  canEnable: boolean
+  twitterHandle: string | null
+  enrolled: boolean
+  signerGranted: boolean
+  perPaymentCapUsd: number
+  maxPerPaymentCapUsd: number
+  dailyCapUsd: number
+  approvers: string[]
+}
+
+const STATUS_KEY = ['twitter-autopay-status']
+
+export default function TwitterBotPage() {
+  const { ready, authenticated, login, user, getAccessToken } = usePrivy()
+  const { addSigners, removeSigners } = useSigners()
+  const { wallets: solanaWallets } = useWallets()
+  const queryClient = useQueryClient()
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [perPayment, setPerPayment] = useState<string | null>(null)
+  const [daily, setDaily] = useState<string | null>(null)
+  const [newApprover, setNewApprover] = useState('')
+
+  const solanaAddress = deriveSolanaEmbeddedAddress(user) ?? solanaWallets[0]?.address ?? null
+
+  const { data: status, isLoading } = useQuery<AutopayStatus>({
+    queryKey: STATUS_KEY,
+    queryFn: async () =>
+      fetchApi<AutopayStatus>('/twitter-autopay/status', { accessToken: await getAccessToken() }),
+    enabled: authenticated,
+  })
+
+  async function post(path: string, body?: unknown) {
+    const updated = await fetchApi<AutopayStatus>(`/twitter-autopay/${path}`, {
+      method: 'POST',
+      accessToken: await getAccessToken(),
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    })
+    queryClient.setQueryData(STATUS_KEY, updated)
+    return updated
+  }
+
+  async function run(fn: () => Promise<unknown>) {
+    setWorking(true)
+    setError(null)
+    try {
+      await fn()
+    } catch (e: any) {
+      setError(e?.message ?? 'Something went wrong')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  const handleEnable = () =>
+    run(async () => {
+      if (!solanaAddress) throw new Error('No Solana wallet found on your account yet')
+      if (!BOT_SIGNER_ID || !BOT_POLICY_ID) {
+        // Never fall back to policyIds: [] (unrestricted grant).
+        throw new Error('Not set up yet: the bot signer and spending policy are missing in Privy.')
+      }
+      const grant = () => addSigners({ address: solanaAddress, signers: [{ signerId: BOT_SIGNER_ID, policyIds: [BOT_POLICY_ID] }] })
+      try {
+        await grant()
+      } catch (e: any) {
+        // A grant from an earlier enrollment is still on the wallet. Clear it and add it again so
+        // the signer always carries the current policy, instead of keeping a stale one.
+        if (!/duplicate signer/i.test(e?.message ?? '')) throw e
+        await removeSigners({ address: solanaAddress })
+        await grant()
+      }
+      await post('enroll')
+    })
+
+  const handleDisable = () =>
+    run(async () => {
+      if (solanaAddress) await removeSigners({ address: solanaAddress }).catch(() => null)
+      await post('unenroll')
+    })
+
+  const handleSaveLimits = () =>
+    run(() =>
+      post('limits', {
+        per_payment_cap_usd: Number(perPayment ?? status?.perPaymentCapUsd),
+        daily_cap_usd: Number(daily ?? status?.dailyCapUsd),
+      }),
+    )
+
+  const handleAddApprover = () =>
+    run(async () => {
+      await post('approvers', { handle: newApprover })
+      setNewApprover('')
+    })
+
+  if (!ready || (authenticated && isLoading)) {
+    return (
+      <div className="flex items-center justify-center min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
+        <Loader2 className="h-7 w-7 animate-spin text-white/30" />
+      </div>
+    )
+  }
+
+  if (!authenticated) {
+    return (
+      <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
+        <div className="mx-auto max-w-xl px-4 py-16 text-center space-y-5">
+          <h1 className="text-3xl font-semibold text-slate-100">Pay people on X</h1>
+          <p className="text-lg text-slate-300">Sign in to let @looftapay pay from your wallet, with limits you control.</p>
+          <GradientActionButton onClick={() => login()}>Sign in</GradientActionButton>
+        </div>
+      </div>
+    )
+  }
+
+  const card = 'rounded-2xl border border-white/[0.08] bg-white/[0.03] px-6 py-6 space-y-4'
+  const input =
+    'w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-4 py-3 text-lg text-white placeholder:text-white/30 focus:outline-none focus:border-orange-400'
+
+  return (
+    <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
+    <div className="mx-auto max-w-2xl px-4 py-10 space-y-6">
+      <div className="space-y-2">
+        <h1 className="text-3xl font-semibold text-white">Pay people on X</h1>
+        <p className="text-lg text-slate-300 leading-relaxed">
+          Let @looftapay pay from your wallet when you or your team ask it to, within limits you set.
+          Reply to any post with <span className="text-white">@looftapay pay $5</span> and the author gets paid.
+          Recipients without a Loofta account get a claim link.
+        </p>
+      </div>
+
+      <div className={card}>
+        {status?.twitterHandle ? (
+          <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] px-4 py-3">
+            <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+            <p className="text-lg text-white/70">Linked as @{status.twitterHandle}</p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-3">
+            <AlertCircle className="h-5 w-5 text-amber-400 shrink-0" />
+            <p className="text-lg text-amber-300">Link your X account in Loofta before enabling</p>
+          </div>
+        )}
+
+        <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${status?.enrolled ? 'border-emerald-500/20 bg-emerald-500/10' : 'border-amber-500/20 bg-amber-500/10'}`}>
+          <ShieldCheck className={`h-5 w-5 shrink-0 ${status?.enrolled ? 'text-emerald-400' : 'text-amber-400'}`} />
+          <span className={`flex-1 text-lg font-medium ${status?.enrolled ? 'text-emerald-300' : 'text-amber-300'}`}>
+            {status?.enrolled ? 'Pay on X is on' : 'Pay on X is off'}
+          </span>
+        </div>
+
+        {status?.enrolled ? (
+          <GradientActionButton onClick={handleDisable} loading={working} loadingText="Turning off…">
+            Turn off
+          </GradientActionButton>
+        ) : status?.canEnable ? (
+          <GradientActionButton onClick={handleEnable} loading={working} loadingText="Setting up…" disabled={!status?.twitterHandle}>
+            Give Loofta access to fund
+          </GradientActionButton>
+        ) : (
+          <p className="text-lg text-slate-300">
+            This is invite-only for now. Email{' '}
+            <a href="mailto:hello@loofta.xyz" className="underline underline-offset-2 text-white/70 hover:text-white">hello@loofta.xyz</a>{' '}
+            to get access.
+          </p>
+        )}
+      </div>
+
+      {status?.enrolled && (
+        <>
+          <div className={card}>
+            <h2 className="text-xl font-semibold text-white">Spending limits</h2>
+            <p className="text-lg text-slate-300">
+              Hard limits checked on every payment, no matter who asks. The daily limit covers the last 24 hours.
+            </p>
+            <label className="block space-y-1.5">
+              <span className="text-lg text-white/70">Max per payment (USD, up to {status.maxPerPaymentCapUsd})</span>
+              <input className={input} inputMode="decimal" value={perPayment ?? String(status.perPaymentCapUsd)} onChange={(e) => setPerPayment(e.target.value)} />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-lg text-white/70">Max per day (USD)</span>
+              <input className={input} inputMode="decimal" value={daily ?? String(status.dailyCapUsd)} onChange={(e) => setDaily(e.target.value)} />
+            </label>
+            <GradientActionButton onClick={handleSaveLimits} loading={working} loadingText="Saving…">
+              Save limits
+            </GradientActionButton>
+          </div>
+
+          <div className={card}>
+            <div className="flex items-center gap-2.5">
+              <Users className="h-5 w-5 text-white/60" />
+              <h2 className="text-xl font-semibold text-white">Team approvers</h2>
+            </div>
+            <p className="text-lg text-slate-300">
+              X accounts that can tell @looftapay to pay from this wallet, for example your community manager.
+              Their payments are public and credit your account, and they follow the limits above.
+            </p>
+            {status.approvers.length > 0 && (
+              <ul className="space-y-2">
+                {status.approvers.map((h) => (
+                  <li key={h} className="flex items-center justify-between rounded-xl bg-white/[0.04] border border-white/[0.08] px-4 py-3">
+                    <span className="text-lg text-white">@{h}</span>
+                    <button
+                      type="button"
+                      aria-label={`Remove @${h}`}
+                      disabled={working}
+                      onClick={() => run(() => post('approvers/remove', { handle: h }))}
+                      className="text-white/50 hover:text-white disabled:opacity-50"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex gap-3">
+              <input className={input} placeholder="@handle" value={newApprover} onChange={(e) => setNewApprover(e.target.value)} />
+              <button
+                type="button"
+                onClick={handleAddApprover}
+                disabled={working || !newApprover.trim()}
+                className="shrink-0 rounded-xl border border-white/[0.15] px-5 text-lg text-white hover:bg-white/[0.06] disabled:opacity-50"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-2.5 rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-3">
+          <AlertCircle className="h-5 w-5 text-red-400 shrink-0" />
+          <p className="text-lg text-red-300">{error}</p>
+        </div>
+      )}
+    </div>
+    </div>
+  )
+}

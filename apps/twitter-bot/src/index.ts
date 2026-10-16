@@ -4,7 +4,7 @@ import { resolve } from 'path'
 config({ path: resolve(__dirname, '..', '.env.local') })
 
 import { TwitterApi, type TweetV2 } from 'twitter-api-v2'
-import { parseTweet, parseTicketGift } from './parser'
+import { parseTweet, parseTicketGift, parseReplyPay } from './parser'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 function required(name: string): string {
@@ -22,7 +22,7 @@ const LOOFTA_API_URL       = required('LOOFTA_API_URL')       // e.g. https://ap
 // static TWITTER_BOT_SECRET/BotGuard so this bot has its own revocable, rate-limited identity
 // instead of one secret shared by anything that ever needed bot-like auth.
 const LOOFTA_INTEGRATOR_API_KEY = required('LOOFTA_INTEGRATOR_API_KEY')
-const APP_URL              = process.env.APP_URL ?? 'https://pay.loofta.xyz'
+const APP_URL              = process.env.APP_URL ?? 'https://pay.loofta.com'
 const BOT_HANDLE           = (process.env.TWITTER_BOT_HANDLE ?? 'looftapay').toLowerCase()
 const POLL_INTERVAL_MS     = parseInt(process.env.POLL_INTERVAL_MS ?? '180000', 10) // 3 min default
 
@@ -47,7 +47,7 @@ async function createPaymentRequest(params: {
   amount_usd: number
   tweet_id: string
   tweet_url: string
-}): Promise<{ short_id: string; link: string; already_exists?: boolean; funded?: boolean; status?: string } | null> {
+}): Promise<{ short_id: string; link: string; already_exists?: boolean; funded?: boolean; status?: string; paid_by_handle?: string } | null> {
   try {
     const res = await fetch(`${LOOFTA_API_URL}/twitter-payments`, {
       method: 'POST',
@@ -155,7 +155,7 @@ async function savePollCursor(tweetId: string): Promise<void> {
 }
 
 // ─── Process a single mention tweet ──────────────────────────────────────────
-async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void> {
+async function processTweet(tweet: TweetV2, authorHandle: string, parentHandle: string | null): Promise<void> {
   const tweetUrl = `https://x.com/${authorHandle}/status/${tweet.id}`
 
   const ticketGift = parseTicketGift(tweet.text, authorHandle)
@@ -164,7 +164,8 @@ async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void>
     return
   }
 
-  const parsed = parseTweet(tweet.text, authorHandle)
+  // Explicit "pay $5 to @alice" first; else "pay $5" as a reply pays the parent tweet's author.
+  const parsed = parseTweet(tweet.text, authorHandle) ?? parseReplyPay(tweet.text, authorHandle, parentHandle)
   if (!parsed) {
     console.log(`[bot] skipped tweet ${tweet.id} — no payment or ticket-gift pattern matched`)
     return
@@ -198,7 +199,9 @@ async function processTweet(tweet: TweetV2, authorHandle: string): Promise<void>
       : `$${parsed.amountUsd.toFixed(2)}`
 
   const link = `${APP_URL}/tw/${payment.short_id}`
-  const replyText = payment.funded
+  const replyText = payment.funded && payment.paid_by_handle
+    ? composeTeamReply(payment.paid_by_handle, parsed.senderHandle, parsed.recipientHandle, amountDisplay, link)
+    : payment.funded
     ? composeFundedReply(parsed.senderHandle, parsed.recipientHandle, amountDisplay, link)
     : composeReply(parsed.senderHandle, parsed.recipientHandle, amountDisplay, link)
 
@@ -262,6 +265,17 @@ function pick<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)]
 }
 
+// Unique per-reply tag (UTC timestamp + short random id), appended to every reply so no two
+// posts from the account are ever textually identical — same approach TipAnsem's bot uses.
+// Looks like a receipt reference, so it reads as useful rather than as noise.
+function uniqueRef(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const stamp = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
+  const id = Math.random().toString(36).slice(2, 7)
+  return `\nref ${id} · ${stamp} UTC`
+}
+
 // Neutral, declarative — no CTA verbs ("confirm", "click", "complete", "want to", "ready to").
 // This path only fires when auto-pay didn't execute (unenrolled sender, or a transient auto-pay
 // failure), so it can't claim the money already moved — but it also shouldn't read as a directive
@@ -279,7 +293,7 @@ function composeReply(sender: string, recipient: string, amount: string, link: s
     (l: string) => ` ${l}`,
     (l: string) => `\ndetails: ${l}`,
   ]
-  return pick(openers)(sender, recipient, amount) + pick(closers)(link)
+  return pick(openers)(sender, recipient, amount) + pick(closers)(link) + uniqueRef()
 }
 
 // Used when the sender is enrolled in auto-pay and the payment already went through — past
@@ -299,7 +313,24 @@ function composeFundedReply(sender: string, recipient: string, amount: string, l
     (l: string) => `\n${l}`,
     (l: string) => ` ${l}`,
   ]
-  return pick(openers)(sender, recipient, amount) + pick(closers)(link)
+  return pick(openers)(sender, recipient, amount) + pick(closers)(link) + uniqueRef()
+}
+
+// A team approver paid from the business's wallet: the public receipt names the business, the
+// recipient and the approver, so every reward doubles as a visible, attributable payout.
+function composeTeamReply(owner: string, approver: string, recipient: string, amount: string, link: string): string {
+  const openers = [
+    (o: string, a: string, r: string, m: string) => `@${o} paid @${r} ${m}, approved by @${a}.`,
+    (o: string, a: string, r: string, m: string) => `${m} from @${o} to @${r}, signed off by @${a}.`,
+    (o: string, a: string, r: string, m: string) => `@${r}, @${o} just sent you ${m} (approved by @${a}).`,
+    (o: string, a: string, r: string, m: string) => `done. @${a} approved ${m} from @${o} to @${r}.`,
+  ]
+  const closers = [
+    (l: string) => `\nclaim it here: ${l}`,
+    (l: string) => `\n${l}`,
+    (l: string) => ` ${l}`,
+  ]
+  return pick(openers)(owner, approver, recipient, amount) + pick(closers)(link) + uniqueRef()
 }
 
 // Ticket gifts are always instant-or-claim, never "come back and confirm" — so this only ever
@@ -318,7 +349,7 @@ function composeTicketGiftReply(sender: string, recipient: string, numTickets: n
       (l: string) => `\n${l}`,
       (l: string) => ` ${l}`,
     ]
-    return pick(openers)(sender, recipient, numTickets) + pick(closers)(link)
+    return pick(openers)(sender, recipient, numTickets) + pick(closers)(link) + uniqueRef()
   }
   const openers = [
     (s: string, r: string, n: number) => `@${s} gifted @${r} ${n} Megapot ${ticketWord}.`,
@@ -329,7 +360,7 @@ function composeTicketGiftReply(sender: string, recipient: string, numTickets: n
     (l: string) => `\nclaim them here: ${l}`,
     (l: string) => `\n${l}`,
   ]
-  return pick(openers)(sender, recipient, numTickets) + pick(closers)(link)
+  return pick(openers)(sender, recipient, numTickets) + pick(closers)(link) + uniqueRef()
 }
 
 // ─── Poll mentions ────────────────────────────────────────────────────────────
@@ -343,8 +374,8 @@ async function pollMentions(botUserId: string): Promise<void> {
     const timeline = await twitter.v2.userMentionTimeline(botUserId, {
       ...(lastSeenTweetId ? { since_id: lastSeenTweetId } : {}),
       max_results: 100,
-      'tweet.fields': ['author_id', 'text', 'referenced_tweets', 'created_at'],
-      expansions: ['author_id'],
+      'tweet.fields': ['author_id', 'text', 'referenced_tweets', 'created_at', 'in_reply_to_user_id'],
+      expansions: ['author_id', 'in_reply_to_user_id'],
       'user.fields': ['username'],
     })
 
@@ -387,7 +418,11 @@ async function pollMentions(botUserId: string): Promise<void> {
         continue
       }
 
-      await processTweet(tweet, authorHandle)
+      // Parent author, for reply-to-pay. Only meaningful when this mention is a reply.
+      const isReply = tweet.referenced_tweets?.some((r) => r.type === 'replied_to')
+      const parentHandle = isReply && tweet.in_reply_to_user_id ? users[tweet.in_reply_to_user_id] ?? null : null
+
+      await processTweet(tweet, authorHandle, parentHandle)
 
       // Jittered pacing between replies — a mention backlog processed back-to-back would post
       // several replies in the same few seconds, a burst signal independent of any rate limit.
