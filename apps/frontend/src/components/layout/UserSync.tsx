@@ -110,6 +110,24 @@ export function UserSync({ suppressOnboarding = false }: { suppressOnboarding?: 
           }
           // Onboarding (add-email, then welcome flow) shows after login; no separate username modal
         }
+
+        // Telegram signups/logins only link the handle on the Privy user. Payments sent to a
+        // Telegram handle (history, unclaimed nudge) are found through social_accounts, so save it
+        // there (server re-verifies it against Privy). Once per user + handle per session.
+        const tgAccount = ((privyUser?.linkedAccounts || []) as Array<{ type?: string; username?: string | null }>).find(
+          (a) => a.type === "telegram" || a.type === "telegram_oauth",
+        );
+        const tgHandle = tgAccount?.username?.replace(/^@/, "").toLowerCase().trim();
+        const tgKey = tgHandle ? `loofta_tg_synced_${userId}_${tgHandle}` : null;
+        if (tgHandle && tgKey && sessionStorage.getItem(tgKey) !== "1") {
+          const token = await getAccessToken();
+          const res = await fetch("/api/users/save-social-handle", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ platform: "telegram", handle: tgHandle }),
+          });
+          if (res.ok || res.status === 409) sessionStorage.setItem(tgKey, "1");
+        }
       } catch (error) {
         console.error("[UserSync] Error checking user:", error);
       }
