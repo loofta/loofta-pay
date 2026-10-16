@@ -275,7 +275,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
   const { refreshUser } = useUser();
   const queryClient = useQueryClient();
-  const { linkTwitter, linkEmail, linkDiscord, linkGithub } = useLinkAccount({
+  const { linkTwitter, linkEmail, linkDiscord, linkGithub, linkTelegram } = useLinkAccount({
     onSuccess: async (arg: any) => {
       const linkedType = arg?.linkedAccount?.type;
       const didLinkTwitter =
@@ -286,6 +286,26 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
         linkingMethod === "twitter";
       const didLinkDiscord = DISCORD_TYPES.includes(linkedType) || linkingMethod === "discord";
       const didLinkGithub = GITHUB_TYPES.includes(linkedType) || linkingMethod === "github";
+      const didLinkTelegram = linkedType === "telegram" || linkedType === "telegram_oauth";
+      if (didLinkTelegram) {
+        const handle = String(arg?.linkedAccount?.username ?? "").replace(/^@/, "").toLowerCase().trim();
+        if (handle) {
+          try {
+            const token = await getAccessToken().catch(() => null);
+            const res = await fetch("/api/users/save-social-handle", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+              body: JSON.stringify({ platform: "telegram", handle }),
+            });
+            if (res.ok) setTelegramHandle(handle);
+            else {
+              const data = await res.json().catch(() => null);
+              toast({ variant: "destructive", title: "Could not connect Telegram", description: data?.error || "Try again." });
+            }
+          } catch { /* non-critical */ }
+        }
+        setConnectingTelegram(false);
+      }
       if (didLinkTwitter) {
         setTwitterLinkedOptimistic(true);
         // Persist Twitter handle to DB so the username toggle works
@@ -564,49 +584,8 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleConnectTelegram = async () => {
-    setConnectingTelegram(true);
-    try {
-      const token = await getAccessToken().catch(() => null);
-      const res = await fetch("/api/users/telegram-relay-token", {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new Error("Could not start Telegram connect.");
-      const data = await res.json();
-      const relayBase = process.env.NEXT_PUBLIC_TELEGRAM_RELAY_URL || "https://loofta.com";
-      // Deliberately no "noopener"/"noreferrer" — same as c/[id]/page.tsx's connectTelegram —
-      // passing them makes window.open return null, which breaks the popup.closed polling below
-      // (the only "recheck now" signal, since the relay's own tab can't navigate this settings tab).
-      const popup = window.open(`${relayBase}/telegram-relay?token=${encodeURIComponent(data.token)}`, "_blank");
-      if (!popup) {
-        // Popup blocked — best-effort fallback: recheck once this tab regains focus.
-        const onFocus = () => {
-          window.removeEventListener("focus", onFocus);
-          void fetchTelegramHandle();
-        };
-        window.addEventListener("focus", onFocus);
-        setConnectingTelegram(false);
-        return;
-      }
-      let attempts = 0;
-      const maxAttempts = 600; // ~10 minutes at 1s polling
-      const poll = setInterval(() => {
-        attempts += 1;
-        if (popup.closed) {
-          clearInterval(poll);
-          setConnectingTelegram(false);
-          void fetchTelegramHandle();
-        } else if (attempts >= maxAttempts) {
-          clearInterval(poll);
-          setConnectingTelegram(false);
-        }
-      }, 1000);
-    } catch (e: unknown) {
-      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
-      toast({ variant: "destructive", title: "Could not connect Telegram", description: msg || "Try again." });
-      setConnectingTelegram(false);
-    }
+  const handleConnectTelegram = () => {
+    linkTelegram();
   };
 
   // Mainnet is open to everyone — always grant access on login.

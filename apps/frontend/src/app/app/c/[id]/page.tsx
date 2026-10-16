@@ -136,7 +136,7 @@ function ConnectExternalWalletButton({ onAddress }: { onAddress: (address: strin
 }
 const EVM_CHAIN_SET = new Set(["eth", "ethereum", "arb", "arbitrum", "base", "op", "optimism", "bsc", "avax", "avalanche", "polygon", "matic", "fantom", "ftm", "gnosis", "linea", "scroll", "zksync", "zk", "blast", "pol"]);
 function isEvmChainId(chain?: string): boolean { return EVM_CHAIN_SET.has(String(chain || "").toLowerCase()); }
-import { usePrivy, useWallets as useEvmWallets, useLinkAccount, useLoginWithOAuth } from "@privy-io/react-auth";
+import { usePrivy, useWallets as useEvmWallets, useLinkAccount } from "@privy-io/react-auth";
 import {
   useWallets as useSolanaWallets,
   useSignTransaction as usePrivySolanaSignTransaction,
@@ -1479,49 +1479,8 @@ export function ClaimPayView({
     if (platform === "twitter") return hasTwitterLinked;
     return false;
   };
-  const connectTelegram = async () => {
-    try {
-      const token = await getAccessToken().catch(() => null);
-      const res = await fetch("/api/users/telegram-relay-token", {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new Error("Could not start Telegram connect.");
-      const data = await res.json();
-      const relayBase = process.env.NEXT_PUBLIC_TELEGRAM_RELAY_URL || "https://loofta.com";
-      // Deliberately no "noopener"/"noreferrer" here — we need a live handle back on our own
-      // relay tab (same-org, trusted) to detect completion. Was previously a one-shot `focus`
-      // listener that unregistered itself on the first focus event; a spurious app-switch/tab-peek
-      // almost always fires focus before the relay flow (which requires leaving this tab) actually
-      // finishes, permanently losing the "recheck now" signal for the rest of the page's life.
-      const popup = window.open(`${relayBase}/telegram-relay?token=${encodeURIComponent(data.token)}`, "_blank");
-      if (!popup) {
-        // Popup blocked — fall back to the old best-effort focus recheck so there's still some signal.
-        const onFocus = () => {
-          window.removeEventListener("focus", onFocus);
-          void refreshIdentityInPlace();
-        };
-        window.addEventListener("focus", onFocus);
-        return;
-      }
-      // Poll for the relay tab closing — it closes itself once linking succeeds (see
-      // telegram-relay/page.tsx), or the user closes it manually after giving up. Either way,
-      // that's the deterministic "they're done, go recheck" signal, unlike guessing from focus.
-      let attempts = 0;
-      const maxAttempts = 600; // ~10 minutes at 1s polling
-      const poll = setInterval(() => {
-        attempts += 1;
-        if (popup.closed) {
-          clearInterval(poll);
-          void refreshIdentityInPlace();
-        } else if (attempts >= maxAttempts) {
-          clearInterval(poll);
-        }
-      }, 1000);
-    } catch {
-      toast({ variant: "destructive", title: "Couldn't connect Telegram", description: "Try again." });
-    }
-  };
+  const connectTelegram = () => linkTelegram();
+
 
   // Pre-auth "is this payment for me?" Telegram check — a visitor with no Loofta account yet
   // can't be signed in via connectTelegram (it needs an existing access token to know which
@@ -1554,12 +1513,7 @@ export function ClaimPayView({
   };
   // Signing in with Telegram links it on the Privy user directly, so persist the verified handle
   // (server re-checks it against Privy) and re-run the recipient check.
-  // Telegram via Privy's OAuth (initOAuth) instead of the modal's Telegram button, which throws
-  // "Telegram Auth configuration is not loaded" for this app. Returns to this same claim page.
-  const { initOAuth } = useLoginWithOAuth({
-    onError: (e) => toast({ variant: "destructive", title: "Couldn't sign in with Telegram", description: String(e) }),
-  });
-  const startTelegramLogin = () => { void initOAuth({ provider: "telegram" }); };
+  const startTelegramLogin = () => login({ loginMethods: ["telegram"], disableSignup: false });
   const savedLoginTelegramRef = useRef(false);
   useEffect(() => {
     const tgAccount = ((user?.linkedAccounts || []) as Array<{ type?: string; username?: string | null }>).find(
@@ -1697,7 +1651,7 @@ export function ClaimPayView({
     }
   };
 
-  const { linkTwitter, linkEmail, linkDiscord, linkGithub } = useLinkAccount({
+  const { linkTwitter, linkEmail, linkDiscord, linkGithub, linkTelegram } = useLinkAccount({
     onSuccess: ({ linkedAccount }) => {
       void (async () => {
         // Set this immediately, before the DB save below — Privy's client-side linkedAccounts
@@ -1717,6 +1671,7 @@ export function ClaimPayView({
         const isTwitter = acct?.type === "twitter_oauth" || acct?.type === "twitter" || acct?.type === "x";
         const isDiscord = acct?.type === "discord_oauth" || acct?.type === "discord";
         const isGithub = acct?.type === "github_oauth" || acct?.type === "github";
+        const isTelegram = acct?.type === "telegram" || acct?.type === "telegram_oauth";
         const handle = (acct?.username || acct?.name || "").replace(/^@/, "").trim();
         if (isTwitter && handle) {
           try {
@@ -1726,6 +1681,18 @@ export function ClaimPayView({
               headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
               body: JSON.stringify({ twitterUsername: handle }),
             });
+          } catch {
+            // best-effort — the recheck loop below still falls back to the live Privy check
+          }
+        } else if (isTelegram && handle) {
+          try {
+            const token = await getAccessToken().catch(() => null);
+            await fetch("/api/users/save-social-handle", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+              body: JSON.stringify({ platform: "telegram", handle }),
+            });
+            setTelegramHandle(handle.toLowerCase());
           } catch {
             // best-effort — the recheck loop below still falls back to the live Privy check
           }
