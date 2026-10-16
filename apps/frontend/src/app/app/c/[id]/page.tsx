@@ -47,7 +47,7 @@ import { GuestCheckoutPay } from "@/components/app/GuestCheckoutPay";
 import { UNREGISTERED_ACCOUNT_FEE_USD } from "@/lib/unregisteredAccountFee";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock, ShoppingBag, CreditCard, Globe, Users, Info } from "lucide-react";
+import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock, ShoppingBag, CreditCard, Globe, Users } from "lucide-react";
 import { ShareLinkMenu } from "@/components/ShareLinkMenu";
 import { QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -136,7 +136,7 @@ function ConnectExternalWalletButton({ onAddress }: { onAddress: (address: strin
 }
 const EVM_CHAIN_SET = new Set(["eth", "ethereum", "arb", "arbitrum", "base", "op", "optimism", "bsc", "avax", "avalanche", "polygon", "matic", "fantom", "ftm", "gnosis", "linea", "scroll", "zksync", "zk", "blast", "pol"]);
 function isEvmChainId(chain?: string): boolean { return EVM_CHAIN_SET.has(String(chain || "").toLowerCase()); }
-import { usePrivy, useWallets as useEvmWallets, useLinkAccount } from "@privy-io/react-auth";
+import { usePrivy, useWallets as useEvmWallets, useLinkAccount, useLoginWithOAuth } from "@privy-io/react-auth";
 import {
   useWallets as useSolanaWallets,
   useSignTransaction as usePrivySolanaSignTransaction,
@@ -776,7 +776,7 @@ function ClaimPageSenderShareView({
                   />
                 </div>
               </div>
-              <p className="text-sm text-slate-400">Each update costs $0.10, paid to Loofta from this payment.</p>
+              <p className="text-sm text-slate-400">Changing the recipient costs $0.50, paid to Loofta from this payment.</p>
               {editError && <p className="text-sm text-red-400">{editError}</p>}
               <div className="flex gap-2">
                 <button
@@ -785,7 +785,7 @@ function ClaimPageSenderShareView({
                   disabled={editSubmitting || !editValue.trim()}
                   className="flex-1 h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
                 >
-                  {editSubmitting ? "Saving…" : "Save · $0.10"}
+                  {editSubmitting ? "Saving…" : "Save"}
                 </button>
                 <button
                   type="button"
@@ -799,25 +799,14 @@ function ClaimPageSenderShareView({
             </div>
           ) : (
             <>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="flex items-start gap-3">
-                  <Info className="h-5 w-5 shrink-0 mt-0.5 text-slate-400" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-base font-medium text-slate-100">Sent to the wrong recipient?</p>
-                    <p className="mt-1 text-sm text-slate-400">
-                      You can change who this is for. Each update costs $0.10, paid to Loofta from this payment.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={startEditRecipient}
-                      disabled={!!claimLocked}
-                      className="mt-3 h-9 px-4 rounded-xl text-base font-medium text-slate-200 border border-white/10 hover:bg-white/[0.06] hover:text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      Update recipient · $0.10
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={startEditRecipient}
+                disabled={!!claimLocked}
+                className="mx-auto block text-sm text-slate-500 hover:text-slate-300 underline-offset-2 hover:underline transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Wrong recipient?
+              </button>
               {claimLocked && (
                 <p className="mt-1 text-sm text-slate-500">
                   The recipient is currently claiming this payment — try again in a minute.
@@ -1565,14 +1554,12 @@ export function ClaimPayView({
   };
   // Signing in with Telegram links it on the Privy user directly, so persist the verified handle
   // (server re-checks it against Privy) and re-run the recipient check.
-  const startTelegramLogin = () => {
-    try {
-      sessionStorage.setItem("tg_login_return", `${window.location.pathname}${window.location.search}`);
-    } catch {
-      // storage unavailable, the sign-in page falls back to home
-    }
-    window.location.href = "/telegram-login";
-  };
+  // Telegram signs in like any other social method, via Privy's generic OAuth flow (the modal's
+  // dedicated Telegram button isn't usable for this app). Returns to this same page afterwards.
+  const { initOAuth } = useLoginWithOAuth({
+    onError: (e) => toast({ variant: "destructive", title: "Couldn't sign in with Telegram", description: String(e) }),
+  });
+  const startTelegramLogin = () => { void initOAuth({ provider: "telegram" }); };
   const savedLoginTelegramRef = useRef(false);
   useEffect(() => {
     const tgAccount = ((user?.linkedAccounts || []) as Array<{ type?: string; username?: string | null }>).find(
