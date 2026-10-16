@@ -1554,16 +1554,7 @@ export function ClaimPayView({
   };
   // Signing in with Telegram links it on the Privy user directly, so persist the verified handle
   // (server re-checks it against Privy) and re-run the recipient check.
-  // Telegram signs in via Privy's generic OAuth, which only returns to an exact registered URL, so it
-  // starts from the fixed /telegram-login page and comes back here afterwards.
-  const startTelegramLogin = () => {
-    try {
-      sessionStorage.setItem("tg_login_return", `${window.location.pathname}${window.location.search}`);
-    } catch {
-      // storage unavailable, the sign-in page falls back to home
-    }
-    window.location.href = "/telegram-login";
-  };
+  const startTelegramLogin = () => login({ loginMethods: ["telegram"], disableSignup: false });
   const savedLoginTelegramRef = useRef(false);
   useEffect(() => {
     const tgAccount = ((user?.linkedAccounts || []) as Array<{ type?: string; username?: string | null }>).find(
