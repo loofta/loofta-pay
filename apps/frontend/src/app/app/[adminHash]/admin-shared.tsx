@@ -143,6 +143,8 @@ export type AnalyticsData = {
   tx_deposits_count: number;
   volume_withdrawals_devnet: number;
   volume_withdrawals_mainnet: number;
+  volume_cashouts: number;
+  tx_cashouts_count: number;
   tx_withdrawals_devnet_count: number;
   tx_withdrawals_mainnet_count: number;
   volume_total_all: number;

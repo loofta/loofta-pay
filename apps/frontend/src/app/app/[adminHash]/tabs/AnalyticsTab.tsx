@@ -236,6 +236,13 @@ export function AnalyticsTab({
                   </div>
                   <div className="text-sm text-gray-500 mt-0.5">USDC · {analyticsData.tx_withdrawals_mainnet_count.toLocaleString()} rows</div>
                 </div>
+                <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                  <div className="text-[10px] text-pink-400 uppercase tracking-wider mb-1 font-medium">Cash Out Volume</div>
+                  <div className="text-2xl font-bold text-white tabular-nums">
+                    {analyticsData.volume_cashouts.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-sm text-gray-500 mt-0.5">USDC · {analyticsData.tx_cashouts_count.toLocaleString()} completed</div>
+                </div>
               </div>
             </div>
 

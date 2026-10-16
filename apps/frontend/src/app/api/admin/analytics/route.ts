@@ -28,6 +28,8 @@ export async function GET(request: NextRequest) {
     withdrawalsDevnetRes,
     withdrawalsMainnetRes,
     appUsersRes,
+    offrampRes,
+    pajOfframpRes,
   ] = await Promise.all([
     supabase
       .from("payments")
@@ -111,6 +113,19 @@ export async function GET(request: NextRequest) {
     supabase
       .from("app_users")
       .select("privy_user_id, username, email")
+      .limit(100000),
+    // Cash outs (Venmo/Cash App/Revolut/etc via Peer) — only completed ones moved real money out.
+    supabase
+      .from("offramp_requests")
+      .select("amount_usdc")
+      .eq("status", "COMPLETE")
+      .limit(100000),
+    // Naira cash outs via PAJ Cash.
+    supabase
+      .from("paj_cash_orders")
+      .select("amount_usdc")
+      .eq("direction", "OFF_RAMP")
+      .eq("status", "COMPLETE")
       .limit(100000),
   ]);
 
@@ -255,6 +270,9 @@ export async function GET(request: NextRequest) {
   const volume_withdrawals_devnet = sumCompletedWithdrawals(withdrawalsDevnetRes.data);
   const volume_withdrawals_mainnet = sumCompletedWithdrawals(withdrawalsMainnetRes.data);
 
+  const volume_cashouts = sum(offrampRes.data, "amount_usdc") + sum(pajOfframpRes.data, "amount_usdc");
+  const tx_cashouts_count = (offrampRes.data?.length ?? 0) + (pajOfframpRes.data?.length ?? 0);
+
   const payload = {
     volume_devnet,
     volume_mainnet,
@@ -287,11 +305,13 @@ export async function GET(request: NextRequest) {
     tx_deposits_count: depositsRes.data?.length ?? 0,
     volume_withdrawals_devnet,
     volume_withdrawals_mainnet,
+    volume_cashouts,
+    tx_cashouts_count,
     tx_withdrawals_devnet_count: withdrawalsDevnetRes.data?.length ?? 0,
     tx_withdrawals_mainnet_count: withdrawalsMainnetRes.data?.length ?? 0,
     // Overall platform volume including lottery, deposits, and withdrawals alongside payments —
     // matches the ask to fold lottery into the headline volume number.
-    volume_total_all: volume_mainnet + volume_lottery + volume_deposits + volume_withdrawals_mainnet,
+    volume_total_all: volume_mainnet + volume_lottery + volume_deposits + volume_withdrawals_mainnet + volume_cashouts,
   };
 
   return NextResponse.json(payload, {
