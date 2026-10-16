@@ -1661,8 +1661,18 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                               </SettingsIconTile>
                             }
                             title={hasTelegramLinked && telegramDisplayHandle ? `@${telegramDisplayHandle}` : "Telegram"}
-                            subtitle={hasTelegramLinked && telegramDisplayHandle ? "Get paid by handle" : "Not connected"}
-                            action={hasTelegramLinked && telegramDisplayHandle ? (
+                            subtitle={
+                              hasTelegramLinked && telegramDisplayHandle
+                                ? privyTelegram ? "Sign-in · Get paid by handle" : "Get paid by handle · Reconnect to sign in with Telegram"
+                                : "Not connected"
+                            }
+                            action={hasTelegramLinked && telegramDisplayHandle && !privyTelegram ? (
+                              // Saved from the old loofta.com relay but not linked in Privy: reconnect
+                              // once so Telegram login lands on this account.
+                              <button type="button" onClick={handleConnectTelegram} disabled={connectingTelegram} className={settingsPillClass}>
+                                {connectingTelegram ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Reconnect"}
+                              </button>
+                            ) : hasTelegramLinked && telegramDisplayHandle ? (
                               <button type="button" onClick={handleUnlinkTelegram} disabled={unlinkingTelegram} className={settingsRemoveClass}>
                                 {unlinkingTelegram ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Remove"}
                               </button>
