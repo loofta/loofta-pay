@@ -444,7 +444,7 @@ class HomePage extends React.Component {
         <img src="/images/home-v2/magicblock-wordmark.svg" alt="MagicBlock" style={{ height: "24px", display: "block", opacity: "0.85" }} />
         <img src="/images/home-v2/blink-wordmark-white.png" alt="Blink" style={{ height: "24px", display: "block", opacity: "0.85" }} />
         <img src="/images/home-v2/megapot-wordmark.svg" alt="Megapot" style={{ height: "24px", display: "block", opacity: "0.85" }} />
-        <img src="/images/home-v2/superteam-ireland-wordmark.svg" alt="Superteam Ireland" style={{ height: "28px", display: "block", opacity: "0.85" }} />
+        <img src="/images/home-v2/superteam-th-wordmark.png" alt="Superteam Thailand" style={{ height: "36px", display: "block", opacity: "0.85" }} />
       </div>
       <section style={{ padding: "clamp(100px,12vw,180px) clamp(20px,6vw,140px)" }}>
         <p style={{ margin: "0", maxWidth: "1500px", fontFamily: SORA, fontWeight: "700", fontSize: "clamp(34px,4.6vw,76px)", lineHeight: "1.18", letterSpacing: "-0.045em", color: "#F2EFE8", textWrap: "pretty" }}>

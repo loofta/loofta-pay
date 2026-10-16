@@ -1058,7 +1058,7 @@ function ProofStrip() {
     { src: "/images/home-v2/magicblock-wordmark.svg", alt: "MagicBlock", width: 144 },
     { src: "/images/home-v2/blink-wordmark-white.png", alt: "Blink", width: 88 },
     { src: "/images/home-v2/megapot-wordmark.svg", alt: "Megapot", width: 137 },
-    { src: "/images/home-v2/superteam-ireland-wordmark.svg", alt: "Superteam Ireland", width: 110 },
+    { src: "/images/home-v2/superteam-th-wordmark.png", alt: "Superteam Thailand", width: 120 },
   ];
 
   return (
