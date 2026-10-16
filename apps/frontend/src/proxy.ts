@@ -17,20 +17,15 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // loofta.com exists solely to host the Telegram Connect widget — Privy/Telegram's login
-  // widget doesn't work on .xyz domains, so this relay domain hands the handle back to
-  // pay.loofta.xyz via a one-time token (see telegram-relay/page.tsx + api/telegram-relay).
-  // Now that this domain's DNS actually resolves to this deployment (previously it pointed
-  // elsewhere), every other route on it — the marketing site, the app, etc. — is technically
-  // reachable here too. That's not intentional: redirect anything but the relay path itself back
-  // to the canonical app domain instead of silently duplicate-serving it on loofta.com.
+  // loofta.com is the primary marketing domain. It is also where the Telegram Connect widget
+  // runs: Privy/Telegram's login widget doesn't work on .xyz domains, so /telegram-relay is
+  // served from loofta.com and hands the handle back to pay.loofta.com via a one-time token
+  // (see telegram-relay/page.tsx + api/telegram-relay). Every other loofta.com path falls
+  // through to the normal marketing handling below.
   const isTelegramRelayDomain = hostname === "loofta.com" || hostname === "www.loofta.com";
-  if (isTelegramRelayDomain) {
-    if (pathname === "/telegram-relay") {
-      const rewritten = new URL(`/telegram-relay${request.nextUrl.search}`, request.url);
-      return NextResponse.rewrite(rewritten);
-    }
-    return NextResponse.redirect(new URL(`${pathname}${request.nextUrl.search}`, "https://pay.loofta.xyz"));
+  if (isTelegramRelayDomain && pathname === "/telegram-relay") {
+    const rewritten = new URL(`/telegram-relay${request.nextUrl.search}`, request.url);
+    return NextResponse.rewrite(rewritten);
   }
 
   const isAppDomain =
@@ -59,7 +54,7 @@ export function proxy(request: NextRequest) {
   // marketing domain that 404s, so bounce it to the real app route instead. Localhost already
   // resolves this correctly via the generic app-path rewrite below.
   if (!isAppDomain && !isLocalhost && (pathname === "/megapot" || pathname.startsWith("/megapot/"))) {
-    return NextResponse.redirect(new URL(`${pathname}${request.nextUrl.search}`, "https://pay.loofta.xyz"));
+    return NextResponse.redirect(new URL(`${pathname}${request.nextUrl.search}`, "https://pay.loofta.com"));
   }
 
   // On localhost, / clashes with the app shell — push it to /home instead

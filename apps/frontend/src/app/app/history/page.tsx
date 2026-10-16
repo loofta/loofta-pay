@@ -395,7 +395,7 @@ export default function HistoryPage() {
               <p className="text-slate-400 mb-4">{t('signInPrompt')}</p>
               <button
                 type="button"
-                onClick={() => privyLogin({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })}
+                onClick={() => privyLogin({ loginMethods: ["email", "twitter", "discord", "github", "telegram"], disableSignup: false })}
                 className="rounded-xl px-4 py-2 font-medium bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
               >
                 {t('signIn')}
@@ -554,39 +554,43 @@ export default function HistoryPage() {
                     </button>
                   );
                 })()}
+                {allPayments.length > 0 && (
+                  <>
+                <div className="mb-3 flex gap-2">
+                  {([["all", "All"], ["done", "Completed"], ["open", "Open"]] as const).map(([key, label]) => (
+                    <button key={key} type="button" onClick={() => setStatusFilter(key)}
+                      className={`rounded-full border px-3.5 py-1.5 text-sm font-semibold ${statusFilter === key ? "border-[#FF7A2A]/60 bg-white/10 text-white" : "border-white/10 text-slate-400"}`}>
+                      {label}
+                    </button>
+                  ))}
+                  {deletableIds.length > 0 && (
+                    <button type="button" onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+                      className="ml-auto rounded-full border border-white/10 px-3.5 py-1.5 text-sm font-semibold text-slate-300">
+                      {selectMode ? "Cancel" : "Select"}
+                    </button>
+                  )}
+                </div>
+                {selectMode && (
+                  <div className="sticky top-2 z-10 mb-3 flex items-center gap-2 rounded-2xl border border-white/10 bg-[#17171D]/95 p-2 backdrop-blur">
+                    <button type="button" onClick={() => setSelected(selected.size === deletableIds.length ? new Set() : new Set(deletableIds))}
+                      className="rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold text-white">
+                      {selected.size === deletableIds.length ? "Clear" : `Select all open (${deletableIds.length})`}
+                    </button>
+                    <button type="button" disabled={selected.size === 0 || deleting}
+                      onClick={() => { if (confirmDelete) void deleteSelected(); else setConfirmDelete(true); }}
+                      className="ml-auto rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">
+                      {deleting ? "Deleting…" : confirmDelete ? `Tap again to delete ${selected.size}` : `Delete${selected.size ? ` (${selected.size})` : ""}`}
+                    </button>
+                  </div>
+                )}
+                  </>
+                )}
                 {allPayments.length === 0 ? (
                   <p className="text-slate-500 text-base">{t('noPayments')}</p>
                 ) : filteredPayments.length === 0 ? (
-                  <p className="text-slate-500 text-base">{t('noPaymentsMatch')}</p>
+                  <p className="text-slate-500 text-base">{statusFilter === "open" && !searchQuery.trim() ? "No open payments." : t('noPaymentsMatch')}</p>
                 ) : (
                   <>
-                  <div className="mb-3 flex gap-2">
-                    {([["all", "All"], ["done", "Completed"], ["open", "Open"]] as const).map(([key, label]) => (
-                      <button key={key} type="button" onClick={() => setStatusFilter(key)}
-                        className={`rounded-full border px-3.5 py-1.5 text-sm font-semibold ${statusFilter === key ? "border-[#FF7A2A]/60 bg-white/10 text-white" : "border-white/10 text-slate-400"}`}>
-                        {label}
-                      </button>
-                    ))}
-                    {deletableIds.length > 0 && (
-                      <button type="button" onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
-                        className="ml-auto rounded-full border border-white/10 px-3.5 py-1.5 text-sm font-semibold text-slate-300">
-                        {selectMode ? "Cancel" : "Select"}
-                      </button>
-                    )}
-                  </div>
-                  {selectMode && (
-                    <div className="sticky top-2 z-10 mb-3 flex items-center gap-2 rounded-2xl border border-white/10 bg-[#17171D]/95 p-2 backdrop-blur">
-                      <button type="button" onClick={() => setSelected(selected.size === deletableIds.length ? new Set() : new Set(deletableIds))}
-                        className="rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold text-white">
-                        {selected.size === deletableIds.length ? "Clear" : `Select all open (${deletableIds.length})`}
-                      </button>
-                      <button type="button" disabled={selected.size === 0 || deleting}
-                        onClick={() => { if (confirmDelete) void deleteSelected(); else setConfirmDelete(true); }}
-                        className="ml-auto rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">
-                        {deleting ? "Deleting…" : confirmDelete ? `Tap again to delete ${selected.size}` : `Delete${selected.size ? ` (${selected.size})` : ""}`}
-                      </button>
-                    </div>
-                  )}
                   <ul className="space-y-2">
                     {filteredPayments.map(({ claim, type }) => {
                       const amount = parseFloat(claim.amount || "0");

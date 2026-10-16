@@ -182,7 +182,7 @@ export default function RewardsMegapotPage() {
               </p>
               <button
                 type="button"
-                onClick={() => privyLogin({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })}
+                onClick={() => privyLogin({ loginMethods: ["email", "twitter", "discord", "github", "telegram"], disableSignup: false })}
                 className="rounded-xl px-5 py-2.5 font-semibold text-black hover:opacity-90 transition-opacity"
                 style={{ backgroundColor: ACCENT }}
               >

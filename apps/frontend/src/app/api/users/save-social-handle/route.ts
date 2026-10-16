@@ -5,12 +5,9 @@ import { redisDel } from "@/lib/redis-cache";
 
 function userPrefsKey(uid: string) { return `user:prefs:${uid}`; }
 
-// Telegram can't be SET here — it isn't a Privy-linked OAuth account (see telegram-relay/page.tsx),
-// so there's nothing for getVerifiedLiveHandle to check. Telegram handles may only be written via
-// the HMAC-verified /api/telegram-relay/* endpoints, which prove ownership against Telegram's own
-// signed widget payload instead. Clearing is different: it only ever touches the caller's own row
-// (already scoped by user_id below), so there's no identity to re-verify — telegram is allowed there.
-const WRITABLE_PLATFORMS = ["discord", "github", "instagram"] as const;
+// Telegram is Privy-linked now (signing in with Telegram), so getVerifiedLiveHandle can verify it
+// like the other platforms. The HMAC-verified /api/telegram-relay/* endpoints still attach it too.
+const WRITABLE_PLATFORMS = ["discord", "github", "instagram", "telegram"] as const;
 const DELETABLE_PLATFORMS = ["discord", "github", "instagram", "telegram"] as const;
 type Platform = (typeof DELETABLE_PLATFORMS)[number];
 
