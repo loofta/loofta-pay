@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const KINDS = new Set(["email", "username", "twitter", "social"]);
-const SOCIAL = new Set(["discord", "github"]);
+const SOCIAL = new Set(["discord", "github", "telegram"]);
 
 /**
  * Same-origin proxy for GET /users/pay-target.

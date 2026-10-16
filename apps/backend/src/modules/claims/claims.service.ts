@@ -448,8 +448,6 @@ export class ClaimsService {
   }
 
   /** Sentinel prefix for claims created by email when recipient has no account yet; they claim by signing in with that email */
-  /** Flat fee (USDC) per sender recipient correction, taken from the payment at sweep. */
-  static readonly RECIPIENT_EDIT_FEE_USDC = 0.1;
   static readonly PENDING_EMAIL_PREFIX = 'PENDING_EMAIL:';
   /** Sentinel prefix for claims when username doesn't exist yet; they claim by signing up with that username */
   static readonly PENDING_USERNAME_PREFIX = 'PENDING_USERNAME:';
@@ -1823,16 +1821,6 @@ export class ClaimsService {
     // recipient_address unchanged, lock not (newly) held — make the update itself a no-op if
     // that happens; .select() + a length check turns that no-op into a real error instead of
     // silently reporting success while nothing actually changed.
-    // Each correction accrues a flat fee, taken from the payment into the Loofta fee wallet at sweep.
-    // Skipped silently when the recipient_edit_fee_usdc migration isn't deployed yet.
-    const { data: feeRow, error: feeColErr } = await this.supabaseService.payments
-      .select('recipient_edit_fee_usdc')
-      .eq('id', opts.claimId)
-      .maybeSingle();
-    if (!feeColErr && feeRow) {
-      extraFields.recipient_edit_fee_usdc =
-        Math.round((Number((feeRow as { recipient_edit_fee_usdc?: number | string | null }).recipient_edit_fee_usdc || 0) + ClaimsService.RECIPIENT_EDIT_FEE_USDC) * 1e6) / 1e6;
-    }
     const lockCutoff = this.recipientClaimLockStaleCutoffIso();
     let { data: updatedRows, error } = await this.supabaseService.payments
       .update({ recipient_address: recipientAddress, ...extraFields })
@@ -2549,18 +2537,13 @@ export class ClaimsService {
         // doubles as the protocol-fee collector (same wallet as platformFeeAccount elsewhere) —
         // its USDC ATA is expected to already exist (see magicblock-private-transfer.ts) but we
         // create it if missing anyway, cheap insurance against a broadcast-time failure.
-        const editFeeUnits = BigInt(
-          Math.round(Number((claim as { recipient_edit_fee_usdc?: number | string | null }).recipient_edit_fee_usdc || 0) * 1_000_000),
-        );
         const looftaFeeUnits = isSplPrize
           ? BigInt(0)
           : feePayerKp && opts?.looftaFeeUsdc
             ? BigInt(Math.round(opts.looftaFeeUsdc * 1_000_000))
             : feePayerKp && isCrossChain && balance > expectedUnits
               ? balance - expectedUnits
-              : feePayerKp && editFeeUnits > BigInt(0) && balance > editFeeUnits
-                ? editFeeUnits
-                : BigInt(0);
+              : BigInt(0);
         const netUnits = balance - looftaFeeUnits;
         if (looftaFeeUnits > BigInt(0) && feePayerKp) {
           const feeAta = await getAssociatedTokenAddress(claimMint, feePayerKp.publicKey, false, tokenProgram);
