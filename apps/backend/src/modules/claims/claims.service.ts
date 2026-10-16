@@ -1823,16 +1823,8 @@ export class ClaimsService {
     // recipient_address unchanged, lock not (newly) held — make the update itself a no-op if
     // that happens; .select() + a length check turns that no-op into a real error instead of
     // silently reporting success while nothing actually changed.
-    // Each correction accrues a flat fee, taken from the payment into the Loofta fee wallet at sweep.
-    // Skipped silently when the recipient_edit_fee_usdc migration isn't deployed yet.
-    const { data: feeRow, error: feeColErr } = await this.supabaseService.payments
-      .select('recipient_edit_fee_usdc')
-      .eq('id', opts.claimId)
-      .maybeSingle();
-    if (!feeColErr && feeRow) {
-      extraFields.recipient_edit_fee_usdc =
-        Math.round((Number((feeRow as { recipient_edit_fee_usdc?: number | string | null }).recipient_edit_fee_usdc || 0) + ClaimsService.RECIPIENT_EDIT_FEE_USDC) * 1e6) / 1e6;
-    }
+    // No fee accrues here: the claim belongs to the recipient, so nothing is ever taken out of it for a
+    // sender's correction. (A sender-paid fee would have to be charged to the sender's own balance.)
     const lockCutoff = this.recipientClaimLockStaleCutoffIso();
     let { data: updatedRows, error } = await this.supabaseService.payments
       .update({ recipient_address: recipientAddress, ...extraFields })
@@ -2549,9 +2541,9 @@ export class ClaimsService {
         // doubles as the protocol-fee collector (same wallet as platformFeeAccount elsewhere) —
         // its USDC ATA is expected to already exist (see magicblock-private-transfer.ts) but we
         // create it if missing anyway, cheap insurance against a broadcast-time failure.
-        const editFeeUnits = BigInt(
-          Math.round(Number((claim as { recipient_edit_fee_usdc?: number | string | null }).recipient_edit_fee_usdc || 0) * 1_000_000),
-        );
+        // Never skim the recipient's claim for a sender-side recipient edit (older rows may still carry
+        // recipient_edit_fee_usdc; it is intentionally ignored).
+        const editFeeUnits = BigInt(0);
         const looftaFeeUnits = isSplPrize
           ? BigInt(0)
           : feePayerKp && opts?.looftaFeeUsdc

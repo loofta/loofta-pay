@@ -272,7 +272,7 @@ export function MinimalHeader() {
       } else if (detail?.tab === "withdraw") {
         setShowBalanceModal(false);
         setDepositMode("withdraw");
-        setDepositScreen(m === "crypto" || m === "near" ? "address" : "home");
+        setDepositScreen(m === "crypto" || m === "near" ? "address" : m === "cash" ? "card" : "home");
         setShowDeposit(true);
       } else {
         setShowBalanceModal(false);

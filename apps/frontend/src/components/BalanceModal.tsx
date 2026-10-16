@@ -2664,7 +2664,6 @@ export function BalanceModal({
       if (!baseWallet) throw new Error("Could not load your Base wallet. Please try again.");
       const baseWalletAddr = baseWallet.address;
       setPeerBaseWalletAddress(baseWalletAddr);
-      setPeerAmountUSDC(depositUsdc);
       console.log(PEER_LOG, "using Base EOA wallet (sponsored)", baseWalletAddr);
 
       const token = await getAccessToken();
@@ -2681,11 +2680,13 @@ export function BalanceModal({
           amountUSDC: depositUsdc,
           solanaAddress: payerAddress,
           baseWalletAddress: baseWalletAddr,
+          // Cashing out what you hold: the bridge fee must come out of the amount, not on top of it.
+          ...(peerPay?.intent === "receive" ? { coverBridgeFee: true } : {}),
         }),
       });
       const prepText = await prepRes.text();
       let prep: {
-        id?: string; shortId?: string; bridge?: string; amountInUsdc?: number;
+        id?: string; shortId?: string; bridge?: string; amountInUsdc?: number; grossUsdc?: number;
         depositAddress?: string; memo?: string; message?: string;
       } = {};
       try { prep = prepText ? JSON.parse(prepText) : {}; } catch { /* empty or HTML error page */ }
@@ -2700,6 +2701,8 @@ export function BalanceModal({
       }
       setPeerOfframpId(prep.id);
       setPeerShareId(prep.shortId ?? null);
+      // The server may have shrunk the gross so the bridge fee fits inside what the user holds.
+      setPeerAmountUSDC(prep.grossUsdc && prep.grossUsdc > 0 ? prep.grossUsdc : depositUsdc);
 
       if (prep.amountInUsdc && spendableBalance + 0.000001 < prep.amountInUsdc) {
         throw new Error(`This send needs $${prep.amountInUsdc.toFixed(2)} from your balance, including the bridge fee.`);

@@ -71,6 +71,17 @@ export async function POST(request: NextRequest) {
       .neq("user_id", privyUserId)
       .maybeSingle();
     if (claimedByOther) {
+      // A deleted or unlinked Privy account leaves its row behind. Only block if the other
+      // account still really has this handle; otherwise free it for the real owner.
+      const otherLive = await getVerifiedLiveHandle(claimedByOther.user_id, platform as typeof WRITABLE_PLATFORMS[number]);
+      if (otherLive !== cleanHandle) {
+        await supabase.from("social_accounts").delete()
+          .eq("platform", platform).eq("handle", cleanHandle).eq("user_id", claimedByOther.user_id);
+      }
+    }
+    const stillClaimed = claimedByOther ? (await supabase.from("social_accounts").select("user_id")
+      .eq("platform", platform).eq("handle", cleanHandle).neq("user_id", privyUserId).maybeSingle()).data : null;
+    if (stillClaimed) {
       return NextResponse.json({ error: `This ${platform} account is already connected to another Loofta account.` }, { status: 409 });
     }
 

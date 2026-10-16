@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, Min, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsBoolean, IsOptional, Min, MaxLength } from 'class-validator';
 
 export class CreateOfframpDto {
   @IsString()
@@ -19,6 +19,14 @@ export class CreateOfframpDto {
   @IsNumber()
   @Min(1)
   amountUSDC: number;
+
+  /**
+   * Treat amountUSDC as the most the user can spend, bridge fee included (a claimed payment cashing
+   * out: they only hold what they were sent). The gross is shrunk until the whole bridge fits.
+   */
+  @IsOptional()
+  @IsBoolean()
+  coverBridgeFee?: boolean;
 
   @IsString()
   @IsNotEmpty()

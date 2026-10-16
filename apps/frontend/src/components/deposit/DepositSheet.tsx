@@ -84,7 +84,7 @@ export type DepositLaunch = {
   receiveExactly?: boolean;
 };
 
-export type CashOutRequest = { platformId: string; identifier: string; amountUsd: number };
+export type CashOutRequest = { platformId: string; identifier: string; amountUsd: number; intent?: "pay" | "receive" };
 
 /** MagicBlock exactOut private withdrawals debit amount + fees ON TOP of the typed amount.
  *  Reserve this headroom on Max / validation so Max never builds an on-chain overdraft.
@@ -1946,7 +1946,7 @@ function BankWithdraw({
       setChance(false);
       if (ok) toast({ title: "You're in for today's draw", description: "Good luck, your chance to win $200K is in." });
     }
-    onCashOut?.({ platformId: platform.id, identifier: identifier.trim(), amountUsd: amountNum });
+    onCashOut?.({ platformId: platform.id, identifier: identifier.trim(), amountUsd: amountNum, intent: "receive" });
   };
 
   const openCoinbase = async () => {

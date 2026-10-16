@@ -137,18 +137,31 @@ export class OfframpService {
     if (!isOwnWallet) {
       throw new ForbiddenException('baseWalletAddress must be one of your own linked wallets');
     }
-    const grossUnits = BigInt(Math.round(dto.amountUSDC * 1_000_000));
-    const looftaFeeUnits = cashoutLooftaFeeAtomic(grossUnits);
-    // Loofta's share is taken on Solana, so the bridge only has to land the rest on Base.
-    const outputUnits = grossUnits - looftaFeeUnits;
+    const requestedUnits = BigInt(Math.round(dto.amountUSDC * 1_000_000));
+    let grossUnits = requestedUnits;
+    let looftaFeeUnits = cashoutLooftaFeeAtomic(grossUnits);
     let relayQuote;
     try {
-      relayQuote = await this.relay.getSolToBaseQuote({
-        fromAddress: dto.solanaAddress,
-        toAddress: dto.baseWalletAddress,
-        outputUnits,
-      });
+      // Loofta's share is taken on Solana, so the bridge only has to land the rest on Base.
+      for (let attempt = 0; ; attempt++) {
+        relayQuote = await this.relay.getSolToBaseQuote({
+          fromAddress: dto.solanaAddress,
+          toAddress: dto.baseWalletAddress,
+          outputUnits: grossUnits - looftaFeeUnits,
+        });
+        const totalIn = relayQuote.requiredInputUnits + looftaFeeUnits;
+        if (!dto.coverBridgeFee || totalIn <= requestedUnits) break;
+        if (attempt >= 3) throw new BadRequestException('This amount is too small to cash out after the bridge fee.');
+        // Relay charges its fee on top of the output, so shrink the gross by the overshoot (+ a hair).
+        const next = grossUnits - (totalIn - requestedUnits) - 1_000n;
+        if (next <= cashoutFeeAtomic(grossUnits)) {
+          throw new BadRequestException('This amount is too small to cash out after the bridge fee.');
+        }
+        grossUnits = next;
+        looftaFeeUnits = cashoutLooftaFeeAtomic(grossUnits);
+      }
     } catch (err: any) {
+      if (err instanceof BadRequestException) throw err;
       this.logger.error('Relay quote failed:', err?.message ?? err);
       throw new BadRequestException(err?.message || 'Failed to quote the bridge to Base');
     }
@@ -170,7 +183,7 @@ export class OfframpService {
       platform:                     dto.platform,
       platform_identifier:          dto.identifier,
       currency:                     dto.currency.toUpperCase(),
-      amount_usdc:                  dto.amountUSDC,
+      amount_usdc:                  Number(grossUnits) / 1_000_000,
       user_solana_address:          dto.solanaAddress,
       near_intents_deposit_address: null,
       near_intents_memo:            JSON.stringify(stored),
@@ -205,6 +218,7 @@ export class OfframpService {
       bridge:         'relay' as const,
       requestId:      relayQuote.requestId,
       amountInUsdc:   Number(relayQuote.requiredInputUnits + looftaFeeUnits) / 1_000_000,
+      grossUsdc:      Number(grossUnits) / 1_000_000,
       baseWallet:     dto.baseWalletAddress,
     };
   }

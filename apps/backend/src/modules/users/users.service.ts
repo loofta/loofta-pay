@@ -112,6 +112,18 @@ export class UsersService {
     return data.handle ?? null;
   }
 
+  private privyAccountsHaveHandle(accounts: any[], platform: SocialPlatform, cleanHandle: string): boolean {
+    const types = platform === 'discord' ? ['discord', 'discord_oauth']
+      : platform === 'github' ? ['github', 'github_oauth']
+      : ['telegram', 'telegram_oauth'];
+    return (accounts || []).some((account) => {
+      if (!types.includes((account.type || '').toLowerCase())) return false;
+      const h = (account.username || account.name || account.address || '')
+        .toString().replace(/^@/, '').replace(/#\d+$/, '').toLowerCase().trim();
+      return h === cleanHandle;
+    });
+  }
+
   /**
    * Reverse lookup: which Loofta user (if any) has this platform+handle connected. Used when
    * creating a claim addressed to a social handle, to pay a registered user's wallet directly
@@ -135,6 +147,17 @@ export class UsersService {
       .maybeSingle();
 
     if (socialError || !social?.user_id) {
+      throw new NotFoundException('User not found');
+    }
+
+    // social_accounts can outlive the Privy account (user deleted in the dashboard, or the handle
+    // unlinked without us hearing about it). Paying a stale row sends money to a wallet that no
+    // longer belongs to this handle, so confirm against Privy right now. Fail closed: if Privy
+    // can't confirm, the sender gets a pending claim instead, which is always recoverable.
+    const live = await this.getPrivyUser(social.user_id, { skipCache: true });
+    const stillLinked = !!live && this.privyAccountsHaveHandle(live.linked_accounts, platform, cleanHandle);
+    if (!stillLinked) {
+      this.logger.warn(`Ignoring stale social_accounts row ${platform}:${cleanHandle} -> ${social.user_id}`);
       throw new NotFoundException('User not found');
     }
 

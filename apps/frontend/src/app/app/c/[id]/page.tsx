@@ -361,7 +361,10 @@ function ClaimPayLayout({
   incognito?: boolean;
   children: React.ReactNode;
 }) {
-  const backHref = from === "history" ? "/history" : "/";
+  const inApp = usePathname()?.startsWith("/app") ?? false;
+  const backHref = from === "history"
+    ? (inApp ? "/app/history" : "/history")
+    : (inApp ? "/app/send?restore=1" : "/send?restore=1");
   const backLabel = from === "history" ? "← Back to History" : "← Back to Send";
   // Memoized so the animate/transition objects keep a stable reference across re-renders — this
   // component re-renders often (background polling queries, etc.) and Framer Motion was
@@ -690,66 +693,95 @@ function ClaimPageSenderShareView({
 
   return (
     <div className="py-2 text-center">
-      <p className="text-base text-slate-400">{isCancelled ? "Cancelled" : ready ? "Paid" : "Link ready"}</p>
-      <p className="mt-2 text-5xl font-semibold tracking-tight tabular-nums text-white">${amount.toFixed(2)}</p>
-      {!isCancelled && recipientDisplay && (
-        <div className="mt-5 mx-auto max-w-sm flex items-center gap-3 rounded-2xl bg-white/[0.04] border border-white/10 px-4 py-3 text-left">
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-white">
-            <EditRecipientKindIcon icon={recipientIcon} className="h-6 w-6" />
-          </span>
-          <span className="min-w-0">
-            <span className="block text-sm text-slate-400">{ready ? "Paid to" : "Pay to"} {recipientKindLabel}</span>
-            <span className="block truncate text-lg font-semibold text-white">{recipientDisplay}</span>
-          </span>
-        </div>
-      )}
-      {!isCancelled && (
-        <p className="mt-3 text-base text-slate-300 max-w-sm mx-auto">
-          {ready
-            ? "Send them this link. They claim it on Loofta."
-            : "Share this link. They can claim it once the payment lands."}
+      <div className="space-y-3 py-6 text-center">
+        <span className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/[0.08] text-white">
+          <EditRecipientKindIcon icon={recipientIcon} className="h-8 w-8" />
+        </span>
+        <div className="mb-3 font-sans text-5xl font-semibold tabular-nums text-white sm:text-6xl">${amount.toFixed(2)}</div>
+        {recipientDisplay && (
+          <p className="mb-5 mt-1 text-xl text-slate-400">
+            sent to <span className="font-medium text-slate-200">{recipientDisplay}</span>
+            {recipientType === "social" ? ` on ${recipientKindLabel}` : recipientType === "username" ? " on Loofta" : ""}
+          </p>
+        )}
+        <p className="text-base text-slate-400">
+          {isCancelled
+            ? "This payment was cancelled."
+            : ready
+              ? "Send them this link. They claim it on Loofta."
+              : "Share this link. They can claim it once the payment lands."}
         </p>
-      )}
-      {!isCancelled && (
-        <div className="mt-6 space-y-3 text-left">
-          <div className="flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3">
-            <a
-              href={claimLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex-1 min-w-0 truncate text-base text-slate-300 hover:text-white hover:underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 rounded-sm"
-            >
-              {claimLink.replace(/^https?:\/\//, "")}
-            </a>
-            <button
-              type="button"
-              onClick={handleCopy}
-              aria-label={copied ? "Copied" : "Copy link"}
-              className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
-            >
-              {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
-            </button>
+        {!isCancelled && (
+          <div className="flex gap-2 pt-2">
+            <div className="flex flex-1 gap-2">
+              <Input
+                readOnly
+                value={claimLink}
+                aria-label="Share link"
+                className="flex-1 border-white/20 bg-white/10 font-mono text-sm text-white"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={handleCopy}
+                aria-label={copied ? "Copied" : "Copy link"}
+                className="shrink-0 border-white/20 bg-white/10 text-white hover:bg-white/20"
+              >
+                {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+              </Button>
+            </div>
+            <ShareLinkMenu url={claimLink} title="Payment for you" text={shareText} triggerClassName="px-5 py-2" />
           </div>
-          <ShareLinkMenu
-            url={claimLink}
-            title="Payment for you"
-            text={shareText}
-            triggerClassName="w-full h-11 rounded-2xl bg-transparent border border-white/10 text-slate-200 hover:bg-white/[0.06] shadow-none"
-          />
+        )}
+      </div>
+      <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-4 text-left">
+        <div className="flex items-center justify-between">
+          <span className="text-base text-slate-400">Recipient receives</span>
+          <span className="text-base font-semibold text-white">${amount.toFixed(2)} USDC</span>
         </div>
-      )}
+        {recipientDisplay && (
+          <div className="flex items-center justify-between border-t border-white/10 pt-2">
+            <span className="text-base text-slate-400">Sent to</span>
+            <span className="text-base font-medium text-white">{recipientDisplay}</span>
+          </div>
+        )}
+        <div className="flex items-center justify-between">
+          <span className="text-base text-slate-400">Status</span>
+          <span className="text-base text-slate-200">{isCancelled ? "Cancelled" : ready ? "Paid, waiting to be claimed" : "Waiting for payment"}</span>
+        </div>
+      </div>
       {/* Edit recipient: only while unclaimed (recipientType present) and not mid-claim.
           `userId` here is documented as "logged-in creator's id, only set when true" — the
           caller is responsible for only passing it when the viewer actually is the creator (see
           call sites below). Same inline dark-themed edit-in-place pattern as the lottery gift
-          flow's "Edit recipient" (apps/frontend/src/app/app/megapot/page.tsx) — no modal. */}
+          flow's "Edit recipient", but shown in a modal. */}
       {!isCancelled && recipientType && userId && (
-        <div className="mt-4 max-w-md mx-auto text-left">
-          {editOpen ? (
-            <div className="space-y-2">
+        <div className="mt-4 max-w-md mx-auto text-center">
+          <button
+            type="button"
+            onClick={startEditRecipient}
+            disabled={!!claimLocked}
+            className="mx-auto block text-sm text-slate-500 hover:text-slate-300 underline-offset-2 hover:underline transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Wrong recipient?
+          </button>
+          {claimLocked && (
+            <p className="mt-1 text-sm text-slate-500">
+              The recipient is currently claiming this payment, try again in a minute.
+            </p>
+          )}
+          <Dialog open={editOpen} onOpenChange={(o) => { if (!editSubmitting) setEditOpen(o); }}>
+            <DialogContent className="max-w-md bg-[#141418] border border-white/10 text-left">
+              <DialogHeader>
+                <DialogTitle className="text-xl text-slate-100">Wrong recipient?</DialogTitle>
+                <DialogDescription className="text-base text-slate-400">
+                  No worries. Until they claim it, you can still change the platform and the recipient.
+                </DialogDescription>
+              </DialogHeader>
               <div className="flex gap-2">
                 <Select value={editKind} onValueChange={(v) => setEditKind(v as EditRecipientKind)}>
-                  <SelectTrigger className="h-10 w-[150px] shrink-0 bg-white/[0.03] border-white/10 text-slate-100 text-base">
+                  <SelectTrigger className="h-12 w-[150px] shrink-0 bg-white/[0.03] border-white/10 text-slate-100 text-base">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -771,49 +803,23 @@ function ClaimPageSenderShareView({
                     value={editValue}
                     onChange={(e) => setEditValue(editKind !== "email" ? e.target.value.replace(/^@+/, "") : e.target.value)}
                     placeholder={editKind === "email" ? "name@example.com" : editKind === "username" ? "username" : "handle"}
-                    className="w-full bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 py-2 text-base"
+                    className="w-full h-12 bg-white/[0.03] border border-white/10 text-slate-100 placeholder:text-slate-600 rounded-lg pl-10 pr-3 text-base focus:outline-none focus:border-[#FF7A2A]/60"
                     autoFocus
                   />
                 </div>
               </div>
-              <p className="text-sm text-slate-400">Changing the recipient costs $0.50, paid to Loofta from this payment.</p>
               {editError && <p className="text-sm text-red-400">{editError}</p>}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleSaveRecipient}
-                  disabled={editSubmitting || !editValue.trim()}
-                  className="flex-1 h-9 rounded-xl text-base font-semibold border border-[#FF7A2A]/40 text-[#FF7A2A] hover:bg-[#FF7A2A]/10 transition-all disabled:opacity-40"
-                >
-                  {editSubmitting ? "Saving…" : "Save"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditOpen(false)}
-                  disabled={editSubmitting}
-                  className="flex-1 h-9 rounded-xl text-base font-semibold border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] transition-all disabled:opacity-40"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
               <button
                 type="button"
-                onClick={startEditRecipient}
-                disabled={!!claimLocked}
-                className="mx-auto block text-sm text-slate-500 hover:text-slate-300 underline-offset-2 hover:underline transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={handleSaveRecipient}
+                disabled={editSubmitting || !editValue.trim()}
+                className="w-full h-12 rounded-2xl text-base font-semibold text-white bg-gradient-to-r from-[#FF7A2A] to-[#FF5A1F] hover:brightness-110 transition-all disabled:opacity-40 flex items-center justify-center gap-2"
               >
-                Wrong recipient?
+                {editSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                {editSubmitting ? "Updating…" : "Update recipient"}
               </button>
-              {claimLocked && (
-                <p className="mt-1 text-sm text-slate-500">
-                  The recipient is currently claiming this payment — try again in a minute.
-                </p>
-              )}
-            </>
-          )}
+            </DialogContent>
+          </Dialog>
         </div>
       )}
       {/* Reclaim only on localhost, when not cancelled, creator is logged in, and burner has balance */}
@@ -2762,6 +2768,19 @@ export function ClaimPayView({
     );
   };
 
+  /** Plain claim into the Loofta wallet, then the existing Withdraw sheet opens on the chosen rail. */
+  const claimThenWithdraw = (method: "crypto" | "cash") => {
+    setClaimInitiated(true);
+    claimAsRecipientMutation.mutate(
+      {},
+      {
+        onSuccess: () => {
+          window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab: "withdraw", ...(method === "cash" ? { method } : {}) } }));
+        },
+      },
+    );
+  };
+
   /** Shared claim panel — replaces the old single hardcoded "claim to wallet" button (and the
    *  first-claim-only "claim privately" button) with the full set of choices, for every claim. */
   const renderClaimPanel = (mobile: boolean) => {
@@ -2835,7 +2854,7 @@ export function ClaimPayView({
           <>
             <button
               type="button"
-              onClick={() => setWalletClaimChosen(true)}
+              onClick={() => claimThenWithdraw("crypto")}
               disabled={claimActionDisabled}
               className={cn(
                 "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
@@ -2856,7 +2875,7 @@ export function ClaimPayView({
 
             <button
               type="button"
-              onClick={() => setCashOptionsOpen(true)}
+              onClick={() => claimThenWithdraw("cash")}
               disabled={claimActionDisabled}
               className={cn(
                 "w-full rounded-2xl p-[1.5px] bg-gradient-to-r from-orange-500 via-amber-400 to-red-500 transition-opacity",
@@ -2876,8 +2895,12 @@ export function ClaimPayView({
                   </span>
                   <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-sm font-medium text-amber-300">Easiest</span>
                 </span>
-                <span className="grid grid-cols-4 gap-2">
-                  {PEER_PLATFORMS.map((p) => (
+                <span className="grid grid-cols-3 gap-x-2 gap-y-3">
+                  {[
+                    ...PEER_PLATFORMS.map((p) => ({ id: p.id, name: p.name, logo: p.logo })),
+                    { id: "coinbase", name: "Coinbase", logo: "/images/icons/coinbase-logo.png" },
+                    { id: "paj", name: "PAJ Cash", logo: "/images/icons/paj-cash-logo.svg" },
+                  ].map((p) => (
                     <span key={p.id} className="flex flex-col items-center gap-1.5">
                       <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-white/5 border border-white/10">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2889,28 +2912,6 @@ export function ClaimPayView({
                 </span>
               </span>
             </button>
-            <div className="mt-2.5 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => { setCashOptionsOpen(true); setCashMenuStep("coinbase"); }}
-                disabled={claimActionDisabled}
-                className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-semibold text-slate-200 hover:bg-white/10 disabled:opacity-50"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/images/icons/coinbase-logo.png" alt="" className="h-5 w-5 object-contain" />
-                Coinbase
-              </button>
-              <button
-                type="button"
-                onClick={() => { setCashOptionsOpen(true); setCashMenuStep("paj"); }}
-                disabled={claimActionDisabled}
-                className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-semibold text-slate-200 hover:bg-white/10 disabled:opacity-50"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/images/icons/paj-cash-logo.svg" alt="" className="h-5 w-5 object-contain" />
-                PAJ Cash
-              </button>
-            </div>
           </>
         ) : (
           <div className="space-y-2.5">
@@ -2982,43 +2983,29 @@ export function ClaimPayView({
               <div className="space-y-3">
                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
                   <p className="text-base font-semibold text-slate-100">Cash out to {peerPlatform.name}</p>
-                  <Input
-                    placeholder={peerPlatform.placeholder}
-                    value={peerHandle}
-                    onChange={(e) => setPeerHandle(e.target.value)}
-                    className="bg-white/10 border-white/20 text-white placeholder:text-slate-400"
-                  />
-                  <p className="text-sm text-slate-400">
-                    {peerEtaLoading ? "Checking fill time…" : peerEtaLabel ? `Typical fill time: ${peerEtaLabel}` : "We’ll show the fill time as soon as Peer quotes it."}
+                  <p className="text-base text-slate-500 leading-relaxed">
+                    Claims into your Loofta wallet first, then opens Withdraw so you can cash out from there.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    const handle = peerHandle.trim();
-                    if (!handle) {
-                      toast({ variant: "destructive", title: `Add your ${peerPlatform.name} ${peerPlatform.idLabel}` });
-                      return;
-                    }
-                    const receipt = { method: peerPlatform.id, status: "cashing_out", eta: peerEtaLabel, detail: handle };
-                    const amountUsd = parseFloat(claim?.amount || "0");
-                    setPayoutReceipt(receipt);
                     setClaimInitiated(true);
-                    openPeerReceive(peerPlatform.id, handle, amountUsd, true);
                     claimAsRecipientMutation.mutate(
-                      { payoutMethod: peerPlatform.id, payoutStatus: "cashing_out", payoutEtaLabel: peerEtaLabel, payoutDetail: handle },
+                      {},
                       {
-                        onSuccess: () => { void persistPayout(receipt); },
-                        onError: () => setPayoutReceipt(null),
+                        onSuccess: () => {
+                          window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab: "withdraw" } }));
+                        },
                       },
                     );
                   }}
-                  disabled={claimActionDisabled || !peerHandle.trim()}
+                  disabled={claimActionDisabled}
                   className={cn(
                     "w-full flex items-center justify-center gap-2 rounded-xl font-semibold transition-all",
                     mobile ? "py-4 text-base" : "py-3",
                     "bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white shadow-md hover:opacity-90",
-                    (claimActionDisabled || !peerHandle.trim()) && "opacity-50 cursor-not-allowed",
+                    claimActionDisabled && "opacity-50 cursor-not-allowed",
                   )}
                 >
                   {claimAsRecipientMutation.isPending ? "Claiming…" : `Claim & cash out to ${peerPlatform.name}`}
@@ -5556,6 +5543,8 @@ export function ClaimPayView({
                 </div>
               </div>
             ) : chrome !== "minimal" && (isRecipient || String(status || claim?.status || "").toUpperCase() === "SUCCESS") &&
+              // The sender of someone else's payment gets the "sent" view below, never the receiver card.
+              !(isCreatorView && !isRecipient && claim?.direction !== "from_recipient") &&
               !claim?.recipient_pending_email &&
               !claim?.recipient_pending_username &&
               !claim?.recipient_pending_social &&

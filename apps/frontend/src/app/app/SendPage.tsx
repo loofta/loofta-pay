@@ -69,7 +69,10 @@ const PRIVY_LOGIN_METHODS = ["email", "twitter", "discord", "github", "telegram"
  * the draft is restored on the next mount instead of forcing the sender to retype everything.
  */
 const SEND_DRAFT_KEY = "loofta.send.formDraft";
+/** Copy of the form taken when a payment is created, so Back on /c/[id] can bring the form back (?restore=1). */
+const SEND_BACK_DRAFT_KEY = "loofta.send.backDraft";
 type SendDraft = {
+  isPrivate?: boolean;
   recipient: string;
   amount: string;
   description: string;
@@ -80,7 +83,8 @@ type SendDraft = {
 function readSendDraft(): SendDraft | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = sessionStorage.getItem(SEND_DRAFT_KEY);
+    const restoring = new URLSearchParams(window.location.search).get("restore") === "1";
+    const raw = sessionStorage.getItem(SEND_DRAFT_KEY) ?? (restoring ? sessionStorage.getItem(SEND_BACK_DRAFT_KEY) : null);
     return raw ? (JSON.parse(raw) as SendDraft) : null;
   } catch {
     return null;
@@ -220,16 +224,16 @@ export default function Home() {
     () => readSendDraft()?.socialPlatform ?? "twitter",
   );
   const [cashPlatform, setCashPlatform] = useState<DirectCashPlatformId>("venmo");
-  const [isPrivateMode, setIsPrivateMode] = useState(false);
+  const [isPrivateMode, setIsPrivateMode] = useState(() => readSendDraft()?.isPrivate ?? false);
   const [payTarget, setPayTarget] = useState<PayTarget>({ registered: false, requirePrivatePayments: false });
   const [resolvedQueryKey, setResolvedQueryKey] = useState("");
 
   // Keep the draft in sync so a mid-login page reload (see SEND_DRAFT_KEY above) can restore it.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const draft: SendDraft = { recipient, amount, description, gifUrl, sendMethod, socialPlatform };
+    const draft: SendDraft = { recipient, amount, description, gifUrl, sendMethod, socialPlatform, isPrivate: isPrivateMode };
     sessionStorage.setItem(SEND_DRAFT_KEY, JSON.stringify(draft));
-  }, [recipient, amount, description, gifUrl, sendMethod, socialPlatform]);
+  }, [recipient, amount, description, gifUrl, sendMethod, socialPlatform, isPrivateMode]);
 
   // Homepage "Cash apps" hands off here: /app/send?cash=venmo&to=&amount=
   useEffect(() => {
@@ -533,7 +537,10 @@ export default function Home() {
     }
 
     // Self-send guard — checks every handle this account is reachable by.
-    const myIdentifiers = [username, ownLooUsername, ownTwitterUsername, ownEmail]
+    const linkedSocialHandles = ((user?.linkedAccounts ?? []) as Array<{ type?: string; username?: string | null }>)
+      .filter((a) => ["telegram", "telegram_oauth", "discord", "discord_oauth", "github", "github_oauth", "twitter", "twitter_oauth"].includes((a.type || "").toLowerCase()))
+      .map((a) => a.username);
+    const myIdentifiers = [username, ownLooUsername, ownTwitterUsername, ownEmail, ...linkedSocialHandles]
       .filter((v): v is string => !!v)
       .map((v) => v.replace(/^@/, "").replace(/^loo-/i, "").toLowerCase().trim());
     const candidateRecipient = (lockedRecipient || trimmed).replace(/^@/, "").replace(/^loo-/i, "").toLowerCase().trim();
@@ -626,6 +633,10 @@ export default function Home() {
           ...privacyChoice,
         });
       }
+      try {
+        const keep = sessionStorage.getItem(SEND_DRAFT_KEY);
+        if (keep) sessionStorage.setItem(SEND_BACK_DRAFT_KEY, keep);
+      } catch { /* storage unavailable, Back just opens an empty form */ }
       sessionStorage.removeItem(SEND_DRAFT_KEY);
       const payingPrivate = isPrivateMode || payTarget.requirePrivatePayments;
       router.push(`/c/${result.id}?pay=1${payingPrivate ? `&split=${split}&delayMs=${delayMs}` : ""}`);
