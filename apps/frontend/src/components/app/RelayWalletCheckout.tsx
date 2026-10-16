@@ -124,13 +124,13 @@ function DynamicWalletProviders({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const manifestUrl = typeof window !== "undefined" ? `${window.location.origin}/tonconnect-manifest.json` : "https://pay.loofta.xyz/tonconnect-manifest.json";
+  const manifestUrl = typeof window !== "undefined" ? `${window.location.origin}/tonconnect-manifest.json` : "https://pay.loofta.com/tonconnect-manifest.json";
 
   return (
     <WagmiProvider config={wagmiConfig}>
       <RainbowKitProvider>
         <TonConnectUIProvider manifestUrl={manifestUrl}>
-          <RelayKitProvider options={{ appName: "Loofta", source: "loofta.xyz", chains: data?.chains as RelayChain[] | undefined }}>
+          <RelayKitProvider options={{ appName: "Loofta", source: "loofta.com", chains: data?.chains as RelayChain[] | undefined }}>
             {children}
           </RelayKitProvider>
         </TonConnectUIProvider>

@@ -8,9 +8,9 @@ export function NestFooter({ dark, onToggleDark }: { dark: boolean; onToggleDark
         <span style={{ fontSize: 13, color: "var(--ink3)" }}>© {new Date().getFullYear()} Loofta Nest</span>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 24, fontSize: 13, color: "var(--ink3)" }}>
-        <a href="https://loofta.xyz" style={{ color: "var(--ink3)" }}>loofta.xyz</a>
-        <a href="https://loofta.xyz/terms" style={{ color: "var(--ink3)" }}>Terms</a>
-        <a href="https://loofta.xyz/privacy" style={{ color: "var(--ink3)" }}>Privacy</a>
+        <a href="https://loofta.com" style={{ color: "var(--ink3)" }}>loofta.com</a>
+        <a href="https://loofta.com/terms" style={{ color: "var(--ink3)" }}>Terms</a>
+        <a href="https://loofta.com/privacy" style={{ color: "var(--ink3)" }}>Privacy</a>
         <button
           onClick={onToggleDark}
           aria-label="Toggle dark mode"

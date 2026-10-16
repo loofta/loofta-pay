@@ -37,6 +37,7 @@ import { SolanaWalletConnectProvider } from "@/components/SolanaWalletConnect";
 import { DirectWalletPayPanel } from "@/components/app/DirectWalletPayPanel";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { isValidSolanaAddress } from "@/lib/refundAddresses";
+import { useSolDomain } from "@/hooks/useSolDomain";
 import { DIRECT_CASH_PLATFORMS, type DirectCashPlatformId } from "@/lib/peerPlatforms";
 import { cashoutGrossUsdc } from "@/services/peerCash";
 
@@ -59,7 +60,7 @@ const HOME_TAB_KEY = "loofta.home.tab";
 
 /** Privy login methods used across /app — email + social only. Wallet is not a Privy login
  *  method here (see AuthProvider); external Solana wallets are for DirectWalletPayPanel guest pays. */
-const PRIVY_LOGIN_METHODS = ["email", "twitter", "discord", "github"] as const;
+const PRIVY_LOGIN_METHODS = ["email", "twitter", "discord", "github", "telegram"] as const;
 
 /**
  * Twitter/Discord/GitHub logins triggered from privyLogin() can fall back to a full top-level
@@ -444,7 +445,10 @@ export default function Home() {
   const isCashDest = destKind === "cash";
   const minAmountUsd = isCashDest || payingPrivate ? 1 : 0.01;
   const amountNum = Number(amount);
-  const walletAddress = destKind === "wallet" ? recipient.trim() : "";
+  const walletInput = destKind === "wallet" ? recipient.trim() : "";
+  // A .sol name resolves to its wallet; anything else is used as typed.
+  const walletDomain = useSolDomain(walletInput, apiCluster);
+  const walletAddress = walletDomain.status === "resolved" ? walletDomain.address : walletInput;
   const walletAddressValid = destKind === "wallet" && isValidSolanaAddress(walletAddress);
   // Flat claim fee for an email / social handle that is not a Loofta account yet.
   // A registered user, a Loofta username, and a direct wallet pay skip it.
@@ -1075,14 +1079,14 @@ export default function Home() {
                       <DirectWalletPayPanel
                         amountUsd={amountNum}
                         recipientAddress={walletAddressValid ? walletAddress : null}
-                        recipientName={walletAddress ? `${walletAddress.slice(0, 4)}…${walletAddress.slice(-4)}` : "this wallet"}
+                        recipientName={walletDomain.status === "resolved" ? walletInput : walletAddress ? `${walletAddress.slice(0, 4)}…${walletAddress.slice(-4)}` : "this wallet"}
                         blocker={
                           amountNum < minAmountUsd
                             ? `Enter an amount of at least $${minAmountUsd}`
                             : !walletAddress
                               ? "Enter a wallet address"
                               : !walletAddressValid
-                                ? "Not a valid Solana address"
+                                ? walletDomain.status === "resolving" ? "Looking up name…" : walletDomain.status === "not-found" ? "That .sol name does not resolve" : "Not a valid Solana address"
                                 : null
                         }
                         isPrivate={isPrivateMode}

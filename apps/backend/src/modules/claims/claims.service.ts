@@ -128,7 +128,7 @@ export class ClaimsService {
     this.perProgramId = new PublicKey(perProgramStr);
     this.baseUrl = this.configService.get<string>(
       'NEXT_PUBLIC_BASE_URL',
-      'https://pay.loofta.xyz',
+      'https://pay.loofta.com',
     );
     const burnerOk = !!(this.encryption?.isAvailable() || this.getClaimBurnerDecryptionKey());
     this.logger.log(

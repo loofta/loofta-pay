@@ -92,7 +92,7 @@ export function PrivacySections() {
             <Table rows={[
               ["Privy, Inc.", "Identity management and embedded Solana wallet creation. Privy stores your email or social login credentials and manages your embedded wallet keys. See Privy's Privacy Policy at privy.io."],
               ["Supabase", "Database storage for user profiles, payment history, and app state. Data is stored in a managed PostgreSQL instance."],
-              ["Vercel", "Frontend hosting (pay.loofta.xyz) and privacy-preserving usage analytics. Vercel Analytics does not use cookies or fingerprinting."],
+              ["Vercel", "Frontend hosting (pay.loofta.com) and privacy-preserving usage analytics. Vercel Analytics does not use cookies or fingerprinting."],
               ["Railway", "Backend hosting and server-side processing."],
               ["Helius", "Solana RPC infrastructure. Transaction data is broadcast to the Solana network via Helius."],
               ["Range Protocol", "Wallet address compliance and sanctions screening for withdrawals."],
@@ -261,7 +261,7 @@ export function PrivacySections() {
               <p>131 Continental Dr, Suite 305</p>
               <p>Newark, DE 19713, USA</p>
               <p className="mt-1">Email: <a href="mailto:hello@loofta.xyz" className="text-orange-400 hover:underline">hello@loofta.xyz</a></p>
-              <p className="mt-1">Website: <a href="https://loofta.xyz" className="text-orange-400 hover:underline">loofta.xyz</a></p>
+              <p className="mt-1">Website: <a href="https://loofta.com" className="text-orange-400 hover:underline">loofta.com</a></p>
             </div>
           </Section>
     </>

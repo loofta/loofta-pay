@@ -1,4 +1,4 @@
-// The nest itself (nest.loofta.xyz/app in prod): onboarding, dashboard, tabs. Marketing lives
+// The nest itself (nest.loofta.com/app in prod): onboarding, dashboard, tabs. Marketing lives
 // one level up at /nest-earn.
 import NestApp from "@/components/nest/NestApp";
 

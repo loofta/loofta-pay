@@ -150,6 +150,7 @@ import { getExplorerTxUrl, getExplorerName } from "@/lib/getExplorerTxUrl";
 import { useSolanaPayment } from "@/hooks/useSolanaPayment";
 import { usePerPrivateTransfer, type PerTransferProgress } from "@/hooks/usePerPrivateTransfer";
 import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
+import { PrivateWaitingLoader } from "@/components/PrivateWaitingLoader";
 import { DEFAULT_SPREAD_MS, formatDelayDuration, randomPrivacySplit } from "@/lib/privacyDelay";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { privatePayErrorMessageForUser } from "@/lib/privatePayUserError";
@@ -162,7 +163,6 @@ import {
   privatePaymentFundsAppearCopy,
   privatePaymentWaitingAfterSenderCopy,
   privateFundsLandedAt,
-  waitingForFundsCopy,
 } from "@/lib/privatePaymentCopy";
 import { buildClaimPrivateTransfer } from "@/services/api/claims";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
@@ -627,7 +627,7 @@ function ClaimPageSenderShareView({
   const claimLink =
     typeof window !== "undefined"
       ? `${window.location.origin}/share/${shareId}`
-      : `https://pay.loofta.xyz/share/${shareId}`;
+      : `https://pay.loofta.com/share/${shareId}`;
 
   const handleReclaim = async () => {
     if (!userId) {
@@ -1529,6 +1529,28 @@ export function ClaimPayView({
       }
     }, 1000);
   };
+  // Signing in with Telegram links it on the Privy user directly, so persist the verified handle
+  // (server re-checks it against Privy) and re-run the recipient check.
+  const savedLoginTelegramRef = useRef(false);
+  useEffect(() => {
+    const tgUsername = (user?.telegram as { username?: string | null } | undefined)?.username;
+    if (!authenticated || !tgUsername || savedLoginTelegramRef.current) return;
+    savedLoginTelegramRef.current = true;
+    (async () => {
+      try {
+        const accessToken = await getAccessToken().catch(() => null);
+        await fetch("/api/users/save-social-handle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+          body: JSON.stringify({ platform: "telegram", handle: tgUsername }),
+        });
+        setTelegramHandle(tgUsername.replace(/^@/, "").toLowerCase());
+      } catch {
+        // best-effort
+      }
+      void refreshIdentityInPlace();
+    })();
+  }, [authenticated, user, getAccessToken]);
   const attachVerifiedTelegramRef = useRef(false);
   useEffect(() => {
     if (!authenticated || telegramClaimVerified !== true || attachVerifiedTelegramRef.current) return;
@@ -5422,7 +5444,7 @@ export function ClaimPayView({
             <h3 className="text-xl font-semibold text-white mb-2">Sign in to view details</h3>
             <p className="text-slate-400 text-base mb-6 max-w-xs">
               {pendingSocialPlatformHint === "telegram"
-                ? "This was sent to a Telegram username. Sign in, then connect your Telegram account to check."
+                ? "This was sent to a Telegram username. Sign in with Telegram to check."
                 : pendingSocialPlatformHint
                   ? `This was sent to a ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "social"} username. Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "that account"} to check.`
                   : "This payment may be waiting for you. Sign in to check."}
@@ -5432,17 +5454,14 @@ export function ClaimPayView({
                 if (pendingEmailHint) login({ loginMethods: ["email"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                 else if (pendingSocialPlatformHint === "github") login({ loginMethods: ["github"], disableSignup: false });
-                // Telegram's login widget doesn't work on this (.xyz) domain, so it can't be a
-                // Privy loginMethods target like discord/github above — sign in normally, then
-                // connect Telegram from the account afterwards (connectSocialPlatform below).
-                else if (pendingSocialPlatformHint === "telegram") login({ disableSignup: false });
+                else if (pendingSocialPlatformHint === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
                 else login();
               }}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-semibold text-white hover:opacity-90 transition-opacity"
               style={{ background: "linear-gradient(to right, #FF1301, #EAB308)" }}
             >
               <LogIn className="w-4 h-4" />
-              {pendingSocialPlatformHint && pendingSocialPlatformHint !== "telegram"
+              {pendingSocialPlatformHint
                 ? `Sign in with ${SOCIAL_PLATFORM_LABELS[pendingSocialPlatformHint] ?? "account"}`
                 : "Sign in"}
             </button>
@@ -5570,7 +5589,7 @@ export function ClaimPayView({
                   const shareId = claim?.short_id || claim?.id;
                   const claimLink = typeof window !== "undefined"
                     ? `${window.location.origin}/share/${shareId}`
-                    : `https://pay.loofta.xyz/share/${shareId}`;
+                    : `https://pay.loofta.com/share/${shareId}`;
                   const shareText = `$${parseFloat(claim?.amount || "0").toFixed(2)} on Loofta.`;
                   const copyShareLink = async () => {
                     try {
@@ -5960,12 +5979,7 @@ export function ClaimPayView({
                           <span className="text-green-600 font-medium">{keepClaimCard ? "Claimed — status is on the receipt below." : "Funds ready — you can claim now."}</span>
                         </>
                       ) : (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                          <span className="text-gray-500">
-                            {waitingForFundsCopy(claim?.is_private, landingDelayMs)}
-                          </span>
-                        </>
+                        <PrivateWaitingLoader isPrivate={claim?.is_private} delayMs={landingDelayMs} startedAt={claim?.paid_at ?? claim?.created_at} />
                       )}
                     </div>
                     {/* Extra top space grounds the button group at the bottom of the card instead of
@@ -6024,12 +6038,7 @@ export function ClaimPayView({
                             <span className="text-green-600 font-medium">{keepClaimCard ? "Claimed — status is on the receipt below." : "Funds ready — you can claim now."}</span>
                           </>
                         ) : (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                            <span className="text-gray-500">
-                              {waitingForFundsCopy(claim?.is_private, landingDelayMs)}
-                            </span>
-                          </>
+                          <PrivateWaitingLoader isPrivate={claim?.is_private} delayMs={landingDelayMs} startedAt={claim?.paid_at ?? claim?.created_at} />
                         )}
                       </div>
                       {/* Extra top space grounds the button group at the bottom of the card instead of
@@ -6128,12 +6137,7 @@ export function ClaimPayView({
                           const platform = claim?.recipient_pending_social_platform;
                           if (platform === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                           else if (platform === "github") login({ loginMethods: ["github"], disableSignup: false });
-                          // Telegram's widget doesn't work on this domain — verify ownership via
-                          // the loofta.com relay first, then sign in to redeem it.
-                          else if (platform === "telegram") {
-                            if (telegramClaimVerified === true) login({ disableSignup: false });
-                            else openTelegramClaimVerifyRelay();
-                          }
+                          else if (platform === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
                           else login({ disableSignup: false });
                         }}
                         className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
@@ -6167,12 +6171,7 @@ export function ClaimPayView({
                             <span className="text-green-600 font-medium">{keepClaimCard ? "Claimed — status is on the receipt below." : "Funds ready — you can claim now."}</span>
                           </>
                         ) : (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                            <span className="text-gray-500">
-                              {waitingForFundsCopy(claim?.is_private, landingDelayMs)}
-                            </span>
-                          </>
+                          <PrivateWaitingLoader isPrivate={claim?.is_private} delayMs={landingDelayMs} startedAt={claim?.paid_at ?? claim?.created_at} />
                         )}
                       </div>
                       {/* Extra top space grounds the button group at the bottom of the card instead of
@@ -6215,12 +6214,7 @@ export function ClaimPayView({
                               const platform = claim?.recipient_pending_social_platform;
                               if (platform === "discord") login({ loginMethods: ["discord"], disableSignup: false });
                               else if (platform === "github") login({ loginMethods: ["github"], disableSignup: false });
-                              // Telegram's widget doesn't work on this domain — verify ownership
-                              // via the loofta.com relay first, then sign in to redeem it.
-                              else if (platform === "telegram") {
-                                if (telegramClaimVerified === true) login({ disableSignup: false });
-                                else openTelegramClaimVerifyRelay();
-                              }
+                              else if (platform === "telegram") login({ loginMethods: ["telegram"], disableSignup: false });
                               else login({ disableSignup: false });
                             }}
                             className="inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 font-semibold transition-all min-w-[220px] bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
@@ -6325,12 +6319,7 @@ export function ClaimPayView({
                       <span className="text-green-600 font-medium">{keepClaimCard ? "Claimed — status is on the receipt below." : "Funds ready — you can claim now."}</span>
                     </>
                   ) : (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-                      <span className="text-gray-500">
-                        {waitingForFundsCopy(claim?.is_private, landingDelayMs)}
-                      </span>
-                    </>
+                    <PrivateWaitingLoader isPrivate={claim?.is_private} delayMs={landingDelayMs} startedAt={claim?.paid_at ?? claim?.created_at} />
                   )}
                 </div>
                 {/* Extra top space grounds the button group at the bottom of the card instead of
@@ -6368,7 +6357,7 @@ export function ClaimPayView({
                   const shareId = (claim as any)?.short_id || claim?.id;
                   const claimLink = typeof window !== "undefined"
                     ? `${window.location.origin}/share/${shareId}`
-                    : `https://pay.loofta.xyz/share/${shareId}`;
+                    : `https://pay.loofta.com/share/${shareId}`;
                   const handleCopyLink = async () => {
                     try {
                       await navigator.clipboard.writeText(claimLink);

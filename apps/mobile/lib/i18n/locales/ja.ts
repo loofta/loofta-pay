@@ -92,7 +92,7 @@ const ja: Translations = {
   claimGiftClaimedHint: (n: number) => `Megapotチケット${n}枚が届きます — 数分後に履歴タブを確認してください。`,
   claimGiftTitle: 'ギフトを受け取る',
   claimGiftHint: '誰かから送られたギフトリンクまたはコードを貼り付けてください。',
-  claimGiftPlaceholder: 'pay.loofta.xyz/gift/… またはコード',
+  claimGiftPlaceholder: 'pay.loofta.com/gift/… またはコード',
   claimGiftLookUp: '確認する',
   claimGiftCardTitle: (n: number) => `Megapotチケット${n}枚`,
   claimGiftFrom: (senderUsername: string | null) => `${senderUsername ? `@${senderUsername}` : '誰か'}から`,

@@ -91,7 +91,7 @@ export default function AboutLayout() {
                 <P>
                   Loofta Inc. is a Delaware corporation. We build payment tools for people who get paid in many places at
                   once: creators, freelancers, web3 contributors and distributed teams. Our product, Loofta Pay, lives at
-                  pay.loofta.xyz.
+                  pay.loofta.com.
                 </P>
                 <P>
                   We are a small team and we ship fast. Most of what we build comes from watching real people lose time and
@@ -145,7 +145,7 @@ export default function AboutLayout() {
                   <p>A Delaware corporation</p>
                   <p>131 Continental Dr, Suite 305</p>
                   <p>Newark, DE 19713, USA</p>
-                  <p className="mt-2">Website: <a href="https://loofta.xyz" className={link}>loofta.xyz</a></p>
+                  <p className="mt-2">Website: <a href="https://loofta.com" className={link}>loofta.com</a></p>
                 </div>
               </Section>
               <Section id="about-support" title="Support">

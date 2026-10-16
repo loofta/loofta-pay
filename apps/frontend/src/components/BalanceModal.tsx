@@ -5803,7 +5803,7 @@ export function BalanceModal({
                 {peerPay && peerPay.intent !== "receive" && peerShareId && (() => {
                   const shareUrl = typeof window !== "undefined"
                     ? `${window.location.origin}/share/${peerShareId}`
-                    : `https://pay.loofta.xyz/share/${peerShareId}`;
+                    : `https://pay.loofta.com/share/${peerShareId}`;
                   return (
                   <div className="space-y-2">
                     <div className={`flex items-center gap-2 rounded-xl border px-4 py-3 ${dark ? "border-white/10 bg-white/[0.03]" : "border-gray-200 bg-white"}`}>

@@ -7,9 +7,9 @@ import { Footer } from "@/components/layout/Footer";
 import { GUIDE_NAV } from "./guideNav";
 
 // Must be absolute, not a relative "/app" — this page is served from the marketing domain
-// (loofta.xyz), which has no session/cookies of its own. A relative link would load a logged-out
-// app shell there instead of taking the user to pay.loofta.xyz, where they're actually signed in.
-const APP_URL = `${process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.xyz"}/app`;
+// (loofta.com), which has no session/cookies of its own. A relative link would load a logged-out
+// app shell there instead of taking the user to pay.loofta.com, where they're actually signed in.
+const APP_URL = `${process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.com"}/app`;
 
 function Cta({ href, label }: { href: string; label: string }) {
   return (

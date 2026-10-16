@@ -129,7 +129,7 @@ export class PaymentLinksService {
     // (localhost included) instead of always pointing at the configured prod URL. A real
     // server-to-server integration call has no Origin header, so it falls through to the
     // configured NEXT_PUBLIC_BASE_URL as before.
-    const configuredOrigin = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
+    const configuredOrigin = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.com');
     const origin = requestOrigin && /^https?:\/\//.test(requestOrigin) ? requestOrigin : configuredOrigin;
     const checkoutUrl = new URL(`${origin}/checkout/${shortId}`);
     if (dto.return_url) checkoutUrl.searchParams.set('callback', dto.return_url);

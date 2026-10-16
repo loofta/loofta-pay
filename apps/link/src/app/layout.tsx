@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <footer className="py-4 text-center text-xs text-slate-500">
             Powered by{" "}
             <a
-              href="https://loofta.xyz"
+              href="https://loofta.com"
               target="_blank"
               rel="noopener noreferrer"
               className="text-slate-400 hover:text-slate-300"

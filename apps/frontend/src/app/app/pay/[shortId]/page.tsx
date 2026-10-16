@@ -266,7 +266,7 @@ export default function PaySharePage() {
   const logo = getPlatform(payment.platform)?.logo;
   const shareUrl = typeof window !== "undefined"
     ? `${window.location.origin}/share/${shortId}`
-    : `https://pay.loofta.xyz/share/${shortId}`;
+    : `https://pay.loofta.com/share/${shortId}`;
   const shareText = `$${amount} sent to ${recipientLabel} via Loofta.`;
   const etaLabel = payment.etaLabel || liveEta;
 

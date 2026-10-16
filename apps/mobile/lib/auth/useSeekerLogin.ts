@@ -5,8 +5,8 @@ import { ensureProfile } from '../api/users';
 import { clearCachedSeekerIdentity, updateCachedSkrDomain } from '../storage/seekerIdentity';
 import { clearCachedWalletBalances } from '../storage/walletBalances';
 
-const DOMAIN = 'pay.loofta.xyz';
-const URI = 'https://pay.loofta.xyz';
+const DOMAIN = 'pay.loofta.com';
+const URI = 'https://pay.loofta.com';
 
 export type SeekerLoginStatus = 'idle' | 'connecting' | 'verifying' | 'error';
 

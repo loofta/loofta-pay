@@ -106,7 +106,7 @@ const id: Translations = {
   claimGiftClaimedHint: (n) => `${n} tiket Megapot sedang dikirim — cek tab Riwayat dalam beberapa menit.`,
   claimGiftTitle: 'Klaim hadiah',
   claimGiftHint: 'Tempel tautan atau kode hadiah yang dikirimkan seseorang ke Anda.',
-  claimGiftPlaceholder: 'pay.loofta.xyz/gift/… atau kodenya',
+  claimGiftPlaceholder: 'pay.loofta.com/gift/… atau kodenya',
   claimGiftLookUp: 'Cari',
   claimGiftCardTitle: (n) => `${n} tiket Megapot`,
   claimGiftFrom: (senderUsername) => `Dari ${senderUsername ? `@${senderUsername}` : 'seseorang'}`,

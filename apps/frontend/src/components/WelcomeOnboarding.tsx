@@ -83,7 +83,7 @@ export function WelcomeOnboarding({ open, onClose, username, privyUserId, onUser
 
   const getPaymentLink = () => {
     const u = username || newUsername.trim() || "username";
-    const baseUrl = typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.xyz";
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.com";
     return `${baseUrl}/me/@${u}`;
   };
 

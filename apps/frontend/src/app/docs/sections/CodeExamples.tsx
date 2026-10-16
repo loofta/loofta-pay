@@ -28,7 +28,7 @@ const link = await client.createPaymentLink({
   message: "Invoice #1042",
 });
 
-console.log(link.url); // https://pay.loofta.xyz/checkout/aB3xK9pQ`}
+console.log(link.url); // https://pay.loofta.com/checkout/aB3xK9pQ`}
       />
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Embedding a checkout button</h2>

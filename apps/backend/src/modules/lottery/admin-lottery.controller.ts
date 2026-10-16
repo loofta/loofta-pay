@@ -209,7 +209,7 @@ export class AdminLotteryController {
     if (error) throw new BadRequestException(error.message);
     const data2 = (data ?? []).map((g: any) => ({
       ...g,
-      claimUrl: `https://pay.loofta.xyz/gift/${g.short_id || g.claim_token}`,
+      claimUrl: `https://pay.loofta.com/gift/${g.short_id || g.claim_token}`,
     }));
     return { data: data2, total: count ?? 0, page, limit: pageSize };
   }

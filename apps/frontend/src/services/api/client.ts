@@ -21,7 +21,7 @@ export const BACKEND_URL = getBackendUrl();
 /**
  * Base URL for a Nest call made from UI code.
  * In the browser this is a same-origin Next route, so the page can live on
- * www.loofta.xyz, pay.loofta.xyz, or a preview host without a CORS allowlist.
+ * loofta.com, pay.loofta.com, or a preview host without a CORS allowlist.
  * Server code keeps calling Railway directly.
  */
 export function clientApiBase(): string {

@@ -5,7 +5,7 @@ export const maxDuration = 60;
 
 /**
  * Same-origin proxy for the Nest API.
- * The page is served from www.loofta.xyz (and pay.loofta.xyz, preview hosts).
+ * The page is served from loofta.com (and pay.loofta.com, preview hosts).
  * The browser must not call Railway directly: a missing CORS origin turns a
  * successful response into a CORS error and the UI never sees the JSON.
  * Auth stays on Nest — this forwards the caller's bearer token and does not

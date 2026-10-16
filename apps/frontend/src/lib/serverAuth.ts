@@ -53,7 +53,7 @@ export async function getVerifiedSolanaWallets(privyUserId: string): Promise<str
  */
 export async function getVerifiedLiveHandle(
   privyUserId: string,
-  platform: "twitter" | "discord" | "github" | "instagram",
+  platform: "twitter" | "discord" | "github" | "instagram" | "telegram",
 ): Promise<string | null> {
   const user = await getPrivyUser(privyUserId);
   if (!user) return null;
@@ -61,6 +61,7 @@ export async function getVerifiedLiveHandle(
     platform === "twitter" ? ["twitter", "x", "twitter_oauth"]
     : platform === "discord" ? ["discord", "discord_oauth"]
     : platform === "github" ? ["github", "github_oauth"]
+    : platform === "telegram" ? ["telegram", "telegram_oauth"]
     : ["instagram", "instagram_oauth"];
   for (const account of (user.linkedAccounts || []) as Array<{ type?: string; username?: string | null; name?: string | null; address?: string | null }>) {
     const type = (account.type || "").toLowerCase();
@@ -110,7 +111,7 @@ export async function getVerifiedLiveTwitterProfile(
  * token supplied — never trust a client-supplied `handle` string for Telegram. Unlike
  * getVerifiedLiveHandle, this takes a raw access token rather than a privyUserId: the Telegram
  * relay flow (telegram-relay/page.tsx) logs in via a throwaway Privy session scoped to the
- * loofta.com domain, distinct from the caller's real pay.loofta.xyz account session, so there is
+ * loofta.com domain, distinct from the caller's real pay.loofta.com account session, so there is
  * no already-authenticated privyUserId to look up — the token itself is the only proof that a
  * Telegram OAuth login actually happened. Without this, both /api/telegram-relay/complete and
  * /api/telegram-relay/verify-claim would have no way to confirm a POSTed handle was ever actually

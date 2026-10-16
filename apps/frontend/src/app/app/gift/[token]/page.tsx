@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { getGiftSharePreview } from "@/lib/giftSharePreview";
 import GiftShareClient from "./GiftShareClient";
 
-const SITE_URL = "https://pay.loofta.xyz";
+const SITE_URL = "https://pay.loofta.com";
 
 export async function generateMetadata({
   params,

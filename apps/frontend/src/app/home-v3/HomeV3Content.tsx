@@ -36,6 +36,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
 import { useAuthStore } from "@/store/auth";
 import { isValidSolanaAddress } from "@/lib/refundAddresses";
+import { useSolDomain } from "@/hooks/useSolDomain";
 import { SolanaWalletConnectProvider } from "@/components/SolanaWalletConnect";
 import { DirectWalletPayPanel } from "@/components/app/DirectWalletPayPanel";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
@@ -73,7 +74,7 @@ const GUEST_SOCIAL_PICKS: { id: SocialIconPlatform; name: string }[] = [
 
 const BRAND_GRADIENT = "bg-gradient-to-r from-[#FF1301] to-[#EAB308]";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "/app";
-const PAY_ORIGIN = "https://pay.loofta.xyz";
+const PAY_ORIGIN = "https://pay.loofta.com";
 
 /** Hand off to the app subdomain (clean paths, no /app prefix). Localhost mirrors prod via proxy.ts, so stay relative there. */
 function goToPay(router: ReturnType<typeof useRouter>, path: string, replace = false) {
@@ -144,7 +145,7 @@ function Header() {
   return (
     <header className={`sticky top-0 z-50 border-b ${BORDER_LINE_2} bg-[rgba(11,11,15,0.72)] px-6 py-5 backdrop-blur-[14px] md:px-10`}>
       <div className="mx-auto grid max-w-[1240px] grid-cols-[1fr_auto_1fr] items-center">
-        <a href="https://www.loofta.xyz/" className="col-start-1 justify-self-start">
+        <a href="https://loofta.com/" className="col-start-1 justify-self-start">
           <Image src="/loofta_white.svg" alt="Loofta" width={138} height={30} priority className="h-[30px] w-auto" />
         </a>
 
@@ -192,7 +193,7 @@ function Header() {
 const CARD_LABEL = `text-[13px] font-semibold uppercase tracking-[0.18em] ${INK_3}`;
 
 /** Same Privy methods as /app — wallet login is not enabled (see AuthProvider). */
-const PRIVY_LOGIN_METHODS = ["email", "twitter", "discord", "github"] as const;
+const PRIVY_LOGIN_METHODS = ["email", "twitter", "discord", "github", "telegram"] as const;
 
 /** Top-level destination: handle/email, raw Solana wallet, or a Venmo / Cash App / Revolut handle. */
 type DestKind = "handle" | "wallet" | "cash";
@@ -312,7 +313,10 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
 
   const trimmedRecipient = recipient.trim().replace(/^@+/, "");
   const amountNum = Number(amount);
-  const walletAddress = destKind === "wallet" ? recipient.trim() : "";
+  const walletInput = destKind === "wallet" ? recipient.trim() : "";
+  // A .sol name resolves to its wallet; anything else is used as typed.
+  const walletDomain = useSolDomain(walletInput, "mainnet");
+  const walletAddress = walletDomain.status === "resolved" ? walletDomain.address : walletInput;
   const walletAddressValid = destKind === "wallet" && isValidSolanaAddress(walletAddress);
   const isHandleDest = destKind === "handle";
   const isCashDest = destKind === "cash";
@@ -743,14 +747,14 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
               <DirectWalletPayPanel
                 amountUsd={amountNum}
                 recipientAddress={walletAddressValid ? walletAddress : null}
-                recipientName={walletAddress ? `${walletAddress.slice(0, 4)}…${walletAddress.slice(-4)}` : "this wallet"}
+                recipientName={walletDomain.status === "resolved" ? walletInput : walletAddress ? `${walletAddress.slice(0, 4)}…${walletAddress.slice(-4)}` : "this wallet"}
                 blocker={
                   amountNum < minAmountUsd
                     ? `Enter an amount of at least $${minAmountUsd.toFixed(2)}`
                     : !walletAddress
                       ? "Enter a wallet address"
                       : !walletAddressValid
-                        ? "Not a valid Solana address"
+                        ? walletDomain.status === "resolving" ? "Looking up name…" : walletDomain.status === "not-found" ? "That .sol name does not resolve" : "Not a valid Solana address"
                         : null
                 }
                 isPrivate={isPrivateMode}

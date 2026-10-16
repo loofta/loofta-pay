@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { getSharePreview } from "@/lib/sharePreview";
 import ShareClient from "./ShareClient";
 
-const SITE_URL = "https://pay.loofta.xyz";
+const SITE_URL = "https://pay.loofta.com";
 
 export async function generateMetadata({
   params,

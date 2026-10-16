@@ -15,6 +15,8 @@ const LOG = "[peer-pay/checkout]";
 const ALLOWED_ORIGINS = [
   "https://pay.loofta.xyz",
   "https://loofta.xyz",
+  "https://pay.loofta.com",
+  "https://loofta.com",
   ...(process.env.NODE_ENV === "development"
     ? ["http://localhost:3000", "http://localhost:3001"]
     : []),
@@ -86,7 +88,7 @@ export async function POST(request: Request) {
 
   // 4. Create the hosted checkout — settles USDC on Base (8453) to destinationAddress
   try {
-    const appOrigin = origin && corsOrigin(origin) ? origin : (process.env.NEXT_PUBLIC_APP_URL || "https://pay.loofta.xyz");
+    const appOrigin = origin && corsOrigin(origin) ? origin : (process.env.NEXT_PUBLIC_APP_URL || "https://pay.loofta.com");
     const result = await createCheckout(
       {
         requestedUsdcAmount: amountUsdc!.toFixed(2),

@@ -16,7 +16,7 @@ export function ReceiveHome() {
   const username = useAuthStore((s) => s.username);
   const [copied, setCopied] = useState(false);
   const handle = username?.replace(/^@/, "") || "";
-  const link = handle ? `https://pay.loofta.xyz/@${handle}` : "";
+  const link = handle ? `https://pay.loofta.com/@${handle}` : "";
 
   const copy = async () => {
     if (!link) return;

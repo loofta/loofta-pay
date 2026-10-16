@@ -19,7 +19,7 @@ const inter = Inter({
   variable: "--font-inter",
 });
 
-const SITE_URL = (process as any)?.env?.NEXT_PUBLIC_SITE_URL || "https://loofta.xyz";
+const SITE_URL = (process as any)?.env?.NEXT_PUBLIC_SITE_URL || "https://loofta.com";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

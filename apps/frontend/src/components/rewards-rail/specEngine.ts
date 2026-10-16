@@ -325,7 +325,7 @@ export class SpecComponent {
       payNow: () => set({ launchStep: 'live' }), launchTitle: step === 'signin' ? 'Sign in to launch' : step === 'fund' ? (isAuto ? 'Start your subscription' : 'Fund your giveaway') : gv._needsReview ? 'Submitted for review' : isAuto ? 'Auto-pilot is on' : 'Your giveaway is live',
       liveTitle: gv._needsReview ? 'Submitted for review' : isAuto ? 'Auto-pilot is on' : 'Your giveaway is live',
       liveNote: gv._needsReview ? gv._reviewNote : isAuto ? 'Your next post becomes a raid. Raiders are verified and rewarded automatically.' : 'Pools under $250 from verified hosts go live straight away. Share it below.',
-      shareItems: [{ k: 'Post on X', v: 'Tweet text with your giveaway link' }, { k: 'Giveaway image', v: 'Ready-made card for X and Telegram' }, { k: 'Telegram message', v: 'Copy-paste announcement' }, { k: 'Short link', v: 'loofta.xyz/g/oct-drop' }],
+      shareItems: [{ k: 'Post on X', v: 'Tweet text with your giveaway link' }, { k: 'Giveaway image', v: 'Ready-made card for X and Telegram' }, { k: 'Telegram message', v: 'Copy-paste announcement' }, { k: 'Short link', v: 'loofta.com/g/oct-drop' }],
     };
   }
 }

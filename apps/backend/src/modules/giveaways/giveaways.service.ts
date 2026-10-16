@@ -92,7 +92,7 @@ export class GiveawaysService {
       this.configService.get<string>('SOLANA_USDC_MINT') ||
       this.configService.get<string>('NEXT_PUBLIC_SOLANA_USDC_MINT') ||
       defaultUsdcMint;
-    this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
+    this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.com');
     // Reuses LOOFTA_INTERNAL_SECRET (already required in Railway for claims.controller.ts's
     // internal-BFF gate) instead of provisioning a new env var — Lisa: no more secrets that need
     // adding to Railway before a feature actually works there, after tonight's SORSA_API_KEY gap.

@@ -130,7 +130,7 @@ function FomoHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-white/5 bg-[#111114]/80 backdrop-blur-xl">
       <div className="max-w-6xl mx-auto px-4 md:px-8 h-16 flex items-center justify-between">
-        <a href="https://www.loofta.xyz/" className={`inline-flex items-center rounded ${FOCUS_RING}`} aria-label="Loofta home">
+        <a href="https://loofta.com/" className={`inline-flex items-center rounded ${FOCUS_RING}`} aria-label="Loofta home">
           <Image src="/loofta_white.svg" alt="Loofta" width={110} height={24} priority />
         </a>
         <Link

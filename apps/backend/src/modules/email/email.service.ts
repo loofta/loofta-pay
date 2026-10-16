@@ -9,7 +9,7 @@ export interface ClaimEmailData {
   senderInfo?: string | null;
   recipientEmail: string;
   scheduledAt?: string;
-  /** Override the default https://pay.loofta.xyz/c/:id URL (e.g. for /s/ send-payment links). */
+  /** Override the default https://pay.loofta.com/c/:id URL (e.g. for /s/ send-payment links). */
   claimUrl?: string;
 }
 
@@ -44,8 +44,8 @@ export class EmailService {
     if (!this.resend) return null;
     const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
     const claimUrl = data.claimUrl
-      ? `https://pay.loofta.xyz${new URL(data.claimUrl, 'https://pay.loofta.xyz').pathname}`
-      : `https://pay.loofta.xyz/c/${data.id}`;
+      ? `https://pay.loofta.com${new URL(data.claimUrl, 'https://pay.loofta.com').pathname}`
+      : `https://pay.loofta.com/c/${data.id}`;
     const subject = `You received ${amountStr} on Loofta 🎉`;
     const html = this.buildPaymentReceivedHtml({ ...data, amountStr, claimUrl });
 
@@ -69,8 +69,8 @@ export class EmailService {
     if (!this.resend) return null;
     const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
     const claimUrl = data.claimUrl
-      ? `https://pay.loofta.xyz${new URL(data.claimUrl, 'https://pay.loofta.xyz').pathname}`
-      : `https://pay.loofta.xyz/c/${data.id}`;
+      ? `https://pay.loofta.com${new URL(data.claimUrl, 'https://pay.loofta.com').pathname}`
+      : `https://pay.loofta.com/c/${data.id}`;
     const subject = `You have ${amountStr} waiting for you on Loofta`;
     const html = this.buildClaimReadyHtml({ ...data, amountStr, claimUrl });
 
@@ -103,8 +103,8 @@ export class EmailService {
     if (!this.resend) return;
     const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
     const claimUrl = data.claimUrl
-      ? `https://pay.loofta.xyz${new URL(data.claimUrl, 'https://pay.loofta.xyz').pathname}`
-      : `https://pay.loofta.xyz/c/${data.id}`;
+      ? `https://pay.loofta.com${new URL(data.claimUrl, 'https://pay.loofta.com').pathname}`
+      : `https://pay.loofta.com/c/${data.id}`;
     const subject = `Your ${amountStr} payment was claimed`;
     const html = this.buildPaymentClaimedHtml({ ...data, amountStr, claimUrl });
     try {
@@ -471,7 +471,7 @@ export class EmailService {
   }
 
   private buildMegapotWinHtml(data: { amountStr: string; roundId: string; username?: string | null; numTickets?: number; autoSent?: boolean }): string {
-    const dashboardUrl = 'https://pay.loofta.xyz/app/megapot';
+    const dashboardUrl = 'https://pay.loofta.com/app/megapot';
     const greeting = data.username ? `Hey @${data.username},` : 'Hey,';
     const ticketLine = data.numTickets && data.numTickets > 1 ? ` (across ${data.numTickets} tickets)` : '';
     return `<!DOCTYPE html>
@@ -489,7 +489,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
               <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Won 🎉</span>
             </td>
           </tr>
@@ -517,7 +517,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -539,7 +539,7 @@ export class EmailService {
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;"><tr><td align="center">
     <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
       <tr><td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-        <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+        <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
       </td></tr>
       <tr><td style="padding:36px 40px 32px;">
         <div style="background:#0f0f12;border:1px solid #0d3b2e;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px;">
@@ -550,11 +550,11 @@ export class EmailService {
           Your Megapot winnings are in. This is the exact amount you received, after fees.${data.isPrivate ? ' It was sent privately, with no on-chain link back to you.' : ''}
         </p>
         <div style="text-align:center;margin-bottom:8px;">
-          <a href="https://pay.loofta.xyz/app/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;">Buy tickets for the next draw</a>
+          <a href="https://pay.loofta.com/app/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;">Buy tickets for the next draw</a>
         </div>
         <p style="margin:20px 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
       </td></tr>
-      <tr><td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;"><p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p></td></tr>
+      <tr><td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;"><p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p></td></tr>
     </table>
   </td></tr></table>
 </body></html>`;
@@ -595,7 +595,7 @@ export class EmailService {
   }
 
   private buildUnclaimedWinningsReminderHtml(data: { amountStr: string; numTickets: number; username?: string | null }): string {
-    const dashboardUrl = 'https://pay.loofta.xyz/app/megapot';
+    const dashboardUrl = 'https://pay.loofta.com/app/megapot';
     const greeting = data.username ? `Hey @${data.username},` : 'Hey,';
     const ticketLine = data.numTickets > 1 ? `across ${data.numTickets} winning tickets` : 'from a winning ticket';
     return `<!DOCTYPE html>
@@ -613,7 +613,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
               <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Still unclaimed</span>
             </td>
           </tr>
@@ -639,7 +639,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -652,7 +652,7 @@ export class EmailService {
 
   private buildTicketRecoveredHtml(data: { numTickets: number; roundId: string }): string {
     const ticketWord = data.numTickets === 1 ? 'ticket' : 'tickets';
-    const dashboardUrl = 'https://pay.loofta.xyz/app/megapot';
+    const dashboardUrl = 'https://pay.loofta.com/app/megapot';
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -668,7 +668,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
               <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Fixed</span>
             </td>
           </tr>
@@ -690,7 +690,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -970,7 +970,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
               <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Gift</span>
             </td>
           </tr>
@@ -991,7 +991,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1033,7 +1033,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
               <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Gift</span>
             </td>
           </tr>
@@ -1044,7 +1044,7 @@ export class EmailService {
               <p style="margin:0 0 28px;font-size:14px;color:#9ca3af;text-align:center;">Already in your account — entered into the next draw. Nothing to claim.</p>
               ${noteBlock}
               <div style="text-align:center;margin-bottom:8px;">
-                <a href="https://pay.loofta.xyz/app/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                <a href="https://pay.loofta.com/app/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   View your ${ticketWord}
                 </a>
               </div>
@@ -1054,7 +1054,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1081,7 +1081,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
               <span style="display:inline-block;margin-top:16px;background:#0d3b2e;color:#5EEAD4;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Live now</span>
             </td>
           </tr>
@@ -1112,12 +1112,12 @@ export class EmailService {
               </div>
 
               <div style="text-align:center;margin-bottom:8px;">
-                <a href="https://pay.loofta.xyz/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                <a href="https://pay.loofta.com/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   Buy tickets privately
                 </a>
               </div>
               <p style="margin:12px 0 24px;font-size:13px;color:#6b7280;text-align:center;">
-                Giveaway details: <a href="https://pay.loofta.xyz/rewards/megapot" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz/rewards/megapot</a>
+                Giveaway details: <a href="https://pay.loofta.com/rewards/megapot" style="color:#FF4A26;text-decoration:none;">pay.loofta.com/rewards/megapot</a>
               </p>
               <p style="margin:0 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
             </td>
@@ -1125,7 +1125,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1152,7 +1152,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <!-- Body -->
@@ -1162,7 +1162,7 @@ export class EmailService {
               <p style="margin:0 0 16px;">We found a bug in how Megapot results were tracked, some tickets showed no win when they'd actually won, real money just sitting unclaimed. Nothing was ever at risk, it was a display issue, not a funds issue, and we've already fixed every case we found.</p>
               <p style="margin:0 0 28px;">Take two minutes and check your ticket history. If anything looks off, just reply and I'll look into it myself.</p>
               <div style="text-align:center;margin-bottom:24px;">
-                <a href="https://pay.loofta.xyz/app/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                <a href="https://pay.loofta.com/app/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   Check my tickets
                 </a>
               </div>
@@ -1173,7 +1173,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1200,7 +1200,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
               <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">✅ Payments are fixed</p>
             </td>
           </tr>
@@ -1211,7 +1211,7 @@ export class EmailService {
               <p style="margin:0 0 16px;">We had a small issue with payments sent to someone who hadn't signed up for Loofta yet, some of those could get stuck mid-transfer instead of going through. Nothing was ever at risk, your funds stayed safely in your wallet the whole time, it just didn't complete.</p>
               <p style="margin:0 0 28px;">It's fixed now, payments are working normally again.</p>
               <div style="text-align:center;margin-bottom:24px;">
-                <a href="https://pay.loofta.xyz/app" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                <a href="https://pay.loofta.com/app" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   Make a payment now
                 </a>
               </div>
@@ -1222,7 +1222,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1249,7 +1249,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
               <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">🎉 Your giveaway was approved</p>
             </td>
           </tr>
@@ -1271,7 +1271,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1298,7 +1298,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
               <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">Your giveaway wasn&apos;t approved</p>
             </td>
           </tr>
@@ -1317,7 +1317,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1344,7 +1344,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
               <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">Your giveaway expired</p>
             </td>
           </tr>
@@ -1363,7 +1363,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1390,7 +1390,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
               <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">Your giveaway was cancelled</p>
             </td>
           </tr>
@@ -1409,7 +1409,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1436,7 +1436,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
               <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">🎉 You won!</p>
             </td>
           </tr>
@@ -1455,7 +1455,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1483,7 +1483,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
               <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">💸 ${amountStr} refunded</p>
             </td>
           </tr>
@@ -1494,7 +1494,7 @@ export class EmailService {
               <p style="margin:0 0 16px;">Your Mystery Pack open hit a bug on our end after you paid — we couldn't complete it, so instead of leaving it stuck we've refunded the full ${amountStr} straight back to your wallet.</p>
               <p style="margin:0 0 28px;">The bug's fixed now, so feel free to open another pack whenever you like.</p>
               <div style="text-align:center;margin-bottom:24px;">
-                <a href="https://pay.loofta.xyz/app/megapot/packs" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                <a href="https://pay.loofta.com/app/megapot/packs" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   Open a Mystery Pack
                 </a>
               </div>
@@ -1505,7 +1505,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1518,7 +1518,7 @@ export class EmailService {
 
   private buildCashoutResumeHtml(data: { amountUsd: number; platformName: string; identifier: string; shortId: string }): string {
     const amountStr = `$${data.amountUsd.toFixed(2)}`;
-    const url = `https://pay.loofta.xyz/pay/${encodeURIComponent(data.shortId)}`;
+    const url = `https://pay.loofta.com/pay/${encodeURIComponent(data.shortId)}`;
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1533,7 +1533,7 @@ export class EmailService {
         <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
           <tr>
             <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
               <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">Your ${amountStr} payment needs one more step</p>
             </td>
           </tr>
@@ -1553,7 +1553,7 @@ export class EmailService {
           </tr>
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1586,7 +1586,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 20px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto 18px;" />
               <p style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">🎁 You've got a free Mystery Pack spin</p>
             </td>
           </tr>
@@ -1597,7 +1597,7 @@ export class EmailService {
               <p style="margin:0 0 28px;">We just added a free Mystery Pack spin to your account — no payment needed, open it whenever you like. You always win at least 1 Megapot ticket.</p>
               ${noteBlock}
               <div style="text-align:center;margin-bottom:24px;">
-                <a href="https://pay.loofta.xyz/app/megapot/packs" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                <a href="https://pay.loofta.com/app/megapot/packs" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   Open your free pack
                 </a>
               </div>
@@ -1608,7 +1608,7 @@ export class EmailService {
           <!-- Footer -->
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1620,7 +1620,7 @@ export class EmailService {
   }
 
   private buildMainnetLiveHtml(): string {
-    const imageUrl = 'https://pay.loofta.xyz/liveloofta-email.png';
+    const imageUrl = 'https://pay.loofta.com/liveloofta-email.png';
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1676,8 +1676,8 @@ export class EmailService {
                 </tr>
               </table>
               <div style="text-align:center;">
-                <a href="https://pay.loofta.xyz" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
-                  Start at pay.loofta.xyz
+                <a href="https://pay.loofta.com" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  Start at pay.loofta.com
                 </a>
               </div>
               <p style="margin:28px 0 0;font-size:14px;color:#9ca3af;text-align:left;">Lisa</p>
@@ -1685,7 +1685,7 @@ export class EmailService {
           </tr>
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1711,7 +1711,7 @@ export class EmailService {
         <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <tr>
@@ -1727,7 +1727,7 @@ export class EmailService {
               </div>
               <p style="margin:0 0 32px;">One heads up before you jump in: you'll need to do a quick upgrade of the app first. Just open Loofta and follow the prompt when you see it. It takes a second and it's totally normal.</p>
               <div style="text-align:center;">
-                <a href="https://pay.loofta.xyz" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                <a href="https://pay.loofta.com" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   Open Loofta
                 </a>
               </div>
@@ -1736,7 +1736,7 @@ export class EmailService {
           </tr>
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p>
+              <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
             </td>
           </tr>
         </table>
@@ -1768,7 +1768,7 @@ export class EmailService {
         <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <tr>
@@ -1785,7 +1785,7 @@ export class EmailService {
               </ul>
               <p style="margin:0 0 32px;">So excited to have you with us. Try it out and tell me what you think — just reply here!</p>
               <div style="text-align:center;">
-                <a href="https://pay.loofta.xyz" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                <a href="https://pay.loofta.com" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
                   Go to Loofta
                 </a>
               </div>
@@ -1794,7 +1794,7 @@ export class EmailService {
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
               <p style="margin:0;font-size:12px;color:#4b5563;">
-                <a href="https://pay.loofta.xyz" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz</a>
+                <a href="https://pay.loofta.com" style="color:#FF4A26;text-decoration:none;">pay.loofta.com</a>
               </p>
             </td>
           </tr>
@@ -1856,7 +1856,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <!-- Body -->
@@ -1886,7 +1886,7 @@ export class EmailService {
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
               <p style="margin:0;font-size:12px;color:#4b5563;">
                 You're receiving this because someone sent you a payment via Loofta.<br>
-                <a href="https://pay.loofta.xyz" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz</a>
+                <a href="https://pay.loofta.com" style="color:#FF4A26;text-decoration:none;">pay.loofta.com</a>
               </p>
             </td>
           </tr>
@@ -1927,7 +1927,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <!-- Body -->
@@ -1957,7 +1957,7 @@ export class EmailService {
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
               <p style="margin:0;font-size:12px;color:#4b5563;">
                 You're receiving this because someone sent you a payment via Loofta.<br>
-                <a href="https://pay.loofta.xyz" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz</a>
+                <a href="https://pay.loofta.com" style="color:#FF4A26;text-decoration:none;">pay.loofta.com</a>
               </p>
             </td>
           </tr>
@@ -1995,7 +1995,7 @@ export class EmailService {
           <!-- Header -->
           <tr>
             <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
-              <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+              <img src="https://pay.loofta.com/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
             </td>
           </tr>
           <!-- Body -->
@@ -2020,7 +2020,7 @@ export class EmailService {
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
               <p style="margin:0;font-size:12px;color:#4b5563;">
                 You're receiving this because a payment you sent via Loofta was just claimed.<br>
-                <a href="https://pay.loofta.xyz" style="color:#FF4A26;text-decoration:none;">pay.loofta.xyz</a>
+                <a href="https://pay.loofta.com" style="color:#FF4A26;text-decoration:none;">pay.loofta.com</a>
               </p>
             </td>
           </tr>

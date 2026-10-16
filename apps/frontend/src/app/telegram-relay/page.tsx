@@ -6,10 +6,10 @@ import { usePrivy, useLoginWithOAuth } from "@privy-io/react-auth";
 import { AlertCircle, AlertTriangle, CheckCircle2, Link2, Loader2, Send } from "lucide-react";
 
 /**
- * Hosted on loofta.com (not pay.loofta.xyz) because Telegram's Login Widget doesn't work on
+ * Hosted on loofta.com (not pay.loofta.com) because Telegram's Login Widget doesn't work on
  * .xyz domains — loofta.com is registered as an additional domain on the same Privy app instead.
  * Logging in here creates a separate, throwaway Privy session scoped to this domain — we only
- * read the resulting Telegram handle off it and hand it back to pay.loofta.xyz, since the two
+ * read the resulting Telegram handle off it and hand it back to pay.loofta.com, since the two
  * domains don't share a session. Two modes, mutually exclusive:
  *  - `token`: connect Telegram to an ALREADY signed-in Loofta account. The token (minted by
  *    /api/users/telegram-relay-token) identifies which account. See /api/telegram-relay/complete.
@@ -174,7 +174,7 @@ export default function TelegramRelayPage() {
             // a silent no-op and the fallback redirect below covers that case instead.
             window.close();
             setTimeout(() => {
-              const base = process.env.NEXT_PUBLIC_APP_URL || "https://pay.loofta.xyz";
+              const base = process.env.NEXT_PUBLIC_APP_URL || "https://pay.loofta.com";
               window.location.href = `${base}/app?connected=telegram`;
             }, 800);
           } else if (!token && data.error) {

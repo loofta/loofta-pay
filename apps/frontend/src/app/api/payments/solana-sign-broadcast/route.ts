@@ -26,8 +26,8 @@ const INTERNAL_SECRET = process.env.LOOFTA_INTERNAL_SECRET;
 // plus a direct script call to this route would otherwise pass the auth check above just fine.
 const ALLOWED_ORIGINS = (
   process.env.NODE_ENV === "production"
-    ? ["https://pay.loofta.xyz", "https://loofta.xyz"]
-    : ["https://pay.loofta.xyz", "https://loofta.xyz", "http://localhost:3000"]
+    ? ["https://pay.loofta.xyz", "https://loofta.xyz", "https://pay.loofta.com", "https://loofta.com"]
+    : ["https://pay.loofta.xyz", "https://loofta.xyz", "https://pay.loofta.com", "https://loofta.com", "http://localhost:3000"]
 );
 
 /**
