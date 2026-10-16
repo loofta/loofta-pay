@@ -450,6 +450,8 @@ export class EmailService {
     roundId: string;
     username?: string | null;
     numTickets?: number;
+    /** True when the win is withdrawn to the user's wallet automatically (default). */
+    autoSent?: boolean;
   }): Promise<void> {
     if (!this.resend) return;
     const amountStr = `$${data.winAmountUsdc.toFixed(2)}`;
@@ -468,7 +470,7 @@ export class EmailService {
     }
   }
 
-  private buildMegapotWinHtml(data: { amountStr: string; roundId: string; username?: string | null; numTickets?: number }): string {
+  private buildMegapotWinHtml(data: { amountStr: string; roundId: string; username?: string | null; numTickets?: number; autoSent?: boolean }): string {
     const dashboardUrl = 'https://pay.loofta.xyz/app/megapot';
     const greeting = data.username ? `Hey @${data.username},` : 'Hey,';
     const ticketLine = data.numTickets && data.numTickets > 1 ? ` (across ${data.numTickets} tickets)` : '';
@@ -500,11 +502,13 @@ export class EmailService {
                 <p style="margin:0;font-size:40px;font-weight:500;color:#5EEAD4;letter-spacing:-1px;">${data.amountStr}</p>
               </div>
               <p style="margin:0 0 24px;font-size:14px;color:#9ca3af;text-align:center;line-height:1.6;">
-                ${greeting} claim it and it lands straight in your Loofta balance. Withdraw as USDC, or cash out directly to your bank.
+                ${data.autoSent === false
+                  ? `${greeting} this one is too small to cash out after fees, so it is a free ticket. Play it again in the next draw.`
+                  : `${greeting} nothing to claim. We are sending your winnings to you automatically, and we will email you again when they arrive.`}
               </p>
               <div style="text-align:center;margin-bottom:8px;">
-                <a href="${dashboardUrl}" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
-                  Claim your winnings
+                <a href="${dashboardUrl}?tab=redeem" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
+                  ${data.autoSent === false ? 'Play it again' : 'See your winnings'}
                 </a>
               </div>
               <p style="margin:20px 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
@@ -522,6 +526,49 @@ export class EmailService {
   </table>
 </body>
 </html>`;
+  }
+
+  /** Sent once the automatic Megapot withdrawal has landed: states the exact amount received. */
+  async sendMegapotWinningsArrivedEmail(data: { recipientEmail: string; amountUsdc: number; isPrivate: boolean }): Promise<void> {
+    if (!this.resend) return;
+    const amountStr = `$${data.amountUsdc.toFixed(2)}`;
+    const where = data.isPrivate ? 'your Loofta balance' : 'your wallet';
+    const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Your winnings arrived</title></head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;"><tr><td align="center">
+    <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+      <tr><td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+        <img src="https://pay.loofta.xyz/loofta_white_email.png" alt="Loofta" width="134" height="38" style="display:block;border:0;margin:0 auto;" />
+      </td></tr>
+      <tr><td style="padding:36px 40px 32px;">
+        <div style="background:#0f0f12;border:1px solid #0d3b2e;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px;">
+          <p style="margin:0 0 4px;font-size:12px;color:#6b7280;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;">Arrived in ${where}</p>
+          <p style="margin:0;font-size:40px;font-weight:500;color:#5EEAD4;letter-spacing:-1px;">${amountStr}</p>
+        </div>
+        <p style="margin:0 0 24px;font-size:14px;color:#9ca3af;text-align:center;line-height:1.6;">
+          Your Megapot winnings are in. This is the exact amount you received, after fees.${data.isPrivate ? ' It was sent privately, with no on-chain link back to you.' : ''}
+        </p>
+        <div style="text-align:center;margin-bottom:8px;">
+          <a href="https://pay.loofta.xyz/app/megapot" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;">Buy tickets for the next draw</a>
+        </div>
+        <p style="margin:20px 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
+      </td></tr>
+      <tr><td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;"><p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.xyz</p></td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: data.recipientEmail,
+        subject: `Your ${amountStr} Megapot winnings arrived`,
+        html,
+      });
+      this.logger.log(`Megapot winnings arrived email sent to ${data.recipientEmail} (${amountStr})`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send winnings arrived email to ${data.recipientEmail}: ${err?.message ?? err}`);
+    }
   }
 
   async sendUnclaimedWinningsReminderEmail(data: {

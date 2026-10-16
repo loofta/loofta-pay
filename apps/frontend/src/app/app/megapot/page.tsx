@@ -1,5 +1,6 @@
 "use client";
 
+import posthog from "posthog-js";
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { useSearchParams, usePathname } from "next/navigation";
@@ -7,7 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import bs58 from "bs58";
-import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, Shuffle, ChevronDown, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, VenetianMask, Send } from "lucide-react";
+import { ArrowDown, X, Trophy, RefreshCw, Ticket, ShieldCheck, ArrowUpRight, ChevronDown, Gift, Copy, CheckCircle2, Mail, AtSign, Loader2, LogIn, VenetianMask, Send } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { getMyGifts, updateGiftRecipient, type MyGiftItem } from "@/services/api/lotteryGift";
 import { MessageInput } from "@/components/MessageInput";
@@ -20,7 +21,7 @@ import { getSolanaCluster } from "@/lib/solanaCluster";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { PrivacyConfettiBurst } from "@/components/PrivacyConfettiBurst";
 import { PRIZE_TIERS, TicketNumberCard } from "@/components/megapot/TicketNumberCard";
-import { MAIN_MAX, MAIN_COUNT, BONUS_MAX, type TicketNumbers, randomTicket, NumberPickerModal, ChooseNumbers } from "@/components/megapot/ChooseNumbers";
+import { MAIN_MAX, MAIN_COUNT, BONUS_MAX, type TicketNumbers, randomTicket } from "@/components/megapot/ChooseNumbers";
 import { GradientActionButton } from "@/components/ui/GradientActionButton";
 import { jetbrainsMono, sora } from "@/components/home-v4/fonts";
 
@@ -823,7 +824,7 @@ function FeeBreakdown({ ticketCostUsd, mode, solPriceUsd, bridgeFeeUsd, bridgeRe
 
 // ─── Buy tab ──────────────────────────────────────────────────────────────────
 
-const PRESETS = [5, 10, 50, 100] as const;
+const PRESETS = [1, 5, 10, 50, 100] as const;
 const PRIVATE_MIN = 1;
 // Default the picker to 5: the privacy + Loofta fees are flat, so per-ticket cost drops
 // sharply with count ($0.30/ticket at 1 → $0.06/ticket at 5). Min stays 1.
@@ -839,7 +840,6 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
 }) {
   const [numTickets, setNumTickets] = useState(DEFAULT_TICKETS);
   const [tickets, setTickets] = useState<TicketNumbers[]>(() => Array.from({ length: DEFAULT_TICKETS }, randomTicket));
-  const [chooseOpen, setChooseOpen] = useState(false);
   // Default ON — matches today's only (private) behavior; public buying is the new opt-in.
   const [sendPrivately, setSendPrivately] = useState(true);
   const [privacyBurstKey, setPrivacyBurstKey] = useState<number | null>(null);
@@ -1123,6 +1123,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         headers: { "Content-Type": "application/json", ...authHeader },
         body: JSON.stringify({ ticketId: currentTicketId, senderTxHash: signature }),
       });
+      posthog.capture("megapot_ticket_purchased", { num_tickets: numTickets, private: true });
       suppressedTicketIdRef.current = null;
       // The buyer's payment is confirmed on-chain right here — bridging + the actual Megapot
       // purchase happen in the background from this point, same as if they closed the tab (the
@@ -1225,6 +1226,7 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
         headers: { "Content-Type": "application/json", ...authHeader },
         body: JSON.stringify({ ticketId: currentTicketId, senderTxHash: signature }),
       });
+      posthog.capture("megapot_ticket_purchased", { num_tickets: numTickets, private: false });
       suppressedTicketIdRef.current = null;
       pollingStartedRef.current = true;
       pollStatus(currentTicketId, numTickets);
@@ -1493,40 +1495,6 @@ function BuyTab({ accessToken, solPriceUsd, onPurchased, activeTickets, dashboar
             </div>
           </div>
 
-          {/* Choose numbers — collapsible for ≤10 tickets, random notice for 11+ (skipped when gifting, since the recipient's numbers are always assigned randomly at claim time) */}
-          {giftMode ? (
-            <div className="flex items-center gap-3 rounded-[18px] border border-white/[0.06] bg-[#0E0E12] px-4 py-3.5">
-              <Shuffle className="h-4 w-4 shrink-0 text-[#8A8893]" />
-              <p className="text-sm text-[#C9C6CF]">Numbers are picked randomly when they claim their ticket</p>
-            </div>
-          ) : numTickets <= 10 ? (
-            <div className="flex flex-col gap-3">
-              <div className="grid grid-cols-2 gap-1 rounded-2xl border border-white/[0.06] bg-[#0E0E12] p-1">
-                <button type="button" onClick={() => setChooseOpen(false)}
-                  className="rounded-xl px-2 py-[11px] text-sm font-bold"
-                  style={{ background: chooseOpen ? "transparent" : "#1E1E25", color: chooseOpen ? "#9A98A3" : "#F2EFE8" }}>
-                  Quick pick
-                </button>
-                <button type="button" onClick={() => setChooseOpen(true)}
-                  className="rounded-xl px-2 py-[11px] text-sm font-bold"
-                  style={{ background: chooseOpen ? "#1E1E25" : "transparent", color: chooseOpen ? "#F2EFE8" : "#9A98A3" }}>
-                  Pick your own
-                </button>
-              </div>
-              {chooseOpen && (
-                <ChooseNumbers tickets={tickets} setTickets={(t) => {
-                  setTickets(t);
-                  setNumTickets(t.length);
-                }} />
-              )}
-            </div>
-          ) : (
-            <div className="flex items-center gap-3 rounded-[18px] border border-white/[0.06] bg-[#0E0E12] px-4 py-3.5">
-              <Shuffle className="h-4 w-4 shrink-0 text-[#8A8893]" />
-              <p className="text-sm text-[#C9C6CF]">Numbers picked randomly for 11+ tickets</p>
-            </div>
-          )}
-
           {privacyBurstKey != null && <PrivacyConfettiBurst key={privacyBurstKey} onDone={() => setPrivacyBurstKey(null)} />}
           <IncognitoModeToggle checked={sendPrivately} onCheckedChange={handleToggleSendPrivately} />
 
@@ -1791,11 +1759,6 @@ function WithdrawTab({ tickets, withdrawals, accessToken, onWithdrawn, dashboard
 
   // Exact amount that lands in the wallet: the delivered figure once complete, the net quote before.
   const shownAmount = previewArrived || previewDone ? 272.39 : arrived ? delivered : estimateReceive;
-  const steps: { label: string; state: "done" | "active" | "pending" }[] = [
-    { label: "Won", state: "done" },
-    { label: queued ? "Sending soon" : sendPrivately ? "Traveling privately" : "On the way", state: arrived ? "done" : "active" },
-    { label: "In your wallet", state: arrived ? "done" : "pending" },
-  ];
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center space-y-6">
       <div>
@@ -1824,31 +1787,6 @@ function WithdrawTab({ tickets, withdrawals, accessToken, onWithdrawn, dashboard
         )}
       </div>
 
-      <div className="flex items-center justify-center px-2" aria-label="Winnings progress">
-        {steps.map((st, i) => (
-          <div key={st.label} className="flex items-center">
-            <div className="flex flex-col items-center gap-1.5 w-24">
-              <div className={[
-                "w-8 h-8 rounded-full overflow-hidden flex items-center justify-center",
-                st.state === "done" ? "bg-gradient-to-r from-[#EAB308] to-[#FF0F00] border-0" :
-                  st.state === "active" ? "bg-transparent border border-[#FF7A2A]/70" : "bg-transparent border border-white/20",
-              ].join(" ")}>
-                {st.state === "done" ? (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                ) : st.state === "active" ? (
-                  <span className={`w-2.5 h-2.5 rounded-full bg-[#FF7A2A] ${reduceMotion ? "" : "animate-pulse"}`} />
-                ) : (
-                  <span className="w-2.5 h-2.5 rounded-full bg-white/20" />
-                )}
-              </div>
-              <span className={["text-sm font-medium leading-tight", st.state === "pending" ? "text-slate-500" : st.state === "active" ? "text-[#FF7A2A] font-semibold" : "text-white"].join(" ")}>
-                {st.label}
-              </span>
-            </div>
-            {i < steps.length - 1 && <div className={["h-px w-6 -mt-6 shrink-0", st.state === "done" ? "bg-[#FF7A2A]/60" : "bg-white/15"].join(" ")} />}
-          </div>
-        ))}
-      </div>
       {!arrived && !failed && <p className="text-sm text-slate-500">You can safely leave this page, it continues in the background.</p>}
 
       {/* Upsell: the prize is already on its way, so offer to put some of it straight into the next draw. */}
@@ -1964,7 +1902,7 @@ function TicketGlyph({ stroke = "#fff", size = 24 }: { stroke?: string; size?: n
 
 const HOW_STEPS = [
   { n: "01", t: "Top up your Loofta balance with any token or bank." },
-  { n: "02", t: "Pick how many tickets. Quick pick or your own numbers." },
+  { n: "02", t: "Pick how many tickets. Numbers are chosen for you." },
   { n: "03", t: "One draw every day. Winnings land in your balance." },
 ];
 

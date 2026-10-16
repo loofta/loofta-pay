@@ -1263,9 +1263,21 @@ export class LotteryService {
           recipientEmail: email,
           winAmountUsdc,
           roundId: String(ticket.round_id ?? ''),
+          // Wins at/above the floor are withdrawn automatically; smaller ones are free tickets.
+          autoSent: winAmountUsdc >= WITHDRAW_MIN_USDC,
         });
       })
       .catch((e) => this.logger.warn(`notifyTicketWon: failed for user ${ticket.user_id}: ${e?.message ?? e}`));
+  }
+
+  /** Best-effort "your winnings arrived" email with the exact amount that reached the wallet. */
+  private notifyWinningsArrived(userId: string, deliveredUsdc: number, isPrivate: boolean): void {
+    this.usersService.getEmailByPrivyId(userId)
+      .then((email) => {
+        if (!email) return;
+        return this.emailService.sendMegapotWinningsArrivedEmail({ recipientEmail: email, amountUsdc: deliveredUsdc, isPrivate });
+      })
+      .catch((e) => this.logger.warn(`notifyWinningsArrived: failed for user ${userId}: ${e?.message ?? e}`));
   }
 
   /**
@@ -4421,6 +4433,7 @@ export class LotteryService {
       }
       this.logger.log(`${W} marked ${ticketIds.length} ticket(s) withdrawn, reconciled to actual delivered total $${deliveredUsdc.toFixed(6)}`);
     }
+    this.notifyWinningsArrived(withdrawal.user_id, deliveredUsdc, true);
   }
 
   /**
@@ -4519,6 +4532,7 @@ export class LotteryService {
       }
       this.logger.log(`${W} marked ${ticketIds.length} ticket(s) withdrawn, reconciled to actual delivered total $${deliveredUsdc.toFixed(6)}`);
     }
+    this.notifyWinningsArrived(withdrawal.user_id, deliveredUsdc, false);
   }
 
   /** Legacy NEAR Intents completion — kept for existing withdrawal records in DB. */
