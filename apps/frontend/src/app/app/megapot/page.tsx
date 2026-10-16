@@ -1662,191 +1662,83 @@ function SubscriptionBanner() {
   );
 }
 
-// ─── Withdraw tab ─────────────────────────────────────────────────────────────
+// ─── Last draw winnings ───────────────────────────────────────────────────────
 
-function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, onWithdrawn, dashboardLoading, previewDone, previewArrived, withdrawMinUsdc }: {
-  wonTickets: TicketSummary[]; accessToken: string | null;
-  userSolanaAddress: string; solPriceUsd: number; onWithdrawn: () => void;
+/** Winnings are withdrawn automatically by the backend the moment a draw settles (privately if the
+ *  ticket was bought privately, otherwise a plain transfer), so there is nothing to press here —
+ *  this just shows where the last draw's prize is and the exact amount that reaches the wallet. */
+function WithdrawTab({ tickets, withdrawals, accessToken, onWithdrawn, dashboardLoading, previewDone, previewArrived, withdrawMinUsdc }: {
+  tickets: TicketSummary[]; withdrawals: WithdrawalSummary[]; accessToken: string | null;
+  onWithdrawn: () => void;
   dashboardLoading?: boolean;
-  previewDone?: boolean; // dev-only: render the "on its way" post-redeem state directly
-  previewArrived?: boolean; // dev-only: render the fully-arrived post-redeem state directly
-  withdrawMinUsdc?: number; // backend-reported withdrawal floor (fallback until dashboard loads)
+  previewDone?: boolean; // dev-only: render the "on its way" state directly
+  previewArrived?: boolean; // dev-only: render the arrived state directly
+  withdrawMinUsdc?: number;
 }) {
-  const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(!!previewDone || !!previewArrived);
-  const [doneAmount, setDoneAmount] = useState(previewDone || previewArrived ? 272.39 : 0);
-  const [error, setError] = useState("");
-  const [bridgeFeeUsd, setBridgeFeeUsd] = useState<number | null>(null);
-  const [bridgeReceiveUsdc, setBridgeReceiveUsdc] = useState<number | null>(null);
-  const [bridgeFeeUnavailable, setBridgeFeeUnavailable] = useState(false);
-  const [feeRetryToken, setFeeRetryToken] = useState(0);
-  const [withdrawalIds, setWithdrawalIds] = useState<string[]>([]);
-  const [arrived, setArrived] = useState(!!previewArrived);
-  const [transferFailed, setTransferFailed] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const buyHref = usePathname()?.startsWith("/app") ? "/app/megapot" : "/megapot";
+  const minWithdraw = withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC;
+  const [estimateReceive, setEstimateReceive] = useState<number | null>(null);
   const [playingAgain, setPlayingAgain] = useState(false);
   const [playAgainDone, setPlayAgainDone] = useState<{ numTickets: number } | null>(null);
   const [playAgainError, setPlayAgainError] = useState("");
-  const [confirmingRedeem, setConfirmingRedeem] = useState(false);
-  const reduceMotion = useReducedMotion();
-  // Not a manual choice — winnings leave the same way the ticket was bought. A ticket funded
-  // through a MagicBlock private transfer withdraws privately; a normally-funded ticket withdraws
-  // as a standard on-chain transfer. Mixed batch (some private, some not) defaults to private —
-  // sending everything as one plain transfer would leak the association with the private buy.
-  const sendPrivately = wonTickets.some(t => t.fundedPrivately);
 
-  // Dev preview links navigate client-side (no remount), so the useState initializers above only
-  // fire once — clicking from one ?preview= link to another left this stuck on whichever state
-  // was current on first mount. Re-sync whenever the preview flags actually change.
+  // The last draw = the newest round that produced a win.
+  const winners = tickets.filter(t => (t.status === "won" || t.status === "withdrawn") && (t.winAmountUsdc ?? 0) > 0 && t.roundId);
+  const lastRound = winners.reduce<string | null>((best, t) => (best === null || Number(t.roundId) > Number(best) ? t.roundId : best), null);
+  const group = winners.filter(t => t.roundId === lastRound);
+  const groupIds = new Set(group.map(t => t.id));
+  const groupWithdrawals = withdrawals.filter(w => groupIds.has(w.ticketId));
+  const sendPrivately = group.some(t => t.fundedPrivately);
+  const grossTotal = group.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
+  const isFreeTicket = group.length > 0 && grossTotal < minWithdraw && groupWithdrawals.length === 0;
+  const failed = groupWithdrawals.some(w => w.status === "failed");
+  const arrived = previewArrived || (groupWithdrawals.length > 0 && groupWithdrawals.every(w => w.status === "complete"));
+  // Won but the automatic withdrawal hasn't been created yet (it starts on the backend's next
+  // results pass), so nothing is travelling. Don't claim it is.
+  const queued = !previewDone && !previewArrived && groupWithdrawals.length === 0;
+  const delivered = groupWithdrawals.reduce((sum, w) => sum + (w.amountUsdc ?? 0), 0);
+
+  // Net estimate while the transfer is still travelling: same quote the redeem button used to show.
   useEffect(() => {
-    if (previewArrived) { setDone(true); setArrived(true); setDoneAmount(272.39); }
-    else if (previewDone) { setDone(true); setArrived(false); setDoneAmount(272.39); }
-  }, [previewDone, previewArrived]);
-
-  // Resume an in-flight redeem across a page refresh — without this, a refresh mid-redeem drops
-  // back to "ready to redeem" (the ticket's status stays 'won' until the very end of the
-  // pipeline), and clicking Redeem again used to spin up a duplicate withdrawal that raced the
-  // first one and got permanently stuck. The backend is now idempotent against that too, but
-  // resuming here avoids the confusing "stuck" UI in the first place.
-  const WITHDRAWAL_STORAGE_KEY = "megapot_withdrawal";
-  // Transfers land in "a few minutes" per the copy below — an hour is generous slack for backend
-  // hiccups while still guaranteeing this can't resurrect a multi-day-old withdrawal and block the
-  // redeem screen for a ticket won after it.
-  const WITHDRAWAL_STORAGE_TTL_MS = 60 * 60 * 1000;
-  useEffect(() => {
-    if (previewDone || previewArrived) return;
-    try {
-      const saved = localStorage.getItem(WITHDRAWAL_STORAGE_KEY);
-      if (!saved) return;
-      const parsed = JSON.parse(saved) as { withdrawalIds: string[]; doneAmount: number; savedAt?: number };
-      if (!parsed?.withdrawalIds?.length) return;
-      if (!parsed.savedAt || Date.now() - parsed.savedAt > WITHDRAWAL_STORAGE_TTL_MS) {
-        localStorage.removeItem(WITHDRAWAL_STORAGE_KEY);
-        return;
-      }
-      setWithdrawalIds(parsed.withdrawalIds);
-      setDoneAmount(parsed.doneAmount ?? 0);
-      setDone(true);
-    } catch { /* ignore malformed/missing storage */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Live progress: poll our withdrawal rows until they all complete (or one fails).
-  useEffect(() => {
-    if (!done || arrived || transferFailed || !withdrawalIds.length) return;
-    const id = setInterval(async () => {
-      try {
-        const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
-        const res = await fetch("/api/lottery/dashboard", { headers });
-        if (!res.ok) return;
-        const data = await res.json();
-        const mine = (data?.withdrawals ?? []).filter((w: WithdrawalSummary) => withdrawalIds.includes(w.id));
-        if (!mine.length) return;
-        if (mine.some((w: WithdrawalSummary) => w.status === "failed")) {
-          setTransferFailed(true);
-          localStorage.removeItem(WITHDRAWAL_STORAGE_KEY);
-        } else if (mine.every((w: WithdrawalSummary) => w.status === "complete")) {
-          // On completion the backend has stamped each row with the actually-delivered amount —
-          // show that real figure, not the gross win we optimistically displayed at redeem.
-          const delivered = mine.reduce((s: number, w: WithdrawalSummary) => s + (w.amountUsdc ?? 0), 0);
-          if (delivered > 0) setDoneAmount(delivered);
-          setArrived(true);
-          localStorage.removeItem(WITHDRAWAL_STORAGE_KEY);
-        }
-      } catch { /* keep polling */ }
-    }, 5000);
-    return () => clearInterval(id);
-  }, [done, arrived, transferFailed, withdrawalIds, accessToken]);
-
-  const totalAmount = wonTickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
-  const isBatch = wonTickets.length > 1;
-  // Threshold is backend-owned (dashboard.withdrawMinUsdc); fall back only until it loads. Sub-
-  // threshold wins are worth less than a ticket after fees — shown as a "Free ticket", the only
-  // action is Play Again. At/above it the user may also cash out.
-  const minWithdraw = withdrawMinUsdc ?? DEFAULT_WITHDRAW_MIN_USDC;
-  // Play-again ticket count, matching the backend playAgainBatch rule: multiple won tickets get
-  // consolidated into ONE companion first, so the round-up/floor applies ONCE to the combined
-  // total — not once per ticket (that used to double-count round-ups: a $23.02 win + a $2.95 win
-  // became 24 + 3 = 27 tickets instead of ceil(25.97) = 26).
-  const playAgainTicketCount = totalAmount >= minWithdraw ? Math.max(1, Math.ceil(totalAmount - ROUND_UP_GRACE_USDC)) : Math.floor(totalAmount);
-  const canPlayAgain = wonTickets.some(t => (t.winAmountUsdc ?? 0) > 0);
-  const isFreeTicket = isFreeTicketAmount(totalAmount, minWithdraw) && canPlayAgain;
-  // A win large enough to matter shouldn't default to steering the user back into another draw —
-  // feature Withdraw instead and demote Play again to the secondary link.
-  const preferWithdraw = !isFreeTicket && canPlayAgain && totalAmount >= WITHDRAW_FEATURED_THRESHOLD_USDC;
-
-  useEffect(() => {
-    if (!totalAmount) return;
+    if (arrived || isFreeTicket || !grossTotal) return;
+    if (group.some(t => t.id.startsWith("preview-"))) { setEstimateReceive(Math.round(grossTotal * 0.97 * 100) / 100); return; }
     let cancelled = false;
-    setBridgeFeeUsd(null);
-    setBridgeReceiveUsdc(null);
-    setBridgeFeeUnavailable(false);
+    setEstimateReceive(null);
     const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
-
-    // No fabricated fallback here — a fee estimate that doesn't match the real bridge is worse
-    // than showing nothing (see the incident this was hardened for). Retry transient failures a
-    // few times; if it still can't get a real number, block redeeming and let the user retry.
     (async () => {
       for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) await new Promise(r => setTimeout(r, 700 * attempt));
         try {
           const route = sendPrivately ? "solana_private" : "solana_public";
-          const res = await fetch(`/api/lottery/bridge-fee?amountUsdc=${totalAmount}&route=${route}`, { headers });
+          const res = await fetch(`/api/lottery/bridge-fee?amountUsdc=${grossTotal}&route=${route}`, { headers });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
-          if (data?.feeUsd == null || data?.receiveUsdc == null) throw new Error("Malformed response");
-          if (cancelled) return;
-          setBridgeFeeUsd(data.feeUsd);
-          setBridgeReceiveUsdc(data.receiveUsdc);
+          if (data?.receiveUsdc == null) throw new Error("Malformed response");
+          if (!cancelled) setEstimateReceive(data.receiveUsdc);
           return;
         } catch { /* try again */ }
       }
-      if (!cancelled) setBridgeFeeUnavailable(true);
     })();
-
     return () => { cancelled = true; };
-  }, [totalAmount, accessToken, feeRetryToken, sendPrivately]);
+  }, [grossTotal, accessToken, sendPrivately, arrived, isFreeTicket]);
 
-  async function handleWithdraw() {
-    if (!userSolanaAddress || !wonTickets.length) return;
-    setLoading(true); setError("");
-    try {
-      const res = await fetch("/api/lottery/withdraw-batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-        body: JSON.stringify({
-          ticketIds: wonTickets.map(t => t.id),
-          destinationAddress: userSolanaAddress,
-          route: sendPrivately ? "solana_private" : "solana_public",
-        }),
-      });
-      if (!res.ok) throw new Error((await res.json()).message ?? "Failed");
-      const data = await res.json().catch(() => null);
-      const ids: string[] = data?.withdrawalIds ?? [];
-      setWithdrawalIds(ids);
-      setArrived(false);
-      setTransferFailed(false);
-      // Show the NET the user will actually receive (after fees), not the gross win — the polling
-      // above replaces this with the exact delivered amount once the transfer completes.
-      const optimisticAmount = bridgeReceiveUsdc ?? totalAmount;
-      setDoneAmount(optimisticAmount);
-      setDone(true); onWithdrawn();
-      if (ids.length) {
-        localStorage.setItem(WITHDRAWAL_STORAGE_KEY, JSON.stringify({ withdrawalIds: ids, doneAmount: optimisticAmount, savedAt: Date.now() }));
-      }
-    } catch (err: any) { setError(err.message ?? "Unknown error"); }
-    finally { setLoading(false); }
-  }
+  // Keep the screen live while the automatic transfer is in flight.
+  useEffect(() => {
+    if (arrived || failed || isFreeTicket || !group.length || group.some(t => t.id.startsWith("preview-"))) return;
+    const id = setInterval(onWithdrawn, 15000);
+    return () => clearInterval(id);
+  }, [arrived, failed, isFreeTicket, group.length, onWithdrawn]);
 
-  /** Claims + reinvests every currently-won ticket — one call, backend consolidates all of them
-   *  into a single companion first so multiple wins get exactly one round-up, not one each. */
   async function handlePlayAgain() {
-    if (!wonTickets.length) return;
+    const ids = group.filter(t => t.status === "won").map(t => t.id);
+    if (!ids.length) return;
     setPlayingAgain(true); setPlayAgainError("");
     try {
       const res = await fetch(`/api/lottery/tickets/play-again-batch`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-        body: JSON.stringify({ ticketIds: wonTickets.map(t => t.id) }),
+        body: JSON.stringify({ ticketIds: ids }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message ?? "Failed");
@@ -1859,303 +1751,114 @@ function WithdrawTab({ wonTickets, accessToken, userSolanaAddress, solPriceUsd, 
     }
   }
 
-  if (dashboardLoading) return (
+  if (dashboardLoading && !previewDone && !previewArrived) return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4 animate-pulse">
       <div className="h-5 w-36 rounded-lg bg-white/10" />
       <div className="h-16 rounded-xl bg-white/5" />
-      <div className="h-16 rounded-xl bg-white/5" />
-      <div className="h-12 rounded-xl bg-white/10" />
     </div>
   );
 
   if (playAgainDone) return (
     <div className="rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.08] to-white/[0.02] p-8 text-center space-y-4">
-      <div className="text-5xl select-none" aria-hidden="true">🎟️</div>
-      <div>
-        <p className="text-sm font-bold text-emerald-400 uppercase tracking-[0.2em] mb-2">Played again</p>
-        <h2 className="font-display text-4xl font-bold tracking-tight bg-gradient-to-b from-white via-slate-100 to-emerald-200 bg-clip-text text-transparent">
-          {playAgainDone.numTickets} new ticket{playAgainDone.numTickets === 1 ? "" : "s"}
-        </h2>
-        <p className="text-base text-slate-400 mt-2">Your winnings went straight back into the next draw — no fees.</p>
-      </div>
-      <button onClick={() => setPlayAgainDone(null)}
-        className="text-base text-slate-400 hover:text-white underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 rounded">
-        Back
-      </button>
+      <p className="text-sm font-bold text-emerald-400 uppercase tracking-[0.2em]">Played again</p>
+      <h2 className="font-display text-4xl font-bold tracking-tight text-white">
+        {playAgainDone.numTickets} new ticket{playAgainDone.numTickets === 1 ? "" : "s"}
+      </h2>
+      <p className="text-base text-slate-400">Your winnings went straight back into the next draw, no fees.</p>
     </div>
   );
 
-  // Checked BEFORE !wonTickets.length below — handleWithdraw() sets done=true and then
-  // refetches the dashboard (onWithdrawn), which now excludes the just-redeemed ticket from
-  // wonTickets (it's in-flight, no longer "won and unclaimed"). With the guards in the other
-  // order, that refetch made wonTickets empty right as the progress tracker should appear,
-  // so the "No winnings yet" card flashed in instead — the redeem progress steps looked like
-  // they vanished the instant you clicked. `done` is local state driven by the withdrawal
-  // itself, so it must win over the derived `wonTickets` prop once a withdrawal is underway.
-  if (done) {
-    type StepState = "done" | "active" | "pending";
-    const steps: { label: string; state: StepState }[] = [
-      { label: "Redeemed", state: "done" },
-      { label: sendPrivately ? "Traveling privately" : "On the way", state: arrived ? "done" : "active" },
-      { label: "In your wallet", state: arrived ? "done" : "pending" },
-    ];
-    return (
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center space-y-6">
-        <motion.div
-          className={arrived ? "text-6xl select-none" : "mx-auto w-16 h-16 rounded-full flex items-center justify-center border-2 border-[#FF7A2A]/40 text-[#FF7A2A]"}
-          aria-hidden="true"
-          initial={reduceMotion ? undefined : { scale: 0.5, opacity: 0 }}
-          animate={reduceMotion ? undefined : { scale: 1, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 260, damping: 16 }}
-        >
-          {arrived ? "✅" : <Send className="w-6 h-6" />}
-        </motion.div>
-        <div>
-          <p className="text-sm font-bold text-[#FF7A2A] uppercase tracking-[0.2em] mb-2">
-            {arrived ? "Withdrawal complete" : "Withdrawal on its way"}
-          </p>
-          <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight text-white tabular-nums">
-            {fmt(doneAmount)}
-          </h2>
-          <p className="text-lg text-slate-300 mt-3 font-medium">
-            {arrived
-              ? (sendPrivately ? "is in your Loofta balance" : "is in your wallet")
-              : (sendPrivately ? "is heading to your Loofta balance" : "is heading to your wallet")}
-          </p>
-          <p className="text-base text-slate-400 mt-1">
-            {sendPrivately
-              ? (arrived
-                  ? "Delivered privately to your Loofta balance — no on-chain link back to you."
-                  : "Arrives in your Loofta balance in a few minutes. No on-chain link back to you.")
-              : (arrived
-                  ? "Delivered directly to your wallet."
-                  : "Arrives directly in your wallet in a few minutes.")}
-          </p>
-          {transferFailed && (
-            <p className="text-base text-red-400 mt-3">
-              Something went wrong in transit — your funds are safe. Check the History tab or contact support.
-            </p>
-          )}
-        </div>
-
-        {/* Progress tracker */}
-        <div className="flex items-center justify-center px-2" aria-label="Withdrawal progress: redeemed, now traveling privately to your wallet">
-          {steps.map((s, i) => (
-            <div key={s.label} className="flex items-center">
-              <div className="flex flex-col items-center gap-1.5 w-24">
-                <div
-                  className={[
-                    "w-8 h-8 rounded-full overflow-hidden flex items-center justify-center",
-                    s.state === "done" ? "bg-gradient-to-r from-[#EAB308] to-[#FF0F00] border-0" :
-                      s.state === "active" ? "bg-transparent border border-[#FF7A2A]/70" :
-                        "bg-transparent border border-white/20",
-                  ].join(" ")}
-                >
-                  {s.state === "done" ? (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                  ) : s.state === "active" ? (
-                    <span className={`w-2.5 h-2.5 rounded-full bg-[#FF7A2A] ${reduceMotion ? "" : "animate-pulse"}`} />
-                  ) : (
-                    <span className="w-2.5 h-2.5 rounded-full bg-white/20" />
-                  )}
-                </div>
-                <span className={[
-                  "text-sm font-medium leading-tight",
-                  s.state === "pending" ? "text-slate-500" : s.state === "active" ? "text-[#FF7A2A] font-semibold" : "text-white",
-                ].join(" ")}>
-                  {s.label}
-                </span>
-              </div>
-              {i < steps.length - 1 && (
-                <div className={["h-px w-6 -mt-6 shrink-0", s.state === "done" ? "bg-[#FF7A2A]/60" : "bg-white/15"].join(" ")} />
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div className="space-y-2">
-          {!arrived && !transferFailed && (
-            <p className="text-sm text-slate-500">You can safely leave this page — it continues in the background.</p>
-          )}
-          {/* Ticket status stays 'won' for the whole claim→bridge→deliver pipeline (see
-              initiateWithdrawalBatch) — showing this while still in flight let a user bail back
-              into what looked like the exact same unredeemed win, even though it was already being
-              delivered. Only offer it once there's actually nothing left in flight to lose track of. */}
-          {(arrived || transferFailed) && (
-            <button onClick={() => { localStorage.removeItem(WITHDRAWAL_STORAGE_KEY); setDone(false); setDoneAmount(0); setArrived(false); setTransferFailed(false); onWithdrawn(); }}
-              className="text-base text-slate-400 hover:text-white underline underline-offset-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF7A2A]/50 rounded">
-              Back to redeem
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (!wonTickets.length) return (
+  if (!group.length && !previewDone && !previewArrived) return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
       <Trophy className="w-10 h-10 text-slate-700 mx-auto mb-3" />
-      <p className="text-slate-300 text-lg font-medium">No winnings yet</p>
-      <p className="text-slate-500 text-base mt-1">Win the daily draw and your prize lands here, ready to redeem privately.</p>
+      <p className="text-slate-300 text-lg font-medium">No winnings from the last draw</p>
+      <p className="text-slate-500 text-base mt-1">Win a draw and your prize is sent to your wallet automatically.</p>
     </div>
   );
 
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-6">
-      {/* Celebration header */}
-      <motion.div
-        className="flex flex-col items-center text-center gap-1 pt-1"
-        initial={reduceMotion ? undefined : { opacity: 0, y: 10 }}
-        animate={reduceMotion ? undefined : { opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-      >
-        <motion.div
-          className="w-16 h-16 rounded-full border-2 border-[#FF7A2A]/40 flex items-center justify-center text-[#FF7A2A]"
-          animate={reduceMotion ? {} : { rotate: [0, -8, 8, -4, 0] }}
-          transition={{ duration: 1.2, delay: 0.15 }}
-        >
-          <Trophy className="w-7 h-7" />
-        </motion.div>
-        <p className="text-sm font-bold text-[#FF7A2A] uppercase tracking-[0.2em] mt-2">
-          {isBatch ? `${wonTickets.length} winning draws` : "You won"}
-        </p>
-        <h2 className="font-display text-5xl sm:text-6xl font-bold tracking-tight text-white tabular-nums">
-          {isFreeTicket ? "Free ticket" : fmt(totalAmount)}
-        </h2>
-        <p className="text-base text-slate-400 mt-1">
-          {isFreeTicket ? "play it again in the next draw" : sendPrivately ? "ready to redeem privately" : "ready to redeem"}
-        </p>
-      </motion.div>
+  if (isFreeTicket) return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center space-y-4">
+      <Trophy className="w-10 h-10 text-[#FF7A2A] mx-auto" />
+      <p className="text-sm font-bold text-[#FF7A2A] uppercase tracking-[0.2em]">Winnings from last draw</p>
+      <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight text-white">Free ticket</h2>
+      <p className="text-base text-slate-400">This win is too small to cash out after fees, so play it again in the next draw.</p>
+      {playAgainError && <p className="text-base text-red-400">{playAgainError}</p>}
+      <GlowPlayAgainButton onClick={handlePlayAgain} disabled={playingAgain}>
+        {playingAgain ? "Playing again…" : "⚡ Play again, free"}
+      </GlowPlayAgainButton>
+    </div>
+  );
 
-      {/* Winning ticket(s) */}
-      <div className="space-y-2">
-        <p className="text-sm text-slate-400 uppercase tracking-wider font-semibold">Your wins</p>
-        {wonTickets.map((t, i) => (
-          <motion.div
-            key={t.id}
-            className="flex items-center justify-between px-4 py-3.5 rounded-xl border border-white/10 bg-white/[0.03]"
-            initial={reduceMotion ? undefined : { opacity: 0, y: 12, scale: 0.98 }}
-            animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.3, delay: 0.15 + i * 0.07 }}
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0 text-amber-400 text-sm font-bold">
-                {t.winTier ? `T${t.winTier}` : <Trophy className="w-4 h-4" />}
-              </div>
-              <div className="min-w-0">
-                <p className="text-white text-base font-medium truncate">Winning ticket{t.winTier ? ` · Tier ${t.winTier}` : ""}</p>
-                <p className="text-slate-400 text-sm mt-0.5 truncate">
-                  {t.drawTime ? new Date(t.drawTime).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
-                  {t.numTickets > 1 ? ` · from batch of ${t.numTickets}` : ""}
-                </p>
-              </div>
-            </div>
-            <span className="text-[#FF7A2A] font-bold text-lg tabular-nums shrink-0 ml-3">
-              {t.isFreeTicket ? "Free ticket" : `+${fmt(t.winAmountUsdc ?? 0)}`}
-            </span>
-          </motion.div>
-        ))}
+  // Exact amount that lands in the wallet: the delivered figure once complete, the net quote before.
+  const shownAmount = previewArrived || previewDone ? 272.39 : arrived ? delivered : estimateReceive;
+  const steps: { label: string; state: "done" | "active" | "pending" }[] = [
+    { label: "Won", state: "done" },
+    { label: queued ? "Sending soon" : sendPrivately ? "Traveling privately" : "On the way", state: arrived ? "done" : "active" },
+    { label: "In your wallet", state: arrived ? "done" : "pending" },
+  ];
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center space-y-6">
+      <div>
+        <p className="text-sm font-bold text-[#FF7A2A] uppercase tracking-[0.2em] mb-2">
+          {arrived ? "Winnings from last draw, received" : queued ? "Winnings from last draw, sending soon" : "Winnings from last draw, on the way"}
+        </p>
+        <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight text-white tabular-nums">
+          {shownAmount === null ? "…" : (arrived ? "" : "~") + fmt(shownAmount)}
+        </h2>
+        <p className="text-lg text-slate-300 mt-3 font-medium">
+          {arrived
+            ? (sendPrivately ? "is in your Loofta balance" : "is in your wallet")
+            : queued
+              ? (sendPrivately ? "will be sent to your Loofta balance" : "will be sent to your wallet")
+              : (sendPrivately ? "is heading to your Loofta balance" : "is heading to your wallet")}
+        </p>
+        <p className="text-base text-slate-400 mt-1">
+          {sendPrivately
+            ? "Sent automatically and privately, the same way you bought. No on-chain link back to you."
+            : "Sent automatically as a standard transfer. Nothing to withdraw."}
+        </p>
+        {failed && (
+          <p className="text-base text-red-400 mt-3">
+            Something went wrong in transit. Your funds are safe, check the History tab or contact support.
+          </p>
+        )}
       </div>
 
-      {!isFreeTicket && (
-        <div className="rounded-xl bg-white/[0.03] border border-white/10 px-4 py-3.5 flex items-start gap-3">
-          {sendPrivately ? (
-            <ShieldCheck className="w-4 h-4 text-[#EAB308] mt-0.5 shrink-0" />
-          ) : (
-            <Send className="w-4 h-4 text-[#EAB308] mt-0.5 shrink-0" />
-          )}
-          <div>
-            <p className="text-base text-white font-semibold">
-              {sendPrivately ? "Private withdrawal, automatic" : "Standard withdrawal"}
-            </p>
-            <p className="text-sm text-slate-400 mt-1">
-              {sendPrivately
-                ? `You bought ${isBatch ? "these tickets" : "this ticket"} privately, so your winnings leave privately too. One shielded transfer, no on-chain link between your win${isBatch ? "s" : ""} and your wallet.`
-                : `You bought ${isBatch ? "these tickets" : "this ticket"} the normal way, so your winnings leave the same way — a standard transfer, straight to your wallet.`}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {playAgainError && <p className="text-base text-red-400">{playAgainError}</p>}
-
-      {isFreeTicket ? (
-        /* Free ticket — worth less than a ticket's cash value after fees, so the only action is
-           to replay it into the next draw (free), rounded up to a whole ticket. No withdraw. */
-        <>
-          <GlowPlayAgainButton onClick={handlePlayAgain} disabled={playingAgain}>
-            {playingAgain ? "Playing again…" : `⚡ Play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"}, free`}
-          </GlowPlayAgainButton>
-          <p className="text-center text-sm text-slate-500">Your win goes straight into the next draw — no fees.</p>
-        </>
-      ) : preferWithdraw ? (
-        /* Win ≥ $5: withdrawing is the featured CTA — a win this size shouldn't default to
-           nudging the user straight back into another draw. Play again stays one tap away. */
-        <>
-          {error && <p className="text-base text-red-400">{error}</p>}
-          <GradientActionButton
-            onClick={handleWithdraw}
-            disabled={loading || bridgeFeeUsd === null}
-            loading={loading}
-            loadingText="Processing..."
-            className="!h-12 !text-lg"
-          >
-            {bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Withdraw ~${fmt(bridgeReceiveUsdc ?? totalAmount)}${sendPrivately ? " privately" : ""}`}
-          </GradientActionButton>
-          <button onClick={handlePlayAgain} disabled={playingAgain}
-            className="w-full text-center text-base font-medium text-slate-300 hover:text-white underline underline-offset-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-            {playingAgain ? "Playing again…" : `or play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"} instead, free`}
-          </button>
-        </>
-      ) : canPlayAgain ? (
-        /* Cash win (≥ $1.30, < $5): play again is the featured, rounded-up, fee-free deal;
-           withdrawing is one tap away, de-emphasised, behind a confirmation showing the real net. */
-        <>
-          <GlowPlayAgainButton onClick={handlePlayAgain} disabled={playingAgain}>
-            {playingAgain ? "Playing again…" : `⚡ Play again — ${playAgainTicketCount} ticket${playAgainTicketCount === 1 ? "" : "s"}`}
-          </GlowPlayAgainButton>
-          <p className="text-center text-sm text-[#FF7A2A]/80 font-medium -mt-1">
-            Best value — we round you up to {playAgainTicketCount} whole ticket{playAgainTicketCount === 1 ? "" : "s"}, no fees
-          </p>
-          {!confirmingRedeem ? (
-            <button onClick={() => setConfirmingRedeem(true)} disabled={playingAgain || bridgeFeeUsd === null}
-              className="w-full text-center text-base font-medium text-slate-300 hover:text-white underline underline-offset-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-              {bridgeFeeUnavailable ? "Fee unavailable, retry" : bridgeFeeUsd === null ? "Getting fee quote…" : `or withdraw ~${fmt(bridgeReceiveUsdc ?? totalAmount)} instead`}
-            </button>
-          ) : (
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
-              <p className="text-sm text-slate-400">
-                You&apos;ll receive an estimated <span className="text-white font-semibold">{fmt(bridgeReceiveUsdc ?? totalAmount)}</span> after fees (confirmed once claimed on-chain, may come in slightly lower) — playing again gets you {playAgainTicketCount} full new ticket{playAgainTicketCount === 1 ? "" : "s"} instead, free.
-              </p>
-              {error && <p className="text-sm text-red-400">{error}</p>}
-              <div className="flex items-center gap-3">
-                <button onClick={() => setConfirmingRedeem(false)} disabled={loading}
-                  className="flex-1 h-10 rounded-lg border border-white/15 text-slate-300 font-medium text-sm hover:bg-white/[0.06] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                  Cancel
-                </button>
-                <button onClick={handleWithdraw} disabled={loading}
-                  className="flex-1 h-10 rounded-lg font-semibold text-sm bg-white/10 border border-white/20 text-white hover:bg-white/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                  {loading ? "Processing…" : "Confirm redeem"}
-                </button>
+      <div className="flex items-center justify-center px-2" aria-label="Winnings progress">
+        {steps.map((st, i) => (
+          <div key={st.label} className="flex items-center">
+            <div className="flex flex-col items-center gap-1.5 w-24">
+              <div className={[
+                "w-8 h-8 rounded-full overflow-hidden flex items-center justify-center",
+                st.state === "done" ? "bg-gradient-to-r from-[#EAB308] to-[#FF0F00] border-0" :
+                  st.state === "active" ? "bg-transparent border border-[#FF7A2A]/70" : "bg-transparent border border-white/20",
+              ].join(" ")}>
+                {st.state === "done" ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                ) : st.state === "active" ? (
+                  <span className={`w-2.5 h-2.5 rounded-full bg-[#FF7A2A] ${reduceMotion ? "" : "animate-pulse"}`} />
+                ) : (
+                  <span className="w-2.5 h-2.5 rounded-full bg-white/20" />
+                )}
               </div>
+              <span className={["text-sm font-medium leading-tight", st.state === "pending" ? "text-slate-500" : st.state === "active" ? "text-[#FF7A2A] font-semibold" : "text-white"].join(" ")}>
+                {st.label}
+              </span>
             </div>
-          )}
-        </>
-      ) : (
-        /* Edge: a win too small to buy even one replay ticket (< $1) — withdrawal is the only path. */
-        <>
-          {error && <p className="text-base text-red-400">{error}</p>}
-          <GradientActionButton
-            onClick={handleWithdraw}
-            disabled={loading || !wonTickets.length || bridgeFeeUsd === null}
-            loading={loading}
-            loadingText="Processing..."
-            className="!h-12 !text-lg"
-          >
-            {bridgeFeeUnavailable ? "Fee unavailable — try again above" : bridgeFeeUsd === null ? "Getting real fee quote…" : `Redeem ~${fmt(bridgeReceiveUsdc ?? totalAmount)}${sendPrivately ? " privately" : ""}`}
-          </GradientActionButton>
-        </>
-      )}
+            {i < steps.length - 1 && <div className={["h-px w-6 -mt-6 shrink-0", st.state === "done" ? "bg-[#FF7A2A]/60" : "bg-white/15"].join(" ")} />}
+          </div>
+        ))}
+      </div>
+      {!arrived && !failed && <p className="text-sm text-slate-500">You can safely leave this page, it continues in the background.</p>}
+
+      {/* Upsell: the prize is already on its way, so offer to put some of it straight into the next draw. */}
+      <div className="rounded-xl border border-[#FF7A2A]/30 bg-[#FF7A2A]/[0.06] p-4 space-y-3">
+        <p className="text-base font-semibold text-white">Feeling lucky? Run it back.</p>
+        <p className="text-sm text-slate-400">Use some of your winnings to buy tickets for the next draw.</p>
+        <Link href={buyHref} className="inline-block rounded-full bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] px-5 py-2.5 text-base font-bold text-white">
+          Buy tickets
+        </Link>
+      </div>
     </div>
   );
 }
@@ -3436,7 +3139,7 @@ function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRe
         {anyWon ? (
           <Link href={`${megapotBase}?tab=redeem`} onClick={onRedeem}
             className="flex items-center justify-center w-full h-11 rounded-xl font-semibold bg-emerald-500 hover:bg-emerald-400 text-white transition-all">
-            Redeem Winnings
+            View winnings
           </Link>
         ) : (
           <Link href={megapotBase} onClick={onClose}
@@ -3464,11 +3167,11 @@ const DEV_PREVIEW_LINKS = [
   { label: "Good luck", href: "/app/megapot?tab=buy&preview=done" },
   { label: "Draw — Won", href: "/app/megapot?tab=buy&preview=won" },
   { label: "Draw — Lost", href: "/app/megapot?tab=buy&preview=lost" },
-  { label: "Redeem — 1 win", href: "/app/megapot?tab=redeem&preview=redeem" },
-  { label: "Redeem — batch", href: "/app/megapot?tab=redeem&preview=redeem-batch" },
-  { label: "Redeem — play again (glow)", href: "/app/megapot?tab=redeem&preview=redeem-playagain" },
-  { label: "Redeem — on its way", href: "/app/megapot?tab=redeem&preview=redeem-done" },
-  { label: "Redeem — arrived", href: "/app/megapot?tab=redeem&preview=redeem-arrived" },
+  { label: "Last draw — on the way (private)", href: "/app/megapot?tab=redeem&preview=redeem" },
+  { label: "Last draw — batch", href: "/app/megapot?tab=redeem&preview=redeem-batch" },
+  { label: "Last draw — free ticket", href: "/app/megapot?tab=redeem&preview=redeem-playagain" },
+  { label: "Last draw — on its way", href: "/app/megapot?tab=redeem&preview=redeem-done" },
+  { label: "Last draw — arrived", href: "/app/megapot?tab=redeem&preview=redeem-arrived" },
 ] as const;
 
 function DevPreviewPanel() {
@@ -3664,7 +3367,16 @@ export default function MegapotPage() {
   const isRedeemPreview = redeemPreview === "redeem" || redeemPreview === "redeem-batch" || redeemPreview === "redeem-playagain" || redeemPreview === "redeem-done" || redeemPreview === "redeem-arrived";
   const isAppPath = usePathname()?.startsWith("/app");
   const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
-  const winningsUsd = wonTickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
+  // Last draw's prize: what actually reaches the wallet (withdrawal amount) once the automatic
+  // transfer exists, the recorded win until then.
+  const allDashTickets = [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])]
+    .filter(t => (t.status === "won" || t.status === "withdrawn") && (t.winAmountUsdc ?? 0) > 0 && t.roundId);
+  const lastWinRound = allDashTickets.reduce<string | null>((b, t) => (b === null || Number(t.roundId) > Number(b) ? t.roundId : b), null);
+  const lastWinTickets = allDashTickets.filter(t => t.roundId === lastWinRound);
+  const lastWinWithdrawals = (dashboard?.withdrawals ?? []).filter(w => lastWinTickets.some(t => t.id === w.ticketId) && w.status !== "failed");
+  const winningsUsd = lastWinWithdrawals.length
+    ? lastWinWithdrawals.reduce((sum, w) => sum + (w.amountUsdc ?? 0), 0)
+    : lastWinTickets.reduce((sum, t) => sum + (t.winAmountUsdc ?? 0), 0);
 
   return (
     <div className={`bg-[#0B0B0E] text-[#F2EFE8] mobile-first ${sora.variable} ${jetbrainsMono.variable}`}>
@@ -3688,9 +3400,9 @@ export default function MegapotPage() {
         )}
         {tab === "redeem" && (
           authenticated ? (
-            <WithdrawTab wonTickets={wonTickets} accessToken={accessToken.current} userSolanaAddress={userSolanaAddress} solPriceUsd={solPriceUsd} onWithdrawn={fetchDashboard} dashboardLoading={isRedeemPreview ? false : dashboardLoading} previewDone={redeemPreview === "redeem-done"} previewArrived={redeemPreview === "redeem-arrived"} withdrawMinUsdc={dashboard?.withdrawMinUsdc} />
+            <WithdrawTab tickets={isRedeemPreview ? (redeemPreview === "redeem-playagain" ? wonTickets.map(t => ({ ...t, winAmountUsdc: 0.9 })) : wonTickets) : [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])]} withdrawals={isRedeemPreview ? [] : (dashboard?.withdrawals ?? [])} accessToken={accessToken.current} onWithdrawn={fetchDashboard} dashboardLoading={isRedeemPreview ? false : dashboardLoading} previewDone={redeemPreview === "redeem-done"} previewArrived={redeemPreview === "redeem-arrived"} withdrawMinUsdc={dashboard?.withdrawMinUsdc} />
           ) : (
-            <SignInGate message="Sign in to see and redeem your winnings." login={login} />
+            <SignInGate message="Sign in to see your winnings." login={login} />
           )
         )}
         {tab === "history" && (
@@ -3701,15 +3413,13 @@ export default function MegapotPage() {
                 <Trophy className="h-7 w-7 text-[#6A3500]" strokeWidth={2.4} />
               </span>
               <span className="flex min-w-0 flex-1 flex-col">
-                <span className="text-[13px] font-bold text-[#D9A866]">Winnings to redeem</span>
+                <span className="text-[13px] font-bold text-[#D9A866]">Winnings from last draw</span>
                 <span className="text-[30px] font-bold tracking-[-0.04em]" style={{ fontFamily: "var(--font-home-sora), sans-serif" }}>{fmt(winningsUsd)}</span>
               </span>
-              {wonTickets.length > 0 ? (
+              {lastWinTickets.length > 0 && (
                 <Link href={`${megapotBase}?tab=redeem`} className="shrink-0 rounded-full bg-gradient-to-r from-[#FF2D0A] to-[#F5B70C] px-4 py-2.5 text-sm font-bold text-white">
-                  Redeem
+                  View
                 </Link>
-              ) : (
-                <span className="shrink-0 rounded-full bg-[#26262E] px-4 py-2.5 text-sm font-bold text-[#77757F]">Redeem</span>
               )}
             </div>
             <HistoryTab

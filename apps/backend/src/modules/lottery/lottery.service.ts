@@ -2873,6 +2873,7 @@ export class LotteryService {
     this.checkingResultsRunning = true;
     try {
       await this.checkDailyResultsInner();
+      await this.autoWithdrawWonTickets();
     } finally {
       this.checkingResultsRunning = false;
     }
@@ -3099,6 +3100,60 @@ export class LotteryService {
     }
 
     await this.reconcileUnclaimedResults();
+  }
+
+  private autoWithdrawing = false;
+
+  /**
+   * Winners no longer press "Redeem": every won ticket at or above WITHDRAW_MIN_USDC is withdrawn
+   * automatically to the wallet recorded on the ticket (the user's own registered wallet, same
+   * destination the refund paths trust). The route mirrors how the ticket was bought: privately
+   * funded tickets leave privately, everything else is a plain transfer. Sub-floor wins stay
+   * "free tickets" (play-again only). Tickets that already have ANY withdrawal row (in flight,
+   * complete or failed) are skipped, so a failed pipeline is never silently re-run on real money —
+   * that needs a human, same as before.
+   */
+  async autoWithdrawWonTickets(): Promise<void> {
+    if (this.autoWithdrawing) return;
+    this.autoWithdrawing = true;
+    try {
+      const db = this.supabase.getClient();
+      const { data: won } = await db
+        .from('lottery_tickets')
+        .select('id, user_id, user_solana_address, funded_privately, win_amount_usdc')
+        .eq('status', 'won');
+      if (!won?.length) return;
+
+      const { data: existing } = await db
+        .from('lottery_withdrawals')
+        .select('ticket_id')
+        .in('ticket_id', won.map(t => t.id));
+      const taken = new Set((existing ?? []).map((w: any) => w.ticket_id));
+
+      const groups = new Map<string, { userId: string; destination: string; route: 'solana_private' | 'solana_public'; ids: string[]; total: number }>();
+      for (const t of won) {
+        const amount = parseFloat(t.win_amount_usdc ?? '0');
+        if (taken.has(t.id) || !t.user_solana_address || !(amount > 0)) continue;
+        const route = t.funded_privately ? 'solana_private' : 'solana_public';
+        const key = `${t.user_id}|${t.user_solana_address}|${route}`;
+        const g = groups.get(key) ?? { userId: t.user_id, destination: t.user_solana_address, route, ids: [] as string[], total: 0 };
+        g.ids.push(t.id);
+        g.total += amount;
+        groups.set(key, g);
+      }
+
+      for (const g of groups.values()) {
+        if (g.total < WITHDRAW_MIN_USDC) continue; // free ticket: play-again only
+        try {
+          await this.initiateWithdrawalBatch({ ticketIds: g.ids, userId: g.userId, destinationAddress: g.destination, route: g.route });
+          this.logger.log(`autoWithdraw: user ${g.userId} ${g.ids.length} ticket(s) $${g.total.toFixed(2)} route=${g.route}`);
+        } catch (e: any) {
+          this.logger.warn(`autoWithdraw: user ${g.userId} failed: ${e?.message ?? e}`);
+        }
+      }
+    } finally {
+      this.autoWithdrawing = false;
+    }
   }
 
   /**
