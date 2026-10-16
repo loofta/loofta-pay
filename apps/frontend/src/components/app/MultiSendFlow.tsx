@@ -59,6 +59,8 @@ const MULTI_SEND_DISABLED = false;
 // (apps/backend/src/common/magicblock-private-transfer.ts). Duplicated rather than shared
 // per this codebase's existing convention for small cross-app constants.
 const MAGICBLOCK_GAS_SOL = 0.002;
+// MagicBlock's actual flat relay charge is exactly 200,000 USDC base units, whatever SOL/USD is.
+const MAGICBLOCK_GAS_USDC = 0.2;
 // MagicBlock's own volume fee + Loofta's cut on a private multi-send recipient's own fan-out
 // leg — same figures as backend MAGICBLOCK_VOLUME_FEE_BPS + SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS.
 // Each recipient is charged this exactly (no batch discount), so this is also the correct
@@ -204,7 +206,9 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
   // MagicBlock's flat relay fee is 0.002 SOL, not a fixed USD amount — priced live so the
   // estimate doesn't drift stale as SOL/USD moves (was hardcoded to $0.20, i.e. SOL≈$100).
   const solPriceUsd = useSolPrice();
-  const magicblockFlatFeeUsdc = MAGICBLOCK_GAS_SOL * solPriceUsd;
+  // Mirrors backend resolveMagicblockRelayFeeUsdc: floored at MagicBlock's real flat $0.20 charge
+  // and padded 5%. Without this the UI under-quotes vs. the funding transfer the backend builds.
+  const magicblockFlatFeeUsdc = Math.max(MAGICBLOCK_GAS_SOL * solPriceUsd, MAGICBLOCK_GAS_USDC) * 1.05;
   const [phase, setPhase] = useState<SendPhase>({ kind: "idle" });
   const [isDragOver, setIsDragOver] = useState(false);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
@@ -859,7 +863,8 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           for (const r of validRows) {
             const net = Math.round(parseFloat(r.amount) * 1_000_000);
             if (net <= 0) { perRowFeeUsdc.set(r.id, 0); continue; }
-            const gross = Math.ceil((net * 10_000) / (10_000 - MULTI_SEND_TOTAL_BPS));
+            // +1 matches backend estimateMagicblockGrossUp's rounding unit.
+            const gross = Math.ceil((net * 10_000) / (10_000 - MULTI_SEND_TOTAL_BPS)) + 1;
             const feeUnits = (gross - net) + flatFeeUnits;
             perRowFeeUsdc.set(r.id, feeUnits / 1_000_000);
             totalFeeUnits += feeUnits;
