@@ -627,7 +627,7 @@ function ClaimPageSenderShareView({
   const claimLink =
     typeof window !== "undefined"
       ? `${window.location.origin}/share/${shareId}`
-      : `https://pay.loofta.xyz/share/${shareId}`;
+      : `https://pay.loofta.com/share/${shareId}`;
 
   const handleReclaim = async () => {
     if (!userId) {
@@ -5589,7 +5589,7 @@ export function ClaimPayView({
                   const shareId = claim?.short_id || claim?.id;
                   const claimLink = typeof window !== "undefined"
                     ? `${window.location.origin}/share/${shareId}`
-                    : `https://pay.loofta.xyz/share/${shareId}`;
+                    : `https://pay.loofta.com/share/${shareId}`;
                   const shareText = `$${parseFloat(claim?.amount || "0").toFixed(2)} on Loofta.`;
                   const copyShareLink = async () => {
                     try {
@@ -6357,7 +6357,7 @@ export function ClaimPayView({
                   const shareId = (claim as any)?.short_id || claim?.id;
                   const claimLink = typeof window !== "undefined"
                     ? `${window.location.origin}/share/${shareId}`
-                    : `https://pay.loofta.xyz/share/${shareId}`;
+                    : `https://pay.loofta.com/share/${shareId}`;
                   const handleCopyLink = async () => {
                     try {
                       await navigator.clipboard.writeText(claimLink);

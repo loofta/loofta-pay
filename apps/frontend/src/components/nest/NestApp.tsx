@@ -395,7 +395,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   // useAuth() (not usePrivy() directly) — it serves `authenticated` from the persisted
   // loofta.auth.v1 zustand store while Privy is still initializing on reload, so this page (and
   // the header CTA) render the signed-in state immediately instead of flashing "Sign in" /
-  // "Start nesting" for the beat before Privy rehydrates. Same cache the main pay.loofta.xyz app
+  // "Start nesting" for the beat before Privy rehydrates. Same cache the main pay.loofta.com app
   // uses — one Privy session, one cache, valid across both surfaces. `ready` (real Privy
   // readiness, not the cached guess) still gates loadAuthedData below.
   const { ready, authenticated, login: privyLogin, logout, getAccessToken } = useAuth();
@@ -409,7 +409,7 @@ export default function NestApp({ mode = "app" }: { mode?: "home" | "app" }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   // Nest-only restriction: email sign-in only, no Twitter/Discord/GitHub — the global Privy
-  // config in AuthProvider.tsx (used by the main pay.loofta.xyz app) is untouched; `login()`
+  // config in AuthProvider.tsx (used by the main pay.loofta.com app) is untouched; `login()`
   // accepts a per-call `loginMethods` override for exactly this kind of scoped restriction.
   const loginStartedHere = useRef(false);
   const login = () => {

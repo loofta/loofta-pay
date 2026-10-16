@@ -6,7 +6,7 @@ import { usePrivy, useLoginWithOAuth } from "@privy-io/react-auth";
 import { AlertCircle, AlertTriangle, CheckCircle2, Link2, Loader2, Send } from "lucide-react";
 
 /**
- * Hosted on loofta.com (not pay.loofta.xyz) because Telegram's Login Widget doesn't work on
+ * Hosted on loofta.com (not pay.loofta.com) because Telegram's Login Widget doesn't work on
  * .xyz domains — loofta.com is registered as an additional domain on the same Privy app instead.
  * Logging in here creates a separate, throwaway Privy session scoped to this domain — we only
  * read the resulting Telegram handle off it and hand it back to pay.loofta.com, since the two

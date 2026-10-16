@@ -146,13 +146,13 @@ function DynamicWalletProvidersInner({ children }: { children: React.ReactNode }
   // machine (browser extension, Telegram Desktop) can reach localhost fine; a remote wallet
   // scanning a QR code (a phone) can't, regardless of what the manifest says — that's a separate,
   // unavoidable limitation of testing against localhost, not something this fixes.
-  const manifestUrl = typeof window !== "undefined" ? `${window.location.origin}/tonconnect-manifest.json` : "https://pay.loofta.xyz/tonconnect-manifest.json";
+  const manifestUrl = typeof window !== "undefined" ? `${window.location.origin}/tonconnect-manifest.json` : "https://pay.loofta.com/tonconnect-manifest.json";
 
   return (
     <WagmiProvider config={wagmiConfig}>
       <RainbowKitProvider>
         <TonConnectUIProvider manifestUrl={manifestUrl}>
-          <RelayKitProvider options={{ appName: "Loofta", source: "loofta.xyz", chains: data?.chains as RelayChain[] | undefined }}>
+          <RelayKitProvider options={{ appName: "Loofta", source: "loofta.com", chains: data?.chains as RelayChain[] | undefined }}>
             {children}
           </RelayKitProvider>
         </TonConnectUIProvider>

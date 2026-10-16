@@ -76,7 +76,7 @@ const HOVER_STYLE = {
  * @example Pre-built link (a one-off invoice, an already-generated URL):
  * ```tsx
  * <PayButton
- *   checkoutUrl="https://pay.loofta.xyz/checkout/aB3xK9pQ"
+ *   checkoutUrl="https://pay.loofta.com/checkout/aB3xK9pQ"
  *   buttonText="Pay $25"
  *   onSuccess={(id) => console.log('Payment:', id)}
  * />
@@ -254,7 +254,7 @@ export function generateEmbedCode(props: Partial<PayButtonProps>): string {
   const { checkoutUrl, buttonBgColor, callbackUrl, buttonText } = props;
 
   const propsStr = [
-    `checkoutUrl="${checkoutUrl || 'https://pay.loofta.xyz/checkout/your-short-id'}"`,
+    `checkoutUrl="${checkoutUrl || 'https://pay.loofta.com/checkout/your-short-id'}"`,
     buttonBgColor ? `buttonBgColor="${buttonBgColor}"` : null,
     callbackUrl ? `callbackUrl="${callbackUrl}"` : null,
     buttonText ? `buttonText="${buttonText}"` : null,

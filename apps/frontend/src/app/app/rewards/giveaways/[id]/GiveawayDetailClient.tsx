@@ -768,11 +768,11 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
   const canEnter = !isQuick && giveaway.status === "OPEN" && !myEntry && !isOwner;
   const giveawayEnded = giveaway.status !== "OPEN";
   const canShare = giveaway.status !== "REJECTED" && giveaway.status !== "CANCELLED";
-  // Matches the current environment (localhost in dev, pay.loofta.xyz in prod) instead of a
+  // Matches the current environment (localhost in dev, pay.loofta.com in prod) instead of a
   // hardcoded production URL — a hardcoded one made ShareLinkMenu's OG pre-warm fetch cross-origin
   // when running locally, which CSP's connect-src correctly blocked (same convention as the claim
   // page's window.location.origin usage). SSR-safe fallback for the brief pre-hydration render.
-  const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://pay.loofta.xyz";
+  const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://pay.loofta.com";
   // Prefer the short_id for anything user-facing/shareable — much shorter than the raw UUID —
   // falling back to the real id for older rows created before short_id existed.
   const shareId = giveaway?.short_id ?? giveaway?.id ?? id;

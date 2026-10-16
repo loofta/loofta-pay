@@ -98,7 +98,7 @@ const en = {
     `${n} Megapot ticket${n === 1 ? '' : 's'} on the way — check the History tab in a couple minutes.`,
   claimGiftTitle: 'Claim a gift',
   claimGiftHint: 'Paste the gift link or code someone sent you.',
-  claimGiftPlaceholder: 'pay.loofta.xyz/gift/… or the code',
+  claimGiftPlaceholder: 'pay.loofta.com/gift/… or the code',
   claimGiftLookUp: 'Look up',
   claimGiftCardTitle: (n: number) => `${n} Megapot ticket${n === 1 ? '' : 's'}`,
   claimGiftFrom: (senderUsername: string | null) => `From ${senderUsername ? `@${senderUsername}` : 'someone'}`,

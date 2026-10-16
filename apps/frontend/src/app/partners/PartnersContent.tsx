@@ -27,19 +27,19 @@ const PRODUCTS = [
     icon: "💬",
     title: "AI terminal",
     body: "Tell it who to pay in plain English — \"send $5 to @alice on X\" — and it handles the rest. No wallet address, no app switch, works for one recipient or many at once.",
-    cta: { label: "Get started", href: "https://pay.loofta.xyz/terminal" },
+    cta: { label: "Get started", href: "https://pay.loofta.com/terminal" },
   },
   {
     icon: "🎟️",
     title: "Giveaways",
     body: "Prize drops and jackpot-style giveaways for a community — built for the kind of viral, low-friction acquisition loop a rewards or referral program needs.",
-    cta: { label: "View giveaways", href: "https://pay.loofta.xyz/rewards/giveaways" },
+    cta: { label: "View giveaways", href: "https://pay.loofta.com/rewards/giveaways" },
   },
   {
     icon: "🔗",
     title: "Payment links",
     body: "One-off payment links your users can share and get paid on, across chains and tokens, without an account required from the payer.",
-    cta: { label: "Create a link", href: "https://pay.loofta.xyz/app?tab=receive" },
+    cta: { label: "Create a link", href: "https://pay.loofta.com/app?tab=receive" },
   },
   {
     icon: "🛠️",
@@ -57,7 +57,7 @@ const PRODUCTS = [
     icon: "🧾",
     title: "Team payouts",
     body: "Scheduled payroll, recurring payments, and bulk contractor payouts across countries and payout methods, with compliance gating built in.",
-    cta: { label: "Try multi-send", href: "https://pay.loofta.xyz/app?tab=send" },
+    cta: { label: "Try multi-send", href: "https://pay.loofta.com/app?tab=send" },
   },
 ];
 

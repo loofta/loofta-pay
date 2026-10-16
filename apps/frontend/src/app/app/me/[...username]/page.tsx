@@ -27,7 +27,7 @@ export default function LinkPayPage({ params }: { params: Promise<{ username: st
     }
     // "/app" not "/" — on localhost, proxy.ts redirects bare "/" to the marketing /home page
     // and drops the query string in the process; "/app" bypasses that shortcut and resolves to
-    // the same app shell on both localhost and pay.loofta.xyz.
+    // the same app shell on both localhost and pay.loofta.com.
     router.replace(`/app?${qs.toString()}`);
   }, [cleanUsername, amountFromQuery, router]);
 

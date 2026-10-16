@@ -85,7 +85,7 @@ export class SendPaymentService {
       ? this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
       : this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
     this.usdcMint = new PublicKey(mintStr);
-    this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
+    this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.com');
     const rpcUrl = isDevnetCluster
       ? this.configService.get<string>('SOLANA_RPC_URL') ||
         this.configService.get<string>('SOLANA_DEVNET_RPC_URL') ||

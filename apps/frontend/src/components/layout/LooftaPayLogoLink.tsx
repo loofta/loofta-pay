@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 
-const LOOFTA_HOME = "https://www.loofta.xyz/";
+const LOOFTA_HOME = "https://loofta.com/";
 
 type LooftaPayLogoLinkProps = {
   href?: string;

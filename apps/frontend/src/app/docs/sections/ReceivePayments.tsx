@@ -63,7 +63,7 @@ export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => 
       <DocsCodeBlock
         code={`{
   "short_id": "aB3xK9pQ",
-  "url": "https://pay.loofta.xyz/checkout/aB3xK9pQ",
+  "url": "https://pay.loofta.com/checkout/aB3xK9pQ",
   "amount": 25,
   "message": "Invoice #1042",
   "webhook_secret": "a1b2c3..." // only present if you passed webhook_url — shown once

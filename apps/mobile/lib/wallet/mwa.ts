@@ -11,7 +11,7 @@ import nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
 
 const AUTH_TOKEN_KEY = 'mwa_auth_token';
-const APP_IDENTITY = { name: 'Loofta', uri: 'https://pay.loofta.xyz', icon: 'favicon.ico' } as const;
+const APP_IDENTITY = { name: 'Loofta', uri: 'https://pay.loofta.com', icon: 'favicon.ico' } as const;
 
 /** MWA account addresses are base64-encoded raw pubkey bytes, not the usual base58 string. */
 function toBase58(mwaAddress: string): string {

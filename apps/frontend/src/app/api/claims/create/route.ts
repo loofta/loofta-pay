@@ -104,7 +104,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
     const id = data?.id;
-    const origin = process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.xyz";
+    const origin = process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.com";
     const link = `${origin}/c/${shortId}`;
     return NextResponse.json({ id, short_id: shortId, link }, { status: 200 });
   } catch (e: any) {

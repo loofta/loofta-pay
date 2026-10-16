@@ -13,7 +13,7 @@ export function Whitelabel({ onNavigate }: { onNavigate: (slug: string) => void 
           payout
         </button>{" "}
         you send generates a <code className="text-orange-300">claim_link</code> at{" "}
-        <code className="text-orange-300">pay.loofta.xyz/c/:id</code>. That&apos;s where your
+        <code className="text-orange-300">pay.loofta.com/c/:id</code>. That&apos;s where your
         recipient actually shows up to collect their money. By default it&apos;s a Loofta page:
         Loofta branding, Loofta domain. For most integrations that&apos;s fine. If your recipients
         should never see the word &quot;Loofta&quot;, that page can be whitelabeled instead. Here&apos;s

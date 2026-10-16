@@ -557,7 +557,7 @@ export function SendPayments({ onNavigate }: { onNavigate: (slug: string) => voi
         code={`{
   "payment_id": "b3f1...e02a",
   "short_id": "aB3xK9pQ",
-  "claim_link": "https://pay.loofta.xyz/c/aB3xK9pQ",
+  "claim_link": "https://pay.loofta.com/c/aB3xK9pQ",
   "unsigned_transaction": "AQAAAAAAAAAAAAAAAAAAAAAA...",
   "transaction_version": "legacy",
   "send_to": "base",
@@ -626,7 +626,7 @@ const signature = await connection.sendRawTransaction(tx.serialize());`}
         code={`{
   "payment_id": "b3f1...e02a",
   "short_id": "aB3xK9pQ",
-  "claim_link": "https://pay.loofta.xyz/c/aB3xK9pQ",
+  "claim_link": "https://pay.loofta.com/c/aB3xK9pQ",
   "is_private": false,
   "funding_source": "gram_ton",
   "deposit_address": "UQC9f2c...4a1b",
@@ -652,7 +652,7 @@ const signature = await connection.sendRawTransaction(tx.serialize());`}
       <div className="rounded-xl border border-white/10 bg-white/5 p-4 mb-4">
         <p className="text-slate-300 text-base">
           Want your recipient landing on your own branded page instead of{" "}
-          <code>pay.loofta.xyz</code>?{" "}
+          <code>pay.loofta.com</code>?{" "}
           <button type="button" onClick={() => onNavigate("whitelabel")} className="text-orange-400 hover:underline">
             Whitelabel the claim page
           </button>

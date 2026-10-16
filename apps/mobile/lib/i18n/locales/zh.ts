@@ -93,7 +93,7 @@ const zh: Translations = {
   claimGiftClaimedHint: (n) => `${n} 张 Megapot 彩票正在发放——几分钟后请在"历史"标签中查看。`,
   claimGiftTitle: '领取礼物',
   claimGiftHint: '粘贴他人发给你的礼物链接或代码。',
-  claimGiftPlaceholder: 'pay.loofta.xyz/gift/… 或输入代码',
+  claimGiftPlaceholder: 'pay.loofta.com/gift/… 或输入代码',
   claimGiftLookUp: '查询',
   claimGiftCardTitle: (n) => `${n} 张 Megapot 彩票`,
   claimGiftFrom: (senderUsername) => `来自 ${senderUsername ? `@${senderUsername}` : '匿名用户'}`,

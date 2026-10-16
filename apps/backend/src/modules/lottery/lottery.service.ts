@@ -608,7 +608,7 @@ export class LotteryService {
       .eq('funding_mode', 'sender_paid')
       .single();
     if (!gift) throw new BadRequestException('Gift not found');
-    const claimUrl = `https://pay.loofta.xyz/gift/${gift.short_id || gift.claim_token}`;
+    const claimUrl = `https://pay.loofta.com/gift/${gift.short_id || gift.claim_token}`;
     if (gift.status !== 'pending_payment') return { claimUrl }; // idempotent retry
 
     const { error } = await db
@@ -641,7 +641,7 @@ export class LotteryService {
     try {
       const id = new URL(claimUrl).pathname.split('/').filter(Boolean).pop();
       if (!id) return;
-      fetch(`https://pay.loofta.xyz/api/gift/${id}/og`).catch(() => {});
+      fetch(`https://pay.loofta.com/api/gift/${id}/og`).catch(() => {});
     } catch { /* ignore */ }
   }
 
@@ -700,7 +700,7 @@ export class LotteryService {
       .single();
     if (error || !gift) throw new Error(`Failed to create lottery gift: ${error?.message}`);
 
-    const claimUrl = `https://pay.loofta.xyz/gift/${shortId}`;
+    const claimUrl = `https://pay.loofta.com/gift/${shortId}`;
 
     if (resolved) {
       // Throws (and leaves the row retryable) on failure — same contract purchaseGiftTickets
@@ -868,7 +868,7 @@ export class LotteryService {
         status: g.status,
         claimedAt: g.claimed_at,
         claimToken: g.claim_token,
-        claimUrl: `https://pay.loofta.xyz/gift/${g.short_id || g.claim_token}`,
+        claimUrl: `https://pay.loofta.com/gift/${g.short_id || g.claim_token}`,
       })),
       total: count ?? 0,
     };
@@ -924,7 +924,7 @@ export class LotteryService {
         claimedAt: g.claimed_at,
         // The share link is fine to publish: claiming still requires logging in as the recipient
         // (isGiftRecipient). Never fall back to claim_token here -- that is the secret.
-        claimUrl: g.short_id ? `https://pay.loofta.xyz/gift/${g.short_id}` : null,
+        claimUrl: g.short_id ? `https://pay.loofta.com/gift/${g.short_id}` : null,
       })),
       total: count ?? 0,
       totalTickets: (allTickets ?? []).reduce((sum, g) => sum + (g.num_tickets ?? 0), 0),
@@ -1015,7 +1015,7 @@ export class LotteryService {
     if (error) throw new Error(`updateGiftRecipient failed: ${error.message}`);
     if (!updatedRows?.length) throw new BadRequestException('This gift was just claimed and can no longer be edited.');
 
-    const claimUrl = `https://pay.loofta.xyz/gift/${gift.short_id || gift.claim_token}`;
+    const claimUrl = `https://pay.loofta.com/gift/${gift.short_id || gift.claim_token}`;
     if (opts.recipientType === 'email') {
       await this.emailService.sendGiftTicketEmail({
         recipientEmail: recipientIdentifier,
@@ -1101,7 +1101,7 @@ export class LotteryService {
     // ("Gift on Loofta" vs "Claimed") would otherwise never update once cached.
     const shareId = gift.short_id || gift.claim_token;
     await db.storage.from('gift-og').remove([`v1/${shareId}.png`]).catch(() => {});
-    this.prewarmGiftOg(`https://pay.loofta.xyz/gift/${shareId}`);
+    this.prewarmGiftOg(`https://pay.loofta.com/gift/${shareId}`);
 
     const claimedGift = { ...gift, status: 'claimed', claimed_by_user_id: claimantPrivyUserId };
     return this.purchaseGiftTickets(claimedGift, claimantPrivyUserId);
@@ -1130,7 +1130,7 @@ export class LotteryService {
 
     const shareId = gift.short_id || gift.claim_token;
     await db.storage.from('gift-og').remove([`v1/${shareId}.png`]).catch(() => {});
-    this.prewarmGiftOg(`https://pay.loofta.xyz/gift/${shareId}`);
+    this.prewarmGiftOg(`https://pay.loofta.com/gift/${shareId}`);
 
     const claimedGift = { ...gift, status: 'claimed', claimed_by_user_id: targetUserId };
     return this.purchaseGiftTickets(claimedGift, targetUserId);

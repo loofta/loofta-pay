@@ -33,7 +33,7 @@ export function TermsSections() {
     <>
           <Section id="terms-acceptance" title="1. Acceptance of Terms">
             <P>
-              These Terms of Service ("Terms") constitute a legally binding agreement between you ("User," "you," or "your") and Loofta Inc., a Delaware corporation with a registered address at 131 Continental Dr, Suite 305, Newark, DE 19713, USA ("Company," "we," "us," or "our"), governing your access to and use of the Loofta Pay application, website, and all related services (collectively, the "Service") available at pay.loofta.xyz and related domains.
+              These Terms of Service ("Terms") constitute a legally binding agreement between you ("User," "you," or "your") and Loofta Inc., a Delaware corporation with a registered address at 131 Continental Dr, Suite 305, Newark, DE 19713, USA ("Company," "we," "us," or "our"), governing your access to and use of the Loofta Pay application, website, and all related services (collectively, the "Service") available at pay.loofta.com and related domains.
             </P>
             <P>
               By creating an account, connecting a wallet, or otherwise accessing the Service, you confirm that you have read, understood, and agree to be bound by these Terms and our Privacy Policy. Your continued use of the Service constitutes ongoing acceptance of any updates to these Terms.
@@ -346,7 +346,7 @@ export function TermsSections() {
               <p>Newark, DE 19713, USA</p>
               <p className="mt-1">Email: <a href="mailto:hello@loofta.xyz" className="text-orange-400 hover:underline">hello@loofta.xyz</a></p>
               <p className="mt-1">Support: <a href="mailto:hello@loofta.xyz" className="text-orange-400 hover:underline">hello@loofta.xyz</a></p>
-              <p className="mt-1">Website: <a href="https://loofta.xyz" className="text-orange-400 hover:underline">loofta.xyz</a></p>
+              <p className="mt-1">Website: <a href="https://loofta.com" className="text-orange-400 hover:underline">loofta.com</a></p>
             </div>
           </Section>
     </>

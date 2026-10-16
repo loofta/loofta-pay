@@ -9,6 +9,8 @@ const LOG = "[coinbase/session]";
 const ALLOWED_ORIGINS = [
   "https://pay.loofta.xyz",
   "https://loofta.xyz",
+  "https://pay.loofta.com",
+  "https://loofta.com",
   ...(process.env.NODE_ENV === "development"
     ? ["http://localhost:3000", "http://localhost:3001"]
     : []),

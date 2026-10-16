@@ -9,9 +9,9 @@ function relayTokenKey(token: string) {
 
 /**
  * Called from telegram-relay/page.tsx after the user logs in with Telegram via Privy on
- * loofta.com (a Privy-registered domain, unlike pay.loofta.xyz which Telegram's widget blocks
+ * loofta.com (a Privy-registered domain, unlike pay.loofta.com which Telegram's widget blocks
  * for being a .xyz TLD). That Privy login happens in a separate session/domain from the user's
- * real pay.loofta.xyz account, so it's authenticated here by the one-time relay token instead of
+ * real pay.loofta.com account, so it's authenticated here by the one-time relay token instead of
  * a Privy access token — the token (minted by /api/users/telegram-relay-token) is what proves
  * which Loofta account this handle belongs to. The handle itself is never trusted from the
  * client — relayAccessToken (the throwaway session's own Privy access token) is independently

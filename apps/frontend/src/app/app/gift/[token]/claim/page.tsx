@@ -14,7 +14,7 @@ import { CardShell, Avatar, Chip, Perforation, StepRow, NumberPlaceholderGrid } 
 import { Loader2, LogIn, CheckCircle2, Ticket, AlertCircle, Clock, Gift, Copy, Pencil, Mail, AtSign, Check, Share2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const SITE_URL = 'https://pay.loofta.xyz';
+const SITE_URL = 'https://pay.loofta.com';
 // Numbers poll: 5s cadence, ~2 minutes total — matches this page's own existing "usually just a
 // couple of minutes" copy for how long the bridge/mint settlement can take.
 const NUMBERS_POLL_INTERVAL_MS = 5_000;
@@ -62,7 +62,7 @@ export default function LotteryGiftClaimPage() {
   const { toast } = useToast();
 
   // Same isAppPath convention as GiftShareClient/HistoryTab — proxy.ts already rewrites clean
-  // paths to /app/* on pay.loofta.xyz, so only prefix when we're already under /app.
+  // paths to /app/* on pay.loofta.com, so only prefix when we're already under /app.
   const isAppPath = usePathname()?.startsWith('/app');
   const megapotHref = isAppPath ? '/app/megapot?tab=history' : '/megapot?tab=history';
   const buyHref = isAppPath ? '/app/megapot' : '/megapot';

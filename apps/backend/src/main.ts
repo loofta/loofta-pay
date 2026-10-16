@@ -60,6 +60,7 @@ async function bootstrap() {
     'https://pay.loofta.xyz',
     'https://loofta.xyz',
     'https://www.loofta.xyz',
+    'https://pay.loofta.com',
     'https://loofta.com',
     'https://www.loofta.com',
   ].filter((o, i, all): o is string => !!o && all.indexOf(o) === i);

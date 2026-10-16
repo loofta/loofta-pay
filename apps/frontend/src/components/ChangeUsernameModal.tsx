@@ -137,7 +137,7 @@ export function ChangeUsernameModal({
       >
         <h2 className="text-lg font-semibold text-white mb-1">Change username</h2>
         <p className="text-sm text-slate-400 mb-5">
-          Your payment link is <span className="text-white font-medium">pay.loofta.xyz/me/@{currentUsername ?? "…"}</span>
+          Your payment link is <span className="text-white font-medium">pay.loofta.com/me/@{currentUsername ?? "…"}</span>
         </p>
 
         {usingTwitter ? (

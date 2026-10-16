@@ -76,7 +76,7 @@ export function BottomNav() {
         let activeKey: NavKey = 'megapot-buy';
         if (tab === 'redeem' || tab === 'history') activeKey = 'megapot-history';
 
-        // On pay.loofta.xyz, proxy.ts redirects any literal "/app/*" URL back to the clean
+        // On pay.loofta.com, proxy.ts redirects any literal "/app/*" URL back to the clean
         // path — hardcoding "/app/megapot" here turned every tab click into an extra
         // redirect round trip (navigate -> 307 -> re-fetch clean path -> rewrite -> render).
         const megapotBase = isAppPath ? '/app/megapot' : '/megapot';

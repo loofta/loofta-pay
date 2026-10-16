@@ -9,7 +9,7 @@
  * import { PayButton } from '@/components/sdk';
  *
  * <PayButton
- *   checkoutUrl="https://pay.loofta.xyz/checkout/your-short-id"
+ *   checkoutUrl="https://pay.loofta.com/checkout/your-short-id"
  *   onSuccess={(id) => console.log('Paid:', id)}
  * />
  * ```

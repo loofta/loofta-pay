@@ -111,7 +111,7 @@ export async function getVerifiedLiveTwitterProfile(
  * token supplied — never trust a client-supplied `handle` string for Telegram. Unlike
  * getVerifiedLiveHandle, this takes a raw access token rather than a privyUserId: the Telegram
  * relay flow (telegram-relay/page.tsx) logs in via a throwaway Privy session scoped to the
- * loofta.com domain, distinct from the caller's real pay.loofta.xyz account session, so there is
+ * loofta.com domain, distinct from the caller's real pay.loofta.com account session, so there is
  * no already-authenticated privyUserId to look up — the token itself is the only proof that a
  * Telegram OAuth login actually happened. Without this, both /api/telegram-relay/complete and
  * /api/telegram-relay/verify-claim would have no way to confirm a POSTed handle was ever actually

@@ -284,7 +284,7 @@ export default function ManageGiveawayPage({ params }: { params: Promise<{ id: s
   const winners = (entries ?? [])
     .filter((e) => e.status === "winner")
     .sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
-  const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://pay.loofta.xyz";
+  const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://pay.loofta.com";
 
   const winnersAsRows = winners.map((w) => {
     const path = claimPath(w);

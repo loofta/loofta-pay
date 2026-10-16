@@ -300,7 +300,7 @@ export async function GET(
   });
 
   // Serve the freshly rendered bytes directly instead of redirecting to the storage URL. A
-  // cross-domain redirect (pay.loofta.xyz -> supabase.co) on this first-ever, slowest-possible
+  // cross-domain redirect (pay.loofta.com -> supabase.co) on this first-ever, slowest-possible
   // request for a short_id is what caused a real tweet to show no image — crawlers don't reliably
   // follow it. Later requests still hit the fast HEAD-check path above and redirect straight to
   // the now-cached file, which is same-origin-trusted and doesn't have this cold-start problem.

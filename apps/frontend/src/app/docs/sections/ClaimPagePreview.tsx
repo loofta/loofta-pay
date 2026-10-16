@@ -27,7 +27,7 @@ function LooftaMark({ className }: { className?: string }) {
 export function ClaimPagePreview() {
   const [branded, setBranded] = useState(false);
 
-  const url = branded ? "claim.acmeco.com/aB3xK9pQ" : "pay.loofta.xyz/c/aB3xK9pQ";
+  const url = branded ? "claim.acmeco.com/aB3xK9pQ" : "pay.loofta.com/c/aB3xK9pQ";
   const accent = branded ? BRAND_GRADIENT : LOOFTA_GRADIENT;
   const pageBg = branded ? "bg-[#0b1220]" : "bg-[#0f0f12]";
 
@@ -35,7 +35,7 @@ export function ClaimPagePreview() {
     <div className="mb-6">
       <div className="flex items-center justify-between gap-3 mb-3">
         <p className="text-base text-slate-300 font-medium">
-          {branded ? "Whitelabeled: your domain, your brand" : "Default: pay.loofta.xyz"}
+          {branded ? "Whitelabeled: your domain, your brand" : "Default: pay.loofta.com"}
         </p>
         <label className="flex items-center gap-2.5 text-base text-slate-400 cursor-pointer select-none shrink-0">
           Whitelabel preview
@@ -65,7 +65,7 @@ export function ClaimPagePreview() {
           ) : (
             <div className="flex items-center gap-2 mb-6 opacity-50">
               <LooftaMark className="w-5 h-5" />
-              <span className="text-[13px] text-slate-500">pay.loofta.xyz</span>
+              <span className="text-[13px] text-slate-500">pay.loofta.com</span>
             </div>
           )}
 

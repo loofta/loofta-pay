@@ -120,7 +120,7 @@ function Header({ onHowItWorks }: { onHowItWorks: () => void }) {
         }`}
     >
       <div className="flex items-center gap-10">
-        <a href="https://www.loofta.xyz/">
+        <a href="https://loofta.com/">
           <Image src="/loofta_white.svg" alt="Loofta" width={110} height={24} priority />
         </a>
         <nav className="hidden gap-1 md:flex">

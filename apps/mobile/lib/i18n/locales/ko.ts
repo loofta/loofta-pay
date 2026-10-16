@@ -92,7 +92,7 @@ const ko: Translations = {
   claimGiftClaimedHint: (n: number) => `Megapot 티켓 ${n}장이 곧 도착합니다 — 몇 분 후 내역 탭을 확인하세요.`,
   claimGiftTitle: '기프트 받기',
   claimGiftHint: '누군가에게 받은 기프트 링크 또는 코드를 붙여넣으세요.',
-  claimGiftPlaceholder: 'pay.loofta.xyz/gift/… 또는 코드',
+  claimGiftPlaceholder: 'pay.loofta.com/gift/… 또는 코드',
   claimGiftLookUp: '조회하기',
   claimGiftCardTitle: (n: number) => `Megapot 티켓 ${n}장`,
   claimGiftFrom: (senderUsername: string | null) => `${senderUsername ? `@${senderUsername}` : '누군가'}님이 보냄`,

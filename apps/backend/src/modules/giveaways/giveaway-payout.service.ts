@@ -57,7 +57,7 @@ export class GiveawayPayoutService {
     private readonly giphy: GiveawayGiphyService,
     private readonly emailService: EmailService,
   ) {
-    this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.xyz');
+    this.baseUrl = this.configService.get<string>('NEXT_PUBLIC_BASE_URL', 'https://pay.loofta.com');
   }
 
   private cluster(giveaway: Giveaway): 'devnet' | 'mainnet' {

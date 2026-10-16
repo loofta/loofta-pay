@@ -107,7 +107,7 @@ const fr: Translations = {
     `${n} ticket${n === 1 ? '' : 's'} Megapot en route — vérifiez l'onglet Historique dans quelques minutes.`,
   claimGiftTitle: 'Récupérer un cadeau',
   claimGiftHint: "Collez le lien ou le code cadeau que quelqu'un vous a envoyé.",
-  claimGiftPlaceholder: 'pay.loofta.xyz/gift/… ou le code',
+  claimGiftPlaceholder: 'pay.loofta.com/gift/… ou le code',
   claimGiftLookUp: 'Rechercher',
   claimGiftCardTitle: (n) => `${n} ticket${n === 1 ? '' : 's'} Megapot`,
   claimGiftFrom: (senderUsername) => `De la part de ${senderUsername ? `@${senderUsername}` : "quelqu'un"}`,

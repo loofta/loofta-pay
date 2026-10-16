@@ -16,7 +16,7 @@ real money; test with small real amounts.
 
 ## 1. Get an API key
 
-The user must generate one themselves at https://pay.loofta.xyz/docs?p=api-key (log in first) —
+The user must generate one themselves at https://pay.loofta.com/docs?p=api-key (log in first) —
 an agent cannot mint this on their behalf. Ask them to paste the raw key (starts with \`lft_live_\`)
 and store it as an environment variable, e.g. \`LOOFTA_API_KEY\`. Never hardcode it or expose it to
 a browser — it must only be used server-side.
@@ -46,7 +46,7 @@ Response:
 \`\`\`json
 {
   "short_id": "aB3xK9pQ",
-  "url": "https://pay.loofta.xyz/checkout/aB3xK9pQ",
+  "url": "https://pay.loofta.com/checkout/aB3xK9pQ",
   "amount": 25,
   "message": "Invoice #1042",
   "webhook_secret": "a1b2c3..."
@@ -144,7 +144,7 @@ a full component:
 </a>
 \`\`\`
 
-See https://pay.loofta.xyz/docs?p=try-it for this pattern wired up end to end.
+See https://pay.loofta.com/docs?p=try-it for this pattern wired up end to end.
 
 ## 5. Send payments (pay someone out)
 
@@ -172,7 +172,7 @@ Response:
 {
   "payment_id": "b3f1...e02a",
   "short_id": "aB3xK9pQ",
-  "claim_link": "https://pay.loofta.xyz/c/aB3xK9pQ",
+  "claim_link": "https://pay.loofta.com/c/aB3xK9pQ",
   "unsigned_transaction": "AQAAAAAAAAAAAAAAAAAAAAAA...",
   "transaction_version": "legacy",
   "send_to": "base",
@@ -247,7 +247,7 @@ Response:
 {
   "payment_id": "b3f1...e02a",
   "short_id": "aB3xK9pQ",
-  "claim_link": "https://pay.loofta.xyz/c/aB3xK9pQ",
+  "claim_link": "https://pay.loofta.com/c/aB3xK9pQ",
   "is_private": false,
   "funding_source": "gram_ton",
   "deposit_address": "UQC9f2c...4a1b",
@@ -278,7 +278,7 @@ of how long the recipient takes to claim it.
 
 ### Whitelabeling the claim page
 
-By default \`claim_link\` points to a Loofta-branded page at \`pay.loofta.xyz\`. Putting that page
+By default \`claim_link\` points to a Loofta-branded page at \`pay.loofta.com\`. Putting that page
 on your own domain with your own branding (no Loofta name visible to the recipient) is not
 self-serve. It's configured on-demand per integrator. Have the user email hello@loofta.xyz with
 the domain they want and their expected volume; don't imply this can be turned on via an API call
@@ -296,5 +296,5 @@ or dashboard toggle.
   \`unsigned_transaction\` with that key and submit it; with \`funding_source\`, you must actually
   send the token to \`deposit_address\`. Don't expect funds to move just from calling the endpoint.
 - No sandbox/test mode — every key is live. Don't build a "test mode" flag expecting one to exist.
-- Full reference: https://pay.loofta.xyz/docs
+- Full reference: https://pay.loofta.com/docs
 `;

@@ -512,7 +512,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     if (!username) return null;
     const baseUrl = typeof window !== "undefined"
       ? window.location.origin
-      : process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.xyz";
+      : process.env.NEXT_PUBLIC_BASE_URL || "https://pay.loofta.com";
     return `${baseUrl}/me/@${username}`;
   };
 

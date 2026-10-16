@@ -74,7 +74,7 @@ const GUEST_SOCIAL_PICKS: { id: SocialIconPlatform; name: string }[] = [
 
 const BRAND_GRADIENT = "bg-gradient-to-r from-[#FF1301] to-[#EAB308]";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "/app";
-const PAY_ORIGIN = "https://pay.loofta.xyz";
+const PAY_ORIGIN = "https://pay.loofta.com";
 
 /** Hand off to the app subdomain (clean paths, no /app prefix). Localhost mirrors prod via proxy.ts, so stay relative there. */
 function goToPay(router: ReturnType<typeof useRouter>, path: string, replace = false) {
@@ -145,7 +145,7 @@ function Header() {
   return (
     <header className={`sticky top-0 z-50 border-b ${BORDER_LINE_2} bg-[rgba(11,11,15,0.72)] px-6 py-5 backdrop-blur-[14px] md:px-10`}>
       <div className="mx-auto grid max-w-[1240px] grid-cols-[1fr_auto_1fr] items-center">
-        <a href="https://www.loofta.xyz/" className="col-start-1 justify-self-start">
+        <a href="https://loofta.com/" className="col-start-1 justify-self-start">
           <Image src="/loofta_white.svg" alt="Loofta" width={138} height={30} priority className="h-[30px] w-auto" />
         </a>
 

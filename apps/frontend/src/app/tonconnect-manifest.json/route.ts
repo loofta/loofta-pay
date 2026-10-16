@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
  * declaring the production domain works fine in production, but blocks every local dev
  * connection outright since the page is really running on localhost. Serving this dynamically —
  * deriving `url`/`iconUrl` from the actual incoming request's host — keeps both cases correct:
- * production gets a manifest that matches pay.loofta.xyz, local dev gets one that matches
+ * production gets a manifest that matches pay.loofta.com, local dev gets one that matches
  * localhost, so a wallet reachable from the dev machine (a browser extension, Telegram Desktop,
  * etc.) can connect. This does not help a *remote* wallet (a phone scanning a QR code) reach a
  * local dev server — that's a separate, unavoidable limitation of testing against localhost at
@@ -22,8 +22,8 @@ export async function GET(request: Request) {
       url: origin,
       name: "Loofta",
       iconUrl: `${origin}/loofta.svg`,
-      termsOfUseUrl: "https://loofta.xyz/terms",
-      privacyPolicyUrl: "https://loofta.xyz/privacy",
+      termsOfUseUrl: "https://loofta.com/terms",
+      privacyPolicyUrl: "https://loofta.com/privacy",
     },
     {
       headers: {

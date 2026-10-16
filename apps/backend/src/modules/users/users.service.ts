@@ -677,7 +677,7 @@ export class UsersService {
       if (handle && handle.replace(/^@/, '').replace(/#\d+$/, '').toLowerCase().trim() === normalized) return true;
 
       // Telegram is linked via a separate throwaway Privy login on the loofta.com relay domain
-      // (Telegram's widget is blocked on pay.loofta.xyz's .xyz TLD), not the user's main Privy
+      // (Telegram's widget is blocked on pay.loofta.com's .xyz TLD), not the user's main Privy
       // identity — so it's stored directly in social_accounts with no live fallback to try here.
       if (recipientType === 'telegram') return false;
 

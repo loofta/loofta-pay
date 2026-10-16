@@ -20,9 +20,9 @@ import { Ticket, AlertCircle, ArrowDown, Lock, CheckCircle2, ArrowRight, LogIn }
 export default function GiftShareClient({ token }: { token: string }) {
   const router = useRouter();
   const { authenticated, login, getAccessToken } = usePrivy();
-  // On pay.loofta.xyz, proxy.ts rewrites clean paths to /app/* internally but the URL bar (and
+  // On pay.loofta.com, proxy.ts rewrites clean paths to /app/* internally but the URL bar (and
   // any link target) must stay clean — only prefix with /app when we're already under /app
-  // (loofta.xyz or localhost hitting /app/* directly). Same pattern as HistoryTab's megapotBase.
+  // (loofta.com or localhost hitting /app/* directly). Same pattern as HistoryTab's megapotBase.
   const isAppPath = usePathname()?.startsWith('/app');
   const claimHref = isAppPath ? `/app/gift/${token}/claim` : `/gift/${token}/claim`;
 
