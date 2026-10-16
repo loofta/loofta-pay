@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { LotteryController } from './lottery.controller';
 import { AdminLotteryController } from './admin-lottery.controller';
 import { PackController } from './pack.controller';
+import { WeeklyQuestController } from './weekly-quest.controller';
+import { WeeklyQuestService } from './weekly-quest.service';
 import { LotteryService } from './lottery.service';
 import { LotteryCronService } from './lottery-cron.service';
 import { MegapotService } from './megapot.service';
@@ -19,8 +21,8 @@ import { MagicblockQuestModule } from '../magicblock-quest/magicblock-quest.modu
 
 @Module({
   imports: [IntentsModule, SendPaymentModule, UsersModule, EmailModule, DatabaseModule, MagicblockQuestModule],
-  controllers: [LotteryController, AdminLotteryController, PackController],
-  providers: [LotteryService, LotteryCronService, MegapotService, RhinestoneService, LifiService, RelayService, PackService, MegapotSubscriptionService],
+  controllers: [LotteryController, AdminLotteryController, PackController, WeeklyQuestController],
+  providers: [LotteryService, LotteryCronService, MegapotService, RhinestoneService, LifiService, RelayService, PackService, MegapotSubscriptionService, WeeklyQuestService],
   exports: [LotteryService, PackService, RelayService],
 })
 export class LotteryModule {}

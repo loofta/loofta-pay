@@ -30,6 +30,7 @@ export async function GET(request: NextRequest) {
     appUsersRes,
     offrampRes,
     pajOfframpRes,
+    recentUsersRes,
   ] = await Promise.all([
     supabase
       .from("payments")
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
     // sender_user_id/recipient_user_id also feed the mainnet active/repeat user counts below.
     supabase
       .from("payments")
-      .select("amount, sender_user_id, recipient_user_id")
+      .select("amount, sender_user_id, recipient_user_id, created_at")
       .eq("is_devnet", false)
       .eq("status", "SUCCESS")
       .limit(100000),
@@ -92,22 +93,22 @@ export async function GET(request: NextRequest) {
     // must stay included or every cashed-out winning ticket silently drops out of the totals.
     supabase
       .from("lottery_tickets")
-      .select("cost_usdc, user_id, num_tickets")
+      .select("cost_usdc, user_id, num_tickets, created_at")
       .in("status", ["active", "won", "lost", "withdrawn"])
       .limit(100000),
     supabase
       .from("user_deposits")
-      .select("amount_usdc")
+      .select("amount_usdc, created_at")
       .eq("status", "complete")
       .limit(100000),
     supabase
       .from("withdrawals")
-      .select("amount_usdc, is_near_intents, near_intents_complete")
+      .select("amount_usdc, is_near_intents, near_intents_complete, created_at")
       .eq("is_devnet", true)
       .limit(100000),
     supabase
       .from("withdrawals")
-      .select("amount_usdc, is_near_intents, near_intents_complete")
+      .select("amount_usdc, is_near_intents, near_intents_complete, created_at")
       .eq("is_devnet", false)
       .limit(100000),
     supabase
@@ -117,15 +118,21 @@ export async function GET(request: NextRequest) {
     // Cash outs (Venmo/Cash App/Revolut/etc via Peer) — only completed ones moved real money out.
     supabase
       .from("offramp_requests")
-      .select("amount_usdc")
+      .select("amount_usdc, created_at")
       .eq("status", "COMPLETE")
       .limit(100000),
     // Naira cash outs via PAJ Cash.
     supabase
       .from("paj_cash_orders")
-      .select("amount_usdc")
+      .select("amount_usdc, created_at")
       .eq("direction", "OFF_RAMP")
       .eq("status", "COMPLETE")
+      .limit(100000),
+    // Signups in the last 14 days, enough for 24h and 7d windows plus their previous periods.
+    supabase
+      .from("app_users")
+      .select("created_at")
+      .gte("created_at", new Date(Date.now() - 14 * 86400000).toISOString())
       .limit(100000),
   ]);
 
@@ -273,7 +280,54 @@ export async function GET(request: NextRequest) {
   const volume_cashouts = sum(offrampRes.data, "amount_usdc") + sum(pajOfframpRes.data, "amount_usdc");
   const tx_cashouts_count = (offrampRes.data?.length ?? 0) + (pajOfframpRes.data?.length ?? 0);
 
+  // Rolling growth windows: last 24h / 7d vs the period right before each. Mainnet money only,
+  // same inclusion rules as volume_total_all so the pieces add up to the headline number.
+  const nowMs = Date.now();
+  const windowSum = (
+    rows: any[] | null,
+    key: string,
+    fromMs: number,
+    toMs: number,
+    include: (r: any) => boolean = () => true
+  ) =>
+    (rows ?? []).reduce((acc: number, r: any) => {
+      const t = new Date(r.created_at).getTime();
+      return t >= fromMs && t < toMs && include(r) ? acc + Number(r[key]) : acc;
+    }, 0);
+  const windowCount = (rows: any[] | null, fromMs: number, toMs: number) =>
+    (rows ?? []).filter((r: any) => {
+      const t = new Date(r.created_at).getTime();
+      return t >= fromMs && t < toMs;
+    }).length;
+  const completedWithdrawal = (r: any) => !r.is_near_intents || r.near_intents_complete;
+  const volumeIn = (fromMs: number, toMs: number) => {
+    const payments = windowSum(mainnetSuccessRes.data, "amount", fromMs, toMs);
+    const lottery = windowSum(lotteryRes.data, "cost_usdc", fromMs, toMs);
+    const deposits = windowSum(depositsRes.data, "amount_usdc", fromMs, toMs);
+    const withdrawals = windowSum(withdrawalsMainnetRes.data, "amount_usdc", fromMs, toMs, completedWithdrawal);
+    const cashouts =
+      windowSum(offrampRes.data, "amount_usdc", fromMs, toMs) +
+      windowSum(pajOfframpRes.data, "amount_usdc", fromMs, toMs);
+    return {
+      payments,
+      lottery,
+      deposits,
+      withdrawals,
+      cashouts,
+      total: payments + lottery + deposits + withdrawals + cashouts,
+      tx: windowCount(mainnetSuccessRes.data, fromMs, toMs),
+      new_users: windowCount(recentUsersRes.data, fromMs, toMs),
+    };
+  };
+  const growth_windows = {
+    last_24h: volumeIn(nowMs - 86400000, nowMs),
+    prev_24h: volumeIn(nowMs - 2 * 86400000, nowMs - 86400000),
+    last_7d: volumeIn(nowMs - 7 * 86400000, nowMs),
+    prev_7d: volumeIn(nowMs - 14 * 86400000, nowMs - 7 * 86400000),
+  };
+
   const payload = {
+    growth_windows,
     volume_devnet,
     volume_mainnet,
     volume_devnet_total,

@@ -83,6 +83,15 @@ export class TwitterAutopayService {
     private readonly emailService: EmailService,
   ) {}
 
+  /**
+   * X (@looftapay) is switched off while auto-pay is Telegram-only. Set X_BOT_ENABLED=true to bring
+   * it back. Gated in resolvePayer/listEnrolledHandles, which every X path (payments, ticket gifts,
+   * the bot's pre-filter) goes through, so no X command can spend while this is off.
+   */
+  private get xEnabled(): boolean {
+    return this.configService.get<string>('X_BOT_ENABLED') === 'true';
+  }
+
   private get isOpen(): boolean {
     return this.configService.get<string>('TWITTER_AUTOPAY_OPEN') === 'true';
   }
@@ -183,6 +192,7 @@ export class TwitterAutopayService {
   /** Bot pre-filter: fetch once per poll cycle so it can skip non-enrolled mentions before
    *  parsing their text. Includes team approvers, who may command the bot on an owner's behalf. */
   async listEnrolledHandles(): Promise<string[]> {
+    if (!this.xEnabled) return [];
     const { data: owners } = await this.supabaseService.twitterAutopayEnrollments
       .select('id, twitter_handle')
       .eq('enabled', true)
@@ -224,6 +234,7 @@ export class TwitterAutopayService {
    * TwitterPaymentsService.create() to decide between real auto-execution and the manual flow.
    */
   async resolvePayer(twitterHandle: string): Promise<ResolvedPayer | null> {
+    if (!this.xEnabled) return null;
     const clean = normHandle(twitterHandle);
     const cols = 'id, user_id, twitter_handle, signer_granted, per_payment_cap_usd, daily_cap_usd, terms_version';
     const toPayer = (row: any, approverHandle: string | null): ResolvedPayer => ({

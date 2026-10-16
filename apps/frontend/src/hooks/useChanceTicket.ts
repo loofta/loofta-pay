@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import bs58 from "bs58";
 import { useSignAndSendTransaction } from "@privy-io/react-auth/solana";
+import posthog from "posthog-js";
 
 /** One chance to win today costs this much USDC, taken from the user's balance. */
 export const CHANCE_PRICE_USDC = 1;
@@ -23,7 +24,8 @@ function quickPick() {
 /** Most chances one purchase can add (matches the per-call cap on picked tickets). */
 export const MAX_CHANCES_PER_BUY = 10;
 
-export function useChanceTicket(getAccessToken: () => Promise<string | null>) {
+/** `source` names the surface that offered the chance (e.g. "withdraw_solana"), sent with every PostHog event. */
+export function useChanceTicket(getAccessToken: () => Promise<string | null>, source: string) {
   const { signAndSendTransaction } = useSignAndSendTransaction();
   return useCallback(async (wallet: { address: string } | undefined | null, count = 1): Promise<boolean> => {
     if (!wallet?.address) return false;
@@ -53,10 +55,12 @@ export function useChanceTicket(getAccessToken: () => Promise<string | null>) {
         headers: { "Content-Type": "application/json", ...authHeader },
         body: JSON.stringify({ ticketId, senderTxHash: bs58.encode(signature as Uint8Array) }),
       });
+      posthog.capture("chance_purchased", { source, count: n, price_usdc: CHANCE_PRICE_USDC * n });
       return true;
     } catch (err) {
       console.warn("[chance] add-on failed:", err);
+      posthog.capture("chance_purchase_failed", { source, count: n });
       return false;
     }
-  }, [getAccessToken, signAndSendTransaction]);
+  }, [getAccessToken, signAndSendTransaction, source]);
 }

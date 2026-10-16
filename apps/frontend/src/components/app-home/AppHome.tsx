@@ -3,6 +3,8 @@
 import { ChanceModal } from "@/components/ChanceModal";
 import { useDashboardStore } from "@/store/dashboard";
 import { useDrawStatus } from "@/hooks/useDrawStatus";
+import { QuestHistoryDialog, type QuestReward } from "@/components/QuestHistoryDialog";
+import { useToast } from "@/components/ui/use-toast";
 import { RankBadge } from "@/components/RankBadge";
 import { RankProgressDialog } from "@/components/RankProgressDialog";
 import { TIERS } from "@/lib/tiers";
@@ -164,7 +166,41 @@ export function AppHome() {
   const cached = cache.userId === userId;
   const historyLive = history.isSuccess;
   const recent: Activity[] = historyLive ? liveRecent : cached ? cache.recent : [];
-  const weeklyShown = historyLive ? weeklyVolume : cached && cache.weekStart === weekStart ? cache.weeklyVolumeUsd : 0;
+  // Server-side quest status is the source of truth (same numbers the hourly award job uses); the
+  // browser-side estimate below is only a fallback while it loads or if the endpoint is unavailable.
+  const quest = useQuery({
+    queryKey: ["weekly-quest", userId],
+    enabled: authenticated && !!userId,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    retry: 1,
+    queryFn: async () => {
+      const token = await getAccessToken().catch(() => null);
+      const r = await fetch("/api/weekly-quest", { headers: token ? { authorization: `Bearer ${token}` } : {}, cache: "no-store" });
+      if (!r.ok) throw new Error("weekly-quest");
+      return r.json() as Promise<{ volumeUsd: number; targetUsd: number; daysUntilNext: number; qualified: boolean; projectedTickets?: number; history?: QuestReward[]; unseenAward?: (QuestReward & { id: string }) | null }>;
+    },
+  });
+  const { toast } = useToast();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const unseen = quest.data?.unseenAward ?? null;
+  useEffect(() => {
+    if (!unseen) return;
+    toast({
+      title: "Your weekly reward is in",
+      description: `You received ${unseen.tickets} free ${unseen.tickets === 1 ? "entry" : "entries"} in the daily $200K draw for last week's ${money(unseen.volumeUsd)} volume.`,
+      duration: 12000,
+    });
+    void (async () => {
+      const token = await getAccessToken().catch(() => null);
+      await fetch("/api/weekly-quest", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ awardId: unseen.id }) }).catch(() => {});
+      void queryClient.invalidateQueries({ queryKey: ["weekly-quest"] });
+      void queryClient.invalidateQueries({ queryKey: ["draw-status"] });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unseen?.id]);
+  const questTarget = quest.data?.targetUsd ?? WEEKLY_QUEST_TARGET_USD;
+  const weeklyShown = quest.data ? quest.data.volumeUsd : historyLive ? weeklyVolume : cached && cache.weekStart === weekStart ? cache.weeklyVolumeUsd : 0;
   const balanceLive = authenticated && !isLoading;
   const balanceShown = balanceLive ? balanceUSD : cached && cache.balanceUsd !== null ? cache.balanceUsd : null;
 
@@ -192,8 +228,9 @@ export function AppHome() {
   }, [nextDrawAt]);
   const msLeft = nextDrawAt ? new Date(nextDrawAt).getTime() - nowMs : null;
 
-  const questPct = Math.min(100, (weeklyShown / WEEKLY_QUEST_TARGET_USD) * 100);
-  const questDone = weeklyShown >= WEEKLY_QUEST_TARGET_USD;
+  const questPct = Math.min(100, (weeklyShown / questTarget) * 100);
+  const questDone = weeklyShown >= questTarget;
+  const daysLeft = quest.data?.daysUntilNext ?? null;
 
   const greet = (username || "there").replace(/^@/, "").toUpperCase();
   const goSend = () => router.push("/app/send");
@@ -280,17 +317,18 @@ export function AppHome() {
             {authenticated && (
               <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 8, padding: "14px 16px", borderRadius: 18, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
                 <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 800, fontSize: 15 }}>{questDone ? "Free $200K draw entry unlocked" : "Weekly quest: win up to $200K"}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 13, color: "#9A98A3", fontVariantNumeric: "tabular-nums" }}>{money(Math.min(weeklyShown, WEEKLY_QUEST_TARGET_USD))} / {money(WEEKLY_QUEST_TARGET_USD)}</span>
+                  <span style={{ fontWeight: 800, fontSize: 15 }}>{questDone ? "Quest complete" : "Weekly quest: win up to $200K"}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 13, color: "#9A98A3", fontVariantNumeric: "tabular-nums" }}>{money(Math.min(weeklyShown, questTarget))} / {money(questTarget)}</span>
                 </div>
                 <div style={{ height: 14, borderRadius: 999, background: "rgba(0,0,0,0.4)", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)", overflow: "hidden" }}>
                   <div style={{ width: `${Math.max(questPct, weeklyShown > 0 ? 4 : 0)}%`, height: "100%", borderRadius: 999, background: questDone ? "linear-gradient(90deg,#3CC878,#9BE564)" : "linear-gradient(90deg,#FF4A26,#FF7A2A,#EAB308)", boxShadow: "inset 0 -3px 0 rgba(0,0,0,0.22)", transition: "width .7s ease" }} />
                 </div>
                 <span style={{ fontSize: 14, color: "#9A98A3", lineHeight: 1.35 }}>
                   {questDone
-                    ? "Your free entry is in. Every extra entry raises your odds."
-                    : `${money(Math.max(0, WEEKLY_QUEST_TARGET_USD - weeklyShown))} more sent or withdrawn this week earns you a free entry.`}
+                    ? `You are on track for ${quest.data?.projectedTickets ?? 1} free ${(quest.data?.projectedTickets ?? 1) === 1 ? "entry" : "entries"}, paid automatically when the week ends.${daysLeft !== null ? ` New quest in ${daysLeft} ${daysLeft === 1 ? "day" : "days"}.` : ""}`
+                    : `${money(Math.max(0, questTarget - weeklyShown))} more sent or withdrawn this week earns you free entries, paid when the week ends.${daysLeft !== null ? ` New quest in ${daysLeft} ${daysLeft === 1 ? "day" : "days"}.` : ""}`}
                 </span>
+                <button type="button" onClick={() => setHistoryOpen(true)} style={{ alignSelf: "flex-start", background: "none", border: 0, padding: 0, cursor: "pointer", color: "#FF8A4A", fontWeight: 700, fontSize: 14 }}>Past rewards{(quest.data?.history?.length ?? 0) > 0 ? ` (${quest.data?.history?.length})` : ""}</button>
               </div>
             )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8, position: "relative", marginTop: "auto" }}>
@@ -384,6 +422,7 @@ export function AppHome() {
           </div>
         </div>
       </div>
+      <QuestHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} rewards={quest.data?.history ?? []} />
       <ChanceModal open={chanceOpen} onOpenChange={setChanceOpen} balanceUsd={balanceUSD ?? 0} getAccessToken={getAccessToken} entries={entries} drawTime={nextDrawAt} prizePool={draw.data?.prizePool ?? null} onBought={() => { void queryClient.invalidateQueries({ queryKey: ["draw-status"] }); void queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] }); }} />
       <RankProgressDialog open={rankOpen} onOpenChange={setRankOpen} volumeUsd={totalVolumeUsd} />
     </div>

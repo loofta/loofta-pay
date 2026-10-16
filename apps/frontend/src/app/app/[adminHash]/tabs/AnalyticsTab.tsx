@@ -49,8 +49,63 @@ export function AnalyticsTab({
           { label: "Recipient Claimed", value: funnel.users_success },
         ];
 
+        const gw = analyticsData.growth_windows;
+        const fmtUsd = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const growthLabel = (cur: number, prev: number) => {
+          if (prev <= 0) return cur > 0 ? "new" : "0%";
+          const pct = Math.round(((cur - prev) / prev) * 100);
+          return `${pct > 0 ? "+" : ""}${pct}%`;
+        };
+        const growthColor = (cur: number, prev: number) =>
+          cur > prev ? "text-green-400" : cur < prev ? "text-red-400" : "text-gray-500";
+        const growthRows: { label: string; key: keyof typeof gw.last_24h; money: boolean }[] = [
+          { label: "Total volume", key: "total", money: true },
+          { label: "Payments", key: "payments", money: true },
+          { label: "Lottery", key: "lottery", money: true },
+          { label: "Deposits", key: "deposits", money: true },
+          { label: "Withdrawals", key: "withdrawals", money: true },
+          { label: "Cash outs", key: "cashouts", money: true },
+          { label: "Payment transactions", key: "tx", money: false },
+          { label: "New users", key: "new_users", money: false },
+        ];
+        const fmtVal = (n: number, money: boolean) => (money ? fmtUsd(n) : n.toLocaleString());
+
         return (
           <>
+            {/* Growth: last 24h and 7d vs the period before */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Growth (mainnet, USDC)</h3>
+              <div className="overflow-x-auto rounded-xl border border-gray-800">
+                <table className="w-full text-base md:text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                      <th className="text-left px-4 py-2.5"></th>
+                      <th className="text-right px-4 py-2.5">Last 24h</th>
+                      <th className="text-right px-4 py-2.5">vs prev 24h</th>
+                      <th className="text-right px-4 py-2.5">Last 7 days</th>
+                      <th className="text-right px-4 py-2.5">vs prev 7d</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {growthRows.map((r) => (
+                      <tr key={r.key} className="border-b border-gray-800/60 hover:bg-gray-900/50">
+                        <td className="px-4 py-2.5 text-gray-300">{r.label}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-white">{fmtVal(gw.last_24h[r.key], r.money)}</td>
+                        <td className={`px-4 py-2.5 text-right tabular-nums ${growthColor(gw.last_24h[r.key], gw.prev_24h[r.key])}`}>
+                          {growthLabel(gw.last_24h[r.key], gw.prev_24h[r.key])}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-white">{fmtVal(gw.last_7d[r.key], r.money)}</td>
+                        <td className={`px-4 py-2.5 text-right tabular-nums ${growthColor(gw.last_7d[r.key], gw.prev_7d[r.key])}`}>
+                          {growthLabel(gw.last_7d[r.key], gw.prev_7d[r.key])}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="text-sm text-gray-500 mt-2">Rolling windows ending now. Growth compares against the equal-length period right before.</div>
+            </div>
+
             {/* Volume section */}
             <div>
               <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Transaction Volume</h3>

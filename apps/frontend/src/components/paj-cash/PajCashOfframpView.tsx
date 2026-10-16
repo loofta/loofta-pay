@@ -1,5 +1,7 @@
 "use client";
 
+import { ChanceUpsellCard } from "@/components/ChanceUpsellCard";
+import { CHANCE_PRICE_USDC, CHANCE_MIN_BALANCE_USDC, useChanceTicket } from "@/hooks/useChanceTicket";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,6 +81,8 @@ export function PajCashOfframpView({
   const [savingAccount, setSavingAccount] = useState(false);
 
   const [amount, setAmount] = useState("");
+  const [chance, setChance] = useState(false);
+  const buyChance = useChanceTicket(getAccessToken);
   const [quote, setQuote] = useState<number | null>(null);
   const looftaFee = computeLooftaFeeUsdc(parseFloat(amount) || 0);
   const [quoteLoading, setQuoteLoading] = useState(false);
@@ -241,6 +245,10 @@ export function PajCashOfframpView({
       toast({ variant: "destructive", title: "Insufficient balance", description: `You have ${maxAmountUsdc.toFixed(6).replace(/\.?0+$/, "")} USDC available.` });
       return;
     }
+    if (chance && amountNum + CHANCE_PRICE_USDC > maxAmountUsdc) {
+      toast({ variant: "destructive", title: "Insufficient balance", description: "Lower the amount a little to keep $1 for your chance to win." });
+      return;
+    }
     if (!solanaAddress || !wallet || !userId) {
       toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta wallet is not available. Try refreshing." });
       return;
@@ -248,6 +256,12 @@ export function PajCashOfframpView({
 
     setSubmitting(true);
     try {
+      // The chance goes first and never blocks the cash out: a failed purchase just means no chance.
+      if (chance) {
+        const added = await buyChance(wallet);
+        setChance(false);
+        if (added) toast({ title: "You're in for today's draw", description: "Good luck, your chance to win $200K is in." });
+      }
       const accessToken = await getAccessToken();
       const created = await pajCreateOfframp(selectedAccountId, amountNum, accessToken);
       setOrder(created);
@@ -474,6 +488,21 @@ export function PajCashOfframpView({
             ) : null}
           </div>
         </div>
+
+        {!devnetMode && maxAmountUsdc >= CHANCE_MIN_BALANCE_USDC && parseFloat(amount) > 0 && (
+          <ChanceUpsellCard
+            dark={dark}
+            price={CHANCE_PRICE_USDC}
+            disabled={submitting}
+            checked={chance}
+            onCheckedChange={(checked) => {
+              setChance(checked);
+              if (checked && (parseFloat(amount) || 0) + CHANCE_PRICE_USDC > maxAmountUsdc) {
+                setAmount(Math.max(0, maxAmountUsdc - CHANCE_PRICE_USDC).toFixed(2).replace(/\.00$/, ""));
+              }
+            }}
+          />
+        )}
 
         <Button
           onClick={handleCreateOrder}

@@ -179,6 +179,18 @@ export type AnalyticsData = {
   tx_withdrawals_devnet_count: number;
   tx_withdrawals_mainnet_count: number;
   volume_total_all: number;
+  growth_windows: Record<"last_24h" | "prev_24h" | "last_7d" | "prev_7d", GrowthWindow>;
+};
+
+export type GrowthWindow = {
+  payments: number;
+  lottery: number;
+  deposits: number;
+  withdrawals: number;
+  cashouts: number;
+  total: number;
+  tx: number;
+  new_users: number;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────

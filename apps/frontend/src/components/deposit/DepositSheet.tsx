@@ -1391,7 +1391,7 @@ function SolanaWithdraw({
   const validAddress = isValidAddressForChain(resolved, "solana");
   // Private (MagicBlock exactOut): sender is debited amount + fees on top — never Max the full balance.
   const [chance, setChance] = useState(false);
-  const buyChance = useChanceTicket(getAccessToken);
+  const buyChance = useChanceTicket(getAccessToken, "withdraw_solana");
   const chanceCost = chance ? CHANCE_PRICE_USDC : 0;
   const maxSendable = Math.max(
     0,
@@ -1615,6 +1615,7 @@ function SolanaWithdraw({
       {balanceNum >= CHANCE_MIN_BALANCE_USDC && amountNum > 0 && (
         <ChanceUpsellCard
           dark
+          source="withdraw_solana"
           price={CHANCE_PRICE_USDC}
           disabled={busy}
           checked={chance}
@@ -1674,7 +1675,7 @@ function CryptoWithdraw({
   const amountNum = Number(amount);
   const addressOk = !!token && isValidAddressForChain(destination.trim(), token.chain);
   const [chance, setChance] = useState(false);
-  const buyChance = useChanceTicket(getAccessToken);
+  const buyChance = useChanceTicket(getAccessToken, "withdraw_crypto");
   const chanceCost = chance ? CHANCE_PRICE_USDC : 0;
   const maxSendable = Math.max(
     0,
@@ -1887,6 +1888,7 @@ function CryptoWithdraw({
       {balanceNum >= CHANCE_MIN_BALANCE_USDC && amountNum > 0 && (
         <ChanceUpsellCard
           dark
+          source="withdraw_crypto"
           price={CHANCE_PRICE_USDC}
           disabled={busy}
           checked={chance}
@@ -1932,7 +1934,7 @@ function BankWithdraw({
   const [busy, setBusy] = useState(false);
   const [chance, setChance] = useState(false);
   const { wallet: chanceWallet } = useLooftaSigner(solanaAddress);
-  const buyChance = useChanceTicket(getAccessToken);
+  const buyChance = useChanceTicket(getAccessToken, "cash_out_bank");
   const platform = PEER_PLATFORMS.find((p) => p.id === app);
   const amountNum = Number(amount);
   const maxCashOut = Math.max(0, balanceNum - (chance ? CHANCE_PRICE_USDC : 0));
@@ -2008,6 +2010,7 @@ function BankWithdraw({
         {balanceNum >= CHANCE_MIN_BALANCE_USDC && amountNum > 0 && (
           <ChanceUpsellCard
             dark
+            source="cash_out_bank"
             price={CHANCE_PRICE_USDC}
             disabled={busy}
             checked={chance}

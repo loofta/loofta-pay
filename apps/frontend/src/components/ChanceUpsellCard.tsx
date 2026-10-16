@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
 import { CheckCircle2 } from "lucide-react";
+import posthog from "posthog-js";
 import { ChanceIcon } from "@/components/ChanceIcon";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -17,6 +19,8 @@ interface ChanceUpsellCardProps {
   title?: string;
   /** Row shown once switched on, e.g. "1 chance added". */
   addedLabel?: string;
+  /** Which surface is showing the card, sent with the PostHog shown/toggled events. */
+  source?: string;
 }
 
 /**
@@ -33,7 +37,12 @@ export function ChanceUpsellCard({
   price,
   title = "Keep $1 for a chance to win $200K",
   addedLabel = "1 chance to win today added",
+  source,
 }: ChanceUpsellCardProps) {
+  useEffect(() => {
+    posthog.capture("chance_upsell_shown", { source });
+  }, [source]);
+
   return (
     <div className="relative rounded-2xl">
       <style>{`
@@ -62,7 +71,10 @@ export function ChanceUpsellCard({
           <Switch
             checked={checked}
             disabled={disabled}
-            onCheckedChange={onCheckedChange}
+            onCheckedChange={(next) => {
+              posthog.capture("chance_upsell_toggled", { source, checked: next });
+              onCheckedChange(next);
+            }}
             className="shrink-0 mt-1 data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-[#FF4A26] data-[state=checked]:to-[#E1A041]"
           />
         </div>

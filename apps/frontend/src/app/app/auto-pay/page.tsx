@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { usePrivy, useSigners } from '@privy-io/react-auth'
 import { useWallets } from '@privy-io/react-auth/solana'
-import { Loader2, AlertCircle, CheckCircle2, ShieldCheck, Users, X } from 'lucide-react'
+import { Loader2, AlertCircle, ShieldCheck } from 'lucide-react'
 import { GradientActionButton } from '@/components/ui/GradientActionButton'
 import { deriveSolanaEmbeddedAddress } from '@/lib/privySolanaEmbeddedAddress'
 import { fetchApi } from '@/services/api/client'
@@ -39,7 +39,6 @@ export default function TwitterBotPage() {
   const [error, setError] = useState<string | null>(null)
   const [perPayment, setPerPayment] = useState<string | null>(null)
   const [daily, setDaily] = useState<string | null>(null)
-  const [newApprover, setNewApprover] = useState('')
   const [acceptedTerms, setAcceptedTerms] = useState(false)
 
   const solanaAddress = deriveSolanaEmbeddedAddress(user) ?? solanaWallets[0]?.address ?? null
@@ -107,12 +106,6 @@ export default function TwitterBotPage() {
       }),
     )
 
-  const handleAddApprover = () =>
-    run(async () => {
-      await post('approvers', { handle: newApprover })
-      setNewApprover('')
-    })
-
   if (!ready || (authenticated && isLoading)) {
     return (
       <div className="flex items-center justify-center min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
@@ -143,22 +136,15 @@ export default function TwitterBotPage() {
       <div className="space-y-2">
         <h1 className="text-3xl font-semibold text-white">Auto-pay</h1>
         <p className="text-lg text-slate-300 leading-relaxed">
-          Let Loofta pay from your wallet when you or your team ask it to, within limits you set.
-          On Telegram, message <a href="https://t.me/looftapay_bot" target="_blank" rel="noreferrer" className="text-white underline underline-offset-2">@looftapay_bot</a> with{' '}
-          <span className="text-white">send $5 to @alice</span>. On X, reply to any post with{' '}
-          <span className="text-white">@looftapay pay $5</span> and the author gets paid.
-          Recipients without a Loofta account get a claim link. Sign in to Loofta with the same Telegram account you use in the bot.
+          Let Loofta pay from your wallet when you ask it to, within limits you set. Message{' '}
+          <a href="https://t.me/looftapay_bot" target="_blank" rel="noreferrer" className="text-white underline underline-offset-2">@looftapay_bot</a>{' '}
+          on Telegram with <span className="text-white">send $5 to @alice</span>, or reply to someone in a group with{' '}
+          <span className="text-white">/tip 5</span>. Recipients without a Loofta account get a claim link.
+          Sign in to Loofta with the same Telegram account you use in the bot.
         </p>
       </div>
 
       <div className={card}>
-        {status?.twitterHandle && (
-          <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] px-4 py-3">
-            <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
-            <p className="text-lg text-white/70">X linked as @{status.twitterHandle}</p>
-          </div>
-        )}
-
         <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${status?.enrolled ? 'border-emerald-500/20 bg-emerald-500/10' : 'border-amber-500/20 bg-amber-500/10'}`}>
           <ShieldCheck className={`h-5 w-5 shrink-0 ${status?.enrolled ? 'text-emerald-400' : 'text-amber-400'}`} />
           <span className={`flex-1 text-lg font-medium ${status?.enrolled ? 'text-emerald-300' : 'text-amber-300'}`}>
@@ -221,46 +207,6 @@ export default function TwitterBotPage() {
             <GradientActionButton onClick={handleSaveLimits} loading={working} loadingText="Saving…">
               Save limits
             </GradientActionButton>
-          </div>
-
-          <div className={card}>
-            <div className="flex items-center gap-2.5">
-              <Users className="h-5 w-5 text-white/60" />
-              <h2 className="text-xl font-semibold text-white">Team approvers</h2>
-            </div>
-            <p className="text-lg text-slate-300">
-              X accounts that can tell @looftapay to pay from this wallet, for example your community manager.
-              Their payments are public and credit your account, and they follow the limits above.
-            </p>
-            {status.approvers.length > 0 && (
-              <ul className="space-y-2">
-                {status.approvers.map((h) => (
-                  <li key={h} className="flex items-center justify-between rounded-xl bg-white/[0.04] border border-white/[0.08] px-4 py-3">
-                    <span className="text-lg text-white">@{h}</span>
-                    <button
-                      type="button"
-                      aria-label={`Remove @${h}`}
-                      disabled={working}
-                      onClick={() => run(() => post('approvers/remove', { handle: h }))}
-                      className="text-white/50 hover:text-white disabled:opacity-50"
-                    >
-                      <X className="h-5 w-5" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="flex gap-3">
-              <input className={input} placeholder="@handle" value={newApprover} onChange={(e) => setNewApprover(e.target.value)} />
-              <button
-                type="button"
-                onClick={handleAddApprover}
-                disabled={working || !newApprover.trim()}
-                className="shrink-0 rounded-xl border border-white/[0.15] px-5 text-lg text-white hover:bg-white/[0.06] disabled:opacity-50"
-              >
-                Add
-              </button>
-            </div>
           </div>
         </>
       )}

@@ -32,15 +32,16 @@ const BlinkTab = dynamic(() => import("./tabs/BlinkTab").then((m) => m.BlinkTab)
 const WaitlistTab = dynamic(() => import("./tabs/WaitlistTab").then((m) => m.WaitlistTab), { loading: tabLoading, ssr: false });
 const CashoutTab = dynamic(() => import("./tabs/CashoutTab").then((m) => m.CashoutTab), { loading: tabLoading, ssr: false });
 const LotteryTab = dynamic(() => import("./tabs/LotteryTab").then((m) => m.LotteryTab), { loading: tabLoading, ssr: false });
+const WeeklyQuestTab = dynamic(() => import("./tabs/WeeklyQuestTab").then((m) => m.WeeklyQuestTab), { loading: tabLoading, ssr: false });
 const PacksTab = dynamic(() => import("./tabs/PacksTab").then((m) => m.PacksTab), { loading: tabLoading, ssr: false });
 const SubscriptionsTab = dynamic(() => import("./tabs/SubscriptionsTab").then((m) => m.SubscriptionsTab), { loading: tabLoading, ssr: false });
 const AnalyticsTab = dynamic(() => import("./tabs/AnalyticsTab").then((m) => m.AnalyticsTab), { loading: tabLoading, ssr: false });
 const GiveawaysTab = dynamic(() => import("./tabs/GiveawaysTab").then((m) => m.GiveawaysTab), { loading: tabLoading, ssr: false });
 
-type AdminTab = "payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout" | "lottery" | "packs" | "subscriptions" | "giveaways";
+type AdminTab = "payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout" | "lottery" | "packs" | "subscriptions" | "giveaways" | "weekly-quest";
 const ADMIN_TAB_STORAGE_KEY = "loofta-admin-active-tab";
 const ADMIN_TAB_QUERY_KEY = ["admin-active-tab"];
-const VALID_ADMIN_TABS: AdminTab[] = ["payments", "sparks", "waitlist", "analytics", "blink", "cashout", "lottery", "packs", "subscriptions", "giveaways"];
+const VALID_ADMIN_TABS: AdminTab[] = ["payments", "sparks", "waitlist", "analytics", "blink", "cashout", "lottery", "packs", "subscriptions", "giveaways", "weekly-quest"];
 
 function loadStoredAdminTab(): AdminTab {
   if (typeof window === "undefined") return "payments";
@@ -872,7 +873,7 @@ export default function AdminDashboard() {
               () => fetchPajCash(pajCashPage, pajCashStatusFilter, pajCashDirectionFilter)
             ) :
             activeTab === "lottery" ? () => { reconcileAndFetchLottery(lotteryPage, lotteryStatusFilter); fetchGifts(giftsPage); fetchReferralFees(); } :
-            activeTab === "giveaways" || activeTab === "packs" || activeTab === "subscriptions" ? () => {} : // self-contained tabs refresh themselves
+            activeTab === "giveaways" || activeTab === "weekly-quest" || activeTab === "packs" || activeTab === "subscriptions" ? () => {} : // self-contained tabs refresh themselves
             () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })
           }
           disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading || cashoutLoading || withdrawalsLoading || pajCashLoading || lotteryLoading}
@@ -953,6 +954,13 @@ export default function AdminDashboard() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab("weekly-quest")}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "weekly-quest" ? "border-teal-500 text-teal-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          Weekly Quest
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab("subscriptions")}
           className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "subscriptions" ? "border-teal-500 text-teal-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
@@ -1023,6 +1031,7 @@ export default function AdminDashboard() {
       )}
 
       {activeTab === "packs" && <PacksTab />}
+      {activeTab === "weekly-quest" && <WeeklyQuestTab />}
       {activeTab === "subscriptions" && <SubscriptionsTab />}
 
       {activeTab === "giveaways" && <GiveawaysTab />}

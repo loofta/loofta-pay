@@ -6,6 +6,7 @@ import { LotteryService } from './lottery.service';
 import { MegapotService, MEGAPOT_JACKPOT } from './megapot.service';
 import { PackService, PackTierConfig } from './pack.service';
 import { MegapotSubscriptionService } from './megapot-subscription.service';
+import { WeeklyQuestService } from './weekly-quest.service';
 import { SupabaseService } from '@/database/supabase.service';
 
 class CreateGiftDto {
@@ -45,6 +46,31 @@ class RecordReferralFeeClaimDto {
   txHash: string;
 }
 
+class AwardWeeklyQuestDto {
+  @IsString()
+  userId: string;
+}
+
+class SetWeeklyQuestSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @Min(1)
+  targetUsd?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  maxTicketsPerWinner?: number;
+
+  @IsOptional()
+  @Min(0)
+  weeklyBudgetUsd?: number;
+}
+
 class GrantFreeSpinDto {
   @IsIn(['email', 'handle'])
   recipientType: 'email' | 'handle';
@@ -70,6 +96,7 @@ export class AdminLotteryController {
     private readonly packs: PackService,
     private readonly subscriptions: MegapotSubscriptionService,
     private readonly supabase: SupabaseService,
+    private readonly weeklyQuest: WeeklyQuestService,
   ) {}
 
   @Get('referral-fees')
@@ -236,6 +263,31 @@ export class AdminLotteryController {
   @ApiOperation({ summary: 'Mystery Pack net revenue — real (non-demo) pack payments collected minus what the tickets awarded actually cost' })
   async packRevenue() {
     return this.packs.getRevenue();
+  }
+
+  @Get('weekly-quest')
+  @ApiOperation({ summary: "Weekly quest: settings, everyone's progress this week, and recent awards" })
+  async weeklyQuestOverview() {
+    return this.weeklyQuest.getAdminOverview();
+  }
+
+  @Patch('weekly-quest/settings')
+  @ApiOperation({ summary: 'Update the weekly quest (enabled, target, tickets per winner, weekly budget)' })
+  async setWeeklyQuestSettings(@Body() dto: SetWeeklyQuestSettingsDto) {
+    return this.weeklyQuest.updateSettings(dto);
+  }
+
+  @Post('weekly-quest/award')
+  @ApiOperation({ summary: "Award a qualified user their free entry now (once per user per week)" })
+  async awardWeeklyQuestNow(@Body() dto: AwardWeeklyQuestDto) {
+    return this.weeklyQuest.awardNow(dto.userId);
+  }
+
+  @Post('weekly-quest/awards/:id/retry')
+  @ApiOperation({ summary: 'Retry a failed or budget-skipped award (confirm first that no ticket was bought)' })
+  async retryWeeklyQuestAward(@Param('id') id: string) {
+    await this.weeklyQuest.retryAward(id);
+    return { ok: true };
   }
 
   @Get('packs/settings')

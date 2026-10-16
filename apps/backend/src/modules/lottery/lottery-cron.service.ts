@@ -5,6 +5,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { LotteryService } from './lottery.service';
 import { PackService } from './pack.service';
 import { MegapotSubscriptionService } from './megapot-subscription.service';
+import { WeeklyQuestService } from './weekly-quest.service';
 
 @Injectable()
 export class LotteryCronService {
@@ -14,6 +15,7 @@ export class LotteryCronService {
     private readonly lottery: LotteryService,
     private readonly pack: PackService,
     private readonly subscriptions: MegapotSubscriptionService,
+    private readonly weeklyQuest: WeeklyQuestService,
     private readonly config: ConfigService,
   ) {
     if (!this.isProd) {
@@ -31,6 +33,16 @@ export class LotteryCronService {
    */
   private get isProd(): boolean {
     return isCronEnabled(this.config);
+  }
+
+  /** Hourly: qualify users who hit this week's quest target and buy their free entry. Production only
+   *  (it spends treasury funds), and does nothing unless an admin has enabled the quest. */
+  @Cron(CronExpression.EVERY_HOUR)
+  async processWeeklyQuest(): Promise<void> {
+    if (!this.isProd) return;
+    await this.weeklyQuest.processWeeklyQuest().catch(e =>
+      this.logger.error(`processWeeklyQuest: ${e.message}`),
+    );
   }
 
   /** Every 5 seconds: check sent tickets for USDC + start bridge (overlap-guarded in service) */

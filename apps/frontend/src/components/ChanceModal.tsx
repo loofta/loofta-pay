@@ -47,7 +47,7 @@ export function ChanceModal({
       ?? list.find((w) => (w as { walletClientType?: string }).walletClientType === "privy")
       ?? list[0];
   }, [wallets, solanaAddress]);
-  const buy = useChanceTicket(getAccessToken);
+  const buy = useChanceTicket(getAccessToken, "home_chance_modal");
   const [state, setState] = useState<"idle" | "buying" | "done" | "failed">("idle");
   const [count, setCount] = useState(1);
   const [nowMs, setNowMs] = useState(() => Date.now());

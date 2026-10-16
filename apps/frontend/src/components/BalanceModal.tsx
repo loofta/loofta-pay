@@ -1262,9 +1262,11 @@ export function BalanceModal({
         headers: { "Content-Type": "application/json", ...authHeader },
         body: JSON.stringify({ ticketId, senderTxHash: signature }),
       });
+      posthog.capture("chance_purchased", { source: "balance_modal", count: 1, price_usdc: LOTTERY_TICKET_PRICE_USDC });
       return true;
     } catch (err: unknown) {
       console.warn(`${LOG_PREFIX} lottery ticket add-on failed:`, err);
+      posthog.capture("chance_purchase_failed", { source: "balance_modal", count: 1 });
       return false;
     }
   }, [wallet, getAccessToken, signAndSendLotteryTx]);
