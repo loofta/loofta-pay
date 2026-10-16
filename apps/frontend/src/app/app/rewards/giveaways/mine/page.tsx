@@ -87,7 +87,7 @@ export default function MyGiveawaysPage() {
           {!authenticated ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
               <p className="text-base text-slate-300 mb-4">Sign in to see the giveaways you've launched.</p>
-              <GradientActionButton onClick={() => login({ loginMethods: ["email", "twitter", "discord", "github", "telegram"], disableSignup: false })}>
+              <GradientActionButton onClick={() => login({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })}>
                 <span className="text-base">Sign in</span>
               </GradientActionButton>
             </div>
