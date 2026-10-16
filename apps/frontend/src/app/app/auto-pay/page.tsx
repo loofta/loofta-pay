@@ -24,6 +24,8 @@ interface AutopayStatus {
   maxPerPaymentCapUsd: number
   dailyCapUsd: number
   approvers: string[]
+  termsAcceptedVersion: string | null
+  currentTermsVersion: string
 }
 
 const STATUS_KEY = ['twitter-autopay-status']
@@ -38,6 +40,7 @@ export default function TwitterBotPage() {
   const [perPayment, setPerPayment] = useState<string | null>(null)
   const [daily, setDaily] = useState<string | null>(null)
   const [newApprover, setNewApprover] = useState('')
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
 
   const solanaAddress = deriveSolanaEmbeddedAddress(user) ?? solanaWallets[0]?.address ?? null
 
@@ -87,7 +90,7 @@ export default function TwitterBotPage() {
         await removeSigners({ address: solanaAddress })
         await grant()
       }
-      await post('enroll')
+      await post('enroll', { accepted_terms: true })
     })
 
   const handleDisable = () =>
@@ -122,8 +125,8 @@ export default function TwitterBotPage() {
     return (
       <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
         <div className="mx-auto max-w-xl px-4 py-16 text-center space-y-5">
-          <h1 className="text-3xl font-semibold text-slate-100">Pay people on X</h1>
-          <p className="text-lg text-slate-300">Sign in to let @looftapay pay from your wallet, with limits you control.</p>
+          <h1 className="text-3xl font-semibold text-slate-100">Auto-pay</h1>
+          <p className="text-lg text-slate-300">Sign in to let Loofta pay from your wallet when you ask, with limits you control.</p>
           <GradientActionButton onClick={() => login()}>Sign in</GradientActionButton>
         </div>
       </div>
@@ -138,31 +141,28 @@ export default function TwitterBotPage() {
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
     <div className="mx-auto max-w-2xl px-4 py-10 space-y-6">
       <div className="space-y-2">
-        <h1 className="text-3xl font-semibold text-white">Pay people on X</h1>
+        <h1 className="text-3xl font-semibold text-white">Auto-pay</h1>
         <p className="text-lg text-slate-300 leading-relaxed">
-          Let @looftapay pay from your wallet when you or your team ask it to, within limits you set.
-          Reply to any post with <span className="text-white">@looftapay pay $5</span> and the author gets paid.
-          Recipients without a Loofta account get a claim link.
+          Let Loofta pay from your wallet when you or your team ask it to, within limits you set.
+          On Telegram, message <a href="https://t.me/looftapay_bot" target="_blank" rel="noreferrer" className="text-white underline underline-offset-2">@looftapay_bot</a> with{' '}
+          <span className="text-white">send $5 to @alice</span>. On X, reply to any post with{' '}
+          <span className="text-white">@looftapay pay $5</span> and the author gets paid.
+          Recipients without a Loofta account get a claim link. Sign in to Loofta with the same Telegram account you use in the bot.
         </p>
       </div>
 
       <div className={card}>
-        {status?.twitterHandle ? (
+        {status?.twitterHandle && (
           <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] px-4 py-3">
             <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
-            <p className="text-lg text-white/70">Linked as @{status.twitterHandle}</p>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-3">
-            <AlertCircle className="h-5 w-5 text-amber-400 shrink-0" />
-            <p className="text-lg text-amber-300">Link your X account in Loofta before enabling</p>
+            <p className="text-lg text-white/70">X linked as @{status.twitterHandle}</p>
           </div>
         )}
 
         <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${status?.enrolled ? 'border-emerald-500/20 bg-emerald-500/10' : 'border-amber-500/20 bg-amber-500/10'}`}>
           <ShieldCheck className={`h-5 w-5 shrink-0 ${status?.enrolled ? 'text-emerald-400' : 'text-amber-400'}`} />
           <span className={`flex-1 text-lg font-medium ${status?.enrolled ? 'text-emerald-300' : 'text-amber-300'}`}>
-            {status?.enrolled ? 'Pay on X is on' : 'Pay on X is off'}
+            {status?.enrolled ? 'Auto-pay is on' : 'Auto-pay is off'}
           </span>
         </div>
 
@@ -171,9 +171,29 @@ export default function TwitterBotPage() {
             Turn off
           </GradientActionButton>
         ) : status?.canEnable ? (
-          <GradientActionButton onClick={handleEnable} loading={working} loadingText="Setting up…" disabled={!status?.twitterHandle}>
+          <div className="space-y-4">
+            <div className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-4 space-y-2 text-lg text-slate-300 leading-relaxed">
+              <p className="text-white font-medium">Before you turn this on</p>
+              <ul className="list-disc pl-5 space-y-1.5">
+                <li>You give Loofta permission to send USDC from your Loofta wallet when a command comes from your account or a teammate you name as an approver.</li>
+                <li>Each payment is capped at ${status?.maxPerPaymentCapUsd ?? 500} at most, and you set your own per-payment and daily limits below. Both are checked on every payment.</li>
+                <li>Payments are sent to the account named in the command. Check handles carefully, because a payment that has been sent cannot be reversed by Loofta.</li>
+                <li>You can turn auto-pay off at any time, which removes the permission from your wallet.</li>
+              </ul>
+            </div>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={acceptedTerms}
+                onChange={(e) => setAcceptedTerms(e.target.checked)}
+                className="mt-1.5 h-5 w-5 accent-orange-400"
+              />
+              <span className="text-lg text-white/80">I understand and accept these terms.</span>
+            </label>
+          <GradientActionButton onClick={handleEnable} loading={working} loadingText="Setting up…" disabled={!acceptedTerms}>
             Give Loofta access to fund
           </GradientActionButton>
+          </div>
         ) : (
           <p className="text-lg text-slate-300">
             This is invite-only for now. Email{' '}

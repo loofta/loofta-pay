@@ -19,6 +19,10 @@ export interface TwitterAutopayStatus {
   maxPerPaymentCapUsd: number;
   dailyCapUsd: number;
   approvers: string[];
+  /** Version of the auto-pay terms this owner accepted, or null if they never did. */
+  termsAcceptedVersion: string | null;
+  /** Version they must accept to (re-)enable. */
+  currentTermsVersion: string;
 }
 
 /** Who a mention's author is allowed to spend as: the wallet owner themselves, or a named approver. */
@@ -36,10 +40,12 @@ export interface ResolvedPayer {
 export const DEFAULT_PER_PAYMENT_CAP_USD = 25;
 export const DEFAULT_DAILY_CAP_USD = 100;
 // Ceiling on what an owner can set per payment. Must not exceed the Privy policy "Twitter Bot
-// spend cap" (TransferChecked.amount lte 50 USDC): the policy is the real backstop, anything above
-// it would be accepted here and then rejected at signing. To raise it, change BOTH the policy in
-// Privy and TWITTER_AUTOPAY_MAX_PER_PAYMENT_USD (default 50).
-export const DEFAULT_MAX_PER_PAYMENT_CAP_USD = 50;
+// spend cap" (TransferChecked.amount lte 500 USDC = 500000000 base units): the policy is the real
+// backstop, anything above it would be accepted here and then rejected at signing. To change it,
+// change BOTH the policy in the Privy dashboard and TWITTER_AUTOPAY_MAX_PER_PAYMENT_USD (default 500).
+export const DEFAULT_MAX_PER_PAYMENT_CAP_USD = 500;
+/** Bump when the consent text on /app/auto-pay changes materially; owners must re-accept. */
+export const AUTOPAY_TERMS_VERSION = '2026-10-16';
 export const MAX_DAILY_CAP_USD = 5_000;
 
 function maxPerPaymentCapUsd(): number {
@@ -86,7 +92,7 @@ export class TwitterAutopayService {
       isPrivyUserAdmin(this.supabaseService, this.configService, userId),
       this.usersService.findIdentityByPrivyId(userId),
       this.supabaseService.twitterAutopayEnrollments
-        .select('id, enabled, signer_granted, per_payment_cap_usd, daily_cap_usd')
+        .select('id, enabled, signer_granted, per_payment_cap_usd, daily_cap_usd, terms_version')
         .eq('user_id', userId)
         .maybeSingle(),
     ]);
@@ -110,6 +116,8 @@ export class TwitterAutopayService {
       maxPerPaymentCapUsd: maxPerPaymentCapUsd(),
       dailyCapUsd: Number(enrollment.data?.daily_cap_usd ?? DEFAULT_DAILY_CAP_USD),
       approvers,
+      termsAcceptedVersion: enrollment.data?.terms_version ?? null,
+      currentTermsVersion: AUTOPAY_TERMS_VERSION,
     };
   }
 
@@ -133,17 +141,26 @@ export class TwitterAutopayService {
   }
 
   /** Called after the client successfully completes useSigners().addSigners() on their wallet. */
-  async enroll(userId: string): Promise<TwitterAutopayStatus> {
+  async enroll(userId: string, acceptedTerms: boolean): Promise<TwitterAutopayStatus> {
     await this.assertAllowed(userId);
-
-    const identity = await this.usersService.findIdentityByPrivyId(userId);
-    const twitterHandle = identity?.twitterUsername?.replace(/^@/, '').toLowerCase();
-    if (!twitterHandle) {
-      throw new BadRequestException('Link your X account in Loofta before enabling the bot');
+    if (acceptedTerms !== true) {
+      throw new BadRequestException('Accept the auto-pay terms to turn it on');
     }
 
+    const identity = await this.usersService.findIdentityByPrivyId(userId);
+    // An X handle is optional: it lets the owner (and approvers) command @looftapay on X, but
+    // auto-pay also works from Telegram (@looftapay_bot) with no X account linked.
+    const twitterHandle = identity?.twitterUsername?.replace(/^@/, '').toLowerCase() || null;
+
     const { error } = await this.supabaseService.twitterAutopayEnrollments.upsert(
-      { user_id: userId, twitter_handle: twitterHandle, enabled: true, signer_granted: true },
+      {
+        user_id: userId,
+        twitter_handle: twitterHandle,
+        enabled: true,
+        signer_granted: true,
+        terms_version: AUTOPAY_TERMS_VERSION,
+        terms_accepted_at: new Date().toISOString(),
+      },
       { onConflict: 'user_id' },
     );
     if (error) throw new Error(`Failed to enroll: ${error.message}`);
@@ -168,8 +185,9 @@ export class TwitterAutopayService {
   async listEnrolledHandles(): Promise<string[]> {
     const { data: owners } = await this.supabaseService.twitterAutopayEnrollments
       .select('id, twitter_handle')
-      .eq('enabled', true);
-    const handles = new Set<string>((owners ?? []).map((r) => r.twitter_handle as string));
+      .eq('enabled', true)
+      .not('terms_version', 'is', null);
+    const handles = new Set<string>((owners ?? []).map((r) => r.twitter_handle as string).filter(Boolean));
     const ids = (owners ?? []).map((r) => r.id as string);
     if (ids.length > 0) {
       const { data: approvers } = await this.supabaseService.twitterAutopayApprovers
@@ -207,7 +225,7 @@ export class TwitterAutopayService {
    */
   async resolvePayer(twitterHandle: string): Promise<ResolvedPayer | null> {
     const clean = normHandle(twitterHandle);
-    const cols = 'id, user_id, twitter_handle, signer_granted, per_payment_cap_usd, daily_cap_usd';
+    const cols = 'id, user_id, twitter_handle, signer_granted, per_payment_cap_usd, daily_cap_usd, terms_version';
     const toPayer = (row: any, approverHandle: string | null): ResolvedPayer => ({
       enrollmentId: row.id,
       userId: row.user_id,
@@ -222,6 +240,7 @@ export class TwitterAutopayService {
       .select(cols)
       .eq('twitter_handle', clean)
       .eq('enabled', true)
+      .not('terms_version', 'is', null)
       .maybeSingle();
     if (own) return toPayer(own, null);
 
@@ -234,6 +253,7 @@ export class TwitterAutopayService {
         .select(cols)
         .eq('id', l.enrollment_id)
         .eq('enabled', true)
+        .not('terms_version', 'is', null)
         .maybeSingle();
       if (owner) return toPayer(owner, clean);
     }
@@ -241,27 +261,69 @@ export class TwitterAutopayService {
   }
 
   /**
+   * Telegram: the chat user is already authenticated by Telegram and mapped to a Privy user, so
+   * enrollment is looked up by user id. Same gates as resolvePayer: enabled, signer granted
+   * (checked by the caller), terms accepted.
+   */
+  async resolvePayerByUserId(userId: string): Promise<ResolvedPayer | null> {
+    const { data: row } = await this.supabaseService.twitterAutopayEnrollments
+      .select('id, user_id, twitter_handle, signer_granted, per_payment_cap_usd, daily_cap_usd')
+      .eq('user_id', userId)
+      .eq('enabled', true)
+      .not('terms_version', 'is', null)
+      .maybeSingle();
+    if (!row) return null;
+    return {
+      enrollmentId: row.id,
+      userId: row.user_id,
+      ownerHandle: row.twitter_handle ?? '',
+      approverHandle: null,
+      signerGranted: !!row.signer_granted,
+      perPaymentCapUsd: Number(row.per_payment_cap_usd ?? DEFAULT_PER_PAYMENT_CAP_USD),
+      dailyCapUsd: Number(row.daily_cap_usd ?? DEFAULT_DAILY_CAP_USD),
+    };
+  }
+
+  /**
    * Hard limits checked before any auto-pay, whoever issued the command. A breach throws rather
    * than falling back to anything: an approver's command can never be turned into a different
    * kind of spend. Daily spend is summed over the last 24h of requests this wallet funded.
    */
-  async assertWithinLimits(payer: ResolvedPayer, amountUsd: number): Promise<void> {
+  async assertWithinLimits(
+    payer: ResolvedPayer,
+    amountUsd: number,
+    opts?: { excludeTelegramActionId?: string },
+  ): Promise<void> {
+    const whose = payer.ownerHandle ? `@${payer.ownerHandle}'s wallet` : 'your wallet';
     if (amountUsd > payer.perPaymentCapUsd) {
       throw new BadRequestException(
-        `$${amountUsd} is over the $${payer.perPaymentCapUsd} per-payment limit set on @${payer.ownerHandle}'s wallet`,
+        `$${amountUsd} is over the $${payer.perPaymentCapUsd} per-payment limit set on ${whose}`,
       );
     }
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data } = await this.supabaseService.getClient()
-      .from('twitter_payment_requests')
-      .select('amount_usd')
-      .eq('funded_by_user_id', payer.userId)
-      .not('payment_id', 'is', null)
-      .gte('created_at', since);
-    const spent = (data ?? []).reduce((sum, r) => sum + Number(r.amount_usd ?? 0), 0);
+    const [x, tg] = await Promise.all([
+      this.supabaseService.getClient()
+        .from('twitter_payment_requests')
+        .select('amount_usd')
+        .eq('funded_by_user_id', payer.userId)
+        .not('payment_id', 'is', null)
+        .gte('created_at', since),
+      // 'processing' counts too, so two Confirm taps fired back to back can't both slip under the cap.
+      (() => {
+        const q = this.supabaseService.getClient()
+          .from('telegram_bot_actions')
+          .select('amount_usd')
+          .eq('privy_user_id', payer.userId)
+          .in('status', ['paid', 'processing'])
+          .gte('created_at', since);
+        return opts?.excludeTelegramActionId ? q.neq('id', opts.excludeTelegramActionId) : q;
+      })(),
+    ]);
+    const sum = (rows: { amount_usd: unknown }[] | null) => (rows ?? []).reduce((t, r) => t + Number(r.amount_usd ?? 0), 0);
+    const spent = sum(x.data) + sum(tg.data);
     if (spent + amountUsd > payer.dailyCapUsd) {
       throw new BadRequestException(
-        `That would take @${payer.ownerHandle}'s wallet past its $${payer.dailyCapUsd} daily limit ($${spent.toFixed(2)} already sent in the last 24h)`,
+        `That would take ${whose} past its $${payer.dailyCapUsd} daily limit ($${spent.toFixed(2)} already sent in the last 24h)`,
       );
     }
   }
@@ -343,6 +405,8 @@ export class TwitterAutopayService {
     amountUsd: number;
     isPrivate: boolean;
     isDevnet: boolean;
+    /** Where the command came from; decides how the recipient handle is resolved. Default X. */
+    source?: 'x' | 'telegram';
   }): Promise<TwitterAutopayResult> {
     if (!this.autopaySigner.isAvailable) {
       throw new Error('Auto-pay signing is not configured (LOOFTA_BOT_AUTH_PRIVATE_KEY missing)');
@@ -353,32 +417,59 @@ export class TwitterAutopayService {
       throw new Error('Sender has no delegated Solana wallet — signer grant may not have completed');
     }
 
-    const payment = await this.claimsService.createFromUsername({
-      username: params.recipientHandle,
-      amount: params.amountUsd,
-      userId: params.senderUserId,
-      isPrivate: params.isPrivate,
-      description: 'Sent via @looftapay on X',
-      cluster: params.isDevnet ? 'devnet' : 'mainnet',
-    });
+    const cluster = params.isDevnet ? 'devnet' : 'mainnet';
+    const payment = params.source === 'telegram'
+      ? await this.claimsService.createFromSocial({
+          platform: 'telegram',
+          handle: params.recipientHandle,
+          amount: params.amountUsd,
+          userId: params.senderUserId,
+          isPrivate: params.isPrivate,
+          description: 'Sent via @looftapay_bot on Telegram',
+          cluster,
+        })
+      : await this.claimsService.createFromUsername({
+          username: params.recipientHandle,
+          amount: params.amountUsd,
+          userId: params.senderUserId,
+          isPrivate: params.isPrivate,
+          description: 'Sent via @looftapay on X',
+          cluster,
+        });
 
     const { data: paymentRow } = await this.supabaseService.payments
       .select('burner_address')
       .eq('id', payment.id)
       .maybeSingle();
-    if (!paymentRow?.burner_address) {
-      throw new Error(`Payment ${payment.id} has no burner address — cannot auto-fund`);
+    // Recipient not on Loofta yet: fund the claim's burner and let the normal sweep deliver it.
+    // Recipient already on Loofta (non-private): the claim carries their wallet as payTo, so send
+    // straight there and mark it paid, the same sequence the browser send flow performs.
+    const burnerAddress = paymentRow?.burner_address ?? null;
+    const directTo = !burnerAddress ? payment.payTo : null;
+    const destinationAddress = burnerAddress ?? directTo;
+    if (!destinationAddress) {
+      throw new Error(`Payment ${payment.id} has no burner or direct destination — cannot auto-fund`);
     }
 
-    await this.autopaySigner.signAndSendTransfer({
+    const { signature } = await this.autopaySigner.signAndSendTransfer({
       senderPrivyUserId: params.senderUserId,
       senderWalletId: wallet.walletId,
       senderAddress: wallet.address,
-      destinationAddress: paymentRow.burner_address,
+      destinationAddress,
       amountUsd: params.amountUsd,
       isDevnet: params.isDevnet,
       paymentId: payment.id,
     });
+
+    if (directTo) {
+      await this.claimsService.updateStatus(payment.id, 'SUCCESS', {
+        txHash: signature,
+        paidWith: 'USDC',
+        paidWithToken: 'USDC',
+        paidWithChain: 'solana',
+      });
+      this.claimsService.notifyRecipientAfterPayment(payment.id);
+    }
 
     this.logger.log(`Auto-pay executed: payment ${payment.id} funded via granted authorization key`);
     return { paymentId: payment.id, shortId: payment.short_id, claimLink: payment.link };
