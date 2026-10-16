@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { usePrivy, useUser, useWallets, useLinkAccount, useUnlinkOAuth, useUnlinkEmail } from "@privy-io/react-auth";
+import { usePrivy, useUser, useWallets, useLinkAccount, useUnlinkOAuth, useUnlinkEmail, useUnlinkTelegram } from "@privy-io/react-auth";
 import { useExportWallet } from "@privy-io/react-auth/solana";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -267,6 +267,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const [githubLinkedOptimistic, setGithubLinkedOptimistic] = useState(false);
   const [unlinkingDiscord, setUnlinkingDiscord] = useState(false);
   const [unlinkingGithub, setUnlinkingGithub] = useState(false);
+  const [unlinkingTelegram, setUnlinkingTelegram] = useState(false);
   const [telegramHandle, setTelegramHandle] = useState<string | null>(null);
   const [connectingTelegram, setConnectingTelegram] = useState(false);
   const [switchingUsername, setSwitchingUsername] = useState(false);
@@ -375,6 +376,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   });
   const { exportWallet } = useExportWallet();
   const unlinkOAuth = useUnlinkOAuth();
+  const unlinkTelegramAccount = useUnlinkTelegram();
   const unlinkEmailHook = useUnlinkEmail();
 
   const { wallets } = useWallets();
@@ -421,6 +423,16 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const hasGithubLinked = linkedAccounts.some((a) => a.type && GITHUB_TYPES.includes(a.type as any)) || githubLinkedOptimistic;
   const discordHandle = useMemo(() => getSocialUsername(linkedAccounts, DISCORD_TYPES), [linkedAccounts]);
   const githubHandle = useMemo(() => getSocialUsername(linkedAccounts, GITHUB_TYPES), [linkedAccounts]);
+  // Telegram is a Privy-linked account like the other socials. Accounts connected through the old
+  // loofta.com relay only have the social_accounts row (telegramHandle), so fall back to that.
+  const privyTelegram = useMemo(
+    () => linkedAccounts.find((a) => a.type === "telegram" || a.type === "telegram_oauth") as
+      | { username?: string | null; telegramUserId?: string }
+      | undefined,
+    [linkedAccounts],
+  );
+  const telegramDisplayHandle = privyTelegram?.username?.replace(/^@/, "").toLowerCase() || telegramHandle;
+  const hasTelegramLinked = !!privyTelegram || !!telegramHandle;
   const discordSubject = useMemo(() =>
     (linkedAccounts.find((a) => a.type && DISCORD_TYPES.includes(a.type as any)) as { subject?: string } | undefined)?.subject ?? null,
     [linkedAccounts]
@@ -759,6 +771,31 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
       toast({ variant: "destructive", title: "Could not disconnect", description: msg || "Try again." });
     } finally {
       setUnlinkingGithub(false);
+    }
+  };
+
+  const handleUnlinkTelegram = async () => {
+    setUnlinkingTelegram(true);
+    try {
+      if (privyTelegram?.telegramUserId) {
+        await unlinkTelegramAccount.unlink({ telegramUserId: privyTelegram.telegramUserId });
+      }
+      try {
+        const token = await getAccessToken().catch(() => null);
+        await fetch("/api/users/save-social-handle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ platform: "telegram", handle: null }),
+        });
+      } catch { /* non-critical — stale row just won't display anywhere important */ }
+      setTelegramHandle(null);
+      try { await refreshUser(); } catch { /* non-critical */ }
+      toast({ title: "Telegram disconnected", description: "Your Telegram account has been removed." });
+    } catch (e: unknown) {
+      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
+      toast({ variant: "destructive", title: "Could not disconnect", description: msg || "Try again." });
+    } finally {
+      setUnlinkingTelegram(false);
     }
   };
 
@@ -1616,26 +1653,11 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                                 </svg>
                               </SettingsIconTile>
                             }
-                            title={telegramHandle ? `@${telegramHandle}` : "Telegram"}
-                            subtitle={telegramHandle ? "Get paid by handle" : "Not connected"}
-                            action={telegramHandle ? (
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  const token = await getAccessToken().catch(() => null);
-                                  try {
-                                    await fetch("/api/users/save-social-handle", {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                                      body: JSON.stringify({ platform: "telegram", handle: null }),
-                                    });
-                                    setTelegramHandle(null);
-                                    toast({ title: "Telegram disconnected", description: "Your Telegram handle has been removed." });
-                                  } catch { /* non-critical */ }
-                                }}
-                                className={settingsRemoveClass}
-                              >
-                                Remove
+                            title={hasTelegramLinked && telegramDisplayHandle ? `@${telegramDisplayHandle}` : "Telegram"}
+                            subtitle={hasTelegramLinked && telegramDisplayHandle ? "Get paid by handle" : "Not connected"}
+                            action={hasTelegramLinked && telegramDisplayHandle ? (
+                              <button type="button" onClick={handleUnlinkTelegram} disabled={unlinkingTelegram} className={settingsRemoveClass}>
+                                {unlinkingTelegram ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Remove"}
                               </button>
                             ) : (
                               <button type="button" onClick={handleConnectTelegram} disabled={connectingTelegram} className={settingsPillClass}>
