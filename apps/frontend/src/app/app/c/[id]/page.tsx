@@ -513,6 +513,7 @@ function ClaimPageSenderShareView({
   recipientPlatform,
   claimLocked,
   onRecipientUpdated,
+  delivered,
 }: {
   claimId: string;
   /** Short URL code (8 chars) — used in the share link when available. Falls back to UUID. */
@@ -532,6 +533,8 @@ function ClaimPageSenderShareView({
   /** True while the recipient is actively claiming — Edit is disabled to avoid racing them. */
   claimLocked?: boolean;
   onRecipientUpdated?: () => void;
+  /** Recipient already has an account, so the money went straight to their wallet: nothing to claim or edit. */
+  delivered?: boolean;
 }) {
   const { toast } = useToast();
   const { getAccessToken: getSenderAccessToken } = usePrivy();
@@ -675,7 +678,9 @@ function ClaimPageSenderShareView({
   };
 
   const shareRecipientSuffix = recipientLabel ? ` (${recipientLabel})` : "";
-  const shareText = `You have a payment of $${amount.toFixed(2)} to claim${shareRecipientSuffix}. Sign in or sign up on Loofta to claim it.`;
+  const shareText = delivered
+    ? `I sent you $${amount.toFixed(2)} on Loofta${shareRecipientSuffix}. It is already in your wallet.`
+    : `You have a payment of $${amount.toFixed(2)} to claim${shareRecipientSuffix}. Sign in or sign up on Loofta to claim it.`;
 
   const ready = ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(status);
   const recipientKindId: EditRecipientKind | null =
@@ -707,7 +712,9 @@ function ClaimPageSenderShareView({
         <p className="text-base text-slate-400">
           {isCancelled
             ? "This payment was cancelled."
-            : ready
+            : delivered
+              ? "It's already in their Loofta wallet. Nothing to claim."
+              : ready
               ? "Send them this link. They claim it on Loofta."
               : "Share this link. They can claim it once the payment lands."}
         </p>
@@ -748,7 +755,7 @@ function ClaimPageSenderShareView({
         )}
         <div className="flex items-center justify-between">
           <span className="text-base text-slate-400">Status</span>
-          <span className="text-base text-slate-200">{isCancelled ? "Cancelled" : ready ? "Paid, waiting to be claimed" : "Waiting for payment"}</span>
+          <span className="text-base text-slate-200">{isCancelled ? "Cancelled" : delivered && ready ? "Delivered to their wallet" : ready ? "Paid, waiting to be claimed" : "Waiting for payment"}</span>
         </div>
       </div>
       {/* Edit recipient: only while unclaimed (recipientType present) and not mid-claim.
@@ -756,7 +763,7 @@ function ClaimPageSenderShareView({
           caller is responsible for only passing it when the viewer actually is the creator (see
           call sites below). Same inline dark-themed edit-in-place pattern as the lottery gift
           flow's "Edit recipient", but shown in a modal. */}
-      {!isCancelled && recipientType && userId && (
+      {!isCancelled && !delivered && recipientType && userId && (
         <div className="mt-4 max-w-md mx-auto text-center">
           <button
             type="button"
@@ -6104,6 +6111,7 @@ export function ClaimPayView({
                 userId={user?.id}
                 recipientType="username"
                 recipientValue={claim?.recipient_username ?? undefined}
+                delivered
                 claimLocked={!!claim?.recipient_claim_in_progress || String(status || claim?.status || "").toUpperCase() === "SUCCESS"}
                 onRecipientUpdated={() => invalidateAfterRecipientUpdate(queryClient, id, user?.id)}
               />
