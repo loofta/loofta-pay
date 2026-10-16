@@ -181,7 +181,12 @@ export function UserSync({ suppressOnboarding = false }: { suppressOnboarding?: 
         const userData = await userResponse.json();
         if (cancelled || userData.user?.skipOnboarding) return;
 
-        const isNewUser = userData.exists === false;
+        // The username-sync effect above calls /api/users/check at the same time and can create
+        // the app_users row first, so this call then sees exists:true with a loo- username. Treat
+        // an account created in the last few minutes as new too.
+        const createdMs = Date.parse(String(userData.user?.createdAt ?? ""));
+        const justCreated = Number.isFinite(createdMs) && Date.now() - createdMs < 10 * 60 * 1000;
+        const isNewUser = userData.exists === false || justCreated;
         // Returning users with a username already set have already been through onboarding
         if (!isNewUser && userData.user?.username) return;
 

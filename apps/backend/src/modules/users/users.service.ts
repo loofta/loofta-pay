@@ -670,22 +670,21 @@ export class UsersService {
       return Boolean(uname && uname === normalized);
     }
 
-    // Discord/GitHub/Telegram: backed by the normalized social_accounts table, not app_users
-    // columns or (for Telegram) Privy linked_accounts at all — see findSocialHandle.
+    // Discord/GitHub/Telegram: backed by the normalized social_accounts table first (see
+    // findSocialHandle), then a live Privy linked_accounts check.
     if (recipientType === 'discord' || recipientType === 'github' || recipientType === 'telegram') {
       const handle = await this.findSocialHandle(privyUserId, recipientType);
       if (handle && handle.replace(/^@/, '').replace(/#\d+$/, '').toLowerCase().trim() === normalized) return true;
 
-      // Telegram is linked via a separate throwaway Privy login on the loofta.com relay domain
-      // (Telegram's widget is blocked on pay.loofta.com's .xyz TLD), not the user's main Privy
-      // identity — so it's stored directly in social_accounts with no live fallback to try here.
-      if (recipientType === 'telegram') return false;
-
-      // Discord/GitHub also go through Privy OAuth linking, so fall back to a live check the
-      // same way email/twitter do below (in case social_accounts hasn't been written yet).
+      // All three go through Privy linking (Telegram via the login modal since the move to
+      // loofta.com), so fall back to a live check the same way email/twitter do below (in case
+      // social_accounts hasn't been written yet).
       const user = await this.getPrivyUser(privyUserId);
       if (!user) return false;
-      const oauthTypes = recipientType === 'discord' ? ['discord', 'discord_oauth'] : ['github', 'github_oauth'];
+      const oauthTypes =
+        recipientType === 'discord' ? ['discord', 'discord_oauth']
+        : recipientType === 'github' ? ['github', 'github_oauth']
+        : ['telegram', 'telegram_oauth'];
       for (const account of user.linked_accounts) {
         const type = (account.type || '').toLowerCase();
         if (!oauthTypes.includes(type)) continue;
