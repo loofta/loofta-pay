@@ -276,7 +276,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
   const { ready: privyReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
   const { refreshUser } = useUser();
   const queryClient = useQueryClient();
-  const { linkTwitter, linkEmail, linkDiscord, linkGithub, linkTelegram } = useLinkAccount({
+  const { linkTwitter, linkEmail, linkDiscord, linkGithub, linkOAuth } = useLinkAccount({
     onSuccess: async (arg: any) => {
       const linkedType = arg?.linkedAccount?.type;
       const didLinkTwitter =
@@ -596,8 +596,15 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleConnectTelegram = () => {
-    linkTelegram();
+  // Privy's linkTelegram only supports the HMAC bot flow; this app uses Telegram OIDC, so link it
+  // through the generic OAuth link (same flow and onSuccess as X / Discord / GitHub).
+  const handleConnectTelegram = async () => {
+    try {
+      await linkOAuth({ provider: "telegram" });
+    } catch (e: unknown) {
+      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
+      toast({ variant: "destructive", title: "Could not connect Telegram", description: msg || "Try again." });
+    }
   };
 
   // Mainnet is open to everyone — always grant access on login.

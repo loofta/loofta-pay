@@ -1492,7 +1492,14 @@ export function ClaimPayView({
     if (platform === "twitter") return hasTwitterLinked;
     return false;
   };
-  const connectTelegram = () => linkTelegram();
+  // linkTelegram is HMAC-bot only; Telegram OIDC links through the generic OAuth link.
+  const connectTelegram = async () => {
+    try {
+      await linkOAuth({ provider: "telegram" });
+    } catch {
+      toast({ variant: "destructive", title: "Couldn't connect Telegram", description: "Try again." });
+    }
+  };
 
 
   // Pre-auth "is this payment for me?" Telegram check — a visitor with no Loofta account yet
@@ -1664,7 +1671,7 @@ export function ClaimPayView({
     }
   };
 
-  const { linkTwitter, linkEmail, linkDiscord, linkGithub, linkTelegram } = useLinkAccount({
+  const { linkTwitter, linkEmail, linkDiscord, linkGithub, linkOAuth } = useLinkAccount({
     onSuccess: ({ linkedAccount }) => {
       void (async () => {
         // Set this immediately, before the DB save below — Privy's client-side linkedAccounts
