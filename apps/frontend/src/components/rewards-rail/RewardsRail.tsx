@@ -182,7 +182,7 @@ function renderNodes(nodes: Array<SpecNode | string>, scope: Scope, key: string)
   return out;
 }
 
-const LOGIN_METHODS = ["email", "twitter", "discord", "github", "telegram"] as const;
+const LOGIN_METHODS = ["email", "twitter", "discord", "github"] as const;
 
 function HeaderLogin() {
   const { authenticated, login, user } = usePrivy();
@@ -459,7 +459,7 @@ export function RewardsRail() {
     if (authenticated) setFundOpen(true);
     else {
       setAwaitingLogin(true);
-      login({ loginMethods: ["email", "twitter", "discord", "github", "telegram"], disableSignup: false });
+      login({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false });
     }
   };
 

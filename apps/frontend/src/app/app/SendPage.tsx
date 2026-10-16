@@ -60,7 +60,7 @@ const HOME_TAB_KEY = "loofta.home.tab";
 
 /** Privy login methods used across /app — email + social only. Wallet is not a Privy login
  *  method here (see AuthProvider); external Solana wallets are for DirectWalletPayPanel guest pays. */
-const PRIVY_LOGIN_METHODS = ["email", "twitter", "discord", "github", "telegram"] as const;
+const PRIVY_LOGIN_METHODS = ["email", "twitter", "discord", "github"] as const;
 
 /**
  * Twitter/Discord/GitHub logins triggered from privyLogin() can fall back to a full top-level
