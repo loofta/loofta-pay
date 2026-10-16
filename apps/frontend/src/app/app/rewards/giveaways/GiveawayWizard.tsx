@@ -1375,7 +1375,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
             <div style={{ ...CARD, alignItems: "center", textAlign: "center", padding: "44px 28px" }}>
               <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 28, letterSpacing: "-0.04em" }}>Sign in to launch a giveaway</span>
               <span style={{ fontSize: 15, color: "#9A98A3", maxWidth: 420 }}>Set the prize, logo, and description. We review it, then you fund the prize.</span>
-              <button type="button" onClick={() => login({ loginMethods: ["email", "twitter", "discord", "github", "telegram"], disableSignup: false })} style={{ cursor: "pointer", marginTop: 8, padding: "15px 26px", borderRadius: 16, border: 0, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: 600, fontSize: 16 }}>
+              <button type="button" onClick={() => login({ loginMethods: ["email", "twitter", "discord", "github"], disableSignup: false })} style={{ cursor: "pointer", marginTop: 8, padding: "15px 26px", borderRadius: 16, border: 0, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontFamily: SORA, fontWeight: 600, fontSize: 16 }}>
                 Sign in
               </button>
             </div>
