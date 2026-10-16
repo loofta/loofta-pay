@@ -14,6 +14,24 @@ const VALID_STATUSES = new Set([
 // `search` gets spliced into a PostgREST `.or()` filter string below — a raw comma or paren in
 // the value would inject additional filter clauses rather than just matching this search term.
 // Double-quoting is PostgREST's own escape mechanism for a value containing reserved characters.
+const SOCIAL_PLATFORMS = new Set(["telegram", "twitter", "discord", "github"]);
+
+/** Who a payment was sent to, as a platform + handle pair for the admin table. */
+function recipientOf(p: any): { platform: string; handle: string } {
+  const ra = String(p.recipient_address ?? "");
+  if (ra.startsWith("PENDING_SOCIAL:")) {
+    const rest = ra.slice("PENDING_SOCIAL:".length);
+    const sep = rest.indexOf(":");
+    return sep >= 0 ? { platform: rest.slice(0, sep), handle: rest.slice(sep + 1) } : { platform: "social", handle: rest };
+  }
+  if (ra.startsWith("PENDING_EMAIL:")) return { platform: "email", handle: ra.slice("PENDING_EMAIL:".length) };
+  if (ra.startsWith("PENDING_USERNAME:")) return { platform: "username", handle: ra.slice("PENDING_USERNAME:".length) };
+  if (p.recipient_username) return { platform: p.recipient_social_platform || "username", handle: p.recipient_username };
+  if (p.recipient_email) return { platform: "email", handle: p.recipient_email };
+  if (ra) return { platform: "wallet", handle: ra };
+  return { platform: "", handle: "" };
+}
+
 function escapePostgrestFilterValue(v: string): string {
   return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
@@ -28,6 +46,7 @@ export async function GET(request: NextRequest) {
   const devnetParam = searchParams.get("devnet");
   const status = searchParams.get("status");
   const search = searchParams.get("search")?.trim() ?? "";
+  const platform = searchParams.get("platform") ?? "";
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
   const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? "50")));
 
@@ -49,13 +68,13 @@ export async function GET(request: NextRequest) {
 
   // guest_sender_wallet is optional until migration 20261010160000 is applied.
   // Naming a missing column makes PostgREST fail the whole list (code 42703).
-  const optionalColumns = ["guest_sender_wallet"];
+  const optionalColumns = ["guest_sender_wallet", "recipient_social_platform"];
   let paymentSelect =
     "id, created_at, updated_at, created_by, sender_user_id, amount, direction, " +
     "recipient_address, recipient_username, recipient_email, burner_address, " +
     "status, paid_at, sender_tx_hash, sweep_tx_hash, description, " +
     "from_chain, from_token, to_chain, to_token, is_devnet, is_private, " +
-    "legacy_claim_id, recipient_user_id, expires_at, guest_sender_email, guest_sender_wallet";
+    "legacy_claim_id, recipient_user_id, recipient_social_platform, expires_at, guest_sender_email, guest_sender_wallet";
 
   const buildQuery = (select: string) => {
     let query = supabase
@@ -68,6 +87,22 @@ export async function GET(request: NextRequest) {
     if (devnetParam === "true") query = query.eq("is_devnet", true);
     if (devnetParam === "false") query = query.eq("is_devnet", false);
     if (status && VALID_STATUSES.has(status)) query = query.eq("status", status);
+
+    // Recipient platform: pending social claims store "PENDING_SOCIAL:<platform>:<handle>";
+    // registered social recipients keep the platform in recipient_social_platform.
+    if (SOCIAL_PLATFORMS.has(platform)) {
+      const socialCol = select.includes("recipient_social_platform") ? `,recipient_social_platform.eq.${platform}` : "";
+      query = query.or(`recipient_address.like.PENDING_SOCIAL:${platform}:*${socialCol}`);
+    } else if (platform === "email") {
+      query = query.or("recipient_address.like.PENDING_EMAIL:*,recipient_email.not.is.null");
+    } else if (platform === "username") {
+      query = query.or("recipient_address.like.PENDING_USERNAME:*,recipient_username.not.is.null");
+    } else if (platform === "wallet") {
+      query = query
+        .not("recipient_address", "like", "PENDING*")
+        .is("recipient_username", null)
+        .is("recipient_email", null);
+    }
 
     if (search) {
       const orParts: string[] = [
@@ -132,6 +167,8 @@ export async function GET(request: NextRequest) {
     ...p,
     sender_user: p.created_by ? (userMap[p.created_by] ?? null) : null,
     recipient_user: p.recipient_user_id ? (userMap[p.recipient_user_id] ?? null) : null,
+    recipient_platform: recipientOf(p).platform,
+    recipient_handle: recipientOf(p).handle,
   }));
 
   return NextResponse.json({ payments: enriched, total: count ?? 0, page, limit });

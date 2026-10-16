@@ -70,6 +70,7 @@ export default function AdminDashboard() {
   const [appliedSearch, setAppliedSearch] = useState("");
   const [devnetFilter, setDevnetFilter] = useState<"all" | "devnet" | "mainnet">("mainnet");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [platformFilter, setPlatformFilter] = useState("all");
 
   // Expanded row
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -203,7 +204,7 @@ export default function AdminDashboard() {
   useEffect(() => { userIdRef.current = userId; }, [userId]);
 
   // Resizable columns for payments table (11 data columns, indices 0–10)
-  const [colWidths, setColWidths] = useState([110, 80, 140, 150, 90, 120, 140, 55, 60, 110, 90, 90]);
+  const [colWidths, setColWidths] = useState([110, 80, 140, 170, 90, 90, 120, 140, 55, 60, 110, 90, 90]);
   const resizeRef = useRef<{ colIdx: number; startX: number; startW: number } | null>(null);
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -246,7 +247,7 @@ export default function AdminDashboard() {
   // ── Fetch payments ──────────────────────────────────────────────────────────
   const fetchPayments = useCallback(async (
     page: number,
-    opts: { search: string; devnet: "all" | "devnet" | "mainnet"; status: string },
+    opts: { search: string; devnet: "all" | "devnet" | "mainnet"; status: string; platform?: string },
   ) => {
     if (!userIdRef.current) return;
     setLoading(true);
@@ -255,6 +256,7 @@ export default function AdminDashboard() {
       if (opts.search) qs.set("search", opts.search);
       if (opts.devnet !== "all") qs.set("devnet", opts.devnet === "devnet" ? "true" : "false");
       if (opts.status !== "all") qs.set("status", opts.status);
+      if (opts.platform && opts.platform !== "all") qs.set("platform", opts.platform);
 
       const res = await fetch(`/api/admin/payments?${qs}`, { headers: await authHeaders() });
       if (!res.ok) throw new Error(await res.text());
@@ -272,12 +274,12 @@ export default function AdminDashboard() {
   // Auto-fetch on filter change (but NOT on search input change — only on applied search)
   useEffect(() => {
     if (isAuthorized) {
-      fetchPayments(1, { search: appliedSearch, devnet: devnetFilter, status: statusFilter });
+      fetchPayments(1, { search: appliedSearch, devnet: devnetFilter, status: statusFilter, platform: platformFilter });
     }
-  }, [isAuthorized, appliedSearch, devnetFilter, statusFilter, fetchPayments]);
+  }, [isAuthorized, appliedSearch, devnetFilter, statusFilter, platformFilter, fetchPayments]);
 
   const applySearch = () => setAppliedSearch(searchInput);
-  const refresh = () => fetchPayments(currentPage, { search: appliedSearch, devnet: devnetFilter, status: statusFilter });
+  const refresh = () => fetchPayments(currentPage, { search: appliedSearch, devnet: devnetFilter, status: statusFilter, platform: platformFilter });
 
   const fetchSparks = useCallback(async () => {
     setSparksLoading(true);
@@ -1048,6 +1050,7 @@ export default function AdminDashboard() {
           searchInput={searchInput} setSearchInput={setSearchInput} applySearch={applySearch}
           devnetFilter={devnetFilter} setDevnetFilter={setDevnetFilter}
           statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+          platformFilter={platformFilter} setPlatformFilter={setPlatformFilter}
           colWidths={colWidths} resizeRef={resizeRef}
           expandedId={expandedId} expandedDetail={expandedDetail} loadingDetail={loadingDetail} toggleExpand={toggleExpand}
           copyText={copyText} openEdit={openEdit} fetchPayments={fetchPayments} appliedSearch={appliedSearch}

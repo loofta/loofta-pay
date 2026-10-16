@@ -36,7 +36,38 @@ export type Payment = {
   expires_at: string | null;
   sender_user: AppUser | null;
   recipient_user: AppUser | null;
+  recipient_platform?: string;
+  recipient_handle?: string;
 };
+
+export const RECIPIENT_PLATFORMS = ["telegram", "twitter", "discord", "github", "email", "username", "wallet"] as const;
+
+const PLATFORM_LABEL: Record<string, string> = {
+  telegram: "Telegram", twitter: "X", discord: "Discord", github: "GitHub",
+  email: "Email", username: "Loofta", wallet: "Wallet",
+};
+const PLATFORM_STYLE: Record<string, string> = {
+  telegram: "bg-sky-950 text-sky-300 border-sky-800",
+  twitter: "bg-gray-800 text-gray-100 border-gray-600",
+  discord: "bg-indigo-950 text-indigo-300 border-indigo-800",
+  github: "bg-gray-900 text-gray-200 border-gray-600",
+  email: "bg-amber-950 text-amber-300 border-amber-800",
+  username: "bg-orange-950 text-orange-300 border-orange-800",
+  wallet: "bg-gray-900 text-gray-400 border-gray-700",
+};
+
+export function platformLabel(p: string): string {
+  return PLATFORM_LABEL[p] ?? p;
+}
+
+export function PlatformBadge({ platform }: { platform?: string }) {
+  if (!platform) return <span className="text-gray-600">—</span>;
+  return (
+    <span className={`inline-block px-1.5 py-0.5 rounded border text-[11px] font-medium whitespace-nowrap ${PLATFORM_STYLE[platform] ?? "bg-gray-800 text-gray-400 border-gray-600"}`}>
+      {platformLabel(platform)}
+    </span>
+  );
+}
 
 export type PaymentIntent = {
   id: string;
@@ -347,20 +378,26 @@ export function SortableHeader({ col, label, sortCol, sortDir, onSort }: {
 
 export function RecipientCell({ p }: { p: Payment }) {
   const hasUserIdButNoProfile = p.recipient_user_id && !p.recipient_user;
+  const handle = p.recipient_handle ?? "";
+  const isWallet = p.recipient_platform === "wallet";
+  const isEmail = p.recipient_platform === "email";
   return (
-    <span className="inline-flex items-center gap-1 text-sm">
-      {p.recipient_username && <span className="text-white font-medium">@{p.recipient_username}</span>}
-      {!p.recipient_username && p.recipient_email && (
-        <span className="text-gray-300">{trunc(p.recipient_email, 18)}</span>
-      )}
-      {!p.recipient_username && !p.recipient_email && p.recipient_address && (
-        <span className="font-mono text-gray-400">{trunc(p.recipient_address, 12)}</span>
-      )}
-      {!p.recipient_username && !p.recipient_email && !p.recipient_address && (
+    <span className="inline-flex flex-col gap-0.5 text-sm min-w-0">
+      {handle ? (
+        <span
+          className={`truncate ${isWallet ? "font-mono text-gray-400" : "text-white font-medium"}`}
+          title={handle}
+        >
+          {isWallet ? trunc(handle, 12) : isEmail ? trunc(handle, 22) : `@${handle}`}
+        </span>
+      ) : (
         <span className="text-gray-600">—</span>
       )}
+      {p.recipient_user?.username && p.recipient_user.username !== handle && (
+        <span className="text-[11px] text-gray-500 truncate" title={p.recipient_user_id ?? ""}>Loofta @{p.recipient_user.username}</span>
+      )}
       {hasUserIdButNoProfile && (
-        <span className="inline-flex items-center gap-0.5 px-1 py-0 text-[9px] rounded border border-orange-700 bg-orange-950 text-orange-400">
+        <span className="inline-flex items-center gap-0.5 px-1 py-0 text-[9px] rounded border border-orange-700 bg-orange-950 text-orange-400 w-fit">
           <AlertTriangle className="w-2 h-2" />unreg
         </span>
       )}

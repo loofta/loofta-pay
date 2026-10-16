@@ -11,7 +11,7 @@ import { PayLinkCashouts } from "./PayLinkCashouts";
 import { ChevronDown, ChevronRight, Loader2, Pencil, Search } from "lucide-react";
 import {
   DetailPanel, EditForm, fmtFull, fmtShort, LIMIT, Payment, PaymentDetail,
-  RecipientCell, STATUS_STYLE, STATUSES, TxCell, UserChip,
+  PlatformBadge, platformLabel, RECIPIENT_PLATFORMS, RecipientCell, STATUS_STYLE, STATUSES, TxCell, UserChip,
 } from "../admin-shared";
 
 export function PaymentsTab({
@@ -19,6 +19,7 @@ export function PaymentsTab({
   searchInput, setSearchInput, applySearch,
   devnetFilter, setDevnetFilter,
   statusFilter, setStatusFilter,
+  platformFilter, setPlatformFilter,
   colWidths, resizeRef,
   expandedId, expandedDetail, loadingDetail, toggleExpand,
   copyText, openEdit, fetchPayments, appliedSearch,
@@ -37,6 +38,8 @@ export function PaymentsTab({
   setDevnetFilter: (v: "all" | "devnet" | "mainnet") => void;
   statusFilter: string;
   setStatusFilter: (v: string) => void;
+  platformFilter: string;
+  setPlatformFilter: (v: string) => void;
   colWidths: number[];
   resizeRef: React.RefObject<{ colIdx: number; startX: number; startW: number } | null>;
   expandedId: string | null;
@@ -45,7 +48,7 @@ export function PaymentsTab({
   toggleExpand: (id: string) => void;
   copyText: (s: string) => void;
   openEdit: (p: Payment, e: React.MouseEvent) => void;
-  fetchPayments: (page: number, opts: { search: string; devnet: "all" | "devnet" | "mainnet"; status: string }) => void;
+  fetchPayments: (page: number, opts: { search: string; devnet: "all" | "devnet" | "mainnet"; status: string; platform?: string }) => void;
   appliedSearch: string;
   editTarget: Payment | null;
   setEditTarget: (p: Payment | null) => void;
@@ -75,7 +78,7 @@ export function PaymentsTab({
         <div className="relative flex-1 min-w-56">
           <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-gray-500 pointer-events-none" />
           <Input
-            placeholder="user ID · username · email · address · tx hash · payment ID…"
+            placeholder="recipient handle · username · email · address · tx hash · payment ID…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && applySearch()}
@@ -103,6 +106,17 @@ export function PaymentsTab({
             ))}
           </SelectContent>
         </Select>
+        <Select value={platformFilter} onValueChange={setPlatformFilter}>
+          <SelectTrigger className="w-40 bg-gray-900 border-gray-700 text-gray-100">
+            <SelectValue placeholder="All platforms" />
+          </SelectTrigger>
+          <SelectContent className="bg-gray-900 border-gray-700 text-gray-100">
+            <SelectItem value="all">All platforms</SelectItem>
+            {RECIPIENT_PLATFORMS.map((pl) => (
+              <SelectItem key={pl} value={pl}>{platformLabel(pl)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button
           size="sm"
           onClick={applySearch}
@@ -120,7 +134,7 @@ export function PaymentsTab({
           <thead>
             <tr className="bg-gray-900 text-gray-500 text-[10px] uppercase tracking-wider border-b border-gray-800">
               <th style={{ width: 24 }} className="px-2 py-2" />
-              {(["Created","ID","Sender","Recipient","Amount","Chain","Status","Net","Private","Expires","Sender TX","Sweep TX"] as const).map((label, i) => (
+              {(["Created","ID","Sender","Recipient","Platform","Amount","Chain","Status","Net","Private","Expires","Sender TX","Sweep TX"] as const).map((label, i) => (
                 <th
                   key={label}
                   className="px-3 py-2 text-left"
@@ -139,13 +153,13 @@ export function PaymentsTab({
           <tbody>
             {loading && payments.length === 0 ? (
               <tr>
-                <td colSpan={13} className="text-center py-16 text-gray-600">
+                <td colSpan={14} className="text-center py-16 text-gray-600">
                   <Loader2 className="w-6 h-6 animate-spin mx-auto" />
                 </td>
               </tr>
             ) : payments.length === 0 ? (
               <tr>
-                <td colSpan={13} className="text-center py-16 text-gray-600">No payments found</td>
+                <td colSpan={14} className="text-center py-16 text-gray-600">No payments found</td>
               </tr>
             ) : (
               payments.map((p) => (
@@ -185,8 +199,13 @@ export function PaymentsTab({
                     </td>
 
                     {/* Recipient */}
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 overflow-hidden">
                       <RecipientCell p={p} />
+                    </td>
+
+                    {/* Platform */}
+                    <td className="px-3 py-2">
+                      <PlatformBadge platform={p.recipient_platform} />
                     </td>
 
                     {/* Amount */}
@@ -258,7 +277,7 @@ export function PaymentsTab({
                   {/* Expanded detail row */}
                   {expandedId === p.id && (
                     <tr className="bg-gray-900 border-b border-gray-700">
-                      <td colSpan={13} className="px-6 py-4">
+                      <td colSpan={14} className="px-6 py-4">
                         {loadingDetail && !expandedDetail ? (
                           <div className="flex items-center gap-2 text-gray-500 py-2">
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -286,7 +305,7 @@ export function PaymentsTab({
               variant="outline"
               size="sm"
               disabled={currentPage <= 1 || loading}
-              onClick={() => fetchPayments(currentPage - 1, { search: appliedSearch, devnet: devnetFilter, status: statusFilter })}
+              onClick={() => fetchPayments(currentPage - 1, { search: appliedSearch, devnet: devnetFilter, status: statusFilter, platform: platformFilter })}
               className="border-gray-700 text-gray-300 bg-gray-900 hover:bg-gray-800"
             >
               ← Prev
@@ -295,7 +314,7 @@ export function PaymentsTab({
               variant="outline"
               size="sm"
               disabled={currentPage >= totalPages || loading}
-              onClick={() => fetchPayments(currentPage + 1, { search: appliedSearch, devnet: devnetFilter, status: statusFilter })}
+              onClick={() => fetchPayments(currentPage + 1, { search: appliedSearch, devnet: devnetFilter, status: statusFilter, platform: platformFilter })}
               className="border-gray-700 text-gray-300 bg-gray-900 hover:bg-gray-800"
             >
               Next →
