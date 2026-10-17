@@ -329,6 +329,18 @@ export class TelegramBotService implements OnModuleInit {
       throw e;
     }
 
+    // Fail early and plainly when the wallet can't cover it, instead of after a Confirm tap.
+    try {
+      const { balanceUSD } = await this.users.getSolanaWalletBalanceAndAddress(userId);
+      if (balanceUSD + 1e-9 < parsed.amount) {
+        return void (await reply(
+          `Your balance is ${money(balanceUSD)}, which is not enough for ${money(parsed.amount)}. Use /fund to add money.`,
+        ));
+      }
+    } catch (e) {
+      this.logger.warn(`Balance check failed, continuing: ${(e as Error).message}`);
+    }
+
     const { data: action, error } = await this.db
       .getClient()
       .from('telegram_bot_actions')
@@ -445,7 +457,12 @@ export class TelegramBotService implements OnModuleInit {
       });
       await this.notifyRecipient(handle, cb.from, amount, result.claimLink);
     } catch (e) {
-      const userFacing = e instanceof BadRequestException ? e.message : 'Something went wrong, so nothing was sent. Please try again.';
+      const insufficient = /insufficient funds/i.test((e as Error).message);
+      const userFacing = e instanceof BadRequestException
+        ? e.message
+        : insufficient
+          ? 'Your wallet does not have enough USDC for this payment. Use /fund to add money, then try again.'
+          : 'Something went wrong, so nothing was sent. Please try again.';
       this.logger.error(`Telegram payment ${claimed.id} failed: ${(e as Error).message}`);
       await supabase
         .from('telegram_bot_actions')
