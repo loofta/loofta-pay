@@ -23,6 +23,7 @@ export function TelegramBot() {
         <div>
           <p className="text-slate-100 font-medium">Pay one person</p>
           <p><code className={code}>pay $5 to @someone</code> or <code className={code}>send 5$ to @someone</code>. Both words work, and the dollar sign can go before or after the amount.</p>
+          <p>On a phone, tapping <code className={code}>/pay</code> in the command list sends it straight away, so the bot asks "Who do you want to pay, and how much?". Reply with <code className={code}>@someone 5</code> and it carries on. The same works for <code className={code}>/payprivately</code>.</p>
         </div>
         <div>
           <p className="text-slate-100 font-medium">Pay up to 5 people in one message</p>

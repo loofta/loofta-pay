@@ -7,7 +7,7 @@ import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { UsersService } from '../users/users.service';
 import { TwitterAutopayService, UncertainPaymentError, type TelegramPaymentPlan } from '../twitter-autopay/twitter-autopay.service';
 import { TelegramApi, InlineKeyboard, InlineButton, escapeHtml } from './telegram-api';
-import { parseSendCommand, DEFAULT_PRIVATE_DELAY_MS } from './telegram-parser';
+import { parseSendCommand, commandFromPrompt, PAY_PROMPT, PAY_PRIVATE_PROMPT, payTargetPrompt, DEFAULT_PRIVATE_DELAY_MS } from './telegram-parser';
 
 interface TgUser { id: number; is_bot?: boolean; username?: string; first_name?: string }
 interface TgMessage {
@@ -15,7 +15,7 @@ interface TgMessage {
   from?: TgUser;
   chat: { id: number; type: 'private' | 'group' | 'supergroup' | 'channel' };
   text?: string;
-  reply_to_message?: { from?: TgUser };
+  reply_to_message?: { from?: TgUser; text?: string };
 }
 interface TgCallback { id: string; from: TgUser; data?: string; message?: TgMessage }
 export interface TgUpdate { update_id: number; message?: TgMessage; callback_query?: TgCallback }
@@ -142,6 +142,29 @@ export class TelegramBotService implements OnModuleInit {
     if (name === 'fund') return this.privateOnly(msg, isPrivate, () => this.showFund(msg.chat.id, from));
     if (name === 'history') return this.privateOnly(msg, isPrivate, () => this.showHistory(msg.chat.id, from));
     if (name === 'settings') return this.privateOnly(msg, isPrivate, () => this.showSettings(msg.chat.id, from));
+
+    // A bare /pay or /payprivately (what a tap on the command suggestion sends): ask who and how much.
+    if ((name === 'pay' || name === 'payprivately' || name === 'send' || name === 'sendprivately') && !/\S/.test(text.replace(/^\/\S+/, ''))) {
+      const isPrivatePay = name!.endsWith('privately');
+      const target = msg.reply_to_message?.from;
+      const targetHandle = target && !target.is_bot ? target.username?.toLowerCase() : undefined;
+      const prompt = targetHandle
+        ? `${payTargetPrompt(targetHandle, isPrivatePay)} Reply with an amount, for example <code>5</code>.`
+        : isPrivatePay
+          ? `${PAY_PRIVATE_PROMPT} Reply to this message, for example <code>@someone 5</code>. You can add <code>delay 30m split 4</code>.`
+          : `${PAY_PROMPT} Reply to this message, for example <code>@someone 5</code>, or several people: <code>@someone 5, @another 10</code>.`;
+      return void (await this.api!.sendMessage(msg.chat.id, prompt, { replyTo: msg.message_id, forceReply: targetHandle ? '5' : '@someone 5' }));
+    }
+
+    // The answer to one of those questions, as a reply to it.
+    const replied = msg.reply_to_message;
+    if (replied?.from?.username?.toLowerCase() === this.botUsername.toLowerCase() && replied.text && !command) {
+      const composed = commandFromPrompt(replied.text, text);
+      if (composed) {
+        const parsedAnswer = parseSendCommand(composed, this.botUsername);
+        if (parsedAnswer) return this.onSend(msg, from, parsedAnswer);
+      }
+    }
 
     const parsed = parseSendCommand(text, this.botUsername);
     if (parsed) return this.onSend(msg, from, parsed);

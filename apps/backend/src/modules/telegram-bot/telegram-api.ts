@@ -37,17 +37,20 @@ export class TelegramApi {
     }
   }
 
-  sendMessage(chatId: number, text: string, opts: { keyboard?: InlineKeyboard; replyTo?: number } = {}) {
+  sendMessage(chatId: number, text: string, opts: { keyboard?: InlineKeyboard; replyTo?: number; forceReply?: string } = {}) {
     return this.withPlainFallback((parseMode, body) => this.sendMessageRaw(chatId, body, parseMode, opts), text);
   }
 
-  private sendMessageRaw(chatId: number, text: string, parseMode: 'HTML' | undefined, opts: { keyboard?: InlineKeyboard; replyTo?: number }) {
+  private sendMessageRaw(chatId: number, text: string, parseMode: 'HTML' | undefined, opts: { keyboard?: InlineKeyboard; replyTo?: number; forceReply?: string }) {
     return this.call<{ message_id: number }>('sendMessage', {
       chat_id: chatId,
       text,
       ...(parseMode ? { parse_mode: parseMode } : {}),
       link_preview_options: { is_disabled: true },
       ...(opts.keyboard ? { reply_markup: opts.keyboard } : {}),
+      // Opens the reply box already pointed at this message, with a hint of what to type. selective: in a
+      // group only the person who asked is prompted.
+      ...(opts.forceReply ? { reply_markup: { force_reply: true, selective: true, input_field_placeholder: opts.forceReply } } : {}),
       ...(opts.replyTo ? { reply_parameters: { message_id: opts.replyTo, allow_sending_without_reply: true } } : {}),
     });
   }

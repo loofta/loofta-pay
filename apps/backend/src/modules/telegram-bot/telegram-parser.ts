@@ -195,3 +195,28 @@ function parseMultiPayments(rest: string): { ok: true; items: Array<{ handle: st
   if (new Set(items.map((i) => i.handle)).size !== items.length) return { ok: false, error: 'Each person can only be paid once per message.' };
   return { ok: true, items };
 }
+
+/* ───────────── Follow-up prompts ─────────────
+ * On a phone, tapping a suggested command sends it at once, with nothing after it. So a bare /pay
+ * (or /payprivately) is answered with a question, and the person's reply completes the command. */
+export const PAY_PROMPT = 'Who do you want to pay, and how much?';
+export const PAY_PRIVATE_PROMPT = 'Who do you want to pay privately, and how much?';
+export const payTargetPrompt = (handle: string, isPrivate: boolean) => `How much should @${handle} get${isPrivate ? ' privately' : ''}?`;
+
+/**
+ * Turns the person's answer to one of the prompts above into a normal command string for
+ * parseSendCommand, or null if the replied-to message was not one of our prompts.
+ */
+export function commandFromPrompt(promptText: string, answer: string): string | null {
+  const reply = answer.trim();
+  if (!reply) return null;
+  const target = /^How much should @([a-z0-9_]{1,40}) get( privately)?\?/i.exec(promptText);
+  if (target) {
+    const verb = target[2] ? 'payprivately' : 'pay';
+    // A bare amount goes to the person the prompt named; anything with a name in it is taken as written.
+    return /@/.test(reply) ? `${verb} ${reply}` : `${verb} ${reply} to @${target[1]}`;
+  }
+  if (promptText.startsWith(PAY_PRIVATE_PROMPT)) return `payprivately ${reply}`;
+  if (promptText.startsWith(PAY_PROMPT)) return `pay ${reply}`;
+  return null;
+}

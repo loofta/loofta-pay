@@ -1,4 +1,4 @@
-import { parseSendCommand } from './telegram-parser';
+import { parseSendCommand, commandFromPrompt, PAY_PROMPT, PAY_PRIVATE_PROMPT, payTargetPrompt } from './telegram-parser';
 
 const BOT = 'looftapay_bot';
 const ok = (amount: number, handle: string | null, extra: Record<string, unknown> = {}) => ({
@@ -100,5 +100,31 @@ describe('parseSendCommand with several people', () => {
     expect(p('pay $5 to @alice_w, $6 to @alice_w')).toMatchObject({ ok: false, error: expect.stringContaining('once') });
     expect(p('pay $0.5 privately to @alice_w, $5 to @bob_wh')).toMatchObject({ ok: false });
     expect(p('pay $501 to @alice_w, $5 to @bob_wh')).toMatchObject({ ok: false });
+  });
+});
+
+describe('follow-up prompts (a tap on /pay sends it with nothing after)', () => {
+  const run = (prompt: string, answer: string) => {
+    const cmd = commandFromPrompt(prompt, answer);
+    return cmd ? parseSendCommand(cmd, 'looftapay_bot') : null;
+  };
+  it('completes a plain pay from the answer', () => {
+    expect(run(`${PAY_PROMPT} Reply to this message`, '@alice_w 5')).toMatchObject({ ok: true, amount: 5, handle: 'alice_w', isPrivate: false });
+    expect(run(PAY_PROMPT, '5 to @alice_w')).toMatchObject({ ok: true, amount: 5, handle: 'alice_w' });
+  });
+  it('accepts several people in the answer', () => {
+    expect(run(PAY_PROMPT, '@alice_w 5, @bob_wh 10')).toMatchObject({ ok: true, amount: 15, payments: [{ handle: 'alice_w', amount: 5 }, { handle: 'bob_wh', amount: 10 }] });
+  });
+  it('keeps the private choice, and the delay and split typed with it', () => {
+    expect(run(PAY_PRIVATE_PROMPT, '@alice_w 5')).toMatchObject({ ok: true, isPrivate: true, amount: 5 });
+    expect(run(PAY_PRIVATE_PROMPT, '@alice_w 5 delay 30m split 4')).toMatchObject({ ok: true, isPrivate: true, delayMs: 30 * 60_000, split: 4 });
+  });
+  it('a bare amount goes to the person the prompt named', () => {
+    expect(run(payTargetPrompt('maya_w', false) + ' Reply with an amount', '5')).toMatchObject({ ok: true, handle: 'maya_w', amount: 5, isPrivate: false });
+    expect(run(payTargetPrompt('maya_w', true), '$5')).toMatchObject({ ok: true, handle: 'maya_w', amount: 5, isPrivate: true });
+  });
+  it('ignores replies to anything that is not one of the prompts', () => {
+    expect(commandFromPrompt('Your balance is $5.00.', '5')).toBeNull();
+    expect(commandFromPrompt(PAY_PROMPT, '   ')).toBeNull();
   });
 });
