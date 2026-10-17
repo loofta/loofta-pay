@@ -5,7 +5,7 @@ import { PrivyClient } from '@privy-io/server-auth';
 import { SupabaseService } from '@/database/supabase.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { UsersService } from '../users/users.service';
-import { TwitterAutopayService, type TelegramPaymentPlan } from '../twitter-autopay/twitter-autopay.service';
+import { TwitterAutopayService, UncertainPaymentError, type TelegramPaymentPlan } from '../twitter-autopay/twitter-autopay.service';
 import { TelegramApi, InlineKeyboard, InlineButton, escapeHtml } from './telegram-api';
 import { parseSendCommand, DEFAULT_PRIVATE_DELAY_MS } from './telegram-parser';
 
@@ -302,7 +302,7 @@ export class TelegramBotService implements OnModuleInit {
       .from('telegram_bot_actions')
       .select('amount_usd, recipient_handle, status, created_at')
       .eq('telegram_user_id', from.id)
-      .in('status', ['paid', 'failed'])
+      .in('status', ['paid', 'failed', 'processing'])
       .order('created_at', { ascending: false })
       .limit(8);
     if (!data?.length) {
@@ -310,7 +310,7 @@ export class TelegramBotService implements OnModuleInit {
       return;
     }
     const lines = data.map(
-      (r) => `${r.status === 'paid' ? 'Sent' : 'Failed'} ${money(Number(r.amount_usd))} to @${escapeHtml(r.recipient_handle)}`,
+      (r) => `${r.status === 'paid' ? 'Sent' : r.status === 'processing' ? 'Unconfirmed' : 'Failed'} ${money(Number(r.amount_usd))} to @${escapeHtml(r.recipient_handle)}`,
     );
     await this.api!.sendMessage(chatId, `<b>Recent payments</b>\n${lines.join('\n')}`);
   }
@@ -378,6 +378,33 @@ export class TelegramBotService implements OnModuleInit {
     } catch (e) {
       if (e instanceof BadRequestException) return void (await reply(escapeHtml(e.message)));
       throw e;
+    }
+
+    // Never pay the same thing twice by accident: refuse a repeat of a payment that just went through
+    // (90 seconds) or is still being processed or unconfirmed (30 minutes).
+    {
+      const since = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      const { data: recent } = await this.db
+        .getClient()
+        .from('telegram_bot_actions')
+        .select('recipient_handle, amount_usd, status, created_at, paid_at')
+        .eq('telegram_user_id', from.id)
+        .in('status', ['paid', 'processing'])
+        .gte('created_at', since);
+      for (const it of items) {
+        const hit = (recent ?? []).find((r) => {
+          if (r.recipient_handle !== it.handle || Number(r.amount_usd) !== it.amount) return false;
+          if (r.status === 'processing') return true;
+          return Date.now() - new Date(r.paid_at ?? r.created_at).getTime() < 90_000;
+        });
+        if (hit) {
+          return void (await reply(
+            hit.status === 'processing'
+              ? `A payment of ${money(it.amount)} to @${escapeHtml(it.handle)} is still being processed or could not be confirmed. Check /history and your balance before sending it again.`
+              : `You just sent ${money(it.amount)} to @${escapeHtml(it.handle)}. If you meant to send it again, wait a minute and repeat the command.`,
+          ));
+        }
+      }
     }
 
     const isDevnet = isSolanaDevnetFromConfig(this.config);
@@ -630,12 +657,18 @@ export class TelegramBotService implements OnModuleInit {
     await this.api!.editMessage(chatId, messageId, claimedRows.length > 1 ? `Sending ${claimedRows.length} payments…` : 'Sending…');
 
     const batchTotal = claimedRows.reduce((t, r) => t + Number(r.amount_usd), 0);
-    const outcomes: Array<{ handle: string; amount: number; isPrivate: boolean; shortLink?: string; claimLink?: string; error?: string }> = [];
+    const outcomes: Array<{ handle: string; amount: number; isPrivate: boolean; shortLink?: string; claimLink?: string; error?: string; uncertain?: boolean; signature?: string | null }> = [];
+    let stopped = false; // set after an unconfirmed payment: nothing further is attempted
     const isDevnet = isSolanaDevnetFromConfig(this.config);
 
     for (const row of claimedRows) {
       const amount = Number(row.amount_usd);
       const handle = row.recipient_handle as string;
+      if (stopped) {
+        await supabase.from('telegram_bot_actions').update({ status: 'failed', error: 'not attempted: an earlier payment in this batch was unconfirmed' }).eq('id', row.id);
+        outcomes.push({ handle, amount, isPrivate: !!row.is_private, error: 'not attempted, an earlier payment was unconfirmed' });
+        continue;
+      }
       try {
         const userId = await this.resolveLinkedUser(cb.from.id);
         if (!userId || userId !== row.privy_user_id) throw new BadRequestException('Your Telegram is no longer linked to this wallet.');
@@ -666,6 +699,15 @@ export class TelegramBotService implements OnModuleInit {
         });
         await this.notifyRecipient(handle, cb.from, amount, result.claimLink, !!row.is_private);
       } catch (e) {
+        if (e instanceof UncertainPaymentError) {
+          // It may have gone through. The row stays 'processing' (it still counts toward the daily limit
+          // and blocks an identical repeat), and the person is told to check before trying again.
+          this.logger.error(`Telegram payment ${row.id} UNCONFIRMED (may have been sent): ${e.message}`);
+          await supabase.from('telegram_bot_actions').update({ error: `unconfirmed: ${e.message}`.slice(0, 500), payment_id: e.paymentId }).eq('id', row.id);
+          outcomes.push({ handle, amount, isPrivate: !!row.is_private, uncertain: true, signature: e.signature, error: 'could not be confirmed' });
+          stopped = true;
+          continue;
+        }
         const insufficient = /insufficient funds/i.test((e as Error).message);
         const userFacing = e instanceof BadRequestException
           ? e.message
@@ -683,11 +725,14 @@ export class TelegramBotService implements OnModuleInit {
 
     // Result: one line per person and a link button for each payment that went through.
     const okOnes = outcomes.filter((o) => !o.error);
+    const unsure = outcomes.filter((o) => o.uncertain);
     const lines: string[] = [];
     if (outcomes.length === 1) {
       const o = outcomes[0];
       lines.push(
-        o.error
+        o.uncertain
+          ? `I could not confirm the payment of <b>${money(o.amount)}</b> to <b>@${escapeHtml(o.handle)}</b>, so it may have gone through. Check your balance and /history before trying again.`
+          : o.error
           ? escapeHtml(o.error.charAt(0).toUpperCase() + o.error.slice(1))
           : o.isPrivate
             ? `Sent <b>${money(o.amount)}</b> privately to <b>@${escapeHtml(o.handle)}</b>. It lands after the delay.`
@@ -697,7 +742,9 @@ export class TelegramBotService implements OnModuleInit {
       lines.push(okOnes.length === outcomes.length ? `Done. All ${outcomes.length} payments sent.` : `${okOnes.length} of ${outcomes.length} payments sent.`);
       outcomes.forEach((o, i) =>
         lines.push(
-          o.error
+          o.uncertain
+            ? `${i + 1}. @${escapeHtml(o.handle)}: ${money(o.amount)} could not be confirmed, it may have gone through`
+            : o.error
             ? `${i + 1}. @${escapeHtml(o.handle)}: ${money(o.amount)} not sent (${escapeHtml(o.error)})`
             : `${i + 1}. @${escapeHtml(o.handle)}: <b>${money(o.amount)}</b> sent${o.isPrivate ? ' privately' : ''}`,
         ),
@@ -706,6 +753,10 @@ export class TelegramBotService implements OnModuleInit {
     const linkRows: InlineButton[][] = okOnes.map((o) => [
       { text: okOnes.length > 1 ? `View payment to @${o.handle}` : 'View payment', url: o.shortLink! },
     ]);
+    for (const o of unsure) {
+      if (o.signature) linkRows.push([{ text: `Check on Solscan: @${o.handle}`, url: `https://solscan.io/tx/${o.signature}` }]);
+    }
+    if (unsure.length && outcomes.length > 1) lines.push('', 'The rest were not attempted. Check /history before sending again.');
     await this.api!.editMessage(chatId, messageId, lines.join('\n'), linkRows.length ? { inline_keyboard: linkRows } : undefined);
   }
 

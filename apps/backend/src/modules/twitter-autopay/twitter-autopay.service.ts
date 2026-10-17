@@ -52,6 +52,26 @@ export interface TelegramPaymentPlan {
   totalUsd: number;
 }
 
+/**
+ * The money may or may not have moved: the transaction was handed to the network but we could not
+ * see it land (timeout, dropped connection, expired blockhash). The caller must NOT report "nothing
+ * was sent" and must not let the same payment be retried blindly, or it can be paid twice.
+ */
+export class UncertainPaymentError extends Error {
+  constructor(message: string, readonly paymentId: string, readonly signature: string | null) {
+    super(message);
+    this.name = 'UncertainPaymentError';
+  }
+}
+
+/** True for failures that happen AFTER a transaction was submitted, where the outcome is unknown. */
+export function isUncertainBroadcastError(message: string): boolean {
+  return /not observed on rpc|timed? ?out|etimedout|econnreset|fetch failed|socket hang up|blockhash not found|block height exceeded|has expired|expired/i.test(message);
+}
+export function signatureFromError(message: string): string | null {
+  return /signature ([1-9A-HJ-NP-Za-km-z]{60,90})/.exec(message)?.[1] ?? null;
+}
+
 export const DEFAULT_PER_PAYMENT_CAP_USD = 25;
 export const DEFAULT_DAILY_CAP_USD = 100;
 // Ceiling on what an owner can set per payment. Must not exceed the Privy policy "Twitter Bot
@@ -552,18 +572,35 @@ export class TwitterAutopayService {
       const split = params.splitOverride ?? undefined;
       const maxDelayMs = params.maxDelayMsOverride ?? undefined;
       const payment = await this.claimsService.createFromSocial({ ...base, isPrivate: true, split, maxDelayMs });
+      let built: Awaited<ReturnType<ClaimsService['buildPrivateTransferForPayer']>>;
       try {
-        const built = await this.claimsService.buildPrivateTransferForPayer(
+        built = await this.claimsService.buildPrivateTransferForPayer(
           payment.id, params.senderUserId, wallet.address, cluster, true, split, maxDelayMs,
         );
-        const { signature } = await this.autopaySigner.signAndSendPrivateTransfer({
+      } catch (e) {
+        // Nothing has been signed or sent yet.
+        await this.cancelUnfunded(payment.id);
+        throw e;
+      }
+      let signature: string;
+      try {
+        ({ signature } = await this.autopaySigner.signAndSendPrivateTransfer({
           senderPrivyUserId: params.senderUserId,
           senderWalletId: wallet.walletId,
           transactionBase64: built.transactionBase64,
           version: built.version,
           sendTo: built.sendTo,
           paymentId: payment.id,
-        });
+        }));
+      } catch (e) {
+        const msg = (e as Error).message ?? '';
+        // Submitted but not seen to land: it may have gone through. Keep the claim, report it as unconfirmed.
+        if (isUncertainBroadcastError(msg)) throw new UncertainPaymentError(msg, payment.id, signatureFromError(msg));
+        await this.cancelUnfunded(payment.id); // refused before anything was sent
+        throw e;
+      }
+      // The money has moved. Bookkeeping from here must never fail the payment or cancel the claim.
+      try {
         await this.claimsService.updateStatus(payment.id, 'SUCCESS', {
           txHash: signature,
           paidWith: 'USDC',
@@ -573,8 +610,7 @@ export class TwitterAutopayService {
         });
         this.claimsService.notifyRecipientAfterPayment(payment.id);
       } catch (e) {
-        await this.cancelUnfunded(payment.id);
-        throw e;
+        this.logger.error(`Private payment ${payment.id} was SENT (tx ${signature}) but marking it paid failed: ${(e as Error).message}`);
       }
       await this.collectLooftaFee(params.senderUserId, wallet, plan.looftaFeeUsd + plan.claimFeeUsd, params.isDevnet);
       this.logger.log(`Telegram private auto-pay executed: payment ${payment.id}`);
@@ -594,8 +630,9 @@ export class TwitterAutopayService {
       await this.cancelUnfunded(payment.id);
       throw new Error(`Payment ${payment.id} has no burner or direct destination — cannot auto-fund`);
     }
+    let signature: string;
     try {
-      const { signature } = await this.autopaySigner.signAndSendTransfer({
+      ({ signature } = await this.autopaySigner.signAndSendTransfer({
         senderPrivyUserId: params.senderUserId,
         senderWalletId: wallet.walletId,
         senderAddress: wallet.address,
@@ -604,8 +641,17 @@ export class TwitterAutopayService {
         isDevnet: params.isDevnet,
         paymentId: payment.id,
         looftaFeeUsd: plan.looftaFeeUsd + plan.claimFeeUsd,
-      });
-      if (directTo) {
+      }));
+    } catch (e) {
+      const msg = (e as Error).message ?? '';
+      // Submitted but not seen to land: it may have gone through. Keep the claim, report it as unconfirmed.
+      if (isUncertainBroadcastError(msg)) throw new UncertainPaymentError(msg, payment.id, signatureFromError(msg));
+      await this.cancelUnfunded(payment.id); // refused or failed on-chain: nothing moved
+      throw e;
+    }
+    // The money has moved. Bookkeeping from here must never fail the payment or cancel the claim.
+    if (directTo) {
+      try {
         await this.claimsService.updateStatus(payment.id, 'SUCCESS', {
           txHash: signature,
           paidWith: 'USDC',
@@ -613,10 +659,9 @@ export class TwitterAutopayService {
           paidWithChain: 'solana',
         });
         this.claimsService.notifyRecipientAfterPayment(payment.id);
+      } catch (e) {
+        this.logger.error(`Payment ${payment.id} was SENT (tx ${signature}) but marking it paid failed: ${(e as Error).message}`);
       }
-    } catch (e) {
-      await this.cancelUnfunded(payment.id);
-      throw e;
     }
     this.logger.log(`Telegram auto-pay executed: payment ${payment.id} (${plan.delivery})`);
     return { paymentId: payment.id, shortId: payment.short_id, claimLink: payment.link };
