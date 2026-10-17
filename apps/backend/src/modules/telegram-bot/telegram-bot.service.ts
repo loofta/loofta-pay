@@ -7,7 +7,8 @@ import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { UsersService } from '../users/users.service';
 import { TwitterAutopayService, UncertainPaymentError, type TelegramPaymentPlan } from '../twitter-autopay/twitter-autopay.service';
 import { TelegramApi, InlineKeyboard, InlineButton, escapeHtml } from './telegram-api';
-import { parseSendCommand, commandFromPrompt, PAY_PROMPT, PAY_PRIVATE_PROMPT, payTargetPrompt, DEFAULT_PRIVATE_DELAY_MS } from './telegram-parser';
+import { parseSendCommand, nextStep, type NextStep, DEFAULT_PRIVATE_DELAY_MS } from './telegram-parser';
+import { IntentLlmService, intentToSentence } from './intent-llm';
 
 interface TgUser { id: number; is_bot?: boolean; username?: string; first_name?: string }
 interface TgMessage {
@@ -51,6 +52,7 @@ export class TelegramBotService implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly users: UsersService,
     private readonly autopay: TwitterAutopayService,
+    private readonly llm: IntentLlmService,
   ) {
     const token = this.config.get<string>('TELEGRAM_BOT_TOKEN');
     this.api = token ? new TelegramApi(token) : null;
@@ -143,39 +145,78 @@ export class TelegramBotService implements OnModuleInit {
     if (name === 'history') return this.privateOnly(msg, isPrivate, () => this.showHistory(msg.chat.id, from));
     if (name === 'settings') return this.privateOnly(msg, isPrivate, () => this.showSettings(msg.chat.id, from));
 
-    // A bare /pay or /payprivately (what a tap on the command suggestion sends): ask who and how much.
-    if ((name === 'pay' || name === 'payprivately' || name === 'send' || name === 'sendprivately') && !/\S/.test(text.replace(/^\/\S+/, ''))) {
-      const isPrivatePay = name!.endsWith('privately');
-      const target = msg.reply_to_message?.from;
-      const targetHandle = target && !target.is_bot ? target.username?.toLowerCase() : undefined;
-      const prompt = targetHandle
-        ? `${payTargetPrompt(targetHandle, isPrivatePay)} Reply with an amount, for example <code>5</code>.`
-        : isPrivatePay
-          ? `${PAY_PRIVATE_PROMPT} Reply to this message, for example <code>@someone 5</code>. You can add <code>delay 30m split 4</code>.`
-          : `${PAY_PROMPT} Reply to this message, for example <code>@someone 5</code>, or several people: <code>@someone 5, @another 10</code>.`;
-      return void (await this.api!.sendMessage(msg.chat.id, prompt, { replyTo: msg.message_id, forceReply: targetHandle ? '5' : '@someone 5' }));
+    if (name === 'cancel') {
+      this.forgetPrompt(`${msg.chat.id}:${from.id}`);
+      return void (await this.api!.sendMessage(msg.chat.id, 'Cancelled.', { replyTo: msg.message_id }));
     }
 
-    // The answer to one of those questions, as a reply to it.
+    // Payments, whole or in pieces. A phone sends a bare "/pay" when a suggestion is tapped, and people
+    // type half a payment ("@someone", "5"). The bot keeps what it understood, asks only for what is
+    // missing, and builds the full command from the answers.
+    const key = `${msg.chat.id}:${from.id}`;
     const replied = msg.reply_to_message;
-    if (replied?.from?.username?.toLowerCase() === this.botUsername.toLowerCase() && replied.text && !command) {
-      const composed = commandFromPrompt(replied.text, text);
-      if (composed) {
-        const parsedAnswer = parseSendCommand(composed, this.botUsername);
-        if (parsedAnswer) return this.onSend(msg, from, parsedAnswer);
-      }
+    const repliedToBot = replied?.from?.username?.toLowerCase() === this.botUsername.toLowerCase();
+    const promptText = repliedToBot && replied?.text ? replied.text : isPrivate ? this.recallPrompt(key) : null;
+    const replyTarget = replied && !replied.from?.is_bot ? replied.from?.username?.toLowerCase() ?? null : null;
+
+    let step: NextStep = nextStep({ text, botUsername: this.botUsername, promptText, replyTarget, isPrivateChat: isPrivate });
+    // Natural wording the plain reader cannot follow ("send five bucks to @someone"): ask the model to
+    // rephrase it. It only describes the request; the answer is rebuilt into a normal sentence and
+    // checked like anything typed by hand.
+    if (step.kind !== 'run' && this.llm.enabled && this.worthAskingModel(text, name)) {
+      const smart = await this.smartStep(text, from.id, promptText, replyTarget, isPrivate);
+      if (smart) step = smart;
     }
 
-    const parsed = parseSendCommand(text, this.botUsername);
-    if (parsed) return this.onSend(msg, from, parsed);
+    if (step.kind === 'ask') {
+      if (isPrivate) this.rememberPrompt(key, step.plain);
+      return void (await this.api!.sendMessage(msg.chat.id, step.prompt, { replyTo: msg.message_id, forceReply: step.placeholder }));
+    }
+    if (step.kind === 'run') {
+      this.forgetPrompt(key);
+      const parsed = parseSendCommand(step.command, this.botUsername);
+      if (parsed) return this.onSend(msg, from, parsed);
+    }
 
     if (isPrivate || text.toLowerCase().includes(`@${this.botUsername.toLowerCase()}`)) {
       await this.api!.sendMessage(
         msg.chat.id,
-        'I did not catch that. Try <code>pay $5 to @someone</code>, or reply to someone with <code>/pay 5</code>.',
+        'I did not catch that. Try <code>pay $5 to @someone</code>, or just send <code>/pay</code> and I will ask.',
         { replyTo: msg.message_id },
       );
     }
+  }
+
+  /** Only sentences with some wording to them are worth a model call; bare fragments are handled above. */
+  private worthAskingModel(text: string, commandName?: string): boolean {
+    if (commandName && !['pay', 'payprivately', 'send', 'sendprivately'].includes(commandName)) return false;
+    const words = text.trim().split(/\s+/).filter(Boolean);
+    return words.length >= 3 && text.length <= 400;
+  }
+
+  private async smartStep(text: string, userId: number, promptText: string | null, replyTarget: string | null, isPrivateChat: boolean): Promise<NextStep | null> {
+    const intent = await this.llm.interpret(text, userId, promptText);
+    if (!intent) return null;
+    const sentence = intentToSentence(intent, text);
+    if (!sentence) return null;
+    const step = nextStep({ text: sentence, botUsername: this.botUsername, promptText, replyTarget, isPrivateChat });
+    return step.kind === 'none' ? null : step;
+  }
+
+  // The last question asked in a private chat, so the next plain message is read as its answer
+  // (in a group the answer is a reply to the question, which carries the same text).
+  private readonly prompts = new Map<string, { text: string; expires: number }>();
+  private rememberPrompt(key: string, text: string) {
+    this.prompts.set(key, { text, expires: Date.now() + 10 * 60 * 1000 });
+    if (this.prompts.size > 2000) for (const [k, v] of this.prompts) if (v.expires < Date.now()) this.prompts.delete(k);
+  }
+  private recallPrompt(key: string): string | null {
+    const p = this.prompts.get(key);
+    if (!p || p.expires < Date.now()) { this.prompts.delete(key); return null; }
+    return p.text;
+  }
+  private forgetPrompt(key: string) {
+    this.prompts.delete(key);
   }
 
   private async privateOnly(msg: TgMessage, isPrivate: boolean, fn: () => Promise<unknown>) {

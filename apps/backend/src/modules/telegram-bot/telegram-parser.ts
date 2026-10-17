@@ -196,27 +196,115 @@ function parseMultiPayments(rest: string): { ok: true; items: Array<{ handle: st
   return { ok: true, items };
 }
 
-/* ───────────── Follow-up prompts ─────────────
- * On a phone, tapping a suggested command sends it at once, with nothing after it. So a bare /pay
- * (or /payprivately) is answered with a question, and the person's reply completes the command. */
+/* ───────────── Conversation: ask only for what is missing ─────────────
+ * People type half a payment ("/pay", "@someone", "5"). On a phone a tap on the command suggestion
+ * sends "/pay" with nothing after it. Instead of failing, the bot keeps what it understood, asks for
+ * the missing piece, and builds the full command from the answers. What it knows is carried in the
+ * wording of its own question, so it still works when the answer is a reply to that question. */
 export const PAY_PROMPT = 'Who do you want to pay, and how much?';
 export const PAY_PRIVATE_PROMPT = 'Who do you want to pay privately, and how much?';
 export const payTargetPrompt = (handle: string, isPrivate: boolean) => `How much should @${handle} get${isPrivate ? ' privately' : ''}?`;
+export const payWhoPrompt = (amount: number, isPrivate: boolean) => `Who should get $${amount.toFixed(2)}${isPrivate ? ' privately' : ''}?`;
+
+export type NextStep =
+  | { kind: 'run'; command: string }
+  | { kind: 'ask'; prompt: string; plain: string; placeholder: string }
+  | { kind: 'none' };
+
+const VERB_START = /^\/?(?:pay|send)(?:_?privately|_?private)?\b/;
+const ctxOf = (promptText: string | null | undefined) => {
+  if (!promptText) return null;
+  let m = /^Who do you want to pay( privately)?, and how much\?/.exec(promptText);
+  if (m) return { isPrivate: !!m[1], handle: undefined as string | undefined, amount: undefined as number | undefined };
+  m = /^How much should @([a-z0-9_]{1,40}) get( privately)?\?/i.exec(promptText);
+  if (m) return { isPrivate: !!m[2], handle: m[1].toLowerCase(), amount: undefined };
+  m = /^Who should get \$(\d+(?:\.\d+)?)( privately)?\?/.exec(promptText);
+  if (m) return { isPrivate: !!m[2], handle: undefined, amount: Number(m[1]) };
+  return null;
+};
+
+const askBoth = (isPrivate: boolean): NextStep => ({
+  kind: 'ask',
+  plain: isPrivate ? PAY_PRIVATE_PROMPT : PAY_PROMPT,
+  prompt: `${isPrivate ? PAY_PRIVATE_PROMPT : PAY_PROMPT} Reply with a name and an amount, for example <code>@someone 5</code>, or several people: <code>@someone 5, @another 10</code>.${isPrivate ? ' You can add <code>delay 30m split 4</code>.' : ''}`,
+  placeholder: '@someone 5',
+});
+const askAmount = (handle: string, isPrivate: boolean): NextStep => ({
+  kind: 'ask',
+  plain: payTargetPrompt(handle, isPrivate),
+  prompt: `${payTargetPrompt(handle, isPrivate)} Reply with an amount, for example <code>5</code>.`,
+  placeholder: '5',
+});
+const askWho = (amount: number, isPrivate: boolean): NextStep => ({
+  kind: 'ask',
+  plain: payWhoPrompt(amount, isPrivate),
+  prompt: `${payWhoPrompt(amount, isPrivate)} Reply with their Telegram username, for example <code>@someone</code>.`,
+  placeholder: '@someone',
+});
 
 /**
- * Turns the person's answer to one of the prompts above into a normal command string for
- * parseSendCommand, or null if the replied-to message was not one of our prompts.
+ * Decides what to do with a message that may be (part of) a payment.
+ *  - promptText: the question this message answers (a reply to it, or the last question asked in this chat)
+ *  - replyTarget: the person whose message this one replies to (so "/pay 5" in a group knows who)
  */
-export function commandFromPrompt(promptText: string, answer: string): string | null {
-  const reply = answer.trim();
-  if (!reply) return null;
-  const target = /^How much should @([a-z0-9_]{1,40}) get( privately)?\?/i.exec(promptText);
-  if (target) {
-    const verb = target[2] ? 'payprivately' : 'pay';
-    // A bare amount goes to the person the prompt named; anything with a name in it is taken as written.
-    return /@/.test(reply) ? `${verb} ${reply}` : `${verb} ${reply} to @${target[1]}`;
+export function nextStep(input: { text: string; botUsername: string; promptText?: string | null; replyTarget?: string | null; isPrivateChat: boolean }): NextStep {
+  const { botUsername, replyTarget, isPrivateChat } = input;
+  const clean = input.text
+    .toLowerCase()
+    .replace(new RegExp(`@${botUsername.toLowerCase()}`, 'g'), '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const ctx = ctxOf(input.promptText);
+  const isVerb = VERB_START.test(clean);
+  if (clean.startsWith('/') && !isVerb) return { kind: 'none' };
+
+  const loneAmount = /^\$?\d+(?:\.\d+)?\$?$/.test(clean);
+  const loneFragment = isPrivateChat && (/@[a-z0-9_]{1,40}/.test(clean) || loneAmount);
+  // Not a payment sentence and not an answer to a question: leave it alone.
+  if (!isVerb && !ctx && !loneFragment) return { kind: 'none' };
+
+  const privateWord = /^\/?(?:pay|send)(?:_?privately|_?private)\b/.test(clean) || PRIVATE_RE.test(clean);
+  const isPrivate = !!ctx?.isPrivate || privateWord;
+  const verb = isPrivate ? 'payprivately' : 'pay';
+  const body = isVerb ? clean.replace(VERB_START, '').trim() : clean;
+
+  // Names and amounts present in this message (the "@" is required, except a lone bare name below).
+  const handles = [...body.matchAll(/@([a-z0-9_]{1,40})/g)].map((m) => m[1]);
+  const noHandles = body.replace(/@[a-z0-9_]{1,40}/g, ' ').replace(DELAY_RE, ' ').replace(SPLIT_RE, ' ').replace(PRIVATE_RE, ' ');
+  const amounts = [...noHandles.matchAll(/\$?(\d+(?:\.\d+)?)\$?/g)].map((m) => Number(m[1]));
+  const bareWord = !handles.length && /^[a-z0-9_]{5,32}$/.test(body) && ctx?.amount !== undefined ? body : null;
+
+  const knownHandle = handles[0] ?? bareWord ?? ctx?.handle ?? (isVerb ? replyTarget ?? undefined : undefined);
+  const knownAmount = amounts[0] ?? ctx?.amount;
+
+  // 1) Everything is here: build the full command and run it. A complete sentence is used as typed.
+  const fullAsTyped = isVerb ? clean : null;
+  const typedResult = fullAsTyped ? parseSendCommand(fullAsTyped, botUsername) : null;
+  // "Something is missing" results become a question below; real mistakes (decimals, limits) are shown as they are.
+  const asTyped = typedResult && !(!typedResult.ok && /^(?:How much should|Who should get|I could not read)/.test(typedResult.error)) ? typedResult : null;
+  if (asTyped) {
+    // The multi-person reader found names but no amounts: ask, rather than show its error.
+    if (!asTyped.ok && /^(How much should|Who should get)/.test(asTyped.error)) return askBoth(isPrivate);
+    const needsWho = asTyped.ok && asTyped.handle === null && !asTyped.payments && !replyTarget;
+    if (!needsWho) return { kind: 'run', command: clean };
+    return askWho(asTyped.amount, isPrivate);
   }
-  if (promptText.startsWith(PAY_PRIVATE_PROMPT)) return `payprivately ${reply}`;
-  if (promptText.startsWith(PAY_PROMPT)) return `pay ${reply}`;
-  return null;
+  if (handles.length >= 2) {
+    // "@a, @b" with no amounts, or an answer that is a list: try it whole before asking.
+    const whole = parseSendCommand(`${verb} ${body}`, botUsername);
+    const missing = !!whole && !whole.ok && /^(?:How much should|Who should get|I could not read)/.test(whole.error);
+    if (whole && !missing) return { kind: 'run', command: `${verb} ${body}` }; // complete, or a real mistake to show
+    return askBoth(isPrivate);
+  }
+  if (knownHandle && knownAmount !== undefined && amounts.length <= 1) {
+    const extra = [DELAY_RE.exec(body)?.[0], SPLIT_RE.exec(body)?.[0]].filter(Boolean).join(' ');
+    const command = `${verb} ${knownAmount} to @${knownHandle}${extra ? ` ${extra}` : ''}`;
+    return { kind: 'run', command };
+  }
+  if (amounts.length >= 1 && handles.length === 0 && body.trim() && !loneAmount && !ctx && !isVerb) return { kind: 'none' };
+
+  // 2) Something is missing: ask for only that.
+  if (knownHandle && knownAmount === undefined) return askAmount(knownHandle, isPrivate);
+  if (!knownHandle && knownAmount !== undefined) return askWho(knownAmount, isPrivate);
+  return askBoth(isPrivate);
 }

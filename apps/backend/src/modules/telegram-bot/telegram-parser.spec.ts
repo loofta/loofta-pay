@@ -1,4 +1,4 @@
-import { parseSendCommand, commandFromPrompt, PAY_PROMPT, PAY_PRIVATE_PROMPT, payTargetPrompt } from './telegram-parser';
+import { parseSendCommand, nextStep, PAY_PROMPT, PAY_PRIVATE_PROMPT, payTargetPrompt, payWhoPrompt } from './telegram-parser';
 
 const BOT = 'looftapay_bot';
 const ok = (amount: number, handle: string | null, extra: Record<string, unknown> = {}) => ({
@@ -103,28 +103,65 @@ describe('parseSendCommand with several people', () => {
   });
 });
 
-describe('follow-up prompts (a tap on /pay sends it with nothing after)', () => {
-  const run = (prompt: string, answer: string) => {
-    const cmd = commandFromPrompt(prompt, answer);
-    return cmd ? parseSendCommand(cmd, 'looftapay_bot') : null;
-  };
-  it('completes a plain pay from the answer', () => {
-    expect(run(`${PAY_PROMPT} Reply to this message`, '@alice_w 5')).toMatchObject({ ok: true, amount: 5, handle: 'alice_w', isPrivate: false });
-    expect(run(PAY_PROMPT, '5 to @alice_w')).toMatchObject({ ok: true, amount: 5, handle: 'alice_w' });
+describe('nextStep: keeps what it understood and asks only for what is missing', () => {
+  const BOT = 'looftapay_bot';
+  const step = (text: string, o: { prompt?: string | null; replyTarget?: string | null; priv?: boolean } = {}) =>
+    nextStep({ text, botUsername: BOT, promptText: o.prompt ?? null, replyTarget: o.replyTarget ?? null, isPrivateChat: o.priv ?? true });
+  const ask = (n: ReturnType<typeof step>) => (n.kind === 'ask' ? n.plain : n.kind);
+  const run = (n: ReturnType<typeof step>) => (n.kind === 'run' ? n.command : n.kind);
+
+  it('the exact conversation from the screenshot now works', () => {
+    // 1. a tap on the suggestion sends a bare /pay
+    expect(ask(step('/pay'))).toBe(PAY_PROMPT);
+    // 2. the person answers with only the recipient: ask for the amount (this used to say "did not catch that")
+    expect(ask(step('@looftaxyz', { prompt: PAY_PROMPT }))).toBe(payTargetPrompt('looftaxyz', false));
+    // 3. they answer with the amount: the full command is rebuilt
+    expect(run(step('5', { prompt: payTargetPrompt('looftaxyz', false) }))).toBe('pay 5 to @looftaxyz');
   });
-  it('accepts several people in the answer', () => {
-    expect(run(PAY_PROMPT, '@alice_w 5, @bob_wh 10')).toMatchObject({ ok: true, amount: 15, payments: [{ handle: 'alice_w', amount: 5 }, { handle: 'bob_wh', amount: 10 }] });
+
+  it('an amount first, then the recipient', () => {
+    expect(ask(step('/pay 5'))).toBe(payWhoPrompt(5, false));
+    expect(run(step('@looftaxyz', { prompt: payWhoPrompt(5, false) }))).toBe('pay 5 to @looftaxyz');
+    expect(run(step('looftaxyz', { prompt: payWhoPrompt(5, false) }))).toBe('pay 5 to @looftaxyz');
   });
-  it('keeps the private choice, and the delay and split typed with it', () => {
-    expect(run(PAY_PRIVATE_PROMPT, '@alice_w 5')).toMatchObject({ ok: true, isPrivate: true, amount: 5 });
-    expect(run(PAY_PRIVATE_PROMPT, '@alice_w 5 delay 30m split 4')).toMatchObject({ ok: true, isPrivate: true, delayMs: 30 * 60_000, split: 4 });
+
+  it('typing just a name or a number in a private chat starts the payment', () => {
+    expect(ask(step('@looftaxyz'))).toBe(payTargetPrompt('looftaxyz', false));
+    expect(ask(step('7.50'))).toBe(payWhoPrompt(7.5, false));
+    expect(step('hello there').kind).toBe('none');
+    expect(step('thanks!').kind).toBe('none');
   });
-  it('a bare amount goes to the person the prompt named', () => {
-    expect(run(payTargetPrompt('maya_w', false) + ' Reply with an amount', '5')).toMatchObject({ ok: true, handle: 'maya_w', amount: 5, isPrivate: false });
-    expect(run(payTargetPrompt('maya_w', true), '$5')).toMatchObject({ ok: true, handle: 'maya_w', amount: 5, isPrivate: true });
+
+  it('a complete sentence, or both pieces in one answer, just runs', () => {
+    expect(run(step('pay $5 to @alice_w'))).toBe('pay $5 to @alice_w');
+    expect(run(step('@alice_w 5', { prompt: PAY_PROMPT }))).toBe('pay 5 to @alice_w');
+    expect(run(step('5 to @alice_w', { prompt: PAY_PROMPT }))).toBe('pay 5 to @alice_w');
+    expect(run(step('@alice_w 5, @bob_wh 10', { prompt: PAY_PROMPT }))).toBe('pay @alice_w 5, @bob_wh 10');
   });
-  it('ignores replies to anything that is not one of the prompts', () => {
-    expect(commandFromPrompt('Your balance is $5.00.', '5')).toBeNull();
-    expect(commandFromPrompt(PAY_PROMPT, '   ')).toBeNull();
+
+  it('keeps the private choice, the delay and the split through the questions', () => {
+    expect(ask(step('/payprivately'))).toBe(PAY_PRIVATE_PROMPT);
+    expect(ask(step('@alice_w', { prompt: PAY_PRIVATE_PROMPT }))).toBe(payTargetPrompt('alice_w', true));
+    expect(run(step('5', { prompt: payTargetPrompt('alice_w', true) }))).toBe('payprivately 5 to @alice_w');
+    expect(run(step('@alice_w 5 delay 30m split 4', { prompt: PAY_PRIVATE_PROMPT }))).toBe('payprivately 5 to @alice_w delay 30m split 4');
+    expect(ask(step('pay @alice_w privately'))).toBe(payTargetPrompt('alice_w', true));
+  });
+
+  it('several names with no amounts asks for amounts instead of guessing', () => {
+    expect(ask(step('pay @alice_w, @bob_wh'))).toBe(PAY_PROMPT);
+  });
+
+  it('in a group, a reply to someone supplies the name', () => {
+    expect(ask(step('/pay', { priv: false, replyTarget: 'maya_w' }))).toBe(payTargetPrompt('maya_w', false));
+    expect(run(step('/pay 5', { priv: false, replyTarget: 'maya_w' }))).toBe('/pay 5');
+    expect(run(step('5', { priv: false, prompt: payTargetPrompt('maya_w', false) }))).toBe('pay 5 to @maya_w');
+    // no reply and no name in a group: ask who, do not give up
+    expect(ask(step('/pay 5', { priv: false }))).toBe(payWhoPrompt(5, false));
+  });
+
+  it('leaves other commands and ordinary chat alone', () => {
+    expect(step('/balance').kind).toBe('none');
+    expect(step('/start').kind).toBe('none');
+    expect(step('what is this bot', { priv: false }).kind).toBe('none');
   });
 });
