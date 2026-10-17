@@ -25,11 +25,27 @@ export class TelegramApi {
     return json.result ?? null;
   }
 
+  /** If Telegram cannot parse our HTML, send the same text as plain words instead of dropping the
+   *  message: a formatting slip must never leave the user with no reply at all. */
+  private async withPlainFallback<T>(send: (parseMode: 'HTML' | undefined, text: string) => Promise<T | null>, text: string) {
+    try {
+      return await send('HTML', text);
+    } catch (e) {
+      if (!/can't parse entities/i.test((e as Error).message)) throw e;
+      const plain = text.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+      return send(undefined, plain);
+    }
+  }
+
   sendMessage(chatId: number, text: string, opts: { keyboard?: InlineKeyboard; replyTo?: number } = {}) {
+    return this.withPlainFallback((parseMode, body) => this.sendMessageRaw(chatId, body, parseMode, opts), text);
+  }
+
+  private sendMessageRaw(chatId: number, text: string, parseMode: 'HTML' | undefined, opts: { keyboard?: InlineKeyboard; replyTo?: number }) {
     return this.call<{ message_id: number }>('sendMessage', {
       chat_id: chatId,
       text,
-      parse_mode: 'HTML',
+      ...(parseMode ? { parse_mode: parseMode } : {}),
       link_preview_options: { is_disabled: true },
       ...(opts.keyboard ? { reply_markup: opts.keyboard } : {}),
       ...(opts.replyTo ? { reply_parameters: { message_id: opts.replyTo, allow_sending_without_reply: true } } : {}),
@@ -37,11 +53,15 @@ export class TelegramApi {
   }
 
   editMessage(chatId: number, messageId: number, text: string, keyboard?: InlineKeyboard) {
+    return this.withPlainFallback((parseMode, body) => this.editMessageRaw(chatId, messageId, body, parseMode, keyboard), text);
+  }
+
+  private editMessageRaw(chatId: number, messageId: number, text: string, parseMode: 'HTML' | undefined, keyboard?: InlineKeyboard) {
     return this.call('editMessageText', {
       chat_id: chatId,
       message_id: messageId,
       text,
-      parse_mode: 'HTML',
+      ...(parseMode ? { parse_mode: parseMode } : {}),
       link_preview_options: { is_disabled: true },
       reply_markup: keyboard ?? { inline_keyboard: [] },
     });

@@ -25,7 +25,8 @@ const DELAY_CHOICES_MIN = [1, 10, 60, 360, 1440];
 const SPLIT_CHOICES: Array<number | 'r'> = ['r', 2, 3, 5, 8];
 const money = (n: number) => `$${n.toFixed(2)}`;
 /** Fees can be fractions of a cent on small amounts; never show a real fee as $0.00. */
-const feeMoney = (n: number) => (n > 0 && n < 0.005 ? '<$0.01' : money(n));
+// Messages are sent as HTML, so a literal "<" would be read as a tag and Telegram would reject the whole message.
+const feeMoney = (n: number) => (n > 0 && n < 0.005 ? 'under $0.01' : money(n));
 
 /**
  * @looftapay_bot. Chat-only payments, in the style of trading bots: every Telegram user is
