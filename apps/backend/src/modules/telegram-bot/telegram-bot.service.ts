@@ -24,6 +24,8 @@ const CONFIRM_TTL_MS = 5 * 60 * 1000;
 const DELAY_CHOICES_MIN = [1, 10, 60, 360, 1440];
 const SPLIT_CHOICES: Array<number | 'r'> = ['r', 2, 3, 5, 8];
 const money = (n: number) => `$${n.toFixed(2)}`;
+/** Fees can be fractions of a cent on small amounts; never show a real fee as $0.00. */
+const feeMoney = (n: number) => (n > 0 && n < 0.005 ? '<$0.01' : money(n));
 
 /**
  * @looftapay_bot. Chat-only payments, in the style of trading bots: every Telegram user is
@@ -335,7 +337,7 @@ export class TelegramBotService implements OnModuleInit {
 
     const isDevnet = isSolanaDevnetFromConfig(this.config);
     const plan = await this.autopay.planTelegramPayment(handle, parsed.isPrivate, isDevnet, parsed.amount);
-    const needed = parsed.amount + plan.claimFeeUsd + plan.privateFeeUsd;
+    const needed = plan.totalUsd;
 
     // Fail early and plainly when the wallet can't cover it, instead of after a Confirm tap.
     try {
@@ -449,20 +451,20 @@ export class TelegramBotService implements OnModuleInit {
           : 'They get a claim link.',
       );
     }
-    // Fees, always spelled out before the Confirm tap.
+    // Fees, always spelled out before the Confirm tap. "~" means approximate. The private fee is one
+    // MagicBlock line (it includes the privacy API's own Loofta 10 bps); Loofta's separate 0.2% and the
+    // $0.10 claim fee share the Loofta line.
     lines.push('');
     lines.push('<b>Fees</b>');
-    let total = amount;
-    if (a.is_private) {
-      lines.push(`Private payment fee: about ${money(plan.privateFeeUsd)} (privacy network and Loofta)`);
-      total += plan.privateFeeUsd;
-    }
+    if (a.is_private) lines.push(`Private payment fee: ~${feeMoney(plan.privateFeeUsd)} (MagicBlock)`);
     if (plan.claimFeeUsd > 0) {
-      lines.push(`Claim fee: ${money(plan.claimFeeUsd)} (@${handle} is not on Loofta yet)`);
-      total += plan.claimFeeUsd;
+      lines.push(
+        `Loofta + Claim fee: ${feeMoney(plan.looftaFeeUsd)} (0.2%) + ${feeMoney(plan.claimFeeUsd)} (@${handle} is not on Loofta yet)`,
+      );
+    } else {
+      lines.push(`Loofta: ${feeMoney(plan.looftaFeeUsd)} (0.2%)`);
     }
-    if (!a.is_private && plan.claimFeeUsd === 0) lines.push('None. Network fees are covered by Loofta.');
-    lines.push(`<b>Total from your wallet: ${a.is_private ? 'about ' : ''}${money(total)}</b>`);
+    lines.push(`<b>Total from your wallet: ${a.is_private ? '~' : ''}${money(plan.totalUsd)}</b>`);
     rows.push([
       { text: 'Confirm', callback_data: `ok:${a.id}` },
       { text: 'Cancel', callback_data: `no:${a.id}` },

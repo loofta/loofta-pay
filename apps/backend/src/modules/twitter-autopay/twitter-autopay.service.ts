@@ -6,13 +6,8 @@ import { ClaimsService } from '../claims/claims.service';
 import { AutopaySignerService } from './autopay-signer.service';
 import { EmailService } from '../email/email.service';
 import { isPrivyUserAdmin } from '@/common/admin-check';
-import {
-  resolveMagicblockRelayFeeUsdc,
-  estimateMagicblockGrossUp,
-  MAGICBLOCK_VOLUME_FEE_BPS,
-  ENABLE_SINGLE_PAYMENT_PLATFORM_FEE,
-  SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS,
-} from '@/common/magicblock-private-transfer';
+import { computeTelegramFees, UNREGISTERED_CLAIM_FEE_USD } from './telegram-fees';
+export { UNREGISTERED_CLAIM_FEE_USD } from './telegram-fees';
 
 export interface TwitterAutopayStatus {
   isAdmin: boolean;
@@ -44,16 +39,17 @@ export interface ResolvedPayer {
   dailyCapUsd: number;
 }
 
-/** Flat claim fee added when the recipient is not on Loofta (mirrors the web send flow). */
-export const UNREGISTERED_CLAIM_FEE_USD = 0.1;
-
 export interface TelegramPaymentPlan {
   registered: boolean;
-  /** Estimated MagicBlock relay + volume + Loofta fee for a private payment, in USD (0 when public). */
-  privateFeeUsd: number;
   /** instant: straight to their wallet; claim: they get a link; private: MagicBlock private transfer. */
   delivery: 'instant' | 'claim' | 'private';
+  /** Shown as one MagicBlock line (includes the privacy API's own Loofta 10 bps). 0 when public. */
+  privateFeeUsd: number;
+  /** Loofta's separate 20 bps on every payment. */
+  looftaFeeUsd: number;
+  /** $0.10 when the recipient is not on Loofta. */
   claimFeeUsd: number;
+  totalUsd: number;
 }
 
 export const DEFAULT_PER_PAYMENT_CAP_USD = 25;
@@ -507,24 +503,12 @@ export class TwitterAutopayService {
       recipientWallet = null; // not on Loofta (or no wallet yet)
     }
     const registered = !!recipientWallet;
-    const claimFeeUsd = registered ? 0 : UNREGISTERED_CLAIM_FEE_USD;
-    if (isPrivate) {
-      return { registered, delivery: 'private', claimFeeUsd, privateFeeUsd: await this.estimatePrivateFeeUsd(amountUsd) };
-    }
+    const fees = computeTelegramFees(amountUsd, { isPrivate, registered });
+    if (isPrivate) return { registered, delivery: 'private', ...fees };
     if (registered && (await this.autopaySigner.usdcAccountExists(recipientWallet!, isDevnet))) {
-      return { registered, delivery: 'instant', claimFeeUsd, privateFeeUsd: 0 };
+      return { registered, delivery: 'instant', ...fees };
     }
-    return { registered, delivery: 'claim', claimFeeUsd, privateFeeUsd: 0 };
-  }
-
-  /** Same inputs the private transfer builder uses: the live relay fee plus MagicBlock's volume
-   *  fee and Loofta's platform fee in bps, grossed up the way exactOut debits the sender. */
-  private async estimatePrivateFeeUsd(amountUsd: number): Promise<number> {
-    const baseUnits = Math.round(amountUsd * 1_000_000);
-    const relayUsd = await resolveMagicblockRelayFeeUsdc();
-    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + (ENABLE_SINGLE_PAYMENT_PLATFORM_FEE ? SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS : 0);
-    const volumeUsd = (estimateMagicblockGrossUp(baseUnits, totalBps) - baseUnits) / 1_000_000;
-    return Math.round((relayUsd + volumeUsd) * 100) / 100;
+    return { registered, delivery: 'claim', ...fees };
   }
 
   /**
@@ -550,7 +534,7 @@ export class TwitterAutopayService {
     if (!wallet) throw new Error('Sender has no delegated Solana wallet — signer grant may not have completed');
 
     const cluster = params.isDevnet ? 'devnet' : 'mainnet';
-    const plan = await this.planTelegramPayment(params.recipientHandle, params.isPrivate, params.isDevnet);
+    const plan = await this.planTelegramPayment(params.recipientHandle, params.isPrivate, params.isDevnet, params.amountUsd);
     const base = {
       platform: 'telegram' as const,
       handle: params.recipientHandle,
@@ -588,7 +572,7 @@ export class TwitterAutopayService {
         await this.cancelUnfunded(payment.id);
         throw e;
       }
-      if (plan.claimFeeUsd > 0) await this.collectClaimFee(params.senderUserId, wallet, plan.claimFeeUsd, params.isDevnet);
+      await this.collectLooftaFee(params.senderUserId, wallet, plan.looftaFeeUsd + plan.claimFeeUsd, params.isDevnet);
       this.logger.log(`Telegram private auto-pay executed: payment ${payment.id}`);
       return { paymentId: payment.id, shortId: payment.short_id, claimLink: payment.link };
     }
@@ -615,7 +599,7 @@ export class TwitterAutopayService {
         amountUsd: params.amountUsd,
         isDevnet: params.isDevnet,
         paymentId: payment.id,
-        claimFeeUsd: plan.claimFeeUsd,
+        looftaFeeUsd: plan.looftaFeeUsd + plan.claimFeeUsd,
       });
       if (directTo) {
         await this.claimsService.updateStatus(payment.id, 'SUCCESS', {
@@ -643,14 +627,15 @@ export class TwitterAutopayService {
     }
   }
 
-  /** Private payments can't carry the claim fee in the MagicBlock transaction, so it is a second
+  /** Private payments can't carry Loofta's fee in the MagicBlock transaction, so it is a second
    *  transfer afterwards. The payment already landed, so a failure here is logged, not thrown. */
-  private async collectClaimFee(
+  private async collectLooftaFee(
     userId: string,
     wallet: { address: string; walletId: string },
-    claimFeeUsd: number,
+    looftaFeeUsd: number,
     isDevnet: boolean,
   ): Promise<void> {
+    if (!(looftaFeeUsd > 0)) return;
     try {
       const feePayer = this.solanaSponsorAddress();
       if (!feePayer) return;
@@ -659,11 +644,11 @@ export class TwitterAutopayService {
         senderWalletId: wallet.walletId,
         senderAddress: wallet.address,
         destinationAddress: feePayer,
-        amountUsd: claimFeeUsd,
+        amountUsd: looftaFeeUsd,
         isDevnet,
       });
     } catch (e) {
-      this.logger.warn(`Claim fee transfer failed after private auto-pay: ${(e as Error).message}`);
+      this.logger.warn(`Loofta fee transfer failed after private auto-pay: ${(e as Error).message}`);
     }
   }
 

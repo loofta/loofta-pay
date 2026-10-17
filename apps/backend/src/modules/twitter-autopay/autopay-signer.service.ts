@@ -94,8 +94,8 @@ export class AutopaySignerService {
     isDevnet: boolean;
     /** Omit for a standalone fee transfer: the sponsor binds claim-amount checks to this id. */
     paymentId?: string;
-    /** Flat claim fee sent to the Loofta fee payer in the SAME transaction (unregistered recipients). */
-    claimFeeUsd?: number;
+    /** Loofta's fee (percentage fee plus any claim fee), sent to the Loofta fee account in the SAME transaction. */
+    looftaFeeUsd?: number;
   }): Promise<{ signature: string }> {
     if (!this.signingClient) {
       throw new BadRequestException('Auto-pay signing is not configured');
@@ -141,11 +141,11 @@ export class AutopaySignerService {
       createTransferCheckedInstruction(senderAta, mint, destinationAta, sender, amountRaw, USDC_DECIMALS, [], TOKEN_PROGRAM_ID),
     );
 
-    if (params.claimFeeUsd && params.claimFeeUsd > 0) {
-      const feeRaw = Math.round(params.claimFeeUsd * 10 ** USDC_DECIMALS);
+    if (params.looftaFeeUsd && params.looftaFeeUsd > 0) {
+      const feeRaw = Math.max(1, Math.round(params.looftaFeeUsd * 10 ** USDC_DECIMALS));
       const feeAta = getAssociatedTokenAddressSync(mint, feePayer, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
       if (!(await connection.getAccountInfo(feeAta))) {
-        throw new Error('Loofta fee account is not initialised; cannot collect the claim fee');
+        throw new Error('Loofta fee account is not initialised; cannot collect the Loofta fee');
       }
       instructions.push(
         createTransferCheckedInstruction(senderAta, mint, feeAta, sender, feeRaw, USDC_DECIMALS, [], TOKEN_PROGRAM_ID),
