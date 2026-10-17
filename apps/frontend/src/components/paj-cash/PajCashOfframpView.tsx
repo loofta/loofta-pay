@@ -82,7 +82,7 @@ export function PajCashOfframpView({
 
   const [amount, setAmount] = useState("");
   const [chance, setChance] = useState(false);
-  const buyChance = useChanceTicket(getAccessToken);
+  const buyChance = useChanceTicket(getAccessToken, "cash_out_naira");
   const [quote, setQuote] = useState<number | null>(null);
   const looftaFee = computeLooftaFeeUsdc(parseFloat(amount) || 0);
   const [quoteLoading, setQuoteLoading] = useState(false);
