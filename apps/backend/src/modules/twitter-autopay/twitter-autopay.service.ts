@@ -319,7 +319,9 @@ export class TwitterAutopayService {
   async assertWithinLimits(
     payer: ResolvedPayer,
     amountUsd: number,
-    opts?: { excludeTelegramActionId?: string },
+    /** excludeTelegramBatchId: this batch's own rows are not "already spent". dailyTotalUsd: what the
+     *  daily limit is checked against (a batch's combined amount), while amountUsd stays the per-payment check. */
+    opts?: { excludeTelegramBatchId?: string; dailyTotalUsd?: number },
   ): Promise<void> {
     const whose = payer.ownerHandle ? `@${payer.ownerHandle}'s wallet` : 'your wallet';
     if (amountUsd > payer.perPaymentCapUsd) {
@@ -343,12 +345,13 @@ export class TwitterAutopayService {
           .eq('privy_user_id', payer.userId)
           .in('status', ['paid', 'processing'])
           .gte('created_at', since);
-        return opts?.excludeTelegramActionId ? q.neq('id', opts.excludeTelegramActionId) : q;
+        return opts?.excludeTelegramBatchId ? q.or(`batch_id.is.null,batch_id.neq.${opts.excludeTelegramBatchId}`) : q;
       })(),
     ]);
     const sum = (rows: { amount_usd: unknown }[] | null) => (rows ?? []).reduce((t, r) => t + Number(r.amount_usd ?? 0), 0);
     const spent = sum(x.data) + sum(tg.data);
-    if (spent + amountUsd > payer.dailyCapUsd) {
+    const dailyCheck = opts?.dailyTotalUsd ?? amountUsd;
+    if (spent + dailyCheck > payer.dailyCapUsd) {
       throw new BadRequestException(
         `That would take ${whose} past its $${payer.dailyCapUsd} daily limit ($${spent.toFixed(2)} already sent in the last 24h)`,
       );

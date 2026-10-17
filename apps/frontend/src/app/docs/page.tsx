@@ -15,6 +15,7 @@ import { SendPayments } from "./sections/SendPayments";
 import { Whitelabel } from "./sections/Whitelabel";
 import { ApiKeySetup } from "./sections/ApiKeySetup";
 import { TryIt } from "./sections/TryIt";
+import { TelegramBot } from "./sections/TelegramBot";
 
 // All doc content lives in ./sections as plain components, not separate routes — clicking the
 // sidebar just swaps which one is rendered (instant, client-side only), instead of every doc
@@ -53,6 +54,8 @@ function DocsBody() {
         return <AgentSkill />;
       case "send-payments":
         return <SendPayments onNavigate={navigate} />;
+      case "telegram-bot":
+        return <TelegramBot />;
       case "whitelabel":
         return <Whitelabel onNavigate={navigate} />;
       default:

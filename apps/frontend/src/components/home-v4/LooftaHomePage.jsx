@@ -8,13 +8,16 @@ const SORA = 'var(--font-home-sora), system-ui, sans-serif';
 const MONO = 'var(--font-home-mono), ui-monospace, monospace';
 const PAJ_CASH_ENABLED = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === 'true';
 
-/** Mobile / reduced-motion: skip WebGL, float rAF, and the 3D pay-in entrance. */
-function prefersLiteMotion() {
+/** Reduced-motion: skip every effect (WebGL, float rAF, tilt). */
+function prefersReducedMotion() {
   if (typeof window === 'undefined') return true;
-  return (
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
-    window.matchMedia('(max-width: 768px)').matches
-  );
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** Mobile: only the hero stays light (no 3D pay-in, tiles or typewriter) for a fast first paint. */
+function isMobileViewport() {
+  if (typeof window === 'undefined') return true;
+  return window.matchMedia('(max-width: 768px)').matches;
 }
 
 export default function LooftaHomePage() {
@@ -31,7 +34,7 @@ class HomePage extends React.Component {
     this._lite = true;
     this.state = {
       typed: '', emailOn: false, caret: true, drawing: false, hi: -1, winner: -1,
-      shield: true, now: null, tilesOut: true, menuOpen: false, lite: true,
+      shield: true, now: null, tilesOut: true, menuOpen: false, lite: true, heroLite: true,
       // Production app domain by default (matches SSR); swapped to the local app on localhost in didMount.
       appUrl: 'https://pay.loofta.com',
     };
@@ -66,19 +69,22 @@ class HomePage extends React.Component {
 
   componentDidMount() {
     this._mounted = true;
-    const lite = prefersLiteMotion();
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduce = prefersReducedMotion();
+    const lite = reduce;
+    const heroLite = reduce || isMobileViewport();
     this._lite = lite;
+    this._heroLite = heroLite;
     const host = window.location.hostname;
     const appUrl = host === 'localhost' || host === '127.0.0.1' ? `${window.location.origin}/app` : this.state.appUrl;
-    this.setState({ now: Date.now(), lite, tilesOut: lite, appUrl });
-    this.startTypewriter(reduce || lite);
+    this.setState({ now: Date.now(), lite, heroLite, tilesOut: heroLite, appUrl });
+    this.startTypewriter(heroLite);
     this._clockT = setInterval(() => this.setState({ now: Date.now() }), 1000);
 
-    // Float loop + pointer parallax are desktop-only — continuous rAF is the main mobile cost.
+    // Reduced-motion skips everything below. On mobile only the hero entrance is skipped, and the
+    // float loop starts after first paint so it never competes with hero loading.
     if (lite) return;
 
-    this._tilesT = setTimeout(this.hideTiles, 3400);
+    if (!heroLite) this._tilesT = setTimeout(this.hideTiles, 3400);
     this._armScene(this._heroEl);
 
     this._onMove = e => { this._px = e.clientX; this._py = e.clientY; };
@@ -104,17 +110,18 @@ class HomePage extends React.Component {
       });
       this._fraf = requestAnimationFrame(loop);
     };
-    this._fraf = requestAnimationFrame(loop);
+    this._startT = setTimeout(() => { this._fraf = requestAnimationFrame(loop); }, heroLite ? 1500 : 0);
   }
   hideTiles = () => { if (!this.state.tilesOut) this.setState({ tilesOut: true }); };
   onPayIn = e => {
-    if (this._lite || e.animationName !== 'lh-pay-in') return;
+    if (this._heroLite || e.animationName !== 'lh-pay-in') return;
     clearTimeout(this._tilesT);
     this._tilesT = setTimeout(this.hideTiles, 2200);
   };
 
   componentWillUnmount() {
     clearTimeout(this._tilesT);
+    clearTimeout(this._startT);
     cancelAnimationFrame(this._fraf);
     clearInterval(this._scanT);
     this._io?.disconnect();
@@ -327,7 +334,7 @@ class HomePage extends React.Component {
         tf: won ? 'translateY(-6px) scale(1.06)' : (on ? 'translateY(-3px)' : 'none') };
     });
     return {
-      typed: S.typed, emailOn: S.emailOn, caret: S.caret, heroRef: this.heroRef, tilesOut: S.tilesOut, hideTiles: this.hideTiles, tilt: this.tilt, untilt: this.untilt, lite: S.lite,
+      typed: S.typed, emailOn: S.emailOn, caret: S.caret, heroRef: this.heroRef, tilesOut: S.tilesOut, hideTiles: this.hideTiles, tilt: this.tilt, untilt: this.untilt, lite: S.lite, heroLite: S.heroLite,
       countdown: now == null ? '--:--:--' : `${p(Math.floor(d / 3.6e6))}:${p(Math.floor(d / 6e4) % 60)}:${p(Math.floor(d / 1e3) % 60)}`,
       tokens, entrants, draw: this.draw,
       drawLabel: S.drawing ? 'Drawing…' : (S.winner >= 0 ? 'Draw again' : 'Draw a winner'),
@@ -408,7 +415,7 @@ class HomePage extends React.Component {
         <div style={{ position: "relative", display: "flex", justifyContent: "center" }}>
           <div style={{ position: "absolute", inset: "-18% -14%", background: "radial-gradient(closest-side,rgba(255,80,20,0.24),rgba(255,80,20,0))", pointerEvents: "none" }}></div>
           <div className="lh-pay-cluster" onAnimationEnd={this.onPayIn} style={{ position: "relative", width: "100%", maxWidth: "500px" }}>
-            {!v.lite ? (
+            {!v.heroLite ? (
             <div className="lh-hero-tiles" aria-hidden style={{ position: "absolute", inset: "0", pointerEvents: "none", transition: "opacity .55s ease, transform .55s ease", opacity: v.tilesOut ? 0 : 1, transform: v.tilesOut ? "scale(0.92)" : "none" }}>
             <span data-float="" data-hero-tile="" style={{ position: "absolute", top: "-30px", left: "-96px", zIndex: "0", width: "104px", height: "104px", borderRadius: "32px", transform: "rotate(-10deg)", background: "radial-gradient(120% 120% at 28% 18%,#FFFFFF 0%,#ECEAF0 45%,#BDBAC6 100%)", boxShadow: "inset 0 4px 7px rgba(255,255,255,0.55),inset 0 -8px 14px rgba(0,0,0,0.22),0 9px 0 #8C8898,0 30px 50px rgba(255,90,26,0.25)", display: "grid", placeItems: "center", pointerEvents: "none" }}>
               <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#16161C" strokeWidth="2.4" strokeLinecap="round">
@@ -590,7 +597,7 @@ class HomePage extends React.Component {
             </div>
             <div style={{ position: "relative", width: "100%", height: "clamp(380px,36vw,540px)" }}>
               <div style={{ position: "absolute", inset: "10% 5%", background: "radial-gradient(closest-side,rgba(255,80,20,0.22),rgba(255,80,20,0))", pointerEvents: "none" }}></div>
-              {/* Mobile / reduced-motion: static gift. Desktop mounts WebGL into the ref below. */}
+              {/* Reduced-motion: static gift. Desktop mounts WebGL into the ref below. */}
               {v.lite ? (
                 <div className="lh-gift-static" aria-hidden style={{ position: "absolute", inset: "0", display: "grid", placeItems: "center", pointerEvents: "none" }}>
                   <div style={{ width: "min(52%,220px)", aspectRatio: "1", borderRadius: "28%", background: "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)", boxShadow: "inset 0 6px 10px rgba(255,255,255,0.45),inset 0 -10px 18px rgba(0,0,0,0.28),0 14px 0 #9C2802,0 36px 60px rgba(255,70,10,0.35)", display: "grid", placeItems: "center", transform: "rotate(-6deg)" }}>

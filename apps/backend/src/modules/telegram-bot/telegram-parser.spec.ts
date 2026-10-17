@@ -58,3 +58,47 @@ describe('parseSendCommand', () => {
     expect(parseSendCommand('pay 5 privately to @someone delay 5s', BOT)).toMatchObject({ ok: false });
   });
 });
+
+describe('parseSendCommand with several people', () => {
+  const multi = (payments: Array<[string, number]>, extra: Record<string, unknown> = {}) => ({
+    ok: true,
+    amount: payments.reduce((t, [, a]) => t + a, 0),
+    handle: null,
+    isPrivate: false,
+    delayMs: null,
+    split: null,
+    payments: payments.map(([handle, amount]) => ({ handle, amount })),
+    ...extra,
+  });
+
+  it.each([
+    ['pay $5 to @alice_w, $10 to @bob_wh and $2 to @carol_w', multi([['alice_w', 5], ['bob_wh', 10], ['carol_w', 2]])],
+    ['send 5$ to @alice_w and 3$ to @bob_wh', multi([['alice_w', 5], ['bob_wh', 3]])],
+    ['pay @alice_w 5, @bob_wh 10', multi([['alice_w', 5], ['bob_wh', 10]])],
+    ['pay 5 to @alice_w @bob_wh @carol_w', multi([['alice_w', 5], ['bob_wh', 5], ['carol_w', 5]])],
+    ['pay $5 each to @alice_w, @bob_wh', multi([['alice_w', 5], ['bob_wh', 5]])],
+    ['pay $5 to @alice_w, @bob_wh, $2 to @carol_w', multi([['alice_w', 5], ['bob_wh', 5], ['carol_w', 2]])],
+    ['pay @alice_w, @bob_wh 5', multi([['alice_w', 5], ['bob_wh', 5]])],
+    ['/pay@looftapay_bot 1 to @alice_w and 2 to @bob_wh', multi([['alice_w', 1], ['bob_wh', 2]])],
+    ['pay 5$ privately to @alice_w and 3$ to @bob_wh delay 30m split 4', multi([['alice_w', 5], ['bob_wh', 3]], { isPrivate: true, delayMs: 30 * 60_000, split: 4 })],
+    ['/payprivately 5 to @alice_w, 6 to @bob_wh', multi([['alice_w', 5], ['bob_wh', 6]], { isPrivate: true })],
+  ])('parses %s', (text, expected) => {
+    expect(parseSendCommand(text, 'looftapay_bot')).toEqual(expected);
+  });
+
+  it('allows five people and refuses six', () => {
+    const five = 'pay $1 to @user_aaa, $1 to @user_bbb, $1 to @user_ccc, $1 to @user_ddd, $1 to @user_eee';
+    expect(parseSendCommand(five, 'looftapay_bot')).toMatchObject({ ok: true });
+    expect(parseSendCommand(five + ', $1 to @user_fff', 'looftapay_bot')).toMatchObject({ ok: false, error: expect.stringContaining('up to 5') });
+  });
+
+  it('refuses unclear sentences instead of guessing', () => {
+    const p = (t: string) => parseSendCommand(t, 'looftapay_bot');
+    expect(p('pay @alice_w, @bob_wh')).toMatchObject({ ok: false });
+    expect(p('pay $5 and $6 to @alice_w, @bob_wh')).toMatchObject({ ok: false });
+    expect(p('pay $5 to @alice_w, hello @bob_wh')).toMatchObject({ ok: false });
+    expect(p('pay $5 to @alice_w, $6 to @alice_w')).toMatchObject({ ok: false, error: expect.stringContaining('once') });
+    expect(p('pay $0.5 privately to @alice_w, $5 to @bob_wh')).toMatchObject({ ok: false });
+    expect(p('pay $501 to @alice_w, $5 to @bob_wh')).toMatchObject({ ok: false });
+  });
+});

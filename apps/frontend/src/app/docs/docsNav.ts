@@ -38,6 +38,10 @@ export const DOCS_NAV: DocsNavSection[] = [
     ],
   },
   {
+    section: "Telegram",
+    pages: [{ slug: "telegram-bot", title: "Pay on Telegram" }],
+  },
+  {
     section: "Send payments",
     pages: [
       { slug: "send-payments", title: "Pay a recipient" },

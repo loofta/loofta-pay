@@ -16,6 +16,8 @@ export type ParsedSend =
       delayMs: number | null;
       /** Number of private transfer parts (1-15); null = random. */
       split: number | null;
+      /** Set when one message pays several people (2 to 5). `amount` is then their sum and `handle` is null. */
+      payments?: Array<{ handle: string; amount: number }>;
     }
   | { ok: false; error: string };
 
@@ -29,6 +31,7 @@ const HANDLE_FIRST = new RegExp(`^${VERB}\\s+${HANDLE}\\s+${AMOUNT}${UNIT}$`);
 
 export const TELEGRAM_HANDLE_RE = /^[a-z0-9_]{5,32}$/;
 export const MAX_COMMAND_AMOUNT_USD = 500;
+export const MAX_RECIPIENTS = 5;
 export const MIN_PRIVATE_AMOUNT_USD = 1;
 export const DEFAULT_PRIVATE_DELAY_MS = 10 * 60 * 1000;
 export const MIN_PRIVATE_DELAY_MS = 60 * 1000;
@@ -78,6 +81,27 @@ export function parseSendCommand(raw: string, botUsername: string): ParsedSend |
 
   text = text.replace(/\s+/g, ' ').trim();
 
+  // Several people in one message: two or more @handles. Handles need the "@" here so plain words
+  // ("and", "each") can never be mistaken for a username.
+  if ((text.match(/@[a-z0-9_]{1,40}/g) ?? []).length >= 2) {
+    const payments = parseMultiPayments(text.replace(new RegExp(`^${VERB}\\s*`), ''));
+    if (!payments.ok) return payments;
+    if (!isPrivate && (d || (sp && sp[1] !== 'random'))) {
+      return { ok: false, error: 'Delay and split only apply to private payments. Add the word "privately".' };
+    }
+    if (isPrivate && payments.items.some((p) => p.amount < MIN_PRIVATE_AMOUNT_USD)) {
+      return { ok: false, error: `Private payments start at $${MIN_PRIVATE_AMOUNT_USD} each.` };
+    }
+    if (delayMs !== null && (delayMs < MIN_PRIVATE_DELAY_MS || delayMs > MAX_PRIVATE_DELAY_MS)) {
+      return { ok: false, error: 'The delay must be between 1 minute and 24 hours, for example delay 30m or delay 2h.' };
+    }
+    if (split !== null && (!Number.isInteger(split) || split < 1 || split > 15)) {
+      return { ok: false, error: 'Split must be a number from 1 to 15, or "random".' };
+    }
+    const total = payments.items.reduce((t, p) => t + p.amount, 0);
+    return { ok: true, amount: Math.round(total * 100) / 100, handle: null, isPrivate, delayMs, split, payments: payments.items };
+  }
+
   let amountStr: string | undefined;
   let handle: string | null = null;
   let m = AMOUNT_FIRST.exec(text);
@@ -115,4 +139,59 @@ export function parseSendCommand(raw: string, botUsername: string): ParsedSend |
     return { ok: false, error: 'Split must be a number from 1 to 15, or "random".' };
   }
   return { ok: true, amount, handle, isPrivate, delayMs, split };
+}
+
+/**
+ * "$5 to @a, $10 to @b and $2 to @c", "@a 5, @b 10", "5 to @a @b @c" (5 each), "$5 to @a, @b" (the
+ * last amount carries over), "@a, @b 5" (a trailing amount covers the names before it). Anything left
+ * over that is not an amount or a name is refused rather than guessed at.
+ */
+function parseMultiPayments(rest: string): { ok: true; items: Array<{ handle: string; amount: number }> } | { ok: false; error: string } {
+  const handles: string[] = [];
+  let t = rest.replace(/@([a-z0-9_]{1,40})/g, (_m, h: string) => {
+    handles.push(h);
+    return ` HNDL${String.fromCharCode(96 + handles.length)} `;
+  });
+  t = t.replace(/\band\b|&|\+|;/g, ',');
+  t = t.replace(/\b(?:to|each|usdc|usd|dollars?|bucks|for)\b/g, ' ');
+
+  if (handles.length > MAX_RECIPIENTS) return { ok: false, error: `I can pay up to ${MAX_RECIPIENTS} people in one message.` };
+
+  const items: Array<{ handle: string; amount: number }> = [];
+  let pending: string[] = [];
+  let last: number | null = null;
+  const give = (h: string, amount: number) => items.push({ handle: h, amount });
+
+  for (const segment of t.split(',').map((x) => x.trim()).filter(Boolean)) {
+    const segHandles = [...segment.matchAll(/HNDL([a-z])/g)].map((m) => handles[m[1].charCodeAt(0) - 97]);
+    const withoutHandles = segment.replace(/HNDL[a-z]/g, ' ');
+    const amounts = [...withoutHandles.matchAll(/\$?(\d+(?:\.\d+)?)\$?/g)].map((m) => m[1]);
+    const leftover = withoutHandles.replace(/\$?\d+(?:\.\d+)?\$?/g, ' ').trim();
+    if (leftover) return { ok: false, error: `I did not understand "${leftover}". Try: pay $5 to @someone, $10 to @another.` };
+    if (amounts.length > 1) return { ok: false, error: 'Give each person one amount, for example: pay $5 to @someone, $10 to @another.' };
+
+    if (amounts.length === 1) {
+      if (!/^\d+(?:\.\d{1,2})?$/.test(amounts[0])) {
+        return { ok: false, error: 'Amounts can have at most 2 decimals, for example $5 or $2.50.' };
+      }
+      const amount = Number(amounts[0]);
+      if (!(amount > 0)) return { ok: false, error: 'Each amount must be more than $0.' };
+      if (amount > MAX_COMMAND_AMOUNT_USD) return { ok: false, error: `The most I can send in one payment is $${MAX_COMMAND_AMOUNT_USD}.` };
+      if (segHandles.length === 0 && pending.length === 0) return { ok: false, error: `Who should get $${amount}? Put the @name next to each amount.` };
+      for (const h of [...pending, ...segHandles]) give(h, amount);
+      pending = [];
+      last = amount;
+    } else if (segHandles.length > 0) {
+      if (last !== null) for (const h of segHandles) give(h, last);
+      else pending.push(...segHandles);
+    }
+  }
+  if (pending.length > 0) return { ok: false, error: `How much should @${pending[0]} get? Put an amount next to each name.` };
+  if (items.length < 2) return { ok: false, error: 'I could not read that. Try: pay $5 to @someone, $10 to @another.' };
+  if (items.length > MAX_RECIPIENTS) return { ok: false, error: `I can pay up to ${MAX_RECIPIENTS} people in one message.` };
+  for (const it of items) {
+    if (!TELEGRAM_HANDLE_RE.test(it.handle)) return { ok: false, error: `"@${it.handle}" is not a valid Telegram username (5 to 32 letters, numbers or underscores).` };
+  }
+  if (new Set(items.map((i) => i.handle)).size !== items.length) return { ok: false, error: 'Each person can only be paid once per message.' };
+  return { ok: true, items };
 }
