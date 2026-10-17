@@ -380,7 +380,7 @@ export class ClaimsService {
 
     let recipientAddress: string;
 
-    try {
+    if (!dto.forceBurner) try {
       const user = await this.usersService.findBySocialHandle(platform, cleanHandle);
       if (!isDevnet && !(await this.usersService.hasCompletedMainnetWalletUpdate(user.privyUserId))) {
         throw new BadRequestException(

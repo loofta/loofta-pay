@@ -37,6 +37,16 @@ export interface ResolvedPayer {
   dailyCapUsd: number;
 }
 
+/** Flat claim fee added when the recipient is not on Loofta (mirrors the web send flow). */
+export const UNREGISTERED_CLAIM_FEE_USD = 0.1;
+
+export interface TelegramPaymentPlan {
+  registered: boolean;
+  /** instant: straight to their wallet; claim: they get a link; private: MagicBlock private transfer. */
+  delivery: 'instant' | 'claim' | 'private';
+  claimFeeUsd: number;
+}
+
 export const DEFAULT_PER_PAYMENT_CAP_USD = 25;
 export const DEFAULT_DAILY_CAP_USD = 100;
 // Ceiling on what an owner can set per payment. Must not exceed the Privy policy "Twitter Bot
@@ -416,8 +426,6 @@ export class TwitterAutopayService {
     amountUsd: number;
     isPrivate: boolean;
     isDevnet: boolean;
-    /** Where the command came from; decides how the recipient handle is resolved. Default X. */
-    source?: 'x' | 'telegram';
   }): Promise<TwitterAutopayResult> {
     if (!this.autopaySigner.isAvailable) {
       throw new Error('Auto-pay signing is not configured (LOOFTA_BOT_AUTH_PRIVATE_KEY missing)');
@@ -428,25 +436,14 @@ export class TwitterAutopayService {
       throw new Error('Sender has no delegated Solana wallet — signer grant may not have completed');
     }
 
-    const cluster = params.isDevnet ? 'devnet' : 'mainnet';
-    const payment = params.source === 'telegram'
-      ? await this.claimsService.createFromSocial({
-          platform: 'telegram',
-          handle: params.recipientHandle,
-          amount: params.amountUsd,
-          userId: params.senderUserId,
-          isPrivate: params.isPrivate,
-          description: 'Sent via @looftapay_bot on Telegram',
-          cluster,
-        })
-      : await this.claimsService.createFromUsername({
-          username: params.recipientHandle,
-          amount: params.amountUsd,
-          userId: params.senderUserId,
-          isPrivate: params.isPrivate,
-          description: 'Sent via @looftapay on X',
-          cluster,
-        });
+    const payment = await this.claimsService.createFromUsername({
+      username: params.recipientHandle,
+      amount: params.amountUsd,
+      userId: params.senderUserId,
+      isPrivate: params.isPrivate,
+      description: 'Sent via @looftapay on X',
+      cluster: params.isDevnet ? 'devnet' : 'mainnet',
+    });
 
     const { data: paymentRow } = await this.supabaseService.payments
       .select('burner_address')
@@ -484,6 +481,173 @@ export class TwitterAutopayService {
 
     this.logger.log(`Auto-pay executed: payment ${payment.id} funded via granted authorization key`);
     return { paymentId: payment.id, shortId: payment.short_id, claimLink: payment.link };
+  }
+
+  /**
+   * What a Telegram payment to @handle would do, so the Confirm card can say it up front and the
+   * balance check can include fees. Registered + public + already has a USDC account: instant,
+   * straight to their wallet. Anyone else: a claim link. Not on Loofta at all: a flat $0.10 claim
+   * fee is added on top, same as the web send flow. Private: MagicBlock private transfer.
+   */
+  async planTelegramPayment(handle: string, isPrivate: boolean, isDevnet: boolean): Promise<TelegramPaymentPlan> {
+    let recipientWallet: string | null = null;
+    try {
+      const user = await this.usersService.findBySocialHandle('telegram', handle);
+      recipientWallet = await this.usersService.getSolanaWalletAddress(user.privyUserId);
+    } catch {
+      recipientWallet = null; // not on Loofta (or no wallet yet)
+    }
+    const registered = !!recipientWallet;
+    const claimFeeUsd = registered ? 0 : UNREGISTERED_CLAIM_FEE_USD;
+    if (isPrivate) return { registered, delivery: 'private', claimFeeUsd };
+    if (registered && (await this.autopaySigner.usdcAccountExists(recipientWallet!, isDevnet))) {
+      return { registered, delivery: 'instant', claimFeeUsd };
+    }
+    return { registered, delivery: 'claim', claimFeeUsd };
+  }
+
+  /**
+   * Telegram auto-pay. Public: instant to a registered wallet that can already hold USDC, else a
+   * burner claim (never asks the sponsor to create a token account for a payment the same user
+   * made, which its drain guard refuses). Not on Loofta: the $0.10 claim fee goes to the Loofta
+   * fee account in the same transaction. Private: MagicBlock private transfer with the chosen
+   * delay and split, signed by the sender's granted key.
+   */
+  async executeTelegramAutoPay(params: {
+    senderUserId: string;
+    recipientHandle: string;
+    amountUsd: number;
+    isPrivate: boolean;
+    isDevnet: boolean;
+    splitOverride?: number | null;
+    maxDelayMsOverride?: number | null;
+  }): Promise<TwitterAutopayResult> {
+    if (!this.autopaySigner.isAvailable) {
+      throw new Error('Auto-pay signing is not configured (LOOFTA_BOT_AUTH_PRIVATE_KEY missing)');
+    }
+    const wallet = await this.autopaySigner.resolveSenderWallet(params.senderUserId);
+    if (!wallet) throw new Error('Sender has no delegated Solana wallet — signer grant may not have completed');
+
+    const cluster = params.isDevnet ? 'devnet' : 'mainnet';
+    const plan = await this.planTelegramPayment(params.recipientHandle, params.isPrivate, params.isDevnet);
+    const base = {
+      platform: 'telegram' as const,
+      handle: params.recipientHandle,
+      amount: params.amountUsd,
+      userId: params.senderUserId,
+      description: 'Sent via @looftapay_bot on Telegram',
+      cluster: cluster as 'devnet' | 'mainnet',
+    };
+
+    if (params.isPrivate) {
+      const split = params.splitOverride ?? undefined;
+      const maxDelayMs = params.maxDelayMsOverride ?? undefined;
+      const payment = await this.claimsService.createFromSocial({ ...base, isPrivate: true, split, maxDelayMs });
+      try {
+        const built = await this.claimsService.buildPrivateTransferForPayer(
+          payment.id, params.senderUserId, wallet.address, cluster, true, split, maxDelayMs,
+        );
+        const { signature } = await this.autopaySigner.signAndSendPrivateTransfer({
+          senderPrivyUserId: params.senderUserId,
+          senderWalletId: wallet.walletId,
+          transactionBase64: built.transactionBase64,
+          version: built.version,
+          sendTo: built.sendTo,
+          paymentId: payment.id,
+        });
+        await this.claimsService.updateStatus(payment.id, 'SUCCESS', {
+          txHash: signature,
+          paidWith: 'USDC',
+          paidWithToken: 'USDC',
+          paidWithChain: 'solana',
+          isPrivate: true,
+        });
+        this.claimsService.notifyRecipientAfterPayment(payment.id);
+      } catch (e) {
+        await this.cancelUnfunded(payment.id);
+        throw e;
+      }
+      if (plan.claimFeeUsd > 0) await this.collectClaimFee(params.senderUserId, wallet, plan.claimFeeUsd, params.isDevnet);
+      this.logger.log(`Telegram private auto-pay executed: payment ${payment.id}`);
+      return { paymentId: payment.id, shortId: payment.short_id, claimLink: payment.link };
+    }
+
+    // Public. Registered with a USDC account: direct. Everything else: burner claim.
+    const payment = await this.claimsService.createFromSocial({ ...base, isPrivate: false, forceBurner: plan.delivery !== 'instant' });
+    const { data: paymentRow } = await this.supabaseService.payments
+      .select('burner_address')
+      .eq('id', payment.id)
+      .maybeSingle();
+    const burnerAddress = paymentRow?.burner_address ?? null;
+    const directTo = !burnerAddress ? payment.payTo : null;
+    const destinationAddress = burnerAddress ?? directTo;
+    if (!destinationAddress) {
+      await this.cancelUnfunded(payment.id);
+      throw new Error(`Payment ${payment.id} has no burner or direct destination — cannot auto-fund`);
+    }
+    try {
+      const { signature } = await this.autopaySigner.signAndSendTransfer({
+        senderPrivyUserId: params.senderUserId,
+        senderWalletId: wallet.walletId,
+        senderAddress: wallet.address,
+        destinationAddress,
+        amountUsd: params.amountUsd,
+        isDevnet: params.isDevnet,
+        paymentId: payment.id,
+        claimFeeUsd: plan.claimFeeUsd,
+      });
+      if (directTo) {
+        await this.claimsService.updateStatus(payment.id, 'SUCCESS', {
+          txHash: signature,
+          paidWith: 'USDC',
+          paidWithToken: 'USDC',
+          paidWithChain: 'solana',
+        });
+        this.claimsService.notifyRecipientAfterPayment(payment.id);
+      }
+    } catch (e) {
+      await this.cancelUnfunded(payment.id);
+      throw e;
+    }
+    this.logger.log(`Telegram auto-pay executed: payment ${payment.id} (${plan.delivery})`);
+    return { paymentId: payment.id, shortId: payment.short_id, claimLink: payment.link };
+  }
+
+  /** Marks a claim we created but could not fund as cancelled, so it doesn't linger as OPEN. */
+  private async cancelUnfunded(paymentId: string): Promise<void> {
+    try {
+      await this.claimsService.updateStatus(paymentId, 'CANCELLED');
+    } catch (e) {
+      this.logger.warn(`Could not cancel unfunded payment ${paymentId}: ${(e as Error).message}`);
+    }
+  }
+
+  /** Private payments can't carry the claim fee in the MagicBlock transaction, so it is a second
+   *  transfer afterwards. The payment already landed, so a failure here is logged, not thrown. */
+  private async collectClaimFee(
+    userId: string,
+    wallet: { address: string; walletId: string },
+    claimFeeUsd: number,
+    isDevnet: boolean,
+  ): Promise<void> {
+    try {
+      const feePayer = this.solanaSponsorAddress();
+      if (!feePayer) return;
+      await this.autopaySigner.signAndSendTransfer({
+        senderPrivyUserId: userId,
+        senderWalletId: wallet.walletId,
+        senderAddress: wallet.address,
+        destinationAddress: feePayer,
+        amountUsd: claimFeeUsd,
+        isDevnet,
+      });
+    } catch (e) {
+      this.logger.warn(`Claim fee transfer failed after private auto-pay: ${(e as Error).message}`);
+    }
+  }
+
+  private solanaSponsorAddress(): string | null {
+    return this.autopaySigner.feePayerAddress;
   }
 
   private async assertAllowed(userId: string): Promise<void> {

@@ -50,6 +50,10 @@ export class CreateClaimFromSocialDto {
 
   // Server-side only — stripped from request body by ValidationPipe whitelist.
   userId?: string;
+  /** Server-side only. Skip the "pay a registered user's wallet directly" shortcut and create a
+   *  burner claim instead (used when the registered recipient has no USDC token account yet, which
+   *  the sponsor will not create for a payment the same user made). */
+  forceBurner?: boolean;
   /** ISO timestamp — claim auto-expires (EXPIRED) if still unsettled past this. Server-side only. */
   expiresAt?: string;
 }

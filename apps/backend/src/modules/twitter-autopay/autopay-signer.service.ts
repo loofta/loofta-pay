@@ -5,6 +5,7 @@ import {
   Connection,
   PublicKey,
   TransactionInstruction,
+  Transaction,
   TransactionMessage,
   VersionedTransaction,
 } from '@solana/web3.js';
@@ -60,6 +61,10 @@ export class AutopaySignerService {
     return this.signingClient !== null;
   }
 
+  get feePayerAddress(): string | null {
+    return this.solanaSponsor.feePayerAddress ?? null;
+  }
+
   /**
    * Resolves the sender's Solana embedded wallet address + Privy wallet id. `id` is only
    * populated once the wallet is delegated (i.e. after addSigners on the frontend) — null id
@@ -87,7 +92,10 @@ export class AutopaySignerService {
     destinationAddress: string;
     amountUsd: number;
     isDevnet: boolean;
-    paymentId: string;
+    /** Omit for a standalone fee transfer: the sponsor binds claim-amount checks to this id. */
+    paymentId?: string;
+    /** Flat claim fee sent to the Loofta fee payer in the SAME transaction (unregistered recipients). */
+    claimFeeUsd?: number;
   }): Promise<{ signature: string }> {
     if (!this.signingClient) {
       throw new BadRequestException('Auto-pay signing is not configured');
@@ -133,6 +141,17 @@ export class AutopaySignerService {
       createTransferCheckedInstruction(senderAta, mint, destinationAta, sender, amountRaw, USDC_DECIMALS, [], TOKEN_PROGRAM_ID),
     );
 
+    if (params.claimFeeUsd && params.claimFeeUsd > 0) {
+      const feeRaw = Math.round(params.claimFeeUsd * 10 ** USDC_DECIMALS);
+      const feeAta = getAssociatedTokenAddressSync(mint, feePayer, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+      if (!(await connection.getAccountInfo(feeAta))) {
+        throw new Error('Loofta fee account is not initialised; cannot collect the claim fee');
+      }
+      instructions.push(
+        createTransferCheckedInstruction(senderAta, mint, feeAta, sender, feeRaw, USDC_DECIMALS, [], TOKEN_PROGRAM_ID),
+      );
+    }
+
     const { blockhash } = await connection.getLatestBlockhash('confirmed');
     const message = new TransactionMessage({
       payerKey: feePayer,
@@ -155,5 +174,46 @@ export class AutopaySignerService {
       params.paymentId,
     );
     return { signature };
+  }
+
+  /** Whether this wallet already has a USDC token account (mainnet). */
+  async usdcAccountExists(ownerAddress: string, isDevnet = false): Promise<boolean> {
+    const rpcUrl = isDevnet
+      ? this.config.get<string>('SOLANA_DEVNET_RPC_URL') || 'https://api.devnet.solana.com'
+      : getMainnetSolanaRpcUrl(this.config);
+    const mintAddress = isDevnet
+      ? this.config.get<string>('SOLANA_USDC_MINT_DEVNET') || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+      : this.config.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const ata = getAssociatedTokenAddressSync(new PublicKey(mintAddress), new PublicKey(ownerAddress), false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+    return !!(await new Connection(rpcUrl, 'confirmed').getAccountInfo(ata));
+  }
+
+  /**
+   * Signs (sender leg, via Privy) and broadcasts a MagicBlock private transfer built by
+   * ClaimsService.buildPrivateTransferForPayer. Same sequence the browser performs: the sender
+   * signs, then the already-built gasless transaction is broadcast on the base chain.
+   */
+  async signAndSendPrivateTransfer(params: {
+    senderPrivyUserId: string;
+    senderWalletId: string;
+    transactionBase64: string;
+    version: 'legacy' | 'v0';
+    sendTo: 'base' | 'ephemeral';
+    paymentId: string;
+  }): Promise<{ signature: string }> {
+    if (!this.signingClient) throw new BadRequestException('Auto-pay signing is not configured');
+    if (params.sendTo !== 'base') {
+      throw new Error(`Unsupported private transfer route "${params.sendTo}" for auto-pay`);
+    }
+    const raw = Buffer.from(params.transactionBase64, 'base64');
+    const tx = params.version === 'v0' ? VersionedTransaction.deserialize(raw) : Transaction.from(raw);
+    const { signedTransaction } = await this.signingClient.walletApi.solana.signTransaction({
+      walletId: params.senderWalletId,
+      transaction: tx as VersionedTransaction,
+    });
+    const signedBase64 = Buffer.from(
+      (signedTransaction as VersionedTransaction | Transaction).serialize(),
+    ).toString('base64');
+    return this.solanaSponsor.signAndBroadcastPER(signedBase64, undefined, params.senderPrivyUserId, params.paymentId);
   }
 }

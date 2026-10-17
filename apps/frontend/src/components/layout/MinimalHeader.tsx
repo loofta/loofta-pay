@@ -286,6 +286,21 @@ export function MinimalHeader() {
     return () => window.removeEventListener("openBalanceModal", handler);
   }, [refreshBalance]);
 
+  // Deep link from the Telegram bot's Fund button: /app?deposit=1 opens the deposit sheet directly.
+  // Waits for sign-in (the sheet only renders when authenticated), then removes the param so a
+  // refresh or back navigation doesn't pop the sheet again.
+  useEffect(() => {
+    if (!authenticated || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("deposit") !== "1") return;
+    url.searchParams.delete("deposit");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    setShowBalanceModal(false);
+    setDepositMode("deposit");
+    setDepositScreen("home");
+    setShowDeposit(true);
+  }, [authenticated]);
+
   // Finishes a pay / cash out whose tab was closed after the bridge, silently.
   useResumePeerCashout(authenticated);
 

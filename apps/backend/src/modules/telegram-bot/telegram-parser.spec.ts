@@ -1,7 +1,11 @@
 import { parseSendCommand } from './telegram-parser';
 
 const BOT = 'looftapay_bot';
-const ok = (amount: number, handle: string | null) => ({ ok: true, amount, handle });
+const ok = (amount: number, handle: string | null, extra: Record<string, unknown> = {}) => ({
+  ok: true, amount, handle, isPrivate: false, delayMs: null, split: null, ...extra,
+});
+const priv = (amount: number, handle: string | null, extra: Record<string, unknown> = {}) =>
+  ok(amount, handle, { isPrivate: true, ...extra });
 
 describe('parseSendCommand', () => {
   it.each([
@@ -19,6 +23,19 @@ describe('parseSendCommand', () => {
     ['/pay 5$ to @alice_w', ok(5, 'alice_w')],
     ['/pay@looftapay_bot 5$ to @alice_w', ok(5, 'alice_w')],
     ['Pay 2.50 dollars to lisabeyy', ok(2.5, 'lisabeyy')],
+    ['send 5$ privately to @someone', priv(5, 'someone')],
+    ['pay $5 to @someone privately', priv(5, 'someone')],
+    ['/pay 5 private @someone', priv(5, 'someone')],
+    ['/payprivately 5 @someone', priv(5, 'someone')],
+    ['/payprivately@looftapay_bot 5$ to @someone', priv(5, 'someone')],
+    ['payprivately $5 to @someone delay 1h', priv(5, 'someone', { delayMs: 3_600_000 })],
+    ['/pay_privately 5', priv(5, null)],
+    ['sendprivately 5 to @someone', priv(5, 'someone')],
+    ['pay 5$ private to @someone', priv(5, 'someone')],
+    ['pay 5 privately to @someone delay 30m split 4', priv(5, 'someone', { delayMs: 30 * 60_000, split: 4 })],
+    ['pay 5 privately to @someone delay 2 hours', priv(5, 'someone', { delayMs: 2 * 3_600_000 })],
+    ['pay 5 privately to @someone split random', priv(5, 'someone')],
+    ['/pay 5 privately', priv(5, null)],
   ])('parses %s', (text, expected) => {
     expect(parseSendCommand(text, BOT)).toEqual(expected);
   });
@@ -35,5 +52,9 @@ describe('parseSendCommand', () => {
     expect(parseSendCommand('send $0 to @alice_w', BOT)).toMatchObject({ ok: false });
     expect(parseSendCommand('send $501 to @alice_w', BOT)).toMatchObject({ ok: false });
     expect(parseSendCommand('send $5 to @abc', BOT)).toMatchObject({ ok: false });
+    expect(parseSendCommand('pay 5 to @someone delay 30m', BOT)).toMatchObject({ ok: false });
+    expect(parseSendCommand('pay 0.5 privately to @someone', BOT)).toMatchObject({ ok: false });
+    expect(parseSendCommand('pay 5 privately to @someone split 40', BOT)).toMatchObject({ ok: false });
+    expect(parseSendCommand('pay 5 privately to @someone delay 5s', BOT)).toMatchObject({ ok: false });
   });
 });
