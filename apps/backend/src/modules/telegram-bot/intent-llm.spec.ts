@@ -45,6 +45,23 @@ describe('intentToSentence: never trusts the model beyond what the person wrote'
   });
 });
 
+describe('IntentLlmService request shape', () => {
+  const realFetch = global.fetch;
+  afterEach(() => { global.fetch = realFetch; });
+  it('asks gpt-oss models for low reasoning effort, and leaves other models alone', async () => {
+    const bodies: any[] = [];
+    global.fetch = jest.fn(async (_u: any, init: any) => {
+      bodies.push(JSON.parse(init.body));
+      return { status: 400, ok: false } as any; // force the chain to try every model
+    }) as any;
+    const s = new IntentLlmService({ get: (k: string) => ({ LLM_API_KEY: 'k', LLM_MODELS: 'openai/gpt-oss-20b,qwen/qwen3.8-27b' } as any)[k] } as any);
+    await s.interpret('pay five to alice_w', 1);
+    expect(bodies[0].reasoning_effort).toBe('low');
+    expect(bodies[1].reasoning_effort).toBeUndefined();
+    expect(bodies.every((b) => b.max_tokens >= 400)).toBe(true);
+  });
+});
+
 describe('IntentLlmService', () => {
   const realFetch = global.fetch;
   afterEach(() => { global.fetch = realFetch; });

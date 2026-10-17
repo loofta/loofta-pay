@@ -109,7 +109,7 @@ export class IntentLlmService {
     const key = this.config.get<string>('LLM_API_KEY');
     // Models are tried in order. On Groq each model has its own free limits, so listing two gives
     // both more room and a second chance when one is overloaded.
-    const models = (this.config.get<string>('LLM_MODELS') || 'llama-3.1-8b-instant,openai/gpt-oss-20b').split(',').map((m) => m.trim()).filter(Boolean);
+    const models = (this.config.get<string>('LLM_MODELS') || 'openai/gpt-oss-20b,openai/gpt-oss-120b,qwen/qwen3.8-27b').split(',').map((m) => m.trim()).filter(Boolean);
     this.targets = key ? models.map((model) => ({ name: `${new URL(baseUrl).hostname}/${model}`, baseUrl, apiKey: key, model })) : [];
     // Optional second provider (any OpenAI-compatible API) for when the first is down.
     const fbKey = this.config.get<string>('LLM_FALLBACK_API_KEY');
@@ -152,7 +152,10 @@ export class IntentLlmService {
           body: JSON.stringify({
             model: t.model,
             temperature: 0,
-            max_tokens: 220,
+            max_tokens: 500,
+            // gpt-oss models think before they answer; at the default effort that thinking can use the whole
+            // budget and leave an empty reply (seen live). Low effort is plenty for pulling out a name and a number.
+            ...(t.model.startsWith('openai/gpt-oss') ? { reasoning_effort: 'low' } : {}),
             response_format: { type: 'json_object' },
             messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: user }],
           }),
