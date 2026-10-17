@@ -161,7 +161,7 @@ export default function TwitterBotPage() {
             <div className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-4 space-y-2 text-lg text-slate-300 leading-relaxed">
               <p className="text-white font-medium">Before you turn this on</p>
               <ul className="list-disc pl-5 space-y-1.5">
-                <li>You give Loofta permission to send USDC from your Loofta wallet when a command comes from your account or a teammate you name as an approver.</li>
+                <li>You give Loofta permission to send USDC from your Loofta wallet when a command comes from your own Telegram account.</li>
                 <li>Each payment is capped at ${status?.maxPerPaymentCapUsd ?? 500} at most, and you set your own per-payment and daily limits below. Both are checked on every payment.</li>
                 <li>Payments are sent to the account named in the command. Check handles carefully, because a payment that has been sent cannot be reversed by Loofta.</li>
                 <li>You can turn auto-pay off at any time, which removes the permission from your wallet.</li>
