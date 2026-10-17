@@ -22,7 +22,7 @@ export interface TgUpdate { update_id: number; message?: TgMessage; callback_que
 const CONFIRM_TTL_MS = 5 * 60 * 1000;
 /** Delay choices (minutes) and split choices offered as buttons on a private card. 'r' = random. */
 const DELAY_CHOICES_MIN = [1, 10, 60, 360, 1440];
-const SPLIT_CHOICES: Array<number | 'r'> = ['r', 2, 3, 4, 5, 8];
+const SPLIT_CHOICES: Array<number | 'r'> = ['r', 2, 3, 5, 8];
 const money = (n: number) => `$${n.toFixed(2)}`;
 
 /**
@@ -334,10 +334,8 @@ export class TelegramBotService implements OnModuleInit {
     }
 
     const isDevnet = isSolanaDevnetFromConfig(this.config);
-    const plan = await this.autopay.planTelegramPayment(handle, parsed.isPrivate, isDevnet);
-    // Private fee is MagicBlock's: a flat $0.20 relay fee plus 0.1% of the amount, added to the debit.
-    const privateFee = parsed.isPrivate ? 0.2 + parsed.amount * 0.001 : 0;
-    const needed = parsed.amount + plan.claimFeeUsd + privateFee;
+    const plan = await this.autopay.planTelegramPayment(handle, parsed.isPrivate, isDevnet, parsed.amount);
+    const needed = parsed.amount + plan.claimFeeUsd + plan.privateFeeUsd;
 
     // Fail early and plainly when the wallet can't cover it, instead of after a Confirm tap.
     try {
@@ -419,22 +417,29 @@ export class TelegramBotService implements OnModuleInit {
     if (a.is_private) {
       const delayLabel = delayMs ? this.formatDelay(delayMs) : '10 minutes (default)';
       lines.push(`Send <b>${money(amount)}</b> USDC <b>privately</b> to <b>@${handle}</b>?`);
-      lines.push(`Delay: up to ${delayLabel}`);
-      lines.push(`Split: ${a.private_split ? `${a.private_split} parts` : 'random'}`);
-      lines.push('The usual private payment fee applies.');
-      lines.push('Tap to change the delay or split, or type it: <code>delay 30m split 4</code>.');
+      lines.push('');
+      lines.push(`<b>Delay:</b> up to ${delayLabel}`);
+      lines.push('How long it can take to arrive. A longer delay is harder to trace.');
+      lines.push('');
+      lines.push(`<b>Split:</b> ${a.private_split ? `${a.private_split} parts` : 'random'}`);
+      lines.push('How many smaller parts it is sent in. More parts is harder to trace.');
+      lines.push('');
+      lines.push('Tap a button to change them, or type it: <code>delay 30m split 4</code>.');
       const effDelayMin = Math.round((delayMs ?? DEFAULT_PRIVATE_DELAY_MS) / 60_000);
       rows.push(
         DELAY_CHOICES_MIN.map((m) => ({
-          text: effDelayMin === m ? `[${this.formatDelayShort(m)}]` : this.formatDelayShort(m),
+          text: effDelayMin === m ? `[${this.formatDelayButton(m)}]` : this.formatDelayButton(m),
           callback_data: `dl:${a.id}:${m}`,
         })),
       );
       rows.push(
-        SPLIT_CHOICES.map((n) => ({
-          text: (a.private_split ?? 'r') === n ? `[${n === 'r' ? 'Random' : n}]` : n === 'r' ? 'Random' : String(n),
-          callback_data: `sp:${a.id}:${n}`,
-        })),
+        SPLIT_CHOICES.map((n) => {
+          const label = n === 'r' ? 'Random' : `${n} parts`;
+          return {
+            text: (a.private_split ?? 'r') === n ? `[${label}]` : label,
+            callback_data: `sp:${a.id}:${n}`,
+          };
+        }),
       );
     } else {
       lines.push(`Send <b>${money(amount)}</b> USDC to <b>@${handle}</b>?`);
@@ -444,11 +449,20 @@ export class TelegramBotService implements OnModuleInit {
           : 'They get a claim link.',
       );
     }
-    if (plan.claimFeeUsd > 0) {
-      lines.push(
-        `@${handle} is not on Loofta yet, so a ${money(plan.claimFeeUsd)} claim fee is added on top (${money(amount + plan.claimFeeUsd)} leaves your wallet${a.is_private ? ', plus the private fee' : ''}).`,
-      );
+    // Fees, always spelled out before the Confirm tap.
+    lines.push('');
+    lines.push('<b>Fees</b>');
+    let total = amount;
+    if (a.is_private) {
+      lines.push(`Private payment fee: about ${money(plan.privateFeeUsd)} (privacy network and Loofta)`);
+      total += plan.privateFeeUsd;
     }
+    if (plan.claimFeeUsd > 0) {
+      lines.push(`Claim fee: ${money(plan.claimFeeUsd)} (@${handle} is not on Loofta yet)`);
+      total += plan.claimFeeUsd;
+    }
+    if (!a.is_private && plan.claimFeeUsd === 0) lines.push('None. Network fees are covered by Loofta.');
+    lines.push(`<b>Total from your wallet: ${a.is_private ? 'about ' : ''}${money(total)}</b>`);
     rows.push([
       { text: 'Confirm', callback_data: `ok:${a.id}` },
       { text: 'Cancel', callback_data: `no:${a.id}` },
@@ -456,8 +470,10 @@ export class TelegramBotService implements OnModuleInit {
     return { text: lines.join('\n'), keyboard: { inline_keyboard: rows } };
   }
 
-  private formatDelayShort(min: number): string {
-    return min >= 60 ? `${min / 60}h` : `${min}m`;
+  private formatDelayButton(min: number): string {
+    if (min < 60) return `${min} min`;
+    const h = min / 60;
+    return h === 1 ? '1 hour' : h === 24 ? '1 day' : `${h} hours`;
   }
 
   private formatDelay(ms: number): string {
@@ -508,7 +524,7 @@ export class TelegramBotService implements OnModuleInit {
         .select('id, recipient_handle, amount_usd, is_private, private_split, private_max_delay_ms')
         .maybeSingle();
       if (!row) return;
-      const plan = await this.autopay.planTelegramPayment(row.recipient_handle, true, isSolanaDevnetFromConfig(this.config));
+      const plan = await this.autopay.planTelegramPayment(row.recipient_handle, true, isSolanaDevnetFromConfig(this.config), Number(row.amount_usd));
       const card = this.renderCard(row as any, plan);
       await this.api!.editMessage(chatId, messageId, card.text, card.keyboard);
       return;

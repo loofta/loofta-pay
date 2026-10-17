@@ -6,6 +6,13 @@ import { ClaimsService } from '../claims/claims.service';
 import { AutopaySignerService } from './autopay-signer.service';
 import { EmailService } from '../email/email.service';
 import { isPrivyUserAdmin } from '@/common/admin-check';
+import {
+  resolveMagicblockRelayFeeUsdc,
+  estimateMagicblockGrossUp,
+  MAGICBLOCK_VOLUME_FEE_BPS,
+  ENABLE_SINGLE_PAYMENT_PLATFORM_FEE,
+  SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS,
+} from '@/common/magicblock-private-transfer';
 
 export interface TwitterAutopayStatus {
   isAdmin: boolean;
@@ -42,6 +49,8 @@ export const UNREGISTERED_CLAIM_FEE_USD = 0.1;
 
 export interface TelegramPaymentPlan {
   registered: boolean;
+  /** Estimated MagicBlock relay + volume + Loofta fee for a private payment, in USD (0 when public). */
+  privateFeeUsd: number;
   /** instant: straight to their wallet; claim: they get a link; private: MagicBlock private transfer. */
   delivery: 'instant' | 'claim' | 'private';
   claimFeeUsd: number;
@@ -489,7 +498,7 @@ export class TwitterAutopayService {
    * straight to their wallet. Anyone else: a claim link. Not on Loofta at all: a flat $0.10 claim
    * fee is added on top, same as the web send flow. Private: MagicBlock private transfer.
    */
-  async planTelegramPayment(handle: string, isPrivate: boolean, isDevnet: boolean): Promise<TelegramPaymentPlan> {
+  async planTelegramPayment(handle: string, isPrivate: boolean, isDevnet: boolean, amountUsd = 0): Promise<TelegramPaymentPlan> {
     let recipientWallet: string | null = null;
     try {
       const user = await this.usersService.findBySocialHandle('telegram', handle);
@@ -499,11 +508,23 @@ export class TwitterAutopayService {
     }
     const registered = !!recipientWallet;
     const claimFeeUsd = registered ? 0 : UNREGISTERED_CLAIM_FEE_USD;
-    if (isPrivate) return { registered, delivery: 'private', claimFeeUsd };
-    if (registered && (await this.autopaySigner.usdcAccountExists(recipientWallet!, isDevnet))) {
-      return { registered, delivery: 'instant', claimFeeUsd };
+    if (isPrivate) {
+      return { registered, delivery: 'private', claimFeeUsd, privateFeeUsd: await this.estimatePrivateFeeUsd(amountUsd) };
     }
-    return { registered, delivery: 'claim', claimFeeUsd };
+    if (registered && (await this.autopaySigner.usdcAccountExists(recipientWallet!, isDevnet))) {
+      return { registered, delivery: 'instant', claimFeeUsd, privateFeeUsd: 0 };
+    }
+    return { registered, delivery: 'claim', claimFeeUsd, privateFeeUsd: 0 };
+  }
+
+  /** Same inputs the private transfer builder uses: the live relay fee plus MagicBlock's volume
+   *  fee and Loofta's platform fee in bps, grossed up the way exactOut debits the sender. */
+  private async estimatePrivateFeeUsd(amountUsd: number): Promise<number> {
+    const baseUnits = Math.round(amountUsd * 1_000_000);
+    const relayUsd = await resolveMagicblockRelayFeeUsdc();
+    const totalBps = MAGICBLOCK_VOLUME_FEE_BPS + (ENABLE_SINGLE_PAYMENT_PLATFORM_FEE ? SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS : 0);
+    const volumeUsd = (estimateMagicblockGrossUp(baseUnits, totalBps) - baseUnits) / 1_000_000;
+    return Math.round((relayUsd + volumeUsd) * 100) / 100;
   }
 
   /**
