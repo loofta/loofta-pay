@@ -138,8 +138,8 @@ export default function TwitterBotPage() {
         <p className="text-lg text-slate-300 leading-relaxed">
           Let Loofta pay from your wallet when you ask it to, within limits you set. Message{' '}
           <a href="https://t.me/looftapay_bot" target="_blank" rel="noreferrer" className="text-white underline underline-offset-2">@looftapay_bot</a>{' '}
-          on Telegram with <span className="text-white">send $5 to @alice</span>, or reply to someone in a group with{' '}
-          <span className="text-white">/tip 5</span>. Recipients without a Loofta account get a claim link.
+          on Telegram with <span className="text-white">pay $5 to @alice</span>, or reply to someone in a group with{' '}
+          <span className="text-white">/pay 5</span>. Recipients without a Loofta account get a claim link.
           Sign in to Loofta with the same Telegram account you use in the bot.
         </p>
       </div>
