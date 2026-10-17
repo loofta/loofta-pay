@@ -10,7 +10,7 @@ import {
 } from '@solana/web3.js';
 import {
   getAssociatedTokenAddressSync,
-  createTransferInstruction,
+  createTransferCheckedInstruction,
   createAssociatedTokenAccountInstruction,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -127,7 +127,11 @@ export class AutopaySignerService {
         createAssociatedTokenAccountInstruction(feePayer, destinationAta, destination, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID),
       );
     }
-    instructions.push(createTransferInstruction(senderAta, destinationAta, sender, amountRaw, [], TOKEN_PROGRAM_ID));
+    // TransferChecked (not plain Transfer) so the Privy policy can pin the mint to USDC as well as
+    // cap the amount; plain Transfer carries no mint field to constrain.
+    instructions.push(
+      createTransferCheckedInstruction(senderAta, mint, destinationAta, sender, amountRaw, USDC_DECIMALS, [], TOKEN_PROGRAM_ID),
+    );
 
     const { blockhash } = await connection.getLatestBlockhash('confirmed');
     const message = new TransactionMessage({
