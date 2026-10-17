@@ -75,17 +75,25 @@ export class TelegramBotService implements OnModuleInit {
         secret_token: secret,
         allowed_updates: ['message', 'callback_query'],
       });
-      await this.api.call('setMyCommands', {
-        commands: [
-          { command: 'balance', description: 'Your balance' },
-          { command: 'fund', description: 'Add money to your wallet' },
-          { command: 'pay', description: 'Pay someone, for example /pay 5 @someone' },
-          { command: 'payprivately', description: 'Pay privately, for example /payprivately 5 @someone' },
-          { command: 'history', description: 'Your recent payments' },
-          { command: 'settings', description: 'Auto-pay limits and terms' },
-          { command: 'help', description: 'How it works' },
-        ],
-      });
+      // Registered per scope so groups show the menu too (a default-only list is sometimes not shown
+      // there). Groups only get the commands that work in a group; the rest are DM-only.
+      const privateCommands = [
+        { command: 'balance', description: 'Your balance' },
+        { command: 'fund', description: 'Add money to your wallet' },
+        { command: 'pay', description: 'Pay someone, for example /pay 5 @someone' },
+        { command: 'payprivately', description: 'Pay privately, for example /payprivately 5 @someone' },
+        { command: 'history', description: 'Your recent payments' },
+        { command: 'settings', description: 'Auto-pay limits and terms' },
+        { command: 'help', description: 'How it works' },
+      ];
+      const groupCommands = [
+        { command: 'pay', description: 'Pay someone, or reply to a message with /pay 5' },
+        { command: 'payprivately', description: 'Pay privately, or reply with /payprivately 5' },
+        { command: 'help', description: 'How it works' },
+      ];
+      await this.api.call('setMyCommands', { commands: privateCommands });
+      await this.api.call('setMyCommands', { commands: privateCommands, scope: { type: 'all_private_chats' } });
+      await this.api.call('setMyCommands', { commands: groupCommands, scope: { type: 'all_group_chats' } });
       this.logger.log(`Telegram webhook registered for @${this.botUsername}`);
     } catch (e) {
       this.logger.error(`Telegram webhook registration failed: ${(e as Error).message}`);

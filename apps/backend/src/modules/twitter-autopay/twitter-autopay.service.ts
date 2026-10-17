@@ -11,7 +11,7 @@ export { UNREGISTERED_CLAIM_FEE_USD } from './telegram-fees';
 
 export interface TwitterAutopayStatus {
   isAdmin: boolean;
-  /** Whether this user may turn auto-pay on: admins always, everyone once TWITTER_AUTOPAY_OPEN=true. */
+  /** Whether this user may turn auto-pay on: everyone unless TWITTER_AUTOPAY_OPEN=false (then admins only). */
   canEnable: boolean;
   twitterHandle: string | null;
   enrolled: boolean;
@@ -81,7 +81,7 @@ export interface TwitterAutopayResult {
 /**
  * Auto-pay on X. A wallet owner (a person or a business) enrolls, sets per-payment and daily
  * limits, and optionally names team "approvers": X handles allowed to tell @looftapay to spend
- * from that wallet. Admin-only until TWITTER_AUTOPAY_OPEN=true, same rollout shape as the
+ * from that wallet. Open to everyone (TWITTER_AUTOPAY_OPEN=false makes it admin-only), same rollout shape as the
  * integrators system. Only enrolled owners and their approvers are ever eligible for the bot to
  * act on — see TwitterPaymentsService.create().
  */
@@ -107,8 +107,9 @@ export class TwitterAutopayService {
     return this.configService.get<string>('X_BOT_ENABLED') === 'true';
   }
 
+  /** Open to everyone by default. Set TWITTER_AUTOPAY_OPEN=false to go back to admin-only. */
   private get isOpen(): boolean {
-    return this.configService.get<string>('TWITTER_AUTOPAY_OPEN') === 'true';
+    return this.configService.get<string>('TWITTER_AUTOPAY_OPEN') !== 'false';
   }
 
   async getStatus(userId: string): Promise<TwitterAutopayStatus> {
@@ -659,6 +660,6 @@ export class TwitterAutopayService {
   private async assertAllowed(userId: string): Promise<void> {
     if (this.isOpen) return;
     const admin = await isPrivyUserAdmin(this.supabaseService, this.configService, userId);
-    if (!admin) throw new ForbiddenException('Twitter auto-pay is invite-only for now');
+    if (!admin) throw new ForbiddenException('Auto-pay is not open yet');
   }
 }

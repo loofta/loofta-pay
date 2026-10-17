@@ -26,7 +26,7 @@ export class TwitterAutopayController {
   @Post('enroll')
   @UseGuards(AuthGuard)
   @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Enable Twitter auto-pay (invite-only until opened) after granting the Privy authorization key' })
+  @ApiOperation({ summary: 'Enable auto-pay after granting the Privy authorization key' })
   async enroll(@PrivyUser() user: { id: string }, @Body() body: { accepted_terms?: boolean }) {
     return this.autopay.enroll(user.id, body?.accepted_terms === true);
   }
