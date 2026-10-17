@@ -1405,6 +1405,11 @@ export class ClaimsService {
       if (userUsername === pendingUsername) {
         return { isRecipient: true };
       }
+      // Sent via the "Loofta username" option: addressed to the permanent loo_username, which can
+      // differ from the active username (e.g. an X handle). Unique per user, so safe to match.
+      if (creator?.looUsername && creator.looUsername.toLowerCase() === pendingUsername) {
+        return { isRecipient: true };
+      }
       // Fallback: match against the claimant's connected X/Twitter handle. Covers the case
       // where a payment was sent to someone's X handle but their Loofta username (set at
       // signup, e.g. a "loo-" prefixed default) doesn't match it 1:1.

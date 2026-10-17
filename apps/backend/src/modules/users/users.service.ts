@@ -57,19 +57,19 @@ export class UsersService {
   /**
    * Get creator display info by Privy user ID (for claim display: username only, no email)
    */
-  async findByPrivyId(privyUserId: string): Promise<{ username: string | null } | null> {
+  async findByPrivyId(privyUserId: string): Promise<{ username: string | null; looUsername: string | null } | null> {
     if (!privyUserId || !privyUserId.includes('did:privy:')) {
       return null;
     }
     const { data: user, error } = await this.supabaseService.appUsers
-      .select('username')
+      .select('username, loo_username')
       .eq('privy_user_id', privyUserId)
       .maybeSingle();
 
     if (error || !user) {
       return null;
     }
-    return { username: user.username ?? null };
+    return { username: user.username ?? null, looUsername: user.loo_username ?? null };
   }
 
   /**
@@ -425,7 +425,7 @@ export class UsersService {
 
     // Use maybeSingle() instead of single() to handle 0 rows gracefully.
     // ilike for case-insensitive exact match (DB may store "Lisa" while we query "lisa").
-    const { data: user, error } = await this.supabaseService.appUsers
+    let { data: user, error } = await this.supabaseService.appUsers
       .select('id, privy_user_id, email, username, require_private_payments')
       .ilike('username', cleanUsername)
       .maybeSingle();
@@ -433,6 +433,19 @@ export class UsersService {
     if (error) {
       this.logger.error(`Error querying user by username "${cleanUsername}":`, error);
       throw new NotFoundException(`User not found: ${error.message}`);
+    }
+
+    // People who picked the "Loofta username" option are addressed as their permanent
+    // loo_username (always "loo-…", unique, never changes). That is not necessarily their active
+    // `username`, which may be their X handle (e.g. username "duongpq07", loo_username
+    // "loo-duongpq07"), so matching `username` alone found nobody and the payment became a pending
+    // claim no real account could open ("Payment not found").
+    if (!user && cleanUsername.startsWith('loo-')) {
+      const { data: byLoo, error: looError } = await this.supabaseService.appUsers
+        .select('id, privy_user_id, email, username, require_private_payments')
+        .eq('loo_username', cleanUsername)
+        .maybeSingle();
+      if (!looError) user = byLoo;
     }
 
     if (!user) {

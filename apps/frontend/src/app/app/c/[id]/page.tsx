@@ -928,7 +928,23 @@ function getPhantomProvider(): { connect: () => Promise<{ publicKey: PublicKey }
 // Check demo mode at module level for consistent behavior
 const DEMO_MODE = isDemoMode();
 
+/** Privy access tokens are JWTs whose `sub` is the Privy user id. Read it from the token that is
+ *  actually sent to the server, so the page can tell when usePrivy().user is stale (e.g. another
+ *  tab on the same device signed in as a different account). Display-only: the server still
+ *  verifies the token itself. */
+function tokenUserId(token?: string | null): string | null {
+  try {
+    const part = token?.split(".")[1];
+    if (!part) return null;
+    const json = JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof json?.sub === "string" ? json.sub : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchClaim(id: string, authToken?: string | null) {
+  const viewerUserId = tokenUserId(authToken);
   const authHeaders: Record<string, string> = authToken ? { Authorization: `Bearer ${authToken}` } : {};
   const r = await fetch(`/api/claims/${id}`, { headers: authHeaders });
   if (!r.ok) {
@@ -944,6 +960,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
     const errData = await r.json().catch(() => ({} as Record<string, unknown>));
     return {
       claim: null,
+      viewerUserId,
       latestIntent: null,
       pendingEmail: !!(errData as { pendingEmail?: boolean }).pendingEmail,
       pendingSocialPlatform: (errData as { pendingSocialPlatform?: string | null }).pendingSocialPlatform ?? null,
@@ -958,6 +975,7 @@ async function fetchClaim(id: string, authToken?: string | null) {
   });
   return {
     claim: c as { id: string; short_id?: string | null; amount: string; to_symbol: string; to_chain: string; status: string; recipient_address?: string; recipient_username?: string | null; recipient_email?: string | null; recipient_user_id?: string | null; claim_burner_address?: string; recipient_pending_email?: boolean; recipient_pending_email_value?: string; recipient_pending_username?: boolean; recipient_pending_username_value?: string; recipient_pending_social?: boolean; recipient_pending_social_platform?: string | null; recipient_pending_social_value?: string | null; recipient_claim_in_progress?: boolean; created_at?: string; paid_at?: string; creator_email?: string; creator_username?: string | null; created_by?: string | null; description?: string; is_private?: boolean | null; claimed_privately?: boolean | null; paid_with_token?: string; paid_with_chain?: string; sender_tx_hash?: string | null; direction?: "from_sender" | "from_recipient"; is_devnet?: boolean; fee_on_sender?: boolean | null; merchant_name?: string | null; merchant_logo_url?: string | null; is_api_payment?: boolean; private_split?: number | null; private_max_delay_ms?: number | null },
+    viewerUserId,
     latestIntent: data.latestIntent || null,
     pendingEmail: false,
     pendingSocialPlatform: null,
@@ -1804,14 +1822,23 @@ export function ClaimPayView({
       return fetchClaim(id, token);
     },
     enabled: privyReady,
-    staleTime: 60_000,
+    // Cached data renders instantly, but who is viewing decides what they may see, so it is always
+    // re-verified in the background with the current token (mount + tab focus).
+    staleTime: 0,
     gcTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    refetchOnWindowFocus: true,
+    refetchOnMount: "always",
     retry: 1,
   });
   const claimData = claimQuery.data as any;
   const claim = claimData?.claim;
+  // The account the server actually saw on the last fetch (from the token), preferred over
+  // usePrivy().user when the two disagree — e.g. sender and recipient testing on one device.
+  const viewerId: string | undefined = (claimData?.viewerUserId as string | null | undefined) ?? user?.id;
+  const privySessionMismatch = !!claimData?.viewerUserId && !!user?.id && claimData.viewerUserId !== user.id;
+  useEffect(() => {
+    if (privySessionMismatch) void queryClient.invalidateQueries({ queryKey: ["claim", id] });
+  }, [privySessionMismatch, id]);
   const tokenPrize = claim as {
     solana_mint?: string | null;
     token_amount?: string | number | null;
@@ -1910,7 +1937,7 @@ export function ClaimPayView({
   // as a fallback alongside isRecipient so a slow/failed recipient-check request never strands a
   // merchant on the generic payer view of their own sale.
   const isMerchantRecipientView =
-    chrome !== "minimal" && claim?.direction === "from_recipient" && !!user?.id && claim?.created_by === user.id;
+    chrome !== "minimal" && claim?.direction === "from_recipient" && !!user?.id && claim?.created_by === viewerId;
   // True while we're still checking — hide the pay form until we know the user is NOT the recipient.
   const isCheckingRecipient = recipientCheckQuery.isLoading || recipientCheckQuery.isFetching;
   // True only for the very first check (no data yet) — unlike isCheckingRecipient, this stays
@@ -3849,7 +3876,7 @@ export function ClaimPayView({
   // for someone who IS logged in, which a guest-created claim's own creator never is.
   const isGuestCreatedClaim = !claim?.created_by;
   const showGuestCheckout = !DEMO_MODE && !!claim?.claim_burner_address && (chrome === "minimal" || (isGuestCreatedClaim && !authenticated));
-  const isCreatorView = !!user?.id && claim?.created_by === user.id;
+  const isCreatorView = !!user?.id && claim?.created_by === viewerId;
   // Guest sender returning from the one-step Send flow: no account to match, only this device's
   // local record (see markGuestSentClaim). Read after mount so SSR/hydration agree.
   const [sentByThisGuestDevice, setSentByThisGuestDevice] = useState(false);
@@ -5309,7 +5336,7 @@ export function ClaimPayView({
         from={from}
         incognito={showingPrivatePayForm || showingPrivateRecipientView}
         topRight={
-          chrome !== "minimal" && user?.id && claim?.created_by === user.id && ["OPEN", "PENDING_DEPOSIT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+          chrome !== "minimal" && user?.id && claim?.created_by === viewerId && ["OPEN", "PENDING_DEPOSIT"].includes(String(status || claim?.status || "").toUpperCase()) ? (
             <>
               <button
                 type="button"
@@ -5696,7 +5723,7 @@ export function ClaimPayView({
                               >
                                 {retrySweepLoading ? "Retrying..." : "Retry claim sweep"}
                               </button>
-                              {isClaimPageLocalhost && claim?.created_by === user.id && (
+                              {isClaimPageLocalhost && claim?.created_by === viewerId && (
                                 <button
                                   type="button"
                                   onClick={reclaimBySender}
@@ -5931,7 +5958,7 @@ export function ClaimPayView({
                   </div>
                 );
               })()
-            ) : claim?.recipient_pending_email && !(user?.id && claim?.created_by === user.id) ? (
+            ) : claim?.recipient_pending_email && !(user?.id && claim?.created_by === viewerId) ? (
               <div className="mt-6 text-center pt-12 pb-6 px-4">
                 {!user?.id ? (
                   (() => {
@@ -6060,7 +6087,7 @@ export function ClaimPayView({
                   </p>
                 )}
               </div>
-            ) : claim?.recipient_pending_email && user?.id && claim?.created_by === user.id && claim?.direction !== "from_recipient" && chrome !== "minimal" && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+            ) : claim?.recipient_pending_email && user?.id && claim?.created_by === viewerId && claim?.direction !== "from_recipient" && chrome !== "minimal" && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
                 claimId={id}
                 shortCode={claim?.short_id}
@@ -6073,7 +6100,7 @@ export function ClaimPayView({
                 claimLocked={!!claim?.recipient_claim_in_progress}
                 onRecipientUpdated={() => invalidateAfterRecipientUpdate(queryClient, id, user?.id)}
               />
-            ) : claim?.recipient_pending_username && user?.id && claim?.created_by === user.id && claim?.direction !== "from_recipient" && chrome !== "minimal" && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+            ) : claim?.recipient_pending_username && user?.id && claim?.created_by === viewerId && claim?.direction !== "from_recipient" && chrome !== "minimal" && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
                 claimId={id}
                 shortCode={claim?.short_id}
@@ -6086,7 +6113,7 @@ export function ClaimPayView({
                 claimLocked={!!claim?.recipient_claim_in_progress}
                 onRecipientUpdated={() => invalidateAfterRecipientUpdate(queryClient, id, user?.id)}
               />
-            ) : claim?.recipient_pending_social && user?.id && claim?.created_by === user.id && claim?.direction !== "from_recipient" && chrome !== "minimal" && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
+            ) : claim?.recipient_pending_social && user?.id && claim?.created_by === viewerId && claim?.direction !== "from_recipient" && chrome !== "minimal" && ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               <ClaimPageSenderShareView
                 claimId={id}
                 shortCode={claim?.short_id}
@@ -6101,7 +6128,7 @@ export function ClaimPayView({
                 onRecipientUpdated={() => invalidateAfterRecipientUpdate(queryClient, id, user?.id)}
               />
             ) : (claim as { recipient_is_registered?: boolean })?.recipient_is_registered &&
-              user?.id && claim?.created_by === user.id && claim?.direction !== "from_recipient" && chrome !== "minimal" &&
+              user?.id && claim?.created_by === viewerId && claim?.direction !== "from_recipient" && chrome !== "minimal" &&
               ["SUCCESS", "PRIVATE_TRANSFER_PENDING"].includes(String(status || claim?.status || "").toUpperCase()) ? (
               // Recipient resolved to a registered account immediately at creation (e.g. a Telegram/
               // username/email handle that already matched an existing user) — still editable up
@@ -6194,7 +6221,7 @@ export function ClaimPayView({
                   </p>
                 )}
               </div>
-            ) : claim?.recipient_pending_social && !isRecipient && !(user?.id && claim?.created_by === user.id) ? (
+            ) : claim?.recipient_pending_social && !isRecipient && !(user?.id && claim?.created_by === viewerId) ? (
               (() => {
                 const senderHasPaid = ["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(
                   String(claim?.status || "").toUpperCase()
@@ -6243,7 +6270,7 @@ export function ClaimPayView({
                   </div>
                 );
               })()
-            ) : claim?.recipient_pending_username && !(user?.id && claim?.created_by === user.id) ? (
+            ) : claim?.recipient_pending_username && !(user?.id && claim?.created_by === viewerId) ? (
               (() => {
                 const senderHasPaid = ["PRIVATE_TRANSFER_PENDING", "SUCCESS", "FUNDED"].includes(
                   String(claim?.status || "").toUpperCase()
@@ -6575,7 +6602,7 @@ export function ClaimPayView({
                               >
                                 {retrySweepLoading ? "Retrying..." : "Retry claim sweep"}
                               </button>
-                              {isClaimPageLocalhost && claim?.created_by === user.id && (
+                              {isClaimPageLocalhost && claim?.created_by === viewerId && (
                                 <button
                                   type="button"
                                   onClick={reclaimBySender}
