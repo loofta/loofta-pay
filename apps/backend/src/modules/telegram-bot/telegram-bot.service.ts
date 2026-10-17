@@ -73,7 +73,7 @@ export class TelegramBotService implements OnModuleInit {
         commands: [
           { command: 'balance', description: 'Your balance' },
           { command: 'fund', description: 'Add money to your wallet' },
-          { command: 'send', description: 'Send USDC, for example /send 5 @alice' },
+          { command: 'pay', description: 'Pay someone, for example /pay 5 @alice' },
           { command: 'history', description: 'Your recent payments' },
           { command: 'settings', description: 'Auto-pay limits and terms' },
           { command: 'help', description: 'How it works' },
@@ -130,7 +130,7 @@ export class TelegramBotService implements OnModuleInit {
     if (isPrivate || text.toLowerCase().includes(`@${this.botUsername.toLowerCase()}`)) {
       await this.api!.sendMessage(
         msg.chat.id,
-        'I did not catch that. Try <code>send $5 to @alice</code>, or reply to someone with <code>/tip 5</code>.',
+        'I did not catch that. Try <code>pay $5 to @alice</code>, or reply to someone with <code>/pay 5</code>.',
         { replyTo: msg.message_id },
       );
     }
@@ -184,11 +184,11 @@ export class TelegramBotService implements OnModuleInit {
           '',
           '1. Sign in to Loofta with Telegram and turn on auto-pay.',
           '2. Add money with /fund.',
-          '3. Type <code>send $5 to @alice</code>, or add me to a group and reply to a message with <code>/tip 5</code>.',
+          '3. Type <code>pay $5 to @alice</code>, or add me to a group and reply to a message with <code>/pay 5</code>.',
           '',
           'Every payment waits for your Confirm tap, and your limits are always checked.',
         ].join('\n')
-      : 'Reply to someone with <code>/tip 5</code>, or type <code>/send 5 @alice</code>. Message me directly to set up and fund your wallet.';
+      : 'Reply to someone with <code>/pay 5</code>, or type <code>/pay 5 @alice</code>. Message me directly to set up and fund your wallet.';
     await this.api!.sendMessage(msg.chat.id, text, {
       keyboard: isPrivate
         ? {
@@ -266,7 +266,7 @@ export class TelegramBotService implements OnModuleInit {
       .order('created_at', { ascending: false })
       .limit(8);
     if (!data?.length) {
-      await this.api!.sendMessage(chatId, 'No payments from Telegram yet. Try <code>send $5 to @alice</code>.');
+      await this.api!.sendMessage(chatId, 'No payments from Telegram yet. Try <code>pay $5 to @alice</code>.');
       return;
     }
     const lines = data.map(
@@ -302,7 +302,7 @@ export class TelegramBotService implements OnModuleInit {
       return void (await reply(
         parsed.handle === null && msg.reply_to_message
           ? 'That person has no Telegram username, so I cannot pay them yet.'
-          : 'Who should get it? Try <code>send $5 to @alice</code>.',
+          : 'Who should get it? Try <code>pay $5 to @alice</code>.',
       ));
     }
     if (handle === from.username?.toLowerCase()) return void (await reply('You cannot pay yourself.'));
@@ -378,7 +378,7 @@ export class TelegramBotService implements OnModuleInit {
       if (arg === 'history') return this.showHistory(chatId, cb.from);
       if (arg === 'settings') return this.showSettings(chatId, cb.from);
       if (arg === 'send') {
-        await this.api!.sendMessage(chatId, 'Type it like <code>send $5 to @alice</code>.');
+        await this.api!.sendMessage(chatId, 'Type it like <code>pay $5 to @alice</code>.');
       }
       return;
     }

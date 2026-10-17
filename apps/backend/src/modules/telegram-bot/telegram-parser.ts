@@ -1,16 +1,16 @@
 /**
  * Parses a payment command typed to @looftapay_bot. Pure and regex-based (no LLM), same
  * approach as apps/twitter-bot/src/parser.ts. Accepted, with or without a leading slash:
- *   send $5 to @alice   pay 5 usdc to alice   /send 5 @alice   /send @alice 5   /tip 5 (as a reply)
+ *   pay $5 to @alice   pay 5$ to alice   /pay 5 @alice   /pay @alice 5   send $5 to @alice   /pay 5 (as a reply)
  */
 export type ParsedSend =
   | { ok: true; amount: number; handle: string | null }
   | { ok: false; error: string };
 
-const AMOUNT = String.raw`\$?(\d+(?:\.\d+)?)`;
+const AMOUNT = String.raw`\$?(\d+(?:\.\d+)?)\$?`;
 const UNIT = String.raw`(?:\s*(?:usdc|usd|dollars?|bucks))?`;
 const HANDLE = String.raw`@?([a-z0-9_]{1,40})`;
-const VERB = String.raw`\/?(?:send|pay|tip)`;
+const VERB = String.raw`\/?(?:pay|send)`;
 
 const AMOUNT_FIRST = new RegExp(`^${VERB}\\s+${AMOUNT}${UNIT}(?:\\s+(?:to\\s+)?${HANDLE})?$`);
 const HANDLE_FIRST = new RegExp(`^${VERB}\\s+${HANDLE}\\s+${AMOUNT}${UNIT}$`);
