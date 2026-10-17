@@ -556,7 +556,10 @@ export class TelegramBotService implements OnModuleInit {
     }
 
     const supabase = this.db.getClient();
-    const rowCols = 'id, privy_user_id, recipient_handle, amount_usd, is_private, private_split, private_max_delay_ms';
+    // created_at is selected so rows can be put in order in code: PostgREST refuses to ORDER BY a column
+    // that is not in the returned set of an UPDATE, and that error once looked like "no rows".
+    const rowCols = 'id, privy_user_id, recipient_handle, amount_usd, is_private, private_split, private_max_delay_ms, created_at';
+    const byCreated = <T extends { created_at: string }>(rows: T[] | null) => (rows ?? []).slice().sort((a, b) => a.created_at.localeCompare(b.created_at));
 
     if (kind === 'dl' || kind === 'sp') {
       await this.api!.answerCallback(cb.id);
@@ -567,7 +570,7 @@ export class TelegramBotService implements OnModuleInit {
           : { private_split: val === 'r' ? null : Number(val) };
       if (kind === 'dl' && !DELAY_CHOICES_MIN.includes(Number(val))) return;
       if (kind === 'sp' && val !== 'r' && !SPLIT_CHOICES.includes(Number(val))) return;
-      const { data: rowsNow } = await supabase
+      const { data: rowsRaw, error: patchError } = await supabase
         .from('telegram_bot_actions')
         .update(patch)
         .eq('batch_id', arg)
@@ -575,9 +578,10 @@ export class TelegramBotService implements OnModuleInit {
         .eq('status', 'pending')
         .eq('is_private', true)
         .gt('expires_at', new Date().toISOString())
-        .select(rowCols)
-        .order('created_at', { ascending: true });
-      if (!rowsNow?.length) return;
+        .select(rowCols);
+      if (patchError) this.logger.error(`Telegram option update failed: ${patchError.message}`);
+      const rowsNow = byCreated(rowsRaw);
+      if (!rowsNow.length) return;
       const isDevnet = isSolanaDevnetFromConfig(this.config);
       const plans = await Promise.all(rowsNow.map((r) => this.autopay.planTelegramPayment(r.recipient_handle, true, isDevnet, Number(r.amount_usd))));
       const card = this.renderCard(
@@ -608,16 +612,17 @@ export class TelegramBotService implements OnModuleInit {
     // Confirm. The pending -> processing flip is the lock: a second tap, a Telegram retry or
     // someone else's tap in a group finds no rows and does nothing. Only the person who asked
     // (telegram_user_id) can ever confirm, and it flips the whole batch at once.
-    const { data: claimedRows } = await supabase
+    const { data: claimedRaw, error: claimError } = await supabase
       .from('telegram_bot_actions')
       .update({ status: 'processing' })
       .eq('batch_id', arg)
       .eq('telegram_user_id', cb.from.id)
       .eq('status', 'pending')
       .gt('expires_at', new Date().toISOString())
-      .select(rowCols)
-      .order('created_at', { ascending: true });
-    if (!claimedRows?.length) {
+      .select(rowCols);
+    if (claimError) this.logger.error(`Telegram confirm could not claim batch ${arg}: ${claimError.message}`);
+    const claimedRows = byCreated(claimedRaw);
+    if (!claimedRows.length) {
       await this.api!.answerCallback(cb.id, 'This request has expired or was already used.');
       return;
     }
