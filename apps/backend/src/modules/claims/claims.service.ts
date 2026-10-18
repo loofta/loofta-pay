@@ -1467,7 +1467,7 @@ export class ClaimsService {
   }
 
   private static readonly PAYOUT_METHODS = new Set([
-    'wallet', 'external', 'near', 'venmo', 'cashapp', 'revolut', 'zelle', 'coinbase', 'paj',
+    'wallet', 'external', 'near', 'venmo', 'cashapp', 'revolut', 'zelle', 'xmoney', 'coinbase', 'paj',
   ]);
   private static readonly PAYOUT_STATUSES = new Set(['pending', 'in_wallet', 'cashing_out', 'completed', 'failed']);
 

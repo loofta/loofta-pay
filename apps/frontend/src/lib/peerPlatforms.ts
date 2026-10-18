@@ -92,6 +92,17 @@ export const PEER_PLATFORMS: PeerPlatform[] = [
     maxUSDC: null,
     cooldownHours: null,
   },
+  {
+    id: 'xmoney',
+    name: 'X Money',
+    processorName: 'xmoney',
+    idLabel: 'X handle',
+    placeholder: '@yourhandle',
+    currencies: ['USD'],
+    logo: '/images/platforms/xmoney.jpg',
+    maxUSDC: null,
+    cooldownHours: null,
+  },
 ];
 
 export function getPlatform(id: string): PeerPlatform | undefined {
@@ -102,8 +113,10 @@ export function getPlatform(id: string): PeerPlatform | undefined {
  * Handles a sender can pay directly through Peer Cash. Wise and PayPal are in
  * the SDK, but a new handle needs a Peer identity attestation this app cannot
  * create, so they are not offered. Zelle stays on the withdraw picker only.
+ * X Money needs neither a Peer identity attestation nor any prior payee
+ * registration, so it can be paid directly (needs @zkp2p/cash >= 0.7.0).
  */
-export const DIRECT_CASH_PLATFORM_IDS = ["venmo", "cashapp", "revolut"] as const;
+export const DIRECT_CASH_PLATFORM_IDS = ["venmo", "cashapp", "revolut", "xmoney"] as const;
 export type DirectCashPlatformId = (typeof DIRECT_CASH_PLATFORM_IDS)[number];
 
 export const DIRECT_CASH_PLATFORMS: PeerPlatform[] = DIRECT_CASH_PLATFORM_IDS.map(

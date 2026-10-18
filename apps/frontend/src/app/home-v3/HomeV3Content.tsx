@@ -874,11 +874,13 @@ function HeroCashOutRails() {
         d.id === "venmo" ? t("railVenmo")
         : d.id === "cashapp" ? t("railCashApp")
         : d.id === "revolut" ? t("railRevolut")
+        : d.id === "xmoney" ? t("railXMoney")
         : t("railZelle"),
       note:
         d.id === "venmo" ? t("railVenmoSub")
         : d.id === "cashapp" ? t("railCashAppSub")
         : d.id === "revolut" ? t("railRevolutSub")
+        : d.id === "xmoney" ? t("railXMoneySub")
         : t("railZelleSub"),
       logo: d.src,
       bg: d.bg,

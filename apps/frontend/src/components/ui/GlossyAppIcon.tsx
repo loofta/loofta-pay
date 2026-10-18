@@ -113,6 +113,16 @@ export const PEER_GLOSSY_DESTS = [
     tint: "#2e1059",
     note: "To their bank",
   },
+  {
+    id: "xmoney",
+    name: "X Money",
+    src: "/images/platforms/xmoney.jpg",
+    bg: "#000000",
+    pad: "0",
+    glow: "rgba(255,255,255,.45)",
+    tint: "#141414",
+    note: "USD",
+  },
 ] as const;
 
 /** Overlapping BTC / SOL / ETH stack — hush-style “any crypto” mark, not a sparkles glyph. */

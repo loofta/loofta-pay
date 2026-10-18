@@ -191,6 +191,28 @@ export async function peerWithdraw(depositId: string, signer: WalletClient, amou
   }
 }
 
+/**
+ * Pulls the most useful human-readable reason out of a failed `cash.cashout()`. The SDK wraps
+ * curator rejections in a generic `PAYEE_REGISTRATION_FAILED` CashError ("Registering payee
+ * details with the curator failed.") whose real cause — e.g. "X Money screen name not found:
+ * quircks" — lives on `error.cause`, so surface that instead of the wrapper text.
+ */
+export function peerCashoutErrorMessage(err: unknown): string | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    const message = (current as { message?: unknown }).message;
+    if (
+      typeof message === "string" &&
+      message.trim() &&
+      !/^Registering payee details with the curator failed\.?$/i.test(message.trim())
+    ) {
+      return message.trim();
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
 export function peerOrder(depositId: string): Promise<CashOrder> {
   return getPeerCashClient().order(depositId);
 }

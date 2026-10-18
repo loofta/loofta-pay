@@ -84,7 +84,7 @@ function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string 
     const sep = rest.indexOf(":");
     const platform = sep >= 0 ? rest.slice(0, sep).trim() : null;
     const handle = (sep >= 0 ? rest.slice(sep + 1) : rest).trim();
-    const cashName = platform === "venmo" ? "Venmo" : platform === "cashapp" ? "Cash App" : platform === "revolut" ? "Revolut" : null;
+    const cashName = platform === "venmo" ? "Venmo" : platform === "cashapp" ? "Cash App" : platform === "revolut" ? "Revolut" : platform === "xmoney" ? "X Money" : null;
     if (cashName) return `${handle} on ${cashName}`;
     return platform ? `@${handle} on ${platform}` : `@${handle}`;
   }

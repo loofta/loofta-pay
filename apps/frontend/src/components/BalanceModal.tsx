@@ -1607,6 +1607,17 @@ export function BalanceModal({
         } else if (msg.includes("user rejected") || msg.includes("denied") || msg.includes("User rejected")) {
           toast({ variant: "destructive", title: "Signing cancelled", description: "You declined the transaction. Tap retry to try again." });
           setPeerStep("bridging");
+        } else if ((err as { code?: string } | null)?.code === "PAYEE_REGISTRATION_FAILED") {
+          // Peer rejected the payout handle (e.g. "X Money screen name not found: foo"). Show the
+          // real reason from the SDK's error cause instead of the generic curator wrapper text.
+          const { peerCashoutErrorMessage } = await import("@/services/peerCash");
+          const reason = peerCashoutErrorMessage(err);
+          toast({
+            variant: "destructive",
+            title: "Couldn't set up that payout",
+            description: reason ?? "That payout handle couldn't be registered. Check it and try again.",
+          });
+          setPeerStep("deposit-error");
         } else {
           toast({ variant: "destructive", title: "Setup failed", description: "Your USDC is safe. Try again or cancel to get it back." });
           setPeerStep("deposit-error");

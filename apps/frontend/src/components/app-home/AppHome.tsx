@@ -85,7 +85,7 @@ function whoLabel(row: HistoryRow, sent: boolean) {
       const sep = rest.indexOf(":");
       const platform = sep >= 0 ? rest.slice(0, sep) : "";
       const handle = sep >= 0 ? rest.slice(sep + 1) : rest;
-      const name = platform === "venmo" ? "Venmo" : platform === "cashapp" ? "Cash App" : platform === "revolut" ? "Revolut" : "";
+      const name = platform === "venmo" ? "Venmo" : platform === "cashapp" ? "Cash App" : platform === "revolut" ? "Revolut" : platform === "xmoney" ? "X Money" : "";
       if (name && handle) return `To ${handle} on ${name}`;
     }
     if (row.recipient_username) return `To @${row.recipient_username}`;

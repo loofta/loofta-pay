@@ -46,7 +46,7 @@ function buildItems(isCash: boolean, isPrivate: boolean): Item[] {
       {
         icon: User,
         q: "Who am I paying?",
-        a: "A real person. Your money goes straight to them on Venmo, Cash App, Revolut, or Zelle, with no company in the middle.",
+        a: "A real person. Your money goes straight to them on Venmo, Cash App, Revolut, Zelle, or X Money, with no company in the middle.",
       },
       {
         icon: Lock,
@@ -81,7 +81,7 @@ function buildItems(isCash: boolean, isPrivate: boolean): Item[] {
     {
       icon: Banknote,
       q: "How do they cash out?",
-      a: "Into a wallet, any crypto, or cashed out to Venmo, Cash App, Revolut, Zelle, or Naira.",
+        a: "Into a wallet, any crypto, or cashed out to Venmo, Cash App, Revolut, Zelle, X Money, or Naira.",
     },
     {
       icon: ShieldCheck,

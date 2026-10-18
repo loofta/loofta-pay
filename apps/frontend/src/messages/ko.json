@@ -571,6 +571,8 @@
       "railCashApp": "Cash App",
       "railRevolut": "Revolut",
       "railZelle": "Zelle",
+      "railXMoney": "X Money",
+      "railXMoneySub": "USD",
       "railUsdc": "USDC",
       "railAnyCrypto": "모든 암호화폐",
       "railPaj": "PAJ Cash",

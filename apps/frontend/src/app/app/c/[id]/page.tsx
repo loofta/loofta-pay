@@ -84,11 +84,12 @@ const PAYOUT_METHOD_LABEL: Record<string, string> = {
   cashapp: "Cash App",
   revolut: "Revolut",
   zelle: "Zelle",
+  xmoney: "X Money",
   coinbase: "Coinbase",
   paj: "PAJ Cash",
 };
 
-const PEER_PAYOUT_METHODS = new Set(["venmo", "cashapp", "revolut", "zelle"]);
+const PEER_PAYOUT_METHODS = new Set(["venmo", "cashapp", "revolut", "zelle", "xmoney"]);
 
 function payoutStatusCopy(status: string): string {
   if (status === "in_wallet") return "In your Loofta wallet";
@@ -2291,7 +2292,7 @@ export function ClaimPayView({
   // recipient last actually claimed through shown first (readPreferredClaimMethod/
   // rememberPreferredClaimMethod), a per-browser convenience only — never anything load-bearing.
   const [cryptoMenuStep, setCryptoMenuStep] = useState<CryptoClaimMethod | null>(null);
-  const [cashMenuStep, setCashMenuStep] = useState<"venmo" | "cashapp" | "revolut" | "zelle" | "coinbase" | "paj" | null>(null);
+  const [cashMenuStep, setCashMenuStep] = useState<"venmo" | "cashapp" | "revolut" | "zelle" | "xmoney" | "coinbase" | "paj" | null>(null);
   const [peerHandle, setPeerHandle] = useState("");
   const [peerEtaLabel, setPeerEtaLabel] = useState<string | null>(null);
   const [peerEtaLoading, setPeerEtaLoading] = useState(false);
@@ -2978,7 +2979,7 @@ export function ClaimPayView({
                       claimActionDisabled && "opacity-50 cursor-not-allowed",
                     )}
                   >
-                    <DepositIcons icons={[{ src: p.logo, bg: p.id === "venmo" ? "#3D95CE" : p.id === "cashapp" ? "#00D632" : p.id === "revolut" ? "#191C1F" : "#6D1ED4" }]} />
+                    <DepositIcons icons={[{ src: p.logo, bg: p.id === "venmo" ? "#3D95CE" : p.id === "cashapp" ? "#00D632" : p.id === "revolut" ? "#191C1F" : p.id === "xmoney" ? "#000000" : "#6D1ED4" }]} />
                     <span className="flex-1 min-w-0">
                       <span className="block text-base">{p.name}</span>
                       <span className="block text-base font-normal text-slate-500">Cash out to {p.name}</span>
