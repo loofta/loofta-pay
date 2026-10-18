@@ -30,6 +30,7 @@ import { createClaimFromUsername } from "@/lib/createClaimFromUsername";
 import { createClaimFromSocial } from "@/lib/createClaimFromSocial";
 import { createClaimFromEmailGuest, createClaimFromSocialGuest, createClaimFromUsernameGuest } from "@/lib/createClaimGuest";
 import { GuestSendPayButton } from "@/components/app/GuestSendPayButton";
+import { SendHowItWorks } from "@/components/app/SendHowItWorks";
 import { UNREGISTERED_ACCOUNT_FEE_USD, unregisteredClaimFeeUsd } from "@/lib/unregisteredAccountFee";
 import { isEmailRecipient, lookupPayTarget, payTargetQueryKey, resolvePayTargetQuery, type PayTarget } from "@/lib/lookupPayTarget";
 import { useAuth } from "@/hooks/useAuth";
@@ -832,6 +833,13 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
                   : t("signInToSendHandleHint")}
               </div>
             </>
+          )}
+          {destKind !== "wallet" && (
+            <SendHowItWorks
+              variant={isCashDest ? "cash" : "handle"}
+              cashPlatformName={DIRECT_CASH_PLATFORMS.find((p) => p.id === cashPlatform)?.name}
+              isPrivate={payingPrivate}
+            />
           )}
         </div>
       </motion.div>
