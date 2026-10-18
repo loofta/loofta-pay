@@ -164,4 +164,11 @@ describe('nextStep: keeps what it understood and asks only for what is missing',
     expect(step('/start').kind).toBe('none');
     expect(step('what is this bot', { priv: false }).kind).toBe('none');
   });
+
+  it('reads a payment that opens with a greeting', () => {
+    expect(ask(step('hey send money to my brother'))).toBe(PAY_PROMPT);
+    expect(run(step('hey pay $5 to @alice_w'))).toBe('pay $5 to @alice_w');
+    expect(ask(step('please pay 5', { priv: false }))).toBe(payWhoPrompt(5, false));
+    expect(run(step('ok, send 5$ to @bob_wh'))).toBe('send 5$ to @bob_wh');
+  });
 });

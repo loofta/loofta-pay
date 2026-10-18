@@ -16,6 +16,11 @@ describe('parseLlmJson', () => {
     const p = Array.from({ length: 9 }, (_, i) => ({ handle: `user_${i}aaa`, amount: 1 }));
     expect(parseLlmJson(JSON.stringify({ is_payment: true, payments: p }))?.payments).toHaveLength(5);
   });
+  it('keeps is_payment even when there is nothing to fill in yet', () => {
+    // "hey send money to my brother": a real request with no name or amount.
+    expect(parseLlmJson('{"is_payment":true,"payments":[]}')?.isPayment).toBe(true);
+    expect(parseLlmJson('{"is_payment":true}')?.isPayment).toBe(true);
+  });
 });
 
 describe('intentToSentence: never trusts the model beyond what the person wrote', () => {
@@ -42,6 +47,11 @@ describe('intentToSentence: never trusts the model beyond what the person wrote'
   });
   it('is nothing when it is not a payment', () => {
     expect(intentToSentence(intent({ isPayment: false }), 'what is the weather')).toBeNull();
+  });
+  it('hands back the bare verb when a payment has no details yet, so the bot asks', () => {
+    expect(intentToSentence(intent({ payments: [] }), 'hey send money to my brother')).toBe('pay');
+    expect(intentToSentence(intent({ isPrivate: true, payments: [] }), 'secretly send money to my brother')).toBe('payprivately');
+    expect(intentToSentence(intent({ payments: [{ handle: null, amount: null }] }), 'hey send money to my brother')).toBe('pay');
   });
 });
 

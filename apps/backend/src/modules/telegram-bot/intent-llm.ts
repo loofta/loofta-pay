@@ -19,7 +19,9 @@ const SYSTEM_PROMPT = `You read one chat message sent to a Telegram payment bot 
 Answer with ONLY a JSON object, no other text:
 {"is_payment": boolean, "private": boolean, "delay_minutes": number|null, "split": number|null, "payments": [{"handle": string|null, "amount": number|null}]}
 Rules:
-- "handle" is a Telegram username without the @, and only if it is literally written in the message. Never invent one. Use null if missing.
+- "is_payment" is true whenever they are asking you to pay, send, give or tip someone money, even if they have not said who or how much yet (for example "hey, send money to my brother", "send 20 bucks", "pay my friend"). Ignore greetings like "hey", "hi" or "please".
+- When a payment has no details yet, use "payments": [] or a single {"handle": null, "amount": null}.
+- "handle" is a Telegram username without the @, and only if a real username is literally written in the message. Never invent one, and never use a relational word ("my brother", "mom", "my friend", "the landlord") as a handle. Use null if missing.
 - "amount" is a number of US dollars. Convert number words ("five" -> 5, "ten bucks" -> 10). Use null if missing. Never invent one.
 - If one amount is shared ("5 each", "$5 to @a and @b"), repeat it for every person.
 - "private" is true only if the message asks for a private, secret or anonymous payment.
@@ -42,7 +44,10 @@ export function parseLlmJson(raw: string): LlmIntent | null {
   if (!obj || typeof obj !== 'object') return null;
   const payments = Array.isArray(obj.payments) ? obj.payments.slice(0, MAX_RECIPIENTS) : [];
   return {
-    isPayment: obj.is_payment === true && payments.length > 0,
+    // Kept independent of `payments`: "hey send money to my brother" is a payment the model
+    // understands even though there is no name or amount to fill in yet. Collapsing that to
+    // "not a payment" is what made the bot fail to understand a plain request.
+    isPayment: obj.is_payment === true,
     isPrivate: obj.private === true,
     delayMinutes: clampNum(obj.delay_minutes),
     split: clampNum(obj.split),
@@ -59,9 +64,21 @@ export function parseLlmJson(raw: string): LlmIntent | null {
  * amounts must be sane. Returns null when the intent cannot be rebuilt safely.
  */
 export function intentToSentence(intent: LlmIntent, originalText: string): string | null {
-  if (!intent.isPayment || intent.payments.length === 0) return null;
+  if (!intent.isPayment) return null;
   const haystack = originalText.toLowerCase();
   const items = intent.payments;
+  const verb = intent.isPrivate ? 'payprivately' : 'pay';
+  const options = [
+    intent.isPrivate && intent.delayMinutes && Number.isInteger(intent.delayMinutes) && intent.delayMinutes >= 1 && intent.delayMinutes <= 1440
+      ? `delay ${intent.delayMinutes}m`
+      : '',
+    intent.isPrivate && intent.split && Number.isInteger(intent.split) && intent.split >= 1 && intent.split <= 15 ? `split ${intent.split}` : '',
+  ].filter(Boolean).join(' ');
+
+  // A payment the model understood but could not fill in yet ("hey send money to my brother"):
+  // hand back just the verb so the normal flow asks who and how much, instead of dropping it.
+  if (!items.some((p) => p.handle !== null || p.amount !== null)) return verb;
+
   for (const p of items) {
     if (p.handle !== null) {
       if (!TELEGRAM_HANDLE_RE.test(p.handle)) return null;
@@ -72,13 +89,6 @@ export function intentToSentence(intent: LlmIntent, originalText: string): strin
       if (Math.round(p.amount * 100) / 100 !== p.amount) return null;
     }
   }
-  const verb = intent.isPrivate ? 'payprivately' : 'pay';
-  const options = [
-    intent.isPrivate && intent.delayMinutes && Number.isInteger(intent.delayMinutes) && intent.delayMinutes >= 1 && intent.delayMinutes <= 1440
-      ? `delay ${intent.delayMinutes}m`
-      : '',
-    intent.isPrivate && intent.split && Number.isInteger(intent.split) && intent.split >= 1 && intent.split <= 15 ? `split ${intent.split}` : '',
-  ].filter(Boolean).join(' ');
 
   const complete = items.every((p) => p.handle !== null && p.amount !== null);
   if (complete) {

@@ -212,6 +212,9 @@ export type NextStep =
   | { kind: 'none' };
 
 const VERB_START = /^\/?(?:pay|send)(?:_?privately|_?private)?\b/;
+/** Leading greetings/filler people open with ("hey send 5 to @x"). Stripped so the rest is read
+ *  as the command it plainly is, without needing the model. */
+const GREETING_PREFIX = /^(?:(?:hey|hi|hello|yo|sup|ok(?:ay)?|please|pls|plz|thanks|thank you)\b[\s,!.]*)+/;
 const ctxOf = (promptText: string | null | undefined) => {
   if (!promptText) return null;
   let m = /^Who do you want to pay( privately)?, and how much\?/.exec(promptText);
@@ -253,6 +256,8 @@ export function nextStep(input: { text: string; botUsername: string; promptText?
     .toLowerCase()
     .replace(new RegExp(`@${botUsername.toLowerCase()}`, 'g'), '')
     .replace(/\s+/g, ' ')
+    .trim()
+    .replace(GREETING_PREFIX, '')
     .trim();
   const ctx = ctxOf(input.promptText);
   const isVerb = VERB_START.test(clean);

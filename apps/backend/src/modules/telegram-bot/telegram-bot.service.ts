@@ -44,6 +44,10 @@ export class TelegramBotService implements OnModuleInit {
   private readonly privy: PrivyClient | null;
   readonly botUsername: string;
   private readonly appUrl: string;
+  /** Where the bot sends people to sign in / turn on auto-pay. The `from=telegram` flag tells
+   *  that page to offer Telegram as the only login method, so the account the bot finds is the
+   *  one they actually linked. */
+  private readonly autoPayUrl: string;
   /** The docs page for the bot, on the marketing site. */
   private readonly guideUrl: string;
 
@@ -65,6 +69,7 @@ export class TelegramBotService implements OnModuleInit {
       this.config.get<string>('NEXT_PUBLIC_BASE_URL') ||
       'https://pay.loofta.xyz'
     ).replace(/\/$/, '');
+    this.autoPayUrl = `${this.appUrl}/app/auto-pay?from=telegram`;
     this.guideUrl = `${(this.config.get<string>('MARKETING_URL') || 'https://loofta.xyz').replace(/\/$/, '')}/docs?p=telegram-bot`;
   }
 
@@ -90,6 +95,7 @@ export class TelegramBotService implements OnModuleInit {
         { command: 'payprivately', description: 'Pay privately, for example /payprivately 5 @someone' },
         { command: 'history', description: 'Your recent payments' },
         { command: 'settings', description: 'Auto-pay limits and terms' },
+        { command: 'logout', description: 'Sign out of the bot' },
         { command: 'help', description: 'How it works' },
       ];
       const groupCommands = [
@@ -144,6 +150,7 @@ export class TelegramBotService implements OnModuleInit {
     if (name === 'fund') return this.privateOnly(msg, isPrivate, () => this.showFund(msg.chat.id, from));
     if (name === 'history') return this.privateOnly(msg, isPrivate, () => this.showHistory(msg.chat.id, from));
     if (name === 'settings') return this.privateOnly(msg, isPrivate, () => this.showSettings(msg.chat.id, from));
+    if (name === 'logout') return this.privateOnly(msg, isPrivate, () => this.logout(msg.chat.id, from));
 
     if (name === 'cancel') {
       this.forgetPrompt(`${msg.chat.id}:${from.id}`);
@@ -254,7 +261,7 @@ export class TelegramBotService implements OnModuleInit {
       inline_keyboard: [
         [{ text: 'Balance', callback_data: 'menu:balance' }, { text: 'Fund', callback_data: 'menu:fund' }],
         [{ text: 'Send', callback_data: 'menu:send' }, { text: 'History', callback_data: 'menu:history' }],
-        [{ text: 'Settings', callback_data: 'menu:settings' }],
+        [{ text: 'Settings', callback_data: 'menu:settings' }, { text: 'Log out', callback_data: 'menu:logout' }],
       ],
     };
   }
@@ -289,14 +296,14 @@ export class TelegramBotService implements OnModuleInit {
           '<b>Good to know</b>',
           'Every fee is shown on the card before you confirm, and every payment waits for your Confirm tap. Your limits are always checked.',
           '',
-          '<b>Commands</b>: /balance /fund /history /settings /help',
+          '<b>Commands</b>: /balance /fund /history /settings /logout /help',
         ].join('\n')
       : 'Reply to someone with <code>/pay 5</code>, or type <code>/pay 5 @someone</code>. Pay up to 5 people at once: <code>/pay $5 to @someone, $10 to @another</code>. Add the word <code>privately</code> for a private payment. Message me directly to set up and fund your wallet.';
     await this.api!.sendMessage(msg.chat.id, text, {
       keyboard: isPrivate
         ? {
             inline_keyboard: [
-              [{ text: 'Set up auto-pay', url: `${this.appUrl}/app/auto-pay` }],
+              [{ text: 'Set up auto-pay', url: `${this.autoPayUrl}` }],
               [{ text: 'Read the full guide', url: this.guideUrl }],
               ...this.mainMenu().inline_keyboard,
             ],
@@ -308,8 +315,22 @@ export class TelegramBotService implements OnModuleInit {
   // ---------------------------------------------------------------------------------------------
   // Identity
 
-  /** Telegram user id -> Loofta (Privy) user id, via the Telegram account linked in Privy. */
+  /**
+   * Telegram user id -> Loofta (Privy) user id, via the Telegram account linked in Privy.
+   *
+   * A local sign-out (from /logout, only when Privy refused to unlink the user's only login
+   * method) wins over the Privy link: the user asked to be signed out, so the bot stops acting
+   * for them until they sign back in on /app/auto-pay (see reconnect()).
+   */
   private async resolveLinkedUser(telegramUserId: number): Promise<string | null> {
+    const { data: local } = await this.db
+      .getClient()
+      .from('telegram_bot_users')
+      .select('signed_out_at')
+      .eq('telegram_user_id', telegramUserId)
+      .maybeSingle();
+    if (local?.signed_out_at) return null;
+
     if (!this.privy) return null;
     try {
       const user = await this.privy.getUserByTelegramUserId(String(telegramUserId));
@@ -320,8 +341,70 @@ export class TelegramBotService implements OnModuleInit {
     }
   }
 
+  /** The Telegram user id linked to a Loofta (Privy) user, if any. Inverse of resolveLinkedUser. */
+  private async findTelegramUserId(userId: string): Promise<string | null> {
+    if (!this.privy) return null;
+    try {
+      const user = await this.privy.getUserById(userId);
+      const tg = (user?.linkedAccounts ?? []).find((a) => a.type === 'telegram') as
+        | { telegramUserId?: string }
+        | undefined;
+      return tg?.telegramUserId ?? null;
+    } catch (e) {
+      this.logger.warn(`Privy user lookup failed: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Called by the app once a user signs in / connects Telegram on /app/auto-pay. Clears a local
+   * sign-out left by /logout so the bot recognizes them again. A no-op for anyone who never
+   * signed out (the row simply does not have signed_out_at set).
+   */
+  async reconnect(userId: string): Promise<{ ok: boolean; telegramLinked: boolean }> {
+    const telegramUserId = await this.findTelegramUserId(userId);
+    if (!telegramUserId) return { ok: false, telegramLinked: false };
+    const { error } = await this.db
+      .getClient()
+      .from('telegram_bot_users')
+      .update({ signed_out_at: null })
+      .eq('telegram_user_id', Number(telegramUserId));
+    if (error) this.logger.warn(`reconnect clear failed: ${error.message}`);
+    return { ok: !error, telegramLinked: true };
+  }
+
+  /**
+   * Unlink the Telegram account from the Loofta (Privy) user, server-side. Returns false when
+   * Privy refuses — e.g. Telegram is the user's only remaining login method.
+   */
+  private async privyUnlinkTelegram(userId: string, telegramUserId: string): Promise<boolean> {
+    const appId = this.config.get<string>('PRIVY_APP_ID');
+    const appSecret = this.config.get<string>('PRIVY_APP_SECRET');
+    if (!appId || !appSecret) return false;
+    try {
+      const res = await fetch(`https://auth.privy.io/api/v1/apps/${appId}/users/unlink`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'privy-app-id': appId,
+          Authorization: `Basic ${Buffer.from(`${appId}:${appSecret}`).toString('base64')}`,
+        },
+        body: JSON.stringify({ user_id: userId, type: 'telegram', handle: telegramUserId }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        this.logger.warn(`Privy telegram unlink failed (${res.status}): ${body.slice(0, 300)}`);
+      }
+      return res.ok;
+    } catch (e) {
+      this.logger.warn(`Privy telegram unlink error: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
   private signInKeyboard(label: string): InlineKeyboard {
-    return { inline_keyboard: [[{ text: label, url: `${this.appUrl}/app/auto-pay` }]] };
+    return { inline_keyboard: [[{ text: label, url: `${this.autoPayUrl}` }]] };
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -390,6 +473,45 @@ export class TelegramBotService implements OnModuleInit {
     });
   }
 
+  /**
+   * /logout. Unlink Telegram from their Loofta account so the bot — and the app — stop treating
+   * this Telegram as their sign-in. Privy refuses when Telegram is their only login method; in
+   * that case we sign them out of the bot locally (signed_out_at) and tell them to add another
+   * login method first if they want it fully removed.
+   */
+  private async logout(chatId: number, from: TgUser) {
+    const userId = await this.resolveLinkedUser(from.id);
+    if (!userId) {
+      await this.api!.sendMessage(chatId, 'You are not signed in.', { keyboard: this.signInKeyboard('Sign in to Loofta') });
+      return;
+    }
+    const unlinked = await this.privyUnlinkTelegram(userId, String(from.id));
+    if (unlinked) {
+      await this.db.getClient().from('telegram_bot_users').update({ signed_out_at: null }).eq('telegram_user_id', from.id);
+      await this.api!.sendMessage(
+        chatId,
+        'You are logged out. Telegram is no longer connected to your Loofta account, so I will not pay from your wallet. Sign in again any time with /start.',
+      );
+      return;
+    }
+    // Privy keeps the account when Telegram is the only way to sign in, so the bot forgets it locally.
+    const { error } = await this.db
+      .getClient()
+      .from('telegram_bot_users')
+      .update({ signed_out_at: new Date().toISOString() })
+      .eq('telegram_user_id', from.id);
+    if (error) this.logger.warn(`logout local sign-out failed: ${error.message}`);
+    await this.api!.sendMessage(
+      chatId,
+      [
+        'You are logged out. I will not pay from your wallet until you sign in again.',
+        '',
+        'Telegram is still the only way to sign in to your Loofta account, so it was kept. To remove it completely, add another sign-in method (like email) on the website, then log out here again.',
+      ].join('\n'),
+      { keyboard: this.signInKeyboard('Manage sign-in methods') },
+    );
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Send
 
@@ -425,14 +547,14 @@ export class TelegramBotService implements OnModuleInit {
     if (!userId) {
       return void (await reply(
         'To pay from Telegram, sign in to Loofta with Telegram first.',
-        { inline_keyboard: [[{ text: 'Sign in to Loofta', url: `${this.appUrl}/app/auto-pay` }]] },
+        { inline_keyboard: [[{ text: 'Sign in to Loofta', url: `${this.autoPayUrl}` }]] },
       ));
     }
     const payer = await this.autopay.resolvePayerByUserId(userId);
     if (!payer?.signerGranted) {
       return void (await reply(
         'Turn on auto-pay and accept the terms first, then I can pay from your wallet.',
-        { inline_keyboard: [[{ text: 'Turn on auto-pay', url: `${this.appUrl}/app/auto-pay` }]] },
+        { inline_keyboard: [[{ text: 'Turn on auto-pay', url: `${this.autoPayUrl}` }]] },
       ));
     }
     // Every payment must fit the per-payment limit, and together they must fit the daily limit.
@@ -640,6 +762,7 @@ export class TelegramBotService implements OnModuleInit {
       if (arg === 'fund') return this.showFund(chatId, cb.from);
       if (arg === 'history') return this.showHistory(chatId, cb.from);
       if (arg === 'settings') return this.showSettings(chatId, cb.from);
+      if (arg === 'logout') return this.logout(chatId, cb.from);
       if (arg === 'send') {
         await this.api!.sendMessage(chatId, 'Type it like <code>pay $5 to @someone</code>, or pay several people at once: <code>pay $5 to @someone, $10 to @another</code>.');
       }

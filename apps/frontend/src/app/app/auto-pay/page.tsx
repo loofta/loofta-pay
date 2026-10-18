@@ -1,10 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { usePrivy, useSigners } from '@privy-io/react-auth'
+import { usePrivy, useSigners, useLinkAccount } from '@privy-io/react-auth'
 import { useWallets } from '@privy-io/react-auth/solana'
-import { Loader2, AlertCircle, ShieldCheck } from 'lucide-react'
+import { Loader2, AlertCircle, ShieldCheck, X } from 'lucide-react'
 import { GradientActionButton } from '@/components/ui/GradientActionButton'
 import { deriveSolanaEmbeddedAddress } from '@/lib/privySolanaEmbeddedAddress'
 import { fetchApi } from '@/services/api/client'
@@ -35,13 +36,72 @@ export default function TwitterBotPage() {
   const { addSigners, removeSigners } = useSigners()
   const { wallets: solanaWallets } = useWallets()
   const queryClient = useQueryClient()
+  const searchParams = useSearchParams()
+  // The bot sends people here with ?from=telegram, so we can offer Telegram as the only login
+  // method (the account the bot finds is the one they actually linked) and prompt to connect it.
+  const fromTelegram = searchParams.get('from') === 'telegram'
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [perPayment, setPerPayment] = useState<string | null>(null)
   const [daily, setDaily] = useState<string | null>(null)
   const [acceptedTerms, setAcceptedTerms] = useState(false)
+  const [showConnect, setShowConnect] = useState(false)
+  const [connectingTelegram, setConnectingTelegram] = useState(false)
+  const [connectError, setConnectError] = useState<string | null>(null)
 
   const solanaAddress = deriveSolanaEmbeddedAddress(user) ?? solanaWallets[0]?.address ?? null
+  const telegramLinked = ((user?.linkedAccounts ?? []) as Array<{ type?: string }>).some(
+    (a) => a.type === 'telegram' || a.type === 'telegram_oauth',
+  )
+
+  // Clear any bot-side sign-out left by the bot's /logout, so it recognizes this account again.
+  const notifyBotReconnect = async () => {
+    try {
+      await fetchApi('/telegram-bot/reconnect', { method: 'POST', accessToken: await getAccessToken() })
+    } catch {
+      // Non-critical: the bot just keeps its local sign-out until the next successful app visit.
+    }
+  }
+
+  const { linkOAuth } = useLinkAccount({
+    onSuccess: async (arg: any) => {
+      const linkedType = arg?.linkedAccount?.type
+      if (linkedType === 'telegram' || linkedType === 'telegram_oauth') {
+        setConnectingTelegram(false)
+        setShowConnect(false)
+        setConnectError(null)
+        await notifyBotReconnect()
+        await queryClient.invalidateQueries({ queryKey: STATUS_KEY })
+      }
+    },
+    onError: () => {
+      setConnectingTelegram(false)
+      setConnectError('Could not connect Telegram. Please try again.')
+    },
+  })
+
+  const handleConnectTelegram = async () => {
+    setConnectingTelegram(true)
+    setConnectError(null)
+    try {
+      await linkOAuth({ provider: 'telegram' })
+    } catch (e: any) {
+      setConnectingTelegram(false)
+      setConnectError(e?.message ?? 'Could not connect Telegram. Please try again.')
+    }
+  }
+
+  // Once signed in (e.g. after Telegram login), reconnect with the bot and, when they arrived
+  // from the bot without Telegram linked yet, prompt them to connect it.
+  useEffect(() => {
+    if (!authenticated) return
+    void notifyBotReconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated])
+
+  useEffect(() => {
+    if (authenticated && fromTelegram && !telegramLinked) setShowConnect(true)
+  }, [authenticated, fromTelegram, telegramLinked])
 
   const { data: status, isLoading } = useQuery<AutopayStatus>({
     queryKey: STATUS_KEY,
@@ -119,8 +179,14 @@ export default function TwitterBotPage() {
       <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
         <div className="mx-auto max-w-xl px-4 py-16 text-center space-y-5">
           <h1 className="text-3xl font-semibold text-slate-100">Auto-pay</h1>
-          <p className="text-lg text-slate-300">Sign in to let Loofta pay from your wallet when you ask, with limits you control.</p>
-          <GradientActionButton onClick={() => login()}>Sign in</GradientActionButton>
+          <p className="text-lg text-slate-300">
+            {fromTelegram
+              ? 'Sign in with Telegram to let the bot pay from your wallet when you ask, with limits you control.'
+              : 'Sign in to let Loofta pay from your wallet when you ask, with limits you control.'}
+          </p>
+          <GradientActionButton onClick={() => login(fromTelegram ? { loginMethods: ['telegram'] } : undefined)}>
+            {fromTelegram ? 'Sign in with Telegram' : 'Sign in'}
+          </GradientActionButton>
         </div>
       </div>
     )
@@ -143,6 +209,22 @@ export default function TwitterBotPage() {
           Sign in to Loofta with the same Telegram account you use in the bot.
         </p>
       </div>
+
+      {fromTelegram && !telegramLinked && (
+        <div className="flex items-center gap-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
+          <AlertCircle className="h-5 w-5 shrink-0 text-amber-400" />
+          <p className="flex-1 text-lg text-amber-200">
+            Connect your Telegram account so the bot knows it is you.
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowConnect(true)}
+            className="shrink-0 inline-flex items-center justify-center h-9 rounded-lg border border-[#FF7A2A]/40 text-[#FF7A2A] px-4 text-base font-semibold hover:bg-[#FF7A2A]/10 transition-all"
+          >
+            Connect
+          </button>
+        </div>
+      )}
 
       <div className={card}>
         <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${status?.enrolled ? 'border-emerald-500/20 bg-emerald-500/10' : 'border-amber-500/20 bg-amber-500/10'}`}>
@@ -218,6 +300,37 @@ export default function TwitterBotPage() {
         </div>
       )}
     </div>
+
+    {showConnect && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4" role="dialog" aria-modal="true">
+        <div className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[#141418] p-6 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <h2 className="text-xl font-semibold text-white">Connect Telegram</h2>
+            <button
+              type="button"
+              onClick={() => setShowConnect(false)}
+              aria-label="Close"
+              className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <p className="text-lg text-slate-300 leading-relaxed">
+            The bot pays from your wallet when a command comes from your Telegram account. Connect it to your
+            Loofta account here so the bot recognizes you.
+          </p>
+          <GradientActionButton onClick={handleConnectTelegram} loading={connectingTelegram} loadingText="Connecting…">
+            Connect Telegram
+          </GradientActionButton>
+          {connectError && (
+            <div className="flex items-center gap-2.5 rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-3">
+              <AlertCircle className="h-5 w-5 text-red-400 shrink-0" />
+              <p className="text-lg text-red-300">{connectError}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
     </div>
   )
 }

@@ -1,8 +1,10 @@
-import { Controller, Post, Body, Headers, HttpCode, UnauthorizedException } from '@nestjs/common';
-import { ApiExcludeController } from '@nestjs/swagger';
+import { Controller, Post, Body, Headers, HttpCode, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { ApiExcludeController, ApiSecurity } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { timingSafeEqual } from 'crypto';
 import { ConfigService } from '@nestjs/config';
+import { AuthGuard } from '@/common/guards';
+import { PrivyUser } from '@/auth/privy-user.decorator';
 import { TelegramBotService, type TgUpdate } from './telegram-bot.service';
 
 @ApiExcludeController()
@@ -31,5 +33,16 @@ export class TelegramBotController {
     }
     void this.bot.handleUpdate(update);
     return { ok: true };
+  }
+
+  /**
+   * Called by /app/auto-pay after the user signs in or connects Telegram. Clears any bot-side
+   * sign-out left by /logout so the bot recognizes them again.
+   */
+  @Post('reconnect')
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  async reconnect(@PrivyUser() user: { id: string }) {
+    return this.bot.reconnect(user.id);
   }
 }
