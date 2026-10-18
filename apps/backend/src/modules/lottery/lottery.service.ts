@@ -2885,7 +2885,6 @@ export class LotteryService {
     this.checkingResultsRunning = true;
     try {
       await this.checkDailyResultsInner();
-      await this.autoWithdrawWonTickets();
     } finally {
       this.checkingResultsRunning = false;
     }
@@ -3124,6 +3123,10 @@ export class LotteryService {
    * "free tickets" (play-again only). Tickets that already have ANY withdrawal row (in flight,
    * complete or failed) are skipped, so a failed pipeline is never silently re-run on real money —
    * that needs a human, same as before.
+   *
+   * Scheduled once a day shortly after the draw (see LotteryCronService.autoWithdrawWonTickets),
+   * NOT on every settlement tick — the draw is daily, so there's no reason to move real money more
+   * than once per draw cycle. Also invoked by the admin "reconcile" action for an on-demand pass.
    */
   async autoWithdrawWonTickets(): Promise<void> {
     if (this.autoWithdrawing) return;

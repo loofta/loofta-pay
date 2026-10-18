@@ -89,6 +89,20 @@ export class LotteryCronService {
     );
   }
 
+  /** Once a day, ~30 min after Megapot's daily draw closes. The draw is ~19:00 CET/CEST
+   *  (~17:00–18:00 UTC), so 18:30 UTC is always ≥30 min after it settles. By then the
+   *  15-minute checkDailyResults pass has already resolved the day's tickets to won/lost, so
+   *  this just withdraws every won ticket at/above WITHDRAW_MIN_USDC to the winner's own wallet.
+   *  Deliberately its own job (not folded into checkDailyResults): real money should move once
+   *  per draw cycle, not on every settlement tick. */
+  @Cron('0 30 18 * * *')
+  async autoWithdrawWonTickets(): Promise<void> {
+    if (!this.isProd) return;
+    await this.lottery.autoWithdrawWonTickets().catch(e =>
+      this.logger.error(`autoWithdrawWonTickets: ${e.message}`),
+    );
+  }
+
   /** Every 5 minutes: backfill NFT ball numbers for active tickets that don't have them yet */
   @Cron('0 */5 * * * *')
   async backfillNumbers(): Promise<void> {
