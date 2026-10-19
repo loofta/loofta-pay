@@ -5704,7 +5704,7 @@ export function BalanceModal({
                   </Button>
                   )}
                   <Button
-                    onClick={handlePeerSubmit}
+                    onClick={() => { void handlePeerSubmit(); }}
                     disabled={peerSubmitting || !peerIdentifier.trim() || withdrawAmountNum < (devnetMode ? 0.01 : 1) || withdrawAmountNum > platformCap || withdrawAmountNum > spendableBalance}
                     className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:opacity-90 text-white disabled:opacity-50">
                     {peerSubmitting
