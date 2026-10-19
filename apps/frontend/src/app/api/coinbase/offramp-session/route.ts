@@ -98,6 +98,10 @@ export async function POST(request: Request) {
     return new NextResponse(JSON.stringify({ error: "Offramp not configured" }), { status: 503, headers });
   }
 
+  // Docs require the end user's IP so the token is bound to the requester
+  const fwd = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const clientIp = fwd || request.headers.get("x-real-ip") || undefined;
+
   try {
     // Offramp uses the same token endpoint as onramp, but with source_wallets
     const uri = "POST api.developer.coinbase.com/onramp/v1/token";
@@ -111,6 +115,8 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         addresses: [{ address: walletAddress, blockchains }],
+        assets: ["USDC"],
+        ...(clientIp ? { clientIp } : {}),
       }),
     });
 

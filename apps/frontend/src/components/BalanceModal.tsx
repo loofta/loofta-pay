@@ -882,16 +882,15 @@ export function BalanceModal({
       }
 
       const params = new URLSearchParams();
-      params.set("appId", "68e3c83a-3d5a-49aa-a8fa-7ef26d824de1");
       params.set("sessionToken", sessionToken);
       params.set("defaultNetwork", "solana");
       params.set("defaultAsset", "USDC");
       params.set("redirectUrl", window.location.origin);
       // partnerUserRef: required, max 50 chars
-      if (user?.id) params.set("partnerUserRef", user.id.slice(0, 50));
+      params.set("partnerUserRef", (user?.id ?? "loofta-user").slice(0, 50));
 
       const offrampUrl = `https://pay.coinbase.com/v3/sell/input?${params.toString()}`;
-      window.open(offrampUrl, "_blank");
+      window.location.assign(offrampUrl);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Could not open Coinbase Off-ramp.";
       toast({ variant: "destructive", title: "Off-ramp error", description: msg });
@@ -2595,11 +2594,13 @@ export function BalanceModal({
     }
   };
 
-  const handlePeerSubmit = async () => {
+  const handlePeerSubmit = async (opts?: { manual?: boolean }) => {
+    const manual = !!opts?.manual;
     const platform = getPlatform(peerPlatformId ?? "");
     const payerAddress = wallet?.address || solanaAddress;
     if (!platform || !peerIdentifier.trim() || !payerAddress || !wallet) {
       if (peerPay) peerPayKickRef.current = false;
+      if (manual) toast({ variant: "destructive", title: "Wallet not ready", description: "Your wallet is still loading. Try again in a moment." });
       return;
     }
     if (withdrawAmountNum < 1) {
@@ -2610,10 +2611,12 @@ export function BalanceModal({
     if (depositUsdc > spendableBalance) {
       if (peerPay?.intent === "receive") {
         peerReceiveAutoRef.current = false;
+        if (manual) toast({ variant: "destructive", title: "Insufficient balance", description: `You need $${depositUsdc.toFixed(2)} USDC in your balance for this cash out.` });
         return;
       }
       if (peerPay && spendableBalance <= 0) {
         peerPayKickRef.current = false;
+        if (manual) toast({ variant: "destructive", title: "Insufficient balance" });
         return;
       }
       toast({ variant: "destructive", title: "Insufficient balance" });
@@ -5498,7 +5501,7 @@ export function BalanceModal({
                   </div>
                   <button
                     type="button"
-                    onClick={() => { void handlePeerSubmit(); }}
+                    onClick={() => { void handlePeerSubmit({ manual: true }); }}
                     disabled={peerSubmitting}
                     className="w-full h-12 rounded-xl font-semibold text-base bg-gradient-to-r from-orange-500 to-red-500 text-white disabled:opacity-60"
                   >

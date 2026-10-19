@@ -1967,15 +1967,15 @@ function BankWithdraw({
       }
       const { token } = await sessionRes.json();
       if (!token) throw new Error("No Coinbase session");
+      // The sessionToken already identifies the app; sending appId too launches the widget twice
       const params = new URLSearchParams({
-        appId: "68e3c83a-3d5a-49aa-a8fa-7ef26d824de1",
         sessionToken: token,
         defaultNetwork: "solana",
         defaultAsset: "USDC",
         redirectUrl: window.location.origin,
+        partnerUserRef: (user?.id ?? "loofta-user").slice(0, 50),
       });
-      if (user?.id) params.set("partnerUserRef", user.id.slice(0, 50));
-      window.open(`https://pay.coinbase.com/v3/sell/input?${params.toString()}`, "_blank");
+      window.location.assign(`https://pay.coinbase.com/v3/sell/input?${params.toString()}`);
     } catch (err) {
       toast({ variant: "destructive", title: "Couldn't open Coinbase", description: err instanceof Error ? err.message : "Try again." });
     } finally {

@@ -1775,8 +1775,13 @@ function WithdrawTab({ tickets, withdrawals, accessToken, onWithdrawn, dashboard
   const [playAgainError, setPlayAgainError] = useState("");
 
   // The last draw = the newest round that produced a win.
-  const winners = tickets.filter(t => (t.status === "won" || t.status === "withdrawn") && (t.winAmountUsdc ?? 0) > 0 && t.roundId);
-  const lastRound = winners.reduce<string | null>((best, t) => (best === null || Number(t.roundId) > Number(best) ? t.roundId : best), null);
+  // Only the newest SETTLED round counts: an older win must not be shown as "last draw" when the
+  // latest draw was a no-win.
+  const latestSettledRound = tickets
+    .filter(t => (t.status === "won" || t.status === "withdrawn" || t.status === "lost") && t.roundId)
+    .reduce<string | null>((best, t) => (best === null || Number(t.roundId) > Number(best) ? t.roundId : best), null);
+  const winners = tickets.filter(t => (t.status === "won" || t.status === "withdrawn") && (t.winAmountUsdc ?? 0) > 0 && t.roundId && t.roundId === latestSettledRound);
+  const lastRound = latestSettledRound;
   const group = winners.filter(t => t.roundId === lastRound);
   const groupIds = new Set(group.map(t => t.id));
   const groupWithdrawals = withdrawals.filter(w => groupIds.has(w.ticketId));
@@ -3427,9 +3432,12 @@ export default function MegapotPage() {
   const megapotBase = isAppPath ? "/app/megapot" : "/megapot";
   // Last draw's prize: what actually reaches the wallet (withdrawal amount) once the automatic
   // transfer exists, the recorded win until then.
-  const allDashTickets = [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])]
+  const dashTicketsAll = [...(dashboard?.activeTickets ?? []), ...(dashboard?.history ?? [])];
+  const lastWinRound = dashTicketsAll
+    .filter(t => (t.status === "won" || t.status === "withdrawn" || t.status === "lost") && t.roundId)
+    .reduce<string | null>((b, t) => (b === null || Number(t.roundId) > Number(b) ? t.roundId : b), null);
+  const allDashTickets = dashTicketsAll
     .filter(t => (t.status === "won" || t.status === "withdrawn") && (t.winAmountUsdc ?? 0) > 0 && t.roundId);
-  const lastWinRound = allDashTickets.reduce<string | null>((b, t) => (b === null || Number(t.roundId) > Number(b) ? t.roundId : b), null);
   const lastWinTickets = allDashTickets.filter(t => t.roundId === lastWinRound);
   const lastWinWithdrawals = (dashboard?.withdrawals ?? []).filter(w => lastWinTickets.some(t => t.id === w.ticketId) && w.status !== "failed");
   const winningsUsd = lastWinWithdrawals.length
