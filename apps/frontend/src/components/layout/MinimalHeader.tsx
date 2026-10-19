@@ -56,7 +56,7 @@ function MobileMenu({
   const navLinks = [
     { href: "/app", label: "Home", description: "Your balance and recent activity" },
     { href: "/app/send", label: "Send & Receive", description: "Send and receive payments" },
-    { href: "/terminal", label: "Terminal", description: "Send payments by chat — no wallet steps, just tell it who to pay" },
+    { href: TELEGRAM_BOT_URL, label: "Telegram bot", description: "Send payments by chat on Telegram", external: true },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
   ];
@@ -134,6 +134,20 @@ function MobileMenu({
         {/* Nav links */}
         <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
           {navLinks.map((link) => {
+            if ("external" in link && link.external) {
+              return (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={onClose}
+                  className="flex items-center px-3.5 py-2.5 rounded-full text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 text-[#8E8C96] hover:text-white"
+                >
+                  {link.label}
+                </a>
+              );
+            }
             const active =
               link.href === "/app"
                 ? pathname === "/app"
@@ -186,6 +200,8 @@ function MobileMenu({
     </>
   );
 }
+
+const TELEGRAM_BOT_URL = "https://t.me/looftapay_bot";
 
 export function MinimalHeader() {
   const t = useTranslations('MinimalHeader');
@@ -311,7 +327,6 @@ export function MinimalHeader() {
 
   const isRewardsActive = pathname?.startsWith("/rewards");
   const isWinActive = pathname?.includes("/megapot");
-  const isTerminalActive = pathname?.startsWith("/terminal");
   const isAppHome = pathname === "/app";
   const isSendReceive =
     !!pathname &&
@@ -322,7 +337,7 @@ export function MinimalHeader() {
   const navItems = [
     { href: "/app", label: "Home", active: isAppHome },
     { href: "/app/send", label: "Send & Receive", active: isSendReceive },
-    { href: "/terminal", label: "Terminal", active: isTerminalActive },
+    { href: TELEGRAM_BOT_URL, label: "Telegram bot", active: false, external: true },
     { href: "/rewards", label: t("rewards"), active: isRewardsActive },
     { href: "/megapot", label: "Megapot", active: isWinActive },
   ];
@@ -345,6 +360,17 @@ export function MinimalHeader() {
               <>
                 <nav className="hidden sm:flex items-center gap-1">
                   {navItems.map((item) => (
+                    "external" in item && item.external ? (
+                    <a
+                      key={item.href}
+                      href={item.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-full px-3.5 py-2 text-sm font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 text-[#8E8C96] hover:text-white"
+                    >
+                      {item.label}
+                    </a>
+                    ) : (
                     <Link
                       key={item.href}
                       href={item.href}
@@ -359,6 +385,7 @@ export function MinimalHeader() {
                     >
                       {item.label}
                     </Link>
+                    )
                   ))}
                 </nav>
 

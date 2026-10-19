@@ -25,9 +25,9 @@ const TELEGRAM_HREF = "https://t.me/looftaxyz";
 const PRODUCTS = [
   {
     icon: "💬",
-    title: "AI terminal",
-    body: "Tell it who to pay in plain English — \"send $5 to @alice on X\" — and it handles the rest. No wallet address, no app switch, works for one recipient or many at once.",
-    cta: { label: "Get started", href: "https://pay.loofta.com/terminal" },
+    title: "Telegram bot",
+    body: "Message the Loofta bot who to pay in plain English — \"send $5 to @alice on X\" — and it handles the rest. No wallet address, no app switch, works for one recipient or many at once.",
+    cta: { label: "Open Telegram bot", href: "https://t.me/looftapay_bot" },
   },
   {
     icon: "🎟️",

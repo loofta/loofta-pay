@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { X } from "lucide-react";
 
 const LOOFTA_ICON_WHITE = "/images/icons/loofta-icon-white.svg";
@@ -22,17 +21,19 @@ export function TerminalPromoToast({ onDismiss }: { onDismiss: () => void }) {
             <img src={LOOFTA_ICON_WHITE} alt="" className="h-5 w-5" />
           </span>
           <div className="flex-1 min-w-0">
-            <p className="text-white font-semibold font-sans text-base">Try the AI terminal</p>
+            <p className="text-white font-semibold font-sans text-base">Try the Loofta bot on Telegram</p>
             <p className="text-slate-400 text-base mt-0.5">
-              Just type who to pay, like &quot;send $5 to @alice on X&quot;, for faster payments with no form-filling.
+              Just message who to pay, like &quot;send $5 to @alice on X&quot;, for faster payments with no form-filling.
             </p>
-            <Link
-              href="/terminal"
+            <a
+              href="https://t.me/looftapay_bot"
+              target="_blank"
+              rel="noopener noreferrer"
               onClick={onDismiss}
               className="inline-flex items-center gap-1 mt-3 rounded-xl px-3 py-1.5 text-base font-medium bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 transition-opacity"
             >
-              Try it
-            </Link>
+              Open Telegram bot
+            </a>
           </div>
         </div>
       </div>

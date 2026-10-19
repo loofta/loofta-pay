@@ -15,7 +15,7 @@ export const GUIDE_NAV: GuideNavSection[] = [
       { slug: "", title: "Overview" },
       { slug: "send", title: "Send a payment" },
       { slug: "payment-links", title: "Payment links" },
-      { slug: "terminal", title: "Terminal" },
+      { slug: "telegram-bot", title: "Telegram bot" },
     ],
   },
   {

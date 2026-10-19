@@ -66,7 +66,7 @@ function Overview({ onNavigate }: { onNavigate: (slug: string) => void }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Card slug="send" title="Send a payment" body="Pay anyone by email, username, or social handle — no wallet address needed." onNavigate={onNavigate} />
         <Card slug="payment-links" title="Payment links" body="Get paid without an invoice or asking the payer to sign up." onNavigate={onNavigate} />
-        <Card slug="terminal" title="Terminal" body="Send money by typing it out, like a message — to one person or many." onNavigate={onNavigate} />
+        <Card slug="telegram-bot" title="Telegram bot" body="Send money by messaging the Loofta bot, like a chat — to one person or many." onNavigate={onNavigate} />
         <Card slug="deposit" title="Deposit" body="Top up your balance from any token, any chain." onNavigate={onNavigate} />
         <Card slug="withdraw" title="Withdraw" body="Cash out to Naira, USD, or any crypto." onNavigate={onNavigate} />
         <Card slug="megapot" title="Megapot" body="A daily-draw lottery, played from Solana, with a private-entry option." onNavigate={onNavigate} />
@@ -114,13 +114,13 @@ function GuideContent({ slug, onNavigate }: { slug: string; onNavigate: (slug: s
           <Cta href="/payment-links" label="Learn more about payment links" />
         </Page>
       );
-    case "terminal":
+    case "telegram-bot":
       return (
-        <Page title="Terminal">
-          <p>Terminal is a chat box for sending money — type what you want to happen ("send $20 to alice@x.com") instead of filling out a form.</p>
+        <Page title="Telegram bot">
+          <p>The Loofta bot on Telegram lets you send money by chat — message what you want to happen ("send $20 to alice@x.com") instead of filling out a form.</p>
           <p>It can split a payment across <strong>multiple recipients at once</strong>, and it can <strong>gift a Megapot ticket</strong> directly from the conversation, in place of a plain cash payment.</p>
-          <p>Non-custodial: you always confirm the exact payment before anything sends — Terminal builds the transaction, it doesn't sign or send anything on its own.</p>
-          <Cta href={`${APP_URL}/terminal`} label="Open Terminal" />
+          <p>Non-custodial: you always confirm the exact payment before anything sends — the bot never sends anything without your approval.</p>
+          <Cta href="https://t.me/looftapay_bot" label="Open the Telegram bot" />
         </Page>
       );
     case "deposit":
@@ -183,7 +183,7 @@ function GuideContent({ slug, onNavigate }: { slug: string; onNavigate: (slug: s
     case "gift-tickets":
       return (
         <Page title="Gift a ticket" logo="/images/megapot/logo.svg">
-          <p>Send someone a Megapot ticket instead of cash — from the Megapot page directly, or by asking Terminal to gift one in chat.</p>
+          <p>Send someone a Megapot ticket instead of cash — from the Megapot page directly, or by asking the Telegram bot to gift one in chat.</p>
           <p>They get a claim link the same way any other payment works; claiming it enters the ticket in their name for the next draw.</p>
           <Cta href={`${APP_URL}/megapot`} label="Gift a ticket" />
         </Page>
