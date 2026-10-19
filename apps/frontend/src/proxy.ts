@@ -79,6 +79,7 @@ export function proxy(request: NextRequest) {
     "/rewards-rail",
     "/partners",
     "/fomo",
+    "/billing-demo",
     "/guides/send-crypto-privately",
     "/vs/paypal",
     "/usdc-to-ngn",
