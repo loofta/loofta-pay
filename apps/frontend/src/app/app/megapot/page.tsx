@@ -1876,10 +1876,10 @@ function WithdrawTab({ tickets, withdrawals, accessToken, onWithdrawn, dashboard
       <Trophy className="w-10 h-10 text-[#FF7A2A] mx-auto" />
       <p className="text-sm font-bold text-[#FF7A2A] uppercase tracking-[0.2em]">Winnings from last draw</p>
       <h2 className="font-display text-4xl sm:text-5xl font-bold tracking-tight text-white">Free ticket</h2>
-      <p className="text-base text-slate-400">This win is too small to cash out after fees, so play it again in the next draw.</p>
+      <p className="text-base text-slate-400">This win is too small to cash out after fees, so we play it again for you in the next draw, automatically.</p>
       {playAgainError && <p className="text-base text-red-400">{playAgainError}</p>}
       <GlowPlayAgainButton onClick={handlePlayAgain} disabled={playingAgain}>
-        {playingAgain ? "Playing again…" : "⚡ Play again, free"}
+        {playingAgain ? "Playing again…" : "⚡ Play again now"}
       </GlowPlayAgainButton>
     </div>
   );
@@ -2609,7 +2609,7 @@ function HistoryTab({ history, withdrawals, activeTickets, getAccessToken, onRef
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-base font-semibold font-sans">
               {(t.status === "won" || t.status === "withdrawn")
-                ? <span className="text-emerald-400">{isFreeTicketAmount(t.winAmountUsdc, minWithdraw) ? "Free" : `+${fmt(t.winAmountUsdc ?? 0)}`}</span>
+                ? <span className="text-emerald-400">{isFreeTicketAmount(t.winAmountUsdc, minWithdraw) ? "Free ticket" : `+${fmt(t.winAmountUsdc ?? 0)}`}</span>
                 : t.isGift
                   ? null
                   : <span className="text-slate-500">−{fmt(t.costUsdc)}</span>}
@@ -3140,7 +3140,7 @@ function DrawResultModal({ results, winningNumbers, ticketNumbers, onClose, onRe
               wonFreeTicket ? (
                 <>
                   <h2 className="text-2xl font-bold text-white">You won a free ticket!</h2>
-                  <p className="text-base font-semibold text-emerald-400">Play it again in the next draw</p>
+                  <p className="text-base font-semibold text-emerald-400">We play it again for you in the next draw</p>
                 </>
               ) : (
                 <>

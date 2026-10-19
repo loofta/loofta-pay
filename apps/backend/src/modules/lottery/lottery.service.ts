@@ -35,10 +35,12 @@ const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 export const TICKET_PRICE_USDC = 1;
 // A win below this is worth less than a ticket's cash value once the fixed bridge + relay fees
 // are taken out, so cashing it out would deliver a fraction of the figure shown. Below the line a
-// win is treated as a "free ticket" — the only action is Play Again (reinvest into the next draw,
-// no fees); at or above it, withdrawal is allowed. This is the single source of truth for that
-// rule: the withdrawal endpoints enforce it, and the dashboard reports it (withdrawMinUsdc +
-// per-ticket isFreeTicket) so the UI never has to hardcode the number.
+// win is treated as a "free ticket" — settled by automatically Play-Again-ing it into the next
+// draw (the daily autoWithdrawWonTickets pass claims the win and reinvests it in a new ticket; the
+// sub-$1 gap is topped up from Loofta's fee wallet so it always buys at least one ticket). At or
+// above it, withdrawal is allowed. This is the single source of truth for that rule: the
+// withdrawal endpoints enforce it, and the dashboard reports it (withdrawMinUsdc + per-ticket
+// isFreeTicket) so the UI never has to hardcode the number.
 export const WITHDRAW_MIN_USDC = 1.3;
 // Round-up grace: a win only 0-10c past a whole ticket price doesn't round up to the next ticket —
 // that would mean funding almost a full extra ticket from Loofta's wallet for a rounding artifact
@@ -218,8 +220,9 @@ export interface LotteryTicketSummary {
   drawTime: string | null;
   winAmountUsdc: number | null;
   winTier: number | null;
-  /** A won ticket whose amount is below WITHDRAW_MIN_USDC — shown as a "free ticket" (play-again
-   *  only, no withdrawal). False for any non-won ticket. Authoritative; the UI renders off this. */
+  /** A won ticket whose amount is below WITHDRAW_MIN_USDC — a "free ticket". Settled automatically:
+   *  it is replayed into the next draw by the daily auto-withdraw pass (no user action). False for
+   *  any non-won ticket. Authoritative; the UI renders off this. */
   isFreeTicket: boolean;
   createdAt: string;
   depositAddress: string | null;
@@ -3116,13 +3119,22 @@ export class LotteryService {
   private autoWithdrawing = false;
 
   /**
-   * Winners no longer press "Redeem": every won ticket at or above WITHDRAW_MIN_USDC is withdrawn
-   * automatically to the wallet recorded on the ticket (the user's own registered wallet, same
-   * destination the refund paths trust). The route mirrors how the ticket was bought: privately
-   * funded tickets leave privately, everything else is a plain transfer. Sub-floor wins stay
-   * "free tickets" (play-again only). Tickets that already have ANY withdrawal row (in flight,
-   * complete or failed) are skipped, so a failed pipeline is never silently re-run on real money —
-   * that needs a human, same as before.
+   * Winners no longer press "Redeem", and nothing sits as 'won' forever. Everything a winner is
+   * owed is settled automatically, once a day, either way:
+   *
+   *   • At/above WITHDRAW_MIN_USDC → withdrawn to the wallet recorded on the ticket (the user's own
+   *     registered wallet, same destination the refund paths trust). The route mirrors how the
+   *     ticket was bought: privately funded tickets leave privately, everything else is a plain
+   *     transfer. Grouped per (user, destination, route) so a user's several small wins add up and
+   *     are withdrawn as one batch.
+   *   • Below WITHDRAW_MIN_USDC ("free ticket" — cashing out would deliver a fraction of the shown
+   *     figure after fixed bridge/relay fees) → automatically REPLAYED into the next draw: the win
+   *     is claimed and reinvested to buy a new ticket, so the user keeps playing instead of the win
+   *     being stranded. No destination address is needed — the replay reuses the ticket's own
+   *     companion wallet (see playAgain/playAgainBatch).
+   *
+   * Tickets that already have ANY withdrawal row (in flight, complete or failed) are skipped, so a
+   * failed pipeline is never silently re-run on real money — that needs a human, same as before.
    *
    * Scheduled once a day shortly after the draw (see LotteryCronService.autoWithdrawWonTickets),
    * NOT on every settlement tick — the draw is daily, so there's no reason to move real money more
@@ -3136,7 +3148,8 @@ export class LotteryService {
       const { data: won } = await db
         .from('lottery_tickets')
         .select('id, user_id, user_solana_address, funded_privately, win_amount_usdc')
-        .eq('status', 'won');
+        .eq('status', 'won')
+        .order('created_at', { ascending: true });
       if (!won?.length) return;
 
       const { data: existing } = await db
@@ -3146,13 +3159,45 @@ export class LotteryService {
       const taken = new Set((existing ?? []).map((w: any) => w.ticket_id));
 
       const groups = new Map<string, { userId: string; destination: string; route: 'solana_private' | 'solana_public'; ids: string[]; total: number }>();
+      // Free tickets to replay, grouped per user so a user's several tiny wins replay as one buy.
+      const replay = new Map<string, { userId: string; ticketIds: string[] }>();
+      const addReplay = (userId: string, ticketId: string, fundedPrivately: boolean) => {
+        const key = `${userId}|${fundedPrivately}`;
+        const r = replay.get(key) ?? { userId, ticketIds: [] };
+        r.ticketIds.push(ticketId);
+        replay.set(key, r);
+      };
+
       for (const t of won) {
         const amount = parseFloat(t.win_amount_usdc ?? '0');
-        if (taken.has(t.id) || !t.user_solana_address || !(amount > 0)) {
+        if (taken.has(t.id)) {
           // Silent skips are how won tickets sat unwithdrawn unnoticed — say why, once per tick.
-          const why = taken.has(t.id) ? 'a withdrawal row already exists (in flight/complete/failed — needs a human if failed)'
-            : !t.user_solana_address ? 'no user_solana_address on the ticket' : 'win amount is 0';
-          this.logger.warn(`autoWithdraw: skipping won ticket ${t.id} ($${amount}) — ${why}`);
+          this.logger.warn(`autoWithdraw: skipping won ticket ${t.id} ($${amount}) — a withdrawal row already exists (in flight/complete/failed — needs a human if failed)`);
+          continue;
+        }
+        if (!(amount > 0)) {
+          this.logger.warn(`autoWithdraw: skipping won ticket ${t.id} — win amount is 0`);
+          continue;
+        }
+        if (!t.user_solana_address) {
+          // The stored column is sometimes stale/null even though the user does have a wallet
+          // (e.g. it was linked after the ticket was bought, or the write silently failed). Resolve
+          // it live once before treating this as an unresolvable destination, and backfill the row.
+          const live = await this.usersService.getSolanaWalletAddress(t.user_id).catch((e: any) => {
+            this.logger.warn(`autoWithdraw: could not resolve wallet for user ${t.user_id}: ${e?.message ?? e}`);
+            return null;
+          });
+          if (live) {
+            t.user_solana_address = live;
+            await db.from('lottery_tickets').update({ user_solana_address: live, updated_at: new Date().toISOString() }).eq('id', t.id);
+            this.logger.log(`autoWithdraw: backfilled user_solana_address for won ticket ${t.id} from user record`);
+          }
+        }
+        if (!t.user_solana_address) {
+          // No address to pay. A free ticket can still be replayed (it reuses the companion); a win
+          // at/above the floor with nowhere to send needs a human to resolve the destination.
+          if (amount < WITHDRAW_MIN_USDC) { addReplay(t.user_id, t.id, t.funded_privately); continue; }
+          this.logger.warn(`autoWithdraw: won ticket ${t.id} ($${amount}) is at/above $${WITHDRAW_MIN_USDC} but has no resolvable wallet — needs a human`);
           continue;
         }
         const route = t.funded_privately ? 'solana_private' : 'solana_public';
@@ -3165,7 +3210,9 @@ export class LotteryService {
 
       for (const g of groups.values()) {
         if (g.total < WITHDRAW_MIN_USDC) {
-          this.logger.debug(`autoWithdraw: user ${g.userId} total $${g.total.toFixed(2)} below $${WITHDRAW_MIN_USDC} — free ticket, play-again only`);
+          // The group doesn't reach the floor as a cash win — replay it instead of withdrawing.
+          this.logger.debug(`autoWithdraw: user ${g.userId} total $${g.total.toFixed(2)} below $${WITHDRAW_MIN_USDC} — free ticket, replaying`);
+          for (const id of g.ids) addReplay(g.userId, id, g.route === 'solana_private');
           continue;
         }
         try {
@@ -3173,6 +3220,16 @@ export class LotteryService {
           this.logger.log(`autoWithdraw: user ${g.userId} ${g.ids.length} ticket(s) $${g.total.toFixed(2)} route=${g.route}`);
         } catch (e: any) {
           this.logger.warn(`autoWithdraw: user ${g.userId} failed: ${e?.message ?? e}`);
+        }
+      }
+
+      // Replay every free ticket — buys a new ticket for the next draw so the win is never stranded.
+      for (const r of replay.values()) {
+        try {
+          const res = await this.playAgainBatch({ ticketIds: r.ticketIds, userId: r.userId });
+          this.logger.log(`autoReplay: user ${r.userId} ${r.ticketIds.length} free ticket(s) → new ticket ${res.newTicketId} (${res.numTickets} ticket(s), round ${res.roundId})`);
+        } catch (e: any) {
+          this.logger.warn(`autoReplay: user ${r.userId} free ticket(s) failed: ${e?.message ?? e}`);
         }
       }
     } finally {
@@ -3430,7 +3487,7 @@ export class LotteryService {
     // Same free-ticket floor as initiateWithdrawalBatch — see the note there.
     if (parseFloat(ticket.win_amount_usdc) < WITHDRAW_MIN_USDC) {
       throw new BadRequestException(
-        `This win is a free ticket — play it again into the next draw instead. (Withdrawals start at $${WITHDRAW_MIN_USDC.toFixed(2)}, since fees would eat most of a smaller amount.)`,
+        `This win is a free ticket, so it is played again into the next draw automatically. (Withdrawals start at $${WITHDRAW_MIN_USDC.toFixed(2)}, since fees would eat most of a smaller amount.)`,
       );
     }
 
@@ -3521,7 +3578,7 @@ export class LotteryService {
     const batchTotalUsdc = tickets.reduce((sum, t) => sum + parseFloat(t.win_amount_usdc), 0);
     if (batchTotalUsdc < WITHDRAW_MIN_USDC) {
       throw new BadRequestException(
-        `This win is a free ticket — play it again into the next draw instead. (Withdrawals start at $${WITHDRAW_MIN_USDC.toFixed(2)}, since fees would eat most of a smaller amount.)`,
+        `This win is a free ticket, so it is played again into the next draw automatically. (Withdrawals start at $${WITHDRAW_MIN_USDC.toFixed(2)}, since fees would eat most of a smaller amount.)`,
       );
     }
 
@@ -5568,8 +5625,18 @@ export class LotteryService {
 
     if (isFreeTicketWin) {
       numTickets = Math.floor(claimedBalance / TICKET_PRICE_USDC);
-      if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a ticket ($${claimedBalance.toFixed(6)} USDC)`);
-      sweepLeftover = true;
+      if (numTickets < 1) {
+        // Win is smaller than one whole ticket after Megapot's payout fee (e.g. a $1 win lands as
+        // ~$0.90 in the companion). Round up to a single ticket and fund the small gap from Loofta's
+        // fee wallet, so the free ticket is actually played instead of the win being stranded.
+        numTickets = 1;
+        const gapUsdc = parseFloat((TICKET_PRICE_USDC - claimedBalance).toFixed(6));
+        const funded = await this.fundCompanionRoundUp(ticket.companion_address, gapUsdc, claimedBalance)
+          .catch(e => { this.logger.warn(`playAgain ${opts.ticketId}: free-ticket gap funding failed (${e.message})`); return false; });
+        if (!funded) throw new BadRequestException(`Could not fund this free ticket ($${claimedBalance.toFixed(6)} USDC in companion)`);
+      } else {
+        sweepLeftover = true;
+      }
     } else {
       numTickets = Math.max(1, Math.ceil(claimedBalance - ROUND_UP_GRACE_USDC));
       const gapUsdc = parseFloat((numTickets * TICKET_PRICE_USDC - claimedBalance).toFixed(6));
@@ -5747,8 +5814,17 @@ export class LotteryService {
 
     if (isFreeTicketWin) {
       numTickets = Math.floor(leadBalance / TICKET_PRICE_USDC);
-      if (numTickets < 1) throw new BadRequestException(`Companion balance too low to buy a ticket ($${leadBalance.toFixed(6)} USDC)`);
-      sweepLeftover = true;
+      if (numTickets < 1) {
+        // Same as playAgain: a free ticket smaller than one whole ticket (e.g. a $1 win ≈ $0.90 net)
+        // rounds up to a single ticket, funding the small gap from Loofta's fee wallet.
+        numTickets = 1;
+        const gapUsdc = parseFloat((TICKET_PRICE_USDC - leadBalance).toFixed(6));
+        const funded = await this.fundCompanionRoundUp(leadAddress, gapUsdc, leadBalance)
+          .catch(e => { this.logger.warn(`playAgainBatch: free-ticket gap funding failed (${e.message})`); return false; });
+        if (!funded) throw new BadRequestException(`Could not fund this free ticket ($${leadBalance.toFixed(6)} USDC in companion)`);
+      } else {
+        sweepLeftover = true;
+      }
     } else {
       numTickets = Math.max(1, Math.ceil(leadBalance - ROUND_UP_GRACE_USDC));
       const gapUsdc = parseFloat((numTickets * TICKET_PRICE_USDC - leadBalance).toFixed(6));

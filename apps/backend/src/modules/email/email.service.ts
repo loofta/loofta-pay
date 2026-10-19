@@ -455,8 +455,11 @@ export class EmailService {
   }): Promise<void> {
     if (!this.resend) return;
     const amountStr = `$${data.winAmountUsdc.toFixed(2)}`;
-    const subject = `You won ${amountStr} on Megapot 🎉`;
-    const html = this.buildMegapotWinHtml({ ...data, amountStr });
+    // A sub-floor win (autoSent === false) is a free ticket, not cash — never headline it as a
+    // dollar amount the user might expect to withdraw.
+    const isFreeTicket = data.autoSent === false;
+    const subject = isFreeTicket ? 'You won a free ticket on Megapot 🎉' : `You won ${amountStr} on Megapot 🎉`;
+    const html = this.buildMegapotWinHtml({ ...data, amountStr, isFreeTicket });
     try {
       await this.resend.emails.send({
         from: 'Lisa from Loofta <hello@loofta.xyz>',
@@ -470,7 +473,7 @@ export class EmailService {
     }
   }
 
-  private buildMegapotWinHtml(data: { amountStr: string; roundId: string; username?: string | null; numTickets?: number; autoSent?: boolean }): string {
+  private buildMegapotWinHtml(data: { amountStr: string; roundId: string; username?: string | null; numTickets?: number; autoSent?: boolean; isFreeTicket?: boolean }): string {
     const dashboardUrl = 'https://pay.loofta.com/app/megapot';
     const greeting = data.username ? `Hey @${data.username},` : 'Hey,';
     const ticketLine = data.numTickets && data.numTickets > 1 ? ` (across ${data.numTickets} tickets)` : '';
@@ -499,16 +502,16 @@ export class EmailService {
               <p style="margin:0 0 24px;font-size:18px;color:#ffffff;font-weight:500;text-align:center;">Your ticket for round ${data.roundId} hit${ticketLine}</p>
               <div style="background:#0f0f12;border:1px solid #0d3b2e;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px;">
                 <p style="margin:0 0 4px;font-size:12px;color:#6b7280;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;">You won</p>
-                <p style="margin:0;font-size:40px;font-weight:500;color:#5EEAD4;letter-spacing:-1px;">${data.amountStr}</p>
+                <p style="margin:0;font-size:40px;font-weight:500;color:#5EEAD4;letter-spacing:-1px;">${data.isFreeTicket ? 'Free ticket' : data.amountStr}</p>
               </div>
               <p style="margin:0 0 24px;font-size:14px;color:#9ca3af;text-align:center;line-height:1.6;">
                 ${data.autoSent === false
-                  ? `${greeting} this one is too small to cash out after fees, so it is a free ticket. Play it again in the next draw.`
+                  ? `${greeting} this one is too small to cash out after fees, so we turned it into a free ticket and already played it again for you in the next draw.`
                   : `${greeting} nothing to claim. We are sending your winnings to you automatically, and we will email you again when they arrive.`}
               </p>
               <div style="text-align:center;margin-bottom:8px;">
                 <a href="${dashboardUrl}?tab=redeem" style="display:inline-block;background:linear-gradient(135deg,#FF4A26,#FF8C00);color:#ffffff;text-decoration:none;font-weight:500;font-size:15px;padding:14px 36px;border-radius:50px;letter-spacing:0.01em;">
-                  ${data.autoSent === false ? 'Play it again' : 'See your winnings'}
+                  ${data.autoSent === false ? 'See your tickets' : 'See your winnings'}
                 </a>
               </div>
               <p style="margin:20px 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
