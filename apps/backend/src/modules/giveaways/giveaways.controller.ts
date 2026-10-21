@@ -250,7 +250,8 @@ export class GiveawaysController {
 
   @Post('quick/parse')
   @ApiOperation({ summary: 'Read a pasted X announcement and return the giveaway rules (AI when configured, patterns otherwise)' })
-  async parseQuickRules(@Req() req: { user?: { id: string } }, @Body() body: { text?: string }) {
+  async parseQuickRules(@Req() req: { user?: { id: string } }, @Body() body: { text?: string; url?: string }) {
+    if (body?.url?.trim()) return this.quickRules.parseFromUrl(req.user!.id, body.url);
     return this.quickRules.parse(req.user!.id, body?.text ?? '');
   }
 

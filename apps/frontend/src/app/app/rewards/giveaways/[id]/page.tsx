@@ -15,7 +15,9 @@ export async function generateMetadata({
     return { title: "Giveaway not found — Loofta" };
   }
 
-  const prizeLabel = preview.reward_type === "megapot_ticket"
+  const prizeLabel = preview.reward_type === "custom" && preview.custom_prize_text
+    ? preview.custom_prize_text
+    : preview.reward_type === "megapot_ticket"
     ? `${preview.prize_amount_usd} Megapot ticket${preview.prize_amount_usd === 1 ? "" : "s"}`
     : `$${preview.prize_amount_usd}`;
   const title = `${preview.title} — ${prizeLabel} × ${preview.winner_count} winners on Loofta`;

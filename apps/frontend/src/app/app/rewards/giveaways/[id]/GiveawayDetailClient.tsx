@@ -259,7 +259,7 @@ function taskDisplayTitle(task: PublicTask): string {
 
 interface PublicGiveaway {
   id: string; title: string; description: string | null; logo_url: string | null; project_name: string | null; short_id: string | null;
-  winner_count: number; selection_mode: string; prize_amount_usd: string; reward_type?: "usdc" | "megapot_ticket"; prize_mint?: string | null; prize_token_symbol?: string | null; entries_close_at: string;
+  winner_count: number; selection_mode: string; prize_amount_usd: string; reward_type?: "usdc" | "megapot_ticket" | "custom"; custom_prize_text?: string | null; prize_mint?: string | null; prize_token_symbol?: string | null; entries_close_at: string;
   eligibility: { min_followers?: number; min_account_age_days?: number; verified_only?: boolean; required_countries?: string[]; required_continents?: string[] };
   status: string; burner_address: string | null; mint: string | null; is_devnet: boolean;
   funding_required_usd: string | null; funding_confirmed_usd: string; entry_count: number;
@@ -957,13 +957,18 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               </p>
               <Image src="/images/icons/shield-icon.png" alt="" width={26} height={26} className="shrink-0 opacity-90" />
             </div>
+            {giveaway.reward_type === "custom" ? (
+              <p className="mb-3 text-3xl font-bold tracking-tight text-white">{giveaway.custom_prize_text}</p>
+            ) : (
             <p className="flex items-baseline gap-2.5 mb-3">
               <span className="text-5xl font-bold tracking-tight text-white">${totalPoolLabel}</span>
               <span className="text-base text-slate-400">
                 {giveaway.reward_type === "megapot_ticket" ? "worth of Megapot tickets" : giveaway.prize_token_symbol ? `in ${giveaway.prize_token_symbol}` : "USDC"}
               </span>
             </p>
+            )}
             <div className="flex flex-wrap gap-2 mb-3">
+              {giveaway.reward_type !== "custom" && (
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
                 {giveaway.reward_type === "megapot_ticket"
                   ? `${giveaway.prize_amount_usd} ticket${Number(giveaway.prize_amount_usd) === 1 ? "" : "s"} each`
@@ -971,6 +976,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                     ? `$${giveaway.prize_amount_usd} in ${giveaway.prize_token_symbol} each`
                     : `$${giveaway.prize_amount_usd} each`}
               </span>
+              )}
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
                 {giveaway.winner_count} winner{giveaway.winner_count === 1 ? "" : "s"}
               </span>

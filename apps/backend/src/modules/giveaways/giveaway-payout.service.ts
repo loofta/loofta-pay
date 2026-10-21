@@ -97,6 +97,20 @@ export class GiveawayPayoutService {
       return;
     }
 
+    // Custom prize (event ticket...): nothing on-chain to pay. The creator hands it over to the
+    // winners, so mark them delivered-by-creator and let finalizeIfComplete collect the $5 listing fee.
+    if (giveaway.reward_type === GiveawayRewardType.CUSTOM) {
+      const pending = (winners ?? []).filter((w) => w.payout_status !== 'succeeded');
+      if (pending.length) {
+        await this.supabaseService.giveawayEntries
+          .update({ payout_status: 'succeeded', payout_amount_usd: 0 })
+          .in('id', pending.map((w) => w.id));
+        await this.logEvent(giveaway.id, 'custom_prize_winners_ready', { winner_count: pending.length, prize: giveaway.custom_prize_text });
+      }
+      await this.finalizeIfComplete(giveaway);
+      return;
+    }
+
     const ready = (winners ?? []).filter(
       (w) => w.payout_status !== 'succeeded' && !w.claim_payment_id && !w.claim_gift_id,
     ) as GiveawayEntry[];

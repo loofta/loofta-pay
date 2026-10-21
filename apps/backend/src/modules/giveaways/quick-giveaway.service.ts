@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 import { RedisService } from '@/redis/redis.service';
-import { XVerificationService } from './x-verification.service';
+import { XVerificationService, TIER_MIN_CRYPTO_FOLLOWERS } from './x-verification.service';
 import { GiveawaysService } from './giveaways.service';
 import {
   Giveaway,
@@ -19,6 +19,8 @@ const MAX_PAGES_PER_SYNC = 5;
 const SYNC_THROTTLE_MS = 5 * 60 * 1000;
 const ELIGIBILITY_CACHE_SECONDS = 60;
 const MAX_POSTS_RETURNED = 300;
+
+const TIER_NAMES: Record<string, string> = { noted: 'Noted', credible: 'Credible', significant: 'Significant', supreme: 'Supreme' };
 
 export interface QuickPost {
   entry_id: string;
@@ -107,6 +109,14 @@ export class QuickGiveawayService {
     }
     if (elig?.verified_only) checks.push({ label: 'Verified on X', ok: t.user?.verified === true });
     return checks;
+  }
+
+  /** Reputation tier gate. Costs one (cached) Sorsa call, so callers run it only after every
+   *  free check has passed. Errors propagate so a cap or outage never admits unchecked posts. */
+  private async meetsTier(handle: string, elig?: Giveaway['eligibility']): Promise<boolean> {
+    const min = elig?.min_tier ? TIER_MIN_CRYPTO_FOLLOWERS[elig.min_tier] : 0;
+    if (!min) return true;
+    return (await this.xVerification.cryptoFollowerCount(handle)) >= min;
   }
 
   private isQualifying(t: Record<string, any>, c: QuickCriteria, elig?: Giveaway['eligibility']): boolean {
@@ -230,7 +240,9 @@ export class QuickGiveawayService {
         // Oldest first within the page so the earliest post by an author is the one kept.
         const sorted = [...res.tweets].sort((a, b) => new Date(String(a.created_at)).getTime() - new Date(String(b.created_at)).getTime());
         for (const t of sorted) {
-          if (this.isQualifying(t, criteria, giveaway.eligibility) && (await this.insertPostEntry(giveaway, t))) added++;
+          if (!this.isQualifying(t, criteria, giveaway.eligibility)) continue;
+          if (!(await this.meetsTier(String(t.user?.username ?? ''), giveaway.eligibility))) continue;
+          if (await this.insertPostEntry(giveaway, t)) added++;
         }
         if (!res.nextCursor || res.nextCursor === cursor) break;
         cursor = res.nextCursor;
@@ -315,7 +327,14 @@ export class QuickGiveawayService {
 
     let result: EligibilityResult;
     const winner = own.find((t) => this.isQualifying(t, criteria, giveaway.eligibility));
-    if (winner) {
+    if (winner && !(await this.meetsTier(handle, giveaway.eligibility))) {
+      result = {
+        eligible: false,
+        checks: [...this.allOk(criteria, giveaway.eligibility).filter((c) => !c.label.includes('reputation')), { label: this.tierLabel(giveaway.eligibility), ok: false }],
+        post_url: `https://x.com/${handle}/status/${winner.id}`,
+        reason: 'Your post follows the rules, but your account is below the minimum crypto reputation tier for this giveaway.',
+      };
+    } else if (winner) {
       await this.insertPostEntry(giveaway, winner);
       result = { eligible: true, checks: this.allOk(criteria, giveaway.eligibility), post_url: `https://x.com/${handle}/status/${winner.id}` };
     } else if (!own.length) {
@@ -343,8 +362,13 @@ export class QuickGiveawayService {
       ...(c.require_media ? ['Includes an image or video'] : []),
       ...(elig?.min_account_age_days ? [`X account ${elig.min_account_age_days}+ days old`] : []),
       ...(elig?.verified_only ? ['Verified on X'] : []),
+      ...(elig?.min_tier ? [this.tierLabel(elig)] : []),
     ];
     return labels.map((label) => ({ label, ok }));
+  }
+
+  private tierLabel(elig?: Giveaway['eligibility']): string {
+    return `Crypto reputation: ${TIER_NAMES[elig?.min_tier ?? ''] ?? ''} tier or higher`;
   }
 
   private allOk(c: QuickCriteria, elig?: Giveaway['eligibility']) {

@@ -19,7 +19,8 @@ interface PublicGiveawayListItem {
   winner_count: number;
   selection_mode: "random" | "first_come" | "manual";
   prize_amount_usd: string;
-  reward_type?: "usdc" | "megapot_ticket";
+  reward_type?: "usdc" | "megapot_ticket" | "custom";
+  custom_prize_text?: string | null;
   prize_token_symbol?: string | null;
   prize_token_logo?: string | null;
   entries_close_at: string;
@@ -33,7 +34,8 @@ interface PublicGiveawayListItem {
 
 /** Big headline figure for a list card's prize pool — dollars for a usdc giveaway, ticket count
  *  for a megapot_ticket one (tickets are $1 each, so total pool === total ticket count). */
-function poolLabel(g: Pick<PublicGiveawayListItem, "reward_type" | "prize_token_symbol">, total: number): string {
+function poolLabel(g: Pick<PublicGiveawayListItem, "reward_type" | "prize_token_symbol" | "custom_prize_text">, total: number): string {
+  if (g.reward_type === "custom" && g.custom_prize_text) return g.custom_prize_text;
   const formatted = total.toLocaleString(undefined, { maximumFractionDigits: 2 });
   if (g.prize_token_symbol) return `$${formatted} in ${g.prize_token_symbol}`;
   return g.reward_type === "megapot_ticket" ? `${formatted} ticket${total === 1 ? "" : "s"}` : `$${formatted}`;

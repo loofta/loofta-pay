@@ -85,7 +85,7 @@ export class GiveawaysPublicController {
   async findOpen() {
     const { data, error } = await this.supabaseService.giveawaysSafe
       .select(
-        'id, title, description, logo_url, project_name, short_id, winner_count, selection_mode, prize_amount_usd, reward_type, entries_close_at, status, is_official, admin_reviewed_at',
+        'id, title, description, logo_url, project_name, short_id, winner_count, selection_mode, prize_amount_usd, reward_type, custom_prize_text, entries_close_at, status, is_official, admin_reviewed_at',
       )
       // Official Loofta giveaways pin to the top, then soonest-closing first within each group.
       .eq('status', 'OPEN')
@@ -162,7 +162,7 @@ export class GiveawaysPublicController {
   @ApiOperation({ summary: 'Browse past (no longer open) giveaways that actually received funding — most recently closed first. No auth required.' })
   async findEnded() {
     const { data, error } = await this.supabaseService.giveawaysSafe
-      .select('id, title, description, logo_url, project_name, short_id, winner_count, selection_mode, prize_amount_usd, reward_type, entries_close_at, status, is_official')
+      .select('id, title, description, logo_url, project_name, short_id, winner_count, selection_mode, prize_amount_usd, reward_type, custom_prize_text, entries_close_at, status, is_official')
       .in('status', ENDED_STATUSES as string[])
       // UNDERFUNDED_EXPIRED always has zero confirmed funding by definition, and CANCELLED can
       // mean either "creator cancelled before ever funding it" or "funded, closed, but nobody
@@ -239,6 +239,7 @@ export class GiveawaysPublicController {
       selection_mode: giveaway.selection_mode,
       prize_amount_usd: giveaway.prize_amount_usd,
       reward_type: giveaway.reward_type,
+      custom_prize_text: raw.custom_prize_text ?? null,
       prize_mint: giveaway.prize_mint,
       prize_token_symbol: giveaway.prize_token_symbol,
       prize_token_decimals: giveaway.prize_token_decimals,

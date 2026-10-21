@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { SupabaseService } from '@/database/supabase.service';
-import { XVerificationService } from './x-verification.service';
+import { XVerificationService, TIER_MIN_CRYPTO_FOLLOWERS } from './x-verification.service';
 import { GiveawaysService } from './giveaways.service';
 import { continentForCountry } from './country-continent';
 import {
@@ -90,6 +90,7 @@ export class GiveawayEntriesService {
     const minFollowers = giveaway.eligibility?.min_followers;
     const minAgeDays = giveaway.eligibility?.min_account_age_days;
     const verifiedOnly = giveaway.eligibility?.verified_only === true;
+    const minTierFollowers = giveaway.eligibility?.min_tier ? TIER_MIN_CRYPTO_FOLLOWERS[giveaway.eligibility.min_tier] ?? 0 : 0;
     const requiredCountries = giveaway.eligibility?.required_countries ?? [];
     const requiredContinents = giveaway.eligibility?.required_continents ?? [];
     const excludedCountries = giveaway.eligibility?.excluded_countries ?? [];
@@ -100,7 +101,7 @@ export class GiveawayEntriesService {
     let avatarUrl = account.profileImageUrl;
     let eligibilitySnapshot: Record<string, unknown> = {};
 
-    if (typeof minFollowers === 'number' || typeof minAgeDays === 'number' || verifiedOnly || hasGeoRequirement) {
+    if (typeof minFollowers === 'number' || typeof minAgeDays === 'number' || verifiedOnly || hasGeoRequirement || minTierFollowers > 0) {
       const profile = await this.xVerification.resolveXProfile(account.username);
       if (!profile) {
         throw new BadRequestException('Could not verify your X account right now. Please try again shortly.');
@@ -127,6 +128,7 @@ export class GiveawayEntriesService {
       const failsExclusionGeo = excludedCountries.includes(country!);
       const failsGeo = failsInclusionGeo || failsExclusionGeo;
 
+      const belowTier = minTierFollowers > 0 && (await this.xVerification.cryptoFollowerCount(profile.username)) < minTierFollowers;
       const failReason =
         typeof minFollowers === 'number' && profile.followersCount < minFollowers
           ? `This giveaway requires at least ${minFollowers} X followers`
@@ -134,6 +136,8 @@ export class GiveawayEntriesService {
             ? `This giveaway requires an X account at least ${minAgeDays} days old`
             : verifiedOnly && !profile.verified
               ? 'This giveaway requires a verified X account'
+              : belowTier
+                ? 'Your account is below the minimum crypto reputation tier for this giveaway'
               // Deliberately generic, unlike the other reasons above — naming the required/excluded
               // countries here would let anyone reconstruct the exact list by probing from different
               // regions, which is exactly what hiding it from the entry-requirements text (see

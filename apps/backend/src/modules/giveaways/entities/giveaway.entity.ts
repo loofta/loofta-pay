@@ -28,6 +28,8 @@ export interface QuickCriteria {
 export enum GiveawayRewardType {
   USDC = 'usdc',
   MEGAPOT_TICKET = 'megapot_ticket',
+  /** Non-money prize handed over by the creator (event ticket...). Only the $5 listing fee is escrowed. */
+  CUSTOM = 'custom',
 }
 
 export enum GiveawayStatus {
@@ -103,6 +105,8 @@ export interface GiveawayEligibility {
   min_followers?: number;
   min_account_age_days?: number;
   verified_only?: boolean;
+  /** Quick giveaways: minimum crypto reputation tier of the author (how many known crypto accounts follow them, via Sorsa). */
+  min_tier?: 'noted' | 'credible' | 'significant' | 'supreme';
   /** Entrant's X account country (per Sorsa's /about endpoint) must be one of these, OR its
    *  continent must be in required_continents — the two lists are OR'd together, not AND'd. */
   required_countries?: string[];
@@ -137,6 +141,8 @@ export interface Giveaway {
    *  can send this token straight to the burner and the platform fee in USDC to Loofta, in one
    *  transaction. Funding in USDC still works and is swapped into this mint. */
   prize_mint: string | null;
+  /** Description of a reward_type 'custom' prize. */
+  custom_prize_text: string | null;
   prize_token_symbol: string | null;
   prize_token_name: string | null;
   prize_token_logo: string | null;

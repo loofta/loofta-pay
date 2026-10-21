@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { BadRequestException, HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RedisService } from '@/redis/redis.service';
+import { XVerificationService } from './x-verification.service';
 
 export interface ParsedQuickRules {
   title: string | null;
@@ -12,6 +13,8 @@ export interface ParsedQuickRules {
   prize_usd: number | null;
   winner_count: number | null;
   token_symbol: string | null;
+  /** A prize that is not money or a token (event ticket, merch...), described in a few words. */
+  custom_prize: string | null;
   /** 'ai' when the model read it, 'basic' when the pattern fallback did. */
   source: 'ai' | 'basic';
 }
@@ -31,6 +34,7 @@ Return ONE JSON object and nothing else, with exactly these keys:
 - prize_usd: total prize pool in US dollars as a number, or null
 - winner_count: number of winners as an integer, or null
 - token_symbol: the token the prize is paid in without "$" (for example TIPANSEM), or null if it is dollars or USDC
+- custom_prize: if the prize is NOT money or a crypto token (for example an event ticket, merch, a subscription), a short description max 80 chars, otherwise null. When set, prize_usd and token_symbol must be null
 Do not invent anything the post does not say.`;
 
 function basicParse(text: string): ParsedQuickRules {
@@ -44,10 +48,11 @@ function basicParse(text: string): ParsedQuickRules {
     mentions,
     hashtags,
     phrase: null,
-    require_media: /\b(meme|image|video|photo|gif|art|pic)\b/i.test(text),
+    require_media: /\bmemes?\b|\b(post|share|make|create|drop|submit|reply with)\b[^.\n]{0,25}\b(image|video|photo|gif|art|pic)\b/i.test(text),
     prize_usd: money ? Number(money[1] ?? money[2]) : null,
     winner_count: winners ? Number(winners[1]) : null,
     token_symbol: token ? token[1] : null,
+    custom_prize: null,
     source: 'basic',
   };
 }
@@ -74,6 +79,7 @@ function sanitize(raw: any): Omit<ParsedQuickRules, 'source'> | null {
     prize_usd: num(raw.prize_usd),
     winner_count: winnerCount ? Math.min(1000, Math.floor(winnerCount)) : null,
     token_symbol: token && /^[A-Z0-9]{2,12}$/.test(token) && token !== 'USDC' && token !== 'USD' ? token : null,
+    custom_prize: typeof raw.custom_prize === 'string' && raw.custom_prize.trim() ? raw.custom_prize.trim().slice(0, 80) : null,
   };
 }
 
@@ -89,6 +95,7 @@ export class QuickRulesParserService {
   constructor(
     private readonly config: ConfigService,
     private readonly redis: RedisService,
+    private readonly xVerification: XVerificationService,
   ) {}
 
   private async consumeDailyCap(userId: string): Promise<void> {
@@ -99,6 +106,28 @@ export class QuickRulesParserService {
     const count = await client.incr(key);
     if (count === 1) await client.expire(key, 26 * 60 * 60);
     if (count > cap) throw new HttpException('Daily limit for reading posts reached. Add the rules by hand.', HttpStatus.TOO_MANY_REQUESTS);
+  }
+
+  /** Pasted X link: fetch the post, then read it like pasted text. Returns the post text too so the page can show it. */
+  async parseFromUrl(userId: string, url: string): Promise<ParsedQuickRules & { text: string; author: string | null }> {
+    const m = (url ?? '').trim().match(/^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/(?:[A-Za-z0-9_]{1,15}|i\/web)\/status(?:es)?\/(\d{5,25})/i);
+    if (!m) throw new BadRequestException('That does not look like a link to a post on X.');
+    if (!this.xVerification.isAvailable()) throw new BadRequestException('Reading posts from a link is not available right now. Paste the text instead.');
+    let tweet: Awaited<ReturnType<XVerificationService['getTweetByLink']>> = null;
+    try {
+      tweet = await this.xVerification.getTweetByLink(m[1]);
+    } catch (e: any) {
+      this.logger.warn(`[QuickRules] tweet lookup failed: ${e?.message ?? e}`);
+      // "request limit exceeded" is Sorsa's own quota/rate message, not ours: say so instead of blaming the post.
+      if (/limit|quota|cap/i.test(String(e?.message ?? '')) || [402, 429].includes(e?.status)) {
+        throw new HttpException('Reading posts from a link is temporarily unavailable (X data provider limit reached). Paste the text of your post instead.', HttpStatus.SERVICE_UNAVAILABLE);
+      }
+    }
+    if (!tweet) throw new BadRequestException('Could not read that post. Make sure it is public, or paste the text instead.');
+    const parsed = await this.parse(userId, tweet.text);
+    // The announcing account is never an entry requirement unless the post says so; the model is told this, basic parse is not.
+    const author = tweet.author?.toLowerCase() ?? null;
+    return { ...parsed, mentions: parsed.source === 'basic' && author ? parsed.mentions.filter((x) => x !== author) : parsed.mentions, text: tweet.text, author: tweet.author };
   }
 
   async parse(userId: string, rawText: string): Promise<ParsedQuickRules> {
@@ -144,9 +173,9 @@ export class QuickRulesParserService {
         ...clean,
         mentions: clean.mentions.length ? clean.mentions : basic.mentions,
         hashtags: clean.hashtags.length ? clean.hashtags : basic.hashtags,
-        prize_usd: clean.prize_usd ?? basic.prize_usd,
+        prize_usd: clean.custom_prize ? null : clean.prize_usd ?? basic.prize_usd,
         winner_count: clean.winner_count ?? basic.winner_count,
-        token_symbol: clean.token_symbol ?? basic.token_symbol,
+        token_symbol: clean.custom_prize ? null : clean.token_symbol ?? basic.token_symbol,
         source: 'ai',
       };
       await this.redis.set(cacheKey, JSON.stringify(merged), CACHE_SECONDS).catch(() => undefined);

@@ -49,6 +49,10 @@ function relativeTime(createdAt: string): string {
   return `${days}d ago`;
 }
 
+/** Minimum number of known crypto accounts (Sorsa influencers + projects + VCs) following an
+ *  account for each reputation tier. "Unknown" (tier 1) is no filter. Tune here. */
+export const TIER_MIN_CRYPTO_FOLLOWERS: Record<string, number> = { noted: 5, credible: 25, significant: 100, supreme: 400 };
+
 const SORSA_BASE_URL = 'https://api.sorsa.io/v3';
 const SORSA_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -118,6 +122,7 @@ const DEFAULT_DAILY_CALL_CAP = 300;
 export class XVerificationService {
   private readonly logger = new Logger(XVerificationService.name);
   private sorsaApiKey: string | null = null;
+  private readonly cryptoFollowerCache = new Map<string, { count: number; expiresAt: number }>();
   private readonly profileCache = new Map<string, { profile: XProfile; expiresAt: number }>();
   private readonly recentPostCache = new Map<string, { posts: XRecentPost[]; expiresAt: number }>();
   private readonly countryCache = new Map<string, { country: string; expiresAt: number }>();
@@ -242,6 +247,44 @@ export class XVerificationService {
       .filter((t) => t.id && t.text);
     this.recentPostCache.set(cacheKey, { posts, expiresAt: Date.now() + 10 * 60 * 1000 });
     return posts;
+  }
+
+  /** How many known crypto accounts (influencers, projects, VCs per Sorsa's categorisation) follow
+   *  a handle. Basis of the quick-giveaway reputation tiers. Cached 24h per handle; one cap unit per miss. */
+  async cryptoFollowerCount(handle: string): Promise<number> {
+    const clean = handle.replace(/^@/, '').trim().toLowerCase();
+    if (!/^[a-z0-9_]{1,15}$/.test(clean)) return 0;
+    if (!this.sorsaApiKey) throw new Error('SORSA_API_KEY not configured');
+    const hit = this.cryptoFollowerCache.get(clean);
+    if (hit && hit.expiresAt > Date.now()) return hit.count;
+    const redisKey = `xverify:cryptofollowers:${clean}`;
+    const cached = await this.redis.get(redisKey).catch(() => null);
+    if (cached !== null && cached !== undefined && !Number.isNaN(Number(cached))) {
+      this.cryptoFollowerCache.set(clean, { count: Number(cached), expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
+      return Number(cached);
+    }
+    await this.consumeDailyCapOrThrow(`crypto-followers:${clean}`);
+    let count = 0;
+    try {
+      const r = await this.sorsaRequest<Record<string, any>>('GET', '/followers-stats', { username: clean });
+      count = Number(r?.influencers_count ?? 0) + Number(r?.projects_count ?? 0) + Number(r?.venture_capitals_count ?? 0);
+    } catch (e) {
+      // An account Sorsa has no data for counts as zero; real outages must not be cached as zero.
+      if (!(e instanceof SorsaApiError) || e.status >= 500 || e.status === 429) throw e;
+    }
+    this.cryptoFollowerCache.set(clean, { count, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS });
+    await this.redis.set(redisKey, String(count), PROFILE_CACHE_TTL_MS / 1000).catch(() => undefined);
+    return count;
+  }
+
+  /** One post by link, for quick giveaways ("paste your post link"). Costs one daily-cap unit. */
+  async getTweetByLink(link: string): Promise<{ id: string; text: string; author: string | null } | null> {
+    if (!this.sorsaApiKey) throw new Error('SORSA_API_KEY not configured');
+    await this.consumeDailyCapOrThrow('quick-tweet-info');
+    const t = await this.sorsaRequest<Record<string, any>>('POST', '/tweet-info', { tweet_link: link });
+    const text = decodeEntities(String(t?.full_text ?? '')).trim();
+    if (!t?.id || !text) return null;
+    return { id: String(t.id), text, author: t?.user?.username ? String(t.user.username) : null };
   }
 
   /**

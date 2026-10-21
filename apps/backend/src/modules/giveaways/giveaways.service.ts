@@ -210,6 +210,19 @@ export class GiveawaysService {
     return prizeAmountUsd * winnerCount;
   }
 
+  /** Custom (non-money) prize: validated text, prize amount forced to 0. Throws for a money prize under $0.01. */
+  private checkPrizeShape(dto: CreateGiveawayDto, rewardType: GiveawayRewardType): string | null {
+    if (rewardType === GiveawayRewardType.CUSTOM) {
+      const text = dto.custom_prize_text?.trim();
+      if (!text) throw new BadRequestException('Describe the prize you are giving away.');
+      if (dto.prize_mint?.trim()) throw new BadRequestException('A custom prize cannot also pick a token.');
+      dto.prize_amount_usd = 0;
+      return text;
+    }
+    if (!(dto.prize_amount_usd >= 0.01)) throw new BadRequestException('Prize per winner must be at least $0.01.');
+    return null;
+  }
+
   /** Columns for a token prize. Empty (all null) for USDC and Megapot. The mint is re-checked
    *  on-chain here so a client cannot invent a symbol or a token program. */
   private async prizeColumns(dto: CreateGiveawayDto, rewardType: GiveawayRewardType) {
@@ -299,6 +312,7 @@ export class GiveawaysService {
         throw new BadRequestException('Ticket prizes must be a whole dollar amount between $1 and $100 per winner.');
       }
     }
+    const customPrizeText = this.checkPrizeShape(dto, rewardType);
     const prize = await this.prizeColumns(dto, rewardType);
 
     // "Create as Loofta" — never trust dto.is_official alone; re-check the caller is actually an
@@ -311,7 +325,9 @@ export class GiveawaysService {
       throw new BadRequestException('Giveaway burner minting is not configured (SEND_PAYMENT_ENC_KEY missing). Contact an engineer.');
     }
 
-    const platformFeeUsd = isOfficial ? 0 : giveawayPlatformFeeUsd(dto.prize_amount_usd * dto.winner_count);
+    if (isOfficial && customPrizeText) throw new BadRequestException('Official giveaways must use a money prize.');
+    // A custom prize escrows nothing: the flat $5 listing fee is the whole funding requirement.
+    const platformFeeUsd = isOfficial ? 0 : customPrizeText ? GIVEAWAY_PLATFORM_FEE_MIN_USD : giveawayPlatformFeeUsd(dto.prize_amount_usd * dto.winner_count);
     const funding_required_usd = this.computeFundingRequiredUsd(dto.prize_amount_usd, dto.winner_count) + platformFeeUsd;
 
     // A creator with no email linked to their Privy account is otherwise invisible once
@@ -335,6 +351,7 @@ export class GiveawaysService {
         selection_mode: dto.selection_mode,
         prize_amount_usd: dto.prize_amount_usd,
         reward_type: rewardType,
+        custom_prize_text: customPrizeText,
         ...prize,
         entries_close_at: closeAt.toISOString(),
         eligibility: dto.eligibility ?? {},
@@ -432,6 +449,7 @@ export class GiveawaysService {
         throw new BadRequestException('Ticket prizes must be a whole dollar amount between $1 and $100 per winner.');
       }
     }
+    const customPrizeText = this.checkPrizeShape(dto, rewardType);
     const prize = await this.prizeColumns(dto, rewardType);
 
     if (giveaway.status === GiveawayStatus.PENDING_FUNDING) {
@@ -471,6 +489,7 @@ export class GiveawaysService {
         selection_mode: dto.selection_mode,
         prize_amount_usd: dto.prize_amount_usd,
         reward_type: rewardType,
+        custom_prize_text: customPrizeText,
         ...prize,
         entries_close_at: closeAt.toISOString(),
         eligibility: dto.eligibility ?? {},

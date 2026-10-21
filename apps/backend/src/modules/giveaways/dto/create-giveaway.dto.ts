@@ -9,6 +9,7 @@ import {
   Min,
   Max,
   IsEnum,
+  IsIn,
   IsUrl,
   IsISO8601,
   MaxLength,
@@ -90,6 +91,11 @@ export class GiveawayEligibilityDto {
   @IsOptional()
   @IsBoolean()
   verified_only?: boolean;
+
+  @ApiPropertyOptional({ enum: ['noted', 'credible', 'significant', 'supreme'], description: 'Quick giveaways: minimum crypto reputation tier (known crypto accounts following the author).' })
+  @IsOptional()
+  @IsIn(['noted', 'credible', 'significant', 'supreme'])
+  min_tier?: 'noted' | 'credible' | 'significant' | 'supreme';
 
   @ApiPropertyOptional({ type: [String], description: "Only these countries (Sorsa's /about country names, e.g. \"United States\") may enter. OR'd with required_continents — either match qualifies." })
   @IsOptional()
@@ -205,13 +211,19 @@ export class CreateGiveawayDto {
 
   @ApiProperty({ description: 'Prize per winner, in USD.', example: 50 })
   @IsNumber()
-  @Min(0.01)
+  @Min(0)
   prize_amount_usd: number;
 
   @ApiPropertyOptional({ enum: GiveawayRewardType, description: 'How the prize is delivered — a normal USDC claim link (default), or that many dollars\' worth of gifted Megapot tickets (prize_amount_usd must then be a whole dollar amount, 1-100).' })
   @IsOptional()
   @IsEnum(GiveawayRewardType)
   reward_type?: GiveawayRewardType;
+
+  @ApiPropertyOptional({ description: "Required when reward_type is 'custom': what the winners get (event ticket...). Only the $5 listing fee is escrowed." })
+  @IsOptional()
+  @IsString()
+  @MaxLength(140)
+  custom_prize_text?: string | null;
 
   @ApiPropertyOptional({ description: 'SPL mint winners are paid in. Omit for a USDC prize. The creator still funds USDC; the prize pool is swapped into this mint when funding lands.' })
   @IsOptional()
