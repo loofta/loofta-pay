@@ -42,6 +42,8 @@ import { SolanaWalletConnectProvider } from "@/components/SolanaWalletConnect";
 import { DirectWalletPayPanel } from "@/components/app/DirectWalletPayPanel";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { DIRECT_CASH_PLATFORMS, type DirectCashPlatformId } from "@/lib/peerPlatforms";
+import { useRecipientSuggestions, useSuggestionNav, rememberRecipient, filterSuggestions, type RecipientSuggestion } from "@/hooks/useRecipientSuggestions";
+import { RecipientSuggestionList } from "@/components/RecipientSuggestionList";
 import { cashoutGrossUsdc } from "@/services/peerCash";
 import { IncognitoModeToggle } from "@/components/IncognitoModeToggle";
 import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
@@ -302,6 +304,8 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
   const [recipient, setRecipient] = useState("");
   const [socialPlatform, setSocialPlatform] = useState<SocialIconPlatform>("twitter");
   const [cashPlatform, setCashPlatform] = useState<DirectCashPlatformId>("venmo");
+  const [recipientFocused, setRecipientFocused] = useState(false);
+  const pastRecipients = useRecipientSuggestions();
   const [amount, setAmount] = useState("50");
   const [sending, setSending] = useState(false);
   const [isPrivateMode, setIsPrivateMode] = useState(false);
@@ -313,6 +317,26 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
   const [resolvedQueryKey, setResolvedQueryKey] = useState("");
 
   const trimmedRecipient = recipient.trim().replace(/^@+/, "");
+  const suggestions = recipientFocused && destKind !== "wallet"
+    ? filterSuggestions(
+        pastRecipients,
+        destKind === "cash" ? { kind: "cash", platform: cashPlatform } : handleKind === "email" ? { kind: "email" } : { kind: "social" },
+        recipient,
+      )
+    : [];
+  const pickSuggestion = (s: RecipientSuggestion) => {
+    if (s.kind === "cash") {
+      setDestKind("cash");
+      setCashPlatform(s.platform as DirectCashPlatformId);
+    } else {
+      setDestKind("handle");
+      setHandleKind(s.kind === "email" ? "email" : "social");
+      if (s.kind === "social") setSocialPlatform(s.platform);
+    }
+    setRecipient(s.value);
+    setRecipientFocused(false);
+  };
+  const suggestionNav = useSuggestionNav(suggestions, pickSuggestion);
   const amountNum = Number(amount);
   const walletInput = destKind === "wallet" ? recipient.trim() : "";
   // A .sol name resolves to its wallet; anything else is used as typed.
@@ -443,6 +467,8 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
             ? await createClaimFromUsername({ username: `loo-${trimmedRecipient.replace(/^loo-/i, "").toLowerCase()}`, amount, userId: user?.id, accessToken, isPrivate: payingPrivate, ...privacyChoice })
             : await createClaimFromSocial({ platform: socialPlatform as "discord" | "github" | "telegram", handle: trimmedRecipient, amount, userId: user?.id, accessToken, isPrivate: payingPrivate, ...privacyChoice });
       sessionStorage.removeItem(HOME_V3_SEND_DRAFT_KEY);
+      if (treatingAsEmail) rememberRecipient({ kind: "email", value: trimmedRecipient.toLowerCase() });
+      else rememberRecipient({ kind: "social", platform: socialPlatform, value: trimmedRecipient.replace(/^loo-/i, "").toLowerCase() });
       goToPay(router, `/c/${created.id}?pay=1${payingPrivate ? `&split=${split}&delayMs=${delayMs}` : ""}`);
     } catch (e: unknown) {
       setSending(false);
@@ -665,7 +691,9 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
               type="text"
               value={recipient}
               onChange={(e) => setRecipient(e.target.value.replace(/^[@$]+/, ""))}
-              onKeyDown={(e) => { if (e.key === "Enter" && isHandleDest && !guestHandlePay) onSend(); }}
+              onFocus={() => setRecipientFocused(true)}
+              onBlur={() => setRecipientFocused(false)}
+              onKeyDown={(e) => { if (suggestionNav.onKeyDown(e)) return; if (e.key === "Escape") setRecipientFocused(false); if (e.key === "Enter" && isHandleDest && !guestHandlePay) onSend(); }}
               placeholder={
                 destKind === "wallet"
                   ? "Solana wallet address"
@@ -683,6 +711,7 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
               className={`w-full h-14 rounded-2xl bg-white/5 border ${BORDER_LINE} ${INK} placeholder:text-[#7D7B76] pr-4 focus:border-white/30 transition-colors ${destKind === "wallet" || isCashDest || handleKind === "email" ? "pl-12" : "pl-16"}`}
               style={{ fontSize: "20px" }}
             />
+            <RecipientSuggestionList items={suggestions} active={suggestionNav.active} onPick={pickSuggestion} />
           </div>
           {platformFeeUsd > 0 && trimmedRecipient.length > 0 && amountNum >= minAmountUsd && (
             <p className={`mt-3 text-sm ${INK_3}`}>

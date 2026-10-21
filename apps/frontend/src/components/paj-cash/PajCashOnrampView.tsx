@@ -26,12 +26,14 @@ interface PajCashOnrampViewProps {
   prefillAmountUsd?: number;
   getAccessToken: () => Promise<string | null>;
   onBack: () => void;
+  /** Parent already shows a back button. */
+  hideBack?: boolean;
   onComplete?: () => void;
 }
 
 const POLL_INTERVAL_MS = 5_000;
 
-export function PajCashOnrampView({ dark, prefillEmail, prefillAmountUsd, getAccessToken, onBack, onComplete }: PajCashOnrampViewProps) {
+export function PajCashOnrampView({ dark, prefillEmail, prefillAmountUsd, getAccessToken, onBack, hideBack, onComplete }: PajCashOnrampViewProps) {
   const { toast } = useToast();
   const [step, setStep] = useState<Step>("checking-link");
   const [amount, setAmount] = useState(prefillAmountUsd && prefillAmountUsd > 0 ? prefillAmountUsd.toFixed(2) : "");
@@ -160,10 +162,12 @@ export function PajCashOnrampView({ dark, prefillEmail, prefillAmountUsd, getAcc
   if (step === "amount") {
     return (
       <div className="py-2 space-y-3">
-        <button type="button" onClick={onBack} className={`flex items-center gap-1 text-base font-medium transition-colors ${dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"}`}>
-          <ChevronLeft className="h-4 w-4" />
-          Back
-        </button>
+        {!hideBack && (
+          <button type="button" onClick={onBack} className={`flex items-center gap-1 text-base font-medium transition-colors ${dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"}`}>
+            <ChevronLeft className="h-4 w-4" />
+            Back
+          </button>
+        )}
         <p className={`text-base font-medium ${dark ? "text-slate-400" : "text-gray-500"}`}>Top up with Naira</p>
 
         <div>
@@ -202,10 +206,12 @@ export function PajCashOnrampView({ dark, prefillEmail, prefillAmountUsd, getAcc
   if ((step === "instructions" || step === "complete" || step === "failed") && order) {
     return (
       <div className="py-2 space-y-3">
-        <button type="button" onClick={onBack} className={`flex items-center gap-1 text-base font-medium transition-colors ${dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"}`}>
-          <ChevronLeft className="h-4 w-4" />
-          Back
-        </button>
+        {!hideBack && (
+          <button type="button" onClick={onBack} className={`flex items-center gap-1 text-base font-medium transition-colors ${dark ? "text-slate-400 hover:text-white" : "text-gray-500 hover:text-gray-900"}`}>
+            <ChevronLeft className="h-4 w-4" />
+            Back
+          </button>
+        )}
 
         {step === "complete" ? (
           <div className={cardClass}>

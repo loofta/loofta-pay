@@ -39,6 +39,8 @@ export type PaymentHistoryClaim = {
   recipient_address?: string;
   creator_email: string | null;
   creator_username?: string | null;
+  /** Handles the recipient has connected (X, Telegram, ...), used only for send autocomplete. */
+  recipient_socials?: { platform: string; handle: string }[];
   created_by: string | null;
   description: string | null;
   is_devnet?: boolean;
@@ -488,6 +490,25 @@ export async function GET(request: Request) {
       }
     }
 
+    // Connected handles of people this user paid, so autocomplete can offer "@name on Telegram"
+    // even though a registered recipient's row only keeps their Loofta username.
+    const socialsByUser: Record<string, { platform: string; handle: string }[]> = {};
+    const recipientIds = [...new Set(allItems.map((c) => (c as EnrichedClaim)._recipient_user_id ?? null).filter(Boolean))] as string[];
+    if (recipientIds.length > 0) {
+      const [{ data: socRows }, { data: twRows }] = await Promise.all([
+        supabase.from("social_accounts").select("user_id, platform, handle").in("user_id", recipientIds),
+        supabase.from("app_users").select("privy_user_id, twitter_username").in("privy_user_id", recipientIds),
+      ]);
+      for (const r of (socRows || []) as { user_id: string; platform: string; handle: string }[]) {
+        if (r.handle) (socialsByUser[r.user_id] ||= []).push({ platform: r.platform, handle: r.handle.replace(/^@/, "") });
+      }
+      for (const r of (twRows || []) as { privy_user_id: string; twitter_username: string | null }[]) {
+        const h = r.twitter_username?.replace(/^@/, "");
+        const list = (socialsByUser[r.privy_user_id] ||= []);
+        if (h && !list.some((x) => x.platform === "twitter")) list.push({ platform: "twitter", handle: h });
+      }
+    }
+
     const enrich = (c: PaymentHistoryClaim) => {
       const ec = c as EnrichedClaim;
       // Only backfill from recipient_user_id for from_sender payments.
@@ -512,6 +533,7 @@ export async function GET(request: Request) {
         recipient_username: recipientUsername,
         creator_username: creatorUsername,
         sender_username: senderUsername,
+        recipient_socials: c.direction === "from_sender" && ec._recipient_user_id ? socialsByUser[ec._recipient_user_id] ?? [] : [],
       };
     };
 

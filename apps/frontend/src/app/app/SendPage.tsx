@@ -40,6 +40,8 @@ import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { isValidSolanaAddress } from "@/lib/refundAddresses";
 import { useSolDomain } from "@/hooks/useSolDomain";
 import { DIRECT_CASH_PLATFORMS, type DirectCashPlatformId } from "@/lib/peerPlatforms";
+import { useRecipientSuggestions, useSuggestionNav, rememberRecipient, filterSuggestions, type RecipientSuggestion } from "@/hooks/useRecipientSuggestions";
+import { RecipientSuggestionList } from "@/components/RecipientSuggestionList";
 import { cashoutGrossUsdc } from "@/services/peerCash";
 
 const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
@@ -225,6 +227,28 @@ export default function Home() {
     () => readSendDraft()?.socialPlatform ?? "twitter",
   );
   const [cashPlatform, setCashPlatform] = useState<DirectCashPlatformId>("venmo");
+  const [recipientFocused, setRecipientFocused] = useState(false);
+  const pastRecipients = useRecipientSuggestions();
+  const suggestions = recipientFocused && (destKind === "cash" || (destKind === "handle" && (sendMethod === "social" || sendMethod === "email")))
+    ? filterSuggestions(
+        pastRecipients,
+        destKind === "cash" ? { kind: "cash", platform: cashPlatform } : sendMethod === "email" ? { kind: "email" } : { kind: "social" },
+        recipient,
+      )
+    : [];
+  const pickSuggestion = (s: RecipientSuggestion) => {
+    if (s.kind === "cash") {
+      setDestKind("cash");
+      setCashPlatform(s.platform as DirectCashPlatformId);
+    } else {
+      setDestKind("handle");
+      setSendMethod(s.kind === "email" ? "email" : "social");
+      if (s.kind === "social") setSocialPlatform(s.platform);
+    }
+    setRecipient(s.value);
+    setRecipientFocused(false);
+  };
+  const suggestionNav = useSuggestionNav(suggestions, pickSuggestion);
   const [isPrivateMode, setIsPrivateMode] = useState(() => readSendDraft()?.isPrivate ?? false);
   const [payTarget, setPayTarget] = useState<PayTarget>({ registered: false, requirePrivatePayments: false });
   const [resolvedQueryKey, setResolvedQueryKey] = useState("");
@@ -639,6 +663,10 @@ export default function Home() {
         if (keep) sessionStorage.setItem(SEND_BACK_DRAFT_KEY, keep);
       } catch { /* storage unavailable, Back just opens an empty form */ }
       sessionStorage.removeItem(SEND_DRAFT_KEY);
+      if (!lockedRecipient && sendMethod !== "username") {
+        if (treatingAsEmail) rememberRecipient({ kind: "email", value: trimmed.toLowerCase() });
+        else if (sendMethod === "social" && socialPlatform) rememberRecipient({ kind: "social", platform: socialPlatform, value: trimmed.replace(/^loo-/i, "").toLowerCase() });
+      }
       const payingPrivate = isPrivateMode || payTarget.requirePrivatePayments;
       router.push(`/c/${result.id}?pay=1${payingPrivate ? `&split=${split}&delayMs=${delayMs}` : ""}`);
     } catch (e: unknown) {
@@ -854,12 +882,16 @@ export default function Home() {
                         placeholder={DIRECT_CASH_PLATFORMS.find((p) => p.id === cashPlatform)?.placeholder ?? "@handle"}
                         value={recipient}
                         onChange={(e) => setRecipient(e.target.value.replace(/^[@$]+/, "").trimStart())}
+                        onKeyDown={(e) => { if (!suggestionNav.onKeyDown(e) && e.key === "Escape") setRecipientFocused(false); }}
+                        onFocus={() => setRecipientFocused(true)}
+                        onBlur={() => setRecipientFocused(false)}
                         autoComplete="off"
                         autoCapitalize="none"
                         spellCheck={false}
                         className="h-12 pl-10 bg-white/5 border-white/10 text-[#F2EFE8] placeholder:text-[#6E6C78]"
                         style={{ fontSize: 17, fontWeight: 600 }}
                       />
+                      <RecipientSuggestionList items={suggestions} active={suggestionNav.active} onPick={pickSuggestion} />
                     </div>
                   ) : destKind === "wallet" ? (
                     <div className="relative">
@@ -963,6 +995,9 @@ export default function Home() {
                           : raw.replace(/^@+/, "").trimStart();
                         setRecipient(trimmed);
                       }}
+                      onKeyDown={(e) => { if (!suggestionNav.onKeyDown(e) && e.key === "Escape") setRecipientFocused(false); }}
+                        onFocus={() => setRecipientFocused(true)}
+                      onBlur={() => setRecipientFocused(false)}
                       autoComplete="off"
                       className={[
                         "h-12 bg-white/5 border-white/10 text-[#F2EFE8] placeholder:text-[#6E6C78]",
@@ -974,6 +1009,7 @@ export default function Home() {
                           : { fontSize: 17, fontWeight: 600 }
                       }
                     />
+                    <RecipientSuggestionList items={suggestions} active={suggestionNav.active} onPick={pickSuggestion} />
                   </div>
                   )}
                   {destKind === "handle" && payTargetResolved && recipient.replace(/^@/, "").trim().length >= 2 && (

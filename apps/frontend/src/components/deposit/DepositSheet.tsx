@@ -62,15 +62,18 @@ const SPLITS = [
 ] as const;
 
 type Screen = "home" | "solana" | "address" | "card" | "paj";
-type CardProvider = "moonpay" | "coinbase" | "paj" | "revolut" | "venmo" | "cashapp";
+type CardProvider = "moonpay" | "coinbase" | "paj" | "peer" | "revolut" | "venmo" | "cashapp";
 
-const CARD_PROVIDERS: { id: CardProvider; name: string; hint: string; logo: string }[] = [
-  { id: "moonpay", name: "MoonPay", hint: "Card · Apple Pay · Google Pay", logo: "/images/icons/moonpay-logo.svg" },
-  { id: "coinbase", name: "Coinbase", hint: "From your Coinbase account", logo: "/images/icons/coinbase-logo.png" },
-  { id: "paj", name: "PAJ Cash", hint: "Naira bank transfer", logo: "/images/icons/paj-cash-logo.svg" },
-  { id: "revolut", name: "Revolut", hint: "From your Revolut account", logo: "/images/platforms/revolut.png" },
-  { id: "venmo", name: "Venmo", hint: "From your Venmo balance", logo: "/images/platforms/venmo.png" },
-  { id: "cashapp", name: "Cash App", hint: "From your Cash App balance", logo: "/images/platforms/cashapp.webp" },
+const CARD_PROVIDERS: { id: CardProvider; name: string; hint: string; logos: string[] }[] = [
+  { id: "coinbase", name: "Coinbase", hint: "From your Coinbase account", logos: ["/images/icons/coinbase-logo.png"] },
+  { id: "moonpay", name: "MoonPay", hint: "Card, Apple Pay, Google Pay", logos: ["/images/icons/moonpay-logo.svg"] },
+  { id: "paj", name: "PAJ Cash", hint: "Naira bank transfer", logos: ["/images/icons/paj-cash-logo.svg"] },
+  {
+    id: "peer",
+    name: "Payment app",
+    hint: "Choose your app on the next screen",
+    logos: ["/images/platforms/revolut.png", "/images/platforms/venmo.png", "/images/platforms/cashapp.webp", "/images/platforms/wise.svg", "/images/platforms/paypal.svg"],
+  },
 ];
 
 export type DepositLaunch = {
@@ -262,7 +265,7 @@ export function DepositSheet({
         </DialogDescription>
         <Header
           balanceUsd={balanceUsd}
-          title={screen === "solana" ? "USDC on Solana" : screen === "address" ? (mode === "withdraw" ? "Any crypto" : "Send to an address") : screen === "card" || screen === "paj" ? (mode === "withdraw" ? "Bank app" : "Card") : null}
+          title={screen === "solana" ? "USDC on Solana" : screen === "address" ? (mode === "withdraw" ? "Any crypto" : "Send to an address") : screen === "card" || screen === "paj" ? "Back" : null}
           privately={privately}
           showPrivacy={screen === "solana" || screen === "address"}
           onBack={screen === "home" ? null : () => setScreen(screen === "paj" ? "card" : "home")}
@@ -404,6 +407,7 @@ export function DepositSheet({
         {mode === "deposit" && screen === "paj" && (
           <PajCashOnrampView
             dark
+            hideBack
             getAccessToken={getAccessToken}
             onBack={() => setScreen("card")}
             onComplete={onRefresh}
@@ -940,31 +944,33 @@ function CardDeposit({
   const { toast } = useToast();
   const { createWallet: createEvmWallet } = useCreateWallet();
   const { wallets: evmWallets } = useEvmWallets();
-  const [provider, setProvider] = useState<CardProvider>(initialProvider ?? "moonpay");
-  const [amount, setAmount] = useState(initialAmount ?? "50");
+  const asPeer = (p?: CardProvider): CardProvider | null =>
+    !p ? null : p === "revolut" || p === "venmo" || p === "cashapp" ? "peer" : p;
+  const [provider, setProvider] = useState<CardProvider | null>(asPeer(initialProvider));
+  const [amount, setAmount] = useState(initialAmount ?? "");
   const [busy, setBusy] = useState(false);
   const amountNum = Number(amount);
   const providers = CARD_PROVIDERS.filter((p) => p.id !== "paj" || PAJ_CASH_ENABLED);
-  const selected = providers.find((p) => p.id === provider) ?? providers[0];
+  const selected = providers.find((p) => p.id === provider) ?? null;
 
-  const continueWith = async () => {
-    if (!(amountNum > 0)) return;
-    if (provider === "paj") { onPaj(); return; }
+  const continueWith = async (chosen: CardProvider) => {
+    if (chosen === "peer" && !(amountNum > 0)) return;
+    if (chosen === "paj") { onPaj(); return; }
     setBusy(true);
     try {
-      if (provider === "moonpay") {
+      if (chosen === "moonpay") {
         const key = process.env.NEXT_PUBLIC_MOONPAY_API_KEY;
         const url = new URL("https://buy.moonpay.com");
         if (key) url.searchParams.set("apiKey", key);
         url.searchParams.set("currencyCode", "usdc_sol");
         url.searchParams.set("walletAddress", solanaAddress);
         url.searchParams.set("baseCurrencyCode", "usd");
-        url.searchParams.set(receiveExactly ? "quoteCurrencyAmount" : "baseCurrencyAmount", String(amountNum));
+        if (amountNum > 0) url.searchParams.set(receiveExactly ? "quoteCurrencyAmount" : "baseCurrencyAmount", String(amountNum));
         window.open(url.toString(), "moonpay", "width=460,height=730");
         if (!key) toast({ title: "MoonPay opened", description: "If the window asks for an API key, set NEXT_PUBLIC_MOONPAY_API_KEY." });
         return;
       }
-      if (provider === "coinbase") {
+      if (chosen === "coinbase") {
         const access = await getAccessToken();
         const sessionRes = await fetch("/api/coinbase/session", {
           method: "POST",
@@ -1006,47 +1012,67 @@ function CardDeposit({
 
   return (
     <div className="mt-4 flex flex-col gap-4">
-      <div className="grid grid-cols-3 gap-2">
+      <div className="flex flex-col gap-3">
         {providers.map((item) => (
           <button
             key={item.id}
             type="button"
-            onClick={() => setProvider(item.id)}
+            disabled={busy}
+            onClick={() => {
+              setProvider(item.id);
+              if (item.id !== "peer") void continueWith(item.id);
+            }}
             className={cn(
-              "rounded-2xl border bg-[#1A1A20] p-3 text-left",
-              provider === item.id ? "border-[#FF7A2A]" : "border-white/10 hover:border-white/20",
+              "flex w-full items-center gap-3 rounded-2xl border bg-[#1A1A20] px-3.5 py-3.5 text-left disabled:opacity-50",
+              provider === item.id && item.id === "peer" ? "border-[#FF7A2A]" : "border-white/[0.07] hover:border-white/20",
             )}
           >
-            <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-xl bg-white/5">
-              <img src={item.logo} alt="" className="h-7 w-7 object-contain" />
+            {item.logos.length === 1 && (
+              <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-xl bg-white/10">
+                <img src={item.logos[0]} alt="" className="h-6 w-6 object-contain" />
+              </span>
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="block text-base font-bold text-white" style={{ fontFamily: SORA }}>{item.name}</span>
+              <span className="mt-0.5 block text-sm text-[#8A8893]">{item.hint}</span>
+              {item.logos.length > 1 && (
+                <span className="mt-2.5 flex">
+                  {item.logos.map((logo, i) => (
+                    <span key={logo} className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl border-2 border-[#1A1A20] bg-white/10" style={{ marginLeft: i ? -8 : 0 }}>
+                      <img src={logo} alt="" className="h-6 w-6 object-contain" />
+                    </span>
+                  ))}
+                </span>
+              )}
             </span>
-            <span className="mt-3 block text-sm font-bold text-white">{item.name}</span>
-            <span className="mt-0.5 block text-sm leading-snug text-[#8A8893]">{item.hint}</span>
+            <span className="text-[#8A8893]">{busy && provider === item.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "→"}</span>
           </button>
         ))}
       </div>
-      <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-[#1A1A20] px-4 py-3">
-        <span className="text-sm font-semibold text-[#8A8893]">{receiveExactly ? "USDC to receive" : "USD"}</span>
-        <input
-          inputMode="decimal"
-          value={amount}
-          readOnly={lockAmount}
-          onChange={(e) => { if (!lockAmount) setAmount(e.target.value.replace(/[^0-9.]/g, "")); }}
-          className="w-28 bg-transparent text-right text-3xl font-bold text-white outline-none"
-          style={{ fontFamily: SORA }}
-        />
-      </label>
-      <p className="text-sm text-[#8A8893]">
-        {selected.name} sends USDC to your Loofta balance{privately ? ". Cross-chain card deposits still settle through a quote, then land as USDC." : "."}
-      </p>
-      <button
-        type="button"
-        disabled={busy || !(amountNum > 0)}
-        onClick={() => void continueWith()}
-        className="rounded-2xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-4 text-base font-bold text-white hover:opacity-90 disabled:opacity-50"
-      >
-        {busy ? "Opening…" : `Continue with ${selected.name}`}
-      </button>
+      {selected?.id === "peer" && (
+        <>
+          <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-[#1A1A20] px-4 py-3">
+            <span className="text-sm font-semibold text-[#8A8893]">{receiveExactly ? "USDC to receive" : "USD"}</span>
+            <input
+              inputMode="decimal"
+              value={amount}
+              readOnly={lockAmount}
+              onChange={(e) => { if (!lockAmount) setAmount(e.target.value.replace(/[^0-9.]/g, "")); }}
+              placeholder="20"
+              className="w-28 bg-transparent text-right text-3xl font-bold text-white outline-none"
+              style={{ fontFamily: SORA }}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={busy || !(amountNum > 0)}
+            onClick={() => void continueWith("peer")}
+            className="rounded-2xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-4 text-base font-bold text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {busy ? "Opening…" : "Continue"}
+          </button>
+        </>
+      )}
     </div>
   );
 }
