@@ -6,7 +6,7 @@ import { Connection, PublicKey, Transaction, VersionedTransaction } from "@solan
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { useCreateWallet, usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import { useSignTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
-import { ChevronDown, ChevronLeft, Copy, ExternalLink, Loader2, Shield, X } from "lucide-react";
+import { ChevronLeft, Copy, ExternalLink, Loader2, Shield, X } from "lucide-react";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
@@ -23,6 +23,8 @@ import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
 import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { addWithdrawal } from "@/lib/withdrawalHistory";
+import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
+import { DEFAULT_SPREAD_MS } from "@/lib/privacyDelay";
 import { sora, manrope } from "@/components/home-v4/fonts";
 import { getAccurateQuote, getDepositInfo, getExecutionStatus, type NearToken } from "@/services/nearIntents";
 import { buildDirectPrivateDeposit, type PrivateTransferStatus } from "@/services/api/privateBalance";
@@ -46,20 +48,8 @@ const SORA = "var(--font-home-sora), Sora, sans-serif";
 const SUCCESS = new Set(["SUCCESS", "COMPLETED"]);
 const TERMINAL = new Set(["SUCCESS", "COMPLETED", "REFUNDED", "FAILED", "EXPIRED"]);
 
-const DELAYS = [
-  { id: "5m", label: "5 min", ms: 5 * 60_000 },
-  { id: "30m", label: "30 min", ms: 30 * 60_000 },
-  { id: "1h", label: "1 hour", ms: 60 * 60_000 },
-  { id: "6h", label: "6 hours", ms: 6 * 60 * 60_000 },
-  { id: "24h", label: "24 hours", ms: 24 * 60 * 60_000 },
-] as const;
-
-const SPLITS = [
-  { n: 1, label: "No split" },
-  { n: 2, label: "2 parts" },
-  { n: 4, label: "4 parts" },
-  { n: 8, label: "8 parts" },
-] as const;
+/** The private deposit endpoint rejects max_delay_ms above 24h, unlike Send. */
+const DEPOSIT_MAX_DELAY_MS = 86_400_000;
 
 type Screen = "home" | "solana" | "address" | "card" | "paj";
 type CardProvider = "moonpay" | "coinbase" | "paj" | "peer" | "revolut" | "venmo" | "cashapp";
@@ -135,7 +125,7 @@ export function DepositSheet({
   // fails Token Program 0x1 / insufficient funds on simulation.
   const balanceNum = Math.floor((balanceExact ?? (Number(balanceUsd) || 0)) * 1_000_000) / 1_000_000;
   const [solanaAmount, setSolanaAmount] = useState("");
-  const [delayId, setDelayId] = useState<(typeof DELAYS)[number]["id"]>("5m");
+  const [delayMs, setDelayMs] = useState<number>(DEFAULT_SPREAD_MS);
   const [split, setSplit] = useState<number>(1);
   const [blinkDepositing, setBlinkDepositing] = useState(false);
   const [blinkError, setBlinkError] = useState<string | null>(null);
@@ -234,7 +224,6 @@ export function DepositSheet({
   };
 
   const cluster = devnetMode ? "devnet" : "mainnet";
-  const delay = DELAYS.find((d) => d.id === delayId) ?? DELAYS[0];
 
   return (
     // modal={false} (same as BalanceModal "fix modal blink"): Blink mounts on document.body
@@ -265,7 +254,7 @@ export function DepositSheet({
         </DialogDescription>
         <Header
           balanceUsd={balanceUsd}
-          title={screen === "solana" ? "USDC on Solana" : screen === "address" ? (mode === "withdraw" ? "Any crypto" : "Send to an address") : screen === "card" || screen === "paj" ? "Back" : null}
+          title={screen === "solana" ? (mode === "deposit" ? "Back" : "USDC on Solana") : screen === "address" ? (mode === "withdraw" ? "Any crypto" : "Send to an address") : screen === "card" || screen === "paj" ? "Back" : null}
           privately={privately}
           showPrivacy={screen === "solana" || screen === "address"}
           onBack={screen === "home" ? null : () => setScreen(screen === "paj" ? "card" : "home")}
@@ -344,6 +333,14 @@ export function DepositSheet({
               icons={[{ src: "/images/blink/icon-yellow.png", bg: "#1C1C22" }]}
             />
             <MethodRow
+              title="Private USDC deposit"
+              hint="From your wallet, shielded with a delay and split"
+              badge="Private"
+              onClick={() => { setPrivately(true); setScreen("solana"); }}
+              disabled={!solanaAddress || blinkDepositing}
+              icons={[{ src: "/images/usdc.svg", bg: "#2775CA" }, { src: "/images/logo/magicblock-mark.svg", bg: "#111" }]}
+            />
+            <MethodRow
               title="Card"
               hint="MoonPay, Coinbase, PAJ Cash, Revolut, Venmo, Cash App"
               onClick={() => setScreen("card")}
@@ -364,11 +361,10 @@ export function DepositSheet({
             privately={privately}
             amount={solanaAmount}
             onAmount={setSolanaAmount}
-            delayId={delayId}
-            onDelay={setDelayId}
+            onDelayMs={setDelayMs}
             split={split}
             onSplit={setSplit}
-            delayMs={delay.ms}
+            delayMs={delayMs}
             solanaAddress={solanaAddress}
             cluster={cluster}
             userId={user?.id}
@@ -565,35 +561,11 @@ function MethodRow({
   );
 }
 
-function Pill({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "rounded-full border px-3 py-1.5 text-sm font-semibold transition-colors",
-        active ? "border-[#FF7A2A] bg-[#FF7A2A]/15 text-white" : "border-white/10 bg-white/[0.04] text-[#C8C6D0] hover:bg-white/[0.08]",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
 function SolanaDeposit(props: {
   privately: boolean;
   amount: string;
   onAmount: (v: string) => void;
-  delayId: string;
-  onDelay: (id: (typeof DELAYS)[number]["id"]) => void;
+  onDelayMs: (ms: number) => void;
   split: number;
   onSplit: (n: number) => void;
   delayMs: number;
@@ -606,53 +578,26 @@ function SolanaDeposit(props: {
 }) {
   const amountNum = Number(props.amount);
   const validAmount = Number.isFinite(amountNum) && amountNum >= 1;
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const delayLabel = DELAYS.find((d) => d.id === props.delayId)?.label ?? "5 min";
+  const [infoOpen, setInfoOpen] = useState(false);
 
   return (
     <div className="mt-4 flex flex-col gap-4">
       {props.privately && (
-        <div className="rounded-2xl border border-white/10 bg-[#1A1A20]">
-          <button
-            type="button"
-            aria-expanded={advancedOpen}
-            onClick={() => setAdvancedOpen((open) => !open)}
-            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-          >
-            <span>
-              <span className="block text-sm font-semibold text-white">Advanced settings</span>
-              <span className="block text-sm text-[#8A8893]">
-                {props.split > 1 ? `${props.split} parts · ${delayLabel}` : delayLabel}
-              </span>
-            </span>
-            <ChevronDown className={cn("h-4 w-4 shrink-0 text-[#8A8893] transition-transform", advancedOpen && "rotate-180")} />
-          </button>
-          {advancedOpen && (
-            <div className="border-t border-white/10 px-4 py-3">
-              <p className="text-sm font-semibold text-[#8A8893]">Release delay</p>
-              <p className="text-sm text-[#8A8893]">Longer is harder to link</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {DELAYS.map((d) => (
-                  <Pill key={d.id} active={props.delayId === d.id} onClick={() => props.onDelay(d.id)}>{d.label}</Pill>
-                ))}
-              </div>
-              <p className="mt-3 text-sm font-semibold text-[#8A8893]">Split into</p>
-              <p className="text-sm text-[#8A8893]">Random amounts and times</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {SPLITS.map((s) => (
-                  <Pill key={s.n} active={props.split === s.n} onClick={() => props.onSplit(s.n)}>{s.label}</Pill>
-                ))}
-              </div>
-              <p className="mt-3 text-sm text-[#C8C6D0]">
-                {props.split > 1
-                  ? `Arrives in ${props.split} payments, within about ${delayLabel}.`
-                  : `Arrives in one payment, about ${delayLabel} after it's received.`}
-              </p>
-              <p className="mt-2 flex items-center gap-1.5 text-sm text-[#8A8893]">
-                Privacy powered by <img src="/magicblock.svg" alt="MagicBlock" className="h-4 w-4" />
-              </p>
-            </div>
-          )}
+        <div>
+          <PrivacyTimingControls
+            idPrefix="deposit"
+            split={props.split}
+            onSplitChange={props.onSplit}
+            delayMs={props.delayMs}
+            onDelayMsChange={props.onDelayMs}
+            amountUsd={validAmount ? amountNum : undefined}
+            maxDelayMs={DEPOSIT_MAX_DELAY_MS}
+            infoOpen={infoOpen}
+            onInfoOpenChange={setInfoOpen}
+          />
+          <p className="mt-2 flex items-center justify-center gap-2 text-sm text-[#8A8893]">
+            Privacy powered by <img src="/magicblock.svg" alt="MagicBlock" className="h-4 w-auto" />
+          </p>
         </div>
       )}
 

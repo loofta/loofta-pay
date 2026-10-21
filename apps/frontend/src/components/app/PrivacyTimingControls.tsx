@@ -47,6 +47,7 @@ export function PrivacyTimingControls({
   delayMs,
   onDelayMsChange,
   amountUsd,
+  maxDelayMs,
   infoOpen,
   onInfoOpenChange,
   theme = "dark",
@@ -59,6 +60,8 @@ export function PrivacyTimingControls({
   delayMs: number;
   onDelayMsChange: (v: number) => void;
   amountUsd?: number;
+  /** Lower the delay ceiling for endpoints that accept less than the 31-day transfer maximum. */
+  maxDelayMs?: number;
   infoOpen: boolean;
   onInfoOpenChange: (v: boolean) => void;
   theme?: Theme;
@@ -68,16 +71,19 @@ export function PrivacyTimingControls({
   className?: string;
 }) {
   const t = TEXT[theme];
+  const unitMax = (u: DelayUnit) =>
+    maxDelayMs == null ? DELAY_UNIT_MAX[u] : Math.min(DELAY_UNIT_MAX[u], Math.floor(maxDelayMs / DELAY_UNIT_MS[u]));
+  const units = DELAY_UNITS.filter((u) => unitMax(u) >= 1);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [unit, setUnit] = useState<DelayUnit>(() => unitForDelayMs(delayMs));
   useEffect(() => {
     setUnit((current) => {
       const inUnit = delayMs / DELAY_UNIT_MS[current];
-      if (delayMs > 0 && Number.isInteger(inUnit) && inUnit <= DELAY_UNIT_MAX[current]) return current;
+      if (delayMs > 0 && Number.isInteger(inUnit) && inUnit <= unitMax(current)) return current;
       return unitForDelayMs(delayMs);
     });
   }, [delayMs]);
-  const amountInUnit = Math.min(DELAY_UNIT_MAX[unit], Math.round(delayMs / DELAY_UNIT_MS[unit]));
+  const amountInUnit = Math.min(unitMax(unit), Math.round(delayMs / DELAY_UNIT_MS[unit]));
   const summary = `${split} ${split === 1 ? "part" : "parts"} · ${delayMs <= 0 ? "no delay" : formatDelayDuration(delayMs)}`;
   const divider = theme === "dark" ? "border-white/10" : "border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10";
 
@@ -85,7 +91,7 @@ export function PrivacyTimingControls({
     if (next === unit) return;
     // Carry the current value over converted into the new unit, clamped to its range, instead of
     // resetting to 0 — switching from "45 min" to hours should land on "1 hr", not "no delay".
-    const nextAmount = Math.min(DELAY_UNIT_MAX[next], Math.round(delayMs / DELAY_UNIT_MS[next]));
+    const nextAmount = Math.min(unitMax(next), Math.round(delayMs / DELAY_UNIT_MS[next]));
     setUnit(next);
     onDelayMsChange(nextAmount * DELAY_UNIT_MS[next]);
   };
@@ -155,9 +161,9 @@ export function PrivacyTimingControls({
             </span>
           </div>
         </div>
-        {DELAY_UNITS.length > 1 && (
+        {units.length > 1 && (
           <div className={`mb-3 inline-flex items-center gap-1 rounded-full p-1 ${theme === "dark" ? "bg-white/[0.06]" : "bg-gray-100 [@media(prefers-color-scheme:dark)]:bg-white/5"}`}>
-            {DELAY_UNITS.map((u) => (
+            {units.map((u) => (
               <button
                 key={u}
                 type="button"
@@ -178,7 +184,7 @@ export function PrivacyTimingControls({
         <Slider
           id={`${idPrefix}-delay`}
           min={0}
-          max={DELAY_UNIT_MAX[unit]}
+          max={unitMax(unit)}
           step={1}
           value={[amountInUnit]}
           onValueChange={([v]) => onDelayMsChange(v * DELAY_UNIT_MS[unit])}
