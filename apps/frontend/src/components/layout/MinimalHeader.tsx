@@ -302,17 +302,20 @@ export function MinimalHeader() {
     return () => window.removeEventListener("openBalanceModal", handler);
   }, [refreshBalance]);
 
-  // Deep link from the Telegram bot's Fund button: /app?deposit=1 opens the deposit sheet directly.
-  // Waits for sign-in (the sheet only renders when authenticated), then removes the param so a
-  // refresh or back navigation doesn't pop the sheet again.
+  // Deep links from the Telegram bot: /app?deposit=1 opens the deposit sheet and /app?withdraw=1 opens it
+  // on withdraw. Waits for sign-in (the sheet only renders when authenticated), then removes the param so
+  // a refresh or back navigation doesn't pop the sheet again.
   useEffect(() => {
     if (!authenticated || typeof window === "undefined") return;
     const url = new URL(window.location.href);
-    if (url.searchParams.get("deposit") !== "1") return;
+    const wantsWithdraw = url.searchParams.get("withdraw") === "1";
+    const wantsDeposit = url.searchParams.get("deposit") === "1";
+    if (!wantsWithdraw && !wantsDeposit) return;
+    url.searchParams.delete("withdraw");
     url.searchParams.delete("deposit");
     window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     setShowBalanceModal(false);
-    setDepositMode("deposit");
+    setDepositMode(wantsWithdraw ? "withdraw" : "deposit");
     setDepositScreen("home");
     setShowDeposit(true);
   }, [authenticated]);

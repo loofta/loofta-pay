@@ -91,6 +91,7 @@ export class TelegramBotService implements OnModuleInit {
       const privateCommands = [
         { command: 'balance', description: 'Your balance' },
         { command: 'fund', description: 'Add money to your wallet' },
+        { command: 'withdraw', description: 'Withdraw your money' },
         { command: 'pay', description: 'Pay someone, for example /pay 5 @someone' },
         { command: 'payprivately', description: 'Pay privately, for example /payprivately 5 @someone' },
         { command: 'history', description: 'Your recent payments' },
@@ -145,9 +146,11 @@ export class TelegramBotService implements OnModuleInit {
     if (command?.[2] && command[2].toLowerCase() !== this.botUsername.toLowerCase()) return;
     const name = command?.[1]?.toLowerCase();
 
-    if (name === 'start' || name === 'help') return this.sendWelcome(msg, isPrivate);
+    // /start is short on purpose: just the two things to try. The whole guide is behind /help.
+    if (name === 'start' || name === 'help') return this.sendIntro(msg.chat.id, isPrivate, name === 'help');
     if (name === 'balance') return this.privateOnly(msg, isPrivate, () => this.showBalance(msg.chat.id, from));
     if (name === 'fund') return this.privateOnly(msg, isPrivate, () => this.showFund(msg.chat.id, from));
+    if (name === 'withdraw') return this.privateOnly(msg, isPrivate, () => this.showWithdraw(msg.chat.id));
     if (name === 'history') return this.privateOnly(msg, isPrivate, () => this.showHistory(msg.chat.id, from));
     if (name === 'settings') return this.privateOnly(msg, isPrivate, () => this.showSettings(msg.chat.id, from));
     if (name === 'logout') return this.privateOnly(msg, isPrivate, () => this.logout(msg.chat.id, from));
@@ -260,17 +263,46 @@ export class TelegramBotService implements OnModuleInit {
     return {
       inline_keyboard: [
         [{ text: 'Balance', callback_data: 'menu:balance' }, { text: 'Fund', callback_data: 'menu:fund' }],
-        [{ text: 'Send', callback_data: 'menu:send' }, { text: 'History', callback_data: 'menu:history' }],
+        [{ text: 'Withdraw', callback_data: 'menu:withdraw' }, { text: 'History', callback_data: 'menu:history' }],
         [{ text: 'Settings', callback_data: 'menu:settings' }, { text: 'Log out', callback_data: 'menu:logout' }],
       ],
     };
   }
 
-  private async sendWelcome(msg: TgMessage, isPrivate: boolean) {
-    // The guide shown on /start and /help: what the bot can do, with a copyable example for each.
-    const text = isPrivate
-      ? [
+  /** /start (short) and /help (the whole guide). In a group both give the one-line version. */
+  private async sendIntro(chatId: number, isPrivate: boolean, full: boolean) {
+    if (!isPrivate) {
+      await this.api!.sendMessage(
+        chatId,
+        'Reply to someone with <code>/pay 5</code>, or type <code>/pay 5 @someone</code>. Add the word <code>privately</code> for a private payment. Message me directly to set up and fund your wallet.',
+        { keyboard: { inline_keyboard: [[{ text: 'Open chat', url: `https://t.me/${this.botUsername}` }]] } },
+      );
+      return;
+    }
+    if (!full) {
+      // Just the two things to try. Everything else is in /help.
+      await this.api!.sendMessage(
+        chatId,
+        [
           '<b>Loofta Pay</b>',
+          'Pay anyone on Telegram in USDC.',
+          '',
+          '<code>pay $5 to @someone</code>',
+          '<code>pay $5 privately to @someone</code>',
+        ].join('\n'),
+        {
+          keyboard: {
+            inline_keyboard: [
+              [{ text: 'Help', callback_data: 'menu:help' }],
+            ],
+          },
+        },
+      );
+      return;
+    }
+    // The guide: what the bot can do, with a copyable example for each.
+    const text = [
+          '<b>Loofta Pay help</b>',
           'Pay anyone on Telegram in USDC, right from this chat.',
           '',
           '<b>Get started</b>',
@@ -296,19 +328,18 @@ export class TelegramBotService implements OnModuleInit {
           '<b>Good to know</b>',
           'Every fee is shown on the card before you confirm, and every payment waits for your Confirm tap. Your limits are always checked.',
           '',
-          '<b>Commands</b>: /balance /fund /history /settings /logout /help',
-        ].join('\n')
-      : 'Reply to someone with <code>/pay 5</code>, or type <code>/pay 5 @someone</code>. Pay up to 5 people at once: <code>/pay $5 to @someone, $10 to @another</code>. Add the word <code>privately</code> for a private payment. Message me directly to set up and fund your wallet.';
-    await this.api!.sendMessage(msg.chat.id, text, {
-      keyboard: isPrivate
-        ? {
-            inline_keyboard: [
-              [{ text: 'Set up auto-pay', url: `${this.autoPayUrl}` }],
-              [{ text: 'Read the full guide', url: this.guideUrl }],
-              ...this.mainMenu().inline_keyboard,
-            ],
-          }
-        : { inline_keyboard: [[{ text: 'Open chat', url: `https://t.me/${this.botUsername}` }]] },
+          '<b>Got paid?</b> Send /withdraw to cash it out.',
+          '',
+          '<b>Commands</b>: /balance /fund /withdraw /history /settings /logout /help',
+        ].join('\n');
+    await this.api!.sendMessage(chatId, text, {
+      keyboard: {
+        inline_keyboard: [
+          [{ text: 'Set up auto-pay', url: `${this.autoPayUrl}` }],
+          [{ text: 'Read the full guide', url: this.guideUrl }],
+          ...this.mainMenu().inline_keyboard,
+        ],
+      },
     });
   }
 
@@ -441,6 +472,13 @@ export class TelegramBotService implements OnModuleInit {
       ].join('\n'),
       { keyboard: { inline_keyboard: [[{ text: 'Add money', url: `${this.appUrl}/app?deposit=1` }]] } },
     );
+  }
+
+  /** For anyone, signed in or not: the button opens Loofta (which asks them to sign in) straight on withdraw. */
+  private async showWithdraw(chatId: number) {
+    await this.api!.sendMessage(chatId, 'Withdraw your USDC to a bank, a cash app or another wallet.', {
+      keyboard: { inline_keyboard: [[{ text: 'Withdraw', url: `${this.appUrl}/app?withdraw=1` }]] },
+    });
   }
 
   private async showHistory(chatId: number, from: TgUser) {
@@ -760,9 +798,11 @@ export class TelegramBotService implements OnModuleInit {
       if (cb.message?.chat.type !== 'private') return;
       if (arg === 'balance') return this.showBalance(chatId, cb.from);
       if (arg === 'fund') return this.showFund(chatId, cb.from);
+      if (arg === 'withdraw') return this.showWithdraw(chatId);
       if (arg === 'history') return this.showHistory(chatId, cb.from);
       if (arg === 'settings') return this.showSettings(chatId, cb.from);
       if (arg === 'logout') return this.logout(chatId, cb.from);
+      if (arg === 'help') return this.sendIntro(chatId, true, true);
       if (arg === 'send') {
         await this.api!.sendMessage(chatId, 'Type it like <code>pay $5 to @someone</code>, or pay several people at once: <code>pay $5 to @someone, $10 to @another</code>.');
       }
@@ -937,14 +977,30 @@ export class TelegramBotService implements OnModuleInit {
         ),
       );
     }
+    // Each payment gets its link and a Share button that opens Telegram's share sheet with a ready message.
+    const many = okOnes.length > 1;
     const linkRows: InlineButton[][] = okOnes.map((o) => [
-      { text: okOnes.length > 1 ? `View payment to @${o.handle}` : 'View payment', url: o.shortLink! },
+      { text: many ? `View @${o.handle}` : 'View payment', url: o.shortLink! },
+      { text: many ? `Share @${o.handle}` : 'Share link', url: this.shareUrl(o.amount, o.claimLink ?? o.shortLink!) },
     ]);
+    if (outcomes.length === 1 && okOnes.length === 1) {
+      // The same message as plain text, to copy: tapping a code block copies it.
+      lines.push('', 'Send it to them:', `<code>${escapeHtml(this.shareText(okOnes[0].amount))}\n${escapeHtml(okOnes[0].claimLink ?? okOnes[0].shortLink!)}</code>`);
+    }
     for (const o of unsure) {
       if (o.signature) linkRows.push([{ text: `Check on Solscan: @${o.handle}`, url: `https://solscan.io/tx/${o.signature}` }]);
     }
     if (unsure.length && outcomes.length > 1) lines.push('', 'The rest were not attempted. Check /history before sending again.');
     await this.api!.editMessage(chatId, messageId, lines.join('\n'), linkRows.length ? { inline_keyboard: linkRows } : undefined);
+  }
+
+  private shareText(amount: number): string {
+    return `Hey, I just sent you ${money(amount)} on @${this.botUsername}, click the link below to claim it`;
+  }
+
+  /** Opens Telegram's own share sheet: pick a chat, the message and link are already filled in. */
+  private shareUrl(amount: number, link: string): string {
+    return `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(this.shareText(amount))}`;
   }
 
   /** Telegram only lets a bot message someone who pressed Start, so this is best effort. */
@@ -959,7 +1015,7 @@ export class TelegramBotService implements OnModuleInit {
       if (!data?.chat_id) return;
       const who = sender.username ? `@${escapeHtml(sender.username)}` : escapeHtml(sender.first_name ?? 'Someone');
       await this.api!.sendMessage(Number(data.chat_id), isPrivate ? `${who} is sending you <b>${money(amount)}</b> privately. It arrives after the delay they chose.` : `${who} sent you <b>${money(amount)}</b>.`, {
-        keyboard: { inline_keyboard: [[{ text: 'Open payment', url: link }]] },
+        keyboard: { inline_keyboard: [[{ text: 'Open payment', url: link }, { text: 'Withdraw', url: `${this.appUrl}/app?withdraw=1` }]] },
       });
     } catch (e) {
       this.logger.warn(`Could not notify @${handle}: ${(e as Error).message}`);

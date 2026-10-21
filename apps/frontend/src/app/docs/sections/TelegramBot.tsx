@@ -48,6 +48,7 @@ export function TelegramBot() {
         <li><code className={code}>/pay</code> and <code className={code}>/payprivately</code>: pay people.</li>
         <li><code className={code}>/balance</code>: your balance.</li>
         <li><code className={code}>/fund</code>: your wallet address and a button to add money.</li>
+        <li><code className={code}>/withdraw</code>: opens Loofta on withdraw, to cash out to a bank, a cash app or another wallet. Anyone can use it.</li>
         <li><code className={code}>/history</code>: your recent payments.</li>
         <li><code className={code}>/settings</code>: your limits and a link to change them.</li>
         <li><code className={code}>/help</code>: this guide, in short.</li>

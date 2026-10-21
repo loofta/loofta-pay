@@ -202,11 +202,9 @@ export default function TwitterBotPage() {
       <div className="space-y-2">
         <h1 className="text-3xl font-semibold text-white">Auto-pay</h1>
         <p className="text-lg text-slate-300 leading-relaxed">
-          Let Loofta pay from your wallet when you ask it to, within limits you set. Message{' '}
+          Pay anyone from Telegram. Message{' '}
           <a href="https://t.me/looftapay_bot" target="_blank" rel="noreferrer" className="text-white underline underline-offset-2">@looftapay_bot</a>{' '}
-          on Telegram with <span className="text-white">pay $5 to @someone</span>, or reply to someone in a group with{' '}
-          <span className="text-white">/pay 5</span>. Recipients without a Loofta account get a claim link.
-          Sign in to Loofta with the same Telegram account you use in the bot.
+          with <span className="text-white">pay $5 to @someone</span>.
         </p>
       </div>
 
@@ -235,20 +233,18 @@ export default function TwitterBotPage() {
         </div>
 
         {status?.enrolled ? (
-          <GradientActionButton onClick={handleDisable} loading={working} loadingText="Turning off…">
-            Turn off
-          </GradientActionButton>
+          <div className="space-y-4">
+            <p className="text-lg text-slate-300">You are ready. Open the bot and send your first payment.</p>
+            <GradientActionButton onClick={() => window.open('https://t.me/looftapay_bot', '_blank', 'noopener,noreferrer')}>
+              Open @looftapay_bot
+            </GradientActionButton>
+          </div>
         ) : status?.canEnable ? (
           <div className="space-y-4">
-            <div className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-4 space-y-2 text-lg text-slate-300 leading-relaxed">
-              <p className="text-white font-medium">Before you turn this on</p>
-              <ul className="list-disc pl-5 space-y-1.5">
-                <li>You give Loofta permission to send USDC from your Loofta wallet when a command comes from your own Telegram account.</li>
-                <li>Each payment is capped at ${status?.maxPerPaymentCapUsd ?? 500} at most, and you set your own per-payment and daily limits below. Both are checked on every payment.</li>
-                <li>Payments are sent to the account named in the command. Check handles carefully, because a payment that has been sent cannot be reversed by Loofta.</li>
-                <li>You can turn auto-pay off at any time, which removes the permission from your wallet.</li>
-              </ul>
-            </div>
+            <ul className="list-disc pl-5 space-y-1.5 text-lg text-slate-300 leading-relaxed">
+              <li>Loofta can send USDC from your wallet when a command comes from your own Telegram account.</li>
+              <li>A payment that has been sent cannot be reversed, so check the name before you confirm. You can turn this off any time.</li>
+            </ul>
             <label className="flex items-start gap-3 cursor-pointer">
               <input
                 type="checkbox"
@@ -256,11 +252,11 @@ export default function TwitterBotPage() {
                 onChange={(e) => setAcceptedTerms(e.target.checked)}
                 className="mt-1.5 h-5 w-5 accent-orange-400"
               />
-              <span className="text-lg text-white/80">I understand and accept these terms.</span>
+              <span className="text-lg text-white/80">I understand and accept.</span>
             </label>
-          <GradientActionButton onClick={handleEnable} loading={working} loadingText="Setting up…" disabled={!acceptedTerms}>
-            Give Loofta access to fund
-          </GradientActionButton>
+            <GradientActionButton onClick={handleEnable} loading={working} loadingText="Setting up…" disabled={!acceptedTerms}>
+              Get started
+            </GradientActionButton>
           </div>
         ) : (
           <p className="text-lg text-slate-300">
@@ -274,9 +270,9 @@ export default function TwitterBotPage() {
       {status?.enrolled && (
         <>
           <div className={card}>
-            <h2 className="text-xl font-semibold text-white">Spending limits</h2>
+            <h2 className="text-xl font-semibold text-white">Limits</h2>
             <p className="text-lg text-slate-300">
-              Hard limits checked on every payment, no matter who asks. The daily limit covers the last 24 hours.
+              Right now the bot can send up to ${status.perPaymentCapUsd} per payment and ${status.dailyCapUsd} a day. Change them any time.
             </p>
             <label className="block space-y-1.5">
               <span className="text-lg text-white/70">Max per payment (USD, up to {status.maxPerPaymentCapUsd})</span>
@@ -290,6 +286,14 @@ export default function TwitterBotPage() {
               Save limits
             </GradientActionButton>
           </div>
+          <button
+            type="button"
+            onClick={handleDisable}
+            disabled={working}
+            className="text-lg text-white/50 underline underline-offset-2 hover:text-white disabled:opacity-50"
+          >
+            {working ? 'Turning off…' : 'Turn off auto-pay'}
+          </button>
         </>
       )}
 
