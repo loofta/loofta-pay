@@ -46,8 +46,8 @@ export interface RecipientRef {
   value: string;
 }
 
-/** Charged when a sender takes back a payment the recipient never claimed. */
-export const RECLAIM_FEE_USD = 0.05;
+/** Charged when a sender takes back a payment the recipient never claimed. None: the sender already paid the claim fee, which is not refunded. */
+export const RECLAIM_FEE_USD = 0;
 
 export interface TelegramPaymentPlan {
   registered: boolean;
@@ -751,7 +751,7 @@ export class TwitterAutopayService {
   }
 
   /**
-   * Takes back an unclaimed payment: the money goes back to the sender's wallet minus the $0.05 fee.
+   * Takes back an unclaimed payment: the money goes back to the sender's wallet (minus RECLAIM_FEE_USD, currently none).
    * Only a payment that is still unclaimed qualifies, checked here again right before moving anything.
    */
   async reclaimUnclaimed(userId: string, paymentId: string): Promise<{ returnedUsd: number; feeUsd: number }> {

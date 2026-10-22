@@ -24,10 +24,10 @@ describe('taking back an unclaimed payment', () => {
     expect([...ok]).toEqual(['waiting']);
   });
 
-  it('takes it back with the $0.05 fee and says what comes back', async () => {
+  it('takes it back in full, with no fee, and says what comes back', async () => {
     const { svc, row, reclaimByCreator } = build();
     row({ id: 'waiting', amount: '5' });
-    expect(await svc.reclaimUnclaimed('u1', 'waiting')).toEqual({ returnedUsd: 4.95, feeUsd: 0.05 });
+    expect(await svc.reclaimUnclaimed('u1', 'waiting')).toEqual({ returnedUsd: 5, feeUsd: 0 });
     expect(reclaimByCreator).toHaveBeenCalledWith('waiting', 'u1', { feeUsdc: RECLAIM_FEE_USD });
   });
 

@@ -1187,7 +1187,7 @@ export class TelegramBotService implements OnModuleInit {
       }
       return `${verb} ${amount} to ${who}`;
     });
-    const hint = buttons.length ? `\n\nA payment nobody has claimed can be taken back for ${money(RECLAIM_FEE_USD)}.` : '';
+    const hint = buttons.length ? '\n\nA payment nobody has claimed can be taken back.' : '';
     await this.api!.sendMessage(chatId, `<b>Recent payments</b>\n${lines.join('\n')}${hint}`, buttons.length ? { keyboard: { inline_keyboard: buttons } } : {});
   }
 
@@ -1223,10 +1223,10 @@ export class TelegramBotService implements OnModuleInit {
         messageId,
         [
           `Take back your <b>${money(amount)}</b> to ${who}?`,
-          `Fee: <b>${money(RECLAIM_FEE_USD)}</b>`,
+          ...(RECLAIM_FEE_USD > 0 ? [`Fee: <b>${money(RECLAIM_FEE_USD)}</b>`] : []),
           `You get back: <b>${money(back)}</b>, into your Loofta wallet`,
           '',
-          `They will no longer be able to claim it. Fees you paid when sending are not refunded.`,
+          `They will no longer be able to claim it. The claim fee and other fees you paid when sending are not refunded.`,
         ].join('\n'),
         { inline_keyboard: [[{ text: `Get back ${money(back)}`, callback_data: `rc:yes:${row.id}` }, { text: 'Keep it', callback_data: 'rc:no' }]] },
       ));
@@ -1249,7 +1249,7 @@ export class TelegramBotService implements OnModuleInit {
       await this.api!.editMessage(
         chatId,
         messageId,
-        [`Done. <b>${money(res.returnedUsd)}</b> is back in your wallet (fee ${money(res.feeUsd)}).`, after != null ? `Your balance: <b>${money(after)}</b>` : ''].filter(Boolean).join('\n'),
+        [`Done. <b>${money(res.returnedUsd)}</b> is back in your wallet.${res.feeUsd > 0 ? ` (fee ${money(res.feeUsd)})` : ''}`, after != null ? `Your balance: <b>${money(after)}</b>` : ''].filter(Boolean).join('\n'),
       );
     } catch (e) {
       // The burner's own balance decides whether money can still move, so a failed attempt is safe to retry.
@@ -1660,7 +1660,7 @@ export class TelegramBotService implements OnModuleInit {
     await this.api!.editMessage(chatId, messageId, claimedRows.length > 1 ? `Sending ${claimedRows.length} payments…` : 'Sending…');
 
     const batchTotal = claimedRows.reduce((t, r) => t + Number(r.amount_usd), 0);
-    const outcomes: Array<{ handle: string; amount: number; isPrivate: boolean; shortLink?: string; claimLink?: string; error?: string; uncertain?: boolean; signature?: string | null }> = [];
+    const outcomes: Array<{ actionId?: string; paymentId?: string; handle: string; amount: number; isPrivate: boolean; shortLink?: string; claimLink?: string; error?: string; uncertain?: boolean; signature?: string | null }> = [];
     let stopped = false; // set after an unconfirmed payment: nothing further is attempted
     const isDevnet = isSolanaDevnetFromConfig(this.config);
 
@@ -1693,6 +1693,8 @@ export class TelegramBotService implements OnModuleInit {
           .update({ status: 'paid', payment_id: result.paymentId, claim_link: result.claimLink, paid_at: new Date().toISOString() })
           .eq('id', row.id);
         outcomes.push({
+          actionId: row.id,
+          paymentId: result.paymentId,
           handle,
           amount,
           isPrivate: !!row.is_private,
@@ -1762,6 +1764,19 @@ export class TelegramBotService implements OnModuleInit {
     if (outcomes.length === 1 && okOnes.length === 1) {
       // The same message as plain text, to copy: tapping a code block copies it.
       lines.push('', 'Send it to them:', `<code>${escapeHtml(this.shareText(okOnes[0].amount))}\n${escapeHtml(okOnes[0].claimLink ?? okOnes[0].shortLink!)}</code>`);
+    }
+    // A payment sent as a claim link that nobody has claimed yet can be taken back right here.
+    if (cb.message?.chat.type === 'private' && okOnes.length) {
+      try {
+        const unclaimed = await this.autopay.unclaimedPaymentIds(claimedRows[0].privy_user_id, okOnes.map((o) => o.paymentId!).filter(Boolean));
+        for (const o of okOnes) {
+          if (o.paymentId && o.actionId && unclaimed.has(o.paymentId)) {
+            linkRows.push([{ text: many ? `Get back @${o.handle}` : 'Get back this payment', callback_data: `rc:ask:${o.actionId}` }]);
+          }
+        }
+      } catch (e) {
+        this.logger.warn(`Could not check which payments can be taken back: ${(e as Error).message}`);
+      }
     }
     for (const o of unsure) {
       if (o.signature) linkRows.push([{ text: `Check on Solscan: @${o.handle}`, url: `https://solscan.io/tx/${o.signature}` }]);
