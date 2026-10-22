@@ -1,4 +1,4 @@
-import { distinctRecents, recipientKeyboard, parseRecipientText, amountCard, commandForAmount, SEND_AMOUNTS } from './send-flow';
+import { distinctRecents, recipientKeyboard, parseRecipientText, amountCard, commandForAmount, SEND_AMOUNTS, readyKeyboard, readyAction } from './send-flow';
 import { parseSendCommand } from './telegram-parser';
 
 describe('send flow', () => {
@@ -44,5 +44,20 @@ describe('send flow', () => {
       expect(parseSendCommand(commandForAmount('alice_w', true, a), 'looftapay_bot')).toMatchObject({ ok: true, amount: a, handle: 'alice_w', isPrivate: true });
       expect(parseSendCommand(commandForAmount('alice_w', false, a), 'looftapay_bot')).toMatchObject({ ok: true, amount: a, isPrivate: false });
     }
+  });
+});
+
+describe('the always-ready keyboard', () => {
+  it('stays on screen with Send and Balance', () => {
+    const k = readyKeyboard();
+    expect(k.is_persistent).toBe(true);
+    expect(k.keyboard[0].map((b) => b.text)).toEqual(['Send', 'Balance']);
+    expect(k.keyboard[0].every((b) => !('request_users' in b))).toBe(true);
+  });
+  it('turns a tap on a button, or the word typed, into the action', () => {
+    expect(readyAction('Send')).toBe('send');
+    expect(readyAction(' balance ')).toBe('balance');
+    expect(readyAction('send 5 to @alice_w')).toBeNull();
+    expect(readyAction('hello')).toBeNull();
   });
 });

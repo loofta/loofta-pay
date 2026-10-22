@@ -9,7 +9,7 @@ import { TwitterAutopayService, UncertainPaymentError, type TelegramPaymentPlan 
 import { TelegramApi, InlineKeyboard, InlineButton, escapeHtml } from './telegram-api';
 import { parseSendCommand, nextStep, type NextStep, DEFAULT_PRIVATE_DELAY_MS } from './telegram-parser';
 import { IntentLlmService, intentToSentence } from './intent-llm';
-import { SEND_AMOUNTS, SendDraft, distinctRecents, recipientKeyboard, parseRecipientText, amountCard, commandForAmount } from './send-flow';
+import { SEND_AMOUNTS, SendDraft, distinctRecents, recipientKeyboard, parseRecipientText, amountCard, commandForAmount, readyKeyboard, readyAction } from './send-flow';
 
 interface TgUser { id: number; is_bot?: boolean; username?: string; first_name?: string }
 interface TgMessage {
@@ -150,6 +150,16 @@ export class TelegramBotService implements OnModuleInit {
     // In a group, a command addressed to some other bot is not ours.
     if (command?.[2] && command[2].toLowerCase() !== this.botUsername.toLowerCase()) return;
     const name = command?.[1]?.toLowerCase();
+
+    if (isPrivate) this.touchNudge(msg.chat.id);
+    // The always-visible buttons at the bottom send their label as a message.
+    if (isPrivate && !command) {
+      const action = readyAction(text);
+      if (action) {
+        this.forgetDraft(`${msg.chat.id}:${from.id}`);
+        return action === 'send' ? this.startSend(msg.chat.id, from) : this.showBalance(msg.chat.id, from);
+      }
+    }
 
     // Guided /send: a bare /send starts it; while it waits for a recipient, a typed or tapped @name is that recipient.
     const draftKey = `${msg.chat.id}:${from.id}`;
@@ -324,6 +334,7 @@ export class TelegramBotService implements OnModuleInit {
           },
         },
       );
+      await this.showReady(chatId, 'Send is one tap away.');
       return;
     }
     // The guide: what the bot can do, with a copyable example for each.
@@ -977,6 +988,7 @@ export class TelegramBotService implements OnModuleInit {
       return;
     }
 
+    if (cb.message?.chat.type === 'private') this.touchNudge(cb.message.chat.id);
     if (kind === 'snd') return this.onSendCallback(cb, arg, val);
 
     const supabase = this.db.getClient();
@@ -1165,7 +1177,49 @@ export class TelegramBotService implements OnModuleInit {
     // The balance after the payment, read fresh so it already reflects what was just sent.
     const balanceAfter = await this.balanceOf(claimedRows[0]?.privy_user_id);
     if (balanceAfter != null) lines.push('', `Your balance: <b>${money(balanceAfter)}</b>`);
+    const inPrivate = cb.message?.chat.type === 'private';
+    if (inPrivate && !outcomes.some((o) => o.uncertain)) linkRows.push([{ text: 'Send again', callback_data: 'menu:send' }]);
     await this.api!.editMessage(chatId, messageId, lines.join('\n'), linkRows.length ? { inline_keyboard: linkRows } : undefined);
+    // Bring the Send button back at the bottom of the chat, and again after a quiet while.
+    if (inPrivate) {
+      await this.showReady(chatId, 'Ready for the next one.');
+      this.scheduleNudge(chatId);
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Always-ready Send
+
+  private readonly readyMsg = new Map<number, number>();
+  private readonly nudgeTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  /** Puts the Send / Balance buttons at the bottom of the chat (silently), replacing the last such message. */
+  private async showReady(chatId: number, text: string) {
+    const previous = this.readyMsg.get(chatId);
+    if (previous) await this.api!.deleteMessage(chatId, previous);
+    try {
+      const sent = await this.api!.sendMessage(chatId, text, { replyKeyboard: readyKeyboard(), silent: true });
+      if (sent?.message_id) this.readyMsg.set(chatId, sent.message_id);
+    } catch (e) {
+      this.logger.warn(`Could not show the ready keyboard: ${(e as Error).message}`);
+    }
+  }
+
+  /** After a payment, one gentle reminder once the chat has gone quiet. Any new activity pushes it back. */
+  private scheduleNudge(chatId: number) {
+    const existing = this.nudgeTimers.get(chatId);
+    if (existing) clearTimeout(existing);
+    const minutes = Number(this.config.get<string>('BOT_NUDGE_MINUTES') || 10);
+    const t = setTimeout(() => {
+      this.nudgeTimers.delete(chatId);
+      void this.showReady(chatId, 'Need to pay someone? Tap Send.');
+    }, minutes * 60_000);
+    t.unref?.();
+    this.nudgeTimers.set(chatId, t);
+  }
+  /** Called on any activity in a chat that has a reminder waiting. */
+  private touchNudge(chatId: number) {
+    if (this.nudgeTimers.has(chatId)) this.scheduleNudge(chatId);
   }
 
   private shareText(amount: number): string {

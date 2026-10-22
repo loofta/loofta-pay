@@ -11,6 +11,8 @@ export type ReplyKeyboard = {
   keyboard: Array<Array<{ text: string; request_users?: { request_id: number; user_is_bot?: boolean; max_quantity?: number; request_username?: boolean; request_name?: boolean } }>>;
   resize_keyboard?: boolean;
   one_time_keyboard?: boolean;
+  /** Stays on screen instead of collapsing. */
+  is_persistent?: boolean;
   input_field_placeholder?: string;
 };
 
@@ -44,16 +46,17 @@ export class TelegramApi {
     }
   }
 
-  sendMessage(chatId: number, text: string, opts: { keyboard?: InlineKeyboard; replyKeyboard?: ReplyKeyboard; replyTo?: number; forceReply?: string } = {}) {
+  sendMessage(chatId: number, text: string, opts: { keyboard?: InlineKeyboard; replyKeyboard?: ReplyKeyboard; replyTo?: number; forceReply?: string; silent?: boolean } = {}) {
     return this.withPlainFallback((parseMode, body) => this.sendMessageRaw(chatId, body, parseMode, opts), text);
   }
 
-  private sendMessageRaw(chatId: number, text: string, parseMode: 'HTML' | undefined, opts: { keyboard?: InlineKeyboard; replyKeyboard?: ReplyKeyboard; replyTo?: number; forceReply?: string }) {
+  private sendMessageRaw(chatId: number, text: string, parseMode: 'HTML' | undefined, opts: { keyboard?: InlineKeyboard; replyKeyboard?: ReplyKeyboard; replyTo?: number; forceReply?: string; silent?: boolean }) {
     return this.call<{ message_id: number }>('sendMessage', {
       chat_id: chatId,
       text,
       ...(parseMode ? { parse_mode: parseMode } : {}),
       link_preview_options: { is_disabled: true },
+      ...(opts.silent ? { disable_notification: true } : {}),
       ...(opts.keyboard ? { reply_markup: opts.keyboard } : {}),
       ...(opts.replyKeyboard ? { reply_markup: opts.replyKeyboard } : {}),
       // Opens the reply box already pointed at this message, with a hint of what to type. selective: in a
@@ -76,6 +79,15 @@ export class TelegramApi {
       link_preview_options: { is_disabled: true },
       reply_markup: keyboard ?? { inline_keyboard: [] },
     });
+  }
+
+  /** Best effort: a message that is already gone, or too old, is simply left. */
+  async deleteMessage(chatId: number, messageId: number): Promise<void> {
+    try {
+      await this.call('deleteMessage', { chat_id: chatId, message_id: messageId });
+    } catch {
+      /* nothing to do */
+    }
   }
 
   answerCallback(callbackQueryId: string, text?: string) {

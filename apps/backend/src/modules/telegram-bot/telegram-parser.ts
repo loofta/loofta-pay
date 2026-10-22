@@ -230,19 +230,19 @@ const askBoth = (isPrivate: boolean): NextStep => ({
   kind: 'ask',
   plain: isPrivate ? PAY_PRIVATE_PROMPT : PAY_PROMPT,
   prompt: `${isPrivate ? PAY_PRIVATE_PROMPT : PAY_PROMPT} Reply with a name and an amount, for example <code>@someone 5</code>, or several people: <code>@someone 5, @another 10</code>.${isPrivate ? ' You can add <code>delay 30m split 4</code>.' : ''}`,
-  placeholder: '@someone 5',
+  placeholder: '@username and amount',
 });
 const askAmount = (handle: string, isPrivate: boolean): NextStep => ({
   kind: 'ask',
   plain: payTargetPrompt(handle, isPrivate),
   prompt: `${payTargetPrompt(handle, isPrivate)} Reply with an amount, for example <code>5</code>.`,
-  placeholder: '5',
+  placeholder: 'Amount in dollars',
 });
 const askWho = (amount: number, isPrivate: boolean): NextStep => ({
   kind: 'ask',
   plain: payWhoPrompt(amount, isPrivate),
   prompt: `${payWhoPrompt(amount, isPrivate)} Reply with their Telegram username, for example <code>@someone</code>.`,
-  placeholder: '@someone',
+  placeholder: '@username',
 });
 
 /**

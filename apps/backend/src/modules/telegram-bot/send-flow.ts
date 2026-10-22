@@ -75,3 +75,14 @@ export function amountCard(handle: string, isPrivate: boolean, balanceUsd?: numb
 /** The ordinary command sentence for a tapped amount, which then goes through the normal Confirm card. */
 export const commandForAmount = (handle: string, isPrivate: boolean, amount: number) =>
   `${isPrivate ? 'payprivately' : 'pay'} ${amount} to @${handle}`;
+
+/** The two actions always one tap away, at the bottom of the chat. Tapping one sends its label as a message. */
+export const READY_BUTTONS = ['Send', 'Balance'];
+export function readyKeyboard(): ReplyKeyboard {
+  return { keyboard: [READY_BUTTONS.map((text) => ({ text }))], resize_keyboard: true, is_persistent: true };
+}
+/** A tap on one of those buttons, or the word typed by hand. */
+export const readyAction = (text: string): 'send' | 'balance' | null => {
+  const t = text.trim().toLowerCase();
+  return t === 'send' ? 'send' : t === 'balance' ? 'balance' : null;
+};
