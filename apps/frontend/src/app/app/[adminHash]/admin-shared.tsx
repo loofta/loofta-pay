@@ -180,6 +180,16 @@ export type AnalyticsData = {
   tx_withdrawals_mainnet_count: number;
   volume_total_all: number;
   growth_windows: Record<"last_24h" | "prev_24h" | "last_7d" | "prev_7d", GrowthWindow>;
+  revenue: Record<"last_30d" | "all_time", {
+    payment_fees: number; private_payment_fees: number; claim_fees: number; edit_fees: number;
+    paj_fees: number; setup_fees: number; total: number;
+  }>;
+  telegram: {
+    bot_users: number;
+    last_30d: { payments: number; private_payments: number; volume: number; users: number };
+    all_time: { payments: number; private_payments: number; volume: number; users: number };
+  };
+  private_30d: Record<"payments" | "deposits" | "withdrawals", { count: number; volume: number }>;
 };
 
 export type GrowthWindow = {

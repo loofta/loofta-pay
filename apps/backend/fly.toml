@@ -1,0 +1,36 @@
+# Loofta backend: emergency fallback / alternate host to Railway.
+# Deploy from apps/backend:  fly deploy -c fly.toml
+#
+# Run exactly ONE machine. With crons enabled, two production instances race each other on
+# payouts (see src/common/cron-gate.ts). Fly starts with DISABLE_CRONS=true so it can never double-run
+# money-moving crons alongside Railway; flip it deliberately with:
+#   fly secrets set DISABLE_CRONS=false -a loofta-api     # only while Railway is DOWN
+#   fly secrets set DISABLE_CRONS=true  -a loofta-api     # BEFORE Railway comes back
+app = "loofta-api"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3001"
+  DISABLE_CRONS = "true"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "20s"
+    timeout = "5s"
+    grace_period = "40s"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"

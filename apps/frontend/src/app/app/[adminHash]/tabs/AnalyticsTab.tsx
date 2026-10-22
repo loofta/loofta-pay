@@ -106,6 +106,77 @@ export function AnalyticsTab({
               <div className="text-sm text-gray-500 mt-2">Rolling windows ending now. Growth compares against the equal-length period right before.</div>
             </div>
 
+            {/* Private activity, last 30 days */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Private activity (last 30 days, mainnet)</h3>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {([
+                  ["Private payments", analyticsData.private_30d.payments],
+                  ["Private deposits", analyticsData.private_30d.deposits],
+                  ["Private withdrawals", analyticsData.private_30d.withdrawals],
+                ] as const).map(([label, v]) => (
+                  <div key={label} className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                    <div className="text-[10px] text-purple-400 uppercase tracking-wider mb-1 font-medium">{label}</div>
+                    <div className="text-2xl font-bold text-white tabular-nums">{v.count.toLocaleString()}</div>
+                    <div className="text-sm text-gray-500 mt-0.5">{fmtUsd(v.volume)} USDC</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Revenue: fees Loofta charged on completed mainnet activity */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Fees charged (USDC, includes MagicBlock gas recovery)</h3>
+              <div className="overflow-x-auto rounded-xl border border-gray-800">
+                <table className="w-full text-base md:text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-gray-400 text-sm uppercase tracking-wide">
+                      <th className="text-left px-4 py-2.5"></th>
+                      <th className="text-right px-4 py-2.5">Last 30 days</th>
+                      <th className="text-right px-4 py-2.5">All time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {([
+                      ["Payment fees (all, incl. Telegram)", "payment_fees"],
+                      ["of which private payments", "private_payment_fees"],
+                      ["Naira claim fees", "claim_fees"],
+                      ["Recipient edit fees", "edit_fees"],
+                      ["PAJ Cash fees", "paj_fees"],
+                      ["Private transfer setup fees", "setup_fees"],
+                      ["Total", "total"],
+                    ] as const).map(([label, key]) => (
+                      <tr key={key} className="border-b border-gray-800/60 hover:bg-gray-900/50">
+                        <td className={`px-4 py-2.5 ${key === "total" ? "text-white font-semibold" : "text-gray-300"}`}>{label}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-white">{fmtUsd(analyticsData.revenue.last_30d[key])}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums text-white">{fmtUsd(analyticsData.revenue.all_time[key])}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="text-sm text-gray-500 mt-2">From fee columns on completed mainnet records. Payment fees include the gas recovery that MagicBlock keeps, so this overstates what Loofta actually receives. The "of which" row is already inside payment fees.</div>
+            </div>
+
+            {/* Telegram bot */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Telegram bot</h3>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {([
+                  ["Bot users (pressed Start)", analyticsData.telegram.bot_users.toLocaleString(), ""],
+                  ["Payments, 30d", analyticsData.telegram.last_30d.payments.toLocaleString(), `${analyticsData.telegram.last_30d.private_payments} private · ${analyticsData.telegram.last_30d.users} payers`],
+                  ["Volume, 30d", fmtUsd(analyticsData.telegram.last_30d.volume), "USD"],
+                  ["Payments, all time", analyticsData.telegram.all_time.payments.toLocaleString(), `${fmtUsd(analyticsData.telegram.all_time.volume)} USD · ${analyticsData.telegram.all_time.private_payments} private`],
+                ] as const).map(([label, value, sub]) => (
+                  <div key={label} className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                    <div className="text-[10px] text-sky-400 uppercase tracking-wider mb-1 font-medium">{label}</div>
+                    <div className="text-2xl font-bold text-white tabular-nums">{value}</div>
+                    {sub && <div className="text-sm text-gray-500 mt-0.5">{sub}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* Volume section */}
             <div>
               <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Transaction Volume</h3>

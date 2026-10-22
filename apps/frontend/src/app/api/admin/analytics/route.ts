@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
     // sender_user_id/recipient_user_id also feed the mainnet active/repeat user counts below.
     supabase
       .from("payments")
-      .select("amount, sender_user_id, recipient_user_id, created_at")
+      .select("amount, sender_user_id, recipient_user_id, created_at, is_private")
       .eq("is_devnet", false)
       .eq("status", "SUCCESS")
       .limit(100000),
@@ -326,8 +326,91 @@ export async function GET(request: NextRequest) {
     prev_7d: volumeIn(nowMs - 14 * 86400000, nowMs - 7 * 86400000),
   };
 
+  // Private activity, last 30 days (mainnet). Private payments are completed payments flagged
+  // is_private; private deposits/withdrawals live in private_transfers.
+  const since30dMs = nowMs - 30 * 86400000;
+  const { data: privateTransfers } = await supabase
+    .from("private_transfers")
+    .select("direction, amount_requested_usdc, created_at")
+    .eq("cluster", "mainnet")
+    .eq("status", "complete")
+    .gte("created_at", new Date(since30dMs).toISOString())
+    .limit(100000);
+  const privPayments = (mainnetSuccessRes.data ?? []).filter(
+    (r: any) => r.is_private && new Date(r.created_at).getTime() >= since30dMs
+  );
+  const privDeposits = (privateTransfers ?? []).filter((r: any) => r.direction === "deposit");
+  const privWithdrawals = (privateTransfers ?? []).filter((r: any) => r.direction === "withdrawal");
+  const private_30d = {
+    payments: { count: privPayments.length, volume: sum(privPayments, "amount") },
+    deposits: { count: privDeposits.length, volume: sum(privDeposits, "amount_requested_usdc") },
+    withdrawals: { count: privWithdrawals.length, volume: sum(privWithdrawals, "amount_requested_usdc") },
+  };
+
+  // Revenue: fees Loofta charged, from the DB columns written at payment time. Completed
+  // mainnet payments only (links never paid carry a fee quote but no revenue), so this is the
+  // "should have been received" number; the on-chain fee account is the reconciliation source.
+  const [feePaymentsRes, pajFeesRes, setupFeesRes, tgActionsRes, tgUsersRes] = await Promise.all([
+    supabase
+      .from("payments")
+      .select("fee_paid_usdc, naira_claim_fee_usdc, recipient_edit_fee_usdc, is_private, created_at")
+      .eq("is_devnet", false)
+      .eq("status", "SUCCESS")
+      .limit(100000),
+    supabase
+      .from("paj_cash_orders")
+      .select("loofta_fee_usdc, created_at")
+      .eq("status", "COMPLETE")
+      .limit(100000),
+    supabase
+      .from("private_transfers")
+      .select("ata_setup_fee_usdc, created_at")
+      .eq("cluster", "mainnet")
+      .eq("status", "complete")
+      .limit(100000),
+    supabase
+      .from("telegram_bot_actions")
+      .select("amount_usd, is_private, privy_user_id, created_at")
+      .eq("status", "paid")
+      .limit(100000),
+    supabase.from("telegram_bot_users").select("telegram_user_id", { count: "exact", head: true }),
+  ]);
+  const revenueSince = (fromMs: number) => {
+    const inWin = (r: any) => new Date(r.created_at).getTime() >= fromMs;
+    const pays = (feePaymentsRes.data ?? []).filter(inWin);
+    const out = {
+      payment_fees: sum(pays, "fee_paid_usdc"),
+      private_payment_fees: sum(pays.filter((r: any) => r.is_private), "fee_paid_usdc"),
+      claim_fees: sum(pays, "naira_claim_fee_usdc"),
+      edit_fees: sum(pays, "recipient_edit_fee_usdc"),
+      paj_fees: sum((pajFeesRes.data ?? []).filter(inWin), "loofta_fee_usdc"),
+      setup_fees: sum((setupFeesRes.data ?? []).filter(inWin), "ata_setup_fee_usdc"),
+      total: 0,
+    };
+    out.total = out.payment_fees + out.claim_fees + out.edit_fees + out.paj_fees + out.setup_fees;
+    return out;
+  };
+  const revenue = { last_30d: revenueSince(since30dMs), all_time: revenueSince(0) };
+  const tgSince = (fromMs: number) => {
+    const rows = (tgActionsRes.data ?? []).filter((r: any) => new Date(r.created_at).getTime() >= fromMs);
+    return {
+      payments: rows.length,
+      private_payments: rows.filter((r: any) => r.is_private).length,
+      volume: sum(rows, "amount_usd"),
+      users: new Set(rows.map((r: any) => r.privy_user_id)).size,
+    };
+  };
+  const telegram = {
+    bot_users: tgUsersRes.count ?? 0,
+    last_30d: tgSince(since30dMs),
+    all_time: tgSince(0),
+  };
+
   const payload = {
     growth_windows,
+    private_30d,
+    revenue,
+    telegram,
     volume_devnet,
     volume_mainnet,
     volume_devnet_total,
