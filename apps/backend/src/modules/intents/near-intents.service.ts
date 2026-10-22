@@ -301,6 +301,9 @@ export class NearIntentsService implements OnModuleInit {
     toToken: { tokenId: string; chain: string; decimals: number };
     amount: string;
     slippageBps?: number;
+    /** A real destination and refund address when known. The placeholders are rejected for some networks. */
+    recipient?: string;
+    refundTo?: string;
   }): Promise<QuoteResult> {
     const { fromToken, toToken, amount, slippageBps = 100 } = params;
 
@@ -324,9 +327,9 @@ export class NearIntentsService implements OnModuleInit {
         depositType: originIsMultiToken ? QuoteRequest.depositType.INTENTS : QuoteRequest.depositType.ORIGIN_CHAIN,
         destinationAsset: toToken.tokenId,
         amount: atomicIn,
-        refundTo: this.getRefundAddress(fromToken.chain),
+        refundTo: params.refundTo ?? this.getRefundAddress(fromToken.chain),
         refundType: QuoteRequest.refundType.ORIGIN_CHAIN,
-        recipient: this.getRefundAddress(toToken.chain),
+        recipient: params.recipient ?? this.getRefundAddress(toToken.chain),
         recipientType: QuoteRequest.recipientType.DESTINATION_CHAIN,
         deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
         quoteWaitingTimeMs: 3000,
@@ -500,7 +503,7 @@ export class NearIntentsService implements OnModuleInit {
     destinationAddress: string;
     refundAddress: string;
     isDevnet?: boolean;
-  }): Promise<{ id: string; depositAddress: string; memo: string | null; deadline?: string; timeEstimate?: number; minAmountInFormatted?: string }> {
+  }): Promise<{ id: string; depositAddress: string; memo: string | null; deadline?: string; timeEstimate?: number; minAmountInFormatted?: string; amountOutFormatted?: string }> {
     const { userId, fromToken, toToken, amountUsdc, destinationAddress, refundAddress, isDevnet } = params;
 
     const quote = await this.getDepositQuote({
@@ -543,6 +546,7 @@ export class NearIntentsService implements OnModuleInit {
       deadline: quote.deadline,
       timeEstimate: quote.timeEstimate,
       minAmountInFormatted: quote.minAmountInFormatted,
+      amountOutFormatted: ((quote.raw as any)?.quote?.amountOutFormatted ?? (quote.raw as any)?.amountOutFormatted) as string | undefined,
     };
   }
 

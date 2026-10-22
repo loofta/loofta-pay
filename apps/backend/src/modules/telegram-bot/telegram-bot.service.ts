@@ -9,6 +9,8 @@ import { TwitterAutopayService, UncertainPaymentError, type TelegramPaymentPlan 
 import { TelegramApi, InlineKeyboard, InlineButton, escapeHtml } from './telegram-api';
 import { parseSendCommand, nextStep, type NextStep, DEFAULT_PRIVATE_DELAY_MS } from './telegram-parser';
 import { IntentLlmService, intentToSentence } from './intent-llm';
+import { TelegramWalletService } from './telegram-wallet.service';
+import { WalletDraft, WalletToken, withdrawAmountRows, validateAddress, POPULAR_TOKENS, parseTokenQuery, chainLabel, shortAddress, formatTokenAmount } from './wallet-flow';
 import { SEND_AMOUNTS, SendDraft, distinctRecents, recipientKeyboard, parseRecipientText, amountCard, commandForAmount, readyKeyboard, readyAction } from './send-flow';
 
 interface TgUser { id: number; is_bot?: boolean; username?: string; first_name?: string }
@@ -60,6 +62,7 @@ export class TelegramBotService implements OnModuleInit {
     private readonly users: UsersService,
     private readonly autopay: TwitterAutopayService,
     private readonly llm: IntentLlmService,
+    private readonly wallet: TelegramWalletService,
   ) {
     const token = this.config.get<string>('TELEGRAM_BOT_TOKEN');
     this.api = token ? new TelegramApi(token) : null;
@@ -161,6 +164,12 @@ export class TelegramBotService implements OnModuleInit {
       }
     }
 
+    // A pasted address or typed amount for a withdraw or deposit that is waiting for one.
+    if (isPrivate && !command) {
+      const wd = this.getWalletDraft(`${msg.chat.id}:${from.id}`);
+      if (wd && (await this.onWalletText(msg, from, text, wd))) return;
+    }
+
     // Guided /send: a bare /send starts it; while it waits for a recipient, a typed or tapped @name is that recipient.
     const draftKey = `${msg.chat.id}:${from.id}`;
     if (name === 'send' && !/\S/.test(text.replace(/^\/\S+/, ''))) {
@@ -184,7 +193,7 @@ export class TelegramBotService implements OnModuleInit {
     if (name === 'start' || name === 'help') return this.sendIntro(msg.chat.id, isPrivate, name === 'help');
     if (name === 'balance') return this.privateOnly(msg, isPrivate, () => this.showBalance(msg.chat.id, from));
     if (name === 'fund') return this.privateOnly(msg, isPrivate, () => this.showFund(msg.chat.id, from));
-    if (name === 'withdraw') return this.privateOnly(msg, isPrivate, () => this.showWithdraw(msg.chat.id));
+    if (name === 'withdraw') return this.privateOnly(msg, isPrivate, () => this.showWithdraw(msg.chat.id, from));
     if (name === 'history') return this.privateOnly(msg, isPrivate, () => this.showHistory(msg.chat.id, from));
     if (name === 'settings') return this.privateOnly(msg, isPrivate, () => this.showSettings(msg.chat.id, from));
     if (name === 'logout') return this.privateOnly(msg, isPrivate, () => this.logout(msg.chat.id, from));
@@ -367,15 +376,19 @@ export class TelegramBotService implements OnModuleInit {
           '<b>Good to know</b>',
           'Every fee is shown on the card before you confirm, and every payment waits for your Confirm tap. Your limits are always checked.',
           '',
-          '<b>Got paid?</b> Send /withdraw to cash it out.',
+          '<b>Add or withdraw money</b>',
+          '/fund shows your address, or a private deposit, or lets you add other crypto.',
+          '/withdraw sends USDC to any Solana wallet, or other crypto to another network. You see what you receive before you confirm.',
           '',
           '<b>Commands</b>: /send /balance /fund /withdraw /history /settings /logout /help',
+          '',
+          'Need a hand? Talk to us: t.me/looftapay',
         ].join('\n');
     await this.api!.sendMessage(chatId, text, {
       keyboard: {
         inline_keyboard: [
           [{ text: 'Set up auto-pay', url: `${this.autoPayUrl}` }],
-          [{ text: 'Read the full guide', url: this.guideUrl }],
+          [{ text: 'Read the full guide', url: this.guideUrl }, { text: 'Support', url: 'https://t.me/looftapay' }],
           ...this.mainMenu().inline_keyboard,
         ],
       },
@@ -490,27 +503,6 @@ export class TelegramBotService implements OnModuleInit {
     }
     const { balanceUSD } = await this.users.getSolanaWalletBalanceAndAddress(userId);
     await this.api!.sendMessage(chatId, `Your balance is <b>${money(balanceUSD)}</b>.`, { keyboard: this.mainMenu() });
-  }
-
-  private async showFund(chatId: number, from: TgUser) {
-    const userId = await this.resolveLinkedUser(from.id);
-    if (!userId) {
-      await this.api!.sendMessage(chatId, 'Sign in to Loofta with Telegram first, then I can show where to add money.', {
-        keyboard: this.signInKeyboard('Sign in to Loofta'),
-      });
-      return;
-    }
-    const address = await this.users.getSolanaWalletAddress(userId);
-    await this.api!.sendMessage(
-      chatId,
-      [
-        'Send <b>USDC on Solana</b> to your Loofta wallet:',
-        `<code>${escapeHtml(address)}</code>`,
-        '',
-        'Or tap below to add money with a card or from another chain.',
-      ].join('\n'),
-      { keyboard: { inline_keyboard: [[{ text: 'Add money', url: `${this.appUrl}/app?deposit=1` }]] } },
-    );
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -650,18 +642,509 @@ export class TelegramBotService implements OnModuleInit {
     }
   }
 
-  /** For anyone, signed in or not: the button opens Loofta (which asks them to sign in) straight on withdraw. */
-  private async showWithdraw(chatId: number) {
-    await this.api!.sendMessage(chatId, 'Withdraw your USDC to a bank, a cash app or another wallet.', {
-      keyboard: { inline_keyboard: [[{ text: 'Withdraw', url: `${this.appUrl}/app?withdraw=1` }]] },
+  // ---------------------------------------------------------------------------------------------
+  // Deposit (/fund) and withdraw (/withdraw), without leaving Telegram. Solana first.
+
+  private readonly walletDrafts = new Map<string, WalletDraft>();
+  private getWalletDraft(key: string): WalletDraft | null {
+    const d = this.walletDrafts.get(key);
+    if (!d || d.expires < Date.now()) { this.walletDrafts.delete(key); return null; }
+    return d;
+  }
+  private setWalletDraft(key: string, d: Omit<WalletDraft, 'expires'>) {
+    this.walletDrafts.set(key, { ...d, expires: Date.now() + 10 * 60 * 1000 });
+    if (this.walletDrafts.size > 2000) for (const [k, v] of this.walletDrafts) if (v.expires < Date.now()) this.walletDrafts.delete(k);
+  }
+  private forgetWalletDraft(key: string) {
+    this.walletDrafts.delete(key);
+  }
+
+  /** The person's Loofta user, or a prompt to sign in. Used by every wallet action. */
+  private async linkedUserOrPrompt(chatId: number, from: TgUser, why: string): Promise<string | null> {
+    const userId = await this.resolveLinkedUser(from.id);
+    if (!userId) {
+      await this.api!.sendMessage(chatId, `Sign in to Loofta with Telegram first, then ${why}.`, { keyboard: this.signInKeyboard('Sign in to Loofta') });
+      return null;
+    }
+    return userId;
+  }
+
+  private async showFund(chatId: number, from: TgUser) {
+    const userId = await this.linkedUserOrPrompt(chatId, from, 'I can show where to add money');
+    if (!userId) return;
+    const address = await this.users.getSolanaWalletAddress(userId);
+    await this.api!.sendMessage(
+      chatId,
+      [
+        'Send <b>USDC on Solana</b> to your Loofta wallet:',
+        `<code>${escapeHtml(address)}</code>`,
+        '',
+        'Want it more private, or to add from another network? Pick below.',
+      ].join('\n'),
+      {
+        keyboard: {
+          inline_keyboard: [
+            [{ text: 'Private deposit', callback_data: 'dp:priv' }, { text: 'Other crypto', callback_data: 'dp:other' }],
+            [{ text: 'Card and more options', url: `${this.appUrl}/app?deposit=1` }],
+          ],
+        },
+      },
+    );
+  }
+
+  private async onDepositCallback(cb: TgCallback, arg?: string, val?: string) {
+    const chatId = cb.message?.chat.id;
+    const messageId = cb.message?.message_id;
+    await this.api!.answerCallback(cb.id);
+    if (!chatId || !messageId || cb.message?.chat.type !== 'private') return;
+    const key = `${chatId}:${cb.from.id}`;
+    if (arg === 'cancel') {
+      this.forgetWalletDraft(key);
+      return void (await this.api!.editMessage(chatId, messageId, 'Cancelled.'));
+    }
+    if (arg === 'other') return this.askToken(chatId, 'dp', messageId);
+    if (arg === 'tokany') return this.askTokenTyped(chatId, cb.from, 'deposit');
+    if (arg === 'tok') return this.pickPopular(chatId, cb.from, 'deposit', Number(val));
+    if (arg === 'opt') return this.pickOption(chatId, cb.from, 'deposit', Number(val));
+    if (arg === 'priv') {
+      this.setWalletDraft(key, { flow: 'deposit', step: 'amount' });
+      return void (await this.api!.editMessage(
+        chatId,
+        messageId,
+        '<b>Private deposit</b>\nHow much USDC do you want to receive in your wallet? I will give you a one-time address to send to, and it reaches your wallet privately.',
+        {
+          inline_keyboard: [
+            [25, 50, 100, 200].map((a) => ({ text: `$${a}`, callback_data: `dp:amt:${a}` })),
+            [{ text: 'Custom amount', callback_data: 'dp:custom' }, { text: 'Cancel', callback_data: 'dp:cancel' }],
+          ],
+        },
+      ));
+    }
+    if (arg === 'custom') {
+      this.setWalletDraft(key, { flow: 'deposit', step: 'custom' });
+      return void (await this.api!.sendMessage(chatId, 'How much USDC do you want to receive? Send an amount, for example 75. Minimum $1.', { forceReply: 'Amount in dollars' }));
+    }
+    if (arg === 'amt') return this.startPrivateDeposit(chatId, cb.from, Number(val), messageId);
+  }
+
+  private async startPrivateDeposit(chatId: number, from: TgUser, amount: number, editMessageId?: number) {
+    this.forgetWalletDraft(`${chatId}:${from.id}`);
+    if (!(amount >= 1 && amount <= 2000)) {
+      return void (await this.api!.sendMessage(chatId, 'Private deposits are $1 to $2,000. Send /fund to try again.'));
+    }
+    const userId = await this.linkedUserOrPrompt(chatId, from, 'I can set up a private deposit');
+    if (!userId) return;
+    try {
+      const d = await this.wallet.startPrivateDeposit(userId, Math.round(amount * 100) / 100);
+      const text = [
+        '<b>Private deposit</b>',
+        `Send exactly <b>${money(d.amountToSendUsdc)} USDC on Solana</b> to this one-time address:`,
+        `<code>${escapeHtml(d.depositAddress)}</code>`,
+        '',
+        `You receive <b>${money(amount)}</b> in your wallet, privately, within a few minutes. Fee: about ${money(d.feeEstimateUsdc)}.`,
+        'Use this address once, and only for USDC on Solana.',
+      ].join('\n');
+      if (editMessageId) await this.api!.editMessage(chatId, editMessageId, text);
+      else await this.api!.sendMessage(chatId, text);
+    } catch (e) {
+      this.logger.warn(`Private deposit failed: ${(e as Error).message}`);
+      await this.api!.sendMessage(chatId, 'I could not set up a private deposit just now. Please try again in a moment.');
+    }
+  }
+
+  // ----- Withdraw
+
+  private async showWithdraw(chatId: number, from: TgUser) {
+    const userId = await this.resolveLinkedUser(from.id);
+    const payer = userId ? await this.autopay.resolvePayerByUserId(userId) : null;
+    const appRow = [{ text: 'Bank or cash (in the app)', url: `${this.appUrl}/app?withdraw=1` }];
+    if (!userId || !payer?.signerGranted) {
+      // Not set up to act from the chat: the app's withdraw still works for anyone.
+      return void (await this.api!.sendMessage(chatId, 'Withdraw your USDC to a wallet, a bank or a cash app. To withdraw from this chat, turn on auto-pay first.', {
+        keyboard: { inline_keyboard: [[{ text: 'Withdraw in the app', url: `${this.appUrl}/app?withdraw=1` }], [{ text: 'Turn on auto-pay', url: this.autoPayUrl }]] },
+      }));
+    }
+    const balance = await this.balanceOf(userId);
+    await this.api!.sendMessage(
+      chatId,
+      ['<b>Withdraw</b>', balance != null ? `Your balance: <b>${money(balance)}</b>` : '', 'Where do you want to send it?'].filter(Boolean).join('\n'),
+      { keyboard: { inline_keyboard: [[{ text: 'USDC on Solana', callback_data: 'wd:sol' }], [{ text: 'Other crypto', callback_data: 'wd:other' }], appRow] } },
+    );
+  }
+
+  private async onWithdrawCallback(cb: TgCallback, arg?: string, val?: string) {
+    const chatId = cb.message?.chat.id;
+    const messageId = cb.message?.message_id;
+    await this.api!.answerCallback(cb.id);
+    if (!chatId || !messageId || cb.message?.chat.type !== 'private') return;
+    const key = `${chatId}:${cb.from.id}`;
+    if (arg === 'cancel') {
+      this.forgetWalletDraft(key);
+      return void (await this.api!.editMessage(chatId, messageId, 'Cancelled.'));
+    }
+    if (arg === 'other') return this.askToken(chatId, 'wd', messageId);
+    if (arg === 'tokany') return this.askTokenTyped(chatId, cb.from, 'withdraw');
+    if (arg === 'tok') return this.pickPopular(chatId, cb.from, 'withdraw', Number(val));
+    if (arg === 'opt') return this.pickOption(chatId, cb.from, 'withdraw', Number(val));
+    if (arg === 'sol') {
+      const userId = await this.linkedUserOrPrompt(chatId, cb.from, 'you can withdraw');
+      if (!userId) return;
+      this.setWalletDraft(key, { flow: 'withdraw', step: 'address', balanceUsd: await this.balanceOf(userId) });
+      return void (await this.api!.sendMessage(chatId, 'Paste the <b>Solana wallet address</b> to send your USDC to.', { forceReply: 'Solana wallet address' }));
+    }
+    const draft = this.getWalletDraft(key);
+    if (!draft || draft.flow !== 'withdraw' || !draft.destination) {
+      return void (await this.api!.editMessage(chatId, messageId, 'This has expired. Send /withdraw to start again.'));
+    }
+    if (arg === 'custom') {
+      this.setWalletDraft(key, { ...draft, step: 'custom' });
+      return void (await this.api!.sendMessage(chatId, 'How much USDC do you want to withdraw? Send an amount, for example 40.', { forceReply: 'Amount in dollars' }));
+    }
+    if (arg === 'amt') {
+      const balance = draft.balanceUsd ?? 0;
+      const amount = val === 'max' ? Math.floor(balance * 100) / 100 : Number(val);
+      return this.proposeWithdrawal(chatId, cb.from, draft, amount, messageId);
+    }
+  }
+
+  // ----- Other crypto (NEAR Intents)
+
+  private askToken(chatId: number, prefix: 'dp' | 'wd', editMessageId?: number) {
+    const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+    for (let i = 0; i < POPULAR_TOKENS.length; i += 2) {
+      rows.push(POPULAR_TOKENS.slice(i, i + 2).map((t, j) => ({ text: t.label, callback_data: `${prefix}:tok:${i + j}` })));
+    }
+    rows.push([{ text: 'Another token', callback_data: `${prefix}:tokany` }]);
+    rows.push([{ text: 'Cancel', callback_data: `${prefix}:cancel` }]);
+    const text = prefix === 'wd' ? '<b>Withdraw other crypto</b>\nWhich crypto do you want to receive?' : '<b>Add other crypto</b>\nWhich crypto are you sending?';
+    return editMessageId ? this.api!.editMessage(chatId, editMessageId, text, { inline_keyboard: rows }) : this.api!.sendMessage(chatId, text, { keyboard: { inline_keyboard: rows } });
+  }
+
+  private async askTokenTyped(chatId: number, from: TgUser, flow: 'withdraw' | 'deposit') {
+    this.setWalletDraft(`${chatId}:${from.id}`, { flow, step: 'token', network: 'near' });
+    await this.api!.sendMessage(chatId, 'Which crypto? Type the token and network, for example <code>ARB on Arbitrum</code> or <code>ETH</code>.', { forceReply: 'Token and network' });
+  }
+
+  private async pickPopular(chatId: number, from: TgUser, flow: 'withdraw' | 'deposit', idx: number) {
+    const p = POPULAR_TOKENS[idx];
+    if (!p) return;
+    const r = await this.wallet.resolveToken(p.symbol, p.chains[0]);
+    if (!r.token) return void (await this.api!.sendMessage(chatId, 'That one is not available right now. Pick another.'));
+    return this.tokenChosen(chatId, from, flow, r.token);
+  }
+
+  private async pickOption(chatId: number, from: TgUser, flow: 'withdraw' | 'deposit', idx: number) {
+    const opt = this.getWalletDraft(`${chatId}:${from.id}`)?.options?.[idx];
+    if (!opt) return void (await this.api!.sendMessage(chatId, 'This has expired. Start again with /fund or /withdraw.'));
+    return this.tokenChosen(chatId, from, flow, opt);
+  }
+
+  private async tokenChosen(chatId: number, from: TgUser, flow: 'withdraw' | 'deposit', token: WalletToken) {
+    const userId = await this.linkedUserOrPrompt(chatId, from, flow === 'withdraw' ? 'you can withdraw' : 'I can set up a deposit');
+    if (!userId) return;
+    const balanceUsd = flow === 'withdraw' ? await this.balanceOf(userId) : null;
+    this.setWalletDraft(`${chatId}:${from.id}`, { flow, step: 'address', network: 'near', token, balanceUsd });
+    const where = `${token.symbol} on ${chainLabel(token.chain)}`;
+    await this.api!.sendMessage(
+      chatId,
+      flow === 'withdraw'
+        ? `Paste your <b>${escapeHtml(where)}</b> address to send to. Make sure it is on ${escapeHtml(chainLabel(token.chain))}, or the money can be lost.`
+        : `Paste <b>your own ${escapeHtml(chainLabel(token.chain))} address</b>. It is only used to refund you if something goes wrong.`,
+      { forceReply: `${chainLabel(token.chain)} address` },
+    );
+  }
+
+  /** The person typed a token. */
+  private async onTokenText(msg: TgMessage, from: TgUser, text: string, draft: WalletDraft): Promise<boolean> {
+    const chatId = msg.chat.id;
+    const q = parseTokenQuery(text);
+    const r = q ? await this.wallet.resolveToken(q.symbol, q.chain) : {};
+    const prefix = draft.flow === 'withdraw' ? 'wd' : 'dp';
+    if (r.token) {
+      await this.tokenChosen(chatId, from, draft.flow, r.token);
+      return true;
+    }
+    if (r.options?.length) {
+      this.setWalletDraft(`${chatId}:${from.id}`, { ...draft, options: r.options });
+      await this.api!.sendMessage(chatId, `${escapeHtml(q!.symbol)} exists on more than one network. Which one?`, {
+        keyboard: { inline_keyboard: [...r.options.map((t, i) => [{ text: `${t.symbol} on ${chainLabel(t.chain)}`, callback_data: `${prefix}:opt:${i}` }]), [{ text: 'Cancel', callback_data: `${prefix}:cancel` }]] },
+      });
+      return true;
+    }
+    await this.api!.sendMessage(chatId, 'I could not find that. Try the token and network, for example <code>USDT on Tron</code>.', { replyTo: msg.message_id });
+    return true;
+  }
+
+  /** An address on another network, or a deposit amount, for the other-crypto flows. */
+  private async onNearText(msg: TgMessage, from: TgUser, text: string, draft: WalletDraft): Promise<boolean> {
+    const chatId = msg.chat.id;
+    const key = `${chatId}:${from.id}`;
+    const token = draft.token!;
+    const userId = await this.linkedUserOrPrompt(chatId, from, draft.flow === 'withdraw' ? 'you can withdraw' : 'I can set up a deposit');
+    if (!userId) return true;
+
+    if (draft.step === 'address') {
+      const address = text.trim();
+      if (!validateAddress(address, token.chain)) {
+        await this.api!.sendMessage(chatId, `That does not look like a ${escapeHtml(chainLabel(token.chain))} address. Paste it again.`, { replyTo: msg.message_id });
+        return true;
+      }
+      if (draft.flow === 'withdraw') {
+        const balance = draft.balanceUsd ?? (await this.balanceOf(userId));
+        this.setWalletDraft(key, { ...draft, step: 'amount', destination: address, balanceUsd: balance });
+        await this.api!.sendMessage(
+          chatId,
+          ['Withdraw to:', `<code>${escapeHtml(address)}</code>`, `on ${escapeHtml(chainLabel(token.chain))}`, balance != null ? `Your balance: <b>${money(balance)}</b>` : '', 'How much USDC do you want to convert?'].filter(Boolean).join('\n'),
+          { keyboard: { inline_keyboard: withdrawAmountRows(balance ?? 0) } },
+        );
+      } else {
+        this.setWalletDraft(key, { ...draft, step: 'amount', refundAddress: address });
+        await this.api!.sendMessage(chatId, `How much <b>${escapeHtml(token.symbol)}</b> will you send? Send an amount, for example 0.5.`, { forceReply: `Amount of ${token.symbol}` });
+      }
+      return true;
+    }
+
+    // deposit amount
+    const amount = Number(text.replace(/[,\s]/g, ''));
+    if (!(amount > 0)) {
+      await this.api!.sendMessage(chatId, 'Send an amount like 0.5 or 25.', { replyTo: msg.message_id });
+      return true;
+    }
+    this.forgetWalletDraft(key);
+    try {
+      const q = await this.wallet.quoteDeposit({ userId, token, amountIn: amount, refundAddress: draft.refundAddress! });
+      if ('error' in q) {
+        await this.api!.sendMessage(chatId, `I could not get a quote: ${escapeHtml(String(q.error))}`);
+        return true;
+      }
+      await this.api!.sendMessage(chatId, [
+        `Send exactly <b>${escapeHtml(formatTokenAmount(amount))} ${escapeHtml(token.symbol)}</b> on <b>${escapeHtml(chainLabel(token.chain))}</b> to:`,
+        `<code>${escapeHtml(q.depositAddress)}</code>`,
+        q.memo ? `Memo (required): <code>${escapeHtml(q.memo)}</code>` : '',
+        '',
+        q.out != null ? `You receive about <b>${money(q.out)} USDC</b> on Solana, in your wallet.` : 'You receive USDC on Solana, in your wallet.',
+        q.minAmountIn ? `Minimum: ${escapeHtml(String(q.minAmountIn))} ${escapeHtml(token.symbol)}.` : '',
+        `Send only ${escapeHtml(token.symbol)} on ${escapeHtml(chainLabel(token.chain))}, and only once to this address. If something fails it refunds to ${escapeHtml(shortAddress(draft.refundAddress!))}.`,
+      ].filter(Boolean).join('\n'));
+    } catch (e) {
+      this.logger.warn(`Deposit quote failed: ${(e as Error).message}`);
+      await this.api!.sendMessage(chatId, 'I could not set that up just now. Please try again in a moment.');
+    }
+    return true;
+  }
+
+  /** Runs a confirmed withdrawal to a pasted Solana wallet, with the same lock, limits and "unconfirmed" rules as payments. */
+  private async confirmWithdrawal(cb: TgCallback, chatId: number, messageId: number, batchId: string, row: { id: string; privy_user_id: string; amount_usd: number | string; kind?: string; destination_address?: string | null; destination_chain?: string | null; destination_token?: string | null; quote_out?: string | null }) {
+    const supabase = this.db.getClient();
+    const amount = Number(row.amount_usd);
+    const destination = row.destination_address ?? '';
+    try {
+      const userId = await this.resolveLinkedUser(cb.from.id);
+      if (!userId || userId !== row.privy_user_id) throw new BadRequestException('Your Telegram is no longer linked to this wallet.');
+      const payer = await this.autopay.resolvePayerByUserId(userId);
+      if (!payer?.signerGranted) throw new BadRequestException('Auto-pay is turned off.');
+      await this.autopay.assertWithinLimits(payer, amount, { excludeTelegramBatchId: batchId, dailyTotalUsd: amount });
+      if (row.kind === 'withdraw_near') return await this.finishNearWithdrawal(chatId, messageId, userId, row, amount, destination);
+
+      // Checked again right before sending: the wallet could have changed since the card was shown.
+      const check = await this.wallet.checkSolanaDestination(userId, destination);
+      if (!check.ok) throw new BadRequestException(check.reason);
+
+      const { signature } = await this.wallet.executeSolanaWithdrawal({ userId, destination, amountUsd: amount });
+      await supabase.from('telegram_bot_actions').update({ status: 'paid', tx_signature: signature, paid_at: new Date().toISOString() }).eq('id', row.id);
+      const after = await this.balanceOf(userId);
+      await this.api!.editMessage(
+        chatId,
+        messageId,
+        [`Withdrew <b>${money(amount)}</b> USDC to`, `<code>${escapeHtml(destination)}</code>`, after != null ? `Your balance: <b>${money(after)}</b>` : ''].filter(Boolean).join('\n'),
+        { inline_keyboard: [[{ text: 'View on Solscan', url: `https://solscan.io/tx/${signature}` }]] },
+      );
+    } catch (e) {
+      if (e instanceof UncertainPaymentError) {
+        // It may have gone through: the row stays 'processing' (it still counts toward the limit and blocks an identical repeat).
+        this.logger.error(`Withdrawal ${row.id} UNCONFIRMED (may have been sent): ${e.message}`);
+        await supabase.from('telegram_bot_actions').update({ error: `unconfirmed: ${e.message}`.slice(0, 500), tx_signature: e.signature }).eq('id', row.id);
+        return void (await this.api!.editMessage(
+          chatId,
+          messageId,
+          `I could not confirm the withdrawal of <b>${money(amount)}</b>, so it may have gone through. Check your balance and /history before trying again.`,
+          e.signature ? { inline_keyboard: [[{ text: 'Check on Solscan', url: `https://solscan.io/tx/${e.signature}` }]] } : undefined,
+        ));
+      }
+      const insufficient = /insufficient funds/i.test((e as Error).message);
+      const shown = e instanceof BadRequestException ? e.message : insufficient ? 'Not enough USDC in your wallet.' : 'Something went wrong, so nothing was sent.';
+      this.logger.error(`Withdrawal ${row.id} failed: ${(e as Error).message}`);
+      await supabase.from('telegram_bot_actions').update({ status: 'failed', error: (e as Error).message.slice(0, 500) }).eq('id', row.id);
+      await this.api!.editMessage(chatId, messageId, escapeHtml(shown));
+    }
+  }
+
+  /** The cross-chain leg: create the backend order, check the rate has not moved, then pay into it. */
+  private async finishNearWithdrawal(chatId: number, messageId: number, userId: string, row: { id: string; destination_chain?: string | null; destination_token?: string | null; quote_out?: string | null }, amount: number, destination: string) {
+    const supabase = this.db.getClient();
+    const found = await this.wallet.resolveToken(row.destination_token ?? '', row.destination_chain ?? undefined);
+    if (!found.token) throw new BadRequestException('That crypto is not available right now. Nothing was sent.');
+    const token = found.token;
+    const order = await this.wallet.createNearWithdrawal({ userId, token, amountUsd: amount, destination });
+    const promised = Number(row.quote_out);
+    if (order.out != null && promised > 0 && order.out < promised * 0.97) {
+      throw new BadRequestException(`The rate moved: you would now receive about ${formatTokenAmount(order.out)} ${token.symbol}. Nothing was sent. Try again.`);
+    }
+    const { signature } = await this.wallet.payNearOrder({ userId, order, amountUsd: amount });
+    await supabase.from('telegram_bot_actions').update({ status: 'paid', tx_signature: signature, order_id: order.id, paid_at: new Date().toISOString() }).eq('id', row.id);
+    const after = await this.balanceOf(userId);
+    await this.api!.editMessage(
+      chatId,
+      messageId,
+      [
+        `Withdrawing <b>${money(amount)}</b> USDC.`,
+        `You receive about <b>${escapeHtml(formatTokenAmount(order.out ?? promised))} ${escapeHtml(token.symbol)}</b> on ${escapeHtml(chainLabel(token.chain))} at`,
+        `<code>${escapeHtml(destination)}</code>`,
+        'It usually arrives within a few minutes.',
+        after != null ? `Your balance: <b>${money(after)}</b>` : '',
+      ].filter(Boolean).join('\n'),
+      { inline_keyboard: [[{ text: 'View on Solscan', url: `https://solscan.io/tx/${signature}` }]] },
+    );
+  }
+
+  /** A pasted address, or a typed amount, while a deposit or withdraw is waiting for one. */
+  private async onWalletText(msg: TgMessage, from: TgUser, text: string, draft: WalletDraft): Promise<boolean> {
+    const chatId = msg.chat.id;
+    const key = `${chatId}:${from.id}`;
+    if (draft.step === 'token') return this.onTokenText(msg, from, text, draft);
+    if (draft.network === 'near' && draft.token && (draft.step === 'address' || (draft.step === 'amount' && draft.flow === 'deposit'))) {
+      return this.onNearText(msg, from, text, draft);
+    }
+    if (draft.flow === 'withdraw' && draft.step === 'address') {
+      const userId = await this.linkedUserOrPrompt(chatId, from, 'you can withdraw');
+      if (!userId) return true;
+      const check = await this.wallet.checkSolanaDestination(userId, text);
+      if (!check.ok) {
+        await this.api!.sendMessage(chatId, escapeHtml(check.reason), { replyTo: msg.message_id });
+        return true;
+      }
+      const destination = text.trim();
+      const balance = draft.balanceUsd ?? (await this.balanceOf(userId));
+      this.setWalletDraft(key, { flow: 'withdraw', step: 'amount', destination, balanceUsd: balance });
+      await this.api!.sendMessage(
+        chatId,
+        [`Withdraw to:`, `<code>${escapeHtml(destination)}</code>`, balance != null ? `Your balance: <b>${money(balance)}</b>` : '', 'How much?'].filter(Boolean).join('\n'),
+        { keyboard: { inline_keyboard: withdrawAmountRows(balance ?? 0) } },
+      );
+      return true;
+    }
+    if (draft.step === 'custom') {
+      const amount = Number(text.replace(/[$,\s]/g, ''));
+      if (!(amount > 0) || Math.round(amount * 100) / 100 !== amount) {
+        await this.api!.sendMessage(chatId, 'Send an amount like 40 or 12.50.', { replyTo: msg.message_id });
+        return true;
+      }
+      if (draft.flow === 'deposit') { await this.startPrivateDeposit(chatId, from, amount); return true; }
+      await this.proposeWithdrawal(chatId, from, draft, amount);
+      return true;
+    }
+    return false;
+  }
+
+  /** The Confirm card for a withdrawal. Checks the amount against the balance and the person's limits first. */
+  private async proposeWithdrawal(chatId: number, from: TgUser, draft: WalletDraft, amount: number, editMessageId?: number) {
+    const destination = draft.destination!;
+    const key = `${chatId}:${from.id}`;
+    const userId = await this.linkedUserOrPrompt(chatId, from, 'you can withdraw');
+    if (!userId) return;
+    const payer = await this.autopay.resolvePayerByUserId(userId);
+    if (!payer?.signerGranted) {
+      return void (await this.api!.sendMessage(chatId, 'Turn on auto-pay first, then I can withdraw from your wallet.', { keyboard: this.signInKeyboard('Turn on auto-pay') }));
+    }
+    const fail = (t: string) => this.api!.sendMessage(chatId, t);
+    if (!(amount >= 1)) return void (await fail('The minimum withdrawal is $1.'));
+    const balance = (await this.balanceOf(userId)) ?? draft.balanceUsd ?? 0;
+    if (amount > balance + 1e-9) return void (await fail(`Your balance is ${money(balance)}, which is not enough for ${money(amount)}.`));
+    try {
+      await this.autopay.assertWithinLimits(payer, amount, { dailyTotalUsd: amount });
+    } catch (e) {
+      if (e instanceof BadRequestException) return void (await fail(escapeHtml(e.message)));
+      throw e;
+    }
+    // Other crypto: say what they will receive before asking for the Confirm.
+    const near = draft.network === 'near' && draft.token ? draft.token : null;
+    let promisedOut: number | null = null;
+    if (near) {
+      try {
+        const q = await this.wallet.quoteWithdrawal({ userId, token: near, amountUsd: amount, destination });
+        if (q.error || !(q.out && q.out > 0)) return void (await fail(`I could not get a quote for ${money(amount)}: ${escapeHtml(q.error ?? 'no route right now')}`));
+        promisedOut = q.out;
+      } catch (e) {
+        this.logger.warn(`Withdrawal quote failed: ${(e as Error).message}`);
+        return void (await fail('I could not get a quote just now. Please try again in a moment.'));
+      }
+    }
+    const kind = near ? 'withdraw_near' : 'withdraw_sol';
+    // The same repeat guard as payments: a withdrawal of the same amount to the same address just went through or is unsettled.
+    const since = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const { data: recent } = await this.db
+      .getClient()
+      .from('telegram_bot_actions')
+      .select('status, created_at, paid_at, amount_usd')
+      .eq('telegram_user_id', from.id)
+      .eq('kind', kind)
+      .eq('destination_address', destination)
+      .in('status', ['paid', 'processing'])
+      .gte('created_at', since);
+    const dupe = (recent ?? []).find((r) => Number(r.amount_usd) === amount && (r.status === 'processing' || Date.now() - new Date(r.paid_at ?? r.created_at).getTime() < 90_000));
+    if (dupe) {
+      return void (await fail(dupe.status === 'processing' ? 'A withdrawal like this is still being processed or could not be confirmed. Check /history and your balance first.' : 'You just made this withdrawal. If you meant to do it again, wait a minute and repeat it.'));
+    }
+
+    await this.db.getClient().from('telegram_bot_actions').update({ status: 'cancelled' }).eq('telegram_user_id', from.id).eq('status', 'pending');
+    const batchId = randomUUID();
+    const { error } = await this.db.getClient().from('telegram_bot_actions').insert({
+      batch_id: batchId,
+      telegram_user_id: from.id,
+      privy_user_id: userId,
+      chat_id: chatId,
+      recipient_handle: 'wallet',
+      amount_usd: amount,
+      kind,
+      destination_address: destination,
+      destination_chain: near ? near.chain : 'solana',
+      destination_token: near ? near.symbol : 'USDC',
+      quote_out: near ? String(promisedOut) : `${amount.toFixed(2)} USDC`,
+      expires_at: new Date(Date.now() + CONFIRM_TTL_MS).toISOString(),
     });
+    if (error) {
+      this.logger.error(`Failed to create withdrawal action: ${error.message}`);
+      return void (await fail('Something went wrong, please try again.'));
+    }
+    this.forgetWalletDraft(key);
+    const text = near
+      ? [
+          `Withdraw <b>${money(amount)}</b> USDC?`,
+          'To:',
+          `<code>${escapeHtml(destination)}</code>`,
+          `on <b>${escapeHtml(chainLabel(near.chain))}</b>`,
+          `You receive about <b>${escapeHtml(formatTokenAmount(promisedOut!))} ${escapeHtml(near.symbol)}</b>. The rate can move a little, and I stop if it drops by more than 3%. It usually arrives within a few minutes.`,
+          `Your balance after: ${money(Math.max(0, balance - amount))}`,
+          'Check the address and the network. A withdrawal cannot be reversed.',
+        ].join('\n')
+      : [
+          `Withdraw <b>${money(amount)}</b> USDC?`,
+          'To:',
+          `<code>${escapeHtml(destination)}</code>`,
+          `They receive: <b>${money(amount)} USDC on Solana</b>. Network fees are covered by Loofta.`,
+          `Your balance after: ${money(Math.max(0, balance - amount))}`,
+          'Check the address. A withdrawal cannot be reversed.',
+        ].join('\n');
+    const keyboard = { inline_keyboard: [[{ text: 'Confirm', callback_data: `ok:${batchId}` }, { text: 'Cancel', callback_data: `no:${batchId}` }]] };
+    if (editMessageId) await this.api!.editMessage(chatId, editMessageId, text, keyboard);
+    else await this.api!.sendMessage(chatId, text, { keyboard });
   }
 
   private async showHistory(chatId: number, from: TgUser) {
     const { data } = await this.db
       .getClient()
       .from('telegram_bot_actions')
-      .select('amount_usd, recipient_handle, status, created_at')
+      .select('amount_usd, recipient_handle, status, created_at, kind')
       .eq('telegram_user_id', from.id)
       .in('status', ['paid', 'failed', 'processing'])
       .order('created_at', { ascending: false })
@@ -671,7 +1154,10 @@ export class TelegramBotService implements OnModuleInit {
       return;
     }
     const lines = data.map(
-      (r) => `${r.status === 'paid' ? 'Sent' : r.status === 'processing' ? 'Unconfirmed' : 'Failed'} ${money(Number(r.amount_usd))} to @${escapeHtml(r.recipient_handle)}`,
+      (r) => {
+        const verb = r.status === 'paid' ? (r.kind === 'pay' ? 'Sent' : 'Withdrew') : r.status === 'processing' ? 'Unconfirmed' : 'Failed';
+        return r.kind === 'pay' ? `${verb} ${money(Number(r.amount_usd))} to @${escapeHtml(r.recipient_handle)}` : `${verb} ${money(Number(r.amount_usd))} to a wallet`;
+      },
     );
     await this.api!.sendMessage(chatId, `<b>Recent payments</b>\n${lines.join('\n')}`);
   }
@@ -979,7 +1465,7 @@ export class TelegramBotService implements OnModuleInit {
       if (cb.message?.chat.type !== 'private') return;
       if (arg === 'balance') return this.showBalance(chatId, cb.from);
       if (arg === 'fund') return this.showFund(chatId, cb.from);
-      if (arg === 'withdraw') return this.showWithdraw(chatId);
+      if (arg === 'withdraw') return this.showWithdraw(chatId, cb.from);
       if (arg === 'history') return this.showHistory(chatId, cb.from);
       if (arg === 'settings') return this.showSettings(chatId, cb.from);
       if (arg === 'logout') return this.logout(chatId, cb.from);
@@ -990,11 +1476,13 @@ export class TelegramBotService implements OnModuleInit {
 
     if (cb.message?.chat.type === 'private') this.touchNudge(cb.message.chat.id);
     if (kind === 'snd') return this.onSendCallback(cb, arg, val);
+    if (kind === 'dp') return this.onDepositCallback(cb, arg, val);
+    if (kind === 'wd') return this.onWithdrawCallback(cb, arg, val);
 
     const supabase = this.db.getClient();
     // created_at is selected so rows can be put in order in code: PostgREST refuses to ORDER BY a column
     // that is not in the returned set of an UPDATE, and that error once looked like "no rows".
-    const rowCols = 'id, privy_user_id, recipient_handle, amount_usd, is_private, private_split, private_max_delay_ms, created_at';
+    const rowCols = 'id, privy_user_id, recipient_handle, amount_usd, is_private, private_split, private_max_delay_ms, created_at, kind, destination_address, destination_chain, destination_token, quote_out';
     const byCreated = <T extends { created_at: string }>(rows: T[] | null) => (rows ?? []).slice().sort((a, b) => a.created_at.localeCompare(b.created_at));
 
     if (kind === 'dl' || kind === 'sp') {
@@ -1064,6 +1552,11 @@ export class TelegramBotService implements OnModuleInit {
       return;
     }
     await this.api!.answerCallback(cb.id, 'Sending…');
+    // A wallet withdrawal, not a payment to a person: its own, simpler path.
+    if (claimedRows[0].kind !== 'pay') {
+      await this.api!.editMessage(chatId, messageId, 'Withdrawing…');
+      return this.confirmWithdrawal(cb, chatId, messageId, arg!, claimedRows[0]);
+    }
     await this.api!.editMessage(chatId, messageId, claimedRows.length > 1 ? `Sending ${claimedRows.length} payments…` : 'Sending…');
 
     const batchTotal = claimedRows.reduce((t, r) => t + Number(r.amount_usd), 0);

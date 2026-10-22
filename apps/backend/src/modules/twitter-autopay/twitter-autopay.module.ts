@@ -11,6 +11,6 @@ import { EmailModule } from '../email/email.module';
   imports: [UsersModule, ClaimsModule, IntegratorsModule, EmailModule],
   controllers: [TwitterAutopayController],
   providers: [TwitterAutopayService, AutopaySignerService],
-  exports: [TwitterAutopayService],
+  exports: [TwitterAutopayService, AutopaySignerService],
 })
 export class TwitterAutopayModule {}

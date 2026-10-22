@@ -24,7 +24,7 @@ function build(opts: { signedOutAt?: string | null; privyUserId?: string | null;
   };
   const db: any = { getClient: () => client };
   const config: any = { get: (key: string) => (key === 'TELEGRAM_BOT_TOKEN' ? undefined : 'test') };
-  const svc = new TelegramBotService(db, config, {} as any, {} as any, {} as any);
+  const svc = new TelegramBotService(db, config, {} as any, {} as any, {} as any, {} as any);
   (svc as any).privy = {
     getUserByTelegramUserId: async () => (opts.privyUserId === null ? null : { id: opts.privyUserId ?? 'did:privy:u' }),
     getUserById: async () => ({

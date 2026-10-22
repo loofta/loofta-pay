@@ -48,8 +48,8 @@ export function TelegramBot() {
         <li><code className={code}>/send</code>: send money with a few taps. Pick who (from your Telegram chats, someone you paid before, or a typed @username), keep Private on or turn it off, then tap $5, $10, $50, $100, $200 or a custom amount.</li>
         <li><code className={code}>/pay</code> and <code className={code}>/payprivately</code>: pay people.</li>
         <li><code className={code}>/balance</code>: your balance.</li>
-        <li><code className={code}>/fund</code>: your wallet address and a button to add money.</li>
-        <li><code className={code}>/withdraw</code>: opens Loofta on withdraw, to cash out to a bank, a cash app or another wallet. Anyone can use it.</li>
+        <li><code className={code}>/fund</code>: your USDC on Solana address first. From there you can make a private deposit (a one-time address, delivered to your wallet privately) or add other crypto from another network, and the bot tells you what you will receive.</li>
+        <li><code className={code}>/withdraw</code>: send USDC to any Solana wallet by pasting its address, or withdraw other crypto to another network. You see what you receive before you confirm. A wallet that has no USDC account yet cannot receive USDC, so the bot will say so. Bank and cash withdrawals open in the app.</li>
         <li><code className={code}>/history</code>: your recent payments.</li>
         <li><code className={code}>/settings</code>: your limits and a link to change them.</li>
         <li><code className={code}>/help</code>: this guide, in short.</li>

@@ -96,6 +96,11 @@ export class AutopaySignerService {
     paymentId?: string;
     /** Loofta's fee (percentage fee plus any claim fee), sent to the Loofta fee account in the SAME transaction. */
     looftaFeeUsd?: number;
+    /** Refuse, instead of asking the sponsor to create the destination's USDC account. Used for withdrawals to
+     *  an address the person pasted: creating accounts for strangers is the drainable path (see the sponsor-safety notes). */
+    forbidAtaCreation?: boolean;
+    /** The backend-created NEAR Intents withdrawal order this transfer pays into, so the sponsor can bind to it. */
+    nearIntentsOrderId?: string;
   }): Promise<{ signature: string }> {
     if (!this.signingClient) {
       throw new BadRequestException('Auto-pay signing is not configured');
@@ -129,6 +134,9 @@ export class AutopaySignerService {
 
     const instructions: TransactionInstruction[] = [];
     const destinationAccountInfo = await connection.getAccountInfo(destinationAta);
+    if (!destinationAccountInfo && params.forbidAtaCreation) {
+      throw new BadRequestException('That wallet has no USDC account yet, so I cannot send to it.');
+    }
     if (!destinationAccountInfo) {
       // Fee payer covers rent, matching every other sponsored-transfer path in this app.
       instructions.push(
@@ -172,6 +180,8 @@ export class AutopaySignerService {
       params.isDevnet ? 'devnet' : 'mainnet',
       params.senderPrivyUserId,
       params.paymentId,
+      undefined,
+      params.nearIntentsOrderId,
     );
     return { signature };
   }
