@@ -6,6 +6,13 @@ export function escapeHtml(s: string): string {
 
 export type InlineButton = { text: string; callback_data?: string; url?: string };
 export type InlineKeyboard = { inline_keyboard: InlineButton[][] };
+/** A keyboard that replaces the phone keyboard. A request_users button opens Telegram's people picker. */
+export type ReplyKeyboard = {
+  keyboard: Array<Array<{ text: string; request_users?: { request_id: number; user_is_bot?: boolean; max_quantity?: number; request_username?: boolean; request_name?: boolean } }>>;
+  resize_keyboard?: boolean;
+  one_time_keyboard?: boolean;
+  input_field_placeholder?: string;
+};
 
 /** Thin Bot API client. Every call returns null on failure (logged by the caller's context). */
 export class TelegramApi {
@@ -37,17 +44,18 @@ export class TelegramApi {
     }
   }
 
-  sendMessage(chatId: number, text: string, opts: { keyboard?: InlineKeyboard; replyTo?: number; forceReply?: string } = {}) {
+  sendMessage(chatId: number, text: string, opts: { keyboard?: InlineKeyboard; replyKeyboard?: ReplyKeyboard; replyTo?: number; forceReply?: string } = {}) {
     return this.withPlainFallback((parseMode, body) => this.sendMessageRaw(chatId, body, parseMode, opts), text);
   }
 
-  private sendMessageRaw(chatId: number, text: string, parseMode: 'HTML' | undefined, opts: { keyboard?: InlineKeyboard; replyTo?: number; forceReply?: string }) {
+  private sendMessageRaw(chatId: number, text: string, parseMode: 'HTML' | undefined, opts: { keyboard?: InlineKeyboard; replyKeyboard?: ReplyKeyboard; replyTo?: number; forceReply?: string }) {
     return this.call<{ message_id: number }>('sendMessage', {
       chat_id: chatId,
       text,
       ...(parseMode ? { parse_mode: parseMode } : {}),
       link_preview_options: { is_disabled: true },
       ...(opts.keyboard ? { reply_markup: opts.keyboard } : {}),
+      ...(opts.replyKeyboard ? { reply_markup: opts.replyKeyboard } : {}),
       // Opens the reply box already pointed at this message, with a hint of what to type. selective: in a
       // group only the person who asked is prompted.
       ...(opts.forceReply ? { reply_markup: { force_reply: true, selective: true, input_field_placeholder: opts.forceReply } } : {}),

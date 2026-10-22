@@ -45,6 +45,7 @@ export function TelegramBot() {
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Commands</h2>
       <ul className="space-y-2 text-base text-slate-300 mb-6">
+        <li><code className={code}>/send</code>: send money with a few taps. Pick who (from your Telegram chats, someone you paid before, or a typed @username), keep Private on or turn it off, then tap $5, $10, $50, $100, $200 or a custom amount.</li>
         <li><code className={code}>/pay</code> and <code className={code}>/payprivately</code>: pay people.</li>
         <li><code className={code}>/balance</code>: your balance.</li>
         <li><code className={code}>/fund</code>: your wallet address and a button to add money.</li>

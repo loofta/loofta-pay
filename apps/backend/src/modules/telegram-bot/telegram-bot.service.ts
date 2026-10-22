@@ -9,6 +9,7 @@ import { TwitterAutopayService, UncertainPaymentError, type TelegramPaymentPlan 
 import { TelegramApi, InlineKeyboard, InlineButton, escapeHtml } from './telegram-api';
 import { parseSendCommand, nextStep, type NextStep, DEFAULT_PRIVATE_DELAY_MS } from './telegram-parser';
 import { IntentLlmService, intentToSentence } from './intent-llm';
+import { SEND_AMOUNTS, SendDraft, distinctRecents, recipientKeyboard, parseRecipientText, amountCard, commandForAmount } from './send-flow';
 
 interface TgUser { id: number; is_bot?: boolean; username?: string; first_name?: string }
 interface TgMessage {
@@ -17,6 +18,8 @@ interface TgMessage {
   chat: { id: number; type: 'private' | 'group' | 'supergroup' | 'channel' };
   text?: string;
   reply_to_message?: { from?: TgUser; text?: string };
+  /** Set when the person picked someone with the "Choose from Telegram" button. */
+  users_shared?: { request_id: number; users: Array<{ user_id: number; username?: string; first_name?: string }> };
 }
 interface TgCallback { id: string; from: TgUser; data?: string; message?: TgMessage }
 export interface TgUpdate { update_id: number; message?: TgMessage; callback_query?: TgCallback }
@@ -90,6 +93,7 @@ export class TelegramBotService implements OnModuleInit {
       // there). Groups only get the commands that work in a group; the rest are DM-only.
       const privateCommands = [
         { command: 'balance', description: 'Your balance' },
+        { command: 'send', description: 'Send money with a few taps' },
         { command: 'fund', description: 'Add money to your wallet' },
         { command: 'withdraw', description: 'Withdraw your money' },
         { command: 'pay', description: 'Pay someone, for example /pay 5 @someone' },
@@ -125,6 +129,7 @@ export class TelegramBotService implements OnModuleInit {
       if (error) this.logger.warn(`update dedupe insert failed: ${error.message}`);
 
       if (update.callback_query) await this.onCallback(update.callback_query);
+      else if (update.message?.users_shared) await this.onUsersShared(update.message);
       else if (update.message?.text) await this.onMessage(update.message);
     } catch (e) {
       this.logger.error(`Telegram update ${update.update_id} failed: ${(e as Error).message}`);
@@ -146,6 +151,25 @@ export class TelegramBotService implements OnModuleInit {
     if (command?.[2] && command[2].toLowerCase() !== this.botUsername.toLowerCase()) return;
     const name = command?.[1]?.toLowerCase();
 
+    // Guided /send: a bare /send starts it; while it waits for a recipient, a typed or tapped @name is that recipient.
+    const draftKey = `${msg.chat.id}:${from.id}`;
+    if (name === 'send' && !/\S/.test(text.replace(/^\/\S+/, ''))) {
+      return this.privateOnly(msg, isPrivate, () => this.startSend(msg.chat.id, from));
+    }
+    const draft = isPrivate ? this.getDraft(draftKey) : null;
+    if (draft?.awaiting === 'recipient' && !command) {
+      const handle = parseRecipientText(text);
+      if (!handle) {
+        // A whole payment sentence typed instead: drop the guided flow and read it as usual.
+        if (!/^(pay|send)/i.test(text)) {
+          return void (await this.api!.sendMessage(msg.chat.id, 'Send an @username, or tap Choose from Telegram.', { replyTo: msg.message_id }));
+        }
+        this.forgetDraft(draftKey);
+      } else {
+        return this.chooseRecipient(msg.chat.id, from, handle);
+      }
+    }
+
     // /start is short on purpose: just the two things to try. The whole guide is behind /help.
     if (name === 'start' || name === 'help') return this.sendIntro(msg.chat.id, isPrivate, name === 'help');
     if (name === 'balance') return this.privateOnly(msg, isPrivate, () => this.showBalance(msg.chat.id, from));
@@ -157,6 +181,7 @@ export class TelegramBotService implements OnModuleInit {
 
     if (name === 'cancel') {
       this.forgetPrompt(`${msg.chat.id}:${from.id}`);
+      this.forgetDraft(`${msg.chat.id}:${from.id}`);
       return void (await this.api!.sendMessage(msg.chat.id, 'Cancelled.', { replyTo: msg.message_id }));
     }
 
@@ -262,8 +287,9 @@ export class TelegramBotService implements OnModuleInit {
   private mainMenu(): InlineKeyboard {
     return {
       inline_keyboard: [
-        [{ text: 'Balance', callback_data: 'menu:balance' }, { text: 'Fund', callback_data: 'menu:fund' }],
-        [{ text: 'Withdraw', callback_data: 'menu:withdraw' }, { text: 'History', callback_data: 'menu:history' }],
+        [{ text: 'Send', callback_data: 'menu:send' }, { text: 'Balance', callback_data: 'menu:balance' }],
+        [{ text: 'Fund', callback_data: 'menu:fund' }, { text: 'Withdraw', callback_data: 'menu:withdraw' }],
+        [{ text: 'History', callback_data: 'menu:history' }],
         [{ text: 'Settings', callback_data: 'menu:settings' }, { text: 'Log out', callback_data: 'menu:logout' }],
       ],
     };
@@ -293,7 +319,7 @@ export class TelegramBotService implements OnModuleInit {
         {
           keyboard: {
             inline_keyboard: [
-              [{ text: 'Help', callback_data: 'menu:help' }],
+              [{ text: 'Send', callback_data: 'menu:send' }, { text: 'Help', callback_data: 'menu:help' }],
             ],
           },
         },
@@ -311,6 +337,8 @@ export class TelegramBotService implements OnModuleInit {
           '3. Pay with a message. Examples below.',
           '',
           '<b>What you can do</b>',
+          '<b>Send with taps</b>: /send, then pick who and how much',
+          '',
           '<b>Pay one person</b>',
           '<code>pay $5 to @someone</code>',
           '',
@@ -330,7 +358,7 @@ export class TelegramBotService implements OnModuleInit {
           '',
           '<b>Got paid?</b> Send /withdraw to cash it out.',
           '',
-          '<b>Commands</b>: /balance /fund /withdraw /history /settings /logout /help',
+          '<b>Commands</b>: /send /balance /fund /withdraw /history /settings /logout /help',
         ].join('\n');
     await this.api!.sendMessage(chatId, text, {
       keyboard: {
@@ -472,6 +500,143 @@ export class TelegramBotService implements OnModuleInit {
       ].join('\n'),
       { keyboard: { inline_keyboard: [[{ text: 'Add money', url: `${this.appUrl}/app?deposit=1` }]] } },
     );
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Guided /send
+
+  private readonly drafts = new Map<string, SendDraft>();
+  private getDraft(key: string): SendDraft | null {
+    const d = this.drafts.get(key);
+    if (!d || d.expires < Date.now()) { this.drafts.delete(key); return null; }
+    return d;
+  }
+  private setDraft(key: string, d: Omit<SendDraft, 'expires'>) {
+    this.drafts.set(key, { ...d, expires: Date.now() + 10 * 60 * 1000 });
+    if (this.drafts.size > 2000) for (const [k, v] of this.drafts) if (v.expires < Date.now()) this.drafts.delete(k);
+  }
+  private forgetDraft(key: string) {
+    this.drafts.delete(key);
+  }
+
+  /** Step 1: who. Telegram's own people picker, the people paid before, or a typed @name. */
+  private async startSend(chatId: number, from: TgUser) {
+    const userId = await this.resolveLinkedUser(from.id);
+    if (!userId) {
+      return void (await this.api!.sendMessage(chatId, 'Sign in to Loofta with Telegram first, then you can send money.', { keyboard: this.signInKeyboard('Sign in to Loofta') }));
+    }
+    const payer = await this.autopay.resolvePayerByUserId(userId);
+    if (!payer?.signerGranted) {
+      return void (await this.api!.sendMessage(chatId, 'Turn on auto-pay first, then I can send from your wallet.', { keyboard: this.signInKeyboard('Turn on auto-pay') }));
+    }
+    const { data } = await this.db
+      .getClient()
+      .from('telegram_bot_actions')
+      .select('recipient_handle, created_at')
+      .eq('telegram_user_id', from.id)
+      .in('status', ['paid', 'processing'])
+      .order('created_at', { ascending: false })
+      .limit(30);
+    const recents = distinctRecents(data ?? [], 4, from.username);
+    this.setDraft(`${chatId}:${from.id}`, { isPrivate: true, awaiting: 'recipient', balanceUsd: await this.balanceOf(userId) });
+    await this.api!.sendMessage(chatId, '<b>Who do you want to pay?</b>\nPick someone from Telegram, or type their @username.', {
+      replyKeyboard: recipientKeyboard(recents),
+    });
+  }
+
+  /** The person picked someone with the "Choose from Telegram" button. */
+  private async onUsersShared(msg: TgMessage) {
+    const from = msg.from;
+    if (!from || from.is_bot || msg.chat.type !== 'private') return;
+    const shared = msg.users_shared?.users?.[0];
+    if (!shared) return;
+    let handle = shared.username?.toLowerCase();
+    if (!handle) {
+      // No public username shared: a person already on Loofta may have one linked.
+      handle = (await this.telegramUsernameOf(shared.user_id)) ?? undefined;
+    }
+    if (!handle) {
+      return void (await this.api!.sendMessage(msg.chat.id, 'That person has no Telegram username, so I cannot pay them yet. They can set one in Telegram settings, or pick someone else.'));
+    }
+    return this.chooseRecipient(msg.chat.id, from, handle);
+  }
+
+  private async telegramUsernameOf(telegramUserId: number): Promise<string | null> {
+    if (!this.privy) return null;
+    try {
+      const user: any = await this.privy.getUserByTelegramUserId(String(telegramUserId));
+      const tg = (user?.linkedAccounts ?? []).find((a: any) => a?.type === 'telegram');
+      return tg?.username ? String(tg.username).toLowerCase() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Step 2: how much. Privacy on by default, five amounts, or custom. */
+  private async chooseRecipient(chatId: number, from: TgUser, handle: string) {
+    if (handle === from.username?.toLowerCase()) return void (await this.api!.sendMessage(chatId, 'You cannot pay yourself. Pick someone else.'));
+    if (handle === this.botUsername.toLowerCase()) return void (await this.api!.sendMessage(chatId, 'I would love to keep it, but no. Pick someone else.'));
+    const key = `${chatId}:${from.id}`;
+    const existing = this.getDraft(key);
+    const isPrivate = existing?.isPrivate ?? true;
+    const balanceUsd = existing?.balanceUsd ?? (await this.balanceOf(await this.resolveLinkedUser(from.id)));
+    this.setDraft(key, { handle, isPrivate, awaiting: 'amount', balanceUsd });
+    const card = amountCard(handle, isPrivate, balanceUsd);
+    await this.api!.sendMessage(chatId, card.text, { keyboard: card.keyboard });
+  }
+
+  private async onSendCallback(cb: TgCallback, arg?: string, val?: string) {
+    const chatId = cb.message?.chat.id;
+    const messageId = cb.message?.message_id;
+    await this.api!.answerCallback(cb.id);
+    if (!chatId || !messageId) return;
+    const key = `${chatId}:${cb.from.id}`;
+    const draft = this.getDraft(key);
+    if (!draft || !draft.handle) {
+      return void (await this.api!.editMessage(chatId, messageId, 'This has expired. Send /send to start again.'));
+    }
+    if (arg === 'cancel') {
+      this.forgetDraft(key);
+      return void (await this.api!.editMessage(chatId, messageId, 'Cancelled.'));
+    }
+    if (arg === 'priv') {
+      this.setDraft(key, { ...draft, isPrivate: val === '1' });
+      const card = amountCard(draft.handle, val === '1', draft.balanceUsd);
+      return void (await this.api!.editMessage(chatId, messageId, card.text, card.keyboard));
+    }
+    if (arg === 'change') {
+      this.forgetDraft(key);
+      return this.startSend(chatId, cb.from);
+    }
+    if (arg === 'custom') {
+      this.forgetDraft(key);
+      const step = nextStep({ text: `${draft.isPrivate ? 'payprivately' : 'pay'} @${draft.handle}`, botUsername: this.botUsername, isPrivateChat: true });
+      if (step.kind === 'ask') {
+        this.rememberPrompt(key, step.plain);
+        await this.api!.editMessage(chatId, messageId, `Pay <b>@${escapeHtml(draft.handle)}</b>`);
+        return void (await this.api!.sendMessage(chatId, step.prompt, { forceReply: step.placeholder }));
+      }
+      return;
+    }
+    if (arg === 'amt') {
+      const amount = Number(val);
+      if (!SEND_AMOUNTS.includes(amount)) return;
+      const parsed = parseSendCommand(commandForAmount(draft.handle, draft.isPrivate, amount), this.botUsername);
+      this.forgetDraft(key);
+      await this.api!.editMessage(chatId, messageId, `Pay <b>@${escapeHtml(draft.handle)}</b>: <b>${money(amount)}</b>${draft.isPrivate ? ' privately' : ''}`);
+      return this.onSend({ message_id: messageId, chat: { id: chatId, type: 'private' } }, cb.from, parsed);
+    }
+  }
+
+  /** The wallet balance in USD, or null when it cannot be read (a card then simply leaves the line out). */
+  private async balanceOf(userId: string | null | undefined): Promise<number | null> {
+    if (!userId) return null;
+    try {
+      return (await this.users.getSolanaWalletBalanceAndAddress(userId)).balanceUSD;
+    } catch (e) {
+      this.logger.warn(`Balance lookup failed: ${(e as Error).message}`);
+      return null;
+    }
   }
 
   /** For anyone, signed in or not: the button opens Loofta (which asks them to sign in) straight on withdraw. */
@@ -636,8 +801,10 @@ export class TelegramBotService implements OnModuleInit {
     const needed = plans.reduce((t, p) => t + p.totalUsd, 0);
 
     // Fail early and plainly when the wallet can't cover it, instead of after a Confirm tap.
+    let balanceNow: number | null = null;
     try {
       const { balanceUSD } = await this.users.getSolanaWalletBalanceAndAddress(userId);
+      balanceNow = balanceUSD;
       if (balanceUSD + 1e-9 < needed) {
         return void (await reply(
           `Your balance is ${money(balanceUSD)}, which is not enough for ${items.length > 1 ? 'these payments' : 'this payment'} (${money(needed)} with fees). Use /fund to add money.`,
@@ -684,6 +851,7 @@ export class TelegramBotService implements OnModuleInit {
       items.map((it) => ({ recipient_handle: it.handle, amount_usd: it.amount })),
       { isPrivate: parsed.isPrivate, split: parsed.isPrivate ? parsed.split : null, delayMs: parsed.isPrivate ? parsed.delayMs : null },
       plans,
+      balanceNow,
     );
     await reply(card.text, card.keyboard);
   }
@@ -698,6 +866,7 @@ export class TelegramBotService implements OnModuleInit {
     items: Array<{ recipient_handle: string; amount_usd: number | string }>,
     opts: { isPrivate: boolean; split: number | null; delayMs: number | string | null },
     plans: TelegramPaymentPlan[],
+    balanceUsd?: number | null,
   ): { text: string; keyboard: InlineKeyboard } {
     const lines: string[] = [];
     const rows: InlineButton[][] = [];
@@ -766,6 +935,7 @@ export class TelegramBotService implements OnModuleInit {
       lines.push(`Loofta: ${feeMoney(sum((p) => p.looftaFeeUsd))} (0.2%)`);
     }
     lines.push(`<b>Total from your wallet: ${opts.isPrivate ? '~' : ''}${money(sum((p) => p.totalUsd))}</b>`);
+    if (balanceUsd != null) lines.push(`Your balance: ${money(balanceUsd)}`);
     rows.push([
       { text: many ? `Confirm all ${items.length}` : 'Confirm', callback_data: `ok:${batchId}` },
       { text: 'Cancel', callback_data: `no:${batchId}` },
@@ -803,11 +973,11 @@ export class TelegramBotService implements OnModuleInit {
       if (arg === 'settings') return this.showSettings(chatId, cb.from);
       if (arg === 'logout') return this.logout(chatId, cb.from);
       if (arg === 'help') return this.sendIntro(chatId, true, true);
-      if (arg === 'send') {
-        await this.api!.sendMessage(chatId, 'Type it like <code>pay $5 to @someone</code>, or pay several people at once: <code>pay $5 to @someone, $10 to @another</code>.');
-      }
+      if (arg === 'send') return this.startSend(chatId, cb.from);
       return;
     }
+
+    if (kind === 'snd') return this.onSendCallback(cb, arg, val);
 
     const supabase = this.db.getClient();
     // created_at is selected so rows can be put in order in code: PostgREST refuses to ORDER BY a column
@@ -843,6 +1013,7 @@ export class TelegramBotService implements OnModuleInit {
         rowsNow,
         { isPrivate: true, split: rowsNow[0].private_split ?? null, delayMs: rowsNow[0].private_max_delay_ms ?? null },
         plans,
+        await this.balanceOf(rowsNow[0].privy_user_id),
       );
       await this.api!.editMessage(chatId, messageId, card.text, card.keyboard);
       return;
@@ -991,6 +1162,9 @@ export class TelegramBotService implements OnModuleInit {
       if (o.signature) linkRows.push([{ text: `Check on Solscan: @${o.handle}`, url: `https://solscan.io/tx/${o.signature}` }]);
     }
     if (unsure.length && outcomes.length > 1) lines.push('', 'The rest were not attempted. Check /history before sending again.');
+    // The balance after the payment, read fresh so it already reflects what was just sent.
+    const balanceAfter = await this.balanceOf(claimedRows[0]?.privy_user_id);
+    if (balanceAfter != null) lines.push('', `Your balance: <b>${money(balanceAfter)}</b>`);
     await this.api!.editMessage(chatId, messageId, lines.join('\n'), linkRows.length ? { inline_keyboard: linkRows } : undefined);
   }
 

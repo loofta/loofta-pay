@@ -1,0 +1,29 @@
+name: Deploy backend to Fly.io
+
+# Every push to main that touches the backend deploys it to the Fly app `loofta-api`
+# (apps/backend/fly.toml). Railway is no longer the deploy target.
+# Needs the repo secret FLY_API_TOKEN (a deploy token scoped to loofta-api: `fly tokens create deploy -a loofta-api`).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/backend/**'
+      - '.github/workflows/deploy-backend-fly.yml'
+  workflow_dispatch:
+
+# One deploy at a time; a newer push cancels a queued (not a running) one.
+concurrency:
+  group: deploy-backend-fly
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: superfly/flyctl-actions/setup-flyctl@fc53c09e1bc3be6f54706524e3b82c4f462f77be # 1.5
+      # --ha=false keeps exactly ONE machine (cron safety). Secrets such as DISABLE_CRONS live in Fly, not here.
+      - run: flyctl deploy --config fly.toml --app loofta-api --ha=false --remote-only
+        working-directory: apps/backend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
