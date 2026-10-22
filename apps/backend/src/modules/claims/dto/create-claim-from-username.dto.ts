@@ -57,6 +57,8 @@ export class CreateClaimFromUsernameDto {
 
   // Server-side only — stripped from request body by ValidationPipe whitelist.
   userId?: string;
+  /** Server-side only. Create a burner claim even if the recipient is registered (they have no USDC account yet). */
+  forceBurner?: boolean;
   /** ISO timestamp — claim auto-expires (EXPIRED) if still unsettled past this. Server-side only. */
   expiresAt?: string;
 }

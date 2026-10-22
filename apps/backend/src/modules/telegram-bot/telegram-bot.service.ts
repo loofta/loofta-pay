@@ -5,7 +5,7 @@ import { PrivyClient } from '@privy-io/server-auth';
 import { SupabaseService } from '@/database/supabase.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { UsersService } from '../users/users.service';
-import { TwitterAutopayService, UncertainPaymentError, type TelegramPaymentPlan } from '../twitter-autopay/twitter-autopay.service';
+import { TwitterAutopayService, UncertainPaymentError, RECLAIM_FEE_USD, type TelegramPaymentPlan } from '../twitter-autopay/twitter-autopay.service';
 import { TelegramApi, InlineKeyboard, InlineButton, escapeHtml } from './telegram-api';
 import { parseSendCommand, nextStep, type NextStep, DEFAULT_PRIVATE_DELAY_MS } from './telegram-parser';
 import { IntentLlmService, intentToSentence } from './intent-llm';
@@ -1141,25 +1141,124 @@ export class TelegramBotService implements OnModuleInit {
   }
 
   private async showHistory(chatId: number, from: TgUser) {
-    const { data } = await this.db
-      .getClient()
-      .from('telegram_bot_actions')
-      .select('amount_usd, recipient_handle, status, created_at, kind')
-      .eq('telegram_user_id', from.id)
-      .in('status', ['paid', 'failed', 'processing'])
-      .order('created_at', { ascending: false })
-      .limit(8);
-    if (!data?.length) {
+    const base = 'id, amount_usd, recipient_handle, status, created_at, kind, payment_id';
+    const query = (cols: string) =>
+      this.db
+        .getClient()
+        .from('telegram_bot_actions')
+        .select(cols)
+        .eq('telegram_user_id', from.id)
+        .in('status', ['paid', 'failed', 'processing'])
+        .order('created_at', { ascending: false })
+        .limit(8);
+    let { data, error } = await query(`${base}, reclaim_state`);
+    // Until the reclaim migration is applied the extra column does not exist; history must still work.
+    if (error) ({ data } = await query(base));
+    const rows = (data ?? []) as unknown as Array<{ id: string; amount_usd: number | string; recipient_handle: string; status: string; kind: string; payment_id: string | null; reclaim_state?: string | null }>;
+    if (!rows.length) {
       await this.api!.sendMessage(chatId, 'No payments from Telegram yet. Try <code>pay $5 to @someone</code>.');
       return;
     }
-    const lines = data.map(
-      (r) => {
-        const verb = r.status === 'paid' ? (r.kind === 'pay' ? 'Sent' : 'Withdrew') : r.status === 'processing' ? 'Unconfirmed' : 'Failed';
-        return r.kind === 'pay' ? `${verb} ${money(Number(r.amount_usd))} to @${escapeHtml(r.recipient_handle)}` : `${verb} ${money(Number(r.amount_usd))} to a wallet`;
-      },
-    );
-    await this.api!.sendMessage(chatId, `<b>Recent payments</b>\n${lines.join('\n')}`);
+    // A payment sent as a claim link that nobody has claimed yet can be taken back.
+    let unclaimed = new Set<string>();
+    const userId = await this.resolveLinkedUser(from.id);
+    const candidates = rows.filter((r) => r.kind === 'pay' && r.status === 'paid' && r.payment_id && !r.reclaim_state);
+    if (userId && candidates.length) {
+      try {
+        unclaimed = await this.autopay.unclaimedPaymentIds(userId, candidates.map((r) => r.payment_id!));
+      } catch (e) {
+        this.logger.warn(`Could not check which payments are unclaimed: ${(e as Error).message}`);
+      }
+    }
+    const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
+    const lines = rows.map((r) => {
+      if (r.kind !== 'pay') {
+        const verb = r.status === 'paid' ? 'Withdrew' : r.status === 'processing' ? 'Unconfirmed' : 'Failed';
+        return `${verb} ${money(Number(r.amount_usd))} to a wallet`;
+      }
+      const who = `@${escapeHtml(r.recipient_handle)}`;
+      const amount = money(Number(r.amount_usd));
+      if (r.reclaim_state === 'done') return `Got back ${amount} from ${who}`;
+      if (r.reclaim_state === 'processing') return `Taking back ${amount} from ${who}, unconfirmed`;
+      const verb = r.status === 'paid' ? 'Sent' : r.status === 'processing' ? 'Unconfirmed' : 'Failed';
+      if (r.payment_id && unclaimed.has(r.payment_id)) {
+        buttons.push([{ text: `Get back ${amount} from @${r.recipient_handle}`, callback_data: `rc:ask:${r.id}` }]);
+        return `${verb} ${amount} to ${who}, not claimed yet`;
+      }
+      return `${verb} ${amount} to ${who}`;
+    });
+    const hint = buttons.length ? `\n\nA payment nobody has claimed can be taken back for ${money(RECLAIM_FEE_USD)}.` : '';
+    await this.api!.sendMessage(chatId, `<b>Recent payments</b>\n${lines.join('\n')}${hint}`, buttons.length ? { keyboard: { inline_keyboard: buttons } } : {});
+  }
+
+  /** The "Get back" buttons: show what happens and what it costs, then do it only on a second tap. */
+  private async onReclaimCallback(cb: TgCallback, arg?: string, id?: string) {
+    const chatId = cb.message?.chat.id;
+    const messageId = cb.message?.message_id;
+    await this.api!.answerCallback(cb.id);
+    if (!chatId || !messageId || cb.message?.chat.type !== 'private') return;
+    if (arg === 'no') return void (await this.api!.editMessage(chatId, messageId, 'Cancelled. The payment stays as it is.'));
+    if (!id || (arg !== 'ask' && arg !== 'yes')) return;
+
+    const supabase = this.db.getClient();
+    const userId = await this.resolveLinkedUser(cb.from.id);
+    const { data: row } = await supabase
+      .from('telegram_bot_actions')
+      .select('id, privy_user_id, telegram_user_id, recipient_handle, amount_usd, status, kind, payment_id, reclaim_state')
+      .eq('id', id)
+      .maybeSingle();
+    if (!userId || !row || row.privy_user_id !== userId || row.telegram_user_id !== cb.from.id || row.kind !== 'pay' || row.status !== 'paid' || !row.payment_id) {
+      return void (await this.api!.editMessage(chatId, messageId, 'I cannot find that payment any more.'));
+    }
+    const amount = Number(row.amount_usd);
+    const who = `@${escapeHtml(row.recipient_handle)}`;
+    if (row.reclaim_state === 'done') return void (await this.api!.editMessage(chatId, messageId, `You already got this one back (${money(amount)} from ${who}).`));
+    if (row.reclaim_state === 'processing') return void (await this.api!.editMessage(chatId, messageId, 'This is already being taken back. Check /history in a moment.'));
+
+    if (arg === 'ask') {
+      const back = Math.max(0, Math.round((amount - RECLAIM_FEE_USD) * 100) / 100);
+      if (back <= 0) return void (await this.api!.editMessage(chatId, messageId, 'This payment is too small to get back after the fee.'));
+      return void (await this.api!.editMessage(
+        chatId,
+        messageId,
+        [
+          `Take back your <b>${money(amount)}</b> to ${who}?`,
+          `Fee: <b>${money(RECLAIM_FEE_USD)}</b>`,
+          `You get back: <b>${money(back)}</b>, into your Loofta wallet`,
+          '',
+          `They will no longer be able to claim it. Fees you paid when sending are not refunded.`,
+        ].join('\n'),
+        { inline_keyboard: [[{ text: `Get back ${money(back)}`, callback_data: `rc:yes:${row.id}` }, { text: 'Keep it', callback_data: 'rc:no' }]] },
+      ));
+    }
+
+    // yes: the NULL -> 'processing' flip is the lock, so a double tap can only run this once.
+    const { data: claimed } = await supabase
+      .from('telegram_bot_actions')
+      .update({ reclaim_state: 'processing' })
+      .eq('id', row.id)
+      .eq('status', 'paid')
+      .is('reclaim_state', null)
+      .select('id');
+    if (!claimed?.length) return void (await this.api!.editMessage(chatId, messageId, 'This is already being taken back. Check /history in a moment.'));
+    await this.api!.editMessage(chatId, messageId, 'Taking it back…');
+    try {
+      const res = await this.autopay.reclaimUnclaimed(userId, row.payment_id);
+      await supabase.from('telegram_bot_actions').update({ reclaim_state: 'done', reclaimed_at: new Date().toISOString() }).eq('id', row.id);
+      const after = await this.balanceOf(userId);
+      await this.api!.editMessage(
+        chatId,
+        messageId,
+        [`Done. <b>${money(res.returnedUsd)}</b> is back in your wallet (fee ${money(res.feeUsd)}).`, after != null ? `Your balance: <b>${money(after)}</b>` : ''].filter(Boolean).join('\n'),
+      );
+    } catch (e) {
+      // The burner's own balance decides whether money can still move, so a failed attempt is safe to retry.
+      await supabase.from('telegram_bot_actions').update({ reclaim_state: null }).eq('id', row.id).eq('reclaim_state', 'processing');
+      this.logger.error(`Reclaim of action ${row.id} failed: ${(e as Error).message}`);
+      const msg = (e as Error).message ?? '';
+      const shown = /too small/i.test(msg) ? 'This payment is too small to get back after the fee.' : e instanceof BadRequestException && !/Reclaim transfer failed/i.test(msg) ? msg : 'Something went wrong, so nothing changed. You can try again from /history.';
+      await this.api!.editMessage(chatId, messageId, escapeHtml(shown));
+    }
   }
 
   private async showSettings(chatId: number, from: TgUser) {
@@ -1475,6 +1574,7 @@ export class TelegramBotService implements OnModuleInit {
     }
 
     if (cb.message?.chat.type === 'private') this.touchNudge(cb.message.chat.id);
+    if (kind === 'rc') return this.onReclaimCallback(cb, arg, val);
     if (kind === 'snd') return this.onSendCallback(cb, arg, val);
     if (kind === 'dp') return this.onDepositCallback(cb, arg, val);
     if (kind === 'wd') return this.onWithdrawCallback(cb, arg, val);

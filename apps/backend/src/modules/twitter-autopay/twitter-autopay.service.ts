@@ -39,6 +39,16 @@ export interface ResolvedPayer {
   dailyCapUsd: number;
 }
 
+/** Who gets paid. `username` is a Loofta username; `x` also matches a linked X account. */
+export type RecipientKind = 'username' | 'email' | 'x' | 'telegram' | 'discord' | 'github';
+export interface RecipientRef {
+  kind: RecipientKind;
+  value: string;
+}
+
+/** Charged when a sender takes back a payment the recipient never claimed. */
+export const RECLAIM_FEE_USD = 0.05;
+
 export interface TelegramPaymentPlan {
   registered: boolean;
   /** instant: straight to their wallet; claim: they get a link; private: MagicBlock private transfer. */
@@ -341,7 +351,7 @@ export class TwitterAutopayService {
     amountUsd: number,
     /** excludeTelegramBatchId: this batch's own rows are not "already spent". dailyTotalUsd: what the
      *  daily limit is checked against (a batch's combined amount), while amountUsd stays the per-payment check. */
-    opts?: { excludeTelegramBatchId?: string; dailyTotalUsd?: number },
+    opts?: { excludeTelegramBatchId?: string; excludeAgentActionId?: string; dailyTotalUsd?: number },
   ): Promise<void> {
     const whose = payer.ownerHandle ? `@${payer.ownerHandle}'s wallet` : 'your wallet';
     if (amountUsd > payer.perPaymentCapUsd) {
@@ -350,7 +360,7 @@ export class TwitterAutopayService {
       );
     }
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const [x, tg] = await Promise.all([
+    const [x, tg, ag] = await Promise.all([
       this.supabaseService.getClient()
         .from('twitter_payment_requests')
         .select('amount_usd')
@@ -367,9 +377,19 @@ export class TwitterAutopayService {
           .gte('created_at', since);
         return opts?.excludeTelegramBatchId ? q.or(`batch_id.is.null,batch_id.neq.${opts.excludeTelegramBatchId}`) : q;
       })(),
+      // What AI agents spent on the person's behalf counts the same, so no route around the daily limit.
+      (() => {
+        const q = this.supabaseService.getClient()
+          .from('agent_actions')
+          .select('amount_usd')
+          .eq('user_id', payer.userId)
+          .in('status', ['paid', 'partial', 'processing', 'unconfirmed'])
+          .gte('created_at', since);
+        return opts?.excludeAgentActionId ? q.neq('id', opts.excludeAgentActionId) : q;
+      })(),
     ]);
     const sum = (rows: { amount_usd: unknown }[] | null) => (rows ?? []).reduce((t, r) => t + Number(r.amount_usd ?? 0), 0);
-    const spent = sum(x.data) + sum(tg.data);
+    const spent = sum(x.data) + sum(tg.data) + sum(ag.data);
     const dailyCheck = opts?.dailyTotalUsd ?? amountUsd;
     if (spent + dailyCheck > payer.dailyCapUsd) {
       throw new BadRequestException(
@@ -519,9 +539,36 @@ export class TwitterAutopayService {
    * fee is added on top, same as the web send flow. Private: MagicBlock private transfer.
    */
   async planTelegramPayment(handle: string, isPrivate: boolean, isDevnet: boolean, amountUsd = 0): Promise<TelegramPaymentPlan> {
+    return this.planPayment({ kind: 'telegram', value: handle }, isPrivate, isDevnet, amountUsd);
+  }
+
+  private async findRecipientUser(ref: RecipientRef) {
+    switch (ref.kind) {
+      case 'email': return this.usersService.findByEmail(ref.value);
+      case 'username': return this.usersService.findByUsername(ref.value);
+      case 'x': return this.usersService.findByTwitterOrUsername(ref.value);
+      default: return this.usersService.findBySocialHandle(ref.kind, ref.value);
+    }
+  }
+
+  /** Same claim the app would create for this kind of recipient (registered: direct, else a pending claim). */
+  private createClaimFor(
+    ref: RecipientRef,
+    c: { amount: number; userId: string; description: string; cluster: 'devnet' | 'mainnet'; isPrivate: boolean; forceBurner?: boolean; split?: number; maxDelayMs?: number },
+  ) {
+    const common = { amount: c.amount, userId: c.userId, description: c.description, cluster: c.cluster, isPrivate: c.isPrivate, forceBurner: c.forceBurner, split: c.split, maxDelayMs: c.maxDelayMs };
+    switch (ref.kind) {
+      case 'email': return this.claimsService.createFromEmail({ ...common, email: ref.value });
+      case 'username': return this.claimsService.createFromUsername({ ...common, username: ref.value });
+      case 'x': return this.claimsService.createFromUsername({ ...common, username: ref.value, treatUnregisteredAsTwitter: true });
+      default: return this.claimsService.createFromSocial({ ...common, platform: ref.kind, handle: ref.value });
+    }
+  }
+
+  async planPayment(ref: RecipientRef, isPrivate: boolean, isDevnet: boolean, amountUsd = 0): Promise<TelegramPaymentPlan> {
     let recipientWallet: string | null = null;
     try {
-      const user = await this.usersService.findBySocialHandle('telegram', handle);
+      const user = await this.findRecipientUser(ref);
       recipientWallet = await this.usersService.getSolanaWalletAddress(user.privyUserId);
     } catch {
       recipientWallet = null; // not on Loofta (or no wallet yet)
@@ -551,6 +598,29 @@ export class TwitterAutopayService {
     splitOverride?: number | null;
     maxDelayMsOverride?: number | null;
   }): Promise<TwitterAutopayResult> {
+    return this.executePayment({
+      senderUserId: params.senderUserId,
+      recipient: { kind: 'telegram', value: params.recipientHandle },
+      description: 'Sent via @looftapay_bot on Telegram',
+      amountUsd: params.amountUsd,
+      isPrivate: params.isPrivate,
+      isDevnet: params.isDevnet,
+      splitOverride: params.splitOverride,
+      maxDelayMsOverride: params.maxDelayMsOverride,
+    });
+  }
+
+  /** Auto-pay to any kind of recipient (Loofta username, email, X, Telegram, Discord, GitHub). */
+  async executePayment(params: {
+    senderUserId: string;
+    recipient: RecipientRef;
+    description: string;
+    amountUsd: number;
+    isPrivate: boolean;
+    isDevnet: boolean;
+    splitOverride?: number | null;
+    maxDelayMsOverride?: number | null;
+  }): Promise<TwitterAutopayResult> {
     if (!this.autopaySigner.isAvailable) {
       throw new Error('Auto-pay signing is not configured (LOOFTA_BOT_AUTH_PRIVATE_KEY missing)');
     }
@@ -558,20 +628,18 @@ export class TwitterAutopayService {
     if (!wallet) throw new Error('Sender has no delegated Solana wallet — signer grant may not have completed');
 
     const cluster = params.isDevnet ? 'devnet' : 'mainnet';
-    const plan = await this.planTelegramPayment(params.recipientHandle, params.isPrivate, params.isDevnet, params.amountUsd);
+    const plan = await this.planPayment(params.recipient, params.isPrivate, params.isDevnet, params.amountUsd);
     const base = {
-      platform: 'telegram' as const,
-      handle: params.recipientHandle,
       amount: params.amountUsd,
       userId: params.senderUserId,
-      description: 'Sent via @looftapay_bot on Telegram',
+      description: params.description,
       cluster: cluster as 'devnet' | 'mainnet',
     };
 
     if (params.isPrivate) {
       const split = params.splitOverride ?? undefined;
       const maxDelayMs = params.maxDelayMsOverride ?? undefined;
-      const payment = await this.claimsService.createFromSocial({ ...base, isPrivate: true, split, maxDelayMs });
+      const payment = await this.createClaimFor(params.recipient, { ...base, isPrivate: true, split, maxDelayMs });
       let built: Awaited<ReturnType<ClaimsService['buildPrivateTransferForPayer']>>;
       try {
         built = await this.claimsService.buildPrivateTransferForPayer(
@@ -618,7 +686,7 @@ export class TwitterAutopayService {
     }
 
     // Public. Registered with a USDC account: direct. Everything else: burner claim.
-    const payment = await this.claimsService.createFromSocial({ ...base, isPrivate: false, forceBurner: plan.delivery !== 'instant' });
+    const payment = await this.createClaimFor(params.recipient, { ...base, isPrivate: false, forceBurner: plan.delivery !== 'instant' });
     const { data: paymentRow } = await this.supabaseService.payments
       .select('burner_address')
       .eq('id', payment.id)
@@ -665,6 +733,35 @@ export class TwitterAutopayService {
     }
     this.logger.log(`Telegram auto-pay executed: payment ${payment.id} (${plan.delivery})`);
     return { paymentId: payment.id, shortId: payment.short_id, claimLink: payment.link };
+  }
+
+  /** Which of these payments are still sitting unclaimed in a burner, and so can be taken back. */
+  async unclaimedPaymentIds(userId: string, paymentIds: string[]): Promise<Set<string>> {
+    const ids = [...new Set(paymentIds.filter(Boolean))];
+    if (!ids.length) return new Set();
+    const { data } = await this.supabaseService.payments
+      .select('id, status, recipient_address, burner_address, created_by')
+      .in('id', ids)
+      .eq('created_by', userId);
+    const ok = (data ?? []).filter((r: any) => {
+      const status = String(r.status ?? '').toUpperCase();
+      return r.burner_address && /^PENDING_/i.test(String(r.recipient_address ?? '')) && status !== 'CANCELLED' && status !== 'DELETED';
+    });
+    return new Set(ok.map((r: any) => r.id as string));
+  }
+
+  /**
+   * Takes back an unclaimed payment: the money goes back to the sender's wallet minus the $0.05 fee.
+   * Only a payment that is still unclaimed qualifies, checked here again right before moving anything.
+   */
+  async reclaimUnclaimed(userId: string, paymentId: string): Promise<{ returnedUsd: number; feeUsd: number }> {
+    if (!(await this.unclaimedPaymentIds(userId, [paymentId])).has(paymentId)) {
+      throw new BadRequestException('This payment can no longer be taken back. It was claimed, or already returned.');
+    }
+    const { data: pay } = await this.supabaseService.payments.select('amount').eq('id', paymentId).maybeSingle();
+    const amount = Number(pay?.amount ?? 0);
+    await this.claimsService.reclaimByCreator(paymentId, userId, { feeUsdc: RECLAIM_FEE_USD });
+    return { returnedUsd: Math.round((amount - RECLAIM_FEE_USD) * 100) / 100, feeUsd: RECLAIM_FEE_USD };
   }
 
   /** Marks a claim we created but could not fund as cancelled, so it doesn't linger as OPEN. */

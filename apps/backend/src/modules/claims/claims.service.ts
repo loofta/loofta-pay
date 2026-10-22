@@ -292,7 +292,7 @@ export class ClaimsService {
 
     let recipientAddress: string;
 
-    try {
+    if (!dto.forceBurner) try {
       const user = treatUnregisteredAsTwitter
         ? await this.usersService.findByTwitterOrUsername(cleanUsername)
         : await this.usersService.findByUsername(cleanUsername);
@@ -837,7 +837,7 @@ export class ClaimsService {
 
     let recipientAddress: string;
 
-    try {
+    if (!dto.forceBurner) try {
       const user = await this.usersService.findByEmail(cleanEmail);
       if (!isDevnet && !(await this.usersService.hasCompletedMainnetWalletUpdate(user.privyUserId))) {
         throw new BadRequestException(
@@ -2951,7 +2951,7 @@ export class ClaimsService {
    * If the claim has a burner with USDC, sweeps it to the creator's Loofta (Solana) wallet.
    * Both flows are supported: sender can reclaim (this method); recipient can claim (claimByRecipient).
    */
-  async reclaimByCreator(claimId: string, privyUserId: string): Promise<{ cancelled: boolean }> {
+  async reclaimByCreator(claimId: string, privyUserId: string, opts: { feeUsdc?: number } = {}): Promise<{ cancelled: boolean }> {
     this.logger.log(`Claim ${claimId}: reclaim requested by creator (privy ${privyUserId})`);
     const claim = await this.findOneRaw(claimId);
     if (!claim.created_by || claim.created_by !== privyUserId) {
@@ -3023,6 +3023,13 @@ export class ClaimsService {
             const creatorPubkey = new PublicKey(creatorWallet.trim());
             const creatorAta = await getAssociatedTokenAddress(claimMint, creatorPubkey);
             const tx = new Transaction();
+            // Optional reclaim fee (the Telegram bot charges one), paid out of the money coming back to the
+            // sender, to Loofta's fee account. If nothing would be left after it, refuse: nothing has moved yet.
+            const feeRaw = BigInt(Math.round((opts.feeUsdc ?? 0) * 1_000_000));
+            if (feeRaw > BigInt(0) && balance <= feeRaw) {
+              throw new Error('This payment is too small to get back after the fee.');
+            }
+            const toCreator = feeRaw > BigInt(0) ? balance - feeRaw : balance;
             if (!(await tokenAccountExists(conn, creatorAta))) {
               const feePayer = this.solanaSponsor.getFeePayerKeypair();
               if (feePayer) {
@@ -3049,8 +3056,17 @@ export class ClaimsService {
                 );
               }
             }
-            tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, balance));
+            tx.add(createTransferInstruction(burnerAta, creatorAta, burnerKeypair.publicKey, toCreator));
             const feePayerKp = this.solanaSponsor.getFeePayerKeypair();
+            if (feeRaw > BigInt(0)) {
+              if (!feePayerKp) throw new Error('Fee account is not available right now. Please try again later.');
+              const feeAta = await getAssociatedTokenAddress(claimMint, feePayerKp.publicKey);
+              // The fee account is ours, so creating its USDC account (if it was never opened) is safe.
+              if (!(await tokenAccountExists(conn, feeAta))) {
+                tx.add(createAssociatedTokenAccountInstruction(feePayerKp.publicKey, feeAta, feePayerKp.publicKey, claimMint));
+              }
+              tx.add(createTransferInstruction(burnerAta, feeAta, burnerKeypair.publicKey, feeRaw));
+            }
             // The transfer above drains the burner ATA to exactly zero, and a cancelled claim's
             // burner is never reused — close it in the same tx so its ~0.002 SOL rent returns to
             // the fee payer instead of being stranded (rent audit 2026-07-29).
