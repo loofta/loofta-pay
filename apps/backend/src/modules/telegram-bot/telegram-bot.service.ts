@@ -1759,12 +1759,8 @@ export class TelegramBotService implements OnModuleInit {
     const many = okOnes.length > 1;
     const linkRows: InlineButton[][] = okOnes.map((o) => [
       { text: many ? `View @${o.handle}` : 'View payment', url: o.shortLink! },
-      { text: many ? `Share @${o.handle}` : 'Share link', url: this.shareUrl(o.amount, o.claimLink ?? o.shortLink!) },
+      { text: many ? `Share @${o.handle}` : 'Share link', url: this.messageUrl(o.handle, o.amount, o.claimLink ?? o.shortLink!) },
     ]);
-    if (outcomes.length === 1 && okOnes.length === 1) {
-      // The same message as plain text, to copy: tapping a code block copies it.
-      lines.push('', 'Send it to them:', `<code>${escapeHtml(this.shareText(okOnes[0].amount))}\n${escapeHtml(okOnes[0].claimLink ?? okOnes[0].shortLink!)}</code>`);
-    }
     // A payment sent as a claim link that nobody has claimed yet can be taken back right here.
     if (cb.message?.chat.type === 'private' && okOnes.length) {
       try {
@@ -1835,6 +1831,11 @@ export class TelegramBotService implements OnModuleInit {
   }
 
   /** Opens Telegram's own share sheet: pick a chat, the message and link are already filled in. */
+  /** Opens a chat with the recipient with the claim message already typed, ready to send. */
+  private messageUrl(handle: string, amount: number, link: string): string {
+    return `https://t.me/${encodeURIComponent(handle)}?text=${encodeURIComponent(`${this.shareText(amount)}\n${link}`)}`;
+  }
+
   private shareUrl(amount: number, link: string): string {
     return `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(this.shareText(amount))}`;
   }
