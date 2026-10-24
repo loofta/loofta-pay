@@ -22,6 +22,7 @@ import {
 } from '@/common/magicblock-private-transfer';
 import { StartPrivateDepositDto, BuildDirectDepositDto, BuildPrivateWithdrawalDto } from './dto';
 import type { PrivateTransfer, PrivateTransferStatusResponse } from './entities/private-transfer.entity';
+import { resolvePlatformFeeAccount } from '@/common/platform-fee-account';
 
 /** Loofta's own cut of every private deposit/withdrawal, taken by MagicBlock as part of the same transfer. */
 export const PRIVATE_BALANCE_PLATFORM_FEE_BPS = 10;
@@ -263,9 +264,7 @@ export class PrivateBalanceService {
     // Same documented MagicBlock gotcha as buildWithdrawal: platformFeeAccount must be the fee
     // collector's initialized USDC ATA, not its wallet address.
     const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
-    const platformFeeAccount = feePayerAddress
-      ? (await getAssociatedTokenAddress(mint, new PublicKey(feePayerAddress))).toBase58()
-      : null;
+    const platformFeeAccount = await resolvePlatformFeeAccount(feePayerAddress, mint, apiCluster);
 
     let txResponse;
     try {
@@ -346,9 +345,7 @@ export class PrivateBalanceService {
     // not its wallet address (undocumented, no validation on their end) — same bug that broke
     // claims.service.ts's single-payment path with InvalidAccountData.
     const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
-    const platformFeeAccount = feePayerAddress
-      ? (await getAssociatedTokenAddress(mint, new PublicKey(feePayerAddress))).toBase58()
-      : null;
+    const platformFeeAccount = await resolvePlatformFeeAccount(feePayerAddress, mint, apiCluster);
 
     let txResponse;
     try {

@@ -23,7 +23,8 @@ import { LifiService } from './lifi.service';
 import { RelayService } from './relay.service';
 import { UsersService } from '../users/users.service';
 import { EmailService } from '../email/email.service';
-import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
+import { requestMagicblockPrivateTransfer, estimateMagicblockGrossUp, MAGICBLOCK_GAS_USDC, MAGICBLOCK_GAS_SOL, MAGICBLOCK_VOLUME_FEE_BPS, SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS, fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
+import { resolvePlatformFeeAccount } from '@/common/platform-fee-account';
 import { MagicblockQuestService } from '../magicblock-quest/magicblock-quest.service';
 import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
@@ -330,15 +331,20 @@ export class LotteryService {
     // Estimate only, for the fee breakdown display — the real transfer sends the clean
     // `costUnits` with exactOut:true and lets MagicBlock gross up the sender's debit internally.
     // Public route has no MagicBlock hop at all, so no fee here.
-    const grossAmount = route === 'solana_private' ? estimateMagicblockGrossUp(costUnits) : costUnits;
+    const grossAmount = route === 'solana_private'
+      ? estimateMagicblockGrossUp(costUnits, MAGICBLOCK_VOLUME_FEE_BPS + SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS)
+      : costUnits;
+    const looftaPrivateFeeUsdc = route === 'solana_private'
+      ? parseFloat(((costUnits * SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS) / 10_000 / 1_000_000).toFixed(6))
+      : 0;
     const magicblockFeeUsdc = route === 'solana_private'
-      ? parseFloat(((grossAmount - costUnits) / 1_000_000 + MAGICBLOCK_GAS_USDC).toFixed(6))
+      ? parseFloat(((grossAmount - costUnits) / 1_000_000 - looftaPrivateFeeUsdc + MAGICBLOCK_GAS_USDC).toFixed(6))
       : 0;
     // Loofta no longer charges a separate service fee on purchases — the buyer pays only the
     // ticket cost + MagicBlock's own transfer fee (private route only). The Base-side bridge cost
     // is absorbed from Loofta's fee-wallet reserve either way (see tryStartBridge), not passed to
     // the buyer.
-    const totalUsdc = costUsdc + magicblockFeeUsdc;
+    const totalUsdc = costUsdc + magicblockFeeUsdc + looftaPrivateFeeUsdc;
 
     // 4. Build the sender → burner transfer. Amount is exactly costUsdc — already a whole-dollar
     // figure for any ticket count, so no rounding is needed to avoid fingerprinting. Base-side
@@ -358,6 +364,8 @@ export class LotteryService {
           gasless: true,
           minDelayMs: 10_000,
           maxDelayMs: 30_000,
+          platformFeeBps: SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS,
+          platformFeeAccount: (await this.resolveLooftaFeeAccount(cluster))!,
         });
       } catch (err: any) {
         if (String(err?.message).includes('delegated to another validator')) {
@@ -402,7 +410,7 @@ export class LotteryService {
       ticketId: ticket.id,
       txBase64: txResponse.transactionBase64,
       requiredSigners: txResponse.requiredSigners,
-      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, looftaFeeUsdc: 0, totalUsdc },
+      feeBreakdown: { ticketCostUsdc: costUsdc, magicblockFeeUsdc, looftaFeeUsdc: looftaPrivateFeeUsdc, totalUsdc },
     };
   }
 
@@ -522,6 +530,8 @@ export class LotteryService {
           gasless: true,
           minDelayMs: 10_000,
           maxDelayMs: 30_000,
+          platformFeeBps: SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS,
+          platformFeeAccount: (await this.resolveLooftaFeeAccount(cluster))!,
         });
       } catch (err: any) {
         if (String(err?.message).includes('delegated to another validator')) {
@@ -3903,7 +3913,7 @@ export class LotteryService {
     // doMagicBlockTransfer actually delivers.
     const relayFee = (await this.magicblockRelayFeeUsdc()) * 1.15;
     const afterRelay = bridgeReceive - relayFee - 0.01;
-    const net = afterRelay > 0 ? afterRelay * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000 : 0;
+    const net = afterRelay > 0 ? afterRelay * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS - SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS) / 10_000 : 0;
 
     const receiveUsdc = parseFloat(Math.max(0, net).toFixed(6));
     const feeUsd = parseFloat(Math.max(0, amountUsdc - receiveUsdc).toFixed(6));
@@ -4333,7 +4343,7 @@ export class LotteryService {
     const GROSSUP_SAFETY_MARGIN_UNITS = 10_000; // $0.01 — headroom for MagicBlock's real rounding vs. our estimate
     const availableForTransfer = Number(burnerBalance) - relayFeeUnits - GROSSUP_SAFETY_MARGIN_UNITS;
     let transferAmount = availableForTransfer > 0
-      ? Math.floor(availableForTransfer * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS) / 10_000)
+      ? Math.floor(availableForTransfer * (10_000 - MAGICBLOCK_VOLUME_FEE_BPS - SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS) / 10_000)
       : 0;
 
     this.logger.log(`${W} step 3/3 MagicBlock: burner ${withdrawal.withdrawal_burner_sol_address.slice(0, 8)}… balance=${burnerBalance} → transferAmount(net, exactOut)=${transferAmount} → ${withdrawal.destination_address}`);
@@ -4347,6 +4357,7 @@ export class LotteryService {
 
     if (canUseGasless) {
       const conn = await this.getSolanaConnection();
+      const looftaWithdrawFeeAccount = await this.resolveLooftaFeeAccount(cluster);
       const buildTransfer = (amount: number) => requestMagicblockPrivateTransfer({
         from: withdrawal.withdrawal_burner_sol_address,
         to: withdrawal.destination_address,
@@ -4355,6 +4366,8 @@ export class LotteryService {
         cluster,
         gasless: true,
         exactOut: true,
+        platformFeeBps: SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS,
+        platformFeeAccount: looftaWithdrawFeeAccount!,
       });
 
       // MagicBlock's private transfer routes through its own vault program, which then CPIs into
@@ -5014,6 +5027,17 @@ export class LotteryService {
    * what the purchase-time estimate assumed (see tryStartBridge) — funded by the fee revenue
    * this same wallet collects on every purchase.
    */
+  /** Loofta's 10 bps cut on private transfers goes to the fee payer wallet's USDC ATA (5dCTWJ… in prod), the same account the other private flows use. Throws on mainnet if the key is missing. */
+  private async resolveLooftaFeeAccount(cluster: string): Promise<string | null> {
+    const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
+    let address: string | null = null;
+    if (feePayerKey) {
+      const bs58Mod = await import('bs58');
+      address = Keypair.fromSecretKey(bs58Mod.default.decode(feePayerKey)).publicKey.toBase58();
+    }
+    return resolvePlatformFeeAccount(address, USDC_MINT, cluster);
+  }
+
   private async topUpFromFeeWallet(toAddress: string, amount: bigint): Promise<string> {
     const feePayerKey = this.config.get<string>('SOLANA_FEE_PAYER_PRIVATE_KEY');
     if (!feePayerKey) throw new Error('SOLANA_FEE_PAYER_PRIVATE_KEY not configured');

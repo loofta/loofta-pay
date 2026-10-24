@@ -43,6 +43,7 @@ import { tokenAccountExists } from '@/common/token-account-exists';
 import { reclaimBurnerFunds } from '@/common/burner-reclaim';
 import { PajCashOrdersService } from '../paj-cash/paj-cash-orders.service';
 import { computeLooftaFeeUsdc } from '@/common/paj-cash-fee';
+import { resolvePlatformFeeAccount } from '@/common/platform-fee-account';
 
 const DEPOSIT_SEED = 'deposit';
 const VAULT_SEED = 'vault';
@@ -1223,8 +1224,8 @@ export class ClaimsService {
     // MagicBlock confirmed the InvalidAccountData cause: platformFeeAccount must be the fee
     // collector's *initialized USDC ATA*, not its wallet address (undocumented on their side,
     // no validation performed). Derive it rather than passing the raw sponsor address.
-    const platformFeeAccount = (ENABLE_SINGLE_PAYMENT_PLATFORM_FEE && this.solanaSponsor.getFeePayerAddress())
-      ? (await getAssociatedTokenAddress(effectiveMint, new PublicKey(this.solanaSponsor.getFeePayerAddress()!))).toBase58()
+    const platformFeeAccount = ENABLE_SINGLE_PAYMENT_PLATFORM_FEE
+      ? await resolvePlatformFeeAccount(this.solanaSponsor.getFeePayerAddress(), effectiveMint, cluster)
       : null;
     // Exact out: pass the clean amount with exactOut:true — MagicBlock grosses up the sender's
     //   debit internally and guarantees the recipient nets exactly baseUnits.
@@ -2196,8 +2197,8 @@ export class ClaimsService {
     // pre-funding assumption — the fee just comes out of what's being delivered, same as today.
     // (Currently disabled altogether — see ENABLE_SINGLE_PAYMENT_PLATFORM_FEE.) Must be the fee
     // collector's USDC ATA, not its wallet address — see the note on the build-leg above.
-    const singlePaymentPlatformFeeAccount = (ENABLE_SINGLE_PAYMENT_PLATFORM_FEE && !opts.feeOnSender && this.solanaSponsor.getFeePayerAddress())
-      ? (await getAssociatedTokenAddress(this.usdcMint, new PublicKey(this.solanaSponsor.getFeePayerAddress()!))).toBase58()
+    const singlePaymentPlatformFeeAccount = (ENABLE_SINGLE_PAYMENT_PLATFORM_FEE && !opts.feeOnSender)
+      ? await resolvePlatformFeeAccount(this.solanaSponsor.getFeePayerAddress(), this.usdcMint, cluster)
       : null;
 
     const txResponse = await requestMagicblockPrivateTransfer({

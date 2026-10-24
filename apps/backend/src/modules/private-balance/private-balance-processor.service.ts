@@ -13,6 +13,7 @@ import { PrivateBalanceService, PRIVATE_BALANCE_PLATFORM_FEE_BPS } from './priva
 import { requestMagicblockPrivateTransfer, resolveMagicblockRelayFeeUsdc, estimateMagicblockGrossUp, MAGICBLOCK_VOLUME_FEE_BPS, type MagicblockPrivateTransferTxResponse } from '@/common/magicblock-private-transfer';
 import { guardAtaSponsorship, assertPerUserAtaCreationCapNotExceeded } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
+import { resolvePlatformFeeAccount } from '@/common/platform-fee-account';
 import { reclaimBurnerFunds } from '@/common/burner-reclaim';
 import { EmailService } from '../email/email.service';
 import type { PrivateTransfer } from './entities/private-transfer.entity';
@@ -290,9 +291,7 @@ export class PrivateBalanceProcessorService {
     // MagicBlock confirmed platformFeeAccount must be the fee collector's initialized USDC ATA,
     // not its wallet address — same bug as private-balance.service.ts's build leg.
     const feePayerAddress = this.solanaSponsor.getFeePayerAddress();
-    const platformFeeAccount = feePayerAddress
-      ? (await getAssociatedTokenAddress(mint, new PublicKey(feePayerAddress))).toBase58()
-      : null;
+    const platformFeeAccount = await resolvePlatformFeeAccount(feePayerAddress, mint, row.cluster);
 
     this.logger.log(`[PrivateDeposit] ${row.id}: burner balance=${balance} exactOut=${useExactOut} (needs>=${requiredForExactOut}) amount=${transferUnits}`);
 
@@ -536,12 +535,47 @@ export class PrivateBalanceProcessorService {
     // Tolerate a hair under the requested amount: MagicBlock's splits round per-transfer, so the
     // sum can land a base unit or two short of the exact figure.
     const delivered = current > baseline ? current - baseline : BigInt(0);
-    if (delivered + BigInt(10) < expected) return; // still arriving — checked again next tick
+    if (delivered + BigInt(10) < expected) {
+      // The balance diff undercounts if the destination spent part of it mid-delivery (a row sat
+      // 'delivering_to_burner' for a week after $102.50 had fully landed, because the owner moved
+      // $91 out between splits). Fall back to summing actual incoming transfers, throttled.
+      const received = await this.sumIncomingSinceCreation(row, destinationAta, conn);
+      if (received + BigInt(10) < expected) return; // still arriving — checked again next tick
+      this.logger.log(`[PrivateWithdrawal] ${row.id}: balance diff showed ${delivered} but ${received} arrived in transfers — complete`);
+    }
 
     await this.supabaseService.privateTransfers
       .update({ status: 'complete', leg2_tx_signature: row.leg1_tx_signature })
       .eq('id', row.id);
     this.logger.log(`[PrivateWithdrawal] ${row.id}: delivered ${delivered} to ${row.destination_address!.slice(0, 8)}… — complete`);
+  }
+
+  private readonly incomingScanAt = new Map<string, number>();
+
+  /** Sum of positive USDC deltas into `ata` from transactions after the withdrawal was created. At most one scan per row every 5 min (1 + N RPC calls). */
+  private async sumIncomingSinceCreation(row: PrivateTransfer, ata: PublicKey, conn: Connection): Promise<bigint> {
+    const last = this.incomingScanAt.get(row.id) ?? 0;
+    if (Date.now() - last < 5 * 60_000) return BigInt(0);
+    this.incomingScanAt.set(row.id, Date.now());
+    const sinceSec = Math.floor(new Date(row.created_at).getTime() / 1000) - 60;
+    let total = BigInt(0);
+    try {
+      const sigs = await conn.getSignaturesForAddress(ata, { limit: 50 }, 'confirmed');
+      for (const s of sigs) {
+        if (s.err || !s.blockTime || s.blockTime < sinceSec) continue;
+        const tx = await conn.getParsedTransaction(s.signature, { maxSupportedTransactionVersion: 1, commitment: 'confirmed' }).catch(() => null);
+        if (!tx?.meta) continue;
+        const keys = tx.transaction.message.accountKeys.map((k) => k.pubkey.toBase58());
+        const idx = keys.indexOf(ata.toBase58());
+        if (idx < 0) continue;
+        const pre = BigInt(tx.meta.preTokenBalances?.find((b) => b.accountIndex === idx)?.uiTokenAmount.amount ?? '0');
+        const post = BigInt(tx.meta.postTokenBalances?.find((b) => b.accountIndex === idx)?.uiTokenAmount.amount ?? '0');
+        if (post > pre) total += post - pre;
+      }
+    } catch (e) {
+      this.logger.warn(`[PrivateWithdrawal] ${row.id}: incoming-transfer scan failed: ${String(e)}`);
+    }
+    return total;
   }
 
 

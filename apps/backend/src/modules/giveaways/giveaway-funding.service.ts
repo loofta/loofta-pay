@@ -7,6 +7,7 @@ import {
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import { tokenAccountExists } from '@/common/token-account-exists';
+import { resolvePlatformFeeAccount } from '@/common/platform-fee-account';
 import { SupabaseService } from '@/database/supabase.service';
 import { isValidSolanaAddress } from '@/common/solana-address';
 import {
@@ -17,6 +18,7 @@ import {
   resolveMagicblockRelayFeeUsdc,
   fetchSolPriceUsd,
   MAGICBLOCK_VOLUME_FEE_BPS,
+  SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS,
   MAGICBLOCK_GAS_SOL,
   MagicblockPrivateTransferClientResponse,
 } from '@/common/magicblock-private-transfer';
@@ -218,8 +220,8 @@ export class GiveawayFundingService {
    * own wallet without the destination (burner) address appearing in the browser network tab —
    * same "Pay privately" pattern as a single claim payment (see claims.service.ts's
    * buildPrivateTransferForPayer), just funding a giveaway burner instead of a claim burner.
-   * No Loofta platform fee here — giveaway funding is priced as a pure MagicBlock cost passthrough,
-   * matching computeFundingRequiredUsd in giveaways.service.ts (no platformFeeBps/platformFeeAccount).
+   * Loofta's 10 bps private-transfer cut is taken via platformFeeBps/platformFeeAccount on top of
+   * what the burner receives (exactOut), so the required funding amount is unchanged.
    */
   async buildFundingPrivateTransfer(
     giveaway: Giveaway,
@@ -253,7 +255,8 @@ export class GiveawayFundingService {
     const relaySolPriceUsd = gasless ? await fetchSolPriceUsd() : null;
     // exactOut: the burner must receive exactly the remaining amount owed — MagicBlock grosses
     // up the sender's debit internally to cover its own fee (same pattern as claims.service.ts).
-    const estimatedMbVolumeFeeUnits = estimateMagicblockGrossUp(baseUnits, MAGICBLOCK_VOLUME_FEE_BPS) - baseUnits;
+    const platformFeeAccount = await resolvePlatformFeeAccount(this.solanaSponsor.getFeePayerAddress(), mint, cluster);
+    const estimatedMbVolumeFeeUnits = estimateMagicblockGrossUp(baseUnits, MAGICBLOCK_VOLUME_FEE_BPS + (platformFeeAccount ? SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS : 0)) - baseUnits;
 
     this.logger.log(
       `[GiveawayFunding] ${giveaway.id}: building private funding transfer remainingUsd=${remainingUsd} ` +
@@ -268,6 +271,7 @@ export class GiveawayFundingService {
       cluster,
       exactOut: true,
       ...(gasless ? { gasless: true } : {}),
+      ...(platformFeeAccount ? { platformFeeBps: SINGLE_PAYMENT_LOOFTA_PLATFORM_FEE_BPS, platformFeeAccount } : {}),
     });
 
     const conn = this.solanaSponsor.getConnectionForCluster(cluster);
