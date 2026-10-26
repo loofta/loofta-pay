@@ -474,6 +474,8 @@ export default function Home() {
   const isCashDest = destKind === "cash";
   const minAmountUsd = isCashDest || payingPrivate ? 1 : 0.01;
   const amountNum = Number(amount);
+  const cashPlatformMeta = DIRECT_CASH_PLATFORMS.find((p) => p.id === cashPlatform);
+  const cashOverCap = destKind === "cash" && cashPlatformMeta?.maxUSDC != null && amountNum > cashPlatformMeta.maxUSDC;
   const walletInput = destKind === "wallet" ? recipient.trim() : "";
   // A .sol name resolves to its wallet; anything else is used as typed.
   const walletDomain = useSolDomain(walletInput, apiCluster);
@@ -1084,7 +1086,7 @@ export default function Home() {
                     <GradientActionButton
                       onClick={() => {
                         const handle = recipient.trim().replace(/^[@$]/, "");
-                        if (!handle || !(amountNum >= 1)) return;
+                        if (!handle || !(amountNum >= 1) || cashOverCap) return;
                         if (!authenticated) {
                           privyLogin({ loginMethods: [...PRIVY_LOGIN_METHODS], disableSignup: false });
                           return;
@@ -1097,7 +1099,7 @@ export default function Home() {
                           },
                         }));
                       }}
-                      disabled={!recipient.trim() || !(amountNum >= 1)}
+                      disabled={!recipient.trim() || !(amountNum >= 1) || cashOverCap}
                       className="!h-auto !min-h-[58px] !flex-col !gap-0 !rounded-[18px] !py-2.5 !text-[17px]"
                       style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif", fontWeight: 600 }}
                     >
@@ -1117,6 +1119,11 @@ export default function Home() {
                         <>{t("signInToContinue")} <ArrowRight className="h-4 w-4" /></>
                       )}
                     </GradientActionButton>
+                    {cashOverCap && (
+                      <p className="text-center text-sm text-red-400 -mt-2">
+                        {cashPlatformMeta?.name} payments are limited to ${cashPlatformMeta?.maxUSDC} per payment.
+                      </p>
+                    )}
                     <p className="flex items-center justify-center gap-1.5 text-sm text-slate-500 -mt-2">
                       <Lock className="h-3.5 w-3.5" />
                       A peer pays that handle in USD. Getting your USDC back costs a bridge fee.

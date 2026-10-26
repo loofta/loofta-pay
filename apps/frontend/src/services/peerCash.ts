@@ -38,6 +38,13 @@ export function getPeerEstimate(amountAtomicUsdc: bigint, currency: string, plat
 export const CASHOUT_FEE_RATE = 0.02;
 const CASHOUT_MIN_FEE_ATOMIC = 100_000n;
 const PEER_SPREAD_BPS = 100;
+/** Above this, a buyer may take a slice no smaller than this instead of the whole deposit. */
+const MIN_FILL_ATOMIC = 500_000_000n;
+
+/** Whole amount up to $500; above that the smallest allowed fill stays at $500. */
+function exactFillRange(amountAtomicUsdc: bigint) {
+  return { min: amountAtomicUsdc > MIN_FILL_ATOMIC ? MIN_FILL_ATOMIC : amountAtomicUsdc, max: amountAtomicUsdc };
+}
 
 /** Total fee the sender pays out of the gross amount. */
 export function cashoutFeeAtomic(amountAtomicUsdc: bigint): bigint {
@@ -103,7 +110,7 @@ export async function peerCashout(opts: {
   currency: string;
   payee: string;
   signer: WalletClient;
-  /** One buyer must take the whole amount — no partial fills. */
+  /** Up to $500 one buyer takes the whole amount; above that, fills are at least $500. */
   exactFill?: boolean;
 }) {
   const { amountAtomicUsdc, grossAtomicUsdc, platform, currency, payee, signer, exactFill } = opts;
@@ -111,7 +118,7 @@ export async function peerCashout(opts: {
     {
       amount: amountAtomicUsdc,
       receive: { platform, currency: currency as any, payee },
-      ...(exactFill ? { intentAmountRange: { min: amountAtomicUsdc, max: amountAtomicUsdc } } : {}),
+      ...(exactFill ? { intentAmountRange: exactFillRange(amountAtomicUsdc) } : {}),
     },
     { signer },
   );

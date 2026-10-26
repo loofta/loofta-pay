@@ -56,7 +56,7 @@ export const PEER_PLATFORMS: PeerPlatform[] = [
     placeholder: '@yourusername',
     currencies: ['USD'],
     logo: '/images/platforms/venmo.png',
-    maxUSDC: null,
+    maxUSDC: 1000,
     cooldownHours: null,
   },
   {
@@ -67,7 +67,7 @@ export const PEER_PLATFORMS: PeerPlatform[] = [
     placeholder: '$yourtag',
     currencies: ['USD'],
     logo: '/images/platforms/cashapp.webp',
-    maxUSDC: null,
+    maxUSDC: 1000,
     cooldownHours: null,
   },
   {
@@ -78,7 +78,7 @@ export const PEER_PLATFORMS: PeerPlatform[] = [
     placeholder: '@yourusername',
     currencies: ['USD'],
     logo: '/images/platforms/revolut.png',
-    maxUSDC: null,
+    maxUSDC: 1000,
     cooldownHours: null,
   },
   {
