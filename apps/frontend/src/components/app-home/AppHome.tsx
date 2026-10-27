@@ -11,6 +11,7 @@ import { TIERS } from "@/lib/tiers";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import posthog from "posthog-js";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
@@ -391,20 +392,17 @@ export function AppHome() {
               </div>
             </Link>
             )}
-            <Link href="/app/card" className="lh-8" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A120C,#160F0D 60%)", border: "1px solid rgba(255,90,26,0.22)" }}>
-              <div style={{ flex: "none", width: 96, height: 96, borderRadius: 30, transform: "rotate(5deg)", background: "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.5), inset 0 -8px 14px rgba(0,0,0,0.22), 0 8px 0 #9C2802, 0 26px 44px rgba(0,0,0,0.5)", display: "grid", placeItems: "center" }}>
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                  <rect x="2.5" y="5" width="19" height="14" rx="2.5" />
-                  <path d="M2.5 9.5h19" />
-                  <path d="M6 15h4" />
-                </svg>
+            <a href="https://poolrip.fun/?utm_source=loofta&utm_medium=app_home&utm_campaign=poolrip_tile" target="_blank" rel="noopener noreferrer" onClick={() => posthog.capture("poolrip_tile_clicked", { source: "app_home" })} className="lh-8" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A200C,#16130D 60%)", border: "1px solid rgba(245,183,12,0.22)" }}>
+              <div style={{ flex: "none", width: 96, height: 96, borderRadius: 30, transform: "rotate(5deg)", background: "radial-gradient(120% 120% at 28% 18%,#3A3A44 0%,#1B1B22 55%,#0A0A0D 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.18), inset 0 -8px 14px rgba(0,0,0,0.5), 0 8px 0 #050507, 0 26px 44px rgba(0,0,0,0.5)", display: "grid", placeItems: "center" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/images/poolrip-icon.svg" alt="" width={62} height={62} style={{ width: 62, height: 62, objectFit: "contain" }} />
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 26, letterSpacing: "-0.04em" }}>Get your Loofta card</span>
-                <span style={{ fontSize: 15, lineHeight: 1.5, color: "#B9AFA8" }}>Spend privately from your balance.</span>
-                <span style={{ fontWeight: 700, fontSize: 14, color: "#FF7A2A" }}>Get your card →</span>
+                <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 26, letterSpacing: "-0.04em" }}>Rip a pack. Win big.</span>
+                <span style={{ fontSize: 15, lineHeight: 1.5, color: "#B9B3A6" }}>Join a pool, rip a pack together. Packs from just $0.50.</span>
+                <span style={{ fontWeight: 700, fontSize: 14, color: "#F5B70C" }}>Play PoolRip now →</span>
               </div>
-            </Link>
+            </a>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,260px),1fr))", gap: 20 }}>
             {actions.map((a) => (
