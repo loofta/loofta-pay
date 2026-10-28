@@ -477,10 +477,10 @@ export class SolanaSponsorService {
     // really transfers on-chain against what the claim says it's worth (2026-08-07 finding — see
     // project memory, solana sponsor security hardening). Fetched once here and reused by the
     // owner-match branch below instead of querying `payments` twice.
-    let claimRow: { id: string; recipient_address: string | null; burner_address: string | null; amount: number | string | null; created_by: string | null } | null = null;
+    let claimRow: { id: string; recipient_address: string | null; burner_address: string | null; amount: number | string | null; created_by: string | null; recipient_user_id: string | null } | null = null;
     if (claimId) {
       const { data, error } = await this.supabaseService.payments
-        .select('id, recipient_address, burner_address, amount, created_by')
+        .select('id, recipient_address, burner_address, amount, created_by, recipient_user_id')
         .eq('id', claimId)
         .maybeSingle();
       if (error || !data) {
@@ -590,7 +590,12 @@ export class SolanaSponsorService {
       // burner" policy) or the destination came from the recipient-supplied-raw-address fallback
       // — only THAT narrower case is where self-payment is actually the same shape as the
       // self-issued-claim attack, so it's the only case still blocked here.
-      if (userId && !claimRow!.burner_address && claimRow!.created_by && claimRow!.created_by === userId) {
+      // A registered recipient (recipient_user_id stamped at creation, and not the payer) is a
+      // different Loofta account, so the payer can't hold that wallet's key; the once-per-wallet and
+      // per-user/per-wallet ATA caps below still bound the rent. Lets a bot/auto-pay send land
+      // directly in a registered user's wallet even before they hold a USDC account.
+      const paidToOtherRegisteredUser = !!claimRow!.recipient_user_id && claimRow!.recipient_user_id !== userId;
+      if (userId && !claimRow!.burner_address && !paidToOtherRegisteredUser && claimRow!.created_by && claimRow!.created_by === userId) {
         this.logger.error(
           `SolanaSponsor[${label}]: BLOCKED — claimId=${claimId} (no burner) was created and is being paid by the same user=${userId} — refusing to sponsor a new token account for a self-issued claim`,
         );

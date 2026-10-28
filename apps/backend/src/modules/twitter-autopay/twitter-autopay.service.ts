@@ -518,15 +518,15 @@ export class TwitterAutopayService {
       paymentId: payment.id,
     });
 
-    if (directTo) {
-      await this.claimsService.updateStatus(payment.id, 'SUCCESS', {
-        txHash: signature,
-        paidWith: 'USDC',
-        paidWithToken: 'USDC',
-        paidWithChain: 'solana',
-      });
-      this.claimsService.notifyRecipientAfterPayment(payment.id);
-    }
+    // Burner claims too: updateStatus stores SUCCESS as PRIVATE_TRANSFER_PENDING for them (funded,
+    // waiting to be claimed). Skipping it left the claim page at OPEN with a pay prompt.
+    await this.claimsService.updateStatus(payment.id, 'SUCCESS', {
+      txHash: signature,
+      paidWith: 'USDC',
+      paidWithToken: 'USDC',
+      paidWithChain: 'solana',
+    });
+    this.claimsService.notifyRecipientAfterPayment(payment.id);
 
     this.logger.log(`Auto-pay executed: payment ${payment.id} funded via granted authorization key`);
     return { paymentId: payment.id, shortId: payment.short_id, claimLink: payment.link };
@@ -576,9 +576,8 @@ export class TwitterAutopayService {
     const registered = !!recipientWallet;
     const fees = computeTelegramFees(amountUsd, { isPrivate, registered });
     if (isPrivate) return { registered, delivery: 'private', ...fees };
-    if (registered && (await this.autopaySigner.usdcAccountExists(recipientWallet!, isDevnet))) {
-      return { registered, delivery: 'instant', ...fees };
-    }
+    // Registered: straight to their wallet. The sponsor creates their USDC account if they have none yet.
+    if (registered) return { registered, delivery: 'instant', ...fees };
     return { registered, delivery: 'claim', ...fees };
   }
 
@@ -718,18 +717,18 @@ export class TwitterAutopayService {
       throw e;
     }
     // The money has moved. Bookkeeping from here must never fail the payment or cancel the claim.
-    if (directTo) {
-      try {
-        await this.claimsService.updateStatus(payment.id, 'SUCCESS', {
-          txHash: signature,
-          paidWith: 'USDC',
-          paidWithToken: 'USDC',
-          paidWithChain: 'solana',
-        });
-        this.claimsService.notifyRecipientAfterPayment(payment.id);
-      } catch (e) {
-        this.logger.error(`Payment ${payment.id} was SENT (tx ${signature}) but marking it paid failed: ${(e as Error).message}`);
-      }
+    // Burner claims too: updateStatus stores SUCCESS as PRIVATE_TRANSFER_PENDING for them (funded,
+    // waiting to be claimed). Skipping it left the claim page at OPEN with a pay prompt.
+    try {
+      await this.claimsService.updateStatus(payment.id, 'SUCCESS', {
+        txHash: signature,
+        paidWith: 'USDC',
+        paidWithToken: 'USDC',
+        paidWithChain: 'solana',
+      });
+      this.claimsService.notifyRecipientAfterPayment(payment.id);
+    } catch (e) {
+      this.logger.error(`Payment ${payment.id} was SENT (tx ${signature}) but marking it paid failed: ${(e as Error).message}`);
     }
     this.logger.log(`Telegram auto-pay executed: payment ${payment.id} (${plan.delivery})`);
     return { paymentId: payment.id, shortId: payment.short_id, claimLink: payment.link };
