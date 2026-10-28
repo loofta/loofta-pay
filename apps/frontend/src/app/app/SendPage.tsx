@@ -249,7 +249,7 @@ export default function Home() {
     setRecipientFocused(false);
   };
   const suggestionNav = useSuggestionNav(suggestions, pickSuggestion);
-  const [isPrivateMode, setIsPrivateMode] = useState(() => readSendDraft()?.isPrivate ?? false);
+  const [isPrivateMode, setIsPrivateMode] = useState(() => readSendDraft()?.isPrivate ?? (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("private") === "1"));
   const [payTarget, setPayTarget] = useState<PayTarget>({ registered: false, requirePrivatePayments: false });
   const [resolvedQueryKey, setResolvedQueryKey] = useState("");
 

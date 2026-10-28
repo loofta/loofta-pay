@@ -18,6 +18,7 @@ import {
   toClientResponse,
   resolveMagicblockRelayFeeUsdc,
   fetchSolPriceUsd,
+  resolvePrivateTiming,
   type MagicblockPrivateTransferClientResponse,
 } from '@/common/magicblock-private-transfer';
 import { StartPrivateDepositDto, BuildDirectDepositDto, BuildPrivateWithdrawalDto } from './dto';
@@ -370,6 +371,8 @@ export class PrivateBalanceService {
         cluster: apiCluster,
         exactOut: true,
         gasless: true,
+        ...(dto.split !== undefined ? { split: dto.split } : {}),
+        ...resolvePrivateTiming(dto.max_delay_ms),
         ...(platformFeeAccount ? { platformFeeBps: PRIVATE_BALANCE_PLATFORM_FEE_BPS, platformFeeAccount } : {}),
       });
     } catch (e: unknown) {

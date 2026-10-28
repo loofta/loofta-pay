@@ -21,6 +21,9 @@ export type PerPrivateWithdrawalOptions = {
   destinationAddress: string;
   /** Omit for USDC on Solana direct. Provide for any other destination token/chain (Near Intents bridge, server-side). */
   destinationToken?: PrivateTokenRef;
+  /** MagicBlock delivery split (1-15) and longest random delay in ms. Omit to keep the backend defaults. */
+  split?: number;
+  maxDelayMs?: number;
   onProgress?: (p: PerSelfTransferProgress) => void;
   /**
    * Fired once the transaction is built and its real fees are known, and AWAITED before the
@@ -48,7 +51,7 @@ export function usePerPrivateSelfTransfer() {
 
   const withdraw = useCallback(
     async (wallet: Wallet, options: PerPrivateWithdrawalOptions): Promise<{ id: string; signature: string }> => {
-      const { privyUserId, accessToken, amountUsdc, destinationAddress, destinationToken, onProgress, onTxBuilt } = options;
+      const { privyUserId, accessToken, amountUsdc, destinationAddress, destinationToken, split, maxDelayMs, onProgress, onTxBuilt } = options;
       if (!privyUserId?.trim()) {
         throw new Error("Log in to send a private withdrawal.");
       }
@@ -57,7 +60,7 @@ export function usePerPrivateSelfTransfer() {
       const apiCluster = networkMode === "mainnet" ? "mainnet" : "devnet";
       const cluster = networkMode === "mainnet" ? "mainnet-beta" : "devnet";
 
-      const txData = await buildPrivateWithdrawal(amountUsdc, destinationAddress, privyUserId, accessToken, apiCluster, destinationToken);
+      const txData = await buildPrivateWithdrawal(amountUsdc, destinationAddress, privyUserId, accessToken, apiCluster, destinationToken, { split, maxDelayMs });
       // Awaited, and called even when the backend returned no fee figure — this is the caller's
       // one chance to confirm before a signature is requested, so it must not be skipped just
       // because the fee is unknown.

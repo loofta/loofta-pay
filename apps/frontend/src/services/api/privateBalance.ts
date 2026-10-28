@@ -104,6 +104,7 @@ export async function buildPrivateWithdrawal(
   accessToken?: string | null,
   cluster?: 'devnet' | 'mainnet',
   destinationToken?: PrivateTokenRef,
+  timing?: { split?: number; maxDelayMs?: number },
 ): Promise<{ id: string } & MagicblockTxResponse> {
   return fetchApi(`/private-balance/withdrawal/build`, {
     method: 'POST',
@@ -112,6 +113,8 @@ export async function buildPrivateWithdrawal(
       destination_address: destinationAddress,
       cluster,
       ...(destinationToken ? { destination_token: destinationToken } : {}),
+      ...(timing?.split !== undefined ? { split: timing.split } : {}),
+      ...(timing?.maxDelayMs !== undefined ? { max_delay_ms: Math.round(timing.maxDelayMs) } : {}),
     }),
     userId,
     accessToken,
@@ -138,4 +141,37 @@ export async function getPrivateTransferStatus(
   accessToken?: string | null,
 ): Promise<PrivateTransferStatusResponse> {
   return fetchApi(`/private-balance/${id}`, { userId, accessToken });
+}
+
+export type PrivateTokenWithdrawalBuild = {
+  transactionBase64: string;
+  version: 'legacy' | 'v0';
+  sendTo: 'base' | 'ephemeral';
+  mint: string;
+  decimals: number;
+  /** Total privacy fee in the token itself (MagicBlock volume fee plus Loofta's cut). */
+  feeAmountToken: number;
+  /** Same fee in USD at the price the backend used. */
+  feeAmountUsd: number;
+  /** Network fee the sender pays in SOL (private transfers of non-stablecoins are not gasless). */
+  networkFeeSol: number;
+};
+
+export async function buildPrivateTokenWithdrawal(
+  params: { mint: string; amount: string; destinationAddress: string; split?: number; maxDelayMs?: number },
+  userId: string,
+  accessToken?: string | null,
+): Promise<PrivateTokenWithdrawalBuild> {
+  return fetchApi(`/private-balance/withdrawal/build-token`, {
+    method: 'POST',
+    body: JSON.stringify({
+      mint: params.mint,
+      amount: params.amount,
+      destination_address: params.destinationAddress,
+      ...(params.split !== undefined ? { split: params.split } : {}),
+      ...(params.maxDelayMs !== undefined ? { max_delay_ms: Math.round(params.maxDelayMs) } : {}),
+    }),
+    userId,
+    accessToken,
+  });
 }

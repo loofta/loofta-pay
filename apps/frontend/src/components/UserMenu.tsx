@@ -11,7 +11,7 @@ import { createPortal } from "react-dom";
 import { useAuthStore } from "@/store/auth";
 import { TIERS, getTierForVolume } from "@/lib/tiers";
 import { useToast } from "@/components/ui/use-toast";
-import { Settings, Loader2, AlertTriangle, X as XClose, Shield, Info, KeyRound, Copy, ChevronRight, RefreshCw } from "lucide-react";
+import { Wallet as WalletIcon, Settings, Loader2, AlertTriangle, X as XClose, Shield, Info, KeyRound, Copy, ChevronRight, RefreshCw } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
 import { clientApiBase } from "@/services/api/client";
@@ -990,6 +990,21 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
             )}
 
 
+
+{/* Wallet - tokens, send, receive, swap and history */}
+            <div className="mb-1">
+              <Link
+                href="/app/wallet"
+                onClick={() => setIsOpen(false)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-base md:text-sm transition-colors flex items-center gap-2 ${isDarkPage
+                  ? "text-gray-300 hover:bg-white/[0.07]"
+                  : "text-gray-700 hover:bg-gray-100"
+                  }`}
+              >
+                <WalletIcon className="w-4 h-4 shrink-0" />
+                Wallet
+              </Link>
+            </div>
 
 {/* Settings - opens modal with wallet address & export private keys */}
             <div className="mb-2">

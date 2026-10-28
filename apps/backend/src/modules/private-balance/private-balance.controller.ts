@@ -4,11 +4,15 @@ import { AuthGuard, RateLimitGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { PrivyUser } from '@/auth/privy-user.decorator';
 import { PrivateBalanceService } from './private-balance.service';
-import { StartPrivateDepositDto, BuildDirectDepositDto, BuildPrivateWithdrawalDto, RecordWithdrawalSignatureDto } from './dto';
+import { PrivateTokenWithdrawalService } from './private-token-withdrawal.service';
+import { StartPrivateDepositDto, BuildDirectDepositDto, BuildPrivateWithdrawalDto, BuildPrivateTokenWithdrawalDto, RecordWithdrawalSignatureDto } from './dto';
 
 @Controller('private-balance')
 export class PrivateBalanceController {
-  constructor(private readonly privateBalanceService: PrivateBalanceService) {}
+  constructor(
+    private readonly privateBalanceService: PrivateBalanceService,
+    private readonly privateTokenWithdrawalService: PrivateTokenWithdrawalService,
+  ) {}
 
   @Post('deposit/start')
   @UseGuards(AuthGuard, RateLimitGuard)
@@ -41,6 +45,16 @@ export class PrivateBalanceController {
   @ApiResponse({ status: 200, description: '{ id, transactionBase64, version, sendTo, feeAmountUsdc, feeBreakdown }' })
   async buildWithdrawal(@PrivyUser() user: { id: string }, @Body() dto: BuildPrivateWithdrawalDto) {
     return this.privateBalanceService.buildWithdrawal(user.id, dto);
+  }
+
+  @Post('withdrawal/build-token')
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'privatebal:build-token')
+  @HttpCode(HttpStatus.OK)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Build an unsigned private transfer of any priced SPL token from the caller\'s own wallet to a Solana address (sender pays the SOL network fee)' })
+  async buildTokenWithdrawal(@PrivyUser() user: { id: string }, @Body() dto: BuildPrivateTokenWithdrawalDto) {
+    return this.privateTokenWithdrawalService.build(user.id, dto);
   }
 
   @Post('withdrawal/:id/signature')

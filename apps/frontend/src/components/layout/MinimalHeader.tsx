@@ -55,6 +55,7 @@ function MobileMenu({
 
   const navLinks = [
     { href: "/app", label: "Home", description: "Your balance and recent activity" },
+    { href: "/app/wallet", label: "Wallet", description: "Hold, send, swap and receive any token" },
     { href: "/app/send", label: "Send & Receive", description: "Send and receive payments" },
     { href: TELEGRAM_BOT_URL, label: "Telegram bot", description: "Send payments by chat on Telegram", external: true },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
@@ -331,6 +332,7 @@ export function MinimalHeader() {
   const isRewardsActive = pathname?.startsWith("/rewards");
   const isWinActive = pathname?.includes("/megapot");
   const isAppHome = pathname === "/app";
+  const isWallet = !!pathname && pathname.startsWith("/app/wallet");
   const isSendReceive =
     !!pathname &&
     (pathname.startsWith("/app/send") ||
@@ -339,6 +341,7 @@ export function MinimalHeader() {
       pathname.startsWith("/app/c/"));
   const navItems = [
     { href: "/app", label: "Home", active: isAppHome },
+    { href: "/app/wallet", label: "Wallet", active: isWallet },
     { href: "/app/send", label: "Send & Receive", active: isSendReceive },
     { href: TELEGRAM_BOT_URL, label: "Telegram bot", active: false, external: true },
     { href: "/rewards", label: t("rewards"), active: isRewardsActive },

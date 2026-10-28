@@ -187,6 +187,18 @@ export function magicblockPrivateDelayForCluster(cluster: 'devnet' | 'mainnet' |
   return { minDelayMs: '0', maxDelayMs: '0' };
 }
 
+
+/**
+ * Turns the user's "spread over" choice into MagicBlock's min/max delay pair. MagicBlock's minimum
+ * must not exceed the maximum, so a short (or zero) spread also lowers the minimum instead of
+ * leaving the 1-minute mainnet default above it. Undefined keeps the cluster defaults.
+ */
+export function resolvePrivateTiming(maxDelayMs?: number): { minDelayMs?: number; maxDelayMs?: number } {
+  if (typeof maxDelayMs !== 'number' || !Number.isFinite(maxDelayMs) || maxDelayMs < 0) return {};
+  const max = Math.min(MAGICBLOCK_PRIVATE_API_MAX_DELAY_MS, Math.round(maxDelayMs));
+  return { minDelayMs: Math.min(MAGICBLOCK_PRIVATE_MAINNET_MIN_DELAY_MS, max), maxDelayMs: max };
+}
+
 /**
  * Picks the delivery split count for a private transfer. Randomized (not a pure function of
  * amount) so identical dollar amounts don't always produce the same split count — a formula like

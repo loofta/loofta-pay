@@ -1247,7 +1247,7 @@ const ATA_RENT_SOL = 0.00203928;
 const ATA_FEE_BUFFER = 1.25;
 const ATA_SETUP_FEE_FALLBACK_USDC = 0.2;
 
-function useLooftaSigner(solanaAddress: string | null) {
+export function useLooftaSigner(solanaAddress: string | null) {
   const { wallets } = useSolanaWallets();
   const { signTransaction } = useSignTransaction();
   const wallet = useMemo(() => {
@@ -1263,7 +1263,7 @@ function useAtaSetupFee() {
   return solPriceUsd ? Math.ceil(ATA_RENT_SOL * ATA_FEE_BUFFER * solPriceUsd * 100) / 100 : ATA_SETUP_FEE_FALLBACK_USDC;
 }
 
-async function saveWithdrawal(item: Parameters<typeof addWithdrawal>[0], access: string | null, devnet: boolean) {
+export async function saveWithdrawal(item: Parameters<typeof addWithdrawal>[0], access: string | null, devnet: boolean) {
   addWithdrawal(item);
   if (!access) return;
   await fetch("/api/withdrawals", {
