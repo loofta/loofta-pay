@@ -59,8 +59,8 @@ function WalletHomeInner() {
       className={`loofta-app ${sora.variable} ${manrope.variable} ${jetbrainsMono.variable} min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12]`}
       style={{ fontFamily: "var(--font-home-manrope), Manrope, sans-serif", color: "#F2EFE8" }}
     >
-      <div style={{ maxWidth: 640, margin: "0 auto", padding: "clamp(20px,4vw,40px) 20px 96px", boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 20 }}>
-        <div style={{ position: "relative", overflow: "hidden", padding: 30, borderRadius: 32, background: "linear-gradient(160deg,#1C1C24,#121217)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", gap: 26 }}>
+      <div style={{ maxWidth: 640, margin: "0 auto", padding: "clamp(20px,4vw,40px) 20px 48px", boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 20 }}>
+        <div style={{ position: "relative", overflow: "hidden", padding: "clamp(18px, 5vw, 30px)", borderRadius: 32, background: "linear-gradient(160deg,#1C1C24,#121217)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", gap: 26 }}>
           <div style={{ position: "absolute", right: -80, top: -80, width: 320, height: 320, borderRadius: "50%", background: "radial-gradient(circle,rgba(255,90,26,0.26),rgba(255,90,26,0) 70%)" }} />
           {authenticated && (
             <button type="button" onClick={() => setSettingsOpen(true)} aria-label="Wallet settings" style={{ position: "absolute", top: 20, right: 20, zIndex: 1, cursor: "pointer", width: 44, height: 44, borderRadius: 999, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(10,10,13,0.5)", color: "#C9C6CF", display: "grid", placeItems: "center" }}>
@@ -74,11 +74,11 @@ function WalletHomeInner() {
             {unpriced && live && <span style={{ fontSize: 14, color: "#77757F" }}>Some tokens have no price yet and are not counted in the total.</span>}
           </div>
 
-          <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10 }}>
+          <div style={{ position: "relative", display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: "clamp(8px, 2.4vw, 10px)" }}>
             {actions.map((a) => (
-              <button key={a.label} type="button" onClick={a.go} className="lh-9" style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "20px 6px 16px", borderRadius: 22, background: "rgba(10,10,13,0.5)", border: "1px solid rgba(255,255,255,0.07)", color: "#F2EFE8" }}>
-                <div style={{ width: 56, height: 56, borderRadius: 18, background: a.bg, boxShadow: a.shadow, display: "grid", placeItems: "center", fontFamily: SORA, fontWeight: 800, fontSize: 26, color: a.ink }}>{a.glyph}</div>
-                <span style={{ fontWeight: 700, fontSize: 14 }}>{a.label}</span>
+              <button key={a.label} type="button" onClick={a.go} className="lh-9" style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: "clamp(10px, 3vw, 14px)", padding: "clamp(14px, 4vw, 20px) 4px clamp(12px, 3.4vw, 16px)", borderRadius: "clamp(18px, 5vw, 22px)", background: "rgba(10,10,13,0.5)", border: "1px solid rgba(255,255,255,0.07)", color: "#F2EFE8" }}>
+                <div style={{ width: "clamp(46px, 13.5vw, 56px)", height: "clamp(46px, 13.5vw, 56px)", borderRadius: "clamp(15px, 4.5vw, 18px)", background: a.bg, boxShadow: a.shadow, display: "grid", placeItems: "center", fontFamily: SORA, fontWeight: 800, fontSize: 26, color: a.ink }}>{a.glyph}</div>
+                <span style={{ fontWeight: 700, fontSize: "clamp(13px, 3.6vw, 14px)" }}>{a.label}</span>
               </button>
             ))}
           </div>
@@ -91,7 +91,7 @@ function WalletHomeInner() {
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,280px),1fr))", gap: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, padding: 16, borderRadius: 28, background: "linear-gradient(135deg,rgba(245,183,12,0.10),#141115 60%)", border: "1px solid rgba(245,183,12,0.28)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "clamp(12px, 3.5vw, 16px)", borderRadius: 28, background: "linear-gradient(135deg,rgba(245,183,12,0.10),#141115 60%)", border: "1px solid rgba(245,183,12,0.28)" }}>
             <div style={{ flex: "none", width: 52, height: 52, borderRadius: 17, background: grad("#FFF0B8", "#F5B70C", "#D17A04"), boxShadow: shine("#8E5202"), display: "grid", placeItems: "center", fontFamily: SORA, fontWeight: 800, fontSize: 24, color: "#6A3500" }}>+</div>
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
               <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 17, letterSpacing: "-0.02em" }}>Add funds</span>
@@ -100,7 +100,7 @@ function WalletHomeInner() {
             <button type="button" onClick={requireAuth(() => window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab: "topup" } })))} style={{ cursor: "pointer", flex: "none", padding: "12px 20px", borderRadius: 14, border: 0, background: "#F5B70C", color: "#2A1A00", fontFamily: SORA, fontWeight: 700, fontSize: 15 }}>Buy</button>
           </div>
 
-          <button type="button" onClick={requireAuth(() => router.push("/app/send"))} className="lh-8" style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 14, padding: 16, borderRadius: 28, textAlign: "left", background: "linear-gradient(135deg,rgba(255,90,26,0.10),#141115 60%)", border: "1px solid rgba(255,138,74,0.30)", color: "#F2EFE8" }}>
+          <button type="button" onClick={requireAuth(() => router.push("/app/send"))} className="lh-8" style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12, padding: "clamp(12px, 3.5vw, 16px)", borderRadius: 28, textAlign: "left", background: "linear-gradient(135deg,rgba(255,90,26,0.10),#141115 60%)", border: "1px solid rgba(255,138,74,0.30)", color: "#F2EFE8" }}>
             <div style={{ flex: "none", width: 52, height: 52, borderRadius: 17, background: grad("#FFC79A", "#FF5A1A", "#D23806"), boxShadow: shine("#9C2802"), display: "grid", placeItems: "center", fontFamily: SORA, fontWeight: 800, fontSize: 24, color: "#fff" }}>@</div>
             <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
               <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 17, letterSpacing: "-0.02em" }}>Send $ to a username</span>

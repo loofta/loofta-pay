@@ -43,7 +43,7 @@ function ShellContent({ children }: { children: ReactNode }) {
   const isImmersivePage = pathname?.startsWith('/megapot/packs') || pathname?.startsWith('/app/megapot/packs');
   const showBottomNav = !isCheckoutPage && (
     pathname === '/' || pathname === '/app' || pathname === '/app/send' || pathname === '/app/receive' ||
-    pathname === '/history' || pathname === '/app/history' || pathname === '/app/wallet' || pathname === '/app/swap' ||
+    pathname === '/history' || pathname === '/app/history' ||
     pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' || pathname === '/profile' ||
     pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
     pathname === '/sparks' || pathname === '/app/sparks' ||
