@@ -21,6 +21,9 @@ import { LOW_SLIPPAGE_BPS, HIGH_SLIPPAGE_BPS, formatSlippage } from "@/component
 const SORA = "var(--font-home-sora), Sora, sans-serif";
 const WSOL = "So11111111111111111111111111111111111111112";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const IMPACT_WARN_PCT = 1; // yellow
+const IMPACT_DANGER_PCT = 5; // red, the button becomes "Swap anyway"
+const IMPACT_BLOCK_PCT = 20; // so much value would be lost that we do not allow it
 const SOL_RESERVE = 0.01; // kept back when paying with SOL so the network fee can still be paid
 
 const card = { display: "flex", flexDirection: "column", gap: 8, padding: 16, borderRadius: 22, background: "#1A1A20", border: "1px solid rgba(255,255,255,0.07)" } as const;
@@ -157,9 +160,22 @@ export function JupiterSwap({
   }
 
   const feePct = quote ? (quote.feeBps / 100).toFixed(2) : "0.80";
+  // Jupiter reports price impact as a fraction (0.001 = 0.1%).
+  const impactPct = quote ? Math.abs(quote.priceImpactPct) * 100 : null;
+  const impactText = impactPct == null ? "-" : impactPct > 0 && impactPct < 0.01 ? "<0.01%" : `${impactPct.toFixed(2)}%`;
+  const impactColor = impactPct == null ? "#F2EFE8" : impactPct >= IMPACT_DANGER_PCT ? "#FF7A6A" : impactPct >= IMPACT_WARN_PCT ? "#F5D547" : "#F2EFE8";
+  const impactBlocked = impactPct != null && impactPct >= IMPACT_BLOCK_PCT;
   const networkFeeSol = quote?.networkFeeLamports != null ? quote.networkFeeLamports / 1e9 : null;
-  const networkCostUsd = quote?.networkCostUsdc != null ? Number(quote.networkCostUsdc) / 1e6 : null;
-  const networkFeeText = quote?.gasless ? (networkCostUsd != null ? `$${networkCostUsd.toFixed(2)} in USDC` : "-") : networkFeeSol == null ? "-" : solUsd != null ? `≈ $${(networkFeeSol * solUsd).toFixed(2)}` : `≈ ${networkFeeSol.toFixed(4)} SOL`;
+  // Network fee = what the network charges, like Phantom's "$0.02". Refundable account deposits are not listed as a fee.
+  const gaslessFeeUsd = quote?.gasless ? Number(quote.networkFeeUsdc ?? quote.networkCostUsdc ?? 0) / 1e6 : null;
+  const networkFeeText =
+    gaslessFeeUsd != null
+      ? `$${gaslessFeeUsd.toFixed(2)}`
+      : networkFeeSol == null
+        ? "-"
+        : solUsd != null
+          ? `$${(networkFeeSol * solUsd).toFixed(2)}`
+          : `${networkFeeSol.toFixed(4)} SOL`;
   const solBalance = solHolding?.amount ?? 0;
   const isGaslessPair = pay?.mint === USDC && get?.mint === WSOL;
   const lacksSol = solBalance < 0.003 && !isGaslessPair;
@@ -184,7 +200,9 @@ export function JupiterSwap({
   else if (sameToken) cta = "Pick two different tokens";
   else if (over) cta = `Not enough ${pay.symbol}`;
   else if (amountNum > 0 && quoteError) cta = "No route found";
-  const ready = !!wallet && !!pay && !!get && !sameToken && !over && !!quote && cluster === "mainnet";
+  else if (impactBlocked) cta = "Price impact too high";
+  else if (impactPct != null && impactPct >= IMPACT_DANGER_PCT) cta = "Swap anyway";
+  const ready = !!wallet && !!pay && !!get && !sameToken && !over && !!quote && cluster === "mainnet" && !impactBlocked;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -251,18 +269,23 @@ export function JupiterSwap({
           <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 16px 14px", borderTop: "1px solid #000", background: "#17171B" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Loofta fee ({feePct}%)</span><span>{feeHuman != null && get ? `${fmt(feeHuman, 4)} ${get.symbol}` : "-"}</span></div>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Minimum received</span><span>{minHuman != null && get ? `${fmt(minHuman)} ${get.symbol}` : "-"}</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Price impact</span><span>{quote ? `${(Math.abs(quote.priceImpactPct) * 100).toFixed(2)}%` : "-"}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Price impact</span><span style={{ color: impactColor, fontWeight: impactPct != null && impactPct >= IMPACT_WARN_PCT ? 700 : 400 }}>{impactText}</span></div>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Route</span><span>Jupiter</span></div>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Network fee</span><span>{quote?.gasless ? "Paid by Loofta, taken from your USDC" : "Paid in SOL"}</span></div>
-            {quote?.gasless ? (
-              <span style={{ fontSize: 13, lineHeight: 1.45, color: "#77757F" }}>No SOL needed. Loofta pays the network fee and takes its cost from the USDC you swap, so you get SOL for the rest. There is no minimum swap.</span>
-            ) : quote?.needsAccountRent ? (
-              <span style={{ fontSize: 13, lineHeight: 1.45, color: "#77757F" }}>Includes about 0.002 SOL, one time, to open your account for {get?.symbol ?? "this token"}.</span>
-            ) : null}
+            {quote?.gasless && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#77757F" }}>No SOL needed, and no minimum swap. Loofta pays the network fee and takes it from the USDC you swap.</span>}
           </div>
         )}
       </div>
 
+      {impactPct != null && impactPct >= IMPACT_WARN_PCT && (
+        <span style={{ fontSize: 13, lineHeight: 1.45, color: impactPct >= IMPACT_DANGER_PCT ? "#FF7A6A" : "#F5D547", padding: "0 6px" }}>
+          {impactBlocked
+            ? `This swap would move the price by about ${impactPct.toFixed(1)}%. Try a smaller amount.`
+            : impactPct >= IMPACT_DANGER_PCT
+              ? `High price impact. You could lose about ${impactPct.toFixed(1)}% of your value on this swap.`
+              : `Price impact is ${impactPct.toFixed(1)}%. A smaller amount would get you a better rate.`}
+        </span>
+      )}
       {isGaslessPair && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#6FD69A", padding: "0 6px" }}>Gasless: no SOL needed for this swap.</span>}
       {lacksSol && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#F5D547", padding: "0 6px" }}>You need about 0.003 SOL for the network fee. Swap some USDC to SOL first, that one is free.</span>}
 

@@ -17,8 +17,14 @@ export type JupiterSwapQuote = {
   /** Fee in base units of the output token. */
   feeAmount: string;
   priceImpactPct: number;
-  /** Gasless swaps only: the network cost Loofta pays, taken from your USDC, in USDC base units (6 decimals). */
+  /** Gasless swaps only: everything Loofta pays and takes from your USDC (fee plus account deposit), USDC base units. */
   networkCostUsdc?: string;
+  /** Gasless swaps only: the part of that which is the network fee. */
+  networkFeeUsdc?: string;
+  /** Gasless swaps only: the account deposit, returned to you as SOL. */
+  accountDepositUsdc?: string;
+  /** Normal swaps: refundable deposit to open the account for the token you buy. Not a fee. */
+  accountDepositLamports?: number;
   /** Estimated network cost in lamports when you pay it yourself (not present on gasless swaps). */
   networkFeeLamports?: number;
   needsAccountRent: boolean;

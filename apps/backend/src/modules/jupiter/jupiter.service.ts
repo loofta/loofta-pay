@@ -295,7 +295,12 @@ export class JupiterService {
     const cost = this.costFeeUsdcUnits(ataCount, solUsd);
     if (total <= cost) throw this.costTooHigh(total, cost);
     const q = await this.v1Quote(dto, USDC_DECIMALS, SWAP_FEE_BPS, total - cost);
+    // Gas is the real fee. The rest pays for the temporary SOL account, which is closed in the same
+    // transaction and its deposit comes back to the user as SOL, so it is shown apart from the fee.
+    const networkFee = this.costFeeUsdcUnits(0, solUsd);
     return {
+      networkFeeUsdc: networkFee.toString(),
+      accountDepositUsdc: (cost - networkFee).toString(),
       inAmount: String(total),
       outAmount: String(q.outAmount),
       minOutAmount: String(q.otherAmountThreshold),
@@ -341,10 +346,14 @@ export class JupiterService {
         needsAccountRent = !(await this.connection.getAccountInfo(await getAssociatedTokenAddress(outMint, wallet)));
       } catch { /* leave false: the estimate just omits rent */ }
     }
-    const networkFeeLamports = 5_000 + 150_000 + (needsAccountRent ? TOKEN_ACCOUNT_RENT_LAMPORTS : 0);
+    // The network fee is the signature plus a typical priority fee. The token-account rent is a refundable
+    // deposit (closing the account returns it), so it is reported separately and not counted as a fee.
+    const networkFeeLamports = 5_000 + 150_000;
+    const accountDepositLamports = needsAccountRent ? TOKEN_ACCOUNT_RENT_LAMPORTS : 0;
 
     return {
       networkFeeLamports,
+      accountDepositLamports,
       needsAccountRent,
       inAmount: String(q.inAmount),
       outAmount: String(q.outAmount),
