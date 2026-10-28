@@ -24,8 +24,10 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module';
 import { TwitterPaymentsModule } from './modules/twitter-payments/twitter-payments.module';
 import { TwitterAutopayModule } from './modules/twitter-autopay/twitter-autopay.module';
 import { TelegramBotModule } from './modules/telegram-bot/telegram-bot.module';
+import { AgentModule } from './modules/agent/agent.module';
 import { TwitterTicketGiftsModule } from './modules/twitter-ticket-gifts/twitter-ticket-gifts.module';
 import { OfframpModule } from './modules/offramp/offramp.module';
+import { QrPayModule } from './modules/qr-pay/qr-pay.module';
 import { JupiterModule } from './modules/jupiter/jupiter.module';
 import { LotteryModule } from './modules/lottery/lottery.module';
 import { MagicblockQuestModule } from './modules/magicblock-quest/magicblock-quest.module';
@@ -108,8 +110,10 @@ import { FomoModule } from './modules/fomo/fomo.module';
     TwitterPaymentsModule,
     TwitterAutopayModule,
     TelegramBotModule,
+    AgentModule,
     TwitterTicketGiftsModule,
     OfframpModule,
+    QrPayModule,
     JupiterModule,
     LotteryModule,
     MagicblockQuestModule,

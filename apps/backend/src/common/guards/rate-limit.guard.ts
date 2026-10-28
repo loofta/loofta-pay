@@ -45,7 +45,8 @@ export class RateLimitGuard implements CanActivate {
       limit = options.limit;
     } else {
       // Default ('user' or unset): prefer authenticated user ID; fall back to IP.
-      identifier = request.user?.id ?? ip;
+      // An AI agent's requests are limited per session, not per IP (many agents share one address).
+      identifier = request.user?.id ?? (request.agentSession?.id ? `agent:${request.agentSession.id}` : ip);
       limit = options.limit;
     }
 

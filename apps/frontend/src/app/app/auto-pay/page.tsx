@@ -202,9 +202,10 @@ export default function TwitterBotPage() {
       <div className="space-y-2">
         <h1 className="text-3xl font-semibold text-white">Auto-pay</h1>
         <p className="text-lg text-slate-300 leading-relaxed">
-          Pay anyone from Telegram. Message{' '}
+          Let Loofta pay from your wallet when you ask, from Telegram or from an AI agent. Message{' '}
           <a href="https://t.me/looftapay_bot" target="_blank" rel="noreferrer" className="text-white underline underline-offset-2">@looftapay_bot</a>{' '}
-          with <span className="text-white">pay $5 to @someone</span>.
+          with <span className="text-white">pay $5 to @someone</span>, or connect an agent on the{' '}
+          <a href="/agent" className="text-white underline underline-offset-2">Agents page</a>.
         </p>
       </div>
 
@@ -242,7 +243,7 @@ export default function TwitterBotPage() {
         ) : status?.canEnable ? (
           <div className="space-y-4">
             <ul className="list-disc pl-5 space-y-1.5 text-lg text-slate-300 leading-relaxed">
-              <li>Loofta can send USDC from your wallet when a command comes from your own Telegram account.</li>
+              <li>Loofta can send USDC from your wallet when a command comes from your own Telegram account, or from an AI agent you connected. Both share the same limits below.</li>
               <li>A payment that has been sent cannot be reversed, so check the name before you confirm. You can turn this off any time.</li>
             </ul>
             <label className="flex items-start gap-3 cursor-pointer">
