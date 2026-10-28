@@ -26,3 +26,16 @@ export class JupiterSwapDto {
   @Max(1000)
   slippageBps?: number;
 }
+
+export class JupiterSwapSubmitDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  id: string;
+
+  /** The swap transaction we prepared, signed by the user's wallet. Base64. */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(6000)
+  signedTransaction: string;
+}

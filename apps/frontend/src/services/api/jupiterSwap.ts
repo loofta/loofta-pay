@@ -17,22 +17,29 @@ export type JupiterSwapQuote = {
   /** Fee in base units of the output token. */
   feeAmount: string;
   priceImpactPct: number;
-  /** Estimated network cost in lamports (signature, priority fee, and one-time account rent if needed). */
-  networkFeeLamports: number;
+  /** Gasless swaps only: the network cost Loofta pays, taken from your USDC, in USDC base units (6 decimals). */
+  networkCostUsdc?: string;
+  /** Estimated network cost in lamports when you pay it yourself (not present on gasless swaps). */
+  networkFeeLamports?: number;
   needsAccountRent: boolean;
+  /** Only USDC to SOL: Loofta pays the network fee and prices it into feeBps. */
+  gasless: boolean;
   inDecimals: number;
   outDecimals: number;
 };
 
 export type JupiterSwapBuild = {
-  /** Unsigned versioned transaction, base64. The user signs and pays the network fee. */
+  /** True for gasless swaps: send this id and the signed transaction to /swap/submit instead of broadcasting yourself. */
+  gasless: boolean;
+  id?: string;
+  /** Versioned transaction, base64. The user signs it and Loofta pays the network fee. */
   swapTransaction: string;
-  lastValidBlockHeight: number | null;
   inAmount: string;
   outAmount: string;
   minOutAmount: string;
   feeBps: number;
   feeAmount: string;
+  networkCostUsdc?: string;
   outDecimals: number;
 };
 
@@ -42,4 +49,8 @@ export function quoteJupiterSwap(params: JupiterSwapParams, userId: string, acce
 
 export function buildJupiterSwap(params: JupiterSwapParams, userId: string, accessToken?: string | null): Promise<JupiterSwapBuild> {
   return fetchApi('/jupiter/swap/build', { method: 'POST', body: JSON.stringify(params), userId, accessToken });
+}
+
+export function submitJupiterSwap(params: { id: string; signedTransaction: string }, userId: string, accessToken?: string | null): Promise<{ signature: string }> {
+  return fetchApi('/jupiter/swap/submit', { method: 'POST', body: JSON.stringify(params), userId, accessToken });
 }

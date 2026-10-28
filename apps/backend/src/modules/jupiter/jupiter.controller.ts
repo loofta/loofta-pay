@@ -5,7 +5,7 @@ import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { UsersService } from '@/modules/users/users.service';
 import { JupiterService } from './jupiter.service';
 import { PrepareSolWithdrawalDto } from './dto/prepare-sol-withdrawal.dto';
-import { JupiterSwapDto } from './dto/jupiter-swap.dto';
+import { JupiterSwapDto, JupiterSwapSubmitDto } from './dto/jupiter-swap.dto';
 
 @ApiTags('jupiter')
 @Controller('jupiter')
@@ -55,8 +55,18 @@ export class JupiterController {
   @RateLimit(10, 60, 'jupiter:build')
   @HttpCode(HttpStatus.OK)
   @ApiSecurity('privy-auth')
-  @ApiOperation({ summary: 'Build an unsigned token swap transaction for the caller\'s own wallet (user pays the network fee)' })
+  @ApiOperation({ summary: 'Build a sponsored (gasless) token swap transaction for the caller\'s own wallet' })
   async buildSwap(@Req() req: any, @Body() dto: JupiterSwapDto) {
     return this.jupiter.buildSwap(req.user!.id, dto);
+  }
+
+  @Post('swap/submit')
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'jupiter:submit')
+  @HttpCode(HttpStatus.OK)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Co-sign (sponsor) and send a swap the user signed. Only a transaction we built is accepted.' })
+  async submitSwap(@Req() req: any, @Body() dto: JupiterSwapSubmitDto) {
+    return this.jupiter.submitSwap(req.user!.id, dto);
   }
 }

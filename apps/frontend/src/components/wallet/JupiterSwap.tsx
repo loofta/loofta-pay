@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Connection } from "@solana/web3.js";
 import { usePrivy } from "@privy-io/react-auth";
 import { ArrowDown, ExternalLink } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
@@ -10,7 +9,8 @@ import type { WalletHolding } from "@/hooks/useWalletHoldings";
 import { useLooftaSigner } from "@/components/deposit/DepositSheet";
 import { WalletTokenLogo } from "@/components/wallet/WalletTokenLogo";
 import type { PickToken } from "@/components/wallet/JupiterTokenPicker";
-import { buildJupiterSwap, quoteJupiterSwap, type JupiterSwapQuote } from "@/services/api/jupiterSwap";
+import { buildJupiterSwap, quoteJupiterSwap, submitJupiterSwap, type JupiterSwapQuote } from "@/services/api/jupiterSwap";
+import { Connection } from "@solana/web3.js";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { getPrivySolanaChainForMode, getRpcForMode } from "@/lib/solanaRpc";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
@@ -21,7 +21,7 @@ import { LOW_SLIPPAGE_BPS, HIGH_SLIPPAGE_BPS, formatSlippage } from "@/component
 const SORA = "var(--font-home-sora), Sora, sans-serif";
 const WSOL = "So11111111111111111111111111111111111111112";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const SOL_RESERVE = 0.01;
+const SOL_RESERVE = 0.01; // kept back when paying with SOL so the network fee can still be paid
 
 const card = { display: "flex", flexDirection: "column", gap: 8, padding: 16, borderRadius: 22, background: "#1A1A20", border: "1px solid rgba(255,255,255,0.07)" } as const;
 const fmt = (n: number, max = 6) => n.toLocaleString("en-US", { maximumSignificantDigits: max });
@@ -121,10 +121,16 @@ export function JupiterSwap({
       const access = await getAccessToken();
       const built = await buildJupiterSwap({ inputMint: pay.mint, outputMint: get.mint, amount: String(amount), slippageBps }, user.id, access);
       const bytes = Uint8Array.from(Buffer.from(built.swapTransaction, "base64"));
-      const { signedTransaction } = await signTransaction({ transaction: bytes, wallet, chain: getPrivySolanaChainForMode(cluster) });
-      const connection = new Connection(getRpcForMode(cluster), "confirmed");
-      const sig = await connection.sendRawTransaction(signedTransaction, { skipPreflight: false, preflightCommitment: "confirmed", maxRetries: 3 });
-      await waitForSignatureConfirmation(connection, sig, 120_000, 1500, "walletJupiterSwap");
+      const { signedTransaction } = await signTransaction({ transaction: bytes, wallet, chain: getPrivySolanaChainForMode(cluster), options: { uiOptions: { showWalletUIs: false } } });
+      let sig: string;
+      if (built.gasless && built.id) {
+        // USDC to SOL is gasless: the backend checks this is the swap it prepared, then co-signs and sends it.
+        ({ signature: sig } = await submitJupiterSwap({ id: built.id, signedTransaction: Buffer.from(signedTransaction).toString("base64") }, user.id, access));
+      } else {
+        const connection = new Connection(getRpcForMode(cluster), "confirmed");
+        sig = await connection.sendRawTransaction(signedTransaction, { skipPreflight: false, preflightCommitment: "confirmed", maxRetries: 3 });
+        await waitForSignatureConfirmation(connection, sig, 120_000, 1500, "walletJupiterSwap");
+      }
       tagWalletTx(sig, { kind: "swap", label: "Jupiter" });
       setSent({ sig, out: `${fmt(baseToHuman(built.outAmount, built.outDecimals))} ${get.symbol}` });
       onDone?.();
@@ -150,8 +156,13 @@ export function JupiterSwap({
     );
   }
 
-  const networkFeeSol = quote ? quote.networkFeeLamports / 1e9 : null;
-  const networkFeeText = networkFeeSol == null ? "-" : solUsd != null ? `≈ $${(networkFeeSol * solUsd).toFixed(2)}` : `≈ ${networkFeeSol.toFixed(4)} SOL`;
+  const feePct = quote ? (quote.feeBps / 100).toFixed(2) : "0.80";
+  const networkFeeSol = quote?.networkFeeLamports != null ? quote.networkFeeLamports / 1e9 : null;
+  const networkCostUsd = quote?.networkCostUsdc != null ? Number(quote.networkCostUsdc) / 1e6 : null;
+  const networkFeeText = quote?.gasless ? (networkCostUsd != null ? `$${networkCostUsd.toFixed(2)} in USDC` : "-") : networkFeeSol == null ? "-" : solUsd != null ? `≈ $${(networkFeeSol * solUsd).toFixed(2)}` : `≈ ${networkFeeSol.toFixed(4)} SOL`;
+  const solBalance = solHolding?.amount ?? 0;
+  const isGaslessPair = pay?.mint === USDC && get?.mint === WSOL;
+  const lacksSol = solBalance < 0.003 && !isGaslessPair;
   const outHuman = quote ? baseToHuman(quote.outAmount, quote.outDecimals) : null;
   const minHuman = quote ? baseToHuman(quote.minOutAmount, quote.outDecimals) : null;
   const feeHuman = quote ? baseToHuman(quote.feeAmount, quote.outDecimals) : null;
@@ -238,15 +249,22 @@ export function JupiterSwap({
         </button>
         {detailsOpen && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 16px 14px", borderTop: "1px solid #000", background: "#17171B" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Loofta fee (0.80%)</span><span>{feeHuman != null && get ? `${fmt(feeHuman, 4)} ${get.symbol}` : "-"}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Loofta fee ({feePct}%)</span><span>{feeHuman != null && get ? `${fmt(feeHuman, 4)} ${get.symbol}` : "-"}</span></div>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Minimum received</span><span>{minHuman != null && get ? `${fmt(minHuman)} ${get.symbol}` : "-"}</span></div>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Price impact</span><span>{quote ? `${(Math.abs(quote.priceImpactPct) * 100).toFixed(2)}%` : "-"}</span></div>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Route</span><span>Jupiter</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Paid in</span><span>SOL</span></div>
-            {quote?.needsAccountRent && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#77757F" }}>Includes about 0.002 SOL, one time, to open your account for {get?.symbol ?? "this token"}.</span>}
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Network fee</span><span>{quote?.gasless ? "Paid by Loofta, taken from your USDC" : "Paid in SOL"}</span></div>
+            {quote?.gasless ? (
+              <span style={{ fontSize: 13, lineHeight: 1.45, color: "#77757F" }}>No SOL needed. Loofta pays the network fee and takes its cost from the USDC you swap, so you get SOL for the rest. There is no minimum swap.</span>
+            ) : quote?.needsAccountRent ? (
+              <span style={{ fontSize: 13, lineHeight: 1.45, color: "#77757F" }}>Includes about 0.002 SOL, one time, to open your account for {get?.symbol ?? "this token"}.</span>
+            ) : null}
           </div>
         )}
       </div>
+
+      {isGaslessPair && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#6FD69A", padding: "0 6px" }}>Gasless: no SOL needed for this swap.</span>}
+      {lacksSol && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#F5D547", padding: "0 6px" }}>You need about 0.003 SOL for the network fee. Swap some USDC to SOL first, that one is free.</span>}
 
       <button type="button" onClick={() => void go()} disabled={!ready || busy} style={{ ...BTN_PRIMARY, flex: "none", width: "100%", marginTop: "auto", opacity: !ready || busy ? 0.4 : 1 }}>
         {busy ? "Swapping…" : cta}
