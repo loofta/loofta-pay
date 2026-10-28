@@ -7,6 +7,7 @@ export const runtime = 'nodejs';
 
 const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const MAX_BYTES = 2 * 1024 * 1024;
+const MAX_NFT_BYTES = 6 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const ALLOWED_TYPES = /^image\/(png|jpe?g|webp|gif|svg\+xml|avif)\b/i;
 
@@ -49,11 +50,47 @@ async function iconFor(mint: string): Promise<string | null> {
   return url;
 }
 
+function toHttps(uri: string): string {
+  if (uri.startsWith('ipfs://')) return `https://ipfs.io/ipfs/${uri.slice(7).replace(/^ipfs\//, '')}`;
+  if (uri.startsWith('ar://')) return `https://arweave.net/${uri.slice(5)}`;
+  return uri;
+}
+
+/** NFT artwork by asset id, read from the DAS index so the caller never supplies a URL. */
+async function nftImageFor(id: string): Promise<string | null> {
+  const hit = iconCache.get(`nft:${id}`);
+  if (hit && Date.now() - hit.at < ICON_TTL_MS) return hit.url;
+  const rpc = process.env.NEXT_PUBLIC_SOLANA_RPC_URL?.trim();
+  let url: string | null = null;
+  if (rpc) {
+    try {
+      const r = await fetch(rpc, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getAsset', params: { id } }),
+        signal: AbortSignal.timeout(6_000),
+        cache: 'no-store',
+      });
+      const c = (await r.json())?.result?.content;
+      const img = c?.links?.image ?? c?.files?.[0]?.uri;
+      url = typeof img === 'string' ? toHttps(img) : null;
+    } catch {
+      url = null;
+    }
+  }
+  iconCache.set(`nft:${id}`, { url, at: Date.now() });
+  return url;
+}
+
 /** Same-origin token icon: looks the icon up by mint, fetches it from a public host and serves it, so the page CSP never has to allow every token host. */
 export async function GET(req: Request) {
-  const mint = new URL(req.url).searchParams.get('mint') ?? '';
-  if (!BASE58.test(mint)) return new NextResponse(null, { status: 400 });
-  const icon = await iconFor(mint);
+  const params = new URL(req.url).searchParams;
+  const asset = params.get('asset') ?? '';
+  const mint = params.get('mint') ?? '';
+  const isNft = asset !== '';
+  if (!BASE58.test(isNft ? asset : mint)) return new NextResponse(null, { status: 400 });
+  const maxBytes = isNft ? MAX_NFT_BYTES : MAX_BYTES;
+  const icon = isNft ? await nftImageFor(asset) : await iconFor(mint);
   if (!icon) return new NextResponse(null, { status: 404 });
   try {
     let current = icon;
@@ -69,7 +106,7 @@ export async function GET(req: Request) {
       const type = res.headers.get('content-type') ?? '';
       if (!res.ok || !ALLOWED_TYPES.test(type)) return new NextResponse(null, { status: 404 });
       const buf = new Uint8Array(await res.arrayBuffer());
-      if (buf.byteLength === 0 || buf.byteLength > MAX_BYTES) return new NextResponse(null, { status: 404 });
+      if (buf.byteLength === 0 || buf.byteLength > maxBytes) return new NextResponse(null, { status: 404 });
       return new NextResponse(buf, {
         headers: {
           'Content-Type': type.split(';')[0],

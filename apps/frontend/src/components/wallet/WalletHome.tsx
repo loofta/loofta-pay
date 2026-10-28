@@ -10,6 +10,7 @@ import { WalletSendModal } from "@/components/wallet/WalletSendModal";
 import { WalletReceiveModal } from "@/components/wallet/WalletReceiveModal";
 import { WalletSwapModal } from "@/components/wallet/WalletSwapModal";
 import { WalletSettingsModal } from "@/components/wallet/WalletSettingsModal";
+import { WalletNfts } from "@/components/wallet/WalletNfts";
 import { WalletHistoryModal } from "@/components/wallet/WalletHistoryModal";
 import { sora, manrope, jetbrainsMono } from "@/components/home-v4/fonts";
 import "@/components/app-home/loofta-app.css";
@@ -27,6 +28,7 @@ function WalletHomeInner() {
   const searchParams = useSearchParams();
   const { authenticated, login } = useAuth();
   const { holdings, totalUsd, unpriced, isLoading, refetch, address, evmAddress } = useWalletHoldings();
+  const [listTab, setListTab] = useState<"tokens" | "nfts">("tokens");
   const live = authenticated && !isLoading;
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -111,12 +113,16 @@ function WalletHomeInner() {
         </div>
 
         <div style={{ padding: "24px 18px 18px", borderRadius: 32, background: "#141419", border: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 8px 6px" }}>
-            <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 19 }}>Tokens</span>
-            <span style={{ fontSize: 13, color: "#77757F" }}>Any SPL token · Solana</span>
+          <div role="group" aria-label="Wallet assets" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, padding: 4, borderRadius: 999, background: "#0E0E12", marginBottom: 6 }}>
+            {(["tokens", "nfts"] as const).map((t) => (
+              <button key={t} type="button" onClick={() => setListTab(t)} aria-pressed={listTab === t} style={{ cursor: "pointer", padding: 10, borderRadius: 999, border: 0, fontFamily: SORA, fontWeight: 700, fontSize: 15, background: listTab === t ? "#26262E" : "transparent", color: listTab === t ? "#F2EFE8" : "#77757F" }}>
+                {t === "tokens" ? "Tokens" : "NFTs"}
+              </button>
+            ))}
           </div>
-          {authenticated && !live && <span style={{ fontSize: 14, color: "#77757F", padding: "0 8px" }}>Loading your tokens…</span>}
-          {shownHoldings.map((h) => (
+          {listTab === "nfts" && <WalletNfts enabled={authenticated} solanaAddress={address} />}
+          {listTab === "tokens" && authenticated && !live && <span style={{ fontSize: 14, color: "#77757F", padding: "0 8px" }}>Loading your tokens…</span>}
+          {listTab === "tokens" && shownHoldings.map((h) => (
             <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: 14, borderRadius: 20, background: "#0E0E12", border: "1px solid rgba(255,255,255,0.05)" }}>
               <WalletTokenLogo symbol={h.symbol} chain={h.chain} logo={h.logo} mint={h.mint} size={44} />
               <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
@@ -126,7 +132,7 @@ function WalletHomeInner() {
               <span style={{ fontFamily: SORA, fontWeight: 600, fontSize: 16 }}>{h.usd != null ? money(h.usd) : "No price"}</span>
             </div>
           ))}
-          {authenticated && live && shownHoldings.length === 0 && <span style={{ fontSize: 14, color: "#77757F", padding: "0 8px 6px" }}>Nothing here yet. Tap Receive to get your address.</span>}
+          {listTab === "tokens" && authenticated && live && shownHoldings.length === 0 && <span style={{ fontSize: 14, color: "#77757F", padding: "0 8px 6px" }}>Nothing here yet. Tap Receive to get your address.</span>}
         </div>
       </div>
 
