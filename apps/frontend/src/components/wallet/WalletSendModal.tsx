@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { Connection, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
-import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { NATIVE_MINT, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { usePrivy } from "@privy-io/react-auth";
 import { ExternalLink, Lock, Search } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
@@ -22,13 +23,15 @@ import { getPrivySolanaChainForMode, getRpcForMode } from "@/lib/solanaRpc";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { tagWalletTx } from "@/lib/walletActivityTags";
 import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
-import { DEFAULT_SPREAD_MS, formatDelayDuration, randomPrivacySplit } from "@/lib/privacyDelay";
+import { DEFAULT_SPREAD_MS, DELAY_UNIT_MS, randomPrivacySplit } from "@/lib/privacyDelay";
 import { BTN_PRIMARY, BTN_SECONDARY, FIELD_BOX, FIELD_INPUT, FIELD_PILL, shortAddress as shortAddr } from "@/components/wallet/walletStyles";
 
 const SORA = "var(--font-home-sora), Sora, sans-serif";
 const MONO = "var(--font-home-mono), ui-monospace, monospace";
 const MAINNET_USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const MIN_SOL_FOR_FEES = 0.003;
+/** Private SOL: MagicBlock wraps and unwraps it. Keep SOL back for the wrap account rent, relay gas and buffer. */
+const PRIVATE_SOL_RESERVE = 0.012;
 
 type Step = "form" | "pick" | "review" | "done";
 type Kind = "empty" | "solana" | "domain" | "evm" | "invalid";
@@ -72,6 +75,13 @@ export function WalletSendModal({
 }) {
   const router = useRouter();
   const { toast } = useToast();
+  const tr = useTranslations("Wallet");
+  const delayText = (ms: number) => {
+    if (ms <= 0) return tr("delay.none");
+    if (ms < DELAY_UNIT_MS.hours) return tr("delay.minutes", { n: Math.round(ms / DELAY_UNIT_MS.minutes) });
+    if (ms < DELAY_UNIT_MS.days) return tr("delay.hours", { n: Math.round(ms / DELAY_UNIT_MS.hours) });
+    return tr("delay.days", { n: Math.round(ms / DELAY_UNIT_MS.days) });
+  };
   const { user, getAccessToken } = usePrivy();
   const networkMode = useAuthStore((s) => s.networkMode);
   const cluster = networkMode === "devnet" ? "devnet" : "mainnet";
@@ -121,10 +131,12 @@ export function WalletSendModal({
   const amountNum = Number(amount);
   const solHeld = holdings.find((h) => h.mint === null)?.amount ?? 0;
   const isUsdc = token?.mint === MAINNET_USDC;
-  const canPrivate = !!token && token.mint !== null && cluster === "mainnet";
+  const canPrivate = !!token && cluster === "mainnet";
+  const isSol = token?.mint === null;
   const usePrivate = privately && canPrivate;
-  const reserve = token?.mint === null ? MIN_SOL_FOR_FEES : 0;
-  const maxAmount = token ? Math.max(0, token.amount - reserve - (usePrivate && isUsdc ? 0.3 : 0)) : 0;
+  // A private SOL send is wrapped first: keep SOL for the wrap account rent, the relay gas and the 0.2% fee.
+  const reserve = isSol ? (usePrivate ? PRIVATE_SOL_RESERVE : MIN_SOL_FOR_FEES) : 0;
+  const maxAmount = token ? Math.max(0, (token.amount - reserve) - (usePrivate && isUsdc ? 0.3 : 0)) : 0;
   const over = amountNum > maxAmount + 1e-12;
   const needsSolForFees = !(usePrivate && isUsdc) && solHeld < MIN_SOL_FOR_FEES;
   const usdValue = token && token.usd != null && token.amount > 0 ? (token.usd / token.amount) * (amountNum || 0) : null;
@@ -192,21 +204,22 @@ export function WalletSendModal({
             destinationAddress: dest,
             split,
             maxDelayMs: delayMs,
-            onTxBuilt: ({ feeAmountUsdc }) => confirmFee(`Privacy fee $${feeAmountUsdc.toFixed(2)} is charged on top of ${amountNum} USDC.`),
+            onTxBuilt: ({ feeAmountUsdc }) => confirmFee(tr("send.feeNoteUsdc", { fee: feeAmountUsdc.toFixed(2), amount: amountNum })),
           });
           tagWalletTx(r.signature, { private: true, kind: "send", to: dest });
           setSent({ sig: r.signature, private: true });
         } else {
+          const privateMint = isSol ? NATIVE_MINT.toBase58() : (token.mint as string);
           const r = await sendTokenPrivately(anchor, {
             privyUserId: userId,
             accessToken: access,
-            mint: token.mint as string,
+            mint: privateMint,
             amount: String(amountNum),
             destinationAddress: dest,
             split,
             maxDelayMs: delayMs,
             onTxBuilt: (b) =>
-              confirmFee(`Privacy fee about ${b.feeAmountToken.toFixed(Math.min(token.decimals, 6))} ${token.symbol} (about $${b.feeAmountUsd.toFixed(2)}) plus ${b.networkFeeSol} SOL network fee, on top of ${amountNum} ${token.symbol}.`),
+              confirmFee(tr("send.feeNoteToken", { feeToken: b.feeAmountToken.toFixed(Math.min(token.decimals, 6)), symbol: token.symbol, feeUsd: b.feeAmountUsd.toFixed(2), networkSol: b.networkFeeSol, amount: amountNum })),
           });
           tagWalletTx(r.signature, { private: true, kind: "send", to: dest });
           setSent({ sig: r.signature, private: true });
@@ -218,9 +231,9 @@ export function WalletSendModal({
       setStep("done");
       onDone();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Send failed";
+      const msg = err instanceof Error ? err.message : tr("send.failed");
       if (msg !== "CANCELLED_BY_USER" && !/reject|cancel|denied/i.test(msg)) {
-        toast({ variant: "destructive", title: "Send failed", description: msg });
+        toast({ variant: "destructive", title: tr("send.failed"), description: msg });
       }
       setStep("form");
     } finally {
@@ -228,13 +241,13 @@ export function WalletSendModal({
     }
   };
 
-  const title = step === "pick" ? "Choose token" : step === "review" ? "Review" : step === "done" ? "Sent" : `Send ${token?.symbol ?? ""}`.trim();
+  const title = step === "pick" ? tr("send.chooseToken") : step === "review" ? tr("send.review") : step === "done" ? tr("send.sent") : tr("send.title", { symbol: token?.symbol ?? "" }).trim();
   const onBack = step === "pick" ? () => setStep("form") : step === "review" && !busy && !feeNote ? () => setStep("form") : null;
   const row = { display: "flex", justifyContent: "space-between", gap: 16 } as const;
   const feeBox = { padding: "14px 16px", borderRadius: 18, background: "#0E0E12", display: "flex", flexDirection: "column", gap: 8, fontSize: 14 } as const;
 
-  const networkFee = usePrivate ? (isUsdc ? "Covered" : "About 0.002 SOL") : token?.mint === null ? "About 0.000005 SOL" : "About 0.000005 SOL";
-  const privacyFee = isUsdc ? "Shown before you confirm" : "About 0.2%";
+  const networkFee = usePrivate ? (isUsdc ? tr("common.covered") : tr("send.feeAbout", { amount: "0.002" })) : tr("send.feeAbout", { amount: "0.000005" });
+  const privacyFee = isUsdc ? tr("send.privacyFeeShown") : tr("send.privacyFeePct");
 
   return (
     <WalletModal open={open} onClose={onClose} title={title} onBack={onBack}>
@@ -242,7 +255,7 @@ export function WalletSendModal({
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
           <label style={FIELD_BOX}>
             <Search size={20} color="#9A98A3" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" aria-label="Search tokens" style={FIELD_INPUT} />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr("common.search")} aria-label={tr("common.searchTokens")} style={FIELD_INPUT} />
           </label>
           {filtered.map((h) => (
             <button key={h.id} type="button" onClick={() => { setSelId(h.id); setAmount(""); setStep("form"); }} className="lh-9" style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 16, textAlign: "left", background: "#1A1A20", border: "1px solid rgba(255,255,255,0.06)", color: "#F2EFE8" }}>
@@ -254,69 +267,72 @@ export function WalletSendModal({
               {h.usd != null && <span style={{ fontWeight: 700, fontSize: 15 }}>{money(h.usd)}</span>}
             </button>
           ))}
-          {filtered.length === 0 && <span style={{ fontSize: 15, color: "#9A98A3", padding: "8px 4px" }}>{sendable.length === 0 ? "You have nothing to send yet." : "No token matches your search."}</span>}
+          {filtered.length === 0 && <span style={{ fontSize: 15, color: "#9A98A3", padding: "8px 4px" }}>{sendable.length === 0 ? tr("send.nothingToSend") : tr("send.noTokenMatch")}</span>}
         </div>
       )}
 
       {step === "form" && (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12 }}>
           {!token ? (
-            <span style={{ fontSize: 15, color: "#9A98A3", padding: "8px 4px" }}>You have nothing to send yet. Tap Receive to add funds.</span>
+            <span style={{ fontSize: 15, color: "#9A98A3", padding: "8px 4px" }}>{tr("send.nothingToSendReceive")}</span>
           ) : (
             <>
               <button type="button" onClick={() => setStep("pick")} className="lh-9" style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 20, background: "#1A1A20", border: "1px solid rgba(255,255,255,0.07)", color: "#F2EFE8", textAlign: "left" }}>
                 <WalletTokenLogo symbol={token.symbol} chain={token.chain} logo={token.logo} mint={token.mint} size={38} />
                 <span style={{ flex: 1, display: "flex", flexDirection: "column" }}>
                   <span style={{ fontWeight: 700, fontSize: 15 }}>{token.name}</span>
-                  <span style={{ fontSize: 13, color: "#77757F" }}>Available {token.amount.toLocaleString("en-US", { maximumFractionDigits: 6 })} {token.symbol}</span>
+                  <span style={{ fontSize: 13, color: "#77757F" }}>{tr("common.available", { amount: token.amount.toLocaleString("en-US", { maximumFractionDigits: 6 }), symbol: token.symbol })}</span>
                 </span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3" }}>Change ▾</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3" }}>{tr("send.change")}</span>
               </button>
 
               <div style={FIELD_BOX}>
-                <input value={recipient} onChange={(e) => setRecipient(e.target.value.replace(/\s/g, ""))} placeholder="Wallet address or .sol name" autoCapitalize="none" autoCorrect="off" spellCheck={false} aria-label="Recipient wallet address or .sol name" style={{ ...FIELD_INPUT, fontFamily: recipient ? MONO : undefined }} />
-                <button type="button" onClick={() => void paste()} style={FIELD_PILL}>Paste</button>
+                <input value={recipient} onChange={(e) => setRecipient(e.target.value.replace(/\s/g, ""))} placeholder={tr("send.recipientPlaceholder")} autoCapitalize="none" autoCorrect="off" spellCheck={false} aria-label={tr("send.recipientAria")} style={{ ...FIELD_INPUT, fontFamily: recipient ? MONO : undefined }} />
+                <button type="button" onClick={() => void paste()} style={FIELD_PILL}>{tr("common.paste")}</button>
               </div>
               {kind === "empty" && (
                 <span style={{ fontSize: 13, color: "#77757F", padding: "0 6px", lineHeight: 1.45 }}>
-                  Wallet address or .sol name only. To pay a username or email, use{" "}
-                  <button type="button" onClick={() => { onClose(); router.push("/app/send"); }} style={{ cursor: "pointer", background: "none", border: 0, padding: 0, color: "#9CC8FF", fontWeight: 700, fontSize: 13 }}>Send</button>.
+                  {tr.rich("send.recipientHint", {
+                    link: (chunks) => (
+                      <button type="button" onClick={() => { onClose(); router.push("/app/send"); }} style={{ cursor: "pointer", background: "none", border: 0, padding: 0, color: "#9CC8FF", fontWeight: 700, fontSize: 13 }}>{chunks}</button>
+                    ),
+                  })}
                 </span>
               )}
-              {kind === "domain" && domain.status === "resolving" && <span style={{ fontSize: 14, color: "#77757F", padding: "0 6px" }}>Looking up {recipient.trim()}…</span>}
+              {kind === "domain" && domain.status === "resolving" && <span style={{ fontSize: 14, color: "#77757F", padding: "0 6px" }}>{tr("send.lookingUp", { name: recipient.trim() })}</span>}
               {kind === "domain" && resolved && <span style={{ fontSize: 14, color: "#6FD69A", padding: "0 6px" }}>{recipient.trim()} → <span style={{ fontFamily: MONO }}>{shortAddr(resolved)}</span></span>}
-              {kind === "domain" && domain.status === "not-found" && <span style={{ fontSize: 14, color: "#FF7A6A", padding: "0 6px" }}>No wallet found for {recipient.trim()}.</span>}
-              {kind === "domain" && domain.status === "error" && <span style={{ fontSize: 14, color: "#FF7A6A", padding: "0 6px" }}>Could not look up that name right now. Try again.</span>}
-              {kind === "invalid" && <span style={{ fontSize: 14, color: "#FF7A6A", padding: "0 6px" }}>Enter a Solana wallet address or a .sol name.</span>}
+              {kind === "domain" && domain.status === "not-found" && <span style={{ fontSize: 14, color: "#FF7A6A", padding: "0 6px" }}>{tr("send.noWalletFor", { name: recipient.trim() })}</span>}
+              {kind === "domain" && domain.status === "error" && <span style={{ fontSize: 14, color: "#FF7A6A", padding: "0 6px" }}>{tr("send.lookupError")}</span>}
+              {kind === "invalid" && <span style={{ fontSize: 14, color: "#FF7A6A", padding: "0 6px" }}>{tr("send.invalidRecipient")}</span>}
               {kind === "evm" && (
                 <button type="button" onClick={() => { onClose(); onUseSwap(); }} className="lh-9" style={{ cursor: "pointer", textAlign: "left", padding: 14, borderRadius: 18, background: "#1A1A20", border: "1px solid rgba(255,255,255,0.1)", color: "#F2EFE8", display: "flex", alignItems: "center", gap: 12 }}>
                   <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-                    <span style={{ fontWeight: 700, fontSize: 15 }}>That is an EVM address</span>
-                    <span style={{ fontSize: 14, color: "#9A98A3" }}>Use Swap, Cross-chain, to send to Ethereum, Base and more.</span>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>{tr("send.evmTitle")}</span>
+                    <span style={{ fontSize: 14, color: "#9A98A3" }}>{tr("send.evmSub")}</span>
                   </span>
                   <span style={{ fontSize: 20, color: "#5D5B66" }}>→</span>
                 </button>
               )}
 
               <div style={FIELD_BOX}>
-                <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="Amount" aria-label="Amount" style={FIELD_INPUT} />
+                <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder={tr("common.amount")} aria-label={tr("common.amount")} style={FIELD_INPUT} />
                 <span style={{ fontSize: 15, color: "#9A98A3", fontWeight: 700 }}>{token.symbol}</span>
-                <button type="button" onClick={() => setAmount(trimAmount(maxAmount, token.decimals))} style={FIELD_PILL}>Max</button>
+                <button type="button" onClick={() => setAmount(trimAmount(maxAmount, token.decimals))} style={FIELD_PILL}>{tr("common.max")}</button>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "0 6px", fontSize: 14, color: over ? "#FF7A6A" : "#77757F" }}>
                 <span>{usdValue != null ? `≈ ${money(usdValue)}` : ""}</span>
-                <span>{over ? "More than you can send" : `Available ${token.amount.toLocaleString("en-US", { maximumFractionDigits: 6 })} ${token.symbol}`}</span>
+                <span>{over ? tr("send.over") : tr("common.available", { amount: token.amount.toLocaleString("en-US", { maximumFractionDigits: 6 }), symbol: token.symbol })}</span>
               </div>
-              {needsSolForFees && <span style={{ fontSize: 14, color: "#FF7A6A", padding: "0 6px" }}>You need about {MIN_SOL_FOR_FEES} SOL in your wallet for the network fee.</span>}
+              {needsSolForFees && <span style={{ fontSize: 14, color: "#FF7A6A", padding: "0 6px" }}>{tr("send.needSol", { amount: MIN_SOL_FOR_FEES })}</span>}
 
-              <button type="button" role="switch" aria-checked={usePrivate} aria-label="Send privately" disabled={!canPrivate} onClick={() => setPrivately((v) => !v)} style={{ cursor: canPrivate ? "pointer" : "default", textAlign: "left", display: "flex", alignItems: "center", gap: 14, padding: 16, borderRadius: 20, background: usePrivate ? "rgba(255,90,26,0.08)" : "#1A1A20", border: `1px solid ${usePrivate ? "rgba(255,122,42,0.35)" : "rgba(255,255,255,0.07)"}`, color: "#F2EFE8", opacity: canPrivate ? 1 : 0.6 }}>
+              <button type="button" role="switch" aria-checked={usePrivate} aria-label={tr("send.privately")} disabled={!canPrivate} onClick={() => setPrivately((v) => !v)} style={{ cursor: canPrivate ? "pointer" : "default", textAlign: "left", display: "flex", alignItems: "center", gap: 14, padding: 16, borderRadius: 20, background: usePrivate ? "rgba(255,90,26,0.08)" : "#1A1A20", border: `1px solid ${usePrivate ? "rgba(255,122,42,0.35)" : "rgba(255,255,255,0.07)"}`, color: "#F2EFE8", opacity: canPrivate ? 1 : 0.6 }}>
                 <span style={{ flex: "none", width: 40, height: 40, borderRadius: 13, background: usePrivate ? "linear-gradient(135deg,#FF5A1A,#F5A20C)" : "#2A2A32", display: "grid", placeItems: "center" }}>
                   <Lock size={20} color="#fff" />
                 </span>
                 <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span style={{ fontWeight: 700, fontSize: 15 }}>Send privately</span>
+                  <span style={{ fontWeight: 700, fontSize: 15 }}>{tr("send.privately")}</span>
                   <span style={{ fontSize: 13, lineHeight: 1.45, color: "#9A98A3" }}>
-                    {canPrivate ? "They get the tokens. Nobody can trace them back to your wallet." : token.mint === null ? "SOL can't be sent privately yet. Any token can." : "Private sends run on mainnet."}
+                    {canPrivate ? (isSol ? tr("send.privateSol") : tr("send.privateOn")) : tr("send.privateMainnet")}
                   </span>
                 </span>
                 <span style={{ flex: "none", width: 48, height: 28, borderRadius: 999, background: usePrivate ? "linear-gradient(90deg,#FF2D0A,#F5B70C)" : "#2A2A32", padding: 3, boxSizing: "border-box", display: "flex", justifyContent: usePrivate ? "flex-end" : "flex-start" }}>
@@ -329,14 +345,14 @@ export function WalletSendModal({
               )}
 
               <div style={feeBox}>
-                <div style={row}><span style={{ color: "#77757F" }}>Network fee</span><span>{networkFee}</span></div>
-                {usePrivate && <div style={row}><span style={{ color: "#77757F" }}>Privacy fee</span><span>{privacyFee}</span></div>}
-                <div style={row}><span style={{ color: "#77757F" }}>Arrives</span><span>{usePrivate ? formatDelayDuration(delayMs) : "Instant"}</span></div>
+                <div style={row}><span style={{ color: "#77757F" }}>{tr("common.networkFee")}</span><span>{networkFee}</span></div>
+                {usePrivate && <div style={row}><span style={{ color: "#77757F" }}>{tr("send.privacyFee")}</span><span>{privacyFee}</span></div>}
+                <div style={row}><span style={{ color: "#77757F" }}>{tr("send.arrives")}</span><span>{usePrivate ? delayText(delayMs) : tr("common.instant")}</span></div>
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: "auto", paddingTop: 4 }}>
-                <button type="button" onClick={onClose} style={BTN_SECONDARY}>Cancel</button>
-                <button type="button" onClick={() => setStep("review")} disabled={!canNext} style={{ ...BTN_PRIMARY, opacity: canNext ? 1 : 0.4 }}>Review</button>
+                <button type="button" onClick={onClose} style={BTN_SECONDARY}>{tr("common.cancel")}</button>
+                <button type="button" onClick={() => setStep("review")} disabled={!canNext} style={{ ...BTN_PRIMARY, opacity: canNext ? 1 : 0.4 }}>{tr("send.review")}</button>
               </div>
             </>
           )}
@@ -350,15 +366,15 @@ export function WalletSendModal({
             {usdValue != null && <span style={{ fontSize: 15, color: "#77757F" }}>≈ {money(usdValue)}</span>}
           </div>
           <div style={{ ...feeBox, padding: 16, gap: 10 }}>
-            <div style={row}><span style={{ color: "#77757F" }}>To</span><span style={{ fontFamily: MONO }}>{kind === "domain" ? `${recipient.trim()} (${shortAddr(destAddress ?? "")})` : shortAddr(destAddress ?? "")}</span></div>
-            <div style={row}><span style={{ color: "#77757F" }}>Mode</span><span style={{ fontWeight: 700, color: usePrivate ? "#FF8A4A" : "#F2EFE8" }}>{usePrivate ? "Private" : "Public"}</span></div>
-            <div style={row}><span style={{ color: "#77757F" }}>Network fee</span><span>{networkFee}</span></div>
-            <div style={row}><span style={{ color: "#77757F" }}>Arrives</span><span>{usePrivate ? formatDelayDuration(delayMs) : "Instant"}</span></div>
+            <div style={row}><span style={{ color: "#77757F" }}>{tr("send.to")}</span><span style={{ fontFamily: MONO }}>{kind === "domain" ? `${recipient.trim()} (${shortAddr(destAddress ?? "")})` : shortAddr(destAddress ?? "")}</span></div>
+            <div style={row}><span style={{ color: "#77757F" }}>{tr("send.mode")}</span><span style={{ fontWeight: 700, color: usePrivate ? "#FF8A4A" : "#F2EFE8" }}>{usePrivate ? tr("send.modePrivate") : tr("send.modePublic")}</span></div>
+            <div style={row}><span style={{ color: "#77757F" }}>{tr("common.networkFee")}</span><span>{networkFee}</span></div>
+            <div style={row}><span style={{ color: "#77757F" }}>{tr("send.arrives")}</span><span>{usePrivate ? delayText(delayMs) : tr("common.instant")}</span></div>
           </div>
           {usePrivate && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px" }}>
               <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.1)" }} />
-              <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.08em", color: "#77757F" }}>YOU → LOOFTA POOL → THEM</span>
+              <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: "0.08em", color: "#77757F" }}>{tr("send.route")}</span>
               <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.1)" }} />
             </div>
           )}
@@ -366,14 +382,14 @@ export function WalletSendModal({
             <div style={{ padding: 16, borderRadius: 18, background: "#0E0E12", border: "1px solid rgba(255,255,255,0.1)", display: "flex", flexDirection: "column", gap: 12 }}>
               <span style={{ fontSize: 15, lineHeight: 1.5, color: "#C8C6D0" }}>{feeNote}</span>
               <div style={{ display: "flex", gap: 10 }}>
-                <button type="button" onClick={() => { setFeeNote(null); confirmRef.current?.reject(new Error("CANCELLED_BY_USER")); confirmRef.current = null; }} style={{ ...BTN_SECONDARY, height: 48, fontSize: 15 }}>Cancel</button>
-                <button type="button" onClick={() => { setFeeNote(null); setBusy(true); confirmRef.current?.resolve(); confirmRef.current = null; }} style={{ ...BTN_PRIMARY, height: 48, fontSize: 15 }}>Confirm</button>
+                <button type="button" onClick={() => { setFeeNote(null); confirmRef.current?.reject(new Error("CANCELLED_BY_USER")); confirmRef.current = null; }} style={{ ...BTN_SECONDARY, height: 48, fontSize: 15 }}>{tr("common.cancel")}</button>
+                <button type="button" onClick={() => { setFeeNote(null); setBusy(true); confirmRef.current?.resolve(); confirmRef.current = null; }} style={{ ...BTN_PRIMARY, height: 48, fontSize: 15 }}>{tr("common.confirm")}</button>
               </div>
             </div>
           )}
           {!feeNote && (
             <button type="button" onClick={() => void go()} disabled={busy} style={{ ...BTN_PRIMARY, flex: "none", width: "100%", marginTop: "auto", opacity: busy ? 0.6 : 1 }}>
-              {busy ? "Sending…" : "Send now"}
+              {busy ? tr("common.sending") : tr("send.sendNow")}
             </button>
           )}
         </div>
@@ -382,14 +398,14 @@ export function WalletSendModal({
       {step === "done" && sent && (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 14, textAlign: "center", paddingTop: 12 }}>
           <div style={{ width: 84, height: 84, borderRadius: 28, background: "radial-gradient(120% 120% at 28% 18%,#B8F5D0 0%,#3CB371 48%,#23864F 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.5),inset 0 -8px 14px rgba(0,0,0,0.22),0 8px 0 #17603A,0 24px 40px rgba(0,0,0,0.5)", display: "grid", placeItems: "center", fontSize: 40, color: "#fff", fontWeight: 800 }}>✓</div>
-          <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>{sent.private ? "On its way, privately" : "Sent"}</span>
+          <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>{sent.private ? tr("send.donePrivateTitle") : tr("send.sent")}</span>
           <span style={{ fontSize: 15, lineHeight: 1.5, color: "#9A98A3", maxWidth: 320 }}>
-            {sent.private ? `Your private transfer is being relayed in ${split} ${split === 1 ? "part" : "parts"}, ${formatDelayDuration(delayMs)}.` : "Your transfer is confirmed on Solana."}
+            {sent.private ? tr("send.donePrivateBody", { split, duration: delayText(delayMs) }) : tr("send.donePublicBody")}
           </span>
           <a href={getExplorerTxUrl("solana", sent.sig)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, color: "#9CC8FF" }}>
-            <ExternalLink size={16} /> View transaction
+            <ExternalLink size={16} /> {tr("common.viewTransaction")}
           </a>
-          <button type="button" onClick={onClose} style={{ ...BTN_SECONDARY, flex: "none", width: "100%", marginTop: "auto" }}>Done</button>
+          <button type="button" onClick={onClose} style={{ ...BTN_SECONDARY, flex: "none", width: "100%", marginTop: "auto" }}>{tr("common.done")}</button>
         </div>
       )}
     </WalletModal>

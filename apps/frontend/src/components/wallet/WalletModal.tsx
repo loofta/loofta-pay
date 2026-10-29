@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -24,6 +25,7 @@ export function WalletModal({
   onBack?: (() => void) | null;
   children: ReactNode;
 }) {
+  const t = useTranslations("Wallet.common");
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       {open ? (
@@ -39,14 +41,14 @@ export function WalletModal({
           <DialogDescription className="sr-only">{title}</DialogDescription>
           <div style={{ display: "grid", gridTemplateColumns: "44px 1fr 44px", alignItems: "center", marginBottom: 16, flex: "none" }}>
             {onBack ? (
-              <button type="button" onClick={onBack} aria-label="Back" style={{ cursor: "pointer", width: 44, height: 44, borderRadius: 999, border: 0, background: "#1C1C22", color: "#C9C6CF", display: "grid", placeItems: "center", fontSize: 22, lineHeight: 1 }}>
+              <button type="button" onClick={onBack} aria-label={t("back")} style={{ cursor: "pointer", width: 44, height: 44, borderRadius: 999, border: 0, background: "#1C1C22", color: "#C9C6CF", display: "grid", placeItems: "center", fontSize: 22, lineHeight: 1 }}>
                 ‹
               </button>
             ) : (
               <span />
             )}
             <DialogTitle style={{ margin: 0, textAlign: "center", fontFamily: SORA, fontWeight: 700, fontSize: 20, letterSpacing: "-0.02em" }}>{title}</DialogTitle>
-            <button type="button" onClick={onClose} aria-label="Close" style={{ cursor: "pointer", width: 44, height: 44, borderRadius: 999, border: 0, background: "#1C1C22", color: "#C9C6CF", display: "grid", placeItems: "center" }}>
+            <button type="button" onClick={onClose} aria-label={t("close")} style={{ cursor: "pointer", width: 44, height: 44, borderRadius: 999, border: 0, background: "#1C1C22", color: "#C9C6CF", display: "grid", placeItems: "center" }}>
               <X size={20} />
             </button>
           </div>

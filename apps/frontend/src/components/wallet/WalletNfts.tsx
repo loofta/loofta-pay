@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { Check, Copy, ExternalLink } from "lucide-react";
 import { useWalletNfts, type WalletNft } from "@/hooks/useWalletNfts";
 import { WalletNftSendModal } from "@/components/wallet/WalletNftSendModal";
@@ -26,6 +27,7 @@ function NftImage({ nft, radius }: { nft: WalletNft; radius: number }) {
 }
 
 function NftDetail({ nft, onClose, onSend }: { nft: WalletNft | null; onClose: () => void; onSend: () => void }) {
+  const t = useTranslations("Wallet");
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     if (!nft) return;
@@ -54,16 +56,16 @@ function NftDetail({ nft, onClose, onSend }: { nft: WalletNft | null; onClose: (
             </div>
           )}
           {nft.sendable ? (
-            <button type="button" onClick={onSend} style={{ ...BTN_PRIMARY, flex: "none", width: "100%" }}>Send</button>
+            <button type="button" onClick={onSend} style={{ ...BTN_PRIMARY, flex: "none", width: "100%" }}>{t("common.send")}</button>
           ) : (
-            <span style={{ fontSize: 13, color: "#77757F", lineHeight: 1.45, textAlign: "center" }}>Sending is available for standard NFTs. This one uses a type we can't move from here yet.</span>
+            <span style={{ fontSize: 13, color: "#77757F", lineHeight: 1.45, textAlign: "center" }}>{t("nft.sendUnsupported")}</span>
           )}
-          <button type="button" onClick={copy} aria-label="Copy NFT address" style={{ cursor: "pointer", alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 10, padding: "10px 16px", borderRadius: 999, border: 0, background: "#1A1A20", color: "#C9C6CF" }}>
+          <button type="button" onClick={copy} aria-label={t("nft.copyAddress")} style={{ cursor: "pointer", alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 10, padding: "10px 16px", borderRadius: 999, border: 0, background: "#1A1A20", color: "#C9C6CF" }}>
             <span style={{ fontFamily: MONO, fontSize: 15 }}>{shortAddress(nft.id)}</span>
             {copied ? <Check size={16} /> : <Copy size={16} />}
           </button>
           <a href={`https://solscan.io/token/${nft.id}`} target="_blank" rel="noopener noreferrer" style={{ ...BTN_SECONDARY, flex: "none", width: "100%", boxSizing: "border-box", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, textDecoration: "none" }}>
-            View on Solscan <ExternalLink size={16} />
+            {t("nft.viewSolscan")} <ExternalLink size={16} />
           </a>
         </div>
       )}
@@ -73,6 +75,7 @@ function NftDetail({ nft, onClose, onSend }: { nft: WalletNft | null; onClose: (
 
 /** Grid of the NFTs held by the Loofta Solana wallet; tap one for its details. */
 export function WalletNfts({ enabled, solanaAddress }: { enabled: boolean; solanaAddress: string | null }) {
+  const t = useTranslations("Wallet");
   const { data, isLoading, isError, refetch } = useWalletNfts();
   const [selected, setSelected] = useState<WalletNft | null>(null);
   const [sending, setSending] = useState<WalletNft | null>(null);
@@ -80,9 +83,9 @@ export function WalletNfts({ enabled, solanaAddress }: { enabled: boolean; solan
 
   return (
     <>
-      {enabled && isLoading && <span style={{ fontSize: 14, color: "#77757F", padding: "0 8px" }}>Loading your NFTs…</span>}
-      {enabled && isError && <span style={{ fontSize: 14, color: "#77757F", padding: "0 8px" }}>Could not load your NFTs. Try again in a moment.</span>}
-      {enabled && !isLoading && !isError && nfts.length === 0 && <span style={{ fontSize: 14, color: "#77757F", padding: "0 8px 6px" }}>No NFTs yet. Send one to your Solana address and it shows up here.</span>}
+      {enabled && isLoading && <span style={{ fontSize: 14, color: "#77757F", padding: "0 8px" }}>{t("nft.loading")}</span>}
+      {enabled && isError && <span style={{ fontSize: 14, color: "#77757F", padding: "0 8px" }}>{t("nft.loadError")}</span>}
+      {enabled && !isLoading && !isError && nfts.length === 0 && <span style={{ fontSize: 14, color: "#77757F", padding: "0 8px 6px" }}>{t("nft.empty")}</span>}
       {nfts.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
           {nfts.map((n) => (

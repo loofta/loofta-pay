@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import { usePrivy } from "@privy-io/react-auth";
 import { ArrowDown, ExternalLink } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
@@ -60,6 +61,7 @@ export function JupiterSwap({
 }) {
   const { user, getAccessToken } = usePrivy();
   const { toast } = useToast();
+  const tr = useTranslations("Wallet");
   const networkMode = useAuthStore((s) => s.networkMode);
   const cluster = networkMode === "devnet" ? "devnet" : "mainnet";
   const { wallet, signTransaction } = useLooftaSigner(solanaAddress);
@@ -109,7 +111,7 @@ export function JupiterSwap({
         const q = await quoteJupiterSwap({ inputMint: pay.mint, outputMint: get.mint, amount: String(amount), slippageBps }, user.id, access);
         if (reqRef.current === id) setQuote(q);
       } catch (e) {
-        if (reqRef.current === id) setQuoteError(e instanceof Error ? e.message.replace(/^HTTP \d+:\s*/, "") : "No route found");
+        if (reqRef.current === id) setQuoteError(e instanceof Error ? e.message.replace(/^HTTP \d+:\s*/, "") : tr("swap.noRoute"));
       } finally {
         if (reqRef.current === id) setQuoting(false);
       }
@@ -138,8 +140,8 @@ export function JupiterSwap({
       setSent({ sig, out: `${fmt(baseToHuman(built.outAmount, built.outDecimals))} ${get.symbol}` });
       onDone?.();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Swap failed";
-      if (!/reject|cancel|denied/i.test(msg)) toast({ variant: "destructive", title: "Swap failed", description: msg.replace(/^HTTP \d+:\s*/, "") });
+      const msg = err instanceof Error ? err.message : tr("swap.failed");
+      if (!/reject|cancel|denied/i.test(msg)) toast({ variant: "destructive", title: tr("swap.failed"), description: msg.replace(/^HTTP \d+:\s*/, "") });
     } finally {
       setBusy(false);
     }
@@ -149,12 +151,12 @@ export function JupiterSwap({
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 14, textAlign: "center", paddingTop: 12 }}>
         <div style={{ width: 84, height: 84, borderRadius: 28, background: "radial-gradient(120% 120% at 28% 18%,#B8F5D0 0%,#3CB371 48%,#23864F 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.5),inset 0 -8px 14px rgba(0,0,0,0.22),0 8px 0 #17603A,0 24px 40px rgba(0,0,0,0.5)", display: "grid", placeItems: "center", fontSize: 40, color: "#fff", fontWeight: 800 }}>✓</div>
-        <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>Swap complete</span>
-        <span style={{ fontSize: 15, lineHeight: 1.5, color: "#9A98A3", maxWidth: 320 }}>You received about {sent.out}.</span>
+        <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>{tr("swap.complete")}</span>
+        <span style={{ fontSize: 15, lineHeight: 1.5, color: "#9A98A3", maxWidth: 320 }}>{tr("swap.received", { amount: sent.out })}</span>
         <a href={getExplorerTxUrl("solana", sent.sig)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, color: "#9CC8FF" }}>
-          <ExternalLink size={16} /> View transaction
+          <ExternalLink size={16} /> {tr("common.viewTransaction")}
         </a>
-        <button type="button" onClick={onClose} style={{ ...BTN_SECONDARY, flex: "none", width: "100%", marginTop: "auto" }}>Done</button>
+        <button type="button" onClick={onClose} style={{ ...BTN_SECONDARY, flex: "none", width: "100%", marginTop: "auto" }}>{tr("common.done")}</button>
       </div>
     );
   }
@@ -188,36 +190,36 @@ export function JupiterSwap({
   const pill = (t: PickToken | null, side: "pay" | "get") => (
     <button type="button" onClick={() => onOpenPicker(side)} style={{ cursor: "pointer", flex: "none", display: "flex", alignItems: "center", gap: 8, padding: t ? "5px 12px 5px 5px" : "10px 14px", borderRadius: 999, border: 0, background: "#26262E", color: "#F2EFE8", fontWeight: 700, fontSize: 15 }}>
       {t ? <WalletTokenLogo symbol={t.symbol} chain="Solana" logo={t.icon ?? undefined} mint={t.mint} size={30} /> : null}
-      {t ? t.symbol : "Select token"}
+      {t ? t.symbol : tr("swap.selectToken")}
       <span style={{ fontSize: 11, color: "#77757F" }}>▾</span>
     </button>
   );
 
-  let cta = "Swap";
-  if (cluster !== "mainnet") cta = "Swaps run on mainnet";
-  else if (!pay) cta = "You have nothing to swap";
-  else if (!get) cta = "Select a token";
-  else if (sameToken) cta = "Pick two different tokens";
-  else if (over) cta = `Not enough ${pay.symbol}`;
-  else if (amountNum > 0 && quoteError) cta = "No route found";
-  else if (impactBlocked) cta = "Price impact too high";
-  else if (impactPct != null && impactPct >= IMPACT_DANGER_PCT) cta = "Swap anyway";
+  let cta = tr("common.swap");
+  if (cluster !== "mainnet") cta = tr("swap.ctaTestnet");
+  else if (!pay) cta = tr("swap.ctaNothing");
+  else if (!get) cta = tr("swap.ctaSelect");
+  else if (sameToken) cta = tr("swap.ctaSame");
+  else if (over) cta = tr("swap.ctaNotEnough", { symbol: pay.symbol });
+  else if (amountNum > 0 && quoteError) cta = tr("swap.noRoute");
+  else if (impactBlocked) cta = tr("swap.ctaImpactHigh");
+  else if (impactPct != null && impactPct >= IMPACT_DANGER_PCT) cta = tr("swap.ctaAnyway");
   const ready = !!wallet && !!pay && !!get && !sameToken && !over && !!quote && cluster === "mainnet" && !impactBlocked;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={card}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "#77757F" }}>
-          <span>You pay</span>
+          <span>{tr("swap.youPay")}</span>
           <span style={{ whiteSpace: "nowrap" }}>Balance {fmt(balance, 6)} {pay?.symbol ?? ""}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" aria-label="Amount to pay" style={{ flex: 1, minWidth: 0, height: 44, background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontFamily: SORA, fontWeight: 600, fontSize: 24 }} />
+          <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" aria-label={tr("swap.amountToPay")} style={{ flex: 1, minWidth: 0, height: 44, background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontFamily: SORA, fontWeight: 600, fontSize: 24 }} />
           {pill(pay, "pay")}
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#77757F" }}>
           <span>{payUsd != null ? `≈ $${payUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : ""}</span>
-          <button type="button" onClick={() => pay && setAmount(maxAmount > 0 ? String(Number(maxAmount.toFixed(Math.min(pay.decimals, 9)))) : "")} style={{ ...FIELD_PILL, height: 28, fontSize: 13, padding: "0 12px" }}>Max</button>
+          <button type="button" onClick={() => pay && setAmount(maxAmount > 0 ? String(Number(maxAmount.toFixed(Math.min(pay.decimals, 9)))) : "")} style={{ ...FIELD_PILL, height: 28, fontSize: 13, padding: "0 12px" }}>{tr("common.max")}</button>
         </div>
       </div>
 
@@ -229,8 +231,8 @@ export function JupiterSwap({
 
       <div style={card}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#77757F" }}>
-          <span>You get</span>
-          <span>on Solana</span>
+          <span>{tr("swap.youGet")}</span>
+          <span>{tr("swap.onSolana")}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ flex: 1, minWidth: 0, minHeight: 44, display: "flex", alignItems: "center", fontFamily: SORA, fontWeight: 600, fontSize: 24, color: outHuman != null ? "#F2EFE8" : "#5D5B66", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -245,21 +247,21 @@ export function JupiterSwap({
 
       <div style={{ borderRadius: 18, background: "#1E1E22", overflow: "hidden", fontSize: 14 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 16px" }}>
-          <span style={{ color: "#9A98A3" }}>Pricing</span>
-          <button type="button" onClick={() => setInvertRate((v) => !v)} disabled={!rate} aria-label="Flip price" style={{ cursor: rate ? "pointer" : "default", display: "inline-flex", alignItems: "center", gap: 8, background: "none", border: 0, padding: 0, color: "#F2EFE8", fontSize: 14, fontWeight: 600 }}>
+          <span style={{ color: "#9A98A3" }}>{tr("swap.pricing")}</span>
+          <button type="button" onClick={() => setInvertRate((v) => !v)} disabled={!rate} aria-label={tr("swap.flipPrice")} style={{ cursor: rate ? "pointer" : "default", display: "inline-flex", alignItems: "center", gap: 8, background: "none", border: 0, padding: 0, color: "#F2EFE8", fontSize: 14, fontWeight: 600 }}>
             {rate && pay && get ? (invertRate ? `1 ${get.symbol} ≈ ${fmt(1 / rate)} ${pay.symbol}` : `1 ${pay.symbol} ≈ ${fmt(rate)} ${get.symbol}`) : "-"}
             {rate ? <span style={{ color: "#77757F" }}>⇄</span> : null}
           </button>
         </div>
         <button type="button" onClick={onOpenSlippage} style={{ cursor: "pointer", width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 16px", background: "none", border: 0, borderTop: "1px solid #000", color: "#F2EFE8", fontSize: 14, textAlign: "left" }}>
-          <span style={{ color: "#9A98A3" }}>Slippage</span>
+          <span style={{ color: "#9A98A3" }}>{tr("swap.slippage")}</span>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 600, color: slippageBps < LOW_SLIPPAGE_BPS || slippageBps >= HIGH_SLIPPAGE_BPS ? "#F5D547" : "#F2EFE8" }}>
-            {slippageBps < LOW_SLIPPAGE_BPS ? "Low slippage tolerance" : slippageBps >= HIGH_SLIPPAGE_BPS ? `High, ${formatSlippage(slippageBps)}` : formatSlippage(slippageBps)}
+            {slippageBps < LOW_SLIPPAGE_BPS ? tr("swap.lowSlippage") : slippageBps >= HIGH_SLIPPAGE_BPS ? tr("swap.highSlippage", { value: formatSlippage(slippageBps) }) : formatSlippage(slippageBps)}
             <span style={{ color: "#77757F" }}>›</span>
           </span>
         </button>
         <button type="button" onClick={() => setDetailsOpen((v) => !v)} aria-expanded={detailsOpen} style={{ cursor: "pointer", width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "12px 16px", background: "none", border: 0, borderTop: "1px solid #000", color: "#F2EFE8", fontSize: 14, textAlign: "left" }}>
-          <span style={{ color: "#9A98A3" }}>Network fee</span>
+          <span style={{ color: "#9A98A3" }}>{tr("common.networkFee")}</span>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
             {networkFeeText}
             <span style={{ color: "#77757F", display: "inline-block", transform: detailsOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>⌄</span>
@@ -268,11 +270,11 @@ export function JupiterSwap({
         {detailsOpen && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 16px 14px", borderTop: "1px solid #000", background: "#17171B" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Loofta fee ({feePct}%)</span><span>{feeHuman != null && get ? `${fmt(feeHuman, 4)} ${get.symbol}` : "-"}</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Minimum received</span><span>{minHuman != null && get ? `${fmt(minHuman)} ${get.symbol}` : "-"}</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Price impact</span><span style={{ color: impactColor, fontWeight: impactPct != null && impactPct >= IMPACT_WARN_PCT ? 700 : 400 }}>{impactText}</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Route</span><span>Jupiter</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>Network fee</span><span>{quote?.gasless ? "Paid by Loofta, taken from your USDC" : "Paid in SOL"}</span></div>
-            {quote?.gasless && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#77757F" }}>No SOL needed, and no minimum swap. Loofta pays the network fee and takes it from the USDC you swap.</span>}
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>{tr("swap.minReceived")}</span><span>{minHuman != null && get ? `${fmt(minHuman)} ${get.symbol}` : "-"}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>{tr("swap.priceImpact")}</span><span style={{ color: impactColor, fontWeight: impactPct != null && impactPct >= IMPACT_WARN_PCT ? 700 : 400 }}>{impactText}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>{tr("swap.route")}</span><span>Jupiter</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><span style={{ color: "#77757F" }}>{tr("common.networkFee")}</span><span>{quote?.gasless ? tr("swap.feeGasless") : tr("swap.feePaidSol")}</span></div>
+            {quote?.gasless && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#77757F" }}>{tr("swap.gaslessDetail")}</span>}
           </div>
         )}
       </div>
@@ -280,17 +282,17 @@ export function JupiterSwap({
       {impactPct != null && impactPct >= IMPACT_WARN_PCT && (
         <span style={{ fontSize: 13, lineHeight: 1.45, color: impactPct >= IMPACT_DANGER_PCT ? "#FF7A6A" : "#F5D547", padding: "0 6px" }}>
           {impactBlocked
-            ? `This swap would move the price by about ${impactPct.toFixed(1)}%. Try a smaller amount.`
+            ? tr("swap.impactBlocked", { pct: impactPct.toFixed(1) })
             : impactPct >= IMPACT_DANGER_PCT
-              ? `High price impact. You could lose about ${impactPct.toFixed(1)}% of your value on this swap.`
-              : `Price impact is ${impactPct.toFixed(1)}%. A smaller amount would get you a better rate.`}
+              ? tr("swap.impactDanger", { pct: impactPct.toFixed(1) })
+              : tr("swap.impactWarn", { pct: impactPct.toFixed(1) })}
         </span>
       )}
-      {isGaslessPair && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#6FD69A", padding: "0 6px" }}>Gasless: no SOL needed for this swap.</span>}
-      {lacksSol && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#F5D547", padding: "0 6px" }}>You need about 0.003 SOL for the network fee. Swap some USDC to SOL first, that one is free.</span>}
+      {isGaslessPair && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#6FD69A", padding: "0 6px" }}>{tr("swap.gaslessNote")}</span>}
+      {lacksSol && <span style={{ fontSize: 13, lineHeight: 1.45, color: "#F5D547", padding: "0 6px" }}>{tr("swap.lacksSol")}</span>}
 
       <button type="button" onClick={() => void go()} disabled={!ready || busy} style={{ ...BTN_PRIMARY, flex: "none", width: "100%", marginTop: "auto", opacity: !ready || busy ? 0.4 : 1 }}>
-        {busy ? "Swapping…" : cta}
+        {busy ? tr("common.swapping") : cta}
       </button>
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Connection, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { usePrivy } from "@privy-io/react-auth";
 import { ArrowDown, ExternalLink, Lock } from "lucide-react";
@@ -41,6 +42,7 @@ const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigi
 export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: () => void }) {
   const { user, getAccessToken } = usePrivy();
   const { toast } = useToast();
+  const tr = useTranslations("Wallet");
   const networkMode = useAuthStore((s) => s.networkMode);
   const devnetMode = networkMode === "devnet";
   const cluster = devnetMode ? "devnet" : "mainnet";
@@ -119,7 +121,7 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
   }, [payToken, toToken, amountNum]);
 
   const sendSolToDeposit = async (depositAddress: string, solAmount: number) => {
-    if (!wallet || !solanaAddress) throw new Error("Wallet not ready");
+    if (!wallet || !solanaAddress) throw new Error(tr("cross.walletNotReady"));
     const connection = new Connection(getRpcForMode(cluster), "confirmed");
     const from = new PublicKey(solanaAddress);
     const tx = new Transaction().add(
@@ -147,7 +149,7 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
       const dest = destination.trim();
       if (pay === "USDC" && isCross) {
         const order = await prepareNearIntentsWithdrawal({ fromToken: payToken, toToken, amountUsdc: String(amountNum), destinationAddress: dest, refundAddress: solanaAddress, isDevnet: devnetMode }, access);
-        if (!order.depositAddress || !isValidAddressForChain(order.depositAddress, "solana")) throw new Error("Couldn't get a deposit address for that swap.");
+        if (!order.depositAddress || !isValidAddressForChain(order.depositAddress, "solana")) throw new Error(tr("cross.noDeposit"));
         const sig = await sendUsdcWithBackendFeePayer({
           senderAddress: solanaAddress,
           recipientAddress: order.depositAddress,
@@ -171,7 +173,7 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
         const quoteBase = { fromToken: payToken, toToken, amount: String(amountNum), recipient: dest, sender: solanaAddress, refundAddress: solanaAddress, slippageBps: 100 };
         // 1Click swaps are confidential only (since 27 Oct 2026): ask for the strongest level, fall back to basic.
         const info = await getDepositInfo({ ...quoteBase, confidentiality: "advanced" }).catch(() => getDepositInfo({ ...quoteBase, confidentiality: "basic" }));
-        if (!info.depositAddress || !isValidAddressForChain(info.depositAddress, "solana")) throw new Error("Couldn't get a deposit address for that swap.");
+        if (!info.depositAddress || !isValidAddressForChain(info.depositAddress, "solana")) throw new Error(tr("cross.noDeposit"));
         let sig: string;
         if (pay === "SOL") {
           sig = await sendSolToDeposit(info.depositAddress, amountNum);
@@ -196,9 +198,9 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
         onDone?.();
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Swap failed";
+      const msg = err instanceof Error ? err.message : tr("swap.failed");
       if (msg !== "CANCELLED_BY_USER" && !/reject|cancel|denied/i.test(msg)) {
-        toast({ variant: "destructive", title: "Swap failed", description: msg });
+        toast({ variant: "destructive", title: tr("swap.failed"), description: msg });
       }
     } finally {
       setBusy(false);
@@ -207,10 +209,10 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
 
   const quoteNum = quote ? Number(quote) : null;
   const rate = quoteNum && amountNum > 0 ? quoteNum / amountNum : null;
-  let cta = isCross ? "Bridge" : "Swap";
-  if (over) cta = `Not enough ${pay}`;
-  else if (isCross && toToken && destination.trim() && !addressOk) cta = `Check the ${formatChainLabel(toToken.chain)} address`;
-  else if (isCross && toToken && !destination.trim() && amountNum > 0) cta = `Add ${formatChainLabel(toToken.chain)} address`;
+  let cta = isCross ? tr("cross.bridge") : tr("common.swap");
+  if (over) cta = tr("swap.ctaNotEnough", { symbol: pay });
+  else if (isCross && toToken && destination.trim() && !addressOk) cta = tr("cross.checkAddress", { chain: formatChainLabel(toToken.chain) });
+  else if (isCross && toToken && !destination.trim() && amountNum > 0) cta = tr("cross.addAddress", { chain: formatChainLabel(toToken.chain) });
   const ready = !!wallet && !!toToken && addressOk && amountNum > 0 && !over;
 
   const paste = async () => {
@@ -229,14 +231,14 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 14, textAlign: "center", paddingTop: 12 }}>
         <div style={{ width: 84, height: 84, borderRadius: 28, background: "radial-gradient(120% 120% at 28% 18%,#B8F5D0 0%,#3CB371 48%,#23864F 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.5),inset 0 -8px 14px rgba(0,0,0,0.22),0 8px 0 #17603A,0 24px 40px rgba(0,0,0,0.5)", display: "grid", placeItems: "center", fontSize: 40, color: "#fff", fontWeight: 800 }}>✓</div>
-        <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>{sent.cross ? "Bridge started" : "Swap sent"}</span>
+        <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>{sent.cross ? tr("cross.started") : tr("cross.swapSent")}</span>
         <span style={{ fontSize: 15, lineHeight: 1.5, color: "#9A98A3", maxWidth: 320 }}>
-          {toToken ? `${toToken.symbol} on ${formatChainLabel(toToken.chain)} should arrive within a few minutes.` : "Your tokens should arrive within a few minutes."}
+          {toToken ? tr("cross.arrive", { symbol: toToken.symbol, chain: formatChainLabel(toToken.chain) }) : tr("cross.arriveGeneric")}
         </span>
         <a href={getExplorerTxUrl("solana", sent.sig)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, color: "#9CC8FF" }}>
-          <ExternalLink size={16} /> View transaction
+          <ExternalLink size={16} /> {tr("common.viewTransaction")}
         </a>
-        <button type="button" onClick={onClose} style={{ ...BTN_SECONDARY, flex: "none", width: "100%", marginTop: "auto" }}>Done</button>
+        <button type="button" onClick={onClose} style={{ ...BTN_SECONDARY, flex: "none", width: "100%", marginTop: "auto" }}>{tr("common.done")}</button>
       </div>
     );
   }
@@ -245,12 +247,12 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
     <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={card}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "#77757F" }}>
-          <span>You pay</span>
-          <span style={{ whiteSpace: "nowrap" }}>Balance {balance.toLocaleString("en-US", { maximumFractionDigits: pay === "USDC" ? 2 : 4 })} {pay}</span>
+          <span>{tr("swap.youPay")}</span>
+          <span style={{ whiteSpace: "nowrap" }}>{tr("cross.balance", { amount: balance.toLocaleString("en-US", { maximumFractionDigits: pay === "USDC" ? 2 : 4 }), symbol: pay })}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" aria-label="Amount to pay" style={{ flex: 1, minWidth: 0, height: 44, background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontFamily: SORA, fontWeight: 600, fontSize: 24 }} />
-          <div role="group" aria-label="Pay with" style={{ flex: "none", display: "flex", gap: 4, padding: 4, borderRadius: 999, background: "#26262E" }}>
+          <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" aria-label={tr("swap.amountToPay")} style={{ flex: 1, minWidth: 0, height: 44, background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontFamily: SORA, fontWeight: 600, fontSize: 24 }} />
+          <div role="group" aria-label={tr("cross.payWith")} style={{ flex: "none", display: "flex", gap: 4, padding: 4, borderRadius: 999, background: "#26262E" }}>
             {(["USDC", "SOL"] as PayAsset[]).map((a) => (
               <button key={a} type="button" onClick={() => { setPay(a); setAmount(""); }} aria-pressed={pay === a} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6, padding: "4px 10px 4px 4px", borderRadius: 999, border: 0, background: pay === a ? "#3A3A46" : "transparent", color: "#F2EFE8", fontWeight: 700, fontSize: 14 }}>
                 <WalletTokenLogo symbol={a} chain="Solana" size={24} />
@@ -261,7 +263,7 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#77757F" }}>
           <span>{payPrice != null && amountNum > 0 ? `≈ ${money(amountNum * payPrice)}` : ""}</span>
-          <button type="button" onClick={() => setAmount(maxSendable > 0 ? String(Number(maxSendable.toFixed(pay === "USDC" ? 2 : 6))) : "")} style={{ ...FIELD_PILL, height: 28, fontSize: 13, padding: "0 12px" }}>Max</button>
+          <button type="button" onClick={() => setAmount(maxSendable > 0 ? String(Number(maxSendable.toFixed(pay === "USDC" ? 2 : 6))) : "")} style={{ ...FIELD_PILL, height: 28, fontSize: 13, padding: "0 12px" }}>{tr("common.max")}</button>
         </div>
       </div>
 
@@ -273,46 +275,46 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
 
       <div style={card}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#77757F" }}>
-          <span>You get</span>
-          <span>{toToken ? `on ${formatChainLabel(toToken.chain)}` : isCross ? "Pick a token" : "on Solana"}</span>
+          <span>{tr("swap.youGet")}</span>
+          <span>{toToken ? tr("cross.on", { chain: formatChainLabel(toToken.chain) }) : isCross ? tr("cross.pickToken") : tr("swap.onSolana")}</span>
         </div>
         <span style={{ minHeight: 44, display: "flex", alignItems: "center", fontFamily: SORA, fontWeight: 600, fontSize: 24, color: quote ? "#F2EFE8" : "#5D5B66", overflow: "hidden", textOverflow: "ellipsis" }}>
           {quoting ? "…" : quote ?? "0"}
         </span>
-        <TokenCombobox tokens={choices} value={selection} defaultShowAllChains searchPlaceholder={isCross ? "Search ETH, BTC, ZEC…" : "Search a Solana token"} placeholder="Search a token" onChange={(next) => { setSelection(next); setDestEdited(false); }} />
+        <TokenCombobox tokens={choices} value={selection} defaultShowAllChains searchPlaceholder={isCross ? tr("cross.searchCross") : tr("cross.searchSolana")} placeholder={tr("cross.searchToken")} onChange={(next) => { setSelection(next); setDestEdited(false); }} />
       </div>
 
       {isCross && (
         <>
           <div style={FIELD_BOX}>
-            <input value={destination} onChange={(e) => { setDestination(e.target.value); setDestEdited(true); }} placeholder={toToken ? `${formatChainLabel(toToken.chain)} address` : "Destination address"} aria-label="Destination address" autoCapitalize="none" autoCorrect="off" spellCheck={false} style={{ ...FIELD_INPUT, fontFamily: MONO, fontSize: 14 }} />
-            <button type="button" onClick={() => void paste()} style={FIELD_PILL}>Paste</button>
+            <input value={destination} onChange={(e) => { setDestination(e.target.value); setDestEdited(true); }} placeholder={toToken ? tr("cross.addrPlaceholder", { chain: formatChainLabel(toToken.chain) }) : tr("cross.destPlaceholder")} aria-label={tr("cross.destPlaceholder")} autoCapitalize="none" autoCorrect="off" spellCheck={false} style={{ ...FIELD_INPUT, fontFamily: MONO, fontSize: 14 }} />
+            <button type="button" onClick={() => void paste()} style={FIELD_PILL}>{tr("common.paste")}</button>
           </div>
           {defaultDestination && destination === defaultDestination && (
-            <span style={{ fontSize: 13, color: "#77757F", padding: "0 6px" }}>This is your Loofta {isEvmChain(toToken?.chain) ? "EVM" : "Solana"} address. Change it to send somewhere else.</span>
+            <span style={{ fontSize: 13, color: "#77757F", padding: "0 6px" }}>{tr("cross.defaultHint", { network: isEvmChain(toToken?.chain) ? "EVM" : "Solana" })}</span>
           )}
         </>
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "14px 16px", borderRadius: 18, background: "#0E0E12", fontSize: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-          <span style={{ color: "#77757F" }}>Rate</span>
+          <span style={{ color: "#77757F" }}>{tr("cross.rate")}</span>
           <span style={{ textAlign: "right" }}>{rate && toToken ? `1 ${pay} = ${rate.toLocaleString("en-US", { maximumSignificantDigits: 6 })} ${toToken.symbol}` : "-"}</span>
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#77757F" }}>Route</span><span>{isCross ? "NEAR Intents, confidential" : "NEAR Intents, confidential"}</span></div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#77757F" }}>Network fee</span><span>{pay === "SOL" ? "Paid in SOL" : "Covered"}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#77757F" }}>{tr("swap.route")}</span><span>{tr("cross.routeValue")}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#77757F" }}>{tr("common.networkFee")}</span><span>{pay === "SOL" ? tr("swap.feePaidSol") : tr("common.covered")}</span></div>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 18, background: "rgba(255,90,26,0.08)", border: "1px solid rgba(255,122,42,0.35)" }}>
         <Lock size={20} color="#FF8A4A" />
         <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ fontWeight: 700, fontSize: 15 }}>Confidential swap</span>
-          <span style={{ fontSize: 13, color: "#9A98A3" }}>Every swap runs confidentially. Your wallet and the payout are not linked on chain.</span>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>{tr("cross.confTitle")}</span>
+          <span style={{ fontSize: 13, color: "#9A98A3" }}>{tr("cross.confBody")}</span>
         </span>
       </div>
 
       <button type="button" onClick={() => void go()} disabled={!ready || busy} style={{ ...BTN_PRIMARY, flex: "none", width: "100%", marginTop: "auto", opacity: !ready || busy ? 0.4 : 1 }}>
-        {busy ? "Swapping…" : cta}
+        {busy ? tr("common.swapping") : cta}
       </button>
     </div>
   );

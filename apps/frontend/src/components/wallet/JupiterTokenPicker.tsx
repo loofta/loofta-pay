@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { WalletTokenLogo } from "@/components/wallet/WalletTokenLogo";
@@ -30,6 +31,7 @@ export function JupiterTokenPicker({
   /** Pay side: only tokens you actually hold. */
   yoursOnly?: boolean;
 }) {
+  const tr = useTranslations("Wallet");
   const [query, setQuery] = useState("");
   const [remote, setRemote] = useState<PickToken[]>([]);
   const [loading, setLoading] = useState(false);
@@ -74,21 +76,21 @@ export function JupiterTokenPicker({
     <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
       <label style={FIELD_BOX}>
         <Search size={20} color="#9A98A3" />
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, symbol or paste a mint address" aria-label="Search tokens" autoCapitalize="none" autoCorrect="off" spellCheck={false} style={FIELD_INPUT} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr("picker.search")} aria-label={tr("common.searchTokens")} autoCapitalize="none" autoCorrect="off" spellCheck={false} style={FIELD_INPUT} />
       </label>
 
-      {mine.length > 0 && <span style={{ fontSize: 13, fontWeight: 700, color: "#77757F", padding: "4px 6px 0" }}>Your tokens</span>}
+      {mine.length > 0 && <span style={{ fontSize: 13, fontWeight: 700, color: "#77757F", padding: "4px 6px 0" }}>{tr("picker.yours")}</span>}
       {mine.map((t) => row(t, t.balance.toLocaleString("en-US", { maximumFractionDigits: 5 }), t.name))}
 
       {!yoursOnly && (
         <>
-          <span style={{ fontSize: 13, fontWeight: 700, color: "#77757F", padding: "4px 6px 0" }}>{q ? "Results" : "Popular"}</span>
-          {loading && others.length === 0 && <span style={{ fontSize: 14, color: "#77757F", padding: "0 6px" }}>Loading…</span>}
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#77757F", padding: "4px 6px 0" }}>{q ? tr("picker.results") : tr("picker.popular")}</span>
+          {loading && others.length === 0 && <span style={{ fontSize: 14, color: "#77757F", padding: "0 6px" }}>{tr("common.loading")}</span>}
           {others.map((t) => row(t, t.usdPrice ? money(t.usdPrice) : "", `${t.name}  ${shortMint(t.mint)}`))}
-          {!loading && others.length === 0 && mine.length === 0 && <span style={{ fontSize: 14, color: "#77757F", padding: "0 6px" }}>No token found. Paste the full mint address to find any token.</span>}
+          {!loading && others.length === 0 && mine.length === 0 && <span style={{ fontSize: 14, color: "#77757F", padding: "0 6px" }}>{tr("picker.none")}</span>}
         </>
       )}
-      {yoursOnly && mine.length === 0 && <span style={{ fontSize: 14, color: "#77757F", padding: "0 6px" }}>No token matches.</span>}
+      {yoursOnly && mine.length === 0 && <span style={{ fontSize: 14, color: "#77757F", padding: "0 6px" }}>{tr("picker.noMatch")}</span>}
     </div>
   );
 }

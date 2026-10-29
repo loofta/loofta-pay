@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 import type { WalletHolding } from "@/hooks/useWalletHoldings";
 import { WalletModal } from "@/components/wallet/WalletModal";
 import { WalletSwap } from "@/components/wallet/WalletSwap";
@@ -36,6 +37,7 @@ export function WalletSwapModal({
   solanaAddress: string | null;
   onDone?: () => void;
 }) {
+  const tr = useTranslations("Wallet");
   const [tab, setTab] = useState<Tab>("solana");
   const [picker, setPicker] = useState<"pay" | "get" | "slippage" | null>(null);
   const [slippageBps, setSlippageBps] = useState<number>(DEFAULT_SLIPPAGE_BPS);
@@ -64,7 +66,7 @@ export function WalletSwapModal({
 
   const onSetGet = useCallback((t: PickToken) => setGet(t), []);
 
-  const title = picker === "pay" ? "You pay" : picker === "get" ? "You get" : picker === "slippage" ? "Slippage" : "Swap";
+  const title = picker === "pay" ? tr("swap.youPay") : picker === "get" ? tr("swap.youGet") : picker === "slippage" ? tr("swap.slippage") : tr("common.swap");
   return (
     <WalletModal open={open} onClose={onClose} title={title} onBack={picker ? () => setPicker(null) : null}>
       {picker === "slippage" ? (
@@ -90,8 +92,8 @@ export function WalletSwapModal({
         />
       ) : (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
-          <div role="group" aria-label="Swap type" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, padding: 4, borderRadius: 999, background: "#0E0E12" }}>
-            {([["solana", "Solana swap"], ["cross", "Cross-chain"]] as Array<[Tab, string]>).map(([m, label]) => (
+          <div role="group" aria-label={tr("swap.type")} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, padding: 4, borderRadius: 999, background: "#0E0E12" }}>
+            {([["solana", tr("swap.tabSolana")], ["cross", tr("swap.tabCross")]] as Array<[Tab, string]>).map(([m, label]) => (
               <button key={m} type="button" onClick={() => setTab(m)} aria-pressed={tab === m} style={{ cursor: "pointer", padding: 10, borderRadius: 999, border: 0, fontWeight: 700, fontSize: 14, background: tab === m ? "#26262E" : "transparent", color: tab === m ? "#F2EFE8" : "#77757F" }}>{label}</button>
             ))}
           </div>

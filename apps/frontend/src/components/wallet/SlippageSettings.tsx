@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { BTN_PRIMARY, BTN_SECONDARY, FIELD_BOX, FIELD_INPUT } from "@/components/wallet/walletStyles";
 
@@ -17,6 +18,7 @@ export function formatSlippage(bps: number): string {
 
 /** Slippage tolerance sheet: presets or a custom percentage, with a warning when it is risky. */
 export function SlippageSettings({ value, onSave, onCancel }: { value: number; onSave: (bps: number) => void; onCancel: () => void }) {
+  const t = useTranslations("Wallet");
   const [bps, setBps] = useState(value);
   const [custom, setCustom] = useState(PRESETS.includes(value) ? "" : String(value / 100));
 
@@ -34,7 +36,7 @@ export function SlippageSettings({ value, onSave, onCancel }: { value: number; o
     <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "6px 0 2px" }}>
         <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 40, letterSpacing: "-0.04em" }}>{valid ? formatSlippage(bps) : "-"}</span>
-        <span style={{ fontSize: 14, color: "#77757F" }}>Maximum price movement you accept</span>
+        <span style={{ fontSize: 14, color: "#77757F" }}>{t("slippage.hint")}</span>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
@@ -46,20 +48,20 @@ export function SlippageSettings({ value, onSave, onCancel }: { value: number; o
       </div>
 
       <div style={FIELD_BOX}>
-        <input inputMode="decimal" value={custom} onChange={(e) => setFromCustom(e.target.value)} placeholder="Custom" aria-label="Custom slippage percent" style={FIELD_INPUT} />
+        <input inputMode="decimal" value={custom} onChange={(e) => setFromCustom(e.target.value)} placeholder={t("slippage.custom")} aria-label={t("slippage.customAria")} style={FIELD_INPUT} />
         <span style={{ fontSize: 15, color: "#9A98A3", fontWeight: 700 }}>%</span>
       </div>
 
       {!valid && <span style={{ fontSize: 14, color: "#FF7A6A", padding: "0 6px" }}>Enter between {formatSlippage(MIN_BPS)} and {formatSlippage(MAX_BPS)}.</span>}
-      {low && <span style={{ fontSize: 14, lineHeight: 1.5, color: "#F5D547", padding: "0 6px" }}>Low slippage tolerance. The swap may fail if the price moves.</span>}
-      {high && <span style={{ fontSize: 14, lineHeight: 1.5, color: "#F5D547", padding: "0 6px" }}>High slippage. You could receive noticeably less than quoted.</span>}
+      {low && <span style={{ fontSize: 14, lineHeight: 1.5, color: "#F5D547", padding: "0 6px" }}>{t("slippage.low")}</span>}
+      {high && <span style={{ fontSize: 14, lineHeight: 1.5, color: "#F5D547", padding: "0 6px" }}>{t("slippage.high")}</span>}
       <span style={{ fontSize: 14, lineHeight: 1.5, color: "#77757F", padding: "0 6px" }}>
-        If the price moves more than this before your swap lands, it is cancelled instead of filled at a worse price.
+        {t("slippage.note")}
       </span>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: "auto" }}>
-        <button type="button" onClick={onCancel} style={BTN_SECONDARY}>Cancel</button>
-        <button type="button" onClick={() => valid && onSave(bps)} disabled={!valid} style={{ ...BTN_PRIMARY, opacity: valid ? 1 : 0.4 }}>Save</button>
+        <button type="button" onClick={onCancel} style={BTN_SECONDARY}>{t("common.cancel")}</button>
+        <button type="button" onClick={() => valid && onSave(bps)} disabled={!valid} style={{ ...BTN_PRIMARY, opacity: valid ? 1 : 0.4 }}>{t("common.save")}</button>
       </div>
     </div>
   );

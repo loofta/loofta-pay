@@ -20,6 +20,11 @@ import type { PeerPayRequest } from "@/lib/peerPlatforms";
 
 const HEADER_HEIGHT = 64;
 
+/** On pay.loofta.xyz the proxy rewrites /app/* away, so the browser path is /wallet, not /app/wallet. */
+function toAppPath(pathname: string | null): string | null {
+  return pathname && /^\/(wallet|send|receive|history|c)(\/|$)/.test(pathname) ? `/app${pathname}` : pathname;
+}
+
 function MobileMenu({
   open,
   onClose,
@@ -50,7 +55,7 @@ function MobileMenu({
   totalVolumeUsd: number;
 }) {
   const t = useTranslations('MinimalHeader');
-  const pathname = usePathname();
+  const pathname = toAppPath(usePathname());
   if (!open) return null;
 
   const navLinks = [
@@ -59,7 +64,7 @@ function MobileMenu({
     { href: TELEGRAM_BOT_URL, label: "Telegram bot", description: "Send payments by chat on Telegram", external: true },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
-    { href: "/app/wallet", label: "Wallet", description: "Hold, send, swap and receive any token" },
+    { href: "/app/wallet", label: "Portfolio", description: "Hold, send, swap and receive any token" },
   ];
 
   return (
@@ -215,7 +220,7 @@ export function MinimalHeader() {
   const setNetworkMode = useAuthStore((s) => s.setNetworkMode);
   const tier = useAuthStore((s) => s.tier);
   const totalVolumeUsd = useAuthStore((s) => s.totalVolumeUsd);
-  const pathname = usePathname();
+  const pathname = toAppPath(usePathname());
   const headerRef = useRef<HTMLElement>(null);
 
   const [showBalanceModal, setShowBalanceModal] = useState(false);
@@ -345,7 +350,7 @@ export function MinimalHeader() {
     { href: TELEGRAM_BOT_URL, label: "Telegram bot", active: false, external: true },
     { href: "/rewards", label: t("rewards"), active: isRewardsActive },
     { href: "/megapot", label: "Megapot", active: isWinActive },
-    { href: "/app/wallet", label: "Wallet", active: isWallet },
+    { href: "/app/wallet", label: "Portfolio", active: isWallet },
   ];
 
   return (
