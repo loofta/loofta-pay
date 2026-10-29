@@ -392,7 +392,7 @@ export function AppHome() {
               </div>
             </Link>
             )}
-            <a href="https://poolrip.fun/?utm_source=loofta&utm_medium=app_home&utm_campaign=poolrip_tile" target="_blank" rel="noopener noreferrer" onClick={() => posthog.capture("poolrip_tile_clicked", { source: "app_home" })} className="lh-8" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A200C,#16130D 60%)", border: "1px solid rgba(245,183,12,0.22)" }}>
+            <a href="https://play.loofta.com/?utm_source=loofta&utm_medium=app_home&utm_campaign=poolrip_tile" target="_blank" rel="noopener noreferrer" onClick={() => posthog.capture("poolrip_tile_clicked", { source: "app_home" })} className="lh-8" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A200C,#16130D 60%)", border: "1px solid rgba(245,183,12,0.22)" }}>
               <div style={{ flex: "none", width: 96, height: 96, borderRadius: 30, transform: "rotate(5deg)", background: "radial-gradient(120% 120% at 28% 18%,#3A3A44 0%,#1B1B22 55%,#0A0A0D 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.18), inset 0 -8px 14px rgba(0,0,0,0.5), 0 8px 0 #050507, 0 26px 44px rgba(0,0,0,0.5)", display: "grid", placeItems: "center" }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src="/images/poolrip-icon.svg" alt="" width={62} height={62} style={{ width: 62, height: 62, objectFit: "contain" }} />
