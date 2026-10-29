@@ -637,7 +637,8 @@
       "loadingTokens": "正在加载你的代币…",
       "noPrice": "暂无价格",
       "empty": "这里还没有内容。点按“接收”获取你的地址。",
-      "signIn": "登录以查看你的钱包"
+      "signIn": "登录以查看你的钱包",
+      "last24h": "24小时"
     },
     "receive": {
       "network": "网络",

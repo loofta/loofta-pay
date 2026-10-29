@@ -29,7 +29,7 @@ function WalletHomeInner() {
   const t = useTranslations("Wallet");
   const searchParams = useSearchParams();
   const { authenticated, login } = useAuth();
-  const { holdings, totalUsd, unpriced, isLoading, refetch, address, evmAddress } = useWalletHoldings();
+  const { holdings, totalUsd, change24hPct, change24hUsd, unpriced, isLoading, refetch, address, evmAddress } = useWalletHoldings();
   const [listTab, setListTab] = useState<"tokens" | "nfts">("tokens");
   const live = authenticated && !isLoading;
 
@@ -75,6 +75,13 @@ function WalletHomeInner() {
             <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: "clamp(46px,9vw,68px)", letterSpacing: "-0.05em", lineHeight: 1 }}>
               {authenticated ? (live ? money(totalUsd) : "…") : money(0)}
             </span>
+            {authenticated && live && change24hPct != null && change24hUsd != null && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 700, color: change24hPct >= 0 ? "#4ADE80" : "#F87171" }}>
+                <span>{change24hPct >= 0 ? "▲" : "▼"} {Math.abs(change24hPct).toFixed(2)}%</span>
+                <span style={{ fontWeight: 600 }}>{change24hUsd >= 0 ? "+" : "-"}{money(Math.abs(change24hUsd))}</span>
+                <span style={{ fontWeight: 500, color: "#77757F" }}>{t("home.last24h")}</span>
+              </span>
+            )}
             {unpriced && live && <span style={{ fontSize: 14, color: "#77757F" }}>{t("home.unpriced")}</span>}
           </div>
 

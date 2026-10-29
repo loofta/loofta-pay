@@ -637,7 +637,8 @@
       "loadingTokens": "Carregando seus tokens…",
       "noPrice": "Sem preço",
       "empty": "Nada por aqui ainda. Toque em Receber para ver seu endereço.",
-      "signIn": "Entre para ver sua carteira"
+      "signIn": "Entre para ver sua carteira",
+      "last24h": "24h"
     },
     "receive": {
       "network": "Rede",

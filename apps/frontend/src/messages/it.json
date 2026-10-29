@@ -637,7 +637,8 @@
       "loadingTokens": "Caricamento dei tuoi token…",
       "noPrice": "Nessun prezzo",
       "empty": "Ancora niente qui. Tocca Ricevi per ottenere il tuo indirizzo.",
-      "signIn": "Accedi per vedere il tuo wallet"
+      "signIn": "Accedi per vedere il tuo wallet",
+      "last24h": "24 h"
     },
     "receive": {
       "network": "Rete",

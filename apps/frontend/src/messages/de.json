@@ -637,7 +637,8 @@
       "loadingTokens": "Deine Token werden geladen…",
       "noPrice": "Kein Preis",
       "empty": "Noch nichts da. Tippe auf Empfangen, um deine Adresse zu sehen.",
-      "signIn": "Melde dich an, um deine Wallet zu sehen"
+      "signIn": "Melde dich an, um deine Wallet zu sehen",
+      "last24h": "24 Std."
     },
     "receive": {
       "network": "Netzwerk",

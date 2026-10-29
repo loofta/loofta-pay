@@ -637,7 +637,8 @@
       "loadingTokens": "Memuat token Anda…",
       "noPrice": "Tanpa harga",
       "empty": "Belum ada apa pun. Ketuk Terima untuk melihat alamat Anda.",
-      "signIn": "Masuk untuk melihat dompet Anda"
+      "signIn": "Masuk untuk melihat dompet Anda",
+      "last24h": "24 jam"
     },
     "receive": {
       "network": "Jaringan",

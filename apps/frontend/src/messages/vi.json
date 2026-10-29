@@ -637,7 +637,8 @@
       "loadingTokens": "Đang tải token của bạn…",
       "noPrice": "Chưa có giá",
       "empty": "Chưa có gì ở đây. Nhấn Nhận để lấy địa chỉ của bạn.",
-      "signIn": "Đăng nhập để xem ví của bạn"
+      "signIn": "Đăng nhập để xem ví của bạn",
+      "last24h": "24 giờ"
     },
     "receive": {
       "network": "Mạng",

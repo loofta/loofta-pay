@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const MAX_MINTS = 50;
 
-type JupToken = { id?: string; symbol?: string; name?: string; icon?: string; decimals?: number; usdPrice?: number };
+type JupToken = { id?: string; symbol?: string; name?: string; icon?: string; decimals?: number; usdPrice?: number; stats24h?: { priceChange?: number } };
 
 /**
  * Token logos, names and USD prices for a list of Solana mints, from Jupiter's token API.
@@ -36,6 +36,7 @@ export async function GET(req: Request) {
         icon: typeof t.icon === 'string' && /^https?:\/\//.test(t.icon) ? t.icon : null,
         decimals: typeof t.decimals === 'number' ? t.decimals : null,
         usdPrice: typeof t.usdPrice === 'number' && t.usdPrice > 0 ? t.usdPrice : null,
+        change24h: typeof t.stats24h?.priceChange === 'number' && Number.isFinite(t.stats24h.priceChange) ? t.stats24h.priceChange : null,
       }));
     return NextResponse.json({ tokens }, { headers: { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60' } });
   } catch {

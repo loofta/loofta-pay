@@ -64,7 +64,7 @@ function MobileMenu({
     { href: TELEGRAM_BOT_URL, label: "Telegram bot", description: "Send payments by chat on Telegram", external: true },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
-    { href: "/app/portfolio", label: "Wallet", description: "Hold, send, swap and receive any token" },
+    { href: "/app/portfolio", label: "Portfolio", description: "Hold, send, swap and receive any token" },
   ];
 
   return (
@@ -350,7 +350,7 @@ export function MinimalHeader() {
     { href: TELEGRAM_BOT_URL, label: "Telegram bot", active: false, external: true },
     { href: "/rewards", label: t("rewards"), active: isRewardsActive },
     { href: "/megapot", label: "Megapot", active: isWinActive },
-    { href: "/app/portfolio", label: "Wallet", active: isWallet },
+    { href: "/app/portfolio", label: "Portfolio", active: isWallet },
   ];
 
   return (

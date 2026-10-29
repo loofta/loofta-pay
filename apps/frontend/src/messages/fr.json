@@ -637,7 +637,8 @@
       "loadingTokens": "Chargement de vos tokens…",
       "noPrice": "Pas de prix",
       "empty": "Rien ici pour l'instant. Touchez Recevoir pour obtenir votre adresse.",
-      "signIn": "Connectez-vous pour voir votre portefeuille"
+      "signIn": "Connectez-vous pour voir votre portefeuille",
+      "last24h": "24 h"
     },
     "receive": {
       "network": "Réseau",

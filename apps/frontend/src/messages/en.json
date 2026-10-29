@@ -637,7 +637,8 @@
       "loadingTokens": "Loading your tokens…",
       "noPrice": "No price",
       "empty": "Nothing here yet. Tap Receive to get your address.",
-      "signIn": "Sign in to see your wallet"
+      "signIn": "Sign in to see your wallet",
+      "last24h": "24h"
     },
     "receive": {
       "network": "Network",

@@ -1019,7 +1019,7 @@ export function UserMenu({ username: usernameProp, email: emailProp, isDarkPage,
                   }`}
               >
                 <WalletIcon className="w-4 h-4 shrink-0" />
-                Wallet
+                Portfolio
               </Link>
             </div>
 

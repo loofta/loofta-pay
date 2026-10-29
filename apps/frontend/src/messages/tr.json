@@ -637,7 +637,8 @@
       "loadingTokens": "Tokenların yükleniyor…",
       "noPrice": "Fiyat yok",
       "empty": "Henüz bir şey yok. Adresini görmek için Al'a dokun.",
-      "signIn": "Cüzdanını görmek için giriş yap"
+      "signIn": "Cüzdanını görmek için giriş yap",
+      "last24h": "24 sa"
     },
     "receive": {
       "network": "Ağ",

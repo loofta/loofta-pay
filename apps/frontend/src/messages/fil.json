@@ -637,7 +637,8 @@
       "loadingTokens": "Nilo-load ang iyong mga token…",
       "noPrice": "Walang presyo",
       "empty": "Wala pa rito. I-tap ang Tumanggap para makuha ang iyong address.",
-      "signIn": "Mag-sign in para makita ang iyong wallet"
+      "signIn": "Mag-sign in para makita ang iyong wallet",
+      "last24h": "24 oras"
     },
     "receive": {
       "network": "Network",

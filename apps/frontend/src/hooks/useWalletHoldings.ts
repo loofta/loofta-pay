@@ -20,6 +20,8 @@ export type WalletHolding = {
   amount: number;
   /** null when no price feed has this token. */
   usd: number | null;
+  /** 24h price change in percent, null when no feed has it. */
+  change24h?: number | null;
   logo?: string;
 };
 
@@ -46,7 +48,7 @@ async function fetchTokenRows(address: string, rpc: string): Promise<TokenRow[]>
   return [...byMint.values()];
 }
 
-type JupiterInfo = { symbol: string | null; name: string | null; icon: string | null; usdPrice: number | null };
+type JupiterInfo = { symbol: string | null; name: string | null; icon: string | null; usdPrice: number | null; change24h: number | null };
 
 /** Logos, names and USD prices from Jupiter, via our own /api route (key stays server-side). */
 async function fetchJupiterInfo(mints: string[]): Promise<Record<string, JupiterInfo>> {
@@ -55,7 +57,7 @@ async function fetchJupiterInfo(mints: string[]): Promise<Record<string, Jupiter
     const r = await fetch(`/api/tokens/jupiter?mints=${mints.join(",")}`);
     const json = (await r.json()) as { tokens?: Array<{ mint: string } & JupiterInfo> };
     const out: Record<string, JupiterInfo> = {};
-    for (const t of json.tokens ?? []) out[t.mint] = { symbol: t.symbol, name: t.name, icon: t.icon, usdPrice: t.usdPrice };
+    for (const t of json.tokens ?? []) out[t.mint] = { symbol: t.symbol, name: t.name, icon: t.icon, usdPrice: t.usdPrice, change24h: t.change24h ?? null };
     return out;
   } catch {
     return {};
@@ -121,6 +123,7 @@ export function useWalletHoldings() {
       decimals: 9,
       amount: data.sol,
       usd: (data.jup[SOL_MINT]?.usdPrice ?? solPrice) != null ? data.sol * ((data.jup[SOL_MINT]?.usdPrice ?? solPrice) as number) : null,
+      change24h: data.jup[SOL_MINT]?.change24h ?? null,
       logo: data.jup[SOL_MINT]?.icon ?? undefined,
     });
     data.rows.forEach((r, i) => {
@@ -136,6 +139,7 @@ export function useWalletHoldings() {
         decimals: r.decimals,
         amount: r.amount,
         usd: j?.usdPrice != null ? r.amount * j.usdPrice : null,
+        change24h: j?.change24h ?? null,
         logo: j?.icon ?? undefined,
       });
     });
@@ -143,6 +147,16 @@ export function useWalletHoldings() {
   holdings.sort((a, b) => (b.usd ?? -1) - (a.usd ?? -1));
 
   const totalUsd = holdings.reduce((a, h) => a + (h.usd ?? 0), 0);
+  // Portfolio move over 24h at today's holdings: each token's value a day ago is value / (1 + change).
+  let before = 0;
+  let now = 0;
+  for (const x of holdings) {
+    if (x.usd == null || x.change24h == null || x.change24h <= -100) continue;
+    now += x.usd;
+    before += x.usd / (1 + x.change24h / 100);
+  }
+  const change24hPct = before > 0 ? ((now - before) / before) * 100 : null;
+  const change24hUsd = before > 0 ? now - before : null;
   const unpriced = holdings.some((h) => h.usd == null && h.amount > 0);
 
   const linked = ((user as { linkedAccounts?: unknown } | null)?.linkedAccounts ?? []) as Array<{
@@ -159,6 +173,8 @@ export function useWalletHoldings() {
   return {
     holdings,
     totalUsd,
+    change24hPct,
+    change24hUsd,
     unpriced,
     isLoading: query.isLoading,
     refetch: query.refetch,
