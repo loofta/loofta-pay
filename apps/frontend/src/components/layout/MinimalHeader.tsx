@@ -20,9 +20,9 @@ import type { PeerPayRequest } from "@/lib/peerPlatforms";
 
 const HEADER_HEIGHT = 64;
 
-/** On pay.loofta.xyz the proxy rewrites /app/* away, so the browser path is /wallet, not /app/wallet. */
+/** On pay.loofta.xyz the proxy rewrites /app/* away, so the browser path is /portfolio, not /app/portfolio. */
 function toAppPath(pathname: string | null): string | null {
-  return pathname && /^\/(wallet|send|receive|history|c)(\/|$)/.test(pathname) ? `/app${pathname}` : pathname;
+  return pathname && /^\/(portfolio|wallet|send|receive|history|c)(\/|$)/.test(pathname) ? `/app${pathname}` : pathname;
 }
 
 function MobileMenu({
@@ -64,7 +64,7 @@ function MobileMenu({
     { href: TELEGRAM_BOT_URL, label: "Telegram bot", description: "Send payments by chat on Telegram", external: true },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/megapot", label: "Megapot", description: "Play the daily jackpot privately" },
-    { href: "/app/wallet", label: "Portfolio", description: "Hold, send, swap and receive any token" },
+    { href: "/app/portfolio", label: "Wallet", description: "Hold, send, swap and receive any token" },
   ];
 
   return (
@@ -337,7 +337,7 @@ export function MinimalHeader() {
   const isRewardsActive = pathname?.startsWith("/rewards");
   const isWinActive = pathname?.includes("/megapot");
   const isAppHome = pathname === "/app";
-  const isWallet = !!pathname && pathname.startsWith("/app/wallet");
+  const isWallet = !!pathname && pathname.startsWith("/app/portfolio");
   const isSendReceive =
     !!pathname &&
     (pathname.startsWith("/app/send") ||
@@ -350,7 +350,7 @@ export function MinimalHeader() {
     { href: TELEGRAM_BOT_URL, label: "Telegram bot", active: false, external: true },
     { href: "/rewards", label: t("rewards"), active: isRewardsActive },
     { href: "/megapot", label: "Megapot", active: isWinActive },
-    { href: "/app/wallet", label: "Portfolio", active: isWallet },
+    { href: "/app/portfolio", label: "Wallet", active: isWallet },
   ];
 
   return (

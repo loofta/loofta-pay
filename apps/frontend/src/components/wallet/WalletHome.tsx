@@ -44,7 +44,7 @@ function WalletHomeInner() {
   const open = useCallback(
     (p: Panel | null) => {
       setPanel(p);
-      router.replace(p ? `/app/wallet?tab=${p}` : "/app/wallet", { scroll: false });
+      router.replace(p ? `/app/portfolio?tab=${p}` : "/app/portfolio", { scroll: false });
     },
     [router],
   );
