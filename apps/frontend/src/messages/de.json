@@ -670,7 +670,7 @@
       "over": "Mehr, als du senden kannst",
       "needSol": "Du brauchst etwa {amount} SOL in deiner Wallet für die Netzwerkgebühr.",
       "privately": "Privat senden",
-      "privateOn": "Der Empfänger erhält die Token. Niemand kann sie zu deiner Wallet zurückverfolgen.",
+      "privateOn": "Niemand kann es zu dir zurückverfolgen.",
       "privateMainnet": "Private Sendungen laufen im Mainnet.",
       "feeAbout": "Etwa {amount} SOL",
       "privacyFee": "Datenschutzgebühr",
@@ -689,7 +689,8 @@
       "failed": "Senden fehlgeschlagen",
       "feeNoteUsdc": "Die Datenschutzgebühr von ${fee} kommt zu den {amount} USDC hinzu.",
       "feeNoteToken": "Datenschutzgebühr von etwa {feeToken} {symbol} (etwa ${feeUsd}) plus {networkSol} SOL Netzwerkgebühr, zusätzlich zu {amount} {symbol}.",
-      "privateSol": "SOL wird als Wrapped SOL (wSOL) gesendet. Der Empfänger kann es in jeder Wallet wieder in SOL umwandeln. Niemand kann es zu dir zurückverfolgen."
+      "feeAboutToken": "Etwa {amount} {symbol}",
+      "totalFee": "Gebühren gesamt"
     },
     "delay": {
       "none": "ohne Verzögerung",

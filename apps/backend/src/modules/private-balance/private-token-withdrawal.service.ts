@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, ServiceUnavailableException } 
 import { ConfigService } from '@nestjs/config';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import {
+  NATIVE_MINT,
   TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountIdempotentInstruction,
   getAccount,
@@ -26,6 +27,9 @@ import { PRIVATE_BALANCE_PLATFORM_FEE_BPS } from './private-balance.service';
 
 const MAINNET_USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 /** Same per-withdrawal ceiling as the USDC private withdrawal, applied to the token's USD value. */
+/** Native SOL goes out as wrapped SOL that MagicBlock wraps for the sender. Keep this much SOL back for the
+ *  wrapped-SOL account rent (~0.00204), MagicBlock's SOL charge (0.002) and transaction fees. */
+const NATIVE_SOL_OVERHEAD_SOL = 0.005;
 const MIN_VALUE_USD = 1;
 const MAX_VALUE_USD = 2000;
 /** Backstop on rent the fee payer locks into its OWN token accounts for new mints (one account per mint, ours to close). */
@@ -101,12 +105,20 @@ export class PrivateTokenWithdrawalService {
       held = (await getAccount(conn, senderAta)).amount;
     } catch { /* no token account */ }
     const feeUnitsEstimate = BigInt(estimateMagicblockGrossUp(Number(baseUnits), MAGICBLOCK_VOLUME_FEE_BPS + PRIVATE_BALANCE_PLATFORM_FEE_BPS)) - baseUnits;
-    if (held < baseUnits + feeUnitsEstimate) {
-      throw new BadRequestException('Not enough of this token to cover the amount plus the privacy fee.');
-    }
-    const solBalance = (await conn.getBalance(userPk)) / 1e9;
-    if (solBalance < MAGICBLOCK_MIN_SENDER_SOL) {
-      throw new BadRequestException(`You need about ${MAGICBLOCK_MIN_SENDER_SOL} SOL in your wallet for the network fee of a private token send.`);
+    const solLamports = await conn.getBalance(userPk);
+    if (mint.equals(NATIVE_MINT)) {
+      // MagicBlock wraps whatever the sender lacks as wSOL, so plain SOL counts toward the amount.
+      const overhead = BigInt(Math.round(NATIVE_SOL_OVERHEAD_SOL * 1e9));
+      if (held + BigInt(solLamports) < baseUnits + feeUnitsEstimate + overhead) {
+        throw new BadRequestException('Not enough SOL to cover the amount, the privacy fee and the network fee.');
+      }
+    } else {
+      if (held < baseUnits + feeUnitsEstimate) {
+        throw new BadRequestException('Not enough of this token to cover the amount plus the privacy fee.');
+      }
+      if (solLamports / 1e9 < MAGICBLOCK_MIN_SENDER_SOL) {
+        throw new BadRequestException(`You need about ${MAGICBLOCK_MIN_SENDER_SOL} SOL in your wallet for the network fee of a private token send.`);
+      }
     }
 
     const platformFeeAccount = await this.ensureFeePayerTokenAccount(mint, userId);

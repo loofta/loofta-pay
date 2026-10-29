@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Settings } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -32,6 +32,15 @@ function WalletHomeInner() {
   const { holdings, totalUsd, change24hPct, change24hUsd, unpriced, isLoading, refetch, address, evmAddress } = useWalletHoldings();
   const [listTab, setListTab] = useState<"tokens" | "nfts">("tokens");
   const live = authenticated && !isLoading;
+
+  // After a send or swap the RPC can still show the old balance for a moment, so refresh now and again a few times.
+  const refreshTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const refreshSoon = useCallback(() => {
+    refreshTimers.current.forEach(clearTimeout);
+    void refetch();
+    refreshTimers.current = [1500, 4000, 9000].map((ms) => setTimeout(() => void refetch(), ms));
+  }, [refetch]);
+  useEffect(() => () => refreshTimers.current.forEach(clearTimeout), []);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const tabParam = searchParams.get("tab");
@@ -145,11 +154,11 @@ function WalletHomeInner() {
         </div>
       </div>
 
-      <WalletSendModal open={authenticated && panel === "send"} onClose={() => open(null)} holdings={holdings} solanaAddress={address} onUseSwap={() => open("swap")} onDone={() => void refetch()} />
+      <WalletSendModal open={authenticated && panel === "send"} onClose={() => open(null)} holdings={holdings} solanaAddress={address} onUseSwap={() => open("swap")} onDone={refreshSoon} />
       <WalletHistoryModal open={authenticated && panel === "history"} onClose={() => open(null)} />
       <WalletSettingsModal open={authenticated && settingsOpen} onClose={() => setSettingsOpen(false)} solanaAddress={address} evmAddress={evmAddress} />
       <WalletReceiveModal open={authenticated && panel === "receive"} onClose={() => open(null)} solanaAddress={address} evmAddress={evmAddress} />
-      <WalletSwapModal open={authenticated && panel === "swap"} onClose={() => open(null)} holdings={holdings} solanaAddress={address} onDone={() => void refetch()} />
+      <WalletSwapModal open={authenticated && panel === "swap"} onClose={() => open(null)} holdings={holdings} solanaAddress={address} onDone={refreshSoon} />
     </div>
   );
 }

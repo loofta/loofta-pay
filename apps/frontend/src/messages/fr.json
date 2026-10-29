@@ -670,7 +670,7 @@
       "over": "Plus que ce que vous pouvez envoyer",
       "needSol": "Il vous faut environ {amount} SOL dans votre portefeuille pour les frais de réseau.",
       "privately": "Envoyer en privé",
-      "privateOn": "Le destinataire reçoit les tokens. Personne ne peut remonter jusqu'à votre portefeuille.",
+      "privateOn": "Personne ne peut remonter jusqu'à vous.",
       "privateMainnet": "Les envois privés fonctionnent sur le mainnet.",
       "feeAbout": "Environ {amount} SOL",
       "privacyFee": "Frais de confidentialité",
@@ -689,7 +689,8 @@
       "failed": "Échec de l'envoi",
       "feeNoteUsdc": "Des frais de confidentialité de {fee} $ s'ajoutent aux {amount} USDC.",
       "feeNoteToken": "Frais de confidentialité d'environ {feeToken} {symbol} (environ {feeUsd} $) plus {networkSol} SOL de frais de réseau, en plus des {amount} {symbol}.",
-      "privateSol": "Le SOL est envoyé sous forme de SOL encapsulé (wSOL). Le destinataire peut le reconvertir en SOL dans n'importe quel portefeuille. Personne ne peut remonter jusqu'à vous."
+      "feeAboutToken": "Environ {amount} {symbol}",
+      "totalFee": "Frais totaux"
     },
     "delay": {
       "none": "sans délai",

@@ -670,7 +670,7 @@
       "over": "Più di quanto puoi inviare",
       "needSol": "Ti servono circa {amount} SOL nel wallet per la commissione di rete.",
       "privately": "Invia in privato",
-      "privateOn": "Il destinatario riceve i token. Nessuno può risalire al tuo wallet.",
+      "privateOn": "Nessuno può risalire a te.",
       "privateMainnet": "Gli invii privati funzionano sulla mainnet.",
       "feeAbout": "Circa {amount} SOL",
       "privacyFee": "Commissione privacy",
@@ -689,7 +689,8 @@
       "failed": "Invio non riuscito",
       "feeNoteUsdc": "La commissione privacy di ${fee} si aggiunge ai {amount} USDC.",
       "feeNoteToken": "Commissione privacy di circa {feeToken} {symbol} (circa ${feeUsd}) più {networkSol} SOL di commissione di rete, oltre a {amount} {symbol}.",
-      "privateSol": "Il SOL viene inviato come SOL wrappato (wSOL). Il destinatario può riconvertirlo in SOL in qualsiasi wallet. Nessuno può risalire a te."
+      "feeAboutToken": "Circa {amount} {symbol}",
+      "totalFee": "Commissioni totali"
     },
     "delay": {
       "none": "nessun ritardo",

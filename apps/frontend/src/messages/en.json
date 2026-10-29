@@ -670,7 +670,7 @@
       "over": "More than you can send",
       "needSol": "You need about {amount} SOL in your wallet for the network fee.",
       "privately": "Send privately",
-      "privateOn": "They get the tokens. Nobody can trace them back to your wallet.",
+      "privateOn": "Nobody can trace it back to you.",
       "privateMainnet": "Private sends run on mainnet.",
       "feeAbout": "About {amount} SOL",
       "privacyFee": "Privacy fee",
@@ -689,7 +689,8 @@
       "failed": "Send failed",
       "feeNoteUsdc": "Privacy fee ${fee} is charged on top of {amount} USDC.",
       "feeNoteToken": "Privacy fee about {feeToken} {symbol} (about ${feeUsd}) plus {networkSol} SOL network fee, on top of {amount} {symbol}.",
-      "privateSol": "SOL is sent as wrapped SOL (wSOL). They can unwrap it to SOL in any wallet. Nobody can trace it back to you."
+      "feeAboutToken": "About {amount} {symbol}",
+      "totalFee": "Total fees"
     },
     "delay": {
       "none": "no delay",

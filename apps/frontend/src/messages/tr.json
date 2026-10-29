@@ -670,7 +670,7 @@
       "over": "Gönderebileceğinden fazla",
       "needSol": "Ağ ücreti için cüzdanında yaklaşık {amount} SOL olmalı.",
       "privately": "Gizli gönder",
-      "privateOn": "Alıcı tokenları alır. Kimse bunları cüzdanına kadar izleyemez.",
+      "privateOn": "Kimse bunu size kadar izleyemez.",
       "privateMainnet": "Gizli gönderimler ana ağda çalışır.",
       "feeAbout": "Yaklaşık {amount} SOL",
       "privacyFee": "Gizlilik ücreti",
@@ -689,7 +689,8 @@
       "failed": "Gönderim başarısız",
       "feeNoteUsdc": "{amount} USDC'nin üzerine ${fee} gizlilik ücreti eklenir.",
       "feeNoteToken": "{amount} {symbol} tutarının üzerine yaklaşık {feeToken} {symbol} (yaklaşık ${feeUsd}) gizlilik ücreti ve {networkSol} SOL ağ ücreti eklenir.",
-      "privateSol": "SOL, sarmalanmış SOL (wSOL) olarak gönderilir. Alıcı bunu herhangi bir cüzdanda SOL'a çevirebilir. Kimse sana kadar izleyemez."
+      "feeAboutToken": "Yaklaşık {amount} {symbol}",
+      "totalFee": "Toplam ücretler"
     },
     "delay": {
       "none": "gecikme yok",

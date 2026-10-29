@@ -670,7 +670,7 @@
       "over": "أكثر مما يمكنك إرساله",
       "needSol": "تحتاج إلى حوالي {amount} SOL في محفظتك لرسوم الشبكة.",
       "privately": "إرسال بخصوصية",
-      "privateOn": "يستلم المستلم الرموز. لا يمكن لأحد تتبعها إلى محفظتك.",
+      "privateOn": "لا أحد يستطيع تتبعه إلى حسابك.",
       "privateMainnet": "الإرسال الخاص يعمل على الشبكة الرئيسية.",
       "feeAbout": "حوالي {amount} SOL",
       "privacyFee": "رسوم الخصوصية",
@@ -689,7 +689,8 @@
       "failed": "فشل الإرسال",
       "feeNoteUsdc": "تُضاف رسوم خصوصية قدرها ${fee} فوق {amount} USDC.",
       "feeNoteToken": "رسوم خصوصية حوالي {feeToken} {symbol} (حوالي ${feeUsd}) إضافة إلى {networkSol} SOL رسوم الشبكة، فوق {amount} {symbol}.",
-      "privateSol": "يُرسل SOL كـ SOL ملفوف (wSOL). يمكن للمستلم فك لفّه إلى SOL في أي محفظة. لا يمكن لأحد تتبعه إليك."
+      "feeAboutToken": "حوالي {amount} {symbol}",
+      "totalFee": "إجمالي الرسوم"
     },
     "delay": {
       "none": "بدون تأخير",

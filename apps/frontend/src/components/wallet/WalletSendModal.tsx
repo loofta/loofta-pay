@@ -10,6 +10,7 @@ import { ExternalLink, Lock, Search } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useAuthStore } from "@/store/auth";
 import { useSolDomain } from "@/hooks/useSolDomain";
+import { useSolPriceOrNull } from "@/hooks/useSolPrice";
 import { isSolDomain } from "@/lib/refundAddresses";
 import { usePerPrivateSelfTransfer } from "@/hooks/usePerPrivateSelfTransfer";
 import { usePerPrivateTokenWithdrawal } from "@/hooks/usePerPrivateTokenWithdrawal";
@@ -31,7 +32,13 @@ const MONO = "var(--font-home-mono), ui-monospace, monospace";
 const MAINNET_USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const MIN_SOL_FOR_FEES = 0.003;
 /** Private SOL: MagicBlock wraps and unwraps it. Keep SOL back for the wrap account rent, relay gas and buffer. */
-const PRIVATE_SOL_RESERVE = 0.012;
+const PRIVATE_SOL_RESERVE = 0.005;
+/** The 0.2% privacy fee (MagicBlock 10 bps + Loofta 10 bps) is charged on top of the amount. */
+const PRIVATE_FEE_FACTOR = 1.002;
+/** A plain SOL transfer only costs the network fee. */
+const PUBLIC_SOL_FEE = 0.00002;
+/** Private USDC is gasless: MagicBlock's SOL charge (0.002 SOL, never under $0.20) is taken from the USDC, with a 5% cushion. */
+const usdcRelayFee = (solPrice: number | null) => Math.max((solPrice ?? 0) * 0.002, 0.2) * 1.05;
 
 type Step = "form" | "pick" | "review" | "done";
 type Kind = "empty" | "solana" | "domain" | "evm" | "invalid";
@@ -129,16 +136,20 @@ export function WalletSendModal({
   /** The wallet the tokens actually go to: the typed address, or what the .sol name points at. */
   const destAddress = kind === "solana" ? recipient.trim() : resolved;
   const amountNum = Number(amount);
+  const solPrice = useSolPriceOrNull();
   const solHeld = holdings.find((h) => h.mint === null)?.amount ?? 0;
   const isUsdc = token?.mint === MAINNET_USDC;
   const canPrivate = !!token && cluster === "mainnet";
   const isSol = token?.mint === null;
   const usePrivate = privately && canPrivate;
-  // A private SOL send is wrapped first: keep SOL for the wrap account rent, the relay gas and the 0.2% fee.
-  const reserve = isSol ? (usePrivate ? PRIVATE_SOL_RESERVE : MIN_SOL_FOR_FEES) : 0;
-  const maxAmount = token ? Math.max(0, (token.amount - reserve) - (usePrivate && isUsdc ? 0.3 : 0)) : 0;
+  // Max is the balance minus what the send itself costs: the network fee, plus for private sends the wrap
+  // account rent, MagicBlock's SOL charge and the 0.2% privacy fee on top of the amount.
+  const reserve = isSol ? (usePrivate ? PRIVATE_SOL_RESERVE : PUBLIC_SOL_FEE) : 0;
+  const maxAmount = token
+    ? Math.max(0, usePrivate && isUsdc ? (token.amount - usdcRelayFee(solPrice)) / PRIVATE_FEE_FACTOR : (token.amount - reserve) / (usePrivate ? PRIVATE_FEE_FACTOR : 1))
+    : 0;
   const over = amountNum > maxAmount + 1e-12;
-  const needsSolForFees = !(usePrivate && isUsdc) && solHeld < MIN_SOL_FOR_FEES;
+  const needsSolForFees = !isSol && !(usePrivate && isUsdc) && solHeld < MIN_SOL_FOR_FEES;
   const usdValue = token && token.usd != null && token.amount > 0 ? (token.usd / token.amount) * (amountNum || 0) : null;
   const canNext = !!token && !!destAddress && amountNum > 0 && !over && !needsSolForFees;
   const filtered = sendable.filter((h) => `${h.name} ${h.symbol}`.toLowerCase().includes(query.trim().toLowerCase()));
@@ -246,8 +257,13 @@ export function WalletSendModal({
   const row = { display: "flex", justifyContent: "space-between", gap: 16 } as const;
   const feeBox = { padding: "14px 16px", borderRadius: 18, background: "#0E0E12", display: "flex", flexDirection: "column", gap: 8, fontSize: 14 } as const;
 
-  const networkFee = usePrivate ? (isUsdc ? tr("common.covered") : tr("send.feeAbout", { amount: "0.002" })) : tr("send.feeAbout", { amount: "0.000005" });
-  const privacyFee = isUsdc ? tr("send.privacyFeeShown") : tr("send.privacyFeePct");
+  const feeText = (amount: number, symbol: string, decimals: number) => tr("send.feeAboutToken", { amount: amount < 0.01 ? trimAmount(amount, Math.min(decimals, 6)) : amount.toFixed(2), symbol });
+  const hasAmount = amountNum > 0;
+  const privacyCost = hasAmount ? amountNum * (PRIVATE_FEE_FACTOR - 1) : 0;
+  const relayCost = usdcRelayFee(solPrice);
+  const networkFee = usePrivate ? (isUsdc ? feeText(relayCost, "USDC", 6) : tr("send.feeAbout", { amount: "0.002" })) : tr("send.feeAbout", { amount: "0.000005" });
+  const privacyFee = hasAmount && token ? feeText(privacyCost, token.symbol, token.decimals) : tr("send.privacyFeePct");
+  const totalUsdcFee = usePrivate && isUsdc && hasAmount ? feeText(relayCost + privacyCost, "USDC", 6) : null;
 
   return (
     <WalletModal open={open} onClose={onClose} title={title} onBack={onBack}>
@@ -332,7 +348,7 @@ export function WalletSendModal({
                 <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
                   <span style={{ fontWeight: 700, fontSize: 15 }}>{tr("send.privately")}</span>
                   <span style={{ fontSize: 13, lineHeight: 1.45, color: "#9A98A3" }}>
-                    {canPrivate ? (isSol ? tr("send.privateSol") : tr("send.privateOn")) : tr("send.privateMainnet")}
+                    {canPrivate ? tr("send.privateOn") : tr("send.privateMainnet")}
                   </span>
                 </span>
                 <span style={{ flex: "none", width: 48, height: 28, borderRadius: 999, background: usePrivate ? "linear-gradient(90deg,#FF2D0A,#F5B70C)" : "#2A2A32", padding: 3, boxSizing: "border-box", display: "flex", justifyContent: usePrivate ? "flex-end" : "flex-start" }}>
@@ -347,6 +363,7 @@ export function WalletSendModal({
               <div style={feeBox}>
                 <div style={row}><span style={{ color: "#77757F" }}>{tr("common.networkFee")}</span><span>{networkFee}</span></div>
                 {usePrivate && <div style={row}><span style={{ color: "#77757F" }}>{tr("send.privacyFee")}</span><span>{privacyFee}</span></div>}
+                {totalUsdcFee && <div style={row}><span style={{ color: "#77757F" }}>{tr("send.totalFee")}</span><span style={{ fontWeight: 700 }}>{totalUsdcFee}</span></div>}
                 <div style={row}><span style={{ color: "#77757F" }}>{tr("send.arrives")}</span><span>{usePrivate ? delayText(delayMs) : tr("common.instant")}</span></div>
               </div>
 
@@ -369,6 +386,8 @@ export function WalletSendModal({
             <div style={row}><span style={{ color: "#77757F" }}>{tr("send.to")}</span><span style={{ fontFamily: MONO }}>{kind === "domain" ? `${recipient.trim()} (${shortAddr(destAddress ?? "")})` : shortAddr(destAddress ?? "")}</span></div>
             <div style={row}><span style={{ color: "#77757F" }}>{tr("send.mode")}</span><span style={{ fontWeight: 700, color: usePrivate ? "#FF8A4A" : "#F2EFE8" }}>{usePrivate ? tr("send.modePrivate") : tr("send.modePublic")}</span></div>
             <div style={row}><span style={{ color: "#77757F" }}>{tr("common.networkFee")}</span><span>{networkFee}</span></div>
+            {usePrivate && <div style={row}><span style={{ color: "#77757F" }}>{tr("send.privacyFee")}</span><span>{privacyFee}</span></div>}
+            {totalUsdcFee && <div style={row}><span style={{ color: "#77757F" }}>{tr("send.totalFee")}</span><span style={{ fontWeight: 700 }}>{totalUsdcFee}</span></div>}
             <div style={row}><span style={{ color: "#77757F" }}>{tr("send.arrives")}</span><span>{usePrivate ? delayText(delayMs) : tr("common.instant")}</span></div>
           </div>
           {usePrivate && (

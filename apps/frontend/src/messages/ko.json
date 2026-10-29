@@ -670,7 +670,7 @@
       "over": "보낼 수 있는 금액을 초과했어요",
       "needSol": "네트워크 수수료를 위해 지갑에 약 {amount} SOL이 필요해요.",
       "privately": "비공개로 보내기",
-      "privateOn": "상대방이 토큰을 받아요. 누구도 내 지갑까지 추적할 수 없어요.",
+      "privateOn": "아무도 당신을 추적할 수 없습니다.",
       "privateMainnet": "비공개 전송은 메인넷에서만 가능해요.",
       "feeAbout": "약 {amount} SOL",
       "privacyFee": "프라이버시 수수료",
@@ -689,7 +689,8 @@
       "failed": "전송 실패",
       "feeNoteUsdc": "{amount} USDC에 더해 ${fee}의 프라이버시 수수료가 부과돼요.",
       "feeNoteToken": "{amount} {symbol}에 더해 약 {feeToken} {symbol}(약 ${feeUsd})의 프라이버시 수수료와 {networkSol} SOL의 네트워크 수수료가 부과돼요.",
-      "privateSol": "SOL은 래핑된 SOL(wSOL)로 전송돼요. 상대방은 어떤 지갑에서든 SOL로 되돌릴 수 있고, 누구도 나를 추적할 수 없어요."
+      "feeAboutToken": "약 {amount} {symbol}",
+      "totalFee": "총 수수료"
     },
     "delay": {
       "none": "지연 없음",

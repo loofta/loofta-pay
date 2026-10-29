@@ -670,7 +670,7 @@
       "over": "Higit sa kaya mong ipadala",
       "needSol": "Kailangan mo ng humigit-kumulang {amount} SOL sa wallet para sa network fee.",
       "privately": "Magpadala nang pribado",
-      "privateOn": "Matatanggap nila ang mga token. Walang makakaugnay nito sa wallet mo.",
+      "privateOn": "Walang makakapag-trace nito pabalik sa iyo.",
       "privateMainnet": "Sa mainnet lang gumagana ang pribadong pagpapadala.",
       "feeAbout": "Humigit-kumulang {amount} SOL",
       "privacyFee": "Bayad sa privacy",
@@ -689,7 +689,8 @@
       "failed": "Nabigo ang pagpapadala",
       "feeNoteUsdc": "May dagdag na bayad sa privacy na ${fee} bukod sa {amount} USDC.",
       "feeNoteToken": "Bayad sa privacy na humigit-kumulang {feeToken} {symbol} (mga ${feeUsd}) at {networkSol} SOL na network fee, bukod sa {amount} {symbol}.",
-      "privateSol": "Ipinapadala ang SOL bilang wrapped SOL (wSOL). Maaari itong i-unwrap ng tatanggap pabalik sa SOL sa anumang wallet. Walang makakaugnay nito sa iyo."
+      "feeAboutToken": "Mga {amount} {symbol}",
+      "totalFee": "Kabuuang bayarin"
     },
     "delay": {
       "none": "walang pagkaantala",

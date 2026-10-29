@@ -670,7 +670,7 @@
       "over": "Melebihi yang bisa dikirim",
       "needSol": "Anda butuh sekitar {amount} SOL di dompet untuk biaya jaringan.",
       "privately": "Kirim secara privat",
-      "privateOn": "Penerima mendapat token. Tidak ada yang bisa melacaknya ke dompet Anda.",
+      "privateOn": "Tidak ada yang bisa melacaknya ke kamu.",
       "privateMainnet": "Pengiriman privat berjalan di mainnet.",
       "feeAbout": "Sekitar {amount} SOL",
       "privacyFee": "Biaya privasi",
@@ -689,7 +689,8 @@
       "failed": "Pengiriman gagal",
       "feeNoteUsdc": "Biaya privasi ${fee} dikenakan di atas {amount} USDC.",
       "feeNoteToken": "Biaya privasi sekitar {feeToken} {symbol} (sekitar ${feeUsd}) ditambah biaya jaringan {networkSol} SOL, di atas {amount} {symbol}.",
-      "privateSol": "SOL dikirim sebagai wrapped SOL (wSOL). Penerima bisa mengubahnya kembali ke SOL di dompet mana pun. Tidak ada yang bisa melacaknya ke Anda."
+      "feeAboutToken": "Sekitar {amount} {symbol}",
+      "totalFee": "Total biaya"
     },
     "delay": {
       "none": "tanpa penundaan",

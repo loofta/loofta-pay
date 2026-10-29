@@ -670,7 +670,7 @@
       "over": "送れる金額を超えています",
       "needSol": "ネットワーク手数料のため、ウォレットに約{amount} SOLが必要です。",
       "privately": "プライベートに送る",
-      "privateOn": "相手がトークンを受け取ります。あなたのウォレットまで追跡されません。",
+      "privateOn": "あなたまで辿られることはありません。",
       "privateMainnet": "プライベート送信はメインネットで利用できます。",
       "feeAbout": "約{amount} SOL",
       "privacyFee": "プライバシー手数料",
@@ -689,7 +689,8 @@
       "failed": "送信に失敗しました",
       "feeNoteUsdc": "{amount} USDCに加えて、プライバシー手数料${fee}がかかります。",
       "feeNoteToken": "{amount} {symbol}に加えて、プライバシー手数料約{feeToken} {symbol}(約${feeUsd})とネットワーク手数料{networkSol} SOLがかかります。",
-      "privateSol": "SOLはラップドSOL(wSOL)として送られます。相手はどのウォレットでもSOLに戻せます。あなたまで追跡されません。"
+      "feeAboutToken": "約 {amount} {symbol}",
+      "totalFee": "手数料合計"
     },
     "delay": {
       "none": "遅延なし",

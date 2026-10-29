@@ -670,7 +670,7 @@
       "over": "超出可发送金额",
       "needSol": "钱包中需要约 {amount} SOL 用于支付网络费用。",
       "privately": "私密发送",
-      "privateOn": "对方会收到代币，且无法追溯到你的钱包。",
+      "privateOn": "没有人能追踪到你。",
       "privateMainnet": "私密发送仅在主网可用。",
       "feeAbout": "约 {amount} SOL",
       "privacyFee": "隐私费用",
@@ -689,7 +689,8 @@
       "failed": "发送失败",
       "feeNoteUsdc": "除 {amount} USDC 外，另收取 ${fee} 隐私费用。",
       "feeNoteToken": "除 {amount} {symbol} 外，另收约 {feeToken} {symbol}（约 ${feeUsd}）隐私费用和 {networkSol} SOL 网络费用。",
-      "privateSol": "SOL 将以包装 SOL（wSOL）形式发送，对方可在任何钱包中解包为 SOL，且无法追溯到你。"
+      "feeAboutToken": "约 {amount} {symbol}",
+      "totalFee": "总费用"
     },
     "delay": {
       "none": "无延迟",

@@ -670,7 +670,7 @@
       "over": "Mais do que você pode enviar",
       "needSol": "Você precisa de cerca de {amount} SOL na carteira para a taxa de rede.",
       "privately": "Enviar em privado",
-      "privateOn": "Eles recebem os tokens. Ninguém consegue rastreá-los até a sua carteira.",
+      "privateOn": "Ninguém consegue rastrear até você.",
       "privateMainnet": "Envios privados funcionam na mainnet.",
       "feeAbout": "Cerca de {amount} SOL",
       "privacyFee": "Taxa de privacidade",
@@ -689,7 +689,8 @@
       "failed": "Falha no envio",
       "feeNoteUsdc": "A taxa de privacidade de ${fee} é cobrada além dos {amount} USDC.",
       "feeNoteToken": "Taxa de privacidade de cerca de {feeToken} {symbol} (cerca de ${feeUsd}) mais {networkSol} SOL de taxa de rede, além dos {amount} {symbol}.",
-      "privateSol": "O SOL é enviado como SOL encapsulado (wSOL). Eles podem converter para SOL em qualquer carteira. Ninguém consegue rastrear até você."
+      "feeAboutToken": "Cerca de {amount} {symbol}",
+      "totalFee": "Taxas totais"
     },
     "delay": {
       "none": "sem atraso",

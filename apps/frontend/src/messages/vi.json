@@ -670,7 +670,7 @@
       "over": "Vượt quá số bạn có thể gửi",
       "needSol": "Bạn cần khoảng {amount} SOL trong ví để trả phí mạng.",
       "privately": "Gửi riêng tư",
-      "privateOn": "Họ nhận được token. Không ai có thể truy vết về ví của bạn.",
+      "privateOn": "Không ai có thể truy ra bạn.",
       "privateMainnet": "Gửi riêng tư chỉ chạy trên mainnet.",
       "feeAbout": "Khoảng {amount} SOL",
       "privacyFee": "Phí riêng tư",
@@ -689,7 +689,8 @@
       "failed": "Gửi không thành công",
       "feeNoteUsdc": "Phí riêng tư ${fee} được tính thêm ngoài {amount} USDC.",
       "feeNoteToken": "Phí riêng tư khoảng {feeToken} {symbol} (khoảng ${feeUsd}) cộng {networkSol} SOL phí mạng, ngoài {amount} {symbol}.",
-      "privateSol": "SOL được gửi dưới dạng SOL đã gói (wSOL). Người nhận có thể mở gói về SOL trong bất kỳ ví nào. Không ai có thể truy vết về bạn."
+      "feeAboutToken": "Khoảng {amount} {symbol}",
+      "totalFee": "Tổng phí"
     },
     "delay": {
       "none": "không trì hoãn",
