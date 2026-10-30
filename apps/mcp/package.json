@@ -1,0 +1,15 @@
+{
+  "name": "@loofta/mcp",
+  "version": "0.1.0",
+  "description": "Let an AI agent pay people from your Loofta wallet. `loofta login` once, then use it as an MCP server.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "loofta": "./dist/cli.js", "loofta-mcp": "./dist/cli.js" },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --test dist/test/server.test.js"
+  },
+  "devDependencies": { "typescript": "^5.4.0", "@types/node": "^20.0.0" }
+}

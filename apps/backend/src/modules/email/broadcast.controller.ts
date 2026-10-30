@@ -213,4 +213,37 @@ export class BroadcastController {
     this.logger.log(`Payments-fixed broadcast complete: ${sent} sent, ${failed} failed`);
     return { ok: true, sent, failed, total: recipients.length };
   }
+
+  @Post('poolrip-launch')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Broadcast the PoolRip launch email to every app user. Pass testEmail to dry-run to one address.' })
+  async broadcastPoolripLaunch(@Body() body: { testEmail?: string }) {
+    const { testEmail } = body ?? {};
+
+    let recipients: string[];
+
+    if (testEmail) {
+      recipients = [testEmail.trim().toLowerCase()];
+      this.logger.log(`PoolRip launch broadcast: TEST MODE, sending only to ${testEmail}`);
+    } else {
+      recipients = Array.from(new Set(await this.fetchAllEmails('appUsers')));
+      this.logger.log(`PoolRip launch broadcast: ${recipients.length} unique recipients (app users)`);
+    }
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const email of recipients) {
+      try {
+        await this.emailService.sendPoolripLaunchEmail(email);
+        sent++;
+      } catch {
+        failed++;
+        this.logger.warn(`Failed to send PoolRip launch email to ${email}`);
+      }
+    }
+
+    this.logger.log(`PoolRip launch broadcast complete: ${sent} sent, ${failed} failed`);
+    return { ok: true, sent, failed, total: recipients.length };
+  }
 }

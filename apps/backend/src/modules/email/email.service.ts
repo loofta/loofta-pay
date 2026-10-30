@@ -226,6 +226,22 @@ export class EmailService {
     }
   }
 
+  async sendPoolripLaunchEmail(recipientEmail: string): Promise<void> {
+    if (!this.resend) return;
+    try {
+      await this.resend.emails.send({
+        from: 'Lisa from Loofta <hello@loofta.xyz>',
+        to: recipientEmail,
+        subject: 'PoolRip is live: Pokémon packs from $0.50 + a free totem 🗿',
+        html: this.buildPoolripLaunchHtml(),
+      });
+      this.logger.log(`PoolRip launch email sent to ${recipientEmail}`);
+    } catch (err: any) {
+      this.logger.error(`Failed to send PoolRip launch email to ${recipientEmail}: ${err?.message ?? err}`);
+      throw err;
+    }
+  }
+
   /** Sent when a Mystery Pack's treasury-funded ticket purchase permanently failed and the pack
    *  cost was refunded to the user's wallet instead — invites them to open a fresh pack. */
   async sendPackRefundEmail(data: { recipientEmail: string; costUsdc: number }): Promise<void> {
@@ -1226,6 +1242,81 @@ export class EmailService {
           <tr>
             <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
               <p style="margin:0;font-size:12px;color:#4b5563;">pay.loofta.com</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  }
+
+  private buildPoolripLaunchHtml(): string {
+    const row = (emoji: string, bg: string, name: string, amount: string) => `
+                <tr>
+                  <td style="padding:0 0 8px;">
+                    <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0c;border:1px solid #2a2a30;border-radius:12px;">
+                      <tr>
+                        <td width="52" style="padding:10px 0 10px 12px;">
+                          <div style="width:36px;height:36px;line-height:36px;border-radius:18px;background:${bg};text-align:center;font-size:19px;">${emoji}</div>
+                        </td>
+                        <td style="padding:10px 8px;font-size:16px;font-weight:700;color:#ffffff;">${name}</td>
+                        <td align="right" style="padding:10px 16px 10px 8px;font-size:18px;font-weight:700;color:#5BE3AE;">${amount}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>`;
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PoolRip is live</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#0f0f12;">Real graded Pokémon packs from $0.50. Your free totem is waiting.</div>
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <!-- Header -->
+          <tr>
+            <td style="padding:30px 40px 22px;text-align:center;border-bottom:1px solid #2a2a30;">
+              <p style="margin:0;font-size:30px;font-weight:800;font-style:italic;letter-spacing:0.04em;text-transform:uppercase;color:#E8B23A;">PoolRip</p>
+              <span style="display:inline-block;margin-top:12px;background:#E5262E;color:#ffffff;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:5px 12px;border-radius:999px;">Live now</span>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:34px 40px 8px;">
+              <p style="margin:0 0 14px;font-size:28px;line-height:1.15;color:#ffffff;font-weight:700;text-align:center;">Rip real Pokémon packs<br/>with other players.</p>
+              <p style="margin:0 0 26px;font-size:16px;line-height:1.55;color:#d1d5db;text-align:center;">Chip in from <strong style="color:#FFE9A8;">$0.50</strong>, watch the pack open live, and split what the card sells for.</p>
+
+              <p style="margin:0 0 10px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#9ca3af;">What a group pull looks like</p>
+              <table width="100%" cellpadding="0" cellspacing="0">${row('😎', '#E8B23A', 'you', '+$10.40')}${row('🤑', '#34D399', 'kai', '+$20.80')}${row('🦐', '#FF7A6A', 'shrimp', '+$1.04')}
+              </table>
+              <p style="margin:2px 0 26px;font-size:12px;color:#6b7280;">Example pull. Everyone gets a share based on what they put in. Results vary.</p>
+
+              <div style="background:#2a1d06;border:1px solid #6b4a0d;border-radius:12px;padding:20px 22px;margin:0 0 26px;">
+                <p style="margin:0 0 6px;font-size:20px;font-weight:700;color:#FFE9A8;">🗿 Your free totem is waiting</p>
+                <p style="margin:0;font-size:14px;line-height:1.55;color:#d1d5db;">Log in with your Loofta account and open your gift. In Death mode the group votes to cut people out. A totem saves you from the cut once.</p>
+              </div>
+
+              <div style="text-align:center;margin-bottom:10px;">
+                <a href="https://play.loofta.com" style="display:inline-block;background:linear-gradient(135deg,#E8B23A,#FFE9A8);color:#0b0b0f;text-decoration:none;font-weight:700;font-size:16px;padding:16px 40px;border-radius:50px;">
+                  Claim your free totem
+                </a>
+              </div>
+              <p style="margin:12px 0 26px;font-size:13px;color:#6b7280;text-align:center;">Same login as Loofta. Nothing to set up.</p>
+              <p style="margin:0 0 4px;font-size:14px;color:#9ca3af;">Lisa</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 40px 24px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0 0 6px;font-size:12px;color:#4b5563;">play.loofta.com</p>
+              <p style="margin:0;font-size:11px;color:#4b5563;">You are getting this because you have a Loofta account.</p>
             </td>
           </tr>
         </table>
