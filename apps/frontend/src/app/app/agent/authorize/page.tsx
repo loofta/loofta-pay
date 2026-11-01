@@ -14,7 +14,7 @@ const input =
 
 /** The consent screen an MCP client (Claude, ChatGPT...) sends people to when connecting to Loofta. */
 function Authorize() {
-  const { ready, authenticated, login, getAccessToken } = usePrivy()
+  const { ready, authenticated, login, getAccessToken, user } = usePrivy()
   const q = useSearchParams()
   const clientId = q.get('client_id') ?? ''
   const redirectUri = q.get('redirect_uri') ?? ''
@@ -39,6 +39,16 @@ function Authorize() {
         accessToken: await getAccessToken(),
       }),
   })
+
+  // Payments only work when auto-pay is on for THIS account, so say so before the person approves.
+  const autopay = useQuery({
+    queryKey: ['agent-authorize-autopay'],
+    enabled: ready && authenticated,
+    retry: false,
+    queryFn: async () => fetchApi<{ enrolled: boolean; signerGranted: boolean }>('/twitter-autopay/status', { accessToken: await getAccessToken() }),
+  })
+  const autopayOn = !!autopay.data?.enrolled && !!autopay.data?.signerGranted
+  const who = user?.email?.address ?? (user?.telegram?.username ? `@${user.telegram.username}` : null) ?? (user?.twitter?.username ? `@${user.twitter.username}` : null) ?? user?.id ?? ''
 
   const shell = (children: React.ReactNode) => (
     <div className="min-h-[calc(100vh-var(--header-h,0px))] bg-[#0f0f12] text-white">
@@ -102,6 +112,15 @@ function Authorize() {
           <p className="text-lg text-slate-300 leading-relaxed">
             <span className="text-white">{client.data.client_name}</span> wants to see your balance and pay people from your Loofta wallet. Only continue if you started this yourself.
           </p>
+          {who && <p className="text-lg text-slate-300">Signed in as <span className="text-white">{who}</span>. The agent will pay from this account's wallet.</p>}
+          {autopay.data && !autopayOn && (
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
+              <p className="text-lg text-amber-200">
+                Auto-pay is off for this account, so the agent could not send anything.{' '}
+                <a href="/auto-pay" className="underline underline-offset-2">Turn it on</a>, then come back to this page. If you turned it on before, you may be signed in with a different login than the one you used then.
+              </p>
+            </div>
+          )}
           <label className="block space-y-1.5">
             <span className="text-lg text-white/70">Max per payment (USD)</span>
             <input className={input} inputMode="decimal" value={perPayment} onChange={(e) => setPerPayment(e.target.value)} />
