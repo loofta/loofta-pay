@@ -269,11 +269,17 @@ export async function GET(request: Request) {
     // the direct link (checkIsRecipient) silently never appears in their history list.
     const { data: currentUser } = await supabase
       .from("app_users")
-      .select("username, email, twitter_username")
+      .select("username, loo_username, email, twitter_username")
       .eq("privy_user_id", userId)
       .maybeSingle();
     const pendingAddresses: string[] = [];
     if (currentUser?.username) pendingAddresses.push(`PENDING_USERNAME:${currentUser.username.toLowerCase()}`);
+    // Sent via the "Loofta username" option: addressed to the permanent loo_username, which can
+    // differ from the active username (e.g. an X handle). Mirrors ClaimsService.checkIsRecipient.
+    if (currentUser?.loo_username) {
+      const looHandle = `PENDING_USERNAME:${currentUser.loo_username.toLowerCase()}`;
+      if (!pendingAddresses.includes(looHandle)) pendingAddresses.push(looHandle);
+    }
     if (currentUser?.twitter_username) {
       const cleanTwitter = currentUser.twitter_username.replace(/^@/, "").toLowerCase();
       const handle = `PENDING_USERNAME:${cleanTwitter}`;

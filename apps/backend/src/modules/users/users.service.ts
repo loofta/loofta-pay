@@ -366,7 +366,7 @@ export class UsersService {
       if (!clean) return null;
       const { data: user } = await this.supabaseService.appUsers
         .select('privy_user_id, email')
-        .or(`username.ilike.${clean},twitter_username.ilike.${clean}`)
+        .or(`username.ilike.${clean},twitter_username.ilike.${clean},loo_username.ilike.${clean}`)
         .maybeSingle();
       if (!user?.privy_user_id) return null;
       // Gifting by handle commonly targets X-first users whose app_users.email is still null
@@ -485,7 +485,7 @@ export class UsersService {
     if (!clean || !/^[a-z0-9_]{1,32}$/.test(clean)) throw new NotFoundException('User not found');
     const { data: user, error } = await this.supabaseService.appUsers
       .select('id, privy_user_id, email, username, require_private_payments')
-      .or(`username.ilike.${clean},twitter_username.ilike.${clean}`)
+      .or(`username.ilike.${clean},twitter_username.ilike.${clean},loo_username.ilike.${clean}`)
       .maybeSingle();
     if (!error && user?.privy_user_id) {
       return {
