@@ -112,7 +112,9 @@ export function proxy(request: NextRequest) {
   // On app domain, redirect /app/* → /* so URLs are always clean
   if (isAppDomain && pathname.startsWith("/app/")) {
     const cleanPath = pathname.slice(4) || "/";
-    return NextResponse.redirect(new URL(cleanPath, request.url));
+    // Keep the query string: /app/send?payto=... (personal pay links) would otherwise lose
+    // the recipient and amount in the redirect.
+    return NextResponse.redirect(new URL(`${cleanPath}${request.nextUrl.search}`, request.url));
   }
 
   // Marketing pages (e.g. /partners) linked from within the app must still
