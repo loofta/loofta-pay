@@ -1560,14 +1560,18 @@ export class TelegramBotService implements OnModuleInit {
     } else if (many) {
       lines.push(`Pay <b>${items.length} people</b>?`);
       items.forEach((_, i) =>
-        lines.push(`${i + 1}. @${handleOf(i)}: <b>${money(amountOf(i))}</b> (${plans[i].delivery === 'instant' ? 'arrives in their wallet' : 'claim link'})`),
+        lines.push(
+          `${i + 1}. @${handleOf(i)}: <b>${money(amountOf(i))}</b> (${plans[i].delivery === 'private' ? 'private only, arrives after a short delay' : plans[i].delivery === 'instant' ? 'arrives in their wallet' : 'claim link'})`,
+        ),
       );
     } else {
       lines.push(`Send <b>${money(amountOf(0))}</b> USDC to <b>@${handleOf(0)}</b>?`);
       lines.push(
-        plans[0].delivery === 'instant'
-          ? `@${handleOf(0)} is on Loofta, so it arrives straight in their wallet.`
-          : 'They get a claim link.',
+        plans[0].delivery === 'private'
+          ? `@${handleOf(0)} only accepts private payments, so this is sent privately: it arrives after a short delay and the private fee below is added.`
+          : plans[0].delivery === 'instant'
+            ? `@${handleOf(0)} is on Loofta, so it arrives straight in their wallet.`
+            : 'They get a claim link.',
       );
     }
 
@@ -1578,7 +1582,7 @@ export class TelegramBotService implements OnModuleInit {
     const unregistered = items.map((_, i) => i).filter((i) => plans[i].claimFeeUsd > 0);
     lines.push('');
     lines.push('<b>Fees</b>');
-    if (opts.isPrivate) lines.push(`Private payment fee: ~${feeMoney(sum((p) => p.privateFeeUsd))} (MagicBlock)`);
+    if (opts.isPrivate || sum((p) => p.privateFeeUsd) > 0) lines.push(`Private payment fee: ~${feeMoney(sum((p) => p.privateFeeUsd))} (MagicBlock)`);
     if (unregistered.length > 0) {
       const who = unregistered.map((i) => `@${handleOf(i)}`).join(', ');
       lines.push(
@@ -1587,7 +1591,7 @@ export class TelegramBotService implements OnModuleInit {
     } else {
       lines.push(`Loofta: ${feeMoney(sum((p) => p.looftaFeeUsd))} (0.2%)`);
     }
-    lines.push(`<b>Total from your wallet: ${opts.isPrivate ? '~' : ''}${money(sum((p) => p.totalUsd))}</b>`);
+    lines.push(`<b>Total from your wallet: ${opts.isPrivate || sum((p) => p.privateFeeUsd) > 0 ? '~' : ''}${money(sum((p) => p.totalUsd))}</b>`);
     if (balanceUsd != null) lines.push(`Your balance: ${money(balanceUsd)}`);
     rows.push([
       { text: many ? `Confirm all ${items.length}` : 'Confirm', callback_data: `ok:${batchId}` },

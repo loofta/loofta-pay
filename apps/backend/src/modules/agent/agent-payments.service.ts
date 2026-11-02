@@ -212,6 +212,9 @@ export class AgentPaymentsService implements OnModuleInit {
         loofta_fee_usd: money(plans[k].looftaFeeUsd),
         claim_fee_usd: money(plans[k].claimFeeUsd),
         private_fee_usd: money(plans[k].privateFeeUsd),
+        // Their own setting: only private payments are accepted. Sending needs privately: true.
+        requires_private: !n.isPrivate && plans[k].delivery === 'private',
+        note: !n.isPrivate && plans[k].delivery === 'private' ? `${i.label} only accepts private payments. Ask the person, then send with privately set to true (extra fee, short delay).` : undefined,
       })),
       total_amount_usd: n.total,
       total_fees_usd: money(feesTotal),
@@ -276,6 +279,12 @@ export class AgentPaymentsService implements OnModuleInit {
       throw e;
     }
     const plans = await Promise.all(n.items.map((i) => this.autopay.planPayment(i.ref, n.isPrivate, this.isDevnet, i.amount)));
+    // Never turn a payment private behind the person's back. Someone who only accepts private payments
+    // needs the person to choose that, with its fee and delay in view.
+    const forcedPrivate = !n.isPrivate && plans.findIndex((p) => p.delivery === 'private');
+    if (forcedPrivate !== false && forcedPrivate >= 0) {
+      throw agentError('recipient_requires_private', `${n.items[forcedPrivate].label} only accepts private payments. Private payments cost a bit more and arrive after a short delay. Ask the person if that is OK, then send again with privately set to true.`, 'bad');
+    }
     const balance = await this.users.getSolanaWalletBalanceAndAddress(session.userId).then((r) => r.balanceUSD).catch(() => null);
     const need = money(plans.reduce((t, p) => t + p.totalUsd, 0));
     if (balance != null && balance + 1e-9 < need) throw agentError('insufficient_balance', `The wallet has $${money(balance)} and this needs $${need} with fees.`, 'forbidden');

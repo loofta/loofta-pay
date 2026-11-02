@@ -567,13 +567,17 @@ export class TwitterAutopayService {
 
   async planPayment(ref: RecipientRef, isPrivate: boolean, isDevnet: boolean, amountUsd = 0): Promise<TelegramPaymentPlan> {
     let recipientWallet: string | null = null;
+    let recipientRequiresPrivate = false;
     try {
       const user = await this.findRecipientUser(ref);
       recipientWallet = await this.usersService.getSolanaWalletAddress(user.privyUserId);
+      recipientRequiresPrivate = user.requirePrivatePayments === true;
     } catch {
       recipientWallet = null; // not on Loofta (or no wallet yet)
     }
     const registered = !!recipientWallet;
+    // Someone who only accepts private payments gets a private one, whatever was asked for.
+    if (registered && recipientRequiresPrivate) isPrivate = true;
     const fees = computeTelegramFees(amountUsd, { isPrivate, registered });
     if (isPrivate) return { registered, delivery: 'private', ...fees };
     // Registered: straight to their wallet. The sponsor creates their USDC account if they have none yet.
@@ -628,6 +632,8 @@ export class TwitterAutopayService {
 
     const cluster = params.isDevnet ? 'devnet' : 'mainnet';
     const plan = await this.planPayment(params.recipient, params.isPrivate, params.isDevnet, params.amountUsd);
+    // planPayment turns a payment private when the recipient only accepts private ones; follow it.
+    const isPrivate = params.isPrivate || plan.delivery === 'private';
     const base = {
       amount: params.amountUsd,
       userId: params.senderUserId,
@@ -635,7 +641,7 @@ export class TwitterAutopayService {
       cluster: cluster as 'devnet' | 'mainnet',
     };
 
-    if (params.isPrivate) {
+    if (isPrivate) {
       const split = params.splitOverride ?? undefined;
       const maxDelayMs = params.maxDelayMsOverride ?? undefined;
       const payment = await this.createClaimFor(params.recipient, { ...base, isPrivate: true, split, maxDelayMs });

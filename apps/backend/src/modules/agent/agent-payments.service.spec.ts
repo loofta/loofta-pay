@@ -331,3 +331,34 @@ describe('letting a session pay new people without asking', () => {
     await expect(pay(svc, session({ allowNewRecipients: true, dailyCapUsd: 3, perPaymentCapUsd: 3 }), [{ recipient: 'x:lisabeyy', amount_usd: 4 }])).rejects.toThrow();
   });
 });
+
+
+describe('recipients who only accept private payments', () => {
+  const privateOnly = (o: any = {}) => {
+    const b = build(o);
+    const real = b.autopay.planPayment;
+    b.autopay.planPayment = jest.fn(async (ref: any, isPrivate: boolean, ...rest: any[]) => real(ref, isPrivate || ref.value === 'lisabeyy', ...rest).then((p: any) => (ref.value === 'lisabeyy' ? { ...p, delivery: 'private' } : p)));
+    return b;
+  };
+  it('is not turned private silently: the agent is told, and nothing is sent', async () => {
+    const { svc, executed } = privateOnly();
+    await expect(pay(svc, session({ allowNewRecipients: true }), [{ recipient: 'x:lisabeyy', amount_usd: 5 }])).rejects.toMatchObject({ response: { code: 'recipient_requires_private' } });
+    expect(executed).toHaveLength(0);
+  });
+  it('a quote says so up front', async () => {
+    const { svc } = privateOnly();
+    const q = await svc.quote(session(), { payments: [{ recipient: 'x:lisabeyy', amount_usd: 5 }] });
+    expect(q.recipients[0]).toMatchObject({ requires_private: true, delivery: 'private' });
+    expect(q.recipients[0].note).toContain('only accepts private payments');
+  });
+  it('goes through when the person chose private', async () => {
+    const { svc, executed } = privateOnly();
+    const r = await pay(svc, session({ allowNewRecipients: true }), [{ recipient: 'x:lisabeyy', amount_usd: 5 }], 'key-private-1', { privately: true });
+    expect(r.status).toBe('paid');
+    expect(executed).toHaveLength(1);
+  });
+  it('does not affect other recipients', async () => {
+    const { svc } = privateOnly();
+    expect((await pay(svc, session(), [{ recipient: 'alice_w', amount_usd: 3 }])).status).toBe('paid');
+  });
+});

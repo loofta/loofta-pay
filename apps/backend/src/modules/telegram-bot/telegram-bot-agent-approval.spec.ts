@@ -81,3 +81,26 @@ describe('approving an agent payment in the bot', () => {
     expect(notifier.decideAgentRequest).not.toHaveBeenCalled();
   });
 });
+
+describe('the confirm card for someone who only accepts private payments', () => {
+  const plan = (o: any) => ({ registered: true, delivery: 'instant', privateFeeUsd: 0, looftaFeeUsd: 0.01, claimFeeUsd: 0, totalUsd: 5.01, ...o });
+  const card = (plans: any[], items: any[]) => (build().svc as any).renderCard('b1', items, { isPrivate: false, split: null, delayMs: null }, plans, 10).text as string;
+
+  it('says it is private only, with the private fee and the delay', () => {
+    const text = card([plan({ delivery: 'private', privateFeeUsd: 0.21, totalUsd: 5.22 })], [{ recipient_handle: 'lisabeyy', amount_usd: 5 }]);
+    expect(text).toContain('only accepts private payments');
+    expect(text).toContain('short delay');
+    expect(text).toContain('Private payment fee');
+    expect(text).not.toContain('arrives straight in their wallet');
+  });
+  it('an ordinary registered recipient is unchanged', () => {
+    const text = card([plan({})], [{ recipient_handle: 'alice_w', amount_usd: 5 }]);
+    expect(text).toContain('arrives straight in their wallet');
+    expect(text).not.toContain('Private payment fee');
+  });
+  it('a batch marks only the private-only person', () => {
+    const text = card([plan({ delivery: 'private', privateFeeUsd: 0.21, totalUsd: 5.22 }), plan({})], [{ recipient_handle: 'lisabeyy', amount_usd: 5 }, { recipient_handle: 'alice_w', amount_usd: 5 }]);
+    expect(text).toMatch(/1\. @lisabeyy.*private only/);
+    expect(text).toMatch(/2\. @alice_w.*arrives in their wallet/);
+  });
+});
