@@ -22,7 +22,7 @@ export const MCP_TOOLS = [
   { name: 'quote_payment', description: 'Check a payment without sending it: fees, who is new to Loofta, whether the person must approve it. Always safe to call.', inputSchema: { type: 'object', properties: paymentProps, required: ['payments'] } },
   {
     name: 'pay',
-    description: "Send USDC from the connected Loofta wallet to people. Small payments to people already paid before go straight through. Larger or first-time payments return status needs_approval with an approval_url: give that URL to the user and then poll get_payment. Never retry a payment that returned an id; check it with get_payment instead.",
+    description: "Send USDC from the connected Loofta wallet to people. Small payments to people already paid before go straight through. Larger or first-time payments return status needs_approval: the user also gets a Telegram message with Approve and Deny buttons (if Telegram is linked), or can open the approval_url, so tell them to approve and then poll get_payment. Never retry a payment that returned an id; check it with get_payment instead.",
     inputSchema: { type: 'object', properties: { ...paymentProps, idempotency_key: { type: 'string', description: 'Reuse the same key when retrying the same payment so it is never sent twice.' } }, required: ['payments'] },
   },
   { name: 'contacts', description: 'People the user has paid before, most recent first. Use this to turn "pay Alice again" into a real recipient.', inputSchema: { type: 'object', properties: { limit: { type: 'number' } } } },

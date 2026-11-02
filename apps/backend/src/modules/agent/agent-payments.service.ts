@@ -1,10 +1,11 @@
-import { Injectable, Logger, BadRequestException, NotFoundException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, BadRequestException, NotFoundException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { UsersService } from '../users/users.service';
 import { TwitterAutopayService, UncertainPaymentError, type RecipientRef } from '../twitter-autopay/twitter-autopay.service';
 import { TELEGRAM_HANDLE_RE, MAX_RECIPIENTS, MAX_COMMAND_AMOUNT_USD, MIN_PRIVATE_AMOUNT_USD } from '../telegram-bot/telegram-parser';
+import { TelegramNotifierService } from '../telegram-bot/telegram-notifier.service';
 import type { AgentSession } from './agent-auth.service';
 
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
@@ -73,7 +74,7 @@ export function parseRecipient(input: unknown): { ref: RecipientRef; key: string
  * it in the app; and every request carries an idempotency key so a retry can never pay twice.
  */
 @Injectable()
-export class AgentPaymentsService {
+export class AgentPaymentsService implements OnModuleInit {
   private readonly logger = new Logger(AgentPaymentsService.name);
 
   constructor(
@@ -81,10 +82,15 @@ export class AgentPaymentsService {
     private readonly config: ConfigService,
     private readonly users: UsersService,
     private readonly autopay: TwitterAutopayService,
+    private readonly notifier?: TelegramNotifierService,
   ) {}
 
+  onModuleInit() {
+    this.notifier?.registerApprovalHandler({ decide: (userId, actionId, approve) => this.decideFromChat(userId, actionId, approve) });
+  }
+
   private get appUrl() {
-    return (this.config.get<string>('NEXT_PUBLIC_APP_URL') || this.config.get<string>('NEXT_PUBLIC_BASE_URL') || 'https://pay.loofta.xyz').replace(/\/$/, '');
+    return (this.config.get<string>('NEXT_PUBLIC_APP_URL') || this.config.get<string>('NEXT_PUBLIC_BASE_URL') || 'https://pay.loofta.com').replace(/\/$/, '');
   }
   private get isDevnet() {
     return isSolanaDevnetFromConfig(this.config);
@@ -301,8 +307,45 @@ export class AgentPaymentsService {
       this.logger.error(`pay insert failed: ${error?.message}`);
       throw agentError('failed', 'Could not record the payment. Nothing was sent. Try again.');
     }
-    if (approval.needs) return this.view(row);
+    if (approval.needs) {
+      void this.askInTelegram(session, row);
+      return this.view(row);
+    }
     return this.run(row);
+  }
+
+  /** Best effort: a message with Approve / Deny buttons, so the person can answer without opening a link. */
+  private async askInTelegram(session: AgentSession, row: any) {
+    try {
+      const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const who = (row.payload?.recipients ?? []).map((r: any) => `${esc(String(r.label ?? r.handle))} ($${money(Number(r.amount_usd))})`).join(', ');
+      const lines = [
+        `<b>${esc(session.label || 'Your agent')}</b> wants to pay <b>$${money(Number(row.amount_usd))}</b>`,
+        who,
+        row.payload?.approval_reason ? esc(String(row.payload.approval_reason)) : '',
+        'Expires in 30 minutes.',
+      ].filter(Boolean);
+      await this.notifier?.notifyUser(row.user_id, lines.join('\n'), {
+        inline_keyboard: [[{ text: 'Approve', callback_data: `ap:y:${row.id}` }, { text: 'Deny', callback_data: `ap:n:${row.id}` }]],
+      });
+    } catch (e) {
+      this.logger.warn(`Could not ask in Telegram: ${(e as Error).message}`);
+    }
+  }
+
+  /** Approve or deny from the bot; same locks and checks as the app, and the result as a sentence. */
+  async decideFromChat(userId: string, actionId: string, approve: boolean): Promise<{ status: string; summary: string }> {
+    const v = approve ? await this.approve(userId, actionId) : await this.deny(userId, actionId);
+    const who = (v.recipients as any[]).map((r) => `${r.recipient} $${money(r.amount_usd)}`).join(', ');
+    const summary =
+      v.status === 'paid' ? `Sent: ${who}.`
+      : v.status === 'denied' ? `Denied. Nothing was sent (${who}).`
+      : v.status === 'partial' ? `Some payments went through, some did not. Ask your agent to check it.`
+      : v.status === 'expired' ? 'This request expired. Ask your agent to send it again.'
+      : v.status === 'unconfirmed' ? 'Sent, but not confirmed yet. Ask your agent to check it in a minute. Do not send it again.'
+      : v.status === 'failed' ? `It could not be sent${v.error ? `: ${v.error}` : ''}. Nothing left your wallet.`
+      : `Status: ${v.status}.`;
+    return { status: v.status, summary };
   }
 
   // ---------------------------------------------------------------------------------------------

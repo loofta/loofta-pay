@@ -4,6 +4,11 @@ import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '../users/users.service';
 import { TelegramApi, type InlineKeyboard } from './telegram-api';
 
+/** What the bot calls when someone taps Approve or Deny on an agent's payment request. */
+export interface AgentApprovalHandler {
+  decide(userId: string, actionId: string, approve: boolean): Promise<{ status: string; summary: string }>;
+}
+
 /**
  * Sends a Telegram message to a Loofta account from outside the bot (an agent's funding finished, a
  * payment arrived). Best effort: it only reaches people who linked Telegram and pressed Start.
@@ -20,6 +25,18 @@ export class TelegramNotifierService {
   ) {
     const token = config.get<string>('TELEGRAM_BOT_TOKEN');
     this.api = token ? new TelegramApi(token) : null;
+  }
+
+  private approvals: AgentApprovalHandler | null = null;
+
+  /** The agent module registers itself here, so the bot needs no import of it (the modules would loop). */
+  registerApprovalHandler(handler: AgentApprovalHandler) {
+    this.approvals = handler;
+  }
+
+  async decideAgentRequest(userId: string, actionId: string, approve: boolean) {
+    if (!this.approvals) throw new Error('Agent approvals are not available.');
+    return this.approvals.decide(userId, actionId, approve);
   }
 
   /** Returns true when the message was handed to Telegram. */

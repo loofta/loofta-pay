@@ -10,6 +10,7 @@ import { TelegramApi, InlineKeyboard, InlineButton, escapeHtml } from './telegra
 import { parseSendCommand, nextStep, type NextStep, DEFAULT_PRIVATE_DELAY_MS } from './telegram-parser';
 import { IntentLlmService, intentToSentence } from './intent-llm';
 import { TelegramWalletService } from './telegram-wallet.service';
+import { TelegramNotifierService } from './telegram-notifier.service';
 import { WalletDraft, WalletToken, withdrawAmountRows, validateAddress, POPULAR_TOKENS, parseTokenQuery, chainLabel, shortAddress, formatTokenAmount } from './wallet-flow';
 import { SEND_AMOUNTS, SendDraft, distinctRecents, recipientKeyboard, parseRecipientText, amountCard, commandForAmount, readyKeyboard, readyAction } from './send-flow';
 
@@ -42,6 +43,8 @@ const feeMoney = (n: number) => (n > 0 && n < 0.005 ? 'under $0.01' : money(n));
  * in Privy, and spends through the same auto-pay enrollment as the X bot: signer grant, accepted
  * terms, per-payment and daily limits. Every payment waits for a Confirm tap by the same person.
  */
+const AGENT_CONFIRM_TTL_MS = 10 * 60 * 1000;
+
 @Injectable()
 export class TelegramBotService implements OnModuleInit {
   private readonly logger = new Logger(TelegramBotService.name);
@@ -63,6 +66,7 @@ export class TelegramBotService implements OnModuleInit {
     private readonly autopay: TwitterAutopayService,
     private readonly llm: IntentLlmService,
     private readonly wallet: TelegramWalletService,
+    private readonly notifier: TelegramNotifierService,
   ) {
     const token = this.config.get<string>('TELEGRAM_BOT_TOKEN');
     this.api = token ? new TelegramApi(token) : null;
@@ -168,6 +172,16 @@ export class TelegramBotService implements OnModuleInit {
     if (isPrivate && !command) {
       const wd = this.getWalletDraft(`${msg.chat.id}:${from.id}`);
       if (wd && (await this.onWalletText(msg, from, text, wd))) return;
+    }
+
+    // After tapping Approve on an agent's payment, the person has to type CONFIRM to send it.
+    if (isPrivate && !command) {
+      const key = `${msg.chat.id}:${from.id}`;
+      const pending = this.agentConfirms.get(key);
+      if (pending) {
+        this.agentConfirms.delete(key);
+        if (pending.until > Date.now()) return this.finishAgentApproval(msg, from.id, pending, text === 'CONFIRM');
+      }
     }
 
     // Guided /send: a bare /send starts it; while it waits for a recipient, a typed or tapped @name is that recipient.
@@ -1191,6 +1205,49 @@ export class TelegramBotService implements OnModuleInit {
     await this.api!.sendMessage(chatId, `<b>Recent payments</b>\n${lines.join('\n')}${hint}`, buttons.length ? { keyboard: { inline_keyboard: buttons } } : {});
   }
 
+  /**
+   * Approve / Deny on a payment an agent asked for. Only the Telegram account linked to the Loofta
+   * account that owns the request can decide it (decide() also filters by that user), and the tap
+   * happens in this chat, which an agent has no way to press.
+   */
+  private readonly agentConfirms = new Map<string, { actionId: string; userId: string; messageId: number; until: number }>();
+
+  private async onAgentApprovalCallback(cb: TgCallback, arg?: string, id?: string) {
+    const chatId = cb.message?.chat.id;
+    const messageId = cb.message?.message_id;
+    await this.api!.answerCallback(cb.id);
+    if (!chatId || !messageId || cb.message?.chat.type !== 'private') return;
+    if ((arg !== 'y' && arg !== 'n') || !id) return;
+    const userId = await this.resolveLinkedUser(cb.from.id);
+    if (!userId) return void (await this.api!.editMessage(chatId, messageId, 'I cannot find your Loofta account. Log in to the bot again.'));
+    if (arg === 'y') {
+      // A tap is too easy to do by accident: the payment only goes out once the word is typed.
+      this.agentConfirms.set(`${chatId}:${cb.from.id}`, { actionId: id, userId, messageId, until: Date.now() + AGENT_CONFIRM_TTL_MS });
+      return void (await this.api!.editMessage(chatId, messageId, 'To send this payment, type <b>CONFIRM</b> (capital letters). Anything else cancels it.'));
+    }
+    await this.decideAgent(chatId, messageId, userId, id, false);
+  }
+
+  private async finishAgentApproval(msg: TgMessage, telegramUserId: number, pending: { actionId: string; userId: string; messageId: number }, confirmed: boolean) {
+    const linked = await this.resolveLinkedUser(telegramUserId);
+    if (!confirmed || linked !== pending.userId) {
+      return void (await this.api!.sendMessage(msg.chat.id, 'Not confirmed, so nothing was sent. The request stays open until it expires; tap Approve on it again if you still want it.', { replyTo: msg.message_id }));
+    }
+    await this.decideAgent(msg.chat.id, pending.messageId, pending.userId, pending.actionId, true);
+  }
+
+  private async decideAgent(chatId: number, messageId: number, userId: string, actionId: string, approve: boolean) {
+    if (approve) await this.api!.editMessage(chatId, messageId, 'Confirmed. Sending…');
+    try {
+      const res = await this.notifier.decideAgentRequest(userId, actionId, approve);
+      await this.api!.editMessage(chatId, messageId, escapeHtml(res.summary));
+    } catch (e) {
+      this.logger.warn(`Agent approval ${actionId} failed: ${(e as Error).message}`);
+      const msg = (e as any)?.getResponse?.()?.message ?? (e as Error).message;
+      await this.api!.editMessage(chatId, messageId, escapeHtml(String(msg || 'Something went wrong. Nothing was sent.')));
+    }
+  }
+
   /** The "Get back" buttons: show what happens and what it costs, then do it only on a second tap. */
   private async onReclaimCallback(cb: TgCallback, arg?: string, id?: string) {
     const chatId = cb.message?.chat.id;
@@ -1575,6 +1632,7 @@ export class TelegramBotService implements OnModuleInit {
 
     if (cb.message?.chat.type === 'private') this.touchNudge(cb.message.chat.id);
     if (kind === 'rc') return this.onReclaimCallback(cb, arg, val);
+    if (kind === 'ap') return this.onAgentApprovalCallback(cb, arg, val);
     if (kind === 'snd') return this.onSendCallback(cb, arg, val);
     if (kind === 'dp') return this.onDepositCallback(cb, arg, val);
     if (kind === 'wd') return this.onWithdrawCallback(cb, arg, val);

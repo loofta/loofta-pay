@@ -9,7 +9,7 @@ const session = (over: Partial<AgentSession> = {}): AgentSession => ({
   perPaymentCapUsd: 25, dailyCapUsd: 100, autoApproveUsd: 5, expiresAt: new Date(Date.now() + 86_400_000).toISOString(), ...over,
 });
 
-function build(o: { balance?: number; autoPayOn?: boolean; exec?: (p: any) => Promise<any>; accountLimit?: boolean } = {}) {
+function build(o: { balance?: number; autoPayOn?: boolean; exec?: (p: any) => Promise<any>; accountLimit?: boolean; notifier?: any } = {}) {
   const db = new TestDb();
   db.rows('agent_sessions').push({ id: 'sess-1', user_id: 'did:privy:u', label: 'Claude Code' });
   const executed: any[] = [];
@@ -29,7 +29,7 @@ function build(o: { balance?: number; autoPayOn?: boolean; exec?: (p: any) => Pr
     getSolanaWalletAddress: async () => '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
     getSolanaWalletBalanceAndAddress: async () => ({ balanceUSD: o.balance ?? 100, walletAddress: 'x' }),
   };
-  const svc = new AgentPaymentsService(db as any, { get: () => undefined } as any, users, autopay);
+  const svc = new AgentPaymentsService(db as any, { get: () => undefined } as any, users, autopay, o.notifier);
   // someone this person has already paid, so small payments to them need no approval
   db.rows('agent_actions').push({ id: 'old', created_at: '2026-10-01T00:00:00Z', user_id: 'did:privy:u', status: 'paid', handles: ['username:alice_w', 'username:bob_wh'] });
   db.rows('telegram_bot_actions').push({ privy_user_id: 'did:privy:u', kind: 'pay', recipient_handle: 'carol_tg', status: 'paid', created_at: '2026-10-02T00:00:00Z' });
@@ -232,6 +232,78 @@ describe('quoting', () => {
     expect(q.total_amount_usd).toBe(5);
     expect(q.total_from_wallet_usd).toBeGreaterThan(5);
     expect(q.needs_approval).toBe(true);
+    expect(executed).toHaveLength(0);
+  });
+});
+
+
+describe('approving from Telegram', () => {
+  const notifier = () => {
+    const sent: any[] = [];
+    let handler: any;
+    return { sent, notifyUser: jest.fn(async (...a: any[]) => { sent.push(a); return true; }), registerApprovalHandler: (h: any) => { handler = h; }, get handler() { return handler; } };
+  };
+
+  it('asks in Telegram with Approve and Deny buttons when a payment needs approval', async () => {
+    const n = notifier();
+    const { svc } = build({ notifier: n });
+    const r = await pay(svc, session(), [{ recipient: 'x:lisabeyy', amount_usd: 1 }]);
+    await new Promise((res) => setImmediate(res));
+    expect(r.status).toBe('needs_approval');
+    expect(n.sent).toHaveLength(1);
+    const [userId, html, keyboard] = n.sent[0];
+    expect(userId).toBe('did:privy:u');
+    expect(html).toContain('$1');
+    expect(keyboard.inline_keyboard[0].map((b: any) => b.callback_data)).toEqual([`ap:y:${r.id}`, `ap:n:${r.id}`]);
+    expect(`ap:y:${r.id}`.length).toBeLessThanOrEqual(64);
+  });
+
+  it('sends nothing to Telegram for a payment that goes straight through', async () => {
+    const n = notifier();
+    const { svc } = build({ notifier: n });
+    await pay(svc, session(), [{ recipient: 'alice_w', amount_usd: 3 }]);
+    await new Promise((res) => setImmediate(res));
+    expect(n.sent).toHaveLength(0);
+  });
+
+  it('a failing Telegram send never breaks the payment request', async () => {
+    const n: any = notifier();
+    n.notifyUser = jest.fn(async () => { throw new Error('telegram down'); });
+    const { svc } = build({ notifier: n });
+    const r = await pay(svc, session(), [{ recipient: 'x:lisabeyy', amount_usd: 1 }]);
+    expect(r.status).toBe('needs_approval');
+  });
+
+  it('registers itself so the bot can reach it', () => {
+    const n = notifier();
+    const { svc } = build({ notifier: n });
+    svc.onModuleInit();
+    expect(n.handler).toBeDefined();
+  });
+
+  it('approving sends the payment once, and says so in a sentence', async () => {
+    const { svc, executed } = build();
+    const waiting = await pay(svc, session(), [{ recipient: 'x:lisabeyy', amount_usd: 1 }]);
+    const res = await svc.decideFromChat('did:privy:u', waiting.id, true);
+    expect(res.status).toBe('paid');
+    expect(res.summary).toContain('Sent');
+    expect(executed).toHaveLength(1);
+    await svc.decideFromChat('did:privy:u', waiting.id, true);
+    expect(executed).toHaveLength(1);
+  });
+
+  it('denying sends nothing', async () => {
+    const { svc, executed } = build();
+    const waiting = await pay(svc, session(), [{ recipient: 'x:lisabeyy', amount_usd: 1 }]);
+    const res = await svc.decideFromChat('did:privy:u', waiting.id, false);
+    expect(res.status).toBe('denied');
+    expect(executed).toHaveLength(0);
+  });
+
+  it('someone else\'s account cannot approve it', async () => {
+    const { svc, executed } = build();
+    const waiting = await pay(svc, session(), [{ recipient: 'x:lisabeyy', amount_usd: 1 }]);
+    await expect(svc.decideFromChat('did:privy:intruder', waiting.id, true)).rejects.toThrow();
     expect(executed).toHaveLength(0);
   });
 });
