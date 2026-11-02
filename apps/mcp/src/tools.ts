@@ -23,6 +23,13 @@ export const TOOLS = [
   },
   { name: 'contacts', description: `People the user has paid before, most recent first. Use this to turn "pay Alice again" into a real recipient.`, inputSchema: { type: 'object', properties: { limit: { type: 'number' } } } },
   { name: 'lookup_recipient', description: 'Check whether a recipient is on Loofta (money arrives directly) or not (they get a claim link).', inputSchema: { type: 'object', properties: { recipient: { type: 'string' } }, required: ['recipient'] } },
+  {
+    name: 'fund_with_token',
+    description: `Pay with any token. Gets a one-time deposit address: the user sends that token (from Solana or an EVM network) to it, and NEAR Intents swaps it to USDC in their Loofta wallet, confidentially by default. Give the token, the network if it exists on several, and either amount or receive_usdc. refund_address must be the user's own wallet on the sending network. Show the user the address, exact amount and network, then call funding_status until it says received or refunded.`,
+    inputSchema: { type: 'object', properties: { token: { type: 'string' }, chain: { type: 'string' }, amount: { type: 'number' }, receive_usdc: { type: 'number' }, refund_address: { type: 'string' }, confidential: { type: 'boolean' }, allow_public: { type: 'boolean' } }, required: ['token', 'refund_address'] },
+  },
+  { name: 'funding_status', description: 'Status of a fund_with_token order: waiting, processing, received, refunded, failed or expired. Tell the user when it is received or refunded.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'list_fundings', description: 'Recent fund_with_token orders.', inputSchema: { type: 'object', properties: { limit: { type: 'number' } } } },
   { name: 'get_payment', description: 'Status of a payment, including approval state and per-recipient results.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
   { name: 'list_payments', description: 'Recent payments made by this session.', inputSchema: { type: 'object', properties: { limit: { type: 'number' } } } },
 ];
@@ -38,6 +45,9 @@ export async function callTool(name: string, args: any): Promise<unknown> {
     case 'pay': return api.pay(input(), String(args?.idempotency_key || randomUUID()));
     case 'contacts': return api.contacts(Number(args?.limit) || 30);
     case 'lookup_recipient': return api.lookup(String(args?.recipient ?? ''));
+    case 'fund_with_token': return api.fund({ token: args?.token, chain: args?.chain, amount: args?.amount, receive_usdc: args?.receive_usdc, refund_address: args?.refund_address, confidential: args?.confidential, allow_public: args?.allow_public });
+    case 'funding_status': return api.funding(String(args?.id));
+    case 'list_fundings': return api.fundings(Number(args?.limit) || 10);
     case 'get_payment': return api.get(String(args?.id));
     case 'list_payments': return api.list(Number(args?.limit) || 20);
     default: throw new Error(`Unknown tool: ${name}`);

@@ -9,10 +9,13 @@ import { AgentMcpService } from './agent-mcp.service';
 import { AgentMcpController } from './agent-mcp.controller';
 import { UsersModule } from '../users/users.module';
 import { TwitterAutopayModule } from '../twitter-autopay/twitter-autopay.module';
+import { IntentsModule } from '../intents/intents.module';
+import { TelegramBotModule } from '../telegram-bot/telegram-bot.module';
+import { AgentFundingService } from './agent-funding.service';
 
 @Module({
-  imports: [UsersModule, TwitterAutopayModule],
+  imports: [UsersModule, TwitterAutopayModule, IntentsModule, TelegramBotModule],
   controllers: [AgentController, AgentOauthController, AgentMcpController],
-  providers: [AgentAuthService, AgentPaymentsService, AgentGuard, AgentOauthService, AgentMcpService],
+  providers: [AgentAuthService, AgentPaymentsService, AgentGuard, AgentOauthService, AgentMcpService, AgentFundingService],
 })
 export class AgentModule {}

@@ -1,6 +1,7 @@
 import { Injectable, HttpException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { AgentPaymentsService } from './agent-payments.service';
+import { AgentFundingService } from './agent-funding.service';
 import type { AgentSession } from './agent-auth.service';
 
 type Rpc = { jsonrpc?: string; id?: number | string | null; method?: string; params?: any };
@@ -26,6 +27,13 @@ export const MCP_TOOLS = [
   },
   { name: 'contacts', description: 'People the user has paid before, most recent first. Use this to turn "pay Alice again" into a real recipient.', inputSchema: { type: 'object', properties: { limit: { type: 'number' } } } },
   { name: 'lookup_recipient', description: 'Check whether a recipient is on Loofta (money arrives directly) or not (they get a claim link).', inputSchema: { type: 'object', properties: { recipient: { type: 'string' } }, required: ['recipient'] } },
+  {
+    name: 'fund_with_token',
+    description: "Pay with any token. Gets a one-time deposit address: the user sends that token (from Solana or an EVM network) to it, and NEAR Intents swaps it to USDC in their Loofta wallet, confidentially by default so the deposit is not linked to the payout. Give the token, the network if it exists on several, and either amount (how much to send) or receive_usdc (how much should arrive). refund_address must be the user's own wallet on the network they send from, so a failed swap can only return to them. Show the user the deposit address, the exact amount to send and the network, then call funding_status until it says received or refunded. Pay with `pay` once it is received.",
+    inputSchema: { type: 'object', properties: { token: { type: 'string', description: 'Token symbol, e.g. ETH, USDT, BONK' }, chain: { type: 'string', description: 'Network, e.g. ethereum, base, arbitrum, solana. Needed when the token exists on several.' }, amount: { type: 'number', description: 'How much of the token to send' }, receive_usdc: { type: 'number', description: 'How many USDC should arrive (instead of amount)' }, refund_address: { type: 'string', description: "The user's own wallet address on the sending network" }, confidential: { type: 'boolean', description: 'Default true. Uses NEAR Confidential Intents.' }, allow_public: { type: 'boolean', description: 'Only if the user agrees: fall back to a public swap when a confidential one is not available.' } }, required: ['token', 'refund_address'] },
+  },
+  { name: 'funding_status', description: 'Where a fund_with_token order is: waiting for the deposit, processing, received (USDC arrived), refunded, failed or expired. Tell the user when it is received or refunded.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'list_fundings', description: 'Recent fund_with_token orders and their status.', inputSchema: { type: 'object', properties: { limit: { type: 'number' } } } },
   { name: 'get_payment', description: 'Status of a payment, including approval state and per-recipient results.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
   { name: 'list_payments', description: 'Recent payments made by this session.', inputSchema: { type: 'object', properties: { limit: { type: 'number' } } } },
 ];
@@ -33,7 +41,10 @@ export const MCP_TOOLS = [
 /** MCP over HTTP (JSON-RPC): the same tools as the local package, answered by the backend itself. */
 @Injectable()
 export class AgentMcpService {
-  constructor(private readonly payments: AgentPaymentsService) {}
+  constructor(
+    private readonly payments: AgentPaymentsService,
+    private readonly funding: AgentFundingService,
+  ) {}
 
   /** Returns the JSON-RPC response, or null for a notification (no reply). */
   async handle(session: AgentSession, msg: Rpc): Promise<object | null> {
@@ -79,6 +90,9 @@ export class AgentMcpService {
       case 'pay': return this.payments.pay(session, input(), String(args?.idempotency_key || randomUUID()));
       case 'contacts': return this.payments.contacts(session, Number(args?.limit) || 30);
       case 'lookup_recipient': return this.payments.lookup(session, String(args?.recipient ?? ''));
+      case 'fund_with_token': return this.funding.fund(session, { token: String(args?.token ?? ''), chain: args?.chain, amount: args?.amount, receive_usdc: args?.receive_usdc, refund_address: String(args?.refund_address ?? ''), confidential: args?.confidential, allow_public: args?.allow_public });
+      case 'funding_status': return this.funding.status(session, String(args?.id ?? ''));
+      case 'list_fundings': return this.funding.list(session, Number(args?.limit) || 10);
       case 'get_payment': return this.payments.get(session, String(args?.id ?? ''));
       case 'list_payments': return this.payments.list(session, Number(args?.limit) || 20);
       default: return Promise.reject(new HttpException(`Unknown tool: ${name}`, 400));

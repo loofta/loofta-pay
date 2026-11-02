@@ -31,6 +31,7 @@ export interface QuoteResult {
   minAmountInFormatted?: string;
   amountOut?: string;
   amountOutFormatted?: string;
+  amountInFormatted?: string;
   raw?: any;
   error?: {
     type: 'client' | 'server' | 'network' | 'unknown';
@@ -377,6 +378,8 @@ export class NearIntentsService implements OnModuleInit {
     useExactOutput?: boolean;
     deadlineMs?: number;
     skipAppFees?: boolean;
+    /** NEAR Confidential Intents: `advanced` unlinks the origin deposit from the payout. Omit for a public swap. */
+    confidentiality?: 'basic' | 'advanced';
   }): Promise<QuoteResult> {
     const {
       fromToken,
@@ -390,6 +393,7 @@ export class NearIntentsService implements OnModuleInit {
       useExactOutput = false,
       deadlineMs = 5 * 60 * 1000,
       skipAppFees = false,
+      confidentiality,
     } = params;
 
     const toAtomic = (val: string, decimals: number): string => {
@@ -438,6 +442,7 @@ export class NearIntentsService implements OnModuleInit {
         referral: referral || this.referralCode,
         virtualChainRecipient: null,
         virtualChainRefundRecipient: null,
+        ...(confidentiality ? { confidentiality } : {}),
       };
       req = skipAppFees ? baseReq : this.attachAppFees(baseReq);
 
@@ -468,6 +473,8 @@ export class NearIntentsService implements OnModuleInit {
         quoteId: q?.id || q?.quoteId,
         minAmountIn: q?.minAmountIn,
         minAmountInFormatted: q?.minAmountInFormatted,
+        amountOutFormatted: q?.amountOutFormatted,
+        amountInFormatted: q?.amountInFormatted,
         raw,
       };
     } catch (error: any) {

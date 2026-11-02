@@ -6,6 +6,7 @@ import { PrivyUser } from '@/auth/privy-user.decorator';
 import { AgentAuthService, type AgentSession } from './agent-auth.service';
 import { AgentPaymentsService } from './agent-payments.service';
 import { AgentGuard } from './agent.guard';
+import { AgentFundingService } from './agent-funding.service';
 import { StartLoginDto, TokenRequestDto, UserCodeDto, ApproveLoginDto, QuoteDto } from './agent.dto';
 
 const clientIp = (req: any) => String(req.headers['x-forwarded-for'] ?? req.ip ?? '').split(',')[0].trim() || undefined;
@@ -22,6 +23,7 @@ export class AgentController {
   constructor(
     private readonly auth: AgentAuthService,
     private readonly payments: AgentPaymentsService,
+    private readonly funding: AgentFundingService,
   ) {}
 
   // ----- The agent logging in
@@ -169,5 +171,29 @@ export class AgentController {
   @RateLimit(120, 60, 'agent:get')
   get(@Req() req: { agentSession: AgentSession }, @Param('id') id: string) {
     return this.payments.get(req.agentSession, id);
+  }
+
+  // ----- Funding from any token (NEAR Intents)
+
+  @Post('v1/fundings')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AgentGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'agent:fund')
+  fund(@Req() req: { agentSession: AgentSession }, @Body() body: any) {
+    return this.funding.fund(req.agentSession, body ?? {});
+  }
+
+  @Get('v1/fundings')
+  @UseGuards(AgentGuard, RateLimitGuard)
+  @RateLimit(60, 60, 'agent:fundings')
+  fundings(@Req() req: { agentSession: AgentSession }, @Query('limit') limit?: string) {
+    return this.funding.list(req.agentSession, limit ? Number(limit) : 10);
+  }
+
+  @Get('v1/fundings/:id')
+  @UseGuards(AgentGuard, RateLimitGuard)
+  @RateLimit(120, 60, 'agent:funding')
+  funding_(@Req() req: { agentSession: AgentSession }, @Param('id') id: string) {
+    return this.funding.status(req.agentSession, id);
   }
 }

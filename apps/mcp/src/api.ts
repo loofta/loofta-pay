@@ -40,6 +40,9 @@ export const loofta = (api: string, token: string) => ({
   get: (id: string) => request<any>(api, `/agent/v1/payments/${encodeURIComponent(id)}`, { token }),
   contacts: (limit = 30) => request<any>(api, `/agent/v1/contacts?limit=${limit}`, { token }),
   lookup: (recipient: string) => request<any>(api, `/agent/v1/lookup?recipient=${encodeURIComponent(recipient)}`, { token }),
+  fund: (b: Record<string, unknown>) => request<any>(api, '/agent/v1/fundings', { token, body: b }),
+  funding: (id: string) => request<any>(api, `/agent/v1/fundings/${encodeURIComponent(id)}`, { token }),
+  fundings: (limit = 10) => request<any>(api, `/agent/v1/fundings?limit=${limit}`, { token }),
   list: (limit = 20) => request<any>(api, `/agent/v1/payments?limit=${limit}`, { token }),
 });
 

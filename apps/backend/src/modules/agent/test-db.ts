@@ -81,6 +81,7 @@ class Query implements PromiseLike<{ data: any; error: any }> {
       agent_device_codes: [['device_code_hash'], ['user_code']],
       agent_actions: [['session_id', 'idempotency_key']],
       agent_oauth_codes: [['code_hash']],
+      agent_funding_orders: [['deposit_address']],
     };
     for (const cols of uniques[this.table] ?? []) {
       if (this.db.rows(this.table).some((r) => cols.every((c) => r[c] === row[c] && row[c] != null))) return cols.join('+');
