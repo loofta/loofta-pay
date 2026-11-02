@@ -68,7 +68,7 @@ export class AgentController {
   async approve(@PrivyUser() user: { id: string }, @Body() dto: ApproveLoginDto) {
     const s = await this.auth.approveDevice(user.id, dto.user_code, {
       label: dto.label, scopes: dto.scopes, perPaymentCapUsd: dto.per_payment_cap_usd, dailyCapUsd: dto.daily_cap_usd,
-      autoApproveUsd: dto.auto_approve_usd, expiresInDays: dto.expires_in_days,
+      autoApproveUsd: dto.auto_approve_usd, allowNewRecipients: dto.allow_new_recipients === true, expiresInDays: dto.expires_in_days,
     });
     return { id: s.id, label: s.label, scopes: s.scopes, expires_at: s.expiresAt };
   }

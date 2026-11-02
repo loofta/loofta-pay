@@ -307,3 +307,27 @@ describe('approving from Telegram', () => {
     expect(executed).toHaveLength(0);
   });
 });
+
+
+describe('letting a session pay new people without asking', () => {
+  it('off by default: a new recipient waits', async () => {
+    const { svc } = build();
+    expect((await pay(svc, session(), [{ recipient: 'x:lisabeyy', amount_usd: 1 }])).status).toBe('needs_approval');
+  });
+  it('on: a new recipient is paid straight away', async () => {
+    const { svc, executed } = build();
+    const r = await pay(svc, session({ allowNewRecipients: true }), [{ recipient: 'x:lisabeyy', amount_usd: 1 }]);
+    expect(r.status).toBe('paid');
+    expect(executed).toHaveLength(1);
+  });
+  it('on: the auto-approve amount still applies', async () => {
+    const { svc, executed } = build();
+    const r = await pay(svc, session({ allowNewRecipients: true }), [{ recipient: 'x:lisabeyy', amount_usd: 10 }]);
+    expect(r.status).toBe('needs_approval');
+    expect(executed).toHaveLength(0);
+  });
+  it('on: the daily limit still applies', async () => {
+    const { svc } = build();
+    await expect(pay(svc, session({ allowNewRecipients: true, dailyCapUsd: 3, perPaymentCapUsd: 3 }), [{ recipient: 'x:lisabeyy', amount_usd: 4 }])).rejects.toThrow();
+  });
+});

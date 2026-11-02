@@ -17,6 +17,7 @@ export class ApproveLoginDto extends UserCodeDto {
   @IsOptional() @IsNumber() per_payment_cap_usd?: number;
   @IsOptional() @IsNumber() daily_cap_usd?: number;
   @IsOptional() @IsNumber() auto_approve_usd?: number;
+  @IsOptional() @IsBoolean() allow_new_recipients?: boolean;
   @IsOptional() @IsInt() @Min(1) @Max(90) expires_in_days?: number;
 }
 export class PaymentItemDto {

@@ -101,7 +101,7 @@ export class AgentOauthController {
       state: b?.state ? String(b.state).slice(0, 500) : undefined,
       ip: String(req.headers['x-forwarded-for'] ?? req.ip ?? '').split(',')[0].trim() || undefined,
       limits: {
-        perPaymentCapUsd: b?.per_payment_cap_usd, dailyCapUsd: b?.daily_cap_usd, autoApproveUsd: b?.auto_approve_usd, expiresInDays: b?.expires_in_days,
+        perPaymentCapUsd: b?.per_payment_cap_usd, dailyCapUsd: b?.daily_cap_usd, autoApproveUsd: b?.auto_approve_usd, allowNewRecipients: b?.allow_new_recipients === true, expiresInDays: b?.expires_in_days,
       },
     });
   }

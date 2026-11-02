@@ -20,6 +20,8 @@ export interface AgentSession {
   perPaymentCapUsd: number;
   dailyCapUsd: number;
   autoApproveUsd: number;
+  /** The person chose to let this session pay people it has not paid before, without asking (still inside the limits). */
+  allowNewRecipients?: boolean;
   expiresAt: string;
 }
 
@@ -35,6 +37,7 @@ const toSession = (r: any): AgentSession => ({
   perPaymentCapUsd: Number(r.per_payment_cap_usd),
   dailyCapUsd: Number(r.daily_cap_usd),
   autoApproveUsd: Number(r.auto_approve_usd),
+  allowNewRecipients: r.allow_new_recipients === true,
   expiresAt: r.expires_at,
 });
 
@@ -159,7 +162,7 @@ export class AgentAuthService {
   async approveDevice(
     userId: string,
     userCodeInput: string,
-    choice: { label?: string; scopes?: unknown; perPaymentCapUsd?: number; dailyCapUsd?: number; autoApproveUsd?: number; expiresInDays?: number },
+    choice: { label?: string; scopes?: unknown; perPaymentCapUsd?: number; dailyCapUsd?: number; autoApproveUsd?: number; allowNewRecipients?: boolean; expiresInDays?: number },
   ): Promise<AgentSession> {
     const row = await this.findPending(userCodeInput);
     const perPayment = this.cap(choice.perPaymentCapUsd, 25, MAX_PER_PAYMENT_USD, 'Per-payment limit');
@@ -184,6 +187,8 @@ export class AgentAuthService {
         per_payment_cap_usd: perPayment,
         daily_cap_usd: daily,
         auto_approve_usd: autoApprove,
+        // Only sent when on, so a database without the column yet keeps working for everyone else.
+        ...(choice.allowNewRecipients === true ? { allow_new_recipients: true } : {}),
         expires_at: new Date(Date.now() + days * 86_400_000).toISOString(),
         created_from_ip: row.requester_ip,
       })
@@ -210,7 +215,7 @@ export class AgentAuthService {
   /** A session created straight from the app (hosted MCP login). The token is issued later, when the client swaps its code. */
   async createSession(
     userId: string,
-    choice: { label?: string; perPaymentCapUsd?: number; dailyCapUsd?: number; autoApproveUsd?: number; expiresInDays?: number; ip?: string },
+    choice: { label?: string; perPaymentCapUsd?: number; dailyCapUsd?: number; autoApproveUsd?: number; allowNewRecipients?: boolean; expiresInDays?: number; ip?: string },
   ): Promise<AgentSession> {
     const perPayment = this.cap(choice.perPaymentCapUsd, 25, MAX_PER_PAYMENT_USD, 'Per-payment limit');
     const daily = this.cap(choice.dailyCapUsd, 100, MAX_DAILY_USD, 'Daily limit');
@@ -230,6 +235,8 @@ export class AgentAuthService {
         per_payment_cap_usd: perPayment,
         daily_cap_usd: daily,
         auto_approve_usd: autoApprove,
+        // Only sent when on, so a database without the column yet keeps working for everyone else.
+        ...(choice.allowNewRecipients === true ? { allow_new_recipients: true } : {}),
         expires_at: new Date(Date.now() + days * 86_400_000).toISOString(),
         created_from_ip: choice.ip ?? null,
       })

@@ -226,6 +226,7 @@ export class AgentPaymentsService implements OnModuleInit {
     if (total > session.autoApproveUsd) {
       return { needs: true, reason: session.autoApproveUsd > 0 ? `Over the $${session.autoApproveUsd} this session may send without asking.` : 'This session asks before every payment.' };
     }
+    if (session.allowNewRecipients) return { needs: false, reason: null };
     for (const i of items) {
       if (!(await this.isKnownRecipient(session.userId, i.key))) return { needs: true, reason: `${i.label} has not been paid from this account before.` };
     }
