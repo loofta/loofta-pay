@@ -113,3 +113,42 @@ describe('sessions', () => {
     expect(await svc.verifyToken(r.accessToken)).toBeNull();
   }, 10000);
 });
+
+describe('changing a connected agent\'s limits in the app', () => {
+  const connect = async () => {
+    const { svc } = build();
+    const s = await svc.createSession('did:privy:u', { label: 'Claude Code', perPaymentCapUsd: 25, dailyCapUsd: 100, autoApproveUsd: 5 });
+    return { svc, s };
+  };
+  it('saves new limits for the owner', async () => {
+    const { svc, s } = await connect();
+    const r = await svc.updateSession('did:privy:u', s.id, { perPaymentCapUsd: 50, dailyCapUsd: 200, autoApproveUsd: 20, allowNewRecipients: true });
+    expect(r).toMatchObject({ per_payment_cap_usd: 50, daily_cap_usd: 200, auto_approve_usd: 20 });
+    const listed = (await svc.listSessions('did:privy:u'))[0] as any;
+    expect(listed.auto_approve_usd).toBe(20);
+    expect(listed.allow_new_recipients).toBe(true);
+  });
+  it('keeps what it was told nothing about', async () => {
+    const { svc, s } = await connect();
+    const r = await svc.updateSession('did:privy:u', s.id, { dailyCapUsd: 150 });
+    expect(r).toMatchObject({ per_payment_cap_usd: 25, daily_cap_usd: 150, auto_approve_usd: 5 });
+  });
+  it('another account cannot change it', async () => {
+    const { svc, s } = await connect();
+    await expect(svc.updateSession('did:privy:intruder', s.id, { dailyCapUsd: 5000 })).rejects.toThrow();
+  });
+  it('refuses a per-payment limit above the daily limit, and limits above the maximums', async () => {
+    const { svc, s } = await connect();
+    await expect(svc.updateSession('did:privy:u', s.id, { perPaymentCapUsd: 90, dailyCapUsd: 50 })).rejects.toThrow();
+    await expect(svc.updateSession('did:privy:u', s.id, { dailyCapUsd: 999999 })).rejects.toThrow();
+  });
+  it('auto-approve cannot be above the per-payment limit', async () => {
+    const { svc, s } = await connect();
+    await expect(svc.updateSession('did:privy:u', s.id, { autoApproveUsd: 60 })).rejects.toThrow();
+  });
+  it('a disconnected agent cannot be edited', async () => {
+    const { svc, s } = await connect();
+    await svc.revokeSession('did:privy:u', s.id);
+    await expect(svc.updateSession('did:privy:u', s.id, { dailyCapUsd: 150 })).rejects.toThrow();
+  });
+});

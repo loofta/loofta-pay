@@ -23,6 +23,7 @@ interface SessionRow {
   per_payment_cap_usd: number
   daily_cap_usd: number
   auto_approve_usd: number
+  allow_new_recipients?: boolean
   expires_at: string
   last_used_at: string | null
 }
@@ -41,6 +42,40 @@ const card = 'rounded-2xl border border-white/[0.08] bg-white/[0.03] px-6 py-6 s
 const input =
   'w-full rounded-xl border border-white/[0.1] bg-white/[0.04] px-4 py-3 text-lg text-white placeholder:text-white/30 focus:outline-none focus:border-orange-400'
 
+function SessionEditor({ session, working, onSave }: { session: SessionRow; working: boolean; onSave: (body: Record<string, unknown>) => void }) {
+  const [perPayment, setPerPayment] = useState(String(session.per_payment_cap_usd))
+  const [daily, setDaily] = useState(String(session.daily_cap_usd))
+  const [autoApprove, setAutoApprove] = useState(String(session.auto_approve_usd))
+  const [allowNew, setAllowNew] = useState(!!session.allow_new_recipients)
+  return (
+    <div className="space-y-3 rounded-xl border border-white/[0.08] px-4 py-4">
+      <label className="block space-y-1.5">
+        <span className="text-lg text-white/70">Max per payment (USD)</span>
+        <input className={input} inputMode="decimal" value={perPayment} onChange={(e) => setPerPayment(e.target.value)} />
+      </label>
+      <label className="block space-y-1.5">
+        <span className="text-lg text-white/70">Max per day (USD)</span>
+        <input className={input} inputMode="decimal" value={daily} onChange={(e) => setDaily(e.target.value)} />
+      </label>
+      <label className="block space-y-1.5">
+        <span className="text-lg text-white/70">Sends without asking me up to (USD)</span>
+        <input className={input} inputMode="decimal" value={autoApprove} onChange={(e) => setAutoApprove(e.target.value)} />
+      </label>
+      <label className="flex items-start gap-3 text-lg text-white/80">
+        <input type="checkbox" className="mt-1.5 h-5 w-5" checked={allowNew} onChange={(e) => setAllowNew(e.target.checked)} />
+        <span>Let it pay people it has not paid before without asking me.</span>
+      </label>
+      <GradientActionButton
+        loading={working}
+        loadingText="Saving…"
+        onClick={() => onSave({ per_payment_cap_usd: Number(perPayment), daily_cap_usd: Number(daily), auto_approve_usd: Number(autoApprove), allow_new_recipients: allowNew })}
+      >
+        Save limits
+      </GradientActionButton>
+    </div>
+  )
+}
+
 export default function AgentPage() {
   const { ready, authenticated, login, getAccessToken } = usePrivy()
   const queryClient = useQueryClient()
@@ -52,6 +87,7 @@ export default function AgentPage() {
   const [daily, setDaily] = useState('100')
   const [autoApprove, setAutoApprove] = useState('5')
   const [allowNew, setAllowNew] = useState(false)
+  const [editing, setEditing] = useState<string | null>(null)
   const [days, setDays] = useState('30')
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -259,18 +295,33 @@ export default function AgentPage() {
         {sessions.data?.length ? (
           <ul className="space-y-4">
             {sessions.data.map((s) => (
-              <li key={s.id} className="flex items-start justify-between gap-4">
-                <div className="text-lg text-slate-300">
-                  <div className="text-white">{s.label}</div>
-                  <div>${s.per_payment_cap_usd} per payment, ${s.daily_cap_usd} a day. Ends {new Date(s.expires_at).toLocaleDateString()}.</div>
+              <li key={s.id} className="space-y-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="text-lg text-slate-300">
+                    <div className="text-white">{s.label}</div>
+                    <div>${s.per_payment_cap_usd} per payment, ${s.daily_cap_usd} a day, sends without asking up to ${s.auto_approve_usd}. Ends {new Date(s.expires_at).toLocaleDateString()}.</div>
+                    <div>{s.allow_new_recipients ? 'Can pay new people without asking.' : 'Asks before paying someone new.'}</div>
+                  </div>
+                  <div className="flex shrink-0 gap-4">
+                    <button type="button" className="text-lg text-white/60 underline underline-offset-2 hover:text-white" onClick={() => setEditing(editing === s.id ? null : s.id)}>
+                      {editing === s.id ? 'Close' : 'Edit limits'}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-lg text-white/60 underline underline-offset-2 hover:text-white"
+                      onClick={() => run(async () => { await call(`/agent/sessions/${s.id}/revoke`, {}); queryClient.invalidateQueries({ queryKey: SESSIONS_KEY }) })}
+                    >
+                      Disconnect
+                    </button>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  className="shrink-0 text-lg text-white/60 underline underline-offset-2 hover:text-white"
-                  onClick={() => run(async () => { await call(`/agent/sessions/${s.id}/revoke`, {}); queryClient.invalidateQueries({ queryKey: SESSIONS_KEY }) })}
-                >
-                  Disconnect
-                </button>
+                {editing === s.id ? (
+                  <SessionEditor
+                    session={s}
+                    working={working}
+                    onSave={(body) => run(async () => { await call(`/agent/sessions/${s.id}/update`, body); setEditing(null); queryClient.invalidateQueries({ queryKey: SESSIONS_KEY }) })}
+                  />
+                ) : null}
               </li>
             ))}
           </ul>

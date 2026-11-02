@@ -282,12 +282,49 @@ export class AgentAuthService {
     const { data } = await this.db
       .getClient()
       .from('agent_sessions')
-      .select('id, label, token_prefix, scopes, per_payment_cap_usd, daily_cap_usd, auto_approve_usd, created_at, expires_at, last_used_at')
+      .select('id, label, token_prefix, scopes, per_payment_cap_usd, daily_cap_usd, auto_approve_usd, allow_new_recipients, created_at, expires_at, last_used_at')
       .eq('user_id', userId)
       .is('revoked_at', null)
       .gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: false });
     return data ?? [];
+  }
+
+  /** The person changes a connected agent's limits from the app, with no new login. Same bounds as when it was connected. */
+  async updateSession(
+    userId: string,
+    sessionId: string,
+    choice: { perPaymentCapUsd?: number; dailyCapUsd?: number; autoApproveUsd?: number; allowNewRecipients?: boolean },
+  ) {
+    const { data: current } = await this.db
+      .getClient()
+      .from('agent_sessions')
+      .select('per_payment_cap_usd, daily_cap_usd, auto_approve_usd')
+      .eq('id', sessionId)
+      .eq('user_id', userId)
+      .is('revoked_at', null)
+      .gt('expires_at', new Date().toISOString())
+      .maybeSingle();
+    if (!current) throw new NotFoundException('That agent is not connected any more.');
+    const perPayment = this.cap(choice.perPaymentCapUsd, Number(current.per_payment_cap_usd), MAX_PER_PAYMENT_USD, 'Per-payment limit');
+    const daily = this.cap(choice.dailyCapUsd, Number(current.daily_cap_usd), MAX_DAILY_USD, 'Daily limit');
+    if (perPayment > daily) throw new BadRequestException('The per-payment limit cannot be higher than the daily limit.');
+    const autoApprove = this.cap(choice.autoApproveUsd, Math.min(Number(current.auto_approve_usd), perPayment), perPayment, 'Auto-approve limit', true);
+    const { data, error } = await this.db
+      .getClient()
+      .from('agent_sessions')
+      .update({
+        per_payment_cap_usd: perPayment,
+        daily_cap_usd: daily,
+        auto_approve_usd: autoApprove,
+        ...(typeof choice.allowNewRecipients === 'boolean' ? { allow_new_recipients: choice.allowNewRecipients } : {}),
+      })
+      .eq('id', sessionId)
+      .eq('user_id', userId)
+      .is('revoked_at', null)
+      .select('id');
+    if (error || !data?.length) throw new BadRequestException('Could not save those limits. Please try again.');
+    return { ok: true, per_payment_cap_usd: perPayment, daily_cap_usd: daily, auto_approve_usd: autoApprove };
   }
 
   async revokeSession(userId: string, sessionId: string): Promise<void> {

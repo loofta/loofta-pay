@@ -11,6 +11,12 @@ export class TokenRequestDto {
 export class UserCodeDto {
   @IsString() @MaxLength(20) user_code: string;
 }
+export class UpdateSessionDto {
+  @IsOptional() @IsNumber() per_payment_cap_usd?: number;
+  @IsOptional() @IsNumber() daily_cap_usd?: number;
+  @IsOptional() @IsNumber() auto_approve_usd?: number;
+  @IsOptional() @IsBoolean() allow_new_recipients?: boolean;
+}
 export class ApproveLoginDto extends UserCodeDto {
   @IsOptional() @IsString() @MaxLength(60) label?: string;
   @IsOptional() @IsArray() @ArrayMaxSize(5) @IsString({ each: true }) scopes?: string[];

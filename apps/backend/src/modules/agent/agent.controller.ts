@@ -7,7 +7,7 @@ import { AgentAuthService, type AgentSession } from './agent-auth.service';
 import { AgentPaymentsService } from './agent-payments.service';
 import { AgentGuard } from './agent.guard';
 import { AgentFundingService } from './agent-funding.service';
-import { StartLoginDto, TokenRequestDto, UserCodeDto, ApproveLoginDto, QuoteDto } from './agent.dto';
+import { StartLoginDto, TokenRequestDto, UserCodeDto, ApproveLoginDto, UpdateSessionDto, QuoteDto } from './agent.dto';
 
 const clientIp = (req: any) => String(req.headers['x-forwarded-for'] ?? req.ip ?? '').split(',')[0].trim() || undefined;
 
@@ -86,6 +86,17 @@ export class AgentController {
   @UseGuards(AuthGuard)
   sessions(@PrivyUser() user: { id: string }) {
     return this.auth.listSessions(user.id);
+  }
+
+  @Post('sessions/:id/update')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'agent:update')
+  update(@PrivyUser() user: { id: string }, @Param('id') id: string, @Body() dto: UpdateSessionDto) {
+    return this.auth.updateSession(user.id, id, {
+      perPaymentCapUsd: dto.per_payment_cap_usd, dailyCapUsd: dto.daily_cap_usd,
+      autoApproveUsd: dto.auto_approve_usd, allowNewRecipients: dto.allow_new_recipients,
+    });
   }
 
   @Post('sessions/:id/revoke')
