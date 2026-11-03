@@ -5,7 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Connection, PublicKey, Transaction, VersionedTransaction } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { useCreateWallet, usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
-import { useSignTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
+import { useFundWallet, useSignTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { ChevronLeft, Copy, ExternalLink, Loader2, Shield, X } from "lucide-react";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -52,11 +52,10 @@ const TERMINAL = new Set(["SUCCESS", "COMPLETED", "REFUNDED", "FAILED", "EXPIRED
 const DEPOSIT_MAX_DELAY_MS = 86_400_000;
 
 type Screen = "home" | "solana" | "address" | "card" | "paj";
-type CardProvider = "moonpay" | "coinbase" | "paj" | "peer" | "revolut" | "venmo" | "cashapp";
+type CardProvider = "card" | "paj" | "peer" | "revolut" | "venmo" | "cashapp";
 
 const CARD_PROVIDERS: { id: CardProvider; name: string; hint: string; logos: string[] }[] = [
-  { id: "coinbase", name: "Coinbase", hint: "From your Coinbase account", logos: ["/images/icons/coinbase-logo.png"] },
-  { id: "moonpay", name: "MoonPay", hint: "Card, Apple Pay, Google Pay", logos: ["/images/icons/moonpay-logo.svg"] },
+  { id: "card", name: "Card or Apple Pay", hint: "Debit or credit card, Apple Pay, Google Pay", logos: ["/images/icons/card.svg"] },
   { id: "paj", name: "PAJ Cash", hint: "Naira bank transfer", logos: ["/images/icons/paj-cash-logo.svg"] },
   {
     id: "peer",
@@ -313,7 +312,7 @@ export function DepositSheet({
                 />
                 <MethodRow
                   title="Bank app"
-                  hint={privately ? "Coinbase, Revolut, Venmo, Cash App. Not private." : "Coinbase, PAJ Cash, Revolut, Venmo, Cash App"}
+                  hint={privately ? "Card, Apple Pay, Revolut, Venmo, Cash App. Not private." : "Card, Apple Pay, PAJ Cash, Revolut, Venmo, Cash App"}
                   onClick={() => setScreen("card")}
                   icons={[
                     { src: "/images/platforms/revolut.png", bg: "#1C1C22" },
@@ -342,13 +341,10 @@ export function DepositSheet({
             />
             <MethodRow
               title="Card"
-              hint="MoonPay, Coinbase, PAJ Cash, Revolut, Venmo, Cash App"
+              hint="Card, Apple Pay, PAJ Cash, Revolut, Venmo, Cash App"
               onClick={() => setScreen("card")}
               disabled={blinkDepositing}
-              icons={[
-                { src: "/images/icons/moonpay-logo.svg", bg: "#1C1C22" },
-                { src: "/images/icons/coinbase-logo.png", bg: "#0052FF" },
-              ]}
+              icons={[{ src: "/images/icons/card.svg", bg: "#1C1C22" }]}
             />
             {blinkError && <p className="text-sm text-orange-500 text-center px-1">{blinkError}</p>}
             </>
@@ -889,6 +885,7 @@ function CardDeposit({
   const { toast } = useToast();
   const { createWallet: createEvmWallet } = useCreateWallet();
   const { wallets: evmWallets } = useEvmWallets();
+  const { fundWallet } = useFundWallet();
   const asPeer = (p?: CardProvider): CardProvider | null =>
     !p ? null : p === "revolut" || p === "venmo" || p === "cashapp" ? "peer" : p;
   const [provider, setProvider] = useState<CardProvider | null>(asPeer(initialProvider));
@@ -903,40 +900,8 @@ function CardDeposit({
     if (chosen === "paj") { onPaj(); return; }
     setBusy(true);
     try {
-      if (chosen === "moonpay") {
-        const key = process.env.NEXT_PUBLIC_MOONPAY_API_KEY;
-        const url = new URL("https://buy.moonpay.com");
-        if (key) url.searchParams.set("apiKey", key);
-        url.searchParams.set("currencyCode", "usdc_sol");
-        url.searchParams.set("walletAddress", solanaAddress);
-        url.searchParams.set("baseCurrencyCode", "usd");
-        if (amountNum > 0) url.searchParams.set(receiveExactly ? "quoteCurrencyAmount" : "baseCurrencyAmount", String(amountNum));
-        window.open(url.toString(), "moonpay", "width=460,height=730");
-        if (!key) toast({ title: "MoonPay opened", description: "If the window asks for an API key, set NEXT_PUBLIC_MOONPAY_API_KEY." });
-        return;
-      }
-      if (chosen === "coinbase") {
-        const access = await getAccessToken();
-        const sessionRes = await fetch("/api/coinbase/session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(access ? { Authorization: `Bearer ${access}` } : {}) },
-          body: JSON.stringify({ walletAddress: solanaAddress, blockchains: ["solana"] }),
-        });
-        if (!sessionRes.ok) {
-          const err = await sessionRes.json().catch(() => ({})) as { error?: string; detail?: string };
-          throw new Error(err.detail || err.error || "Could not start Coinbase");
-        }
-        const sessionData = await sessionRes.json();
-        if (!sessionData.token) throw new Error("No Coinbase session token");
-        const params = new URLSearchParams({
-          appId: "68e3c83a-3d5a-49aa-a8fa-7ef26d824de1",
-          defaultNetwork: "solana",
-          defaultAsset: "USDC",
-          addresses: JSON.stringify({ [solanaAddress]: ["solana"] }),
-          assets: JSON.stringify(["USDC"]),
-          sessionToken: sessionData.token,
-        });
-        window.open(`https://pay.coinbase.com/buy/select-asset?${params.toString()}`, "coinbase-onramp", "width=460,height=730");
+      if (chosen === "card") {
+        await fundWallet({ address: solanaAddress, options: { asset: "USDC", ...(amountNum > 0 ? { amount: String(amountNum) } : {}) } });
         return;
       }
       await startPeerCheckout({
