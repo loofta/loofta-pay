@@ -67,3 +67,5 @@ blink-keys/
 
 # Brand assets (local only, not for publishing)
 apps/Logos/
+# internal B2B offer + brochure, not for the repo
+docs/outreach/b2b/

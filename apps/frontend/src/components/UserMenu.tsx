@@ -109,7 +109,7 @@ function SettingsAccountRow({
 function formatVolume(n: number): string {
   if (n >= 1000000) return `$${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
   if (n >= 1000) return `$${(n / 1000).toFixed(1)}k`;
-  return `$${n}`;
+  return `$${Math.max(0, Math.round(n)).toLocaleString()}`;
 }
 
 function TierBadge({ volumeUsd, dark }: { volumeUsd: number; dark: boolean }) {
