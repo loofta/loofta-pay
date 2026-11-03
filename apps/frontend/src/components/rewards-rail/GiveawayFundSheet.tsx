@@ -10,14 +10,13 @@ import { sora, manrope } from "@/components/home-v4/fonts";
 
 const PAJ = process.env.NEXT_PUBLIC_PAJ_CASH_ENABLED === "true";
 
-type MethodId = "solana" | "solana-private" | "chain" | "moonpay" | "coinbase" | "paj" | "revolut" | "venmo" | "cashapp";
+type MethodId = "solana" | "solana-private" | "chain" | "card" | "paj" | "revolut" | "venmo" | "cashapp";
 
 const METHODS: { id: MethodId; title: string; hint: string }[] = [
   { id: "solana", title: "USDC on Solana", hint: "No extra fee" },
   { id: "solana-private", title: "USDC on Solana, privately", hint: "MagicBlock relay, 0.10% + $0.20" },
   { id: "chain", title: "Another chain", hint: "SOL, BTC, ETH, and more. Bridge fee included." },
-  { id: "moonpay", title: "MoonPay", hint: "Card, Apple Pay, or Google Pay" },
-  { id: "coinbase", title: "Coinbase", hint: "Coinbase adds its fee in the checkout" },
+  { id: "card", title: "Card, Apple Pay, or Google Pay", hint: "The card fee is shown in the checkout" },
   ...(PAJ ? [{ id: "paj" as const, title: "PAJ Cash", hint: "Naira transfer. Their quote includes the fee." }] : []),
   { id: "revolut", title: "Revolut", hint: "Bridge fee included" },
   { id: "venmo", title: "Venmo", hint: "Bridge fee included" },
@@ -53,7 +52,6 @@ export function GiveawayFundSheet({
   const [method, setMethod] = useState<MethodId>("solana");
   const [bridgeFee, setBridgeFee] = useState<number | null>(null);
   const [chainSend, setChainSend] = useState<string>("");
-  const [moonpayFee, setMoonpayFee] = useState<number | null>(null);
   const [deposit, setDeposit] = useState<DepositLaunch | null>(null);
 
   const target = prizeUsd + platformFeeUsd;
@@ -94,23 +92,11 @@ export function GiveawayFundSheet({
     return () => { cancel = true; };
   }, [open, shortfall, needsBridge, method, solanaAddress, tokens]);
 
-  useEffect(() => {
-    if (!open || method !== "moonpay" || shortfall <= 0) { setMoonpayFee(null); return; }
-    let cancel = false;
-    fetch(`/api/giveaways/moonpay-quote?usdc=${encodeURIComponent(String(shortfall))}`)
-      .then((r) => r.json())
-      .then((body: { fee?: number | null }) => { if (!cancel) setMoonpayFee(typeof body.fee === "number" ? body.fee : null); })
-      .catch(() => { if (!cancel) setMoonpayFee(null); });
-    return () => { cancel = true; };
-  }, [open, method, shortfall]);
-
-  const methodFee = method === "solana" || method === "coinbase" || method === "paj"
+  const methodFee = method === "solana" || method === "card" || method === "paj"
     ? 0
     : method === "solana-private"
       ? totalWithMagicBlockPrivateFee(shortfall) - shortfall
-      : method === "moonpay"
-        ? moonpayFee
-        : bridgeFee;
+      : bridgeFee;
   const payTotal = methodFee == null ? null : shortfall + methodFee;
   const feePending = shortfall > 0 && needsBridge && !chainSend;
 
@@ -129,14 +115,14 @@ export function GiveawayFundSheet({
       setDeposit({ screen: "paj", amount: String(shortfall), lockAmount: true });
       return;
     }
-    const card = method === "moonpay" || method === "coinbase" || method === "revolut" || method === "venmo" || method === "cashapp" ? method : "moonpay";
-    const send = method === "moonpay" || method === "coinbase" ? String(shortfall) : (chainSend || String(shortfall));
+    const card = method === "revolut" || method === "venmo" || method === "cashapp" ? method : "card";
+    const send = method === "card" ? String(shortfall) : (chainSend || String(shortfall));
     setDeposit({
       screen: "card",
       amount: send,
       card,
       lockAmount: true,
-      receiveExactly: method === "moonpay",
+      receiveExactly: method === "card",
     });
   };
 
@@ -158,7 +144,7 @@ export function GiveawayFundSheet({
             <Row label="Platform fee" value={money(platformFeeUsd)} />
             <Row label="Needed in your wallet" value={money(target)} />
             <Row label="Already there" value={money(balanceUsd)} />
-            <Row label="Method fee" value={shortfall <= 0 ? money(0) : method === "coinbase" || method === "paj" ? "At checkout" : methodFee == null ? "…" : money(methodFee)} />
+            <Row label="Method fee" value={shortfall <= 0 ? money(0) : method === "card" || method === "paj" ? "At checkout" : methodFee == null ? "…" : money(methodFee)} />
             <div className="my-1 h-px bg-white/10" />
             <div className="flex items-baseline justify-between">
               <span className="font-bold">You pay</span>
@@ -166,11 +152,8 @@ export function GiveawayFundSheet({
                 {shortfall <= 0 ? money(0) : payTotal == null ? "…" : money(payTotal)}
               </span>
             </div>
-            {method === "coinbase" && shortfall > 0 && (
-              <p className="text-sm text-[#8A8893]">Coinbase adds its own card fee on top of {money(shortfall)} USDC in their window.</p>
-            )}
-            {method === "moonpay" && moonpayFee == null && shortfall > 0 && (
-              <p className="text-sm text-[#8A8893]">MoonPay adds its card fee in the checkout. You’ll receive {money(shortfall)} USDC.</p>
+            {method === "card" && shortfall > 0 && (
+              <p className="text-sm text-[#8A8893]">The card fee is added in the checkout. You’ll receive {money(shortfall)} USDC.</p>
             )}
             {method === "paj" && shortfall > 0 && (
               <p className="text-sm text-[#8A8893]">PAJ Cash adds its transfer fee in the Naira quote. You’ll receive {money(shortfall)} USDC.</p>
