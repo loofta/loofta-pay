@@ -559,7 +559,6 @@ export function BalanceModal({
   const blinkDepositRef = useRef<BlinkDeposit | null>(null);
   const dialogContentRef = useRef<HTMLDivElement>(null);
 
-  const [coinbaseLoading, setCoinbaseLoading] = useState(false);
   const [withdrawMethod, setWithdrawMethod] = useState<"crypto-picker" | "usdc-sol" | "sol-jupiter" | "near-intents" | "peer-offramp" | "private-relay" | "paj-cash" | null>(null);
   const [coinbaseOfframpLoading, setCoinbaseOfframpLoading] = useState(false);
   const [showFiatOfframpPicker, setShowFiatOfframpPicker] = useState(false);
@@ -797,63 +796,6 @@ export function BalanceModal({
     }
   };
 
-  // Coinbase Onramp: fetch a session token then open pay.coinbase.com in a popup (460×730)
-  const handleCoinbaseOnramp = async () => {
-    if (!solanaAddress) return;
-    setCoinbaseLoading(true);
-    try {
-      const accessToken = await getAccessToken();
-      const sessionRes = await fetch("/api/coinbase/session", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-        },
-        body: JSON.stringify({ walletAddress: solanaAddress, blockchains: ["solana"] }),
-      });
-
-      if (!sessionRes.ok) {
-        const err = await sessionRes.json().catch(() => ({})) as { error?: string; detail?: string };
-        const msg = err.detail || err.error || `Session error ${sessionRes.status}`;
-        toast({ variant: "destructive", title: "Could not start Coinbase session", description: msg });
-        return;
-      }
-
-      const sessionData = await sessionRes.json();
-      const sessionToken: string | undefined = sessionData.token;
-      if (!sessionToken) {
-        toast({ variant: "destructive", title: "Could not start Coinbase session", description: "No session token returned." });
-        return;
-      }
-
-      const params = new URLSearchParams();
-      params.set("appId", "68e3c83a-3d5a-49aa-a8fa-7ef26d824de1");
-      params.set("defaultNetwork", "solana");
-      params.set("defaultAsset", "USDC");
-      params.set("addresses", JSON.stringify({ [solanaAddress]: ["solana"] }));
-      params.set("assets", JSON.stringify(["USDC"]));
-      params.set("sessionToken", sessionToken);
-
-      const onrampUrl = `https://pay.coinbase.com/buy/select-asset?${params.toString()}`;
-
-      recordDeposit("coinbase", "pending");
-
-      // Open in Coinbase's recommended popup size
-      const popup = window.open(
-        onrampUrl,
-        "coinbase-onramp",
-        "width=460,height=730,left=200,top=100,resizable=yes,scrollbars=yes"
-      );
-      // Fallback: if popup blocked, navigate directly
-      if (!popup) window.open(onrampUrl, "_blank");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Could not open Coinbase Onramp.";
-      toast({ variant: "destructive", title: "Onramp error", description: msg });
-    } finally {
-      setCoinbaseLoading(false);
-    }
-  };
-
   // Coinbase Off-ramp: fetch offramp session token then open sell popup
   const handleCoinbaseOfframp = async () => {
     if (!solanaAddress) return;
@@ -935,14 +877,10 @@ export function BalanceModal({
           destination: { asset: "USDC", chain: "solana:mainnet", address: solanaAddress },
         });
       } else {
-        recordDeposit("moonpay", "pending");
+        recordDeposit("card-onramp", "pending");
         await privyFundWallet({
           address: solanaAddress,
-          options: {
-            asset: 'USDC',
-            defaultFundingMethod: 'card',
-            card: { preferredProvider: 'moonpay' },
-          },
+          options: { asset: 'USDC', defaultFundingMethod: 'card' },
         });
       }
     } catch (err: unknown) {
@@ -3570,14 +3508,12 @@ export function BalanceModal({
                     <div className="w-12 h-12 shrink-0 flex items-center justify-center">
                       {moonpayOnrampLoading
                         ? <Loader2 className="h-8 w-8 animate-spin text-orange-400" />
-                        : isMobileDevice
-                          ? <CreditCard className={`h-8 w-8 ${dark ? "text-slate-300" : "text-gray-700"}`} />
-                          : <img src="/images/icons/moonpay-logo.svg" alt="MoonPay" className="w-10 h-10 object-contain" />
+                        : <CreditCard className={`h-8 w-8 ${dark ? "text-slate-300" : "text-gray-700"}`} />
                       }
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>{isMobileDevice ? "Card" : "MoonPay"}</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Apple Pay · debit or credit card. The card fee is shown before you pay.</p>
+                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Card, Apple Pay & Google Pay</p>
+                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Debit or credit card. The card fee is shown before you pay.</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
@@ -3601,31 +3537,6 @@ export function BalanceModal({
                     <div className="min-w-0 flex-1">
                       <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Peer</p>
                       <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Venmo · Cash App · Zelle · PayPal · Revolut. Peer’s fee is in the checkout total.</p>
-                    </div>
-                    <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
-                  </button>
-
-                  {/* Coinbase — always last */}
-                  <button
-                    type="button"
-                    disabled={!solanaAddress || coinbaseLoading}
-                    onClick={handleCoinbaseOnramp}
-                    className={cn(
-                      "w-full flex items-center gap-5 p-5 rounded-2xl border-2 text-left transition-all",
-                      dark
-                        ? "border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                        : "border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    )}
-                  >
-                    <div className="w-12 h-12 shrink-0 flex items-center justify-center">
-                      {coinbaseLoading
-                        ? <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-                        : <img src="/images/icons/coinbase-logo.png" alt="Coinbase" className="w-10 h-10 object-contain" />
-                      }
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xl font-semibold ${dark ? "text-white" : "text-gray-900"}`}>Coinbase</p>
-                      <p className={`text-base mt-1 ${dark ? "text-slate-400" : "text-gray-500"}`}>Apple Pay · card · bank transfer. Coinbase shows its fee before you pay.</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
@@ -3720,7 +3631,7 @@ export function BalanceModal({
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
 
-                  {/* 2. Bank & Card — MoonPay, Coinbase, PAJ Cash */}
+                  {/* 2. Bank & Card */}
                   <button type="button" disabled={!solanaAddress || blinkDepositing} onClick={() => setShowFiatOnrampPicker(true)}
                     className={cn("w-full flex items-center gap-4 p-[18px] rounded-[22px] text-left transition-all", dark ? "border border-white/[0.07] bg-[#1A1A20] hover:border-[rgba(255,122,42,0.5)] disabled:opacity-50 disabled:cursor-not-allowed" : "border border-gray-100 bg-white hover:bg-orange-50/40 hover:border-orange-100 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed")}
                   >
@@ -3731,7 +3642,7 @@ export function BalanceModal({
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-lg font-bold ${dark ? "text-white" : "text-gray-900"}`} style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif" }}>Bank & Card</p>
-                      <p className={`text-sm mt-0.5 ${dark ? "text-[#8A8893]" : "text-gray-500"}`}>Card · Peer · Coinbase · PAJ Cash</p>
+                      <p className={`text-sm mt-0.5 ${dark ? "text-[#8A8893]" : "text-gray-500"}`}>Card · Apple Pay · Peer · PAJ Cash</p>
                     </div>
                     <ArrowRight className={`h-5 w-5 shrink-0 ${dark ? "text-slate-500" : "text-gray-300"}`} />
                   </button>
