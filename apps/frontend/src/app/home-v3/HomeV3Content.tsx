@@ -31,7 +31,7 @@ import { createClaimFromSocial } from "@/lib/createClaimFromSocial";
 import { createClaimFromEmailGuest, createClaimFromSocialGuest, createClaimFromUsernameGuest } from "@/lib/createClaimGuest";
 import { GuestSendPayButton } from "@/components/app/GuestSendPayButton";
 import { SendHowItWorks } from "@/components/app/SendHowItWorks";
-import { UNREGISTERED_ACCOUNT_FEE_USD, unregisteredClaimFeeUsd } from "@/lib/unregisteredAccountFee";
+import { UNREGISTERED_ACCOUNT_FEE_USD, unregisteredClaimFeeUsd, unregisteredClaimFeeWouldApply } from "@/lib/unregisteredAccountFee";
 import { isEmailRecipient, lookupPayTarget, payTargetQueryKey, resolvePayTargetQuery, type PayTarget } from "@/lib/lookupPayTarget";
 import { useAuth } from "@/hooks/useAuth";
 import { usePrivy } from "@privy-io/react-auth";
@@ -361,11 +361,13 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
   // Flat claim fee for email / social handle, public or private. A Loofta username
   // and a direct wallet pay skip it. An email typed on the Social tab still counts as email.
   const isLooftaUsername = handleKind === "social" && socialPlatform === "loofta" && !treatingAsEmail;
-  const platformFeeUsd = unregisteredClaimFeeUsd({
+  const claimFeeOpts = {
     destApplies: isHandleDest && !isLooftaUsername && trimmedRecipient.length > 0,
     registered: payTarget.registered,
     lookupResolved: payTargetResolved,
-  });
+  };
+  const platformFeeUsd = unregisteredClaimFeeUsd(claimFeeOpts);
+  const claimFeeWaived = platformFeeUsd === 0 && unregisteredClaimFeeWouldApply(claimFeeOpts);
   const payingPrivate = isPrivateMode || payTarget.requirePrivatePayments;
   const payTotal = payingPrivate
     ? totalWithMagicBlockPrivateFee(amountNum) + platformFeeUsd
@@ -713,9 +715,11 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
             />
             <RecipientSuggestionList items={suggestions} active={suggestionNav.active} onPick={pickSuggestion} />
           </div>
-          {platformFeeUsd > 0 && trimmedRecipient.length > 0 && amountNum >= minAmountUsd && (
+          {(platformFeeUsd > 0 || claimFeeWaived) && trimmedRecipient.length > 0 && amountNum >= minAmountUsd && (
             <p className={`mt-3 text-sm ${INK_3}`}>
-              {`+$${UNREGISTERED_ACCOUNT_FEE_USD.toFixed(2)} claim fee · they don't need an account yet`}
+              {claimFeeWaived
+                ? "Claim fee waived · they don't need an account yet"
+                : `+$${UNREGISTERED_ACCOUNT_FEE_USD.toFixed(2)} claim fee · they don't need an account yet`}
             </p>
           )}
         </div>

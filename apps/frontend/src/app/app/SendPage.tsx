@@ -26,7 +26,7 @@ import { createClaimFromSocial } from "@/lib/createClaimFromSocial";
 import { createClaimFromEmailGuest, createClaimFromSocialGuest, createClaimFromUsernameGuest } from "@/lib/createClaimGuest";
 import { GuestSendPayButton } from "@/components/app/GuestSendPayButton";
 import { SendHowItWorks } from "@/components/app/SendHowItWorks";
-import { UNREGISTERED_ACCOUNT_FEE_USD, unregisteredClaimFeeUsd } from "@/lib/unregisteredAccountFee";
+import { UNREGISTERED_ACCOUNT_FEE_USD, unregisteredClaimFeeUsd, unregisteredClaimFeeWouldApply } from "@/lib/unregisteredAccountFee";
 import { isEmailRecipient, lookupPayTarget, payTargetQueryKey, resolvePayTargetQuery, type PayTarget } from "@/lib/lookupPayTarget";
 import { totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
 import { DEFAULT_SPREAD_MS, randomPrivacySplit } from "@/lib/privacyDelay";
@@ -489,11 +489,13 @@ export default function Home() {
     !!lockedRecipient ||
     sendMethod === "username" ||
     (sendMethod === "social" && socialPlatform === "loofta" && !treatingAsEmail);
-  const platformFeeUsd = unregisteredClaimFeeUsd({
+  const claimFeeOpts = {
     destApplies: destKind === "handle" && !isLooftaUsernameDest && recipient.replace(/^@/, "").trim().length > 0,
     registered: payTarget.registered,
     lookupResolved: payTargetResolved,
-  });
+  };
+  const platformFeeUsd = unregisteredClaimFeeUsd(claimFeeOpts);
+  const claimFeeWaived = platformFeeUsd === 0 && unregisteredClaimFeeWouldApply(claimFeeOpts);
   const basePay = Number.isFinite(amountNum) ? amountNum : 0;
   const payTotal = (payingPrivate ? totalWithMagicBlockPrivateFee(basePay) : basePay) + platformFeeUsd;
   const canSend = lockedRecipient
@@ -1021,7 +1023,11 @@ export default function Home() {
                         : payTarget.registered
                           ? "Pays straight to their Loofta wallet."
                           : authenticated || sendMethod !== "username"
-                            ? platformFeeUsd > 0
+                            ? claimFeeWaived
+                              ? isPrivateMode
+                                ? "Claim fee waived · the privacy fee is included · they don't need an account yet"
+                                : "Claim fee waived · they don't need an account yet"
+                            : platformFeeUsd > 0
                               ? isPrivateMode
                                 ? `$${UNREGISTERED_ACCOUNT_FEE_USD.toFixed(2)} claim fee and the privacy fee are included · they don't need an account yet`
                                 : `$${UNREGISTERED_ACCOUNT_FEE_USD.toFixed(2)} claim fee is included in the price · they don't need an account yet`
@@ -1209,6 +1215,8 @@ export default function Home() {
                             ? " · price includes the privacy fee and the $0.10 claim fee"
                             : payingPrivate
                               ? " · price includes the privacy fee"
+                              : claimFeeWaived
+                                ? " · claim fee waived"
                               : platformFeeUsd > 0
                                 ? " · price includes the $0.10 claim fee"
                                 : payTarget.registered

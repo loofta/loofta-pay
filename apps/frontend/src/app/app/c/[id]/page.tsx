@@ -44,7 +44,7 @@ import { DescriptionWithGif } from "@/components/DescriptionWithGif";
 import { TokenIcon } from "@/components/TokenIcon";
 import { InsufficientBalanceCard } from "@/components/app/InsufficientBalanceCard";
 import { GuestCheckoutPay } from "@/components/app/GuestCheckoutPay";
-import { UNREGISTERED_ACCOUNT_FEE_USD } from "@/lib/unregisteredAccountFee";
+import { UNREGISTERED_ACCOUNT_FEE_USD, UNREGISTERED_ACCOUNT_FEE_WAIVED } from "@/lib/unregisteredAccountFee";
 import Image from "next/image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ArrowRight, Wallet, LogIn, CheckCircle2, Send, Copy, Check, Mail, AtSign, AlertTriangle, User, ChevronLeft, Landmark, Lock, ShoppingBag, CreditCard, Globe, Users } from "lucide-react";
@@ -4693,11 +4693,13 @@ export function ClaimPayView({
   const { total: privatePayTotal, protocolFee: privatePayProtocolFee, gasFee: privatePayGasFee } = estimatePrivateTotal(claimAmountUSD);
   // $0.10 claim fee for an email or social handle that does not have an account yet.
   // A Loofta username (pending or registered) is not charged. Applies to public and private.
-  const claimFeeUsd = (
+  const claimFeeApplies = !!(
     claim?.recipient_pending_email ||
     claim?.recipient_pending_social
-  ) ? UNREGISTERED_ACCOUNT_FEE_USD : 0;
+  );
+  const claimFeeUsd = claimFeeApplies && !UNREGISTERED_ACCOUNT_FEE_WAIVED ? UNREGISTERED_ACCOUNT_FEE_USD : 0;
   const chargeClaimFee = claimFeeUsd > 0;
+  const claimFeeWaived = claimFeeApplies && UNREGISTERED_ACCOUNT_FEE_WAIVED;
   // The big price is what leaves the payer's wallet.
   const headlineUsd = destUSD == null
     ? null
@@ -6769,10 +6771,10 @@ export function ClaimPayView({
                                 <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">You pay</span>
                                 <span className="font-semibold font-sans text-gray-900 [@media(prefers-color-scheme:dark)]:text-slate-100">${(headlineUsd ?? claimAmountUSD).toFixed(2)}</span>
                               </div>
-                              {chargeClaimFee && (
+                              {(chargeClaimFee || claimFeeWaived) && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Claim fee</span>
-                                  <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">${claimFeeUsd.toFixed(2)}</span>
+                                  <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">{claimFeeWaived ? "Waived" : `$${claimFeeUsd.toFixed(2)}`}</span>
                                 </div>
                               )}
                               <div className="flex items-center justify-between">
@@ -6794,10 +6796,10 @@ export function ClaimPayView({
                                 <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Privacy fee</span>
                                 <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">${(privatePayProtocolFee + privatePayGasFee).toFixed(2)}</span>
                               </div>
-                              {chargeClaimFee && (
+                              {(chargeClaimFee || claimFeeWaived) && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Claim fee</span>
-                                  <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">${claimFeeUsd.toFixed(2)}</span>
+                                  <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">{claimFeeWaived ? "Waived" : `$${claimFeeUsd.toFixed(2)}`}</span>
                                 </div>
                               )}
                               <div className="pt-2 border-t border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10 flex items-center justify-between">
@@ -6815,10 +6817,10 @@ export function ClaimPayView({
                                 <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Privacy fee, from what they receive</span>
                                 <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
                               </div>
-                              {chargeClaimFee && (
+                              {(chargeClaimFee || claimFeeWaived) && (
                                 <div className="flex items-center justify-between">
                                   <span className="text-gray-600 [@media(prefers-color-scheme:dark)]:text-slate-400">Claim fee</span>
-                                  <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">${claimFeeUsd.toFixed(2)}</span>
+                                  <span className="font-medium text-gray-700 [@media(prefers-color-scheme:dark)]:text-slate-300">{claimFeeWaived ? "Waived" : `$${claimFeeUsd.toFixed(2)}`}</span>
                                 </div>
                               )}
                               <div className="pt-2 border-t border-gray-200 [@media(prefers-color-scheme:dark)]:border-white/10 flex items-center justify-between">
@@ -7021,10 +7023,10 @@ export function ClaimPayView({
                             <span className="text-gray-600">You pay</span>
                             <span className="font-semibold font-sans text-gray-900">${(headlineUsd ?? claimAmountUSD).toFixed(2)}</span>
                           </div>
-                          {chargeClaimFee && (
+                          {(chargeClaimFee || claimFeeWaived) && (
                             <div className="flex items-center justify-between">
                               <span className="text-gray-600">Claim fee</span>
-                              <span className="font-medium text-gray-700">${claimFeeUsd.toFixed(2)}</span>
+                              <span className="font-medium text-gray-700">{claimFeeWaived ? "Waived" : `$${claimFeeUsd.toFixed(2)}`}</span>
                             </div>
                           )}
                           <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
@@ -7042,10 +7044,10 @@ export function ClaimPayView({
                             <span className="text-gray-600">Privacy fee</span>
                             <span className="font-medium text-gray-700">${(privatePayProtocolFee + privatePayGasFee).toFixed(2)}</span>
                           </div>
-                          {chargeClaimFee && (
+                          {(chargeClaimFee || claimFeeWaived) && (
                             <div className="flex items-center justify-between">
                               <span className="text-gray-600">Claim fee</span>
-                              <span className="font-medium text-gray-700">${claimFeeUsd.toFixed(2)}</span>
+                              <span className="font-medium text-gray-700">{claimFeeWaived ? "Waived" : `$${claimFeeUsd.toFixed(2)}`}</span>
                             </div>
                           )}
                           <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
@@ -7063,10 +7065,10 @@ export function ClaimPayView({
                             <span className="text-gray-600">Privacy fee, from what they receive</span>
                             <span className="font-medium text-gray-700">~${(privatePayProtocolFee + privatePayGasFee).toFixed(3)}</span>
                           </div>
-                          {chargeClaimFee && (
+                          {(chargeClaimFee || claimFeeWaived) && (
                             <div className="flex items-center justify-between">
                               <span className="text-gray-600">Claim fee</span>
-                              <span className="font-medium text-gray-700">${claimFeeUsd.toFixed(2)}</span>
+                              <span className="font-medium text-gray-700">{claimFeeWaived ? "Waived" : `$${claimFeeUsd.toFixed(2)}`}</span>
                             </div>
                           )}
                           <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
@@ -7774,10 +7776,10 @@ export function ClaimPayView({
                           <span className="font-bold">${feeAmount.toFixed(2)}</span>
                         </div>
                       )}
-                      {chargeClaimFee && (
+                      {(chargeClaimFee || claimFeeWaived) && (
                         <div className="flex justify-between text-[15px]">
                           <span className="text-[#B5B2BC]">Claim fee</span>
-                          <span className="font-bold">${claimFeeUsd.toFixed(2)}</span>
+                          <span className="font-bold">{claimFeeWaived ? "Waived" : `$${claimFeeUsd.toFixed(2)}`}</span>
                         </div>
                       )}
                       <div className="h-px bg-white/[0.07]" />
