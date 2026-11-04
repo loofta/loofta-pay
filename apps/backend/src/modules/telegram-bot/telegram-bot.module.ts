@@ -13,6 +13,6 @@ import { TwitterAutopayModule } from '../twitter-autopay/twitter-autopay.module'
   imports: [UsersModule, TwitterAutopayModule, PrivateBalanceModule, IntentsModule],
   controllers: [TelegramBotController],
   providers: [TelegramBotService, IntentLlmService, TelegramWalletService, TelegramNotifierService],
-  exports: [TelegramNotifierService],
+  exports: [TelegramNotifierService, TelegramWalletService],
 })
 export class TelegramBotModule {}

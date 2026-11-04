@@ -29,7 +29,8 @@ function build(o: { quote?: (p: any) => any; status?: (addr: string) => any; onC
   };
   const notifier: any = { notifyUser: jest.fn(async () => true) };
   const config: any = { get: (k: string) => (k === 'NODE_ENV' ? 'production' : undefined) };
-  const svc = new AgentFundingService(db as any, config, near, users, notifier);
+  const tgWallet: any = { startPrivateDeposit: jest.fn(async (_u: string, a: number) => ({ id: 'pd1', depositAddress: 'PrivDep1', amountToSendUsdc: a + 0.3, feeEstimateUsdc: 0.3 })) };
+  const svc = new AgentFundingService(db as any, config, near, users, notifier, tgWallet);
   return { svc, db, near, notifier };
 }
 
@@ -41,6 +42,36 @@ describe('mapNearStatus', () => {
     ['SUCCESS', 'received'], ['REFUNDED', 'refunded'], ['FAILED', 'failed'], ['success', 'received'],
   ])('%s -> %s', (raw, want) => expect(mapNearStatus(raw)).toBe(want));
   it('knows nothing about a status it has not seen', () => expect(mapNearStatus('???')).toBeNull());
+});
+
+describe('adding money without questions', () => {
+  it('gives the wallet address, card link and other options at once', async () => {
+    const { svc } = build();
+    const r: any = await svc.options(session());
+    expect(r.send_usdc_on_solana_to).toBe(SOL_WALLET);
+    expect(r.card_link).toContain('/app?deposit=1');
+    expect(r.paying_privately).toMatch(/privately true/);
+    expect(r.private_deposit).toBeUndefined();
+  });
+  it('sets up a private deposit when asked', async () => {
+    const { svc } = build();
+    const r: any = await svc.options(session(), { private: true, amount_usd: 10 });
+    expect(r.private_deposit).toMatchObject({ to_one_time_address: 'PrivDep1', send_exactly_usdc: 10.3, you_receive_usd: 10 });
+    await expect(svc.options(session(), { private: true })).rejects.toMatchObject({ response: { code: 'bad_amount' } });
+  });
+  it('funding with USDC on Solana is just the wallet address', async () => {
+    const { svc, near } = build();
+    const r: any = await svc.fund(session(), { token: 'USDC', chain: 'solana', receive_usdc: 10 });
+    expect(r.send_usdc_on_solana_to).toBe(SOL_WALLET);
+    expect(near.getDepositQuote).not.toHaveBeenCalled();
+  });
+  it('needs no refund address from Solana, it is the Loofta wallet', async () => {
+    const { svc, near } = build();
+    const r: any = await svc.fund(session(), { token: 'BONK', chain: 'solana', amount: 1000 });
+    expect(r.refund_address).toBe(SOL_WALLET);
+    expect(near.getDepositQuote.mock.calls[0][0].refundAddress).toBe(SOL_WALLET);
+    await expect(svc.fund(session(), { token: 'ETH', chain: 'base', amount: 0.01 })).rejects.toMatchObject({ response: { code: 'refund_address_required' } });
+  });
 });
 
 describe('creating a funding', () => {

@@ -287,7 +287,7 @@ export class AgentPaymentsService implements OnModuleInit {
     }
     const balance = await this.users.getSolanaWalletBalanceAndAddress(session.userId).then((r) => r.balanceUSD).catch(() => null);
     const need = money(plans.reduce((t, p) => t + p.totalUsd, 0));
-    if (balance != null && balance + 1e-9 < need) throw agentError('insufficient_balance', `The wallet has $${money(balance)} and this needs $${need} with fees.`, 'forbidden');
+    if (balance != null && balance + 1e-9 < need) throw agentError('insufficient_balance', `The wallet has $${money(balance)} and this needs $${need} with fees. Call fund_wallet right away and show the user the wallet address and options; do not ask them questions first.`, 'forbidden');
 
     const approval = await this.needsApproval(session, n.items, n.total);
     const payload = {

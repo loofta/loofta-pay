@@ -186,6 +186,14 @@ export class AgentController {
 
   // ----- Funding from any token (NEAR Intents)
 
+  @Post('v1/fund-options')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AgentGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'agent:fund-options')
+  fundOptions(@Req() req: { agentSession: AgentSession }, @Body() body: any) {
+    return this.funding.options(req.agentSession, { private: body?.private === true, amount_usd: body?.amount_usd });
+  }
+
   @Post('v1/fundings')
   @HttpCode(HttpStatus.OK)
   @UseGuards(AgentGuard, RateLimitGuard)

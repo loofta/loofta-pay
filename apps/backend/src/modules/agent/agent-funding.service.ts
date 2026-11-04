@@ -6,6 +6,7 @@ import { isCronEnabled } from '@/common/cron-gate';
 import { NearIntentsService, type NearToken } from '../intents/near-intents.service';
 import { UsersService } from '../users/users.service';
 import { TelegramNotifierService } from '../telegram-bot/telegram-notifier.service';
+import { TelegramWalletService } from '../telegram-bot/telegram-wallet.service';
 import { escapeHtml } from '../telegram-bot/telegram-api';
 import { validateAddress, chainAliases } from '../telegram-bot/wallet-flow';
 import { agentError } from './agent-payments.service';
@@ -44,7 +45,7 @@ export interface FundRequest {
   /** How many USDC should arrive. Give this or amount. */
   receive_usdc?: number;
   /** Where a failed swap is returned: a wallet of the person's own, on the chain they send from. */
-  refund_address: string;
+  refund_address?: string;
   /** Hide the link between the deposit and the payout (NEAR Confidential Intents). Default true. */
   confidential?: boolean;
   /** Allow an ordinary public swap when confidential is not available for this token. Default false. */
@@ -67,7 +68,12 @@ export class AgentFundingService {
     private readonly near: NearIntentsService,
     private readonly users: UsersService,
     private readonly notifier: TelegramNotifierService,
+    private readonly tgWallet?: TelegramWalletService,
   ) {}
+
+  private get appUrl() {
+    return this.config.get<string>('APP_URL') || this.config.get<string>('NEXT_PUBLIC_BASE_URL') || 'https://pay.loofta.com';
+  }
 
   // ---------------------------------------------------------------------------------------------
   // Create
@@ -115,6 +121,42 @@ export class AgentFundingService {
     }
   }
 
+  /**
+   * Every way to add money, in one answer: no questions first. The wallet address takes USDC on Solana
+   * directly; a private deposit or another token gets a one-time address; card lives on the app page.
+   */
+  async options(session: AgentSession, req: { amount_usd?: number; private?: boolean } = {}) {
+    if (!session.scopes.includes('pay')) throw agentError('missing_scope', "This session was not granted 'pay'.", 'forbidden');
+    const wallet = await this.users.getSolanaWalletAddress(session.userId).catch(() => null);
+    if (!wallet) throw agentError('no_wallet', 'This account has no Solana wallet yet.', 'forbidden');
+    const out: Record<string, unknown> = {
+      send_usdc_on_solana_to: wallet,
+      instructions: 'Send USDC on Solana to wallet_address. It arrives in about a minute and is a normal public transfer.',
+      card_link: `${this.appUrl}/app?deposit=1`,
+      other_ways: [
+        'Card, Apple Pay or Google Pay: open card_link.',
+        'Another token (SOL, ETH, USDT, BONK, ...) on Solana or an EVM network: call fund_with_token with the token and chain and either how much to send or receive_usdc. SOL is fine. It is swapped to USDC in this wallet and the quote shows the exact amount to send with fees included.',
+        'Private deposit (the deposit is not linked to the wallet): call fund_wallet with private true and amount_usd (1 to 2000).',
+      ],
+      paying_privately: 'Payments out can be private too: set privately true on pay or quote_payment. It costs a little extra and arrives after a short delay.',
+    };
+    if (req.private) {
+      const amount = Number(req.amount_usd);
+      if (!(amount >= 1 && amount <= 2000)) throw agentError('bad_amount', 'A private deposit is 1 to 2000 USD. Give amount_usd.');
+      if (!this.tgWallet) throw agentError('unavailable', 'Private deposits are not available right now.');
+      const d = await this.tgWallet.startPrivateDeposit(session.userId, Math.round(amount * 100) / 100);
+      out.private_deposit = {
+        send_exactly_usdc: d.amountToSendUsdc,
+        network: 'solana',
+        to_one_time_address: d.depositAddress,
+        you_receive_usd: amount,
+        fee_estimate_usdc: d.feeEstimateUsdc,
+        note: 'Use this address once, only for USDC on Solana. It reaches the wallet privately within a few minutes.',
+      };
+    }
+    return out;
+  }
+
   async fund(session: AgentSession, req: FundRequest) {
     if (!session.scopes.includes('pay')) throw agentError('missing_scope', "This session was not granted 'pay'.", 'forbidden');
     const hasIn = req.amount != null;
@@ -129,9 +171,14 @@ export class AgentFundingService {
 
     const from = await this.resolveToken(req.token, req.chain);
     const to = await this.usdcOnSolana();
-    await this.assertRefundIsTheirs(session.userId, from.chain, req.refund_address);
     const wallet = await this.users.getSolanaWalletAddress(session.userId).catch(() => null);
     if (!wallet) throw agentError('no_wallet', 'This account has no Solana wallet yet.', 'forbidden');
+    // USDC on Solana needs no swap: it goes straight to the wallet.
+    if (from.symbol.toUpperCase() === 'USDC' && isSolana(from.chain)) return this.options(session);
+    // From Solana the only valid refund address is the person's own Loofta wallet, so there is nothing to ask.
+    const refundAddress = (req.refund_address ?? '').trim() || (isSolana(from.chain) ? wallet : '');
+    if (!refundAddress) throw agentError('refund_address_required', `Ask the person for their own ${from.chain} wallet address. A failed swap is refunded there.`);
+    await this.assertRefundIsTheirs(session.userId, from.chain, refundAddress);
 
     const wantConfidential = req.confidential !== false;
     const levels: Array<'advanced' | 'basic' | undefined> = wantConfidential ? ['advanced', 'basic'] : [undefined];
@@ -147,7 +194,7 @@ export class AgentFundingService {
           toToken: { tokenId: to.tokenId!, chain: to.chain, symbol: to.symbol, decimals: to.decimals },
           ...(hasIn ? { amountIn: String(amount) } : { amountOut: String(amount), useExactOutput: true }),
           recipient: wallet,
-          refundAddress: req.refund_address.trim(),
+          refundAddress,
           confidentiality: level,
           deadlineMs: 60 * 60 * 1000,
         });
@@ -180,7 +227,7 @@ export class AgentFundingService {
       memo: quote.memo ?? null,
       deadline: quote.deadline ?? null,
       confidentiality: used ?? 'public',
-      refund_address: req.refund_address.trim(),
+      refund_address: refundAddress,
       recipient_address: wallet,
       status: 'awaiting_deposit',
       created_at: new Date().toISOString(),
