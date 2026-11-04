@@ -23,3 +23,18 @@ export function cashoutDepositAtomic(grossAtomic: bigint): bigint {
 export function cashoutLooftaFeeAtomic(grossAtomic: bigint): bigint {
   return grossAtomic - cashoutDepositAtomic(grossAtomic);
 }
+
+/** USDC the sender must put in so the recipient still gets `payout` after the total fee. */
+export function cashoutGrossAtomic(payoutAtomic: bigint): bigint {
+  if (payoutAtomic <= 0n) return 0n;
+  const withMin = payoutAtomic + MIN_FEE_ATOMIC;
+  if (cashoutFeeAtomic(withMin) <= MIN_FEE_ATOMIC) return withMin;
+  let gross = (payoutAtomic * 100n) / 98n;
+  while (gross - cashoutFeeAtomic(gross) < payoutAtomic) gross += 1n;
+  return gross;
+}
+
+/** The deposit is priced 1% under the oracle so a peer sends less fiat; the sender already covered that gap. */
+export function fillerIncentiveSpreadBps(grossAtomic: bigint): number {
+  return cashoutDepositAtomic(grossAtomic) > 0n ? -100 : 0;
+}

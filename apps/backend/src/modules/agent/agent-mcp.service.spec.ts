@@ -19,7 +19,7 @@ describe('hosted MCP', () => {
     const { svc } = build();
     const r: any = await svc.handle(session, rpc('tools/list'));
     expect(r.result.tools.map((t: any) => t.name)).toEqual(MCP_TOOLS.map((t) => t.name));
-    expect(r.result.tools.map((t: any) => t.name)).toEqual(['whoami', 'quote_payment', 'pay', 'contacts', 'lookup_recipient', 'fund_wallet', 'fund_with_token', 'swap_to_usdc', 'funding_status', 'list_fundings', 'get_payment', 'list_payments']);
+    expect(r.result.tools.map((t: any) => t.name)).toEqual(['whoami', 'quote_payment', 'pay', 'cash_out_quote', 'cash_out', 'cancel_cash_out', 'contacts', 'lookup_recipient', 'fund_wallet', 'fund_with_token', 'funding_status', 'list_fundings', 'get_payment', 'list_payments']);
   });
   it('does not answer notifications', async () => {
     const { svc } = build();

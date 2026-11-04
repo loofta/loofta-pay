@@ -6,13 +6,12 @@ import { isCronEnabled } from '@/common/cron-gate';
 import { NearIntentsService, type NearToken } from '../intents/near-intents.service';
 import { UsersService } from '../users/users.service';
 import { TelegramNotifierService } from '../telegram-bot/telegram-notifier.service';
-import { JupiterService } from '../jupiter/jupiter.service';
-import { AutopaySignerService } from '../twitter-autopay/autopay-signer.service';
+import { AgentSolSwapService, MIN_SWAP_LAMPORTS } from './agent-sol-swap.service';
 import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 import { TelegramWalletService } from '../telegram-bot/telegram-wallet.service';
 import { escapeHtml } from '../telegram-bot/telegram-api';
 import { validateAddress, chainAliases } from '../telegram-bot/wallet-flow';
-import { agentError } from './agent-payments.service';
+import { agentError } from './agent-error';
 import type { AgentSession } from './agent-auth.service';
 
 export type FundingStatus = 'awaiting_deposit' | 'processing' | 'incomplete' | 'received' | 'refunded' | 'failed' | 'expired';
@@ -24,12 +23,10 @@ const EXPIRY_GRACE_MS = 15 * 60 * 1000;
 
 const EVM_CHAINS = ['eth', 'ethereum', 'base', 'arb', 'arbitrum', 'op', 'optimism', 'pol', 'polygon', 'matic', 'bsc', 'bnb', 'avax', 'avalanche', 'gnosis', 'bera', 'berachain', 'linea', 'scroll', 'blast'];
 const isEvm = (chain: string) => EVM_CHAINS.includes(chain.toLowerCase());
-const WSOL_MINT = 'So11111111111111111111111111111111111111112';
-const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-const MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 /** What a SOL deposit should cover beyond the USDC wanted: Loofta's 0.80% swap fee, slippage room and the network fee. */
 const SOL_SWAP_BUFFER = 1.02;
-const SOL_NETWORK_RESERVE = 0.004;
+const SOL_ORDER_TTL_MS = 24 * 60 * 60 * 1000;
+const SOL_NETWORK_RESERVE = 0.009;
 const isSolana = (chain: string) => ['sol', 'solana'].includes(chain.toLowerCase());
 
 /** NEAR Intents (1Click) status -> what we tell the person. */
@@ -80,8 +77,7 @@ export class AgentFundingService {
     private readonly users: UsersService,
     private readonly notifier: TelegramNotifierService,
     private readonly tgWallet?: TelegramWalletService,
-    private readonly jupiter?: JupiterService,
-    private readonly signer?: AutopaySignerService,
+    private readonly solSwap?: AgentSolSwapService,
   ) {}
 
   private get appUrl() {
@@ -171,75 +167,48 @@ export class AgentFundingService {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Solana tokens: swapped inside the wallet with Jupiter (cross-chain still goes through NEAR Intents)
+  // SOL: sent to a one-time address only the backend holds, swapped to USDC with Jupiter and forwarded to the
+  // person's own wallet (cross-chain funding still goes through NEAR Intents)
 
-  /** SOL by name, any other token by its mint address. A bare symbol is never trusted: scam tokens copy them. */
-  private solanaMint(token: string): string | null {
-    const t = token.trim();
-    if (t.toUpperCase() === 'SOL') return WSOL_MINT;
-    return MINT_RE.test(t) ? t : null;
+  private isSol(token: string): boolean {
+    return token.trim().toUpperCase() === 'SOL';
   }
 
-  /** How much to send, with fees, for a SOL top-up. Nothing is created: the person sends to their own wallet. */
-  private async solanaTokenPlan(session: AgentSession, req: FundRequest, wallet: string, mint: string) {
-    const out: Record<string, unknown> = {
+  private async solOrder(session: AgentSession, req: FundRequest, wallet: string) {
+    if (!this.solSwap) throw agentError('unavailable', 'Paying with SOL is not available right now.');
+    let send: number;
+    if (req.amount != null) send = Number(req.amount);
+    else {
+      const px = await fetchSolPriceUsd();
+      if (!px) throw agentError('unavailable', 'Could not price SOL right now. Try again in a moment.');
+      send = Math.ceil(((Number(req.receive_usdc) / px) * SOL_SWAP_BUFFER + SOL_NETWORK_RESERVE) * 1e4 - 1e-6) / 1e4;
+    }
+    if (send * 1e9 < MIN_SWAP_LAMPORTS) throw agentError('bad_amount', `Send at least ${MIN_SWAP_LAMPORTS / 1e9} SOL so the swap is worth its network fee.`);
+    const burner = this.solSwap.newBurner();
+    const deadline = new Date(Date.now() + SOL_ORDER_TTL_MS).toISOString();
+    const { data: row, error } = await this.db.getClient().from('agent_funding_orders').insert({
+      user_id: session.userId,
+      session_id: session.id,
+      from_symbol: 'SOL',
+      from_chain: 'solana',
+      from_token_id: 'native:sol',
+      amount_in: String(send),
+      expected_usdc: req.receive_usdc != null ? Number(req.receive_usdc) : null,
+      deposit_address: burner.address,
+      deadline,
+      confidentiality: 'public',
+      refund_address: wallet,
+      recipient_address: wallet,
+      status: 'awaiting_deposit',
       route: 'jupiter',
-      send_to: wallet,
-      network: 'solana',
-      instructions: '',
-    };
-    if (mint === WSOL_MINT) {
-      let send: number | null = null;
-      if (req.amount != null) send = Number(req.amount);
-      else if (req.receive_usdc != null) {
-        const px = await fetchSolPriceUsd();
-        if (px) send = Math.ceil(((Number(req.receive_usdc) / px) * SOL_SWAP_BUFFER + SOL_NETWORK_RESERVE) * 1e4) / 1e4;
-      }
-      if (send) out.send_amount = send;
-      out.token = 'SOL';
-      out.instructions = `Send ${send ? `${send} SOL` : 'the SOL'} on Solana to send_to (your Loofta wallet). That covers the swap fee (0.80%), price movement and the network fee, which is paid in SOL. When it arrives, call swap_to_usdc with token SOL and the amount to turn it into USDC.`;
-    } else {
-      out.token = req.token;
-      out.mint = mint;
-      out.instructions = `Send the token on Solana to send_to (your Loofta wallet). The swap needs about 0.004 SOL in the wallet for the network fee. When it arrives, call swap_to_usdc with this mint and the amount.`;
+      burner_key_enc: burner.keyEnc,
+      created_at: new Date().toISOString(),
+    }).select('*').single();
+    if (error || !row) {
+      this.logger.error(`SOL funding insert failed: ${error?.message}`);
+      throw agentError('failed', 'Could not record this funding. Nothing was sent. Try again.');
     }
-    return { ...out, id: undefined, status: 'awaiting_deposit', swap_fee: '0.80%', next: out.instructions };
-  }
-
-  /** Swaps a token the wallet already holds into USDC, signed with the person's delegated key. */
-  async swapToUsdc(session: AgentSession, req: { token: string; amount: number | string }) {
-    if (!session.scopes.includes('pay')) throw agentError('missing_scope', "This session was not granted 'pay'.", 'forbidden');
-    const mint = this.solanaMint(String(req.token ?? ''));
-    if (!mint) throw agentError('unknown_token', 'Use SOL, or the token mint address. A name alone is not safe to swap.');
-    if (mint === USDC_MINT) throw agentError('bad_token', 'That is already USDC.');
-    if (!this.jupiter || !this.signer?.isAvailable) throw agentError('unavailable', 'Swaps are not available right now.');
-    const amount = String(req.amount ?? '').trim();
-    if (!/^\d{1,18}(\.\d{1,18})?$/.test(amount) || Number(amount) <= 0) throw agentError('bad_amount', 'Give the amount of the token to swap, as a plain number.');
-    const wallet = await this.signer.resolveSenderWallet(session.userId);
-    if (!wallet) throw agentError('no_signer', 'Loofta has no permission to sign for this wallet. Turn on auto-pay in the Loofta app first.', 'forbidden');
-    const dto = { inputMint: mint, outputMint: USDC_MINT, amount, slippageBps: 100 };
-    let quote: any;
-    try {
-      quote = await this.jupiter.quoteSwap(session.userId, dto as any);
-    } catch (e) {
-      throw agentError('no_route', (e as any)?.response?.message ?? (e as Error).message ?? 'No route for that swap right now.');
-    }
-    const usdc = Number(quote.outAmount) / 1e6;
-    if (usdc > session.dailyCapUsd) throw agentError('over_session_limit', `That swap is worth about $${usdc.toFixed(2)}, more than this session's $${session.dailyCapUsd} daily limit. Swap less, or raise the limit in the Loofta app.`, 'forbidden');
-    let built: any;
-    try {
-      built = await this.jupiter.buildSwap(session.userId, dto as any);
-    } catch (e) {
-      throw agentError('swap_failed', (e as any)?.response?.message ?? (e as Error).message ?? 'Could not build the swap.');
-    }
-    if (built.gasless || !built.swapTransaction) throw agentError('swap_failed', 'Could not build the swap. Try again.');
-    try {
-      const { signature } = await this.signer.signAndSendOwnWalletTransaction({ walletId: wallet.walletId, walletAddress: wallet.address, transactionBase64: built.swapTransaction, lastValidBlockHeight: built.lastValidBlockHeight });
-      return { status: 'swapped', token: String(req.token), swapped: amount, received_usdc_about: Number((Number(built.outAmount) / 1e6).toFixed(2)), min_received_usdc: Number((Number(built.minOutAmount) / 1e6).toFixed(2)), fee: '0.80%', signature, next: 'The USDC is in the Loofta wallet. You can pay now.' };
-    } catch (e) {
-      this.logger.warn(`agent swap failed user=${session.userId}: ${(e as Error).message}`);
-      throw agentError('swap_failed', (e as any)?.response?.message ?? 'The swap did not go through. Your tokens were not moved.');
-    }
+    return { ...this.view(row), send_to: burner.address, route: 'jupiter', swap_fee: '0.80%', next: this.nextStep(row) };
   }
 
   async fund(session: AgentSession, req: FundRequest) {
@@ -254,13 +223,11 @@ export class AgentFundingService {
     const { data: openRows } = await this.db.getClient().from('agent_funding_orders').select('id').eq('session_id', session.id).in('status', OPEN);
     if ((openRows?.length ?? 0) >= MAX_OPEN_PER_SESSION) throw agentError('too_many_open', 'You already have several fundings waiting. Finish or let them expire first.');
 
-    // Solana tokens are swapped inside the wallet with Jupiter (SOL by name, anything else by mint).
-    // Only cross-chain funding goes through NEAR Intents.
-    const solMint = !req.chain || isSolana(req.chain) ? (this.solanaMint(req.token) ?? (req.mint && MINT_RE.test(req.mint) ? req.mint : null)) : null;
-    if (solMint && solMint !== USDC_MINT) {
+    // SOL is swapped to USDC with Jupiter from a one-time address. Only cross-chain funding uses NEAR Intents.
+    if (this.isSol(req.token) && (!req.chain || isSolana(req.chain))) {
       const w = await this.users.getSolanaWalletAddress(session.userId).catch(() => null);
       if (!w) throw agentError('no_wallet', 'This account has no Solana wallet yet.', 'forbidden');
-      return this.solanaTokenPlan(session, req, w, solMint);
+      return this.solOrder(session, req, w);
     }
     const from = await this.resolveToken(req.token, req.chain);
     const to = await this.usdcOnSolana();
@@ -268,8 +235,8 @@ export class AgentFundingService {
     if (!wallet) throw agentError('no_wallet', 'This account has no Solana wallet yet.', 'forbidden');
     // USDC on Solana needs no swap: it goes straight to the wallet.
     if (from.symbol.toUpperCase() === 'USDC' && isSolana(from.chain)) return this.options(session);
-    // Any other Solana token is a Jupiter swap in the wallet, by mint: a bare symbol is not safe to trust.
-    if (isSolana(from.chain)) throw agentError('mint_required', `Give the ${from.symbol} mint address (the token contract) so I swap the right one.`);
+    // Other Solana tokens are not swapped here: only SOL and USDC are supported on Solana.
+    if (isSolana(from.chain)) throw agentError('unsupported_token', `On Solana I can take USDC or SOL. For ${from.symbol}, swap it to USDC in the Loofta app first.`);
     // From Solana the only valid refund address is the person's own Loofta wallet, so there is nothing to ask.
     const refundAddress = (req.refund_address ?? '').trim() || (isSolana(from.chain) ? wallet : '');
     if (!refundAddress) throw agentError('refund_address_required', `Ask the person for their own ${from.chain} wallet address. A failed swap is refunded there.`);
@@ -337,9 +304,29 @@ export class AgentFundingService {
   // ---------------------------------------------------------------------------------------------
   // Follow
 
+  /** SOL orders: look at the one-time address, swap and forward what arrived, or expire and return it. */
+  private async refreshSol(row: any): Promise<any> {
+    const r = await this.solSwap!.settle(row);
+    const now = new Date().toISOString();
+    const patch: Record<string, unknown> = { last_checked_at: now, updated_at: now };
+    if (r.state === 'received') {
+      patch.status = 'received';
+      patch.received_usdc = r.usdc;
+      patch.tx_hash = r.signature ?? null;
+    } else if (row.deadline && Date.now() > new Date(row.deadline).getTime()) {
+      try { await this.solSwap!.refund(row); } catch (e) { this.logger.warn(`SOL funding ${row.id} refund: ${(e as Error).message}`); }
+      patch.status = 'expired';
+    }
+    const { data: updated } = await this.db.getClient().from('agent_funding_orders').update(patch).eq('id', row.id).select('*').maybeSingle();
+    const next = updated ?? { ...row, ...patch };
+    if (!OPEN.includes(next.status as FundingStatus)) await this.tellThePerson(next);
+    return next;
+  }
+
   /** Reads the order's live state from NEAR Intents and saves any change. Says so once when it ends. */
   async refresh(row: any): Promise<any> {
     if (!OPEN.includes(row.status)) return row;
+    if (row.route === 'jupiter') return this.refreshSol(row);
     let status: FundingStatus | null = null;
     let details: any = null;
     let nearStatus: string | null = row.near_status;
@@ -400,7 +387,7 @@ export class AgentFundingService {
 
   private nextStep(row: any): string {
     switch (row.status as FundingStatus) {
-      case 'awaiting_deposit': return `Send ${row.amount_in ?? 'the amount'} ${row.from_symbol} on ${row.from_chain} to the address above${row.memo ? ` with memo ${row.memo}` : ''}. Send only that token on that network. Check funding_status for the result.`;
+      case 'awaiting_deposit': return row.route === 'jupiter' ? `Send ${row.amount_in} SOL on Solana to the address above (it is valid for 24 hours). It is swapped to USDC with Jupiter (0.80% fee) and sent to your Loofta wallet within a minute or two. Check funding_status.` : `Send ${row.amount_in ?? 'the amount'} ${row.from_symbol} on ${row.from_chain} to the address above${row.memo ? ` with memo ${row.memo}` : ''}. Send only that token on that network. Check funding_status for the result.`;
       case 'processing': return 'The deposit was seen and is being swapped. Check again in a minute.';
       case 'incomplete': return 'Less than the minimum arrived. It will be refunded if it is not topped up before the deadline.';
       case 'received': return 'Done. The USDC is in the Loofta wallet. You can pay now.';

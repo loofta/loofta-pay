@@ -130,6 +130,32 @@ export class OfframpService {
     return { funded: true };
   }
 
+  /**
+   * The history entry for a cash-out an agent starts: the same offramp_requests row the app makes, so it shows
+   * in the person's history and on the /app/pay/<shortId> receipt. The backend, not the browser, runs the rest
+   * (see AgentCashoutService), so it carries no stored bridge quote for the browser to resume.
+   */
+  async createAgentRecord(userId: string, args: { platform: string; identifier: string; currency: string; amountUsdc: number; userSolanaAddress: string }) {
+    const shortId = generateShortId();
+    const row = {
+      user_id: userId,
+      platform: args.platform,
+      platform_identifier: args.identifier,
+      currency: args.currency.toUpperCase(),
+      amount_usdc: args.amountUsdc,
+      user_solana_address: args.userSolanaAddress,
+      near_intents_deposit_address: null,
+      near_intents_memo: null,
+      near_intents_status: `sid:${shortId}`,
+      status: 'BRIDGING',
+    };
+    const client = this.supabase.getClient();
+    let { data, error } = await client.from('offramp_requests').insert({ ...row, short_id: shortId }).select('id').single();
+    if (error && /short_id/i.test(error.message ?? '')) ({ data, error } = await client.from('offramp_requests').insert(row).select('id').single());
+    if (error || !data) throw new BadRequestException(error?.message || 'Failed to create offramp record');
+    return { id: data.id as string, shortId };
+  }
+
   // Non-custodial: bridge goes to the user's own Base wallet (dto.baseWalletAddress).
   async prepareOfframp(userId: string, dto: CreateOfframpDto) {
     // Same ownership requirement as fundGas — this also triggers a real ETH top-up below.
@@ -383,6 +409,12 @@ export class OfframpService {
     return record;
   }
 
+  /** A cash-out an agent started is held by backend wallets, so the backend cancels it, not the browser. */
+  private agentCancel?: { owns(offrampId: string): Promise<boolean>; cancel(offrampId: string, userId: string): Promise<{ status: string; message?: string }> };
+  registerAgentCancel(handler: NonNullable<OfframpService['agentCancel']>) {
+    this.agentCancel = handler;
+  }
+
   // For PENDING_BRIDGE / BRIDGING: marks CANCELLED directly.
   // For DEPOSITED: marks CANCELLING and returns a note — frontend handles ZKP2P + bridge signing.
   async cancelOfframp(offrampId: string, userId: string) {
@@ -391,6 +423,7 @@ export class OfframpService {
     if (['COMPLETE', 'CANCELLED', 'FAILED'].includes(record.status)) {
       throw new BadRequestException(`Cannot cancel in status ${record.status}`);
     }
+    if (this.agentCancel && (await this.agentCancel.owns(offrampId))) return this.agentCancel.cancel(offrampId, userId);
 
     if (['PENDING_BRIDGE', 'BRIDGING', 'CREATING_DEPOSIT'].includes(record.status)) {
       await this.updateStatus(offrampId, 'CANCELLED');
@@ -521,14 +554,16 @@ export class OfframpService {
   }
 
   async getPendingForUser(userId: string) {
-    const { data } = await this.supabase.getClient()
+    // A cash-out an agent started is finished by the backend, so the browser must not offer to resume it.
+    const { data: agentRows } = await this.supabase.getClient().from('agent_cashouts').select('offramp_id').eq('user_id', userId).not('offramp_id', 'is', null).order('created_at', { ascending: false }).limit(50);
+    const skip = (agentRows ?? []).map((r: any) => r.offramp_id).filter(Boolean);
+    let q = this.supabase.getClient()
       .from('offramp_requests')
       .select('*')
       .eq('user_id', userId)
-      .not('status', 'in', '("COMPLETE","CANCELLED","FAILED")')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .not('status', 'in', '("COMPLETE","CANCELLED","FAILED")');
+    if (skip.length) q = q.not('id', 'in', `(${skip.join(',')})`);
+    const { data } = await q.order('created_at', { ascending: false }).limit(1).maybeSingle();
     return data ?? null;
   }
 
@@ -749,7 +784,7 @@ export class OfframpService {
     return data;
   }
 
-  private async updateStatus(offrampId: string, status: string, errorMessage?: string) {
+  async updateStatus(offrampId: string, status: string, errorMessage?: string) {
     const update: Record<string, any> = { status, updated_at: new Date().toISOString() };
     if (errorMessage) update.error_message = errorMessage;
     await this.supabase.getClient().from('offramp_requests').update(update).eq('id', offrampId);

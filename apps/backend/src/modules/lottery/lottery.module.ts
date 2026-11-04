@@ -23,6 +23,6 @@ import { MagicblockQuestModule } from '../magicblock-quest/magicblock-quest.modu
   imports: [IntentsModule, SendPaymentModule, UsersModule, EmailModule, DatabaseModule, MagicblockQuestModule],
   controllers: [LotteryController, AdminLotteryController, PackController, WeeklyQuestController],
   providers: [LotteryService, LotteryCronService, MegapotService, RhinestoneService, LifiService, RelayService, PackService, MegapotSubscriptionService, WeeklyQuestService],
-  exports: [LotteryService, PackService, RelayService],
+  exports: [LotteryService, PackService, RelayService, RhinestoneService],
 })
 export class LotteryModule {}

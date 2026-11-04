@@ -6,9 +6,18 @@ import { UsersService } from '../users/users.service';
 import { TwitterAutopayService, UncertainPaymentError, type RecipientRef } from '../twitter-autopay/twitter-autopay.service';
 import { TELEGRAM_HANDLE_RE, MAX_RECIPIENTS, MAX_COMMAND_AMOUNT_USD, MIN_PRIVATE_AMOUNT_USD } from '../telegram-bot/telegram-parser';
 import { TelegramNotifierService } from '../telegram-bot/telegram-notifier.service';
+import { agentError } from './agent-error';
+import { AgentCashoutService } from './agent-cashout.service';
 import type { AgentSession } from './agent-auth.service';
 
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
+
+export interface CashRequest {
+  platform: string;
+  handle: string;
+  /** What the person receives, in USD. */
+  amount_usd: number;
+}
 
 export interface PayRequest {
   payments: Array<{ recipient: string; amount_usd: number }>;
@@ -18,11 +27,7 @@ export interface PayRequest {
   split?: number;
 }
 
-/** A structured refusal an agent can act on: a stable code plus a plain sentence. */
-export const agentError = (code: string, message: string, status: 'bad' | 'forbidden' | 'conflict' = 'bad') => {
-  const body = { code, message };
-  return status === 'forbidden' ? new ForbiddenException(body) : status === 'conflict' ? new ConflictException(body) : new BadRequestException(body);
-};
+export { agentError };
 
 const money = (n: number) => Math.round(n * 100) / 100;
 
@@ -83,6 +88,7 @@ export class AgentPaymentsService implements OnModuleInit {
     private readonly users: UsersService,
     private readonly autopay: TwitterAutopayService,
     private readonly notifier?: TelegramNotifierService,
+    private readonly cashout?: AgentCashoutService,
   ) {}
 
   onModuleInit() {
@@ -348,7 +354,8 @@ export class AgentPaymentsService implements OnModuleInit {
     const v = approve ? await this.approve(userId, actionId) : await this.deny(userId, actionId);
     const who = (v.recipients as any[]).map((r) => `${r.recipient} $${money(r.amount_usd)}`).join(', ');
     const summary =
-      v.status === 'paid' ? `Sent: ${who}.`
+      v.status === 'processing' ? `Approved. ${who} is being cashed out. I will message you when it lands.`
+      : v.status === 'paid' ? `Sent: ${who}.`
       : v.status === 'denied' ? `Denied. Nothing was sent (${who}).`
       : v.status === 'partial' ? `Some payments went through, some did not. Ask your agent to check it.`
       : v.status === 'expired' ? 'This request expired. Ask your agent to send it again.'
@@ -376,6 +383,8 @@ export class AgentPaymentsService implements OnModuleInit {
       await supabase.from('agent_actions').update({ status: 'failed', error: msg, updated_at: new Date().toISOString() }).eq('id', row.id);
       return this.view({ ...row, status: 'failed', error: msg });
     }
+
+    if (row.payload?.kind === 'cashout') return this.runCashout(row);
 
     for (const r of row.payload.recipients) {
       if (unconfirmed) { results.push({ handle: r.handle, status: 'not_attempted' }); continue; }
@@ -445,6 +454,124 @@ export class AgentPaymentsService implements OnModuleInit {
     return this.view(data[0]);
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // Cash-out: a Revolut / Venmo / Cash App / X Money handle, paid from the wallet's USDC
+
+  private async normalizeCash(session: AgentSession, req: CashRequest) {
+    if (!this.cashout) throw agentError('unavailable', 'Cash-outs are not available right now.');
+    const plan = await this.cashout.plan(session.userId, String(req?.platform ?? ''), String(req?.handle ?? ''), Number(req?.amount_usd));
+    if (plan.total_from_wallet_usd > session.perPaymentCapUsd) {
+      throw agentError('over_session_limit', `This costs $${plan.total_from_wallet_usd} from the wallet, over this session's $${session.perPaymentCapUsd} per-payment limit.`, 'forbidden');
+    }
+    return plan;
+  }
+
+  /** What a cash-out would cost and whether the person must approve it. Moves nothing. */
+  async cashQuote(session: AgentSession, req: CashRequest) {
+    this.requireScope(session, 'pay');
+    const plan = await this.normalizeCash(session, req);
+    const approval = await this.needsApproval(session, [{ key: `${plan.platform}:${plan.handle}`, label: `${plan.platform_name} @${plan.handle}` }], plan.total_from_wallet_usd);
+    return {
+      recipient: `${plan.platform_name} @${plan.handle}`,
+      they_receive_usd: plan.payout_usd,
+      loofta_fee_usd: plan.loofta_fee_usd,
+      bridge_fee_usd: plan.bridge_fee_usd,
+      total_from_wallet_usd: plan.total_from_wallet_usd,
+      how_long: 'Usually a few minutes once someone fills it; it can take longer. If nobody fills it within 6 hours, the USDC is returned to the wallet.',
+      needs_approval: approval.needs,
+      approval_reason: approval.reason,
+    };
+  }
+
+  async cashPay(session: AgentSession, req: CashRequest, idempotencyKey: string) {
+    this.requireScope(session, 'pay');
+    if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 100) {
+      throw agentError('idempotency_key_required', 'Send an idempotency_key (8 to 100 characters, unique per intended payment). Retrying with the same key never pays twice.');
+    }
+    const plan = await this.normalizeCash(session, req);
+    const key = `${plan.platform}:${plan.handle}`;
+    const label = `${plan.platform_name} @${plan.handle}`;
+    const existing = await this.findByKey(session.id, idempotencyKey);
+    if (existing) {
+      if (!(existing.handles ?? []).includes(key) || existing.payload?.kind !== 'cashout') throw agentError('idempotency_key_reused', 'That idempotency_key was already used for a different request.', 'conflict');
+      return this.view(existing);
+    }
+    const spent = await this.spentByAgentToday(session.id);
+    if (spent + plan.total_from_wallet_usd > session.dailyCapUsd) {
+      throw agentError('over_session_limit', `That would take this session past its $${session.dailyCapUsd} daily limit ($${spent} already used in the last 24 hours).`, 'forbidden');
+    }
+    const payer = await this.autopay.resolvePayerByUserId(session.userId);
+    if (!payer?.signerGranted) throw agentError('auto_pay_off', 'Auto-pay is turned off. Turn it on in the Loofta app so this agent can send from your wallet.', 'forbidden');
+    try {
+      await this.autopay.assertWithinLimits(payer, plan.total_from_wallet_usd, { dailyTotalUsd: plan.total_from_wallet_usd });
+    } catch (e) {
+      if (e instanceof BadRequestException) throw agentError('over_account_limit', (e.getResponse() as any)?.message ?? e.message, 'forbidden');
+      throw e;
+    }
+    const balance = await this.users.getSolanaWalletBalanceAndAddress(session.userId).then((r) => r.balanceUSD).catch(() => null);
+    if (balance != null && balance + 1e-9 < plan.total_from_wallet_usd) {
+      throw agentError('insufficient_balance', `The wallet has $${money(balance)} and this needs $${plan.total_from_wallet_usd} with fees. Call fund_wallet right away and show the user the wallet address and options; do not ask them questions first.`, 'forbidden');
+    }
+    const approval = await this.needsApproval(session, [{ key, label }], plan.total_from_wallet_usd);
+    const payload = {
+      kind: 'cashout',
+      recipients: [{ handle: key, label, ref: null, amount_usd: plan.payout_usd, delivery: 'cash', total_usd: plan.total_from_wallet_usd }],
+      cash: { platform: plan.platform, handle: plan.handle, payout_usd: plan.payout_usd },
+      options: {},
+      total_from_wallet_usd: plan.total_from_wallet_usd,
+      approval_reason: approval.reason,
+      results: [] as any[],
+    };
+    const { data: row, error } = await this.db.getClient().from('agent_actions').insert({
+      session_id: session.id,
+      user_id: session.userId,
+      kind: 'pay',
+      idempotency_key: idempotencyKey,
+      status: approval.needs ? 'needs_approval' : 'processing',
+      amount_usd: plan.total_from_wallet_usd,
+      is_private: false,
+      handles: [key],
+      payload,
+      expires_at: new Date(Date.now() + APPROVAL_TTL_MS).toISOString(),
+    }).select('*').single();
+    if (error || !row) {
+      if (error?.code === '23505') {
+        const again = await this.findByKey(session.id, idempotencyKey);
+        if (again) return this.view(again);
+      }
+      this.logger.error(`cash-out insert failed: ${error?.message}`);
+      throw agentError('failed', 'Could not record the cash-out. Nothing was sent. Try again.');
+    }
+    if (approval.needs) {
+      void this.askInTelegram(session, row);
+      return this.view(row);
+    }
+    return this.run(row);
+  }
+
+  /** Cancel a cash-out that has not been paid yet. Same as pressing Cancel in the app. */
+  async cashCancel(session: AgentSession, actionId: string) {
+    this.requireScope(session, 'pay');
+    const { data } = await this.db.getClient().from('agent_actions').select('id,session_id,user_id,payload').eq('id', actionId).eq('session_id', session.id).maybeSingle();
+    if (!data || data.payload?.kind !== 'cashout') throw agentError('not_found', 'That is not a cash-out made by this session.');
+    return this.cashout!.cancelByAction(session.userId, actionId);
+  }
+
+  /** Starts the bridge. The rest (deposit, fill, refund) is followed by the cash-out service's cron. */
+  private async runCashout(row: any) {
+    const cash = row.payload.cash;
+    try {
+      await this.cashout!.start({ userId: row.user_id, sessionId: row.session_id, actionId: row.id, platform: cash.platform, handle: cash.handle, payoutUsd: cash.payout_usd });
+      const payload = { ...row.payload, progress: 'Bridging the USDC to Base. Then a buyer is found to send the money. You will get a message when it lands.' };
+      await this.db.getClient().from('agent_actions').update({ payload, updated_at: new Date().toISOString() }).eq('id', row.id);
+      return this.view({ ...row, status: 'processing', payload });
+    } catch (e) {
+      const msg = e instanceof BadRequestException || e instanceof ForbiddenException ? String((e.getResponse() as any)?.message ?? e.message) : 'The cash-out could not start. Nothing was sent.';
+      await this.db.getClient().from('agent_actions').update({ status: 'failed', error: msg, updated_at: new Date().toISOString() }).eq('id', row.id);
+      return this.view({ ...row, status: 'failed', error: msg });
+    }
+  }
+
   /** The agent checking on a request it made. */
   async get(session: AgentSession, actionId: string) {
     this.requireScope(session, 'read');
@@ -502,6 +629,8 @@ export class AgentPaymentsService implements OnModuleInit {
         };
       }),
       approval_url: row.status === 'needs_approval' ? `${this.appUrl}/agent?approve=${row.id}` : undefined,
+      progress: row.payload?.kind === 'cashout' ? row.payload?.progress : row.status === 'processing' ? row.payload?.progress : undefined,
+      links: row.payload?.links,
       approval_reason: row.status === 'needs_approval' ? row.payload?.approval_reason : undefined,
       expires_at: row.status === 'needs_approval' ? row.expires_at : undefined,
       error: row.error ?? undefined,

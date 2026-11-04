@@ -226,25 +226,4 @@ export class AutopaySignerService {
     ).toString('base64');
     return this.solanaSponsor.signAndBroadcastPER(signedBase64, undefined, params.senderPrivyUserId, params.paymentId);
   }
-
-  /**
-   * Signs a transaction the person's own wallet is the only signer and fee payer of (a Jupiter swap inside
-   * their wallet) with the delegated key, and sends it. Nothing here pays or signs for the fee payer, so the
-   * sponsor guards do not apply; the caller built the transaction and checked its signer layout.
-   */
-  async signAndSendOwnWalletTransaction(params: { walletId: string; walletAddress: string; transactionBase64: string; lastValidBlockHeight?: number | null }): Promise<{ signature: string }> {
-    if (!this.signingClient) throw new BadRequestException('Signing is not configured');
-    const tx = VersionedTransaction.deserialize(Buffer.from(params.transactionBase64, 'base64'));
-    if (tx.message.header.numRequiredSignatures !== 1 || tx.message.staticAccountKeys[0].toBase58() !== params.walletAddress) {
-      throw new BadRequestException('Could not build a safe swap transaction. Try again.');
-    }
-    const { signedTransaction } = await this.signingClient.walletApi.solana.signTransaction({ walletId: params.walletId, transaction: tx });
-    const signed = signedTransaction as VersionedTransaction;
-    const connection = new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
-    const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 });
-    const { blockhash, lastValidBlockHeight } = { blockhash: signed.message.recentBlockhash, lastValidBlockHeight: params.lastValidBlockHeight ?? (await connection.getLatestBlockhash('confirmed')).lastValidBlockHeight };
-    const res = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
-    if (res.value.err) throw new BadRequestException('The swap did not go through. Your tokens were not moved.');
-    return { signature };
-  }
 }

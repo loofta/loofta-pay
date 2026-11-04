@@ -4,7 +4,7 @@ import { handle } from '../server.js';
 
 test('lists the tools', async () => {
   const r: any = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
-  assert.deepEqual(r.result.tools.map((t: any) => t.name), ['whoami', 'quote_payment', 'pay', 'contacts', 'lookup_recipient', 'fund_wallet', 'fund_with_token', 'swap_to_usdc', 'funding_status', 'list_fundings', 'get_payment', 'list_payments']);
+  assert.deepEqual(r.result.tools.map((t: any) => t.name), ['whoami', 'quote_payment', 'pay', 'cash_out_quote', 'cash_out', 'cancel_cash_out', 'contacts', 'lookup_recipient', 'fund_wallet', 'fund_with_token', 'funding_status', 'list_fundings', 'get_payment', 'list_payments']);
 });
 test('notifications get no reply', async () => {
   assert.equal(await handle({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);

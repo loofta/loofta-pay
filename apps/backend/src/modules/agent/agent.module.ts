@@ -11,12 +11,16 @@ import { UsersModule } from '../users/users.module';
 import { TwitterAutopayModule } from '../twitter-autopay/twitter-autopay.module';
 import { IntentsModule } from '../intents/intents.module';
 import { TelegramBotModule } from '../telegram-bot/telegram-bot.module';
-import { JupiterModule } from '../jupiter/jupiter.module';
+import { OfframpModule } from '../offramp/offramp.module';
+import { LotteryModule } from '../lottery/lottery.module';
+import { SendPaymentModule } from '../send-payment/send-payment.module';
+import { AgentSolSwapService } from './agent-sol-swap.service';
+import { AgentCashoutService } from './agent-cashout.service';
 import { AgentFundingService } from './agent-funding.service';
 
 @Module({
-  imports: [UsersModule, TwitterAutopayModule, IntentsModule, TelegramBotModule, JupiterModule],
+  imports: [UsersModule, TwitterAutopayModule, IntentsModule, TelegramBotModule, OfframpModule, LotteryModule, SendPaymentModule],
   controllers: [AgentController, AgentOauthController, AgentMcpController],
-  providers: [AgentAuthService, AgentPaymentsService, AgentGuard, AgentOauthService, AgentMcpService, AgentFundingService],
+  providers: [AgentAuthService, AgentPaymentsService, AgentGuard, AgentOauthService, AgentMcpService, AgentFundingService, AgentCashoutService, AgentSolSwapService],
 })
 export class AgentModule {}

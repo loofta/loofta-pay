@@ -186,20 +186,36 @@ export class AgentController {
 
   // ----- Funding from any token (NEAR Intents)
 
+  @Post('v1/cash-out/quote')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AgentGuard, RateLimitGuard)
+  @RateLimit(30, 60, 'agent:cash-quote')
+  cashQuote(@Req() req: { agentSession: AgentSession }, @Body() body: any) {
+    return this.payments.cashQuote(req.agentSession, body ?? {});
+  }
+
+  @Post('v1/cash-out')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AgentGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'agent:cash-out')
+  cashOut(@Req() req: { agentSession: AgentSession }, @Body() body: any) {
+    return this.payments.cashPay(req.agentSession, body ?? {}, String(body?.idempotency_key ?? ''));
+  }
+
+  @Post('v1/cash-out/:id/cancel')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AgentGuard, RateLimitGuard)
+  @RateLimit(10, 60, 'agent:cash-cancel')
+  cashCancel(@Req() req: { agentSession: AgentSession }, @Param('id') id: string) {
+    return this.payments.cashCancel(req.agentSession, id);
+  }
+
   @Post('v1/fund-options')
   @HttpCode(HttpStatus.OK)
   @UseGuards(AgentGuard, RateLimitGuard)
   @RateLimit(20, 60, 'agent:fund-options')
   fundOptions(@Req() req: { agentSession: AgentSession }, @Body() body: any) {
     return this.funding.options(req.agentSession, { private: body?.private === true, amount_usd: body?.amount_usd });
-  }
-
-  @Post('v1/swap-to-usdc')
-  @HttpCode(HttpStatus.OK)
-  @UseGuards(AgentGuard, RateLimitGuard)
-  @RateLimit(10, 60, 'agent:swap')
-  swapToUsdc(@Req() req: { agentSession: AgentSession }, @Body() body: any) {
-    return this.funding.swapToUsdc(req.agentSession, { token: String(body?.token ?? ''), amount: body?.amount });
   }
 
   @Post('v1/fundings')

@@ -31,17 +31,13 @@ function build(o: { quote?: (p: any) => any; status?: (addr: string) => any; onC
   const notifier: any = { notifyUser: jest.fn(async () => true) };
   const config: any = { get: (k: string) => (k === 'NODE_ENV' ? 'production' : undefined) };
   const tgWallet: any = { startPrivateDeposit: jest.fn(async (_u: string, a: number) => ({ id: 'pd1', depositAddress: 'PrivDep1', amountToSendUsdc: a + 0.3, feeEstimateUsdc: 0.3 })) };
-  const jupiter: any = {
-    quoteSwap: jest.fn(async () => ({ outAmount: '12500000' })),
-    buildSwap: jest.fn(async () => ({ gasless: false, swapTransaction: 'dHg=', lastValidBlockHeight: 10, outAmount: '12500000', minOutAmount: '12375000' })),
+  const solSwap: any = {
+    newBurner: jest.fn(() => ({ address: `BurnerSol${++n}`, keyEnc: 'v2:enc' })),
+    settle: jest.fn(async () => ({ state: 'waiting' })),
+    refund: jest.fn(async () => undefined),
   };
-  const signer: any = {
-    isAvailable: true,
-    resolveSenderWallet: jest.fn(async () => ({ address: SOL_WALLET, walletId: 'w1' })),
-    signAndSendOwnWalletTransaction: jest.fn(async () => ({ signature: 'sig1' })),
-  };
-  const svc = new AgentFundingService(db as any, config, near, users, notifier, tgWallet, jupiter, signer);
-  return { svc, db, near, notifier, jupiter, signer };
+  const svc = new AgentFundingService(db as any, config, near, users, notifier, tgWallet, solSwap);
+  return { svc, db, near, notifier, solSwap };
 }
 
 const fund = (svc: AgentFundingService, over: any = {}, s = session()) => svc.fund(s, { token: 'ETH', chain: 'base', amount: 0.0031, refund_address: EVM, ...over });
@@ -75,35 +71,35 @@ describe('adding money without questions', () => {
     expect(r.send_usdc_on_solana_to).toBe(SOL_WALLET);
     expect(near.getDepositQuote).not.toHaveBeenCalled();
   });
-  it('SOL is sent to the wallet and swapped with Jupiter, never NEAR Intents', async () => {
-    const { svc, near } = build();
+  it('SOL goes to a one-time address and is swapped with Jupiter, never NEAR Intents', async () => {
+    const { svc, near, db } = build();
     const r: any = await svc.fund(session(), { token: 'SOL', receive_usdc: 10 });
-    expect(r).toMatchObject({ route: 'jupiter', send_to: SOL_WALLET, swap_fee: '0.80%', send_amount: 0.106 });
+    expect(r).toMatchObject({ route: 'jupiter', send_to: expect.stringContaining('BurnerSol'), swap_fee: '0.80%', send_amount: '0.111' });
     expect(near.getDepositQuote).not.toHaveBeenCalled();
+    expect(db.rows('agent_funding_orders')[0]).toMatchObject({ route: 'jupiter', recipient_address: SOL_WALLET, burner_key_enc: 'v2:enc' });
     const exact: any = await svc.fund(session(), { token: 'SOL', chain: 'solana', amount: 0.5 });
-    expect(exact.send_amount).toBe(0.5);
+    expect(exact.send_amount).toBe('0.5');
+    await expect(svc.fund(session(), { token: 'SOL', amount: 0.001 })).rejects.toMatchObject({ response: { code: 'bad_amount' } });
   });
-  it('other Solana tokens need their mint address', async () => {
-    const { svc, near } = build();
-    await expect(svc.fund(session(), { token: 'BONK', chain: 'solana', amount: 1000 })).rejects.toBeDefined();
-    const r: any = await svc.fund(session(), { token: 'BONK', chain: 'solana', amount: 1000, mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263' });
-    expect(r.route).toBe('jupiter');
-    expect(near.getDepositQuote).not.toHaveBeenCalled();
+  it('other Solana tokens are not supported', async () => {
+    const { svc } = build();
+    await expect(svc.fund(session(), { token: 'BONK', chain: 'solana', amount: 1000 })).rejects.toMatchObject({ response: { code: 'unsupported_token' } });
   });
-  it('swaps what is in the wallet to USDC, signed with the delegated key', async () => {
-    const { svc, jupiter, signer } = build();
-    const r: any = await svc.swapToUsdc(session(), { token: 'SOL', amount: 0.1 });
-    expect(r).toMatchObject({ status: 'swapped', received_usdc_about: 12.5, signature: 'sig1' });
-    expect(jupiter.buildSwap.mock.calls[0][1]).toMatchObject({ inputMint: 'So11111111111111111111111111111111111111112', outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' });
-    expect(signer.signAndSendOwnWalletTransaction).toHaveBeenCalledWith(expect.objectContaining({ walletId: 'w1' }));
+  it('a SOL order becomes received once the swap is forwarded, and the person is told', async () => {
+    const { svc, solSwap, notifier } = build();
+    const r: any = await svc.fund(session(), { token: 'SOL', amount: 0.2 });
+    solSwap.settle.mockResolvedValueOnce({ state: 'received', usdc: 18.4, signature: 'sigX' });
+    const s: any = await svc.status(session(), r.id);
+    expect(s).toMatchObject({ status: 'received', received_usdc: 18.4 });
+    expect(notifier.notifyUser).toHaveBeenCalled();
   });
-  it('refuses a swap by symbol, over the limit, or without signing permission', async () => {
-    const { svc, signer } = build();
-    await expect(svc.swapToUsdc(session(), { token: 'BONK', amount: 1 })).rejects.toMatchObject({ response: { code: 'unknown_token' } });
-    await expect(svc.swapToUsdc(session({ dailyCapUsd: 5 }), { token: 'SOL', amount: 0.1 })).rejects.toMatchObject({ response: { code: 'over_session_limit' } });
-    signer.resolveSenderWallet.mockResolvedValueOnce(null);
-    await expect(svc.swapToUsdc(session(), { token: 'SOL', amount: 0.1 })).rejects.toMatchObject({ response: { code: 'no_signer' } });
-    await expect(svc.swapToUsdc(session({ scopes: ['read'] }), { token: 'SOL', amount: 1 })).rejects.toMatchObject({ response: { code: 'missing_scope' } });
+  it('an expired SOL order sends anything left back to the person', async () => {
+    const { svc, solSwap, db } = build();
+    const r: any = await svc.fund(session(), { token: 'SOL', amount: 0.2 });
+    db.rows('agent_funding_orders')[0].deadline = new Date(Date.now() - 1000).toISOString();
+    const s: any = await svc.status(session(), r.id);
+    expect(s.status).toBe('expired');
+    expect(solSwap.refund).toHaveBeenCalled();
   });
   it('needs no refund address from Solana, it is the Loofta wallet', async () => {
     const { svc } = build();

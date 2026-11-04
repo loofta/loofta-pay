@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createPublicClient, http, encodeFunctionData, erc20Abi, type Address } from 'viem';
+import { createPublicClient, createWalletClient, custom, http, encodeFunctionData, erc20Abi, type Address } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
 import { RhinestoneSDK } from '@rhinestone/sdk';
@@ -372,5 +372,41 @@ export class RhinestoneService {
 
     await account.waitForExecution(result);
     this.logger.log(`Rhinestone rescue complete`);
+  }
+
+  /**
+   * Run calls from the smart account with Rhinestone paying the gas. Returns the transaction hash.
+   * The account needs no ETH, only the tokens it moves.
+   */
+  async sendSponsored(ownerKey: `0x${string}`, calls: { to: Address; data?: `0x${string}`; value?: bigint }[]): Promise<string> {
+    const account = await this.getAccount(ownerKey);
+    const result = await account.sendTransaction({ chain: base, calls, sponsored: true });
+    const status = (await account.waitForExecution(result)) as any;
+    const hash = status?.fill?.hash ?? status?.transactionHash ?? status?.hash;
+    if (!hash) throw new Error(`Rhinestone returned no transaction hash: ${safeJson(status).slice(0, 200)}`);
+    return hash;
+  }
+
+  /**
+   * A viem wallet client for the smart account whose eth_sendTransaction goes out as a sponsored Rhinestone
+   * transaction, so SDKs that expect a normal wallet (Peer Cash) work with no ETH on the account. Everything else
+   * (reads, receipts) goes to the Base RPC. Peer Cash only sends transactions here; it asks for no signatures.
+   */
+  async getSponsoredWalletClient(ownerKey: `0x${string}`): Promise<{ address: Address; walletClient: any }> {
+    const account = await this.getAccount(ownerKey);
+    const address = account.getAddress() as Address;
+    const rpc = http(this.baseRpcUrl)({ chain: base });
+    const transport = custom({
+      request: async ({ method, params }: { method: string; params?: any }) => {
+        if (method === 'eth_chainId') return '0x2105';
+        if (method === 'eth_accounts' || method === 'eth_requestAccounts') return [address];
+        if (method === 'eth_sendTransaction') {
+          const tx = params[0];
+          return this.sendSponsored(ownerKey, [{ to: tx.to, data: tx.data, ...(tx.value ? { value: BigInt(tx.value) } : {}) }]);
+        }
+        return rpc.request({ method, params } as any);
+      },
+    });
+    return { address, walletClient: createWalletClient({ chain: base, transport, account: address }) };
   }
 }
