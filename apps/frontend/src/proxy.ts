@@ -78,6 +78,7 @@ export function proxy(request: NextRequest) {
     "/giveaways",
     "/rewards-rail",
     "/partners",
+    "/business",
     "/fomo",
     "/guides/send-crypto-privately",
     "/vs/paypal",

@@ -2,22 +2,22 @@ import type { Metadata } from "next";
 import PartnersContent from "./PartnersContent";
 import { PARTNERS_FAQ } from "./data";
 
-const TITLE = "For Business — Bring Social Payments Into Your Product";
+const TITLE = "Loofta for Business: Pay Clippers, Affiliates and Creators";
 const DESCRIPTION =
-  "Gift, split, reward, and pay out in USDC — public or private — inside your own product. Built for creator platforms, freelance marketplaces, and distributed teams who want to move money for their community.";
+  "Pay clippers, referral partners and creators by social handle or email, in USDC or any token. They cash out to Venmo, Cash App, Revolut, Zelle or a bank. You earn a share of their fees, and we handle the support.";
 
 export const metadata: Metadata = {
   title: TITLE,
   description: DESCRIPTION,
   keywords: [
-    "crypto gifting integration",
-    "embed crypto payments",
-    "white label crypto payments",
-    "B2B crypto payments API",
+    "clipper payouts",
+    "affiliate payouts",
+    "creator payouts",
+    "referral payouts",
     "USDC payouts for platforms",
-    "private payments integration",
-    "gift card API crypto",
-    "payment links for platforms",
+    "Whop alternative",
+    "payout API",
+    "pay creators worldwide",
   ],
   alternates: {
     canonical: "/partners",
