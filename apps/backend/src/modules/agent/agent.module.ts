@@ -11,10 +11,11 @@ import { UsersModule } from '../users/users.module';
 import { TwitterAutopayModule } from '../twitter-autopay/twitter-autopay.module';
 import { IntentsModule } from '../intents/intents.module';
 import { TelegramBotModule } from '../telegram-bot/telegram-bot.module';
+import { JupiterModule } from '../jupiter/jupiter.module';
 import { AgentFundingService } from './agent-funding.service';
 
 @Module({
-  imports: [UsersModule, TwitterAutopayModule, IntentsModule, TelegramBotModule],
+  imports: [UsersModule, TwitterAutopayModule, IntentsModule, TelegramBotModule, JupiterModule],
   controllers: [AgentController, AgentOauthController, AgentMcpController],
   providers: [AgentAuthService, AgentPaymentsService, AgentGuard, AgentOauthService, AgentMcpService, AgentFundingService],
 })

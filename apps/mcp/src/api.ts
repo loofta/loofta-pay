@@ -41,6 +41,7 @@ export const loofta = (api: string, token: string) => ({
   contacts: (limit = 30) => request<any>(api, `/agent/v1/contacts?limit=${limit}`, { token }),
   lookup: (recipient: string) => request<any>(api, `/agent/v1/lookup?recipient=${encodeURIComponent(recipient)}`, { token }),
   fundOptions: (b: Record<string, unknown>) => request<any>(api, '/agent/v1/fund-options', { token, body: b }),
+  swapToUsdc: (b: Record<string, unknown>) => request<any>(api, '/agent/v1/swap-to-usdc', { token, body: b }),
   fund: (b: Record<string, unknown>) => request<any>(api, '/agent/v1/fundings', { token, body: b }),
   funding: (id: string) => request<any>(api, `/agent/v1/fundings/${encodeURIComponent(id)}`, { token }),
   fundings: (limit = 10) => request<any>(api, `/agent/v1/fundings?limit=${limit}`, { token }),

@@ -27,8 +27,9 @@ export const TOOLS = [
   {
     name: 'fund_with_token',
     description: `Pay with any token. Gets a one-time deposit address: the user sends that token (from Solana or an EVM network) to it, and NEAR Intents swaps it to USDC in their Loofta wallet, confidentially by default. Give the token, the network if it exists on several, and either amount or receive_usdc. refund_address is optional from Solana (defaults to the user's Loofta wallet); on EVM it must be the user's own wallet. Show the user the address, exact amount and network, then call funding_status until it says received or refunded.`,
-    inputSchema: { type: 'object', properties: { token: { type: 'string' }, chain: { type: 'string' }, amount: { type: 'number' }, receive_usdc: { type: 'number' }, refund_address: { type: 'string' }, confidential: { type: 'boolean' }, allow_public: { type: 'boolean' } }, required: ['token'] },
+    inputSchema: { type: 'object', properties: { token: { type: 'string' }, chain: { type: 'string' }, amount: { type: 'number' }, receive_usdc: { type: 'number' }, refund_address: { type: 'string' }, mint: { type: 'string' }, confidential: { type: 'boolean' }, allow_public: { type: 'boolean' } }, required: ['token'] },
   },
+  { name: 'swap_to_usdc', description: "Swap SOL (or a Solana token by mint address) already in the user's Loofta wallet into USDC with Jupiter (0.80% fee, needs about 0.004 SOL for the network fee).", inputSchema: { type: 'object', properties: { token: { type: 'string' }, amount: { type: 'number' } }, required: ['token', 'amount'] } },
   { name: 'funding_status', description: 'Status of a fund_with_token order: waiting, processing, received, refunded, failed or expired. Tell the user when it is received or refunded.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
   { name: 'list_fundings', description: 'Recent fund_with_token orders.', inputSchema: { type: 'object', properties: { limit: { type: 'number' } } } },
   { name: 'get_payment', description: 'Status of a payment, including approval state and per-recipient results.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
@@ -47,7 +48,8 @@ export async function callTool(name: string, args: any): Promise<unknown> {
     case 'contacts': return api.contacts(Number(args?.limit) || 30);
     case 'lookup_recipient': return api.lookup(String(args?.recipient ?? ''));
     case 'fund_wallet': return api.fundOptions({ private: args?.private === true, amount_usd: args?.amount_usd });
-    case 'fund_with_token': return api.fund({ token: args?.token, chain: args?.chain, amount: args?.amount, receive_usdc: args?.receive_usdc, refund_address: args?.refund_address, confidential: args?.confidential, allow_public: args?.allow_public });
+    case 'fund_with_token': return api.fund({ token: args?.token, chain: args?.chain, amount: args?.amount, receive_usdc: args?.receive_usdc, refund_address: args?.refund_address, confidential: args?.confidential, allow_public: args?.allow_public, mint: args?.mint });
+    case 'swap_to_usdc': return api.swapToUsdc({ token: args?.token, amount: args?.amount });
     case 'funding_status': return api.funding(String(args?.id));
     case 'list_fundings': return api.fundings(Number(args?.limit) || 10);
     case 'get_payment': return api.get(String(args?.id));

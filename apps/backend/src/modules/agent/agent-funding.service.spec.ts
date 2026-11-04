@@ -1,4 +1,5 @@
 import { AgentFundingService, mapNearStatus } from './agent-funding.service';
+jest.mock('@/common/magicblock-private-transfer', () => ({ fetchSolPriceUsd: async () => 100 }));
 import { TestDb } from './test-db';
 import type { AgentSession } from './agent-auth.service';
 
@@ -30,8 +31,17 @@ function build(o: { quote?: (p: any) => any; status?: (addr: string) => any; onC
   const notifier: any = { notifyUser: jest.fn(async () => true) };
   const config: any = { get: (k: string) => (k === 'NODE_ENV' ? 'production' : undefined) };
   const tgWallet: any = { startPrivateDeposit: jest.fn(async (_u: string, a: number) => ({ id: 'pd1', depositAddress: 'PrivDep1', amountToSendUsdc: a + 0.3, feeEstimateUsdc: 0.3 })) };
-  const svc = new AgentFundingService(db as any, config, near, users, notifier, tgWallet);
-  return { svc, db, near, notifier };
+  const jupiter: any = {
+    quoteSwap: jest.fn(async () => ({ outAmount: '12500000' })),
+    buildSwap: jest.fn(async () => ({ gasless: false, swapTransaction: 'dHg=', lastValidBlockHeight: 10, outAmount: '12500000', minOutAmount: '12375000' })),
+  };
+  const signer: any = {
+    isAvailable: true,
+    resolveSenderWallet: jest.fn(async () => ({ address: SOL_WALLET, walletId: 'w1' })),
+    signAndSendOwnWalletTransaction: jest.fn(async () => ({ signature: 'sig1' })),
+  };
+  const svc = new AgentFundingService(db as any, config, near, users, notifier, tgWallet, jupiter, signer);
+  return { svc, db, near, notifier, jupiter, signer };
 }
 
 const fund = (svc: AgentFundingService, over: any = {}, s = session()) => svc.fund(s, { token: 'ETH', chain: 'base', amount: 0.0031, refund_address: EVM, ...over });
@@ -65,11 +75,38 @@ describe('adding money without questions', () => {
     expect(r.send_usdc_on_solana_to).toBe(SOL_WALLET);
     expect(near.getDepositQuote).not.toHaveBeenCalled();
   });
-  it('needs no refund address from Solana, it is the Loofta wallet', async () => {
+  it('SOL is sent to the wallet and swapped with Jupiter, never NEAR Intents', async () => {
     const { svc, near } = build();
-    const r: any = await svc.fund(session(), { token: 'BONK', chain: 'solana', amount: 1000 });
-    expect(r.refund_address).toBe(SOL_WALLET);
-    expect(near.getDepositQuote.mock.calls[0][0].refundAddress).toBe(SOL_WALLET);
+    const r: any = await svc.fund(session(), { token: 'SOL', receive_usdc: 10 });
+    expect(r).toMatchObject({ route: 'jupiter', send_to: SOL_WALLET, swap_fee: '0.80%', send_amount: 0.106 });
+    expect(near.getDepositQuote).not.toHaveBeenCalled();
+    const exact: any = await svc.fund(session(), { token: 'SOL', chain: 'solana', amount: 0.5 });
+    expect(exact.send_amount).toBe(0.5);
+  });
+  it('other Solana tokens need their mint address', async () => {
+    const { svc, near } = build();
+    await expect(svc.fund(session(), { token: 'BONK', chain: 'solana', amount: 1000 })).rejects.toBeDefined();
+    const r: any = await svc.fund(session(), { token: 'BONK', chain: 'solana', amount: 1000, mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263' });
+    expect(r.route).toBe('jupiter');
+    expect(near.getDepositQuote).not.toHaveBeenCalled();
+  });
+  it('swaps what is in the wallet to USDC, signed with the delegated key', async () => {
+    const { svc, jupiter, signer } = build();
+    const r: any = await svc.swapToUsdc(session(), { token: 'SOL', amount: 0.1 });
+    expect(r).toMatchObject({ status: 'swapped', received_usdc_about: 12.5, signature: 'sig1' });
+    expect(jupiter.buildSwap.mock.calls[0][1]).toMatchObject({ inputMint: 'So11111111111111111111111111111111111111112', outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' });
+    expect(signer.signAndSendOwnWalletTransaction).toHaveBeenCalledWith(expect.objectContaining({ walletId: 'w1' }));
+  });
+  it('refuses a swap by symbol, over the limit, or without signing permission', async () => {
+    const { svc, signer } = build();
+    await expect(svc.swapToUsdc(session(), { token: 'BONK', amount: 1 })).rejects.toMatchObject({ response: { code: 'unknown_token' } });
+    await expect(svc.swapToUsdc(session({ dailyCapUsd: 5 }), { token: 'SOL', amount: 0.1 })).rejects.toMatchObject({ response: { code: 'over_session_limit' } });
+    signer.resolveSenderWallet.mockResolvedValueOnce(null);
+    await expect(svc.swapToUsdc(session(), { token: 'SOL', amount: 0.1 })).rejects.toMatchObject({ response: { code: 'no_signer' } });
+    await expect(svc.swapToUsdc(session({ scopes: ['read'] }), { token: 'SOL', amount: 1 })).rejects.toMatchObject({ response: { code: 'missing_scope' } });
+  });
+  it('needs no refund address from Solana, it is the Loofta wallet', async () => {
+    const { svc } = build();
     await expect(svc.fund(session(), { token: 'ETH', chain: 'base', amount: 0.01 })).rejects.toMatchObject({ response: { code: 'refund_address_required' } });
   });
 });
@@ -130,10 +167,8 @@ describe('creating a funding', () => {
     const { svc, near } = build();
     await expect(fund(svc, { refund_address: OTHER_EVM })).rejects.toMatchObject({ response: { code: 'refund_address_not_yours' } });
     await expect(fund(svc, { refund_address: 'nope' })).rejects.toMatchObject({ response: { code: 'bad_refund_address' } });
-    await expect(fund(svc, { token: 'BONK', chain: 'solana', refund_address: 'DifferentSolanaWallet11111111111111111111111111' })).rejects.toBeDefined();
-    await expect(fund(svc, { token: 'BONK', chain: 'solana', refund_address: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU' })).rejects.toMatchObject({ response: { code: 'refund_address_not_yours' } });
     expect(near.getDepositQuote).not.toHaveBeenCalled();
-    const ok: any = await fund(svc, { token: 'BONK', chain: 'solana', refund_address: SOL_WALLET });
+    const ok: any = await fund(svc, { token: 'USDT', chain: 'eth', refund_address: EVM });
     expect(ok.status).toBe('awaiting_deposit');
   });
 
