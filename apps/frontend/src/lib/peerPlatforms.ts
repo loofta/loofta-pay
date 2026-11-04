@@ -12,6 +12,8 @@ export interface PeerCurrency {
 // bake in a spread to incentivize faster fills; that concept doesn't exist in the new SDK.)
 export const PEER_CURRENCIES: PeerCurrency[] = [
   { code: 'USD', label: 'US Dollar',          flag: '🇺🇸', symbol: '$',  spreadPercent: 0 },
+  { code: 'GBP', label: 'British Pound',      flag: '🇬🇧', symbol: '£',  spreadPercent: 0 },
+  { code: 'INR', label: 'Indian Rupee',       flag: '🇮🇳', symbol: '₹',  spreadPercent: 0 },
 ];
 
 export function getPeerCurrency(code: string): PeerCurrency | undefined {
@@ -103,6 +105,39 @@ export const PEER_PLATFORMS: PeerPlatform[] = [
     maxUSDC: null,
     cooldownHours: null,
   },
+  {
+    id: 'chime',
+    name: 'Chime',
+    processorName: 'chime',
+    idLabel: 'ChimeSign',
+    placeholder: '$yourchimesign',
+    currencies: ['USD'],
+    logo: '/images/platforms/chime.png',
+    maxUSDC: 1000,
+    cooldownHours: null,
+  },
+  {
+    id: 'monzo',
+    name: 'Monzo',
+    processorName: 'monzo',
+    idLabel: 'Monzo.me username',
+    placeholder: 'yourusername',
+    currencies: ['GBP'],
+    logo: '/images/platforms/monzo.svg',
+    maxUSDC: null,
+    cooldownHours: null,
+  },
+  {
+    id: 'upi',
+    name: 'UPI',
+    processorName: 'upi',
+    idLabel: 'UPI ID',
+    placeholder: 'name@bank',
+    currencies: ['INR'],
+    logo: '/images/platforms/upi.svg',
+    maxUSDC: null,
+    cooldownHours: null,
+  },
 ];
 
 export function getPlatform(id: string): PeerPlatform | undefined {
@@ -116,7 +151,7 @@ export function getPlatform(id: string): PeerPlatform | undefined {
  * X Money needs neither a Peer identity attestation nor any prior payee
  * registration, so it can be paid directly (needs @zkp2p/cash >= 0.7.0).
  */
-export const DIRECT_CASH_PLATFORM_IDS = ["venmo", "cashapp", "revolut", "xmoney"] as const;
+export const DIRECT_CASH_PLATFORM_IDS = ["venmo", "cashapp", "revolut", "chime", "monzo", "upi", "xmoney"] as const;
 export type DirectCashPlatformId = (typeof DIRECT_CASH_PLATFORM_IDS)[number];
 
 export const DIRECT_CASH_PLATFORMS: PeerPlatform[] = DIRECT_CASH_PLATFORM_IDS.map(
@@ -153,4 +188,10 @@ export function formatCooldown(minutes: number): string {
     return m > 0 ? `${h}h ${m}m left` : `${h}h left`;
   }
   return `${minutes}m left`;
+}
+
+/** Currency a peer pays out in on this platform: its first non-USD currency (Monzo GBP, UPI INR), else USD. */
+export function platformPayoutCurrency(platformId: string | null | undefined): string {
+  const platform = platformId ? getPlatform(platformId) : undefined;
+  return platform?.currencies.find((c) => c !== 'USD') ?? platform?.currencies[0] ?? 'USD';
 }

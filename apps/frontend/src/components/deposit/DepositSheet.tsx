@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Connection, PublicKey, Transaction, VersionedTransaction } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { useCreateWallet, usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
-import { useFundWallet, useSignTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
+import { useCreateWallet, useFiatOnramp, usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
+import { useSignTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { ChevronLeft, Copy, ExternalLink, Loader2, Shield, X } from "lucide-react";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -16,6 +16,8 @@ import { SolanaWalletConnectProvider, useWallet, WalletMultiButton } from "@/com
 import { PajCashOnrampView } from "@/components/paj-cash/PajCashOnrampView";
 import { PajCashOfframpView } from "@/components/paj-cash/PajCashOfframpView";
 import { PEER_PLATFORMS } from "@/lib/peerPlatforms";
+import { CashConversion } from "@/components/cash/CashConversion";
+import { cashoutPayoutUsdc } from "@/services/peerCash";
 import { usePerPrivateSelfTransfer } from "@/hooks/usePerPrivateSelfTransfer";
 import { useSolDomain } from "@/hooks/useSolDomain";
 import { useSolPriceOrNull } from "@/hooks/useSolPrice";
@@ -885,7 +887,7 @@ function CardDeposit({
   const { toast } = useToast();
   const { createWallet: createEvmWallet } = useCreateWallet();
   const { wallets: evmWallets } = useEvmWallets();
-  const { fundWallet } = useFundWallet();
+  const { fund: fundFiatOnramp } = useFiatOnramp();
   const asPeer = (p?: CardProvider): CardProvider | null =>
     !p ? null : p === "revolut" || p === "venmo" || p === "cashapp" ? "peer" : p;
   const [provider, setProvider] = useState<CardProvider | null>(asPeer(initialProvider));
@@ -901,7 +903,11 @@ function CardDeposit({
     setBusy(true);
     try {
       if (chosen === "card") {
-        await fundWallet({ address: solanaAddress, options: { asset: "USDC", ...(amountNum > 0 ? { amount: String(amountNum) } : {}) } });
+        await fundFiatOnramp({
+          source: { defaultAsset: "usd" },
+          destination: { asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", chain: "solana:mainnet", address: solanaAddress },
+          ...(amountNum > 0 ? { defaultAmount: String(amountNum) } : {}),
+        });
         return;
       }
       await startPeerCheckout({
@@ -1887,40 +1893,32 @@ function BankWithdraw({
     onCashOut?.({ platformId: platform.id, identifier: identifier.trim(), amountUsd: amountNum, intent: "receive" });
   };
 
-  const openCoinbase = async () => {
+  const openMeld = async () => {
     if (!solanaAddress) return;
     setBusy(true);
     try {
       const access = await getAccessToken();
-      const sessionRes = await fetch("/api/coinbase/offramp-session", {
+      const sessionRes = await fetch("/api/meld/offramp-session", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(access ? { Authorization: `Bearer ${access}` } : {}) },
-        body: JSON.stringify({ walletAddress: solanaAddress, blockchains: ["solana"] }),
+        body: JSON.stringify({ walletAddress: solanaAddress, redirectUrl: `${window.location.origin}/` }),
       });
       if (!sessionRes.ok) {
         const err = await sessionRes.json().catch(() => ({})) as { error?: string; detail?: string };
-        throw new Error(err.detail || err.error || "Could not start Coinbase");
+        throw new Error(err.detail || err.error || "Could not start cash-out");
       }
-      const { token } = await sessionRes.json();
-      if (!token) throw new Error("No Coinbase session");
-      // The sessionToken already identifies the app; sending appId too launches the widget twice
-      const params = new URLSearchParams({
-        sessionToken: token,
-        defaultNetwork: "solana",
-        defaultAsset: "USDC",
-        redirectUrl: window.location.origin,
-        partnerUserRef: (user?.id ?? "loofta-user").slice(0, 50),
-      });
-      window.location.assign(`https://pay.coinbase.com/v3/sell/input?${params.toString()}`);
+      const { widgetUrl } = await sessionRes.json() as { widgetUrl?: string };
+      if (!widgetUrl) throw new Error("No cash-out session");
+      window.location.assign(widgetUrl);
     } catch (err) {
-      toast({ variant: "destructive", title: "Couldn't open Coinbase", description: err instanceof Error ? err.message : "Try again." });
+      toast({ variant: "destructive", title: "Couldn't open cash-out", description: err instanceof Error ? err.message : "Try again." });
     } finally {
       setBusy(false);
     }
   };
 
   if (devnetMode) {
-    return <p className="mt-4 text-sm text-[#C8C6D0]">Bank cash-out is available on mainnet. Switch networks to send to Coinbase, PAJ Cash, or a bank app.</p>;
+    return <p className="mt-4 text-sm text-[#C8C6D0]">Bank cash-out is available on mainnet. Switch networks to cash out to a bank, PAJ Cash, or a bank app.</p>;
   }
 
   if (platform) {
@@ -1934,6 +1932,7 @@ function BankWithdraw({
           onMax={() => setAmount(maxCashOut > 0 ? maxCashOut.toFixed(6).replace(/\.?0+$/, "") : "")}
         />
         {amountNum > maxCashOut && <p className="text-sm text-red-400">That is more than your ${balanceNum.toFixed(2)} balance.</p>}
+        <CashConversion platformId={platform.id} amountUsd={amountNum >= 1 ? cashoutPayoutUsdc(amountNum) : 0} />
         <label className="block">
           <span className="text-sm font-semibold text-[#C8C6D0]">{platform.idLabel}</span>
           <input
@@ -1971,10 +1970,10 @@ function BankWithdraw({
 
   return (
     <div className="mt-4 flex flex-col gap-2">
-      <button type="button" disabled={!solanaAddress || busy} onClick={() => { void openCoinbase(); }} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20 disabled:opacity-50">
-        <img src="/images/icons/coinbase-logo.png" alt="" className="h-9 w-9 rounded-xl bg-[#0052FF] object-contain p-1.5" />
+      <button type="button" disabled={!solanaAddress || busy} onClick={() => { void openMeld(); }} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20 disabled:opacity-50">
+        <img src="/images/icons/card.svg" alt="" className="h-9 w-9 rounded-xl bg-[#1C1C22] object-contain p-1.5" />
         <span className="min-w-0 flex-1">
-          <span className="block text-base font-bold text-white">Coinbase</span>
+          <span className="block text-base font-bold text-white">Bank or card</span>
           <span className="block text-sm text-[#8A8893]">Bank, card, or Apple Pay</span>
         </span>
       </button>

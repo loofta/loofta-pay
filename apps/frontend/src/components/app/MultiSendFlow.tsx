@@ -1095,11 +1095,11 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
           </button>
           <div className="flex flex-col">
             <p className="text-white" style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>Multi send</p>
-            <p style={{ fontSize: 13, fontWeight: 400, color: "#8A8893" }}>Pay up to 50 people in one go</p>
+            <p style={{ fontSize: 13, fontWeight: 400, color: "#8A8893" }}>Pay up to 10 people in one go</p>
           </div>
         </div>
         <span className="rounded-full border border-[rgba(255,122,42,0.35)] px-3 py-1.5 font-mono text-xs tracking-[0.12em] text-[#FF8A4A]">
-          {rows.length} / 50
+          {rows.length} / 10
         </span>
         {process.env.NODE_ENV === "development" && (
           <button
@@ -1406,7 +1406,7 @@ export function MultiSendFlow({ onBack }: MultiSendFlowProps) {
       </Button>
 
       <p className="text-slate-400 text-base text-center">
-        All transfers are private MagicBlock payments. Each recipient gets their own payment link.
+        Each recipient gets their own payment link. You can choose to send privately on the next step.
       </p>
     </div>
   );

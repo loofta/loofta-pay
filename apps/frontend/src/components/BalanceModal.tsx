@@ -27,7 +27,8 @@ import { findTokenBySelection } from "@/lib/tokens";
 import type { TokenSelection } from "@/app/utils/types";
 import { TokenCombobox } from "@/components/TokenCombobox";
 import { CheckCircle2, AlertTriangle, Loader2, ExternalLink, Copy, ArrowRight, ArrowDown, ArrowUp, Clock, ChevronLeft, X, VenetianMask, Ticket, Wallet, CreditCard } from "lucide-react";
-import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, type PeerPayRequest, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, clearPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
+import { CashConversion, useCashRate, formatLocalAmount } from "@/components/cash/CashConversion";
+import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, platformPayoutCurrency, type PeerPayRequest, type PeerPlatform, getPlatformCooldownRemaining, recordPlatformWithdraw, clearPlatformWithdraw, formatCooldown } from "@/lib/peerPlatforms";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
@@ -598,6 +599,10 @@ export function BalanceModal({
   // hand-rolled spread/FX math (now that Peer Cash always prices at zero-spread oracle rate).
   const [peerEstimate, setPeerEstimate] = useState<{ receiveAmount: number; eta: { seconds?: number; label: string } | null } | null>(null);
   const [peerEstimateLoading, setPeerEstimateLoading] = useState(false);
+  // Live rate for platforms that pay out in local money (Monzo GBP, UPI INR), so amounts read in that currency.
+  const { rate: peerRate } = useCashRate(peerCurrency, getPlatform(peerPlatformId ?? "")?.processorName, withdrawMethod === "peer-offramp" && peerCurrency !== "USD");
+  const peerPayoutLabel = (usd: number) =>
+    peerCurrency !== "USD" && peerRate ? `${formatLocalAmount(usd * peerRate, peerCurrency)} ${peerCurrency}` : `$${usd.toFixed(2)}${peerCurrency === "USD" ? " USD" : ""}`;
 
   // Near Intents top-up deposit
   const [topUpView, setTopUpView] = useState<"crypto-picker" | "usdc-deposit" | "near-intents-deposit" | "private-deposit" | "paj-cash-onramp" | "peer-deposit" | null>(null);
@@ -855,34 +860,17 @@ export function BalanceModal({
     }
   };
 
-  // Card onramp: buy USDC via Privy.
-  // Desktop: privyFundWallet with card.preferredProvider: 'moonpay' — Privy's auto-skip
-  // (defaultFundingMethod: 'card') fires the MoonPay popup from a useEffect after the modal
-  // mounts, which desktop browsers still treat as a trusted gesture.
-  // Mobile: that same popup gets silently blocked by mobile Safari/WebKit because it's opened
-  // outside the original tap's call stack. useFiatOnramp().fund() runs synchronously from this
-  // click instead, so its popup stays inside a trusted gesture — but it has no provider override,
-  // so Privy may route to Coinbase/Stripe/Meld instead of MoonPay. The button below drops the
-  // MoonPay branding on mobile to stay honest about that, and the deposit record uses a neutral
-  // "card-onramp" type since we can't know which provider was actually used.
-  const isMobileDevice = typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  // Card onramp: Privy's fiat onramp aggregator (Meld) picks the provider. fund() runs synchronously
+  // from the click, so its popup stays inside a trusted gesture on mobile Safari.
   const handleMoonpayOnramp = async () => {
     if (!solanaAddress) return;
     setMoonpayOnrampLoading(true);
     try {
-      if (isMobileDevice) {
-        recordDeposit("card-onramp", "pending");
-        await fundFiatOnramp({
-          source: { defaultAsset: "usd" },
-          destination: { asset: "USDC", chain: "solana:mainnet", address: solanaAddress },
-        });
-      } else {
-        recordDeposit("card-onramp", "pending");
-        await privyFundWallet({
-          address: solanaAddress,
-          options: { asset: 'USDC', defaultFundingMethod: 'card' },
-        });
-      }
+      recordDeposit("card-onramp", "pending");
+      await fundFiatOnramp({
+        source: { defaultAsset: "usd" },
+        destination: { asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", chain: "solana:mainnet", address: solanaAddress },
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Could not open card onramp.";
       toast({ variant: "destructive", title: "Card onramp error", description: msg });
@@ -1976,7 +1964,7 @@ export function BalanceModal({
       setWithdrawMethod("peer-offramp");
       setPeerPlatformId(peerPay.platformId);
       setPeerIdentifier(peerPay.identifier);
-      setPeerCurrency("USD");
+      setPeerCurrency(platformPayoutCurrency(peerPay.platformId));
       setWithdrawAmount(peerPay.amountUsd.toFixed(2).replace(/\.00$/, ""));
       setPeerStep("form");
       return;
@@ -5410,6 +5398,7 @@ export function BalanceModal({
                       <span className={cn("text-xl font-semibold", dark ? "text-white" : "text-gray-900")}>${peerReceiveUsd.toFixed(2)}</span>
                     </div>
                   </div>
+                  <CashConversion platformId={peerPay.platformId} amountUsd={peerReceiveUsd} dark={dark} />
                   <button
                     type="button"
                     onClick={() => { void handlePeerSubmit({ manual: true }); }}
@@ -5471,6 +5460,7 @@ export function BalanceModal({
                       <span className={cn("text-xl font-semibold", dark ? "text-white" : "text-gray-900")}>${peerPayGrossUsd.toFixed(2)}</span>
                     </div>
                   </div>
+                  <CashConversion platformId={peerPay.platformId} amountUsd={peerPay.amountUsd} dark={dark} />
                   <button
                     type="button"
                     onClick={() => { void handlePeerSubmit(); }}
@@ -5582,7 +5572,7 @@ export function BalanceModal({
                         </span>
                       ) : (
                         <span className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
-                          ${cashoutPayoutUsdc(withdrawAmountNum).toFixed(2)} {peerCurrency}
+                          {peerPayoutLabel(cashoutPayoutUsdc(withdrawAmountNum))}
                         </span>
                       )}
                     </div>
@@ -5597,6 +5587,9 @@ export function BalanceModal({
                       <span className={`text-base ${dark ? "text-slate-300" : "text-gray-700"}`}>${Math.max(0, withdrawAmountNum - cashoutPayoutUsdc(withdrawAmountNum)).toFixed(2)}</span>
                     </div>
                   </div>
+                )}
+                {peerCurrency === "USD" && (
+                  <CashConversion platformId={platform.id} amountUsd={withdrawAmountNum >= 1 ? cashoutPayoutUsdc(withdrawAmountNum) : 0} dark={dark} />
                 )}
 
                 <div className={`rounded-xl border p-3 ${dark ? "border-white/10 bg-white/5" : "border-blue-100 bg-blue-50/60"}`}>
@@ -5800,7 +5793,7 @@ export function BalanceModal({
                     <p className={`text-base font-medium ${dark ? "text-white" : "text-gray-900"}`}>
                       {peerPay
                         ? `$${cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum).toFixed(2)} to ${peerIdentifier.replace(/^[@$]/, "")}`
-                        : `$${cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum).toFixed(2)} ${peerCurrency}`}
+                        : peerPayoutLabel(cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum))}
                     </p>
                     {typeof peerFilledAmountUSDC === "number" && peerFilledAmountUSDC > 0 && peerFilledAmountUSDC < Number(cashoutDepositAtomic(BigInt(Math.round((peerAmountUSDC || withdrawAmountNum) * 1_000_000)))) / 1_000_000 && (
                       <p className={`text-xs mt-0.5 ${dark ? "text-amber-300" : "text-amber-600"}`}>
@@ -5867,7 +5860,7 @@ export function BalanceModal({
                   <CheckCircle2 className="h-10 w-10 text-emerald-400" />
                   <p className={`text-xl font-bold ${dark ? "text-white" : "text-gray-900"}`}>Cash out complete!</p>
                   <p className={`text-base ${dark ? "text-slate-400" : "text-gray-600"}`}>
-                    ${cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum).toFixed(2)} {peerCurrency} was sent to your {platform?.name} account.
+                    {peerPayoutLabel(cashoutPayoutUsdc(peerAmountUSDC || withdrawAmountNum))} was sent to your {platform?.name} account.
                   </p>
                 </div>
                 <Button onClick={() => { resetPeer(); setWithdrawMethod(null); onRefresh(); }}

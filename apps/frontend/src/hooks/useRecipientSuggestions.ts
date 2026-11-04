@@ -21,7 +21,7 @@ type HistoryRow = {
 };
 
 const SOCIAL = new Set(["twitter", "discord", "github", "telegram", "loofta"]);
-const CASH = new Set(["venmo", "cashapp", "revolut", "xmoney"]);
+const CASH = new Set(["venmo", "cashapp", "revolut", "chime", "monzo", "upi", "xmoney"]);
 
 // History loses the typed handle once the recipient has a Loofta account (only their Loofta
 // username is stored), so sends are also remembered locally with the platform that was typed.

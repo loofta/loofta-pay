@@ -82,7 +82,7 @@ async function loadCashPays(
     .from("offramp_requests")
     .select("id, status, amount_usdc, created_at, platform, platform_identifier, near_intents_status")
     .eq("user_id", userId)
-    .in("platform", ["venmo", "cashapp", "revolut", "xmoney"])
+    .in("platform", ["venmo", "cashapp", "revolut", "chime", "monzo", "upi", "xmoney"])
     .order("created_at", { ascending: false })
     .limit(50);
   if (error || !data) return [];

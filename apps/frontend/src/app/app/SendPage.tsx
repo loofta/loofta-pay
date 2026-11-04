@@ -43,6 +43,7 @@ import { DIRECT_CASH_PLATFORMS, type DirectCashPlatformId } from "@/lib/peerPlat
 import { useRecipientSuggestions, useSuggestionNav, rememberRecipient, filterSuggestions, type RecipientSuggestion } from "@/hooks/useRecipientSuggestions";
 import { RecipientSuggestionList } from "@/components/RecipientSuggestionList";
 import { cashoutGrossUsdc } from "@/services/peerCash";
+import { CashConversion } from "@/components/cash/CashConversion";
 
 const ClaimPageContent = dynamic<{ embedInApp?: boolean }>(
   () => import("@/app/app/claim/ClaimPageContent").then((mod) => ({ default: mod.ClaimPageContent })),
@@ -475,6 +476,7 @@ export default function Home() {
   const minAmountUsd = isCashDest || payingPrivate ? 1 : 0.01;
   const amountNum = Number(amount);
   const cashPlatformMeta = DIRECT_CASH_PLATFORMS.find((p) => p.id === cashPlatform);
+  const cashHandleInvalid = destKind === "cash" && cashPlatform === "upi" && recipient.trim().length > 0 && !/^[\w.\-]{2,}@[A-Za-z][\w.\-]{1,}$/.test(recipient.trim());
   const cashOverCap = destKind === "cash" && cashPlatformMeta?.maxUSDC != null && amountNum > cashPlatformMeta.maxUSDC;
   const walletInput = destKind === "wallet" ? recipient.trim() : "";
   // A .sol name resolves to its wallet; anything else is used as typed.
@@ -1089,10 +1091,11 @@ export default function Home() {
 
                   {destKind === "cash" ? (
                     <>
+                    <CashConversion platformId={cashPlatform} amountUsd={amountNum >= 1 ? amountNum : 0} />
                     <GradientActionButton
                       onClick={() => {
                         const handle = recipient.trim().replace(/^[@$]/, "");
-                        if (!handle || !(amountNum >= 1) || cashOverCap) return;
+                        if (!handle || !(amountNum >= 1) || cashOverCap || cashHandleInvalid) return;
                         if (!authenticated) {
                           privyLogin({ loginMethods: [...PRIVY_LOGIN_METHODS], disableSignup: false });
                           return;
@@ -1105,7 +1108,7 @@ export default function Home() {
                           },
                         }));
                       }}
-                      disabled={!recipient.trim() || !(amountNum >= 1) || cashOverCap}
+                      disabled={!recipient.trim() || !(amountNum >= 1) || cashOverCap || cashHandleInvalid}
                       className="!h-auto !min-h-[58px] !flex-col !gap-0 !rounded-[18px] !py-2.5 !text-[17px]"
                       style={{ fontFamily: "var(--font-home-sora), Sora, sans-serif", fontWeight: 600 }}
                     >
@@ -1125,6 +1128,9 @@ export default function Home() {
                         <>{t("signInToContinue")} <ArrowRight className="h-4 w-4" /></>
                       )}
                     </GradientActionButton>
+                    {cashHandleInvalid && (
+                      <p className="text-center text-base text-red-400 -mt-2">A UPI ID looks like name@bank.</p>
+                    )}
                     {cashOverCap && (
                       <p className="text-center text-sm text-red-400 -mt-2">
                         {cashPlatformMeta?.name} payments are limited to ${cashPlatformMeta?.maxUSDC} per payment.
