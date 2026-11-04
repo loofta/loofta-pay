@@ -43,6 +43,7 @@ export class AgentOauthController {
       authorization_endpoint: `${this.appUrl}/agent/authorize`, // the Loofta app shows the consent screen
       token_endpoint: `${base}/oauth/token`,
       registration_endpoint: `${base}/oauth/register`,
+      revocation_endpoint: `${base}/oauth/revoke`,
       response_types_supported: ['code'],
       grant_types_supported: ['authorization_code'],
       code_challenge_methods_supported: ['S256'],
@@ -76,6 +77,15 @@ export class AgentOauthController {
       if (e instanceof OAuthError) return res.status(400).json({ error: e.code, error_description: e.message });
       throw e;
     }
+  }
+
+  @Post('oauth/revoke')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RateLimitGuard)
+  @RateLimit(60, 60, 'agent:oauth-revoke', 'ip')
+  async revoke(@Body() body: any) {
+    await this.oauth.revoke(body ?? {});
+    return {};
   }
 
   // ----- The person, in the app

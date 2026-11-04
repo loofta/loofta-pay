@@ -121,11 +121,17 @@ export class AgentOauthService {
     if (!flipped?.length) throw new OAuthError('invalid_grant', 'That code was already used.');
     const issued = await this.auth.issueToken(row.session_id);
     if (!issued) throw new OAuthError('invalid_grant', 'This connection was revoked.');
+    await this.auth.replaceOlderSessions(row.user_id, issued.session.label, issued.session.id).catch(() => undefined);
     return {
       access_token: issued.token,
       token_type: 'Bearer',
       expires_in: Math.max(60, Math.floor((new Date(issued.session.expiresAt).getTime() - Date.now()) / 1000)),
       scope: issued.session.scopes.join(' '),
     };
+  }
+
+  /** RFC 7009: the client throws its token away. */
+  async revoke(body: Record<string, unknown>) {
+    await this.auth.revokeByToken(String(body.token ?? ''));
   }
 }

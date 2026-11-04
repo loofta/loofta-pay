@@ -285,9 +285,28 @@ export class AgentAuthService {
       .select('id, label, token_prefix, scopes, per_payment_cap_usd, daily_cap_usd, auto_approve_usd, allow_new_recipients, created_at, expires_at, last_used_at')
       .eq('user_id', userId)
       .is('revoked_at', null)
+      .neq('token_prefix', 'pending') // an approval whose token was never collected is not a connection
       .gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: false });
     return data ?? [];
+  }
+
+  /**
+   * A client that connects again replaces its earlier connection instead of piling up next to it, and approvals
+   * whose token was never collected are dropped. Runs only once the new token has actually been issued, so a
+   * failed login never cuts off the connection that still works.
+   */
+  async replaceOlderSessions(userId: string, label: string, keepId: string): Promise<void> {
+    const now = new Date().toISOString();
+    const supabase = this.db.getClient();
+    await supabase.from('agent_sessions').update({ revoked_at: now }).eq('user_id', userId).eq('label', label).neq('id', keepId).is('revoked_at', null);
+    await supabase.from('agent_sessions').update({ revoked_at: now }).eq('user_id', userId).eq('token_prefix', 'pending').neq('id', keepId).is('revoked_at', null);
+  }
+
+  /** The client says it dropped its token (RFC 7009), so the connection ends here too. Unknown tokens are ignored. */
+  async revokeByToken(raw: string): Promise<void> {
+    if (!raw) return;
+    await this.db.getClient().from('agent_sessions').update({ revoked_at: new Date().toISOString() }).eq('token_hash', hashToken(raw)).is('revoked_at', null);
   }
 
   /** The person changes a connected agent's limits from the app, with no new login. Same bounds as when it was connected. */

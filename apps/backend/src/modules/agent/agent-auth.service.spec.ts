@@ -95,7 +95,9 @@ describe('sessions', () => {
   it('lists only the persons own live sessions, and revoking stops the token at once', async () => {
     const { svc } = build();
     const mine = await login(svc, 'did:privy:me');
-    await login(svc, 'did:privy:someone-else');
+    const theirs = await login(svc, 'did:privy:someone-else');
+    await svc.issueToken(mine.session.id);
+    await svc.issueToken(theirs.session.id);
     expect((await svc.listSessions('did:privy:me')).map((r: any) => r.id)).toEqual([mine.session.id]);
     await expect(svc.revokeSession('did:privy:someone-else', mine.session.id)).rejects.toThrow(); // not theirs
     await svc.revokeSession('did:privy:me', mine.session.id);
@@ -118,6 +120,7 @@ describe('changing a connected agent\'s limits in the app', () => {
   const connect = async () => {
     const { svc } = build();
     const s = await svc.createSession('did:privy:u', { label: 'Claude Code', perPaymentCapUsd: 25, dailyCapUsd: 100, autoApproveUsd: 5 });
+    await svc.issueToken(s.id);
     return { svc, s };
   };
   it('saves new limits for the owner', async () => {
@@ -150,5 +153,38 @@ describe('changing a connected agent\'s limits in the app', () => {
     const { svc, s } = await connect();
     await svc.revokeSession('did:privy:u', s.id);
     await expect(svc.updateSession('did:privy:u', s.id, { dailyCapUsd: 150 })).rejects.toThrow();
+  });
+});
+
+describe('reconnecting and dropping tokens', () => {
+  it('hides approvals whose token was never collected', async () => {
+    const { svc } = build();
+    await svc.createSession('did:privy:u', { label: 'Claude Code loofta' });
+    expect(await svc.listSessions('did:privy:u')).toEqual([]);
+  });
+  it('a new connection from the same client replaces the old one, other clients stay', async () => {
+    const { svc } = build();
+    const old = await svc.createSession('did:privy:u', { label: 'Claude Code loofta' });
+    const other = await svc.createSession('did:privy:u', { label: 'Claude' });
+    const oldIssued = await svc.issueToken(old.id);
+    await svc.issueToken(other.id);
+    const abandoned = await svc.createSession('did:privy:u', { label: 'Claude Code loofta' });
+    const fresh = await svc.createSession('did:privy:u', { label: 'Claude Code loofta' });
+    const freshIssued = await svc.issueToken(fresh.id);
+    await svc.replaceOlderSessions('did:privy:u', 'Claude Code loofta', fresh.id);
+    expect((await svc.listSessions('did:privy:u')).map((r: any) => r.id).sort()).toEqual([other.id, fresh.id].sort());
+    expect(await svc.verifyToken(oldIssued!.token)).toBeNull();
+    expect(await svc.verifyToken(freshIssued!.token)).not.toBeNull();
+    expect(abandoned.id).not.toBe(fresh.id);
+  });
+  it('a token the client revokes ends the connection, an unknown one does nothing', async () => {
+    const { svc } = build();
+    const s = await svc.createSession('did:privy:u', { label: 'Claude Code loofta' });
+    const issued = await svc.issueToken(s.id);
+    await svc.revokeByToken('lft_nope');
+    expect(await svc.verifyToken(issued!.token)).not.toBeNull();
+    await svc.revokeByToken(issued!.token);
+    expect(await svc.verifyToken(issued!.token)).toBeNull();
+    expect(await svc.listSessions('did:privy:u')).toEqual([]);
   });
 });
