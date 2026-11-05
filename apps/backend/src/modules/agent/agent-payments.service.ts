@@ -567,7 +567,8 @@ export class AgentPaymentsService implements OnModuleInit {
       await this.db.getClient().from('agent_actions').update({ payload, updated_at: new Date().toISOString() }).eq('id', row.id);
       return this.view({ ...row, status: 'processing', payload });
     } catch (e) {
-      const msg = e instanceof BadRequestException || e instanceof ForbiddenException ? String((e.getResponse() as any)?.message ?? e.message) : 'The cash-out could not start. Nothing was sent.';
+      if (!(e instanceof BadRequestException || e instanceof ForbiddenException)) this.logger.error(`cash-out ${row.id} could not start: ${(e as Error)?.message}`);
+      const msg = e instanceof BadRequestException || e instanceof ForbiddenException ? String((e.getResponse() as any)?.message ?? e.message) : `The cash-out could not start (${String((e as Error)?.message ?? 'unknown error').replace(/\s+/g, ' ').slice(0, 160)}). Nothing was sent.`;
       await this.db.getClient().from('agent_actions').update({ status: 'failed', error: msg, updated_at: new Date().toISOString() }).eq('id', row.id);
       return this.view({ ...row, status: 'failed', error: msg });
     }

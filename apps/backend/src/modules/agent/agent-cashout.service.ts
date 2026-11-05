@@ -241,7 +241,8 @@ export class AgentCashoutService implements OnModuleInit {
         await this.offramp.updateStatus(history.id, 'FAILED', String(msg).slice(0, 200)).catch(() => undefined);
         void this.reclaim(row);
         if (/polic|denied|not allowed|forbidden/i.test(String(msg))) throw agentError('signing_policy', 'The signing policy on this wallet blocked the transfer, so nothing was sent.', 'forbidden');
-        throw agentError('failed', `${/insufficient/i.test(String(msg)) ? 'Not enough USDC in the wallet for this cash-out, including the bridge fee.' : 'The cash-out could not start.'} Nothing left your wallet.`);
+        const reason = String(msg).replace(/\s+/g, ' ').slice(0, 160);
+        throw agentError('failed', `${/insufficient/i.test(String(msg)) ? 'Not enough USDC in the wallet for this cash-out, including the bridge fee.' : `The cash-out could not start (${reason}).`} Nothing left your wallet.`);
       }
     }
     // Bridge straight away; if this hiccups the cron picks it up from 'funded'.
