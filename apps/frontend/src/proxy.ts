@@ -49,12 +49,13 @@ export function proxy(request: NextRequest) {
   }
   const isNestEarnPath = pathname === "/nest-earn" || pathname.startsWith("/nest-earn/");
 
-  // /megapot only exists inside the app itself (src/app/app/megapot) — it's not a marketing
-  // page, but blog posts and other marketing copy link to it as if it were one. On the real
-  // marketing domain that 404s, so bounce it to the real app route instead. Localhost already
-  // resolves this correctly via the generic app-path rewrite below.
-  if (!isAppDomain && !isLocalhost && (pathname === "/megapot" || pathname.startsWith("/megapot/"))) {
-    return NextResponse.redirect(new URL(`${pathname}${request.nextUrl.search}`, "https://pay.loofta.com"));
+  // Megapot shut down, so its pages are gone. Old links (blog posts, shared gift pages, bookmarks) land on the
+  // app home instead of a 404. On the marketing domain that means the real app host.
+  const isRetiredMegapotPath = /^\/(app\/)?(rewards\/)?megapot(\/|$)/.test(pathname);
+  if (isRetiredMegapotPath) {
+    if (isAppDomain) return NextResponse.redirect(new URL("/", request.url));
+    if (isLocalhost) return NextResponse.redirect(new URL("/app", request.url));
+    return NextResponse.redirect(new URL("/", "https://pay.loofta.com"));
   }
 
   // On localhost, / clashes with the app shell — push it to /home instead

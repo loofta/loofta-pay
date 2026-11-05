@@ -1,7 +1,6 @@
 "use client";
 
 import posthog from "posthog-js";
-import { ChanceUpsellCard } from "@/components/ChanceUpsellCard";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -5547,22 +5546,6 @@ export function BalanceModal({
                   )}
                 </div>
 
-                {!peerPay && spendableBalance >= LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC && withdrawAmountNum > 0 && (
-                  <ChanceUpsellCard
-                    dark={dark}
-                    reduceMotion={!!reduceMotion}
-                    price={LOTTERY_TICKET_PRICE_USDC}
-                    disabled={peerSubmitting}
-                    checked={addLotteryTicket}
-                    onCheckedChange={(checked) => {
-                      setAddLotteryTicket(checked);
-                      if (checked && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
-                        const adjusted = Math.max(0, spendableBalance - LOTTERY_TICKET_PRICE_USDC);
-                        setWithdrawAmount(adjusted.toFixed(2).replace(/\.00$/, ""));
-                      }
-                    }}
-                  />
-                )}
 
                 {/* Estimated receive + real fill-time ETA (live oracle rate, zero spread) */}
                 {withdrawAmountNum >= 1 && (

@@ -1,15 +1,12 @@
 "use client";
 
-import { ChanceModal } from "@/components/ChanceModal";
 import { useDashboardStore } from "@/store/dashboard";
-import { useDrawStatus } from "@/hooks/useDrawStatus";
-import { QuestHistoryDialog, type QuestReward } from "@/components/QuestHistoryDialog";
-import { useToast } from "@/components/ui/use-toast";
+import { WeeklyQuestCard } from "@/components/app-home/WeeklyQuestCard";
 import { RankBadge } from "@/components/RankBadge";
 import { RankProgressDialog } from "@/components/RankProgressDialog";
 import { TIERS } from "@/lib/tiers";
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import posthog from "posthog-js";
 import { useRouter } from "next/navigation";
@@ -19,7 +16,7 @@ import { useAuthStore } from "@/store/auth";
 import { sora, manrope, jetbrainsMono } from "@/components/home-v4/fonts";
 import "./loofta-app.css";
 
-// Giveaway card is hidden while the Megapot ticket card is being tested. Flip to true to restore it.
+// Giveaway card is hidden for now. Flip to true to restore it.
 const SHOW_GIVEAWAY_CARD = false;
 
 type HistoryRow = {
@@ -36,17 +33,6 @@ type HistoryRow = {
   sender_username?: string | null;
 };
 
-// Weekly quest: move this much in a week (sends + withdrawals) to unlock a free entry in the daily $200K draw.
-// Tuned here for now; the real budget/target will live server-side and is never shown as a cap.
-const WEEKLY_QUEST_TARGET_USD = 150;
-
-function startOfWeekUtc(now = new Date()) {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // Monday
-  return d.getTime();
-}
-
-const pad2 = (n: number) => String(n).padStart(2, "0");
 const SORA = "var(--font-home-sora), Sora, sans-serif";
 const MONO = "var(--font-home-mono), ui-monospace, monospace";
 
@@ -107,7 +93,6 @@ export function AppHome() {
   const tierInfo = TIERS.find((t) => t.key === tierKey) ?? TIERS[0];
   const totalVolumeUsd = useAuthStore((s) => s.totalVolumeUsd);
   const [rankOpen, setRankOpen] = useState(false);
-  const [chanceOpen, setChanceOpen] = useState(false);
   const { balanceUSD, isLoading } = useEmbeddedSolanaUsdcBalance({ enabled: authenticated });
 
   const history = useQuery({
@@ -156,82 +141,22 @@ export function AppHome() {
     .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at))
     .slice(0, 8);
 
-  const weekStart = startOfWeekUtc();
-  const DEAD = new Set(["CANCELLED", "EXPIRED", "REFUNDED", "DELETED"]);
-  const weeklyVolume = [
-    ...(history.data?.sent ?? []).filter((r) => !DEAD.has(String(r.status).toUpperCase())).map((r) => ({ at: r.created_at, amt: Number(r.amount) || 0 })),
-    ...(moves.data?.withdrawals ?? []).map((w) => ({ at: w.created_at, amt: Number(w.amount_usdc) || 0 })),
-  ].filter((x) => +new Date(x.at) >= weekStart).reduce((a, x) => a + x.amt, 0);
   // Last known values (persisted) fill the gaps while live data loads, so nothing flashes $0 / empty.
   const cache = useDashboardStore();
   const cached = cache.userId === userId;
   const historyLive = history.isSuccess;
   const recent: Activity[] = historyLive ? liveRecent : cached ? cache.recent : [];
-  // Server-side quest status is the source of truth (same numbers the hourly award job uses); the
-  // browser-side estimate below is only a fallback while it loads or if the endpoint is unavailable.
-  const quest = useQuery({
-    queryKey: ["weekly-quest", userId],
-    enabled: authenticated && !!userId,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-    retry: 1,
-    queryFn: async () => {
-      const token = await getAccessToken().catch(() => null);
-      const r = await fetch("/api/weekly-quest", { headers: token ? { authorization: `Bearer ${token}` } : {}, cache: "no-store" });
-      if (!r.ok) throw new Error("weekly-quest");
-      return r.json() as Promise<{ volumeUsd: number; targetUsd: number; daysUntilNext: number; qualified: boolean; projectedTickets?: number; history?: QuestReward[]; unseenAward?: (QuestReward & { id: string }) | null }>;
-    },
-  });
-  const { toast } = useToast();
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const unseen = quest.data?.unseenAward ?? null;
-  useEffect(() => {
-    if (!unseen) return;
-    toast({
-      title: "Your weekly reward is in",
-      description: `You received ${unseen.tickets} free ${unseen.tickets === 1 ? "entry" : "entries"} in the daily $200K draw for last week's ${money(unseen.volumeUsd)} volume.`,
-      duration: 12000,
-    });
-    void (async () => {
-      const token = await getAccessToken().catch(() => null);
-      await fetch("/api/weekly-quest", { method: "POST", headers: { "Content-Type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ awardId: unseen.id }) }).catch(() => {});
-      void queryClient.invalidateQueries({ queryKey: ["weekly-quest"] });
-      void queryClient.invalidateQueries({ queryKey: ["draw-status"] });
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [unseen?.id]);
-  const questTarget = quest.data?.targetUsd ?? WEEKLY_QUEST_TARGET_USD;
-  const weeklyShown = quest.data ? quest.data.volumeUsd : historyLive ? weeklyVolume : cached && cache.weekStart === weekStart ? cache.weeklyVolumeUsd : 0;
   const balanceLive = authenticated && !isLoading;
   const balanceShown = balanceLive ? balanceUSD : cached && cache.balanceUsd !== null ? cache.balanceUsd : null;
-
-  const queryClient = useQueryClient();
-  const draw = useDrawStatus({ userId, enabled: authenticated, getAccessToken });
-  const entries = draw.data ? draw.data.entries : cached ? cache.entries ?? 0 : 0;
-  const nextDrawAt = draw.data ? draw.data.drawTime : cached ? cache.nextDrawAt : null;
 
   useEffect(() => {
     if (!authenticated || !userId) return;
     cache.update(userId, {
       ...(balanceLive ? { balanceUsd: balanceUSD } : {}),
-      ...(historyLive ? { recent: liveRecent, weeklyVolumeUsd: weeklyVolume, weekStart } : {}),
-      ...(draw.data ? { entries: draw.data.entries, nextDrawAt: draw.data.drawTime } : {}),
+      ...(historyLive ? { recent: liveRecent } : {}),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, userId, balanceLive, balanceUSD, historyLive, history.dataUpdatedAt, moves.dataUpdatedAt, draw.data]);
-
-  // Ticking countdown to the next draw.
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    if (!nextDrawAt) return;
-    const t = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [nextDrawAt]);
-  const msLeft = nextDrawAt ? new Date(nextDrawAt).getTime() - nowMs : null;
-
-  const questPct = Math.min(100, (weeklyShown / questTarget) * 100);
-  const questDone = weeklyShown >= questTarget;
-  const daysLeft = quest.data?.daysUntilNext ?? null;
+  }, [authenticated, userId, balanceLive, balanceUSD, historyLive, history.dataUpdatedAt, moves.dataUpdatedAt]);
 
   const greet = (username || "there").replace(/^@/, "").toUpperCase();
   const goSend = () => router.push("/app/send");
@@ -273,65 +198,7 @@ export function AppHome() {
               </span>
               <span style={{ fontSize: 14, color: "#6E6C78" }}>USDC on Solana</span>
             </div>
-            {authenticated && (
-              <div style={{ position: "relative" }}>
-                <style>{`
-                  @keyframes lhGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
-                  @keyframes lhGlowPulse { 0%,100% { opacity: .3; } 50% { opacity: .6; } }
-                  @media (prefers-reduced-motion: reduce) { .lh-glow { animation: none !important; opacity: .7 !important; } }
-                `}</style>
-                <div aria-hidden className="lh-glow" style={{ position: "absolute", inset: -2, borderRadius: 22, filter: "blur(6px)", background: "linear-gradient(110deg,#FF1301,#FF6A00,#EAB308,#FF4A26,#FF1301)", backgroundSize: "220% 100%", animation: "lhGlowShift 6s linear infinite, lhGlowPulse 4s ease-in-out infinite" }} />
-                {entries > 0 ? (
-                  <button type="button" onClick={() => setChanceOpen(true)} aria-label="See your chances, the prize pool and odds" style={{ position: "relative", width: "100%", cursor: "pointer", textAlign: "left", color: "inherit", display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderRadius: 20, border: "1px solid rgba(255,138,74,0.45)", background: "linear-gradient(135deg,#1d140e,#14110f)" }}>
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1, minWidth: 64 }}>
-                      <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: 52, letterSpacing: "-0.05em", background: "linear-gradient(180deg,#FFD25A,#FF6A1A)", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent", fontVariantNumeric: "tabular-nums" }}>{entries}</span>
-                      <span style={{ marginTop: 4, fontFamily: MONO, fontSize: 11, letterSpacing: "0.2em", color: "#FF8A4A" }}>{entries === 1 ? "CHANCE" : "CHANCES"}</span>
-                    </div>
-                    <div style={{ flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-                      <span style={{ fontWeight: 800, fontSize: 17, lineHeight: 1.15 }}>to win up to $200K today</span>
-                      {msLeft !== null && msLeft > 0 ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 13, color: "#9A98A3", marginRight: 1 }}>Draw in</span>
-                          {[["h", Math.floor(msLeft / 3_600_000)], ["m", Math.floor((msLeft % 3_600_000) / 60_000)], ["s", Math.floor((msLeft % 60_000) / 1000)]].map(([u, v]) => (
-                            <span key={u as string} style={{ display: "inline-flex", alignItems: "baseline", gap: 2, padding: "3px 6px", borderRadius: 8, background: "rgba(0,0,0,0.45)", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)", fontFamily: MONO, fontSize: 14, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                              {pad2(v as number)}<span style={{ fontSize: 11, color: "#FF8A4A" }}>{u}</span>
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: 14, color: "#C8C6D0" }}>Checking your results…</span>
-                      )}
-                    </div>
-                    <span aria-hidden style={{ flex: "none", alignSelf: "center", fontWeight: 800, fontSize: 24, color: "#FF8A4A" }}>›</span>
-                  </button>
-                ) : (
-                  <button type="button" onClick={() => setChanceOpen(true)} style={{ position: "relative", width: "100%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "14px 18px", borderRadius: 20, border: "1px solid rgba(255,138,74,0.45)", background: "#16120f", color: "#F2EFE8", textAlign: "left" }}>
-                    <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                      <span style={{ fontWeight: 800, fontSize: 17, lineHeight: 1.15 }}>$1 for a shot at $200K</span>
-                      <span style={{ fontWeight: 600, fontSize: 13, color: "#9A98A3", lineHeight: 1.2 }}>Today&apos;s draw. Paid straight to your balance.</span>
-                    </span>
-                    <span aria-hidden style={{ flex: "none", fontWeight: 800, fontSize: 20, color: "#FF8A4A" }}>→</span>
-                  </button>
-                )}
-              </div>
-            )}
-            {authenticated && (
-              <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 8, padding: "14px 16px", borderRadius: 18, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 800, fontSize: 15 }}>{questDone ? "Quest complete" : "Weekly quest: win up to $200K"}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 13, color: "#9A98A3", fontVariantNumeric: "tabular-nums" }}>{money(Math.min(weeklyShown, questTarget))} / {money(questTarget)}</span>
-                </div>
-                <div style={{ height: 14, borderRadius: 999, background: "rgba(0,0,0,0.4)", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)", overflow: "hidden" }}>
-                  <div style={{ width: `${Math.max(questPct, weeklyShown > 0 ? 4 : 0)}%`, height: "100%", borderRadius: 999, background: questDone ? "linear-gradient(90deg,#3CC878,#9BE564)" : "linear-gradient(90deg,#FF4A26,#FF7A2A,#EAB308)", boxShadow: "inset 0 -3px 0 rgba(0,0,0,0.22)", transition: "width .7s ease" }} />
-                </div>
-                <span style={{ fontSize: 14, color: "#9A98A3", lineHeight: 1.35 }}>
-                  {questDone
-                    ? `You are on track for ${quest.data?.projectedTickets ?? 1} free ${(quest.data?.projectedTickets ?? 1) === 1 ? "entry" : "entries"}, paid automatically when the week ends.${daysLeft !== null ? ` New quest in ${daysLeft} ${daysLeft === 1 ? "day" : "days"}.` : ""}`
-                    : `${money(Math.max(0, questTarget - weeklyShown))} more sent or withdrawn this week earns you free entries, paid when the week ends.${daysLeft !== null ? ` New quest in ${daysLeft} ${daysLeft === 1 ? "day" : "days"}.` : ""}`}
-                </span>
-                <button type="button" onClick={() => setHistoryOpen(true)} style={{ alignSelf: "flex-start", background: "none", border: 0, padding: 0, cursor: "pointer", color: "#FF8A4A", fontWeight: 700, fontSize: 14 }}>Past rewards{(quest.data?.history?.length ?? 0) > 0 ? ` (${quest.data?.history?.length})` : ""}</button>
-              </div>
-            )}
+            {authenticated && <WeeklyQuestCard userId={userId} getAccessToken={getAccessToken} />}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8, position: "relative", marginTop: "auto" }}>
               <button type="button" onClick={goDeposit} style={{ cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "14px 4px", minWidth: 0, textAlign: "center", lineHeight: 1.15, borderRadius: 16, border: 0, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontWeight: 700, fontSize: 15, boxShadow: "0 10px 30px rgba(255,70,10,0.3)" }}>+ Deposit</button>
               <button type="button" onClick={goWithdraw} className="lh-4" style={{ cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "14px 4px", minWidth: 0, textAlign: "center", lineHeight: 1.15, borderRadius: 16, background: "#22222A", border: "1px solid rgba(255,255,255,0.08)", color: "#F2EFE8", fontWeight: 700, fontSize: 15 }}>↑ Withdraw</button>
@@ -364,19 +231,20 @@ export function AppHome() {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <span style={{ fontFamily: MONO, fontSize: 14, letterSpacing: "0.2em", color: "#77757F" }}>START SOMETHING</span>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,420px),1fr))", gap: 20 }}>
-            <Link href="/app/megapot" className="lh-7" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A1A0C,#16110D 60%)", border: "1px solid rgba(245,183,12,0.22)" }}>
+            <div className="lh-7" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A1A0C,#16110D 60%)", border: "1px solid rgba(245,183,12,0.22)" }}>
               <div style={{ flex: "none", width: 96, height: 96, borderRadius: 30, transform: "rotate(-6deg)", background: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.55), inset 0 -8px 14px rgba(120,60,0,0.3), 0 8px 0 #8E5202, 0 26px 44px rgba(0,0,0,0.5)", display: "grid", placeItems: "center" }}>
                 <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#6A3500" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                  <path d="M3 9a2 2 0 0 0 0 6v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-3a2 2 0 0 1 0-6V6a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1z" />
-                  <path d="M14 5v14" strokeDasharray="2 3" />
+                  <rect x="3" y="4" width="18" height="16" rx="3" />
+                  <circle cx="12" cy="12" r="3.5" />
+                  <path d="M12 8.5V6M12 18v-2.5M8.5 12H6M18 12h-2.5" />
                 </svg>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 26, letterSpacing: "-0.04em" }}>Buy a Megapot ticket</span>
-                <span style={{ fontSize: 15, lineHeight: 1.5, color: "#B9B3A6" }}>$200K jackpot to win every day from a $1.1M prize pool.</span>
-                <span style={{ fontWeight: 700, fontSize: 14, color: "#F5B70C" }}>Buy a ticket →</span>
+                <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 26, letterSpacing: "-0.04em" }}>Stake to win</span>
+                <span style={{ fontSize: 15, lineHeight: 1.5, color: "#B9B3A6" }}>Stake your USDC and get a shot at weekly rewards, without risking your deposit.</span>
+                <span style={{ alignSelf: "flex-start", padding: "4px 12px", borderRadius: 999, background: "rgba(245,183,12,0.14)", border: "1px solid rgba(245,183,12,0.35)", fontWeight: 700, fontSize: 14, color: "#F5B70C" }}>Coming soon</span>
               </div>
-            </Link>
+            </div>
             {SHOW_GIVEAWAY_CARD && (
             <Link href="/rewards-rail" className="lh-7" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A1A0C,#16110D 60%)", border: "1px solid rgba(245,183,12,0.22)" }}>
               <div style={{ flex: "none", width: 96, height: 96, borderRadius: 30, transform: "rotate(-6deg)", background: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.55), inset 0 -8px 14px rgba(120,60,0,0.3), 0 8px 0 #8E5202, 0 26px 44px rgba(0,0,0,0.5)", display: "grid", placeItems: "center" }}>
@@ -420,8 +288,6 @@ export function AppHome() {
           </div>
         </div>
       </div>
-      <QuestHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} rewards={quest.data?.history ?? []} />
-      <ChanceModal open={chanceOpen} onOpenChange={setChanceOpen} balanceUsd={balanceUSD ?? 0} getAccessToken={getAccessToken} entries={entries} drawTime={nextDrawAt} prizePool={draw.data?.prizePool ?? null} onBought={() => { void queryClient.invalidateQueries({ queryKey: ["draw-status"] }); void queryClient.invalidateQueries({ queryKey: ["embeddedSolanaUsdcBalance"] }); }} />
       <RankProgressDialog open={rankOpen} onOpenChange={setRankOpen} volumeUsd={totalVolumeUsd} />
     </div>
   );

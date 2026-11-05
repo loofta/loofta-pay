@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ArrowDown, ArrowUp, Clock, House, Settings, Ticket } from "lucide-react";
+import { ArrowDown, ArrowUp, Clock, House, Settings } from "lucide-react";
 import { useTranslations } from "next-intl";
 
-type NavKey = 'home' | 'send' | 'receive' | 'history' | 'settings' | 'megapot-buy' | 'megapot-redeem' | 'megapot-history';
+type NavKey = 'home' | 'send' | 'receive' | 'history' | 'settings';
 
 function IconBubble({
     active,
@@ -69,30 +69,7 @@ export function BottomNav() {
     const searchParams = useSearchParams();
 
     const tab = searchParams.get("tab");
-    const isMegapot = pathname === "/app/megapot" || pathname === "/megapot";
     const isAppPath = pathname?.startsWith('/app');
-
-    if (isMegapot) {
-        let activeKey: NavKey = 'megapot-buy';
-        if (tab === 'redeem' || tab === 'history') activeKey = 'megapot-history';
-
-        // On pay.loofta.com, proxy.ts redirects any literal "/app/*" URL back to the clean
-        // path — hardcoding "/app/megapot" here turned every tab click into an extra
-        // redirect round trip (navigate -> 307 -> re-fetch clean path -> rewrite -> render).
-        const megapotBase = isAppPath ? '/app/megapot' : '/megapot';
-        const profileHref = isAppPath ? '/app/profile' : '/settings';
-
-        return (
-            <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-area-pb bg-[#0f0f12]/70 backdrop-blur-xl border-t border-white/10 shadow-[0_-10px_30px_rgba(0,0,0,0.35)]">
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
-                <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-1 mt-1">
-                    <NavItem href={megapotBase} label="Buy" active={activeKey === 'megapot-buy'} icon={<Ticket />} />
-                    <NavItem href={`${megapotBase}?tab=history`} label="Tickets" active={activeKey === 'megapot-history'} icon={<Clock />} />
-                    <NavItem href={profileHref} label="Profile" active={false} icon={<Settings />} />
-                </div>
-            </nav>
-        );
-    }
 
     let activeKey: NavKey;
     if (pathname === "/history" || pathname === "/app/history") {

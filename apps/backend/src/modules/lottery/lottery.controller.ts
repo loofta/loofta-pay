@@ -22,6 +22,7 @@ import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { LotteryService, InitiatePurchaseResult, InitiatePublicPurchaseResult, LotteryDashboard, LotteryTicketSummary } from './lottery.service';
 import { PrizeTiersSnapshot } from './megapot.service';
 import { LifiService } from './lifi.service';
+import { assertLotteryNotPaused } from './lottery-pause';
 import { MegapotSubscriptionService, SubscriptionSummary, MIN_TICKETS_PER_DAY, MAX_TICKETS_PER_DAY } from './megapot-subscription.service';
 
 class TicketNumbersDto {
@@ -231,6 +232,7 @@ export class LotteryController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Initiate ticket purchase — returns the MagicBlock tx for the user to sign (no separate Loofta fee tx)' })
   async buy(@Body() dto: BuyTicketsDto, @Request() req: any): Promise<InitiatePurchaseResult> {
+    assertLotteryNotPaused();
     if (!dto.numTickets || dto.numTickets < 1) throw new BadRequestException('numTickets required');
     if (!dto.userSolanaAddress) throw new BadRequestException('userSolanaAddress required');
     return this.lottery.initiatePurchase({
@@ -255,6 +257,7 @@ export class LotteryController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Initiate public (non-private) ticket purchase — returns a NEAR Intents deposit address and a client-signable USDC transfer tx to fund it' })
   async buyPublic(@Body() body: any, @Request() req: any): Promise<InitiatePublicPurchaseResult> {
+    assertLotteryNotPaused();
     const numTickets = Number(body?.numTickets);
     if (!numTickets || numTickets < 1) throw new BadRequestException('numTickets required');
     if (!body?.userSolanaAddress) throw new BadRequestException('userSolanaAddress required');
@@ -269,6 +272,7 @@ export class LotteryController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Pay for a gift (N tickets for someone else) — returns the MagicBlock tx to sign (no separate fee tx). The Megapot purchase itself only happens when the recipient claims (see gift/:token/claim).' })
   async buyGift(@Body() dto: BuyGiftDto, @Request() req: any): Promise<{ giftId: string; txBase64: string; requiredSigners: string[] }> {
+    assertLotteryNotPaused();
     if (!dto.numTickets || dto.numTickets < 1) throw new BadRequestException('numTickets required');
     if (!dto.userSolanaAddress) throw new BadRequestException('userSolanaAddress required');
     if (!dto.recipientIdentifier) throw new BadRequestException('recipientIdentifier required');
@@ -403,6 +407,7 @@ export class LotteryController {
     @Param('ticketId') ticketId: string,
     @Request() req: any,
   ): Promise<{ newTicketId: string; numTickets: number; roundId: string | null }> {
+    assertLotteryNotPaused();
     return this.lottery.playAgain({ ticketId, userId: req.user.id });
   }
 
@@ -413,6 +418,7 @@ export class LotteryController {
     @Body() dto: PlayAgainBatchDto,
     @Request() req: any,
   ): Promise<{ newTicketId: string; numTickets: number; roundId: string | null }> {
+    assertLotteryNotPaused();
     if (!dto.ticketIds?.length) throw new BadRequestException('ticketIds required');
     return this.lottery.playAgainBatch({ ticketIds: dto.ticketIds, userId: req.user.id });
   }
@@ -502,6 +508,7 @@ export class LotteryController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Build the payment transfer for a ticket subscription (price scales with ticketsPerDay, base rate $28/30 tickets) — sign client-side, then POST subscription/activate' })
   async subscriptionPay(@Body() dto: SubscriptionPayDto, @Request() req: any): Promise<{ txBase64: string }> {
+    assertLotteryNotPaused();
     const txBase64 = await this.subscriptions.buildPaymentTx(
       dto.userSolanaAddress, req.user.id, dto.ticketsPerDay,
       dto.tickets?.map(t => ({ main: t.main, bonus: t.bonus })),

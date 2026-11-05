@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { isLotteryPaused } from './lottery-pause';
 import { isCronEnabled } from '@/common/cron-gate';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { LotteryService } from './lottery.service';
@@ -35,8 +36,8 @@ export class LotteryCronService {
     return isCronEnabled(this.config);
   }
 
-  /** Hourly: qualify users who hit this week's quest target and buy their free entry. Production only
-   *  (it spends treasury funds), and does nothing unless an admin has enabled the quest. */
+  /** Hourly: qualify users who hit this week's quest target and grant their free PoolRip totems. Production only,
+   *  and does nothing unless an admin has enabled the quest. */
   @Cron(CronExpression.EVERY_HOUR)
   async processWeeklyQuest(): Promise<void> {
     if (!this.isProd) return;
@@ -210,7 +211,7 @@ export class LotteryCronService {
    *  steps above, a subscription batch being a few minutes late is harmless). */
   @Cron('*/10 * * * *')
   async processSubscriptionBatches(): Promise<void> {
-    if (!this.isProd) return;
+    if (!this.isProd || isLotteryPaused()) return;
     await this.subscriptions.processDueBatches().catch(e =>
       this.logger.error(`processSubscriptionBatches: ${e.message}`),
     );

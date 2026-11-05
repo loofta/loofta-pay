@@ -37,8 +37,8 @@ import { getPrivySolanaChainForMode, getRpcForMode, getUsdcMintForMode } from "@
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { isValidAddressForChain } from "@/lib/refundAddresses";
 import { cn } from "@/lib/utils";
-import { ChanceUpsellCard } from "@/components/ChanceUpsellCard";
-import { CHANCE_PRICE_USDC, CHANCE_MIN_BALANCE_USDC, useChanceTicket } from "@/hooks/useChanceTicket";
+import { PoolRipSeatCard } from "@/components/PoolRipSeatCard";
+import { POOLRIP_SEAT_PRICE_USDC, POOLRIP_SEAT_MIN_BALANCE_USDC, usePoolRipSeat } from "@/hooks/usePoolRipSeat";
 import { findUsdcOnBase, findUsdcOnSolana, readDepositPrivately, writeDepositPrivately } from "@/lib/depositRails";
 import { totalWithMagicBlockPrivateFee } from "@/services/magicblockPrivateTransfer";
 import { TokenCombobox } from "@/components/TokenCombobox";
@@ -1336,12 +1336,12 @@ function SolanaWithdraw({
   const resolved = domain.status === "resolved" ? domain.address : destination.trim();
   const validAddress = isValidAddressForChain(resolved, "solana");
   // Private (MagicBlock exactOut): sender is debited amount + fees on top — never Max the full balance.
-  const [chance, setChance] = useState(false);
-  const buyChance = useChanceTicket(getAccessToken, "withdraw_solana");
-  const chanceCost = chance ? CHANCE_PRICE_USDC : 0;
+  const [seat, setSeat] = useState(false);
+  const buySeat = usePoolRipSeat(getAccessToken, "withdraw_solana");
+  const seatCost = seat ? POOLRIP_SEAT_PRICE_USDC : 0;
   const maxSendable = Math.max(
     0,
-    (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - chanceCost,
+    (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - seatCost,
   );
   const over = amountNum > maxSendable;
   const privateFeeExceedsBalance =
@@ -1369,12 +1369,12 @@ function SolanaWithdraw({
   }, [resolved, validAddress, privately, cluster]);
 
   const formatMax = (n: number) => (n > 0 ? n.toFixed(6).replace(/\.?0+$/, "") : "");
-  const takeChance = async () => {
-    if (!chance) return;
-    setBusyLabel("Adding your chance…");
-    const ok = await buyChance(wallet);
-    setChance(false);
-    if (ok) toast({ title: "You're in for today's draw", description: "Good luck, your chance to win $200K is in." });
+  const takeSeat = async () => {
+    if (!seat) return;
+    setBusyLabel("Adding your seat…");
+    const ok = await buySeat(wallet);
+    setSeat(false);
+    if (ok) toast({ title: "Your PoolRip seat is in", description: "Your first vote is set to take someone out. Follow the room at play.loofta.com." });
   };
 
   const sendPublic = async (ataAcknowledged: boolean) => {
@@ -1394,7 +1394,7 @@ function SolanaWithdraw({
     } else {
       rent = ataFee;
     }
-    await takeChance();
+    await takeSeat();
     setBusyLabel("Approve in your wallet…");
     const access = await getAccessToken();
     const sig = await sendUsdcWithBackendFeePayer({
@@ -1427,7 +1427,7 @@ function SolanaWithdraw({
 
   const sendPrivate = async () => {
     if (!wallet || !userId) throw new Error("Your Loofta wallet is not ready yet.");
-    await takeChance();
+    await takeSeat();
     setBusyLabel("Preparing private withdrawal…");
     const access = await getAccessToken();
     const anchor = privyStandardWalletToAnchorWallet(wallet, signTransaction, getPrivySolanaChainForMode(cluster));
@@ -1558,17 +1558,17 @@ function SolanaWithdraw({
           </div>
         </div>
       )}
-      {balanceNum >= CHANCE_MIN_BALANCE_USDC && amountNum > 0 && (
-        <ChanceUpsellCard
+      {balanceNum >= POOLRIP_SEAT_MIN_BALANCE_USDC && amountNum > 0 && (
+        <PoolRipSeatCard
           dark
           source="withdraw_solana"
-          price={CHANCE_PRICE_USDC}
+          price={POOLRIP_SEAT_PRICE_USDC}
           disabled={busy}
-          checked={chance}
+          checked={seat}
           onCheckedChange={(checked) => {
-            setChance(checked);
-            if (checked && amountNum + CHANCE_PRICE_USDC > (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum)) {
-              setAmount(formatMax(Math.max(0, (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - CHANCE_PRICE_USDC)));
+            setSeat(checked);
+            if (checked && amountNum + POOLRIP_SEAT_PRICE_USDC > (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum)) {
+              setAmount(formatMax(Math.max(0, (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - POOLRIP_SEAT_PRICE_USDC)));
             }
           }}
         />
@@ -1620,22 +1620,22 @@ function CryptoWithdraw({
   const choices = tokens.filter((t) => !isSolanaChain(t.chain) && (!usdc || t.tokenId !== usdc.tokenId));
   const amountNum = Number(amount);
   const addressOk = !!token && isValidAddressForChain(destination.trim(), token.chain);
-  const [chance, setChance] = useState(false);
-  const buyChance = useChanceTicket(getAccessToken, "withdraw_crypto");
-  const chanceCost = chance ? CHANCE_PRICE_USDC : 0;
+  const [seat, setSeat] = useState(false);
+  const buySeat = usePoolRipSeat(getAccessToken, "withdraw_crypto");
+  const seatCost = seat ? POOLRIP_SEAT_PRICE_USDC : 0;
   const maxSendable = Math.max(
     0,
-    (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - chanceCost,
+    (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - seatCost,
   );
   const over = amountNum > maxSendable;
   const privateFeeExceedsBalance =
     privately && privateFee != null && amountNum + privateFee > balanceNum + 1e-6;
   const formatMax = (n: number) => (n > 0 ? n.toFixed(6).replace(/\.?0+$/, "") : "");
-  const takeChance = async () => {
-    if (!chance) return;
-        const ok = await buyChance(wallet);
-    setChance(false);
-    if (ok) toast({ title: "You're in for today's draw", description: "Good luck, your chance to win $200K is in." });
+  const takeSeat = async () => {
+    if (!seat) return;
+        const ok = await buySeat(wallet);
+    setSeat(false);
+    if (ok) toast({ title: "Your PoolRip seat is in", description: "Your first vote is set to take someone out. Follow the room at play.loofta.com." });
   };
 
   useEffect(() => {
@@ -1672,7 +1672,7 @@ function CryptoWithdraw({
     if (!wallet || !userId || !token || !usdc || !addressOk || !(amountNum > 0) || over) return;
     setBusy(true);
     try {
-      await takeChance();
+      await takeSeat();
       const access = await getAccessToken();
       const cluster = devnetMode ? "devnet" : "mainnet";
       if (privately) {
@@ -1831,17 +1831,17 @@ function CryptoWithdraw({
           </div>
         </div>
       )}
-      {balanceNum >= CHANCE_MIN_BALANCE_USDC && amountNum > 0 && (
-        <ChanceUpsellCard
+      {balanceNum >= POOLRIP_SEAT_MIN_BALANCE_USDC && amountNum > 0 && (
+        <PoolRipSeatCard
           dark
           source="withdraw_crypto"
-          price={CHANCE_PRICE_USDC}
+          price={POOLRIP_SEAT_PRICE_USDC}
           disabled={busy}
-          checked={chance}
+          checked={seat}
           onCheckedChange={(checked) => {
-            setChance(checked);
-            if (checked && amountNum + CHANCE_PRICE_USDC > (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum)) {
-              setAmount(formatMax(Math.max(0, (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - CHANCE_PRICE_USDC)));
+            setSeat(checked);
+            if (checked && amountNum + POOLRIP_SEAT_PRICE_USDC > (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum)) {
+              setAmount(formatMax(Math.max(0, (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - POOLRIP_SEAT_PRICE_USDC)));
             }
           }}
         />
@@ -1879,21 +1879,21 @@ function BankWithdraw({
   const [amount, setAmount] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [busy, setBusy] = useState(false);
-  const [chance, setChance] = useState(false);
-  const { wallet: chanceWallet } = useLooftaSigner(solanaAddress);
-  const buyChance = useChanceTicket(getAccessToken, "cash_out_bank");
+  const [seat, setSeat] = useState(false);
+  const { wallet: seatWallet } = useLooftaSigner(solanaAddress);
+  const buySeat = usePoolRipSeat(getAccessToken, "cash_out_bank");
   const platform = PEER_PLATFORMS.find((p) => p.id === app);
   const amountNum = Number(amount);
-  const maxCashOut = Math.max(0, balanceNum - (chance ? CHANCE_PRICE_USDC : 0));
+  const maxCashOut = Math.max(0, balanceNum - (seat ? POOLRIP_SEAT_PRICE_USDC : 0));
 
   const continueCashOut = async () => {
     if (!platform) return;
-    if (chance) {
+    if (seat) {
       setBusy(true);
-      const ok = await buyChance(chanceWallet);
+      const ok = await buySeat(seatWallet);
       setBusy(false);
-      setChance(false);
-      if (ok) toast({ title: "You're in for today's draw", description: "Good luck, your chance to win $200K is in." });
+      setSeat(false);
+      if (ok) toast({ title: "Your PoolRip seat is in", description: "Your first vote is set to take someone out. Follow the room at play.loofta.com." });
     }
     onCashOut?.({ platformId: platform.id, identifier: identifier.trim(), amountUsd: amountNum, intent: "receive" });
   };
@@ -1948,17 +1948,17 @@ function BankWithdraw({
             className="mt-1.5 w-full rounded-xl border border-white/10 bg-[#0E0E12] px-3 py-3 text-base text-white outline-none focus:border-[#FF7A2A]/60"
           />
         </label>
-        {balanceNum >= CHANCE_MIN_BALANCE_USDC && amountNum > 0 && (
-          <ChanceUpsellCard
+        {balanceNum >= POOLRIP_SEAT_MIN_BALANCE_USDC && amountNum > 0 && (
+          <PoolRipSeatCard
             dark
             source="cash_out_bank"
-            price={CHANCE_PRICE_USDC}
+            price={POOLRIP_SEAT_PRICE_USDC}
             disabled={busy}
-            checked={chance}
+            checked={seat}
             onCheckedChange={(checked) => {
-              setChance(checked);
-              if (checked && amountNum + CHANCE_PRICE_USDC > balanceNum) {
-                setAmount(Math.max(0, balanceNum - CHANCE_PRICE_USDC).toFixed(6).replace(/\.?0+$/, ""));
+              setSeat(checked);
+              if (checked && amountNum + POOLRIP_SEAT_PRICE_USDC > balanceNum) {
+                setAmount(Math.max(0, balanceNum - POOLRIP_SEAT_PRICE_USDC).toFixed(6).replace(/\.?0+$/, ""));
               }
             }}
           />
@@ -1967,7 +1967,7 @@ function BankWithdraw({
           busy={busy}
           disabled={!(amountNum > 0) || amountNum > maxCashOut || identifier.trim().length < 2}
           label={`Continue with ${platform.name}`}
-          busyLabel="Adding your chance…"
+          busyLabel="Adding your seat…"
           onClick={() => { void continueCashOut(); }}
         />
       </div>

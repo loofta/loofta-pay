@@ -3,44 +3,43 @@
 import { useEffect } from "react";
 import { CheckCircle2 } from "lucide-react";
 import posthog from "posthog-js";
-import { ChanceIcon } from "@/components/ChanceIcon";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
-interface ChanceUpsellCardProps {
+interface PoolRipSeatCardProps {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   dark?: boolean;
   disabled?: boolean;
   reduceMotion?: boolean;
-  /** Price of one chance in USDC (shown in the "added" row). */
+  /** Price of the seat in USDC (shown in the "added" row). */
   price: number;
   /** Headline. Defaults to the cash-out wording. */
   title?: string;
-  /** Row shown once switched on, e.g. "1 chance added". */
+  /** Row shown once switched on. */
   addedLabel?: string;
   /** Which surface is showing the card, sent with the PostHog shown/toggled events. */
   source?: string;
 }
 
 /**
- * "Chance to win $200K today" add-on shown before a withdrawal or cash out. One flowing-glow
- * card with a switch; the parent decides what toggling does to the amount. Same glow as the
- * ticket confirm button on the Megapot page (SlideToPay.tsx).
+ * PoolRip seat add-on shown before a withdrawal or cash out: $2.50 stays behind as a seat in a Death room for the
+ * $25 pack, with the first vote set to take someone out automatically. One flowing-glow card with a switch; the
+ * parent decides what toggling does to the amount.
  */
-export function ChanceUpsellCard({
+export function PoolRipSeatCard({
   checked,
   onCheckedChange,
   dark,
   disabled,
   reduceMotion,
   price,
-  title = "Keep $1 for a chance to win $200K",
-  addedLabel = "1 chance to win today added",
+  title = "Keep $2.50 for a PoolRip Death seat",
+  addedLabel = "Death room seat added",
   source,
-}: ChanceUpsellCardProps) {
+}: PoolRipSeatCardProps) {
   useEffect(() => {
-    posthog.capture("chance_upsell_shown", { source });
+    posthog.capture("poolrip_seat_upsell_shown", { source });
   }, [source]);
 
   return (
@@ -61,18 +60,19 @@ export function ChanceUpsellCard({
       />
       <div className={cn("relative rounded-2xl border p-4", dark ? "bg-[#15110d] border-white/10" : "bg-white border-orange-100")}>
         <div className="flex items-start gap-3">
-          <ChanceIcon size={44} />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/images/poolrip-icon.svg" alt="" width={44} height={44} className="shrink-0 h-11 w-11 object-contain" />
           <div className="flex-1 min-w-0">
             <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>{title}</p>
             <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
-              {`$${price.toFixed(0)} stays in the draw instead of leaving. Winners are paid straight to the balance.`}
+              {`$${price.toFixed(2)} buys a seat in the next $25 pack instead of leaving. Your first vote is set to take someone out, and the card is split by survivors.`}
             </p>
           </div>
           <Switch
             checked={checked}
             disabled={disabled}
             onCheckedChange={(next) => {
-              posthog.capture("chance_upsell_toggled", { source, checked: next });
+              posthog.capture("poolrip_seat_upsell_toggled", { source, checked: next });
               onCheckedChange(next);
             }}
             className="shrink-0 mt-1 data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-[#FF4A26] data-[state=checked]:to-[#E1A041]"

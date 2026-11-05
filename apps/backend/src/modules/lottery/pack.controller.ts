@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post, Request, UseGuards } from '@nestjs/common'
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { IsString } from 'class-validator';
 import { AuthGuard, Public } from '@/common/guards';
+import { assertLotteryNotPaused } from './lottery-pause';
 import { PackService, PackOpenResult, PackTierPublic } from './pack.service';
 
 class OpenPackDto {
@@ -32,6 +33,7 @@ export class PackController {
   @Post('pay-tx')
   @ApiOperation({ summary: 'Build the $2 USDC payment transfer for the caller to sign client-side (gas + destination ATA sponsored by the treasury wallet)' })
   async payTx(@Body() dto: BuildPaymentTxDto, @Request() req: any): Promise<{ txBase64: string }> {
+    assertLotteryNotPaused();
     const txBase64 = await this.packs.buildPaymentTx(dto.userSolanaAddress, req.user.id);
     return { txBase64 };
   }
@@ -51,6 +53,7 @@ export class PackController {
   @Post('open-free-spin')
   @ApiOperation({ summary: "Open a Mystery Pack using an admin-granted free spin — no payment required, but still a real tier roll and a real ticket purchase. Fails if the caller has no unclaimed free spin (see GET /packs/my-status)." })
   async openFreeSpin(@Request() req: any): Promise<PackOpenResult> {
+    assertLotteryNotPaused();
     return this.packs.openPackWithFreeSpin(req.user.id);
   }
 

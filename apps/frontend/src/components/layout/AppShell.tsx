@@ -50,7 +50,6 @@ function ShellContent({ children }: { children: ReactNode }) {
     pathname === '/settings' || pathname === '/app/settings' || pathname === '/app/profile' || pathname === '/profile' ||
     pathname?.startsWith('/c/') || pathname?.startsWith('/app/c/') ||
     pathname === '/sparks' || pathname === '/app/sparks' ||
-    pathname === '/megapot' || pathname === '/app/megapot' ||
     pathname === '/app/card'
   );
   const showMinimalHeader = !isCheckoutPage && !isRewardsRail;

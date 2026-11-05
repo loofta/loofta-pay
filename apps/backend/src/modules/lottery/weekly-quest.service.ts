@@ -1,6 +1,5 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
-import { LotteryService } from './lottery.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TICKET_PRICE_USDC = 1;
@@ -34,10 +33,7 @@ export class WeeklyQuestService {
   private readonly logger = new Logger(WeeklyQuestService.name);
   private running = false;
 
-  constructor(
-    private readonly supabase: SupabaseService,
-    private readonly lottery: LotteryService,
-  ) {}
+  constructor(private readonly supabase: SupabaseService) {}
 
   async getSettings(): Promise<WeeklyQuestSettings> {
     const { data } = await this.supabase.getClient().from('weekly_quest_settings').select('*').eq('id', 1).maybeSingle();
@@ -209,21 +205,33 @@ export class WeeklyQuestService {
     }
   }
 
-  private async award(awardId: string, userId: string, tickets: number): Promise<void> {
+  /**
+   * Pays the award in PoolRip totems (the old reward was Megapot entries, which shut down). The unit count stays in
+   * the `tickets` column. PoolRip dedupes on the ref, so retrying an award can never credit twice; this is why a
+   * failure here, unlike the old ticket purchase, is safe to retry.
+   */
+  private async award(awardId: string, userId: string, totems: number): Promise<void> {
     const db = this.supabase.getClient();
     try {
-      const { ticketId } = await this.lottery.purchaseTicketsForUser(userId, tickets);
-      await db.from('weekly_quest_awards').update({ status: 'awarded', lottery_ticket_id: ticketId, awarded_at: new Date().toISOString(), failure_reason: null }).eq('id', awardId);
-      this.logger.log(`Weekly quest: awarded ${tickets} ticket(s) to ${userId} (ticket ${ticketId})`);
+      const base = (process.env.POOLRIP_API_URL ?? '').replace(/\/+$/, '');
+      const key = process.env.POOLRIP_SERVICE_KEY ?? '';
+      if (!base || !key) throw new Error('POOLRIP_API_URL / POOLRIP_SERVICE_KEY are not set');
+      const res = await fetch(`${base}/api/service/totems/grant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-service-key': key },
+        body: JSON.stringify({ userId, qty: totems, ref: `weekly-quest:${awardId}` }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) throw new Error(`PoolRip answered ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+      await db.from('weekly_quest_awards').update({ status: 'awarded', awarded_at: new Date().toISOString(), failure_reason: null }).eq('id', awardId);
+      this.logger.log(`Weekly quest: granted ${totems} PoolRip totem(s) to ${userId}`);
     } catch (e: any) {
-      // Not retried automatically: the purchase may have moved treasury funds before throwing, so an
-      // admin checks the ticket and retries by hand. This is what keeps a failure from ever double-spending.
       this.logger.error(`Weekly quest: award for ${userId} failed: ${e?.message ?? e}`);
       await db.from('weekly_quest_awards').update({ status: 'failed', failure_reason: String(e?.message ?? e).slice(0, 500) }).eq('id', awardId);
     }
   }
 
-  /** The user acknowledged the "you received X entries" toast. */
+  /** The user acknowledged the "you received X totems" toast. */
   async markSeen(userId: string, awardId: string): Promise<void> {
     await this.supabase.getClient().from('weekly_quest_awards').update({ seen_at: new Date().toISOString() }).eq('id', awardId).eq('user_id', userId);
   }
