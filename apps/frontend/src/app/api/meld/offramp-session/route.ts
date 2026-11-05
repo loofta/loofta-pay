@@ -6,6 +6,10 @@ const LOG = "[meld/offramp-session]";
 // Production keys only work on api.meld.io, sandbox keys only on api-sb.meld.io
 const MELD_API_BASE = process.env.MELD_API_BASE || "https://api.meld.io";
 
+// Providers that support Meld's redirect flow (user confirms the quote in the widget, then returns to
+// Loofta so we send the USDC for them). Others make the user copy a deposit address by hand.
+const REDIRECT_FLOW_PROVIDERS = new Set(["BANXA", "TRANSAK", "ALCHEMYPAY", "UNLIMIT"]);
+
 const ALLOWED_ORIGINS = [
   "https://pay.loofta.xyz",
   "https://loofta.xyz",
@@ -88,7 +92,7 @@ export async function POST(request: Request) {
       }),
     });
     const quoteData = await quoteRes.json().catch(() => null) as { quotes?: { serviceProvider: string; destinationAmount: number }[] } | null;
-    const best = [...(quoteData?.quotes ?? [])].sort((a, b) => b.destinationAmount - a.destinationAmount)[0];
+    const best = [...(quoteData?.quotes ?? [])].filter((q) => REDIRECT_FLOW_PROVIDERS.has(q.serviceProvider)).sort((a, b) => b.destinationAmount - a.destinationAmount)[0];
     if (!quoteRes.ok || !best) {
       console.error(`${LOG} No Meld quote ${quoteRes.status}:`, JSON.stringify(quoteData));
       return new NextResponse(JSON.stringify({ error: "Cash-out isn't available for this amount or country yet." }), { status: 502, headers });
@@ -108,6 +112,7 @@ export async function POST(request: Request) {
           walletAddress,
           ...(clientIpAddress ? { clientIpAddress } : {}),
           ...(amount ? { sourceAmount: String(amount) } : {}),
+          redirectFlow: true,
           ...(redirectUrl ? { redirectUrl } : {}),
         },
       }),
@@ -120,11 +125,11 @@ export async function POST(request: Request) {
       return new NextResponse(JSON.stringify({ error: "Failed to create Meld session", detail }), { status: 502, headers });
     }
 
-    const data = await res.json() as { widgetUrl?: string };
+    const data = await res.json() as { id?: string; widgetUrl?: string };
     if (!data.widgetUrl) {
       return new NextResponse(JSON.stringify({ error: "Meld returned no widget URL" }), { status: 502, headers });
     }
-    return new NextResponse(JSON.stringify({ widgetUrl: data.widgetUrl }), { status: 200, headers });
+    return new NextResponse(JSON.stringify({ widgetUrl: data.widgetUrl, sessionId: data.id }), { status: 200, headers });
   } catch (err: unknown) {
     console.error(`${LOG} Error:`, err instanceof Error ? err.message : String(err));
     return new NextResponse(JSON.stringify({ error: "Internal error" }), { status: 500, headers });

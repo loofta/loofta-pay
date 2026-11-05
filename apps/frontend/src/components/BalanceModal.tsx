@@ -32,7 +32,7 @@ import { PEER_PLATFORMS, PEER_CURRENCIES, getPlatform, getPeerCurrency, platform
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { Deposit as BlinkDeposit } from "@swype-org/deposit";
-import { usePrivy, useUser, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction, useFiatOnramp } from "@privy-io/react-auth";
+import { usePrivy, useUser, useWallets as useEvmWallets, useCreateWallet, useSendTransaction as useEvmSendTransaction } from "@privy-io/react-auth";
 import { useWallets, useSignTransaction, useSignAndSendTransaction, useFundWallet } from "@privy-io/react-auth/solana";
 import { Connection, Transaction, VersionedTransaction } from "@solana/web3.js";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
@@ -684,7 +684,6 @@ export function BalanceModal({
   const { signTransaction } = useSignTransaction();
   const { signAndSendTransaction: signAndSendLotteryTx } = useSignAndSendTransaction();
   const { fundWallet: privyFundWallet } = useFundWallet();
-  const { fund: fundFiatOnramp } = useFiatOnramp();
   const { wallets: evmWallets } = useEvmWallets();
   const { createWallet: createEvmWallet } = useCreateWallet();
   const { sendTransaction: privySendEvmTx } = useEvmSendTransaction();
@@ -860,17 +859,21 @@ export function BalanceModal({
     }
   };
 
-  // Card onramp: Privy's fiat onramp aggregator (Meld) picks the provider. fund() runs synchronously
-  // from the click, so its popup stays inside a trusted gesture on mobile Safari.
+  // Card onramp: our own Meld session (card, Apple Pay, Google Pay). The server records the deposit and the
+  // Meld webhook completes it. A full-page redirect avoids mobile Safari blocking a popup opened after a fetch.
   const handleMoonpayOnramp = async () => {
     if (!solanaAddress) return;
     setMoonpayOnrampLoading(true);
     try {
-      recordDeposit("card-onramp", "pending");
-      await fundFiatOnramp({
-        source: { defaultAsset: "usd" },
-        destination: { asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", chain: "solana:mainnet", address: solanaAddress },
+      const access = await getAccessToken();
+      const res = await fetch("/api/meld/onramp-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(access ? { Authorization: `Bearer ${access}` } : {}) },
+        body: JSON.stringify({ walletAddress: solanaAddress, redirectUrl: `${window.location.origin}/` }),
       });
+      const body = await res.json().catch(() => ({})) as { widgetUrl?: string; error?: string };
+      if (!res.ok || !body.widgetUrl) throw new Error(body.error || "Could not start the card deposit.");
+      window.location.assign(body.widgetUrl);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Could not open card onramp.";
       toast({ variant: "destructive", title: "Card onramp error", description: msg });

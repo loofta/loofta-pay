@@ -48,9 +48,12 @@ export type PaymentHistoryClaim = {
   guest_sender_wallet?: string | null;
   /** Set for a pay to Venmo, Cash App, or Revolut. Opens the receipt instead of /c/[id]. */
   receipt_path?: string | null;
+  /** Set for money added to the wallet (a deposit), shown instead of a sender name. */
+  source_label?: string | null;
 };
 
 function getSenderDisplay(claim: PaymentHistoryClaim, anonymous: string): string {
+  if (claim.source_label) return claim.source_label;
   if (claim.direction === "from_recipient") {
     if (claim.sender_username) return `@${claim.sender_username}`;
     // No account, so no username — a guest checkout payer's only identity is the email they
@@ -84,6 +87,7 @@ function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string 
     const sep = rest.indexOf(":");
     const platform = sep >= 0 ? rest.slice(0, sep).trim() : null;
     const handle = (sep >= 0 ? rest.slice(sep + 1) : rest).trim();
+    if (platform === "meld") return "Your bank account";
     const cashName = platform === "venmo" ? "Venmo" : platform === "cashapp" ? "Cash App" : platform === "revolut" ? "Revolut" : platform === "xmoney" ? "X Money" : platform === "chime" ? "Chime" : platform === "monzo" ? "Monzo" : platform === "upi" ? "UPI" : null;
     if (cashName) return `${handle} on ${cashName}`;
     return platform ? `@${handle} on ${platform}` : `@${handle}`;

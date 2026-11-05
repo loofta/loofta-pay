@@ -52,6 +52,8 @@ export type PaymentHistoryClaim = {
   guest_sender_wallet?: string | null;
   /** Pay to Venmo, Cash App, or Revolut. The history row opens this receipt. */
   receipt_path?: string | null;
+  /** Set for money added to the wallet (a deposit), shown instead of a sender name. */
+  source_label?: string | null;
 };
 
 function cashPayStatus(status: string): string {
@@ -71,6 +73,7 @@ const VISIBLE_CASH_PAY_STATUSES = new Set([
   "COMPLETE",
   "SUCCESS",
   "CANCELLED",
+  "FAILED",
 ]);
 
 /** Pays to Venmo, Cash App, or Revolut live on offramp_requests, not payments. */
@@ -82,7 +85,7 @@ async function loadCashPays(
     .from("offramp_requests")
     .select("id, status, amount_usdc, created_at, platform, platform_identifier, near_intents_status")
     .eq("user_id", userId)
-    .in("platform", ["venmo", "cashapp", "revolut", "chime", "monzo", "upi", "xmoney"])
+    .in("platform", ["venmo", "cashapp", "revolut", "chime", "monzo", "upi", "xmoney", "meld"])
     .order("created_at", { ascending: false })
     .limit(50);
   if (error || !data) return [];
@@ -116,9 +119,72 @@ async function loadCashPays(
       created_by: null,
       is_private: false,
       description: null,
-      receipt_path: `/app/pay/${shortId || id}`,
+      // A bank cash-out has no share receipt; its page shows the live payout status instead
+      receipt_path: platform === "meld" && marker.startsWith("meld:")
+        ? `/app/cash-out/meld?sessionId=${marker.slice(5)}`
+        : `/app/pay/${shortId || id}`,
     };
   });
+}
+
+const DEPOSIT_LABELS: Record<string, string> = {
+  "card-onramp": "Card deposit",
+  moonpay: "Card deposit",
+  coinbase: "Coinbase deposit",
+  blink: "Private deposit",
+  "near-intents": "Cross-chain deposit",
+  "usdc-wallet": "USDC deposit",
+  "peer-pay": "Cash app deposit",
+};
+
+/** Money added to the wallet (card, bank, bridge). Lives in user_deposits, not payments. */
+async function loadDeposits(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  userId: string,
+): Promise<PaymentHistoryClaim[]> {
+  const { data, error } = await supabase
+    .from("user_deposits")
+    .select("id, type, status, amount_usdc, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error || !data) return [];
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  return (data as Array<Record<string, unknown>>)
+    .filter((row) => {
+      const status = String(row.status ?? "");
+      if (status === "cancelled") return false;
+      // An abandoned checkout stays "pending" forever, so only show recent ones
+      if (status === "pending") return new Date(String(row.created_at)).getTime() > dayAgo;
+      return true;
+    })
+    .map((row) => {
+      const status = String(row.status ?? "");
+      return {
+        id: `deposit:${String(row.id)}`,
+        short_id: null,
+        amount: String(row.amount_usdc ?? "0"),
+        direction: "from_sender" as const,
+        to_symbol: "USDC",
+        to_chain: "solana",
+        to_token: "USDC",
+        from_chain: "solana",
+        from_token: "USDC",
+        paid_with_chain: "solana",
+        paid_with_token: "USDC",
+        status: status === "complete" ? "SUCCESS" : status === "failed" ? "EXPIRED" : "IN_FLIGHT",
+        created_at: String(row.created_at ?? ""),
+        paid_at: status === "complete" ? String(row.created_at ?? "") : null,
+        recipient_username: null,
+        recipient_email: null,
+        creator_email: null,
+        created_by: null,
+        is_private: false,
+        description: null,
+        source_label: DEPOSIT_LABELS[String(row.type)] ?? "Deposit",
+        receipt_path: "/app/history",
+      };
+    });
 }
 
 const TERMINAL_STATUSES = ["SUCCESS", "PRIVATE_TRANSFER_PENDING", "CANCELLED", "REFUNDED", "EXPIRED", "DELETED"];
@@ -548,9 +614,13 @@ export async function GET(request: Request) {
       .filter((c) => !isExpiredOpenPayment(c) && String(c.status || "").toUpperCase() !== "DELETED")
       .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
 
-    const received = normPaymentReceived
-      .map(enrich)
-      .filter((c) => RECEIVED_VISIBLE_STATUSES.includes(String(c.status || "").toUpperCase()));
+    const deposits = await loadDeposits(supabase, userId);
+    const received = [
+      ...normPaymentReceived
+        .map(enrich)
+        .filter((c) => RECEIVED_VISIBLE_STATUSES.includes(String(c.status || "").toUpperCase())),
+      ...deposits,
+    ].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
 
     const res = NextResponse.json({ sent, received, page, limit, sentTotal, receivedTotal });
     res.headers.set("Cache-Control", "private, no-store");

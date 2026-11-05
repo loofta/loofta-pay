@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Connection, PublicKey, Transaction, VersionedTransaction } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { useCreateWallet, useFiatOnramp, usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
+import { useCreateWallet, usePrivy, useWallets as useEvmWallets } from "@privy-io/react-auth";
 import { useSignTransaction, useWallets as useSolanaWallets } from "@privy-io/react-auth/solana";
 import { ChevronLeft, Copy, ExternalLink, Loader2, Shield, X } from "lucide-react";
 import { getExplorerTxUrl } from "@/lib/getExplorerTxUrl";
@@ -23,6 +23,7 @@ import { useSolDomain } from "@/hooks/useSolDomain";
 import { useSolPriceOrNull } from "@/hooks/useSolPrice";
 import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
 import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
+import { MELD_SESSION_KEY } from "@/lib/meldOfframp";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { addWithdrawal } from "@/lib/withdrawalHistory";
 import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
@@ -887,7 +888,6 @@ function CardDeposit({
   const { toast } = useToast();
   const { createWallet: createEvmWallet } = useCreateWallet();
   const { wallets: evmWallets } = useEvmWallets();
-  const { fund: fundFiatOnramp } = useFiatOnramp();
   const asPeer = (p?: CardProvider): CardProvider | null =>
     !p ? null : p === "revolut" || p === "venmo" || p === "cashapp" ? "peer" : p;
   const [provider, setProvider] = useState<CardProvider | null>(asPeer(initialProvider));
@@ -903,11 +903,15 @@ function CardDeposit({
     setBusy(true);
     try {
       if (chosen === "card") {
-        await fundFiatOnramp({
-          source: { defaultAsset: "usd" },
-          destination: { asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", chain: "solana:mainnet", address: solanaAddress },
-          ...(amountNum > 0 ? { defaultAmount: String(amountNum) } : {}),
+        const access = await getAccessToken();
+        const res = await fetch("/api/meld/onramp-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(access ? { Authorization: `Bearer ${access}` } : {}) },
+          body: JSON.stringify({ walletAddress: solanaAddress, redirectUrl: `${window.location.origin}/`, ...(amountNum > 0 ? { amount: amountNum } : {}) }),
         });
+        const body = await res.json().catch(() => ({})) as { widgetUrl?: string; error?: string };
+        if (!res.ok || !body.widgetUrl) throw new Error(body.error || "Could not start the card deposit.");
+        window.location.assign(body.widgetUrl);
         return;
       }
       await startPeerCheckout({
@@ -1871,6 +1875,7 @@ function BankWithdraw({
   const { toast } = useToast();
   const { user } = usePrivy();
   const [app, setApp] = useState<string | null>(null);
+  const [peerOpen, setPeerOpen] = useState(false);
   const [amount, setAmount] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1901,14 +1906,15 @@ function BankWithdraw({
       const sessionRes = await fetch("/api/meld/offramp-session", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(access ? { Authorization: `Bearer ${access}` } : {}) },
-        body: JSON.stringify({ walletAddress: solanaAddress, redirectUrl: `${window.location.origin}/` }),
+        body: JSON.stringify({ walletAddress: solanaAddress, redirectUrl: `${window.location.origin}/cash-out/meld` }),
       });
       if (!sessionRes.ok) {
         const err = await sessionRes.json().catch(() => ({})) as { error?: string; detail?: string };
         throw new Error(err.detail || err.error || "Could not start cash-out");
       }
-      const { widgetUrl } = await sessionRes.json() as { widgetUrl?: string };
-      if (!widgetUrl) throw new Error("No cash-out session");
+      const { widgetUrl, sessionId } = await sessionRes.json() as { widgetUrl?: string; sessionId?: string };
+      if (!widgetUrl || !sessionId) throw new Error("No cash-out session");
+      try { window.localStorage.setItem(MELD_SESSION_KEY, sessionId); } catch { /* storage blocked, the return page then needs the sessionId param */ }
       window.location.assign(widgetUrl);
     } catch (err) {
       toast({ variant: "destructive", title: "Couldn't open cash-out", description: err instanceof Error ? err.message : "Try again." });
@@ -1968,13 +1974,30 @@ function BankWithdraw({
     );
   }
 
+  if (peerOpen) {
+    return (
+      <div className="mt-4 flex flex-col gap-2">
+        <button type="button" onClick={() => setPeerOpen(false)} className="mb-1 self-start text-sm font-semibold text-[#C8C6D0] hover:text-white">Private P2P</button>
+        {PEER_PLATFORMS.map((item) => (
+          <button key={item.id} type="button" onClick={() => setApp(item.id)} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20">
+            <img src={item.logo} alt="" className="h-9 w-9 rounded-xl bg-[#1C1C22] object-contain p-1.5" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-base font-bold text-white">{item.name}</span>
+              <span className="block text-sm text-[#8A8893]">{item.idLabel}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="mt-4 flex flex-col gap-2">
       <button type="button" disabled={!solanaAddress || busy} onClick={() => { void openMeld(); }} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20 disabled:opacity-50">
         <img src="/images/icons/card.svg" alt="" className="h-9 w-9 rounded-xl bg-[#1C1C22] object-contain p-1.5" />
         <span className="min-w-0 flex-1">
           <span className="block text-base font-bold text-white">Bank or card</span>
-          <span className="block text-sm text-[#8A8893]">Bank, card, or Apple Pay</span>
+          <span className="block text-sm text-[#8A8893]">Bank account or debit card</span>
         </span>
       </button>
       {PAJ_CASH_ENABLED && (
@@ -1986,15 +2009,18 @@ function BankWithdraw({
           </span>
         </button>
       )}
-      {PEER_PLATFORMS.map((item) => (
-        <button key={item.id} type="button" onClick={() => setApp(item.id)} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20">
-          <img src={item.logo} alt="" className="h-9 w-9 rounded-xl bg-[#1C1C22] object-contain p-1.5" />
-          <span className="min-w-0 flex-1">
-            <span className="block text-base font-bold text-white">{item.name}</span>
-            <span className="block text-sm text-[#8A8893]">{item.idLabel}</span>
-          </span>
-        </button>
-      ))}
+      <button type="button" onClick={() => setPeerOpen(true)} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20">
+        <span className="flex shrink-0 -space-x-2.5">
+          {PEER_PLATFORMS.slice(0, 4).map((item) => (
+            <img key={item.id} src={item.logo} alt="" className="h-9 w-9 rounded-xl border-2 border-[#1A1A20] bg-[#1C1C22] object-contain p-1.5" />
+          ))}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-base font-bold text-white">Private P2P</span>
+          <span className="block text-sm text-[#8A8893]">{PEER_PLATFORMS.slice(0, 5).map((item) => item.name).join(", ")} and more</span>
+        </span>
+        <span className="text-[#8A8893]">→</span>
+      </button>
     </div>
   );
 }

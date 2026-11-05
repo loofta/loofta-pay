@@ -599,6 +599,7 @@ export class OfframpService {
       .from('offramp_requests')
       .select('*')
       .eq('user_id', userId)
+      .neq('platform', 'meld') // Meld bank cash-outs finish on /cash-out/meld, not in the Peer resume flow
       .not('status', 'in', '("COMPLETE","CANCELLED","FAILED")');
     if (skip.length) q = q.not('id', 'in', `(${skip.join(',')})`);
     const { data } = await q.order('created_at', { ascending: false }).limit(1).maybeSingle();
