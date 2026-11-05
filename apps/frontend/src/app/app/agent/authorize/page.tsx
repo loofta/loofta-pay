@@ -25,6 +25,7 @@ function Authorize() {
   const [daily, setDaily] = useState('100')
   const [autoApprove, setAutoApprove] = useState('5')
   const [allowNew, setAllowNew] = useState(false)
+  const [chatApproval, setChatApproval] = useState(false)
   const [days, setDays] = useState('30')
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -94,6 +95,7 @@ function Authorize() {
           daily_cap_usd: Number(daily),
           auto_approve_usd: Number(autoApprove),
           allow_new_recipients: allowNew,
+          chat_approval: chatApproval,
           expires_in_days: Math.round(Number(days)),
         }),
       })
@@ -140,6 +142,10 @@ function Authorize() {
             <span>
               Let it pay people it has not paid before without asking me. It still stays inside the limits above.
             </span>
+          </label>
+          <label className="flex items-start gap-3 text-lg text-white/80">
+            <input type="checkbox" className="mt-1.5 h-5 w-5" checked={chatApproval} onChange={(e) => setChatApproval(e.target.checked)} />
+            <span>Approve in chat: when I tell the agent to approve, it sends right away, no link to open. Only for payments this agent asked for, inside the limits above.</span>
           </label>
           <label className="block space-y-1.5">
             <span className="text-lg text-white/70">Access lasts (days)</span>

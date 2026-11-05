@@ -22,6 +22,7 @@ export interface AgentSession {
   autoApproveUsd: number;
   /** The person chose to let this session pay people it has not paid before, without asking (still inside the limits). */
   allowNewRecipients?: boolean;
+  chatApproval?: boolean;
   expiresAt: string;
 }
 
@@ -38,6 +39,7 @@ const toSession = (r: any): AgentSession => ({
   dailyCapUsd: Number(r.daily_cap_usd),
   autoApproveUsd: Number(r.auto_approve_usd),
   allowNewRecipients: r.allow_new_recipients === true,
+  chatApproval: r.chat_approval === true,
   expiresAt: r.expires_at,
 });
 
@@ -162,7 +164,7 @@ export class AgentAuthService {
   async approveDevice(
     userId: string,
     userCodeInput: string,
-    choice: { label?: string; scopes?: unknown; perPaymentCapUsd?: number; dailyCapUsd?: number; autoApproveUsd?: number; allowNewRecipients?: boolean; expiresInDays?: number },
+    choice: { label?: string; scopes?: unknown; perPaymentCapUsd?: number; dailyCapUsd?: number; autoApproveUsd?: number; allowNewRecipients?: boolean; chatApproval?: boolean; expiresInDays?: number },
   ): Promise<AgentSession> {
     const row = await this.findPending(userCodeInput);
     const perPayment = this.cap(choice.perPaymentCapUsd, 25, MAX_PER_PAYMENT_USD, 'Per-payment limit');
@@ -189,6 +191,7 @@ export class AgentAuthService {
         auto_approve_usd: autoApprove,
         // Only sent when on, so a database without the column yet keeps working for everyone else.
         ...(choice.allowNewRecipients === true ? { allow_new_recipients: true } : {}),
+        ...(choice.chatApproval === true ? { chat_approval: true } : {}),
         expires_at: new Date(Date.now() + days * 86_400_000).toISOString(),
         created_from_ip: row.requester_ip,
       })
@@ -215,7 +218,7 @@ export class AgentAuthService {
   /** A session created straight from the app (hosted MCP login). The token is issued later, when the client swaps its code. */
   async createSession(
     userId: string,
-    choice: { label?: string; perPaymentCapUsd?: number; dailyCapUsd?: number; autoApproveUsd?: number; allowNewRecipients?: boolean; expiresInDays?: number; ip?: string },
+    choice: { label?: string; perPaymentCapUsd?: number; dailyCapUsd?: number; autoApproveUsd?: number; allowNewRecipients?: boolean; chatApproval?: boolean; expiresInDays?: number; ip?: string },
   ): Promise<AgentSession> {
     const perPayment = this.cap(choice.perPaymentCapUsd, 25, MAX_PER_PAYMENT_USD, 'Per-payment limit');
     const daily = this.cap(choice.dailyCapUsd, 100, MAX_DAILY_USD, 'Daily limit');
@@ -237,6 +240,7 @@ export class AgentAuthService {
         auto_approve_usd: autoApprove,
         // Only sent when on, so a database without the column yet keeps working for everyone else.
         ...(choice.allowNewRecipients === true ? { allow_new_recipients: true } : {}),
+        ...(choice.chatApproval === true ? { chat_approval: true } : {}),
         expires_at: new Date(Date.now() + days * 86_400_000).toISOString(),
         created_from_ip: choice.ip ?? null,
       })
@@ -282,7 +286,7 @@ export class AgentAuthService {
     const { data } = await this.db
       .getClient()
       .from('agent_sessions')
-      .select('id, label, token_prefix, scopes, per_payment_cap_usd, daily_cap_usd, auto_approve_usd, allow_new_recipients, created_at, expires_at, last_used_at')
+      .select('id, label, token_prefix, scopes, per_payment_cap_usd, daily_cap_usd, auto_approve_usd, allow_new_recipients, chat_approval, created_at, expires_at, last_used_at')
       .eq('user_id', userId)
       .is('revoked_at', null)
       .neq('token_prefix', 'pending') // an approval whose token was never collected is not a connection
@@ -313,7 +317,7 @@ export class AgentAuthService {
   async updateSession(
     userId: string,
     sessionId: string,
-    choice: { perPaymentCapUsd?: number; dailyCapUsd?: number; autoApproveUsd?: number; allowNewRecipients?: boolean },
+    choice: { perPaymentCapUsd?: number; dailyCapUsd?: number; autoApproveUsd?: number; allowNewRecipients?: boolean; chatApproval?: boolean },
   ) {
     const { data: current } = await this.db
       .getClient()
@@ -337,6 +341,7 @@ export class AgentAuthService {
         daily_cap_usd: daily,
         auto_approve_usd: autoApprove,
         ...(typeof choice.allowNewRecipients === 'boolean' ? { allow_new_recipients: choice.allowNewRecipients } : {}),
+        ...(typeof choice.chatApproval === 'boolean' ? { chat_approval: choice.chatApproval } : {}),
       })
       .eq('id', sessionId)
       .eq('user_id', userId)

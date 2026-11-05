@@ -90,6 +90,18 @@ describe('waiting for the person', () => {
     expect(again.status).toBe('paid');
     expect(executed).toHaveLength(1);
   });
+  it('approving in chat needs the setting on, and only works for the session that asked', async () => {
+    const { svc, executed } = build();
+    const waiting = await pay(svc, session(), [{ recipient: 'brand_new', amount_usd: 2 }]);
+    await expect(svc.approveFromAgent(session(), waiting.id)).rejects.toMatchObject({ response: { code: 'chat_approval_off' } });
+    expect(executed).toHaveLength(0);
+    await expect(svc.approveFromAgent(session({ id: 'sess-2', chatApproval: true }), waiting.id)).rejects.toThrow(); // another connection's request
+    expect(executed).toHaveLength(0);
+    const done = await svc.approveFromAgent(session({ chatApproval: true }), waiting.id);
+    expect(done.status).toBe('paid');
+    expect((await svc.approveFromAgent(session({ chatApproval: true }), waiting.id)).status).toBe('paid');
+    expect(executed).toHaveLength(1);
+  });
   it('only the owner can approve or deny, and denying sends nothing', async () => {
     const { svc, executed } = build();
     const waiting = await pay(svc, session(), [{ recipient: 'brand_new', amount_usd: 2 }]);

@@ -24,6 +24,7 @@ interface SessionRow {
   daily_cap_usd: number
   auto_approve_usd: number
   allow_new_recipients?: boolean
+  chat_approval?: boolean
   expires_at: string
   last_used_at: string | null
 }
@@ -47,6 +48,7 @@ function SessionEditor({ session, working, onSave }: { session: SessionRow; work
   const [daily, setDaily] = useState(String(session.daily_cap_usd))
   const [autoApprove, setAutoApprove] = useState(String(session.auto_approve_usd))
   const [allowNew, setAllowNew] = useState(!!session.allow_new_recipients)
+  const [chatApproval, setChatApproval] = useState(!!session.chat_approval)
   return (
     <div className="space-y-3 rounded-xl border border-white/[0.08] px-4 py-4">
       <label className="block space-y-1.5">
@@ -65,10 +67,14 @@ function SessionEditor({ session, working, onSave }: { session: SessionRow; work
         <input type="checkbox" className="mt-1.5 h-5 w-5" checked={allowNew} onChange={(e) => setAllowNew(e.target.checked)} />
         <span>Let it pay people it has not paid before without asking me.</span>
       </label>
+      <label className="flex items-start gap-3 text-lg text-white/80">
+        <input type="checkbox" className="mt-1.5 h-5 w-5" checked={chatApproval} onChange={(e) => setChatApproval(e.target.checked)} />
+        <span>Approve in chat: when I tell the agent to approve, it sends right away, no link to open. Only for payments this agent asked for, inside the limits above.</span>
+      </label>
       <GradientActionButton
         loading={working}
         loadingText="Saving…"
-        onClick={() => onSave({ per_payment_cap_usd: Number(perPayment), daily_cap_usd: Number(daily), auto_approve_usd: Number(autoApprove), allow_new_recipients: allowNew })}
+        onClick={() => onSave({ per_payment_cap_usd: Number(perPayment), daily_cap_usd: Number(daily), auto_approve_usd: Number(autoApprove), allow_new_recipients: allowNew, chat_approval: chatApproval })}
       >
         Save limits
       </GradientActionButton>
@@ -87,6 +93,7 @@ export default function AgentPage() {
   const [daily, setDaily] = useState('100')
   const [autoApprove, setAutoApprove] = useState('5')
   const [allowNew, setAllowNew] = useState(false)
+  const [chatApproval, setChatApproval] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
   const [days, setDays] = useState('30')
   const [working, setWorking] = useState(false)
@@ -244,6 +251,10 @@ export default function AgentPage() {
                 Let it pay people it has not paid before without asking me. It still stays inside the limits above.
               </span>
             </label>
+            <label className="flex items-start gap-3 text-lg text-white/80">
+              <input type="checkbox" className="mt-1.5 h-5 w-5" checked={chatApproval} onChange={(e) => setChatApproval(e.target.checked)} />
+              <span>Approve in chat: when I tell the agent to approve, it sends right away, no link to open. Only for payments this agent asked for, inside the limits above.</span>
+            </label>
             <label className="block space-y-1.5">
               <span className="text-lg text-white/70">Access lasts (days)</span>
               <input className={input} inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} />
@@ -260,6 +271,7 @@ export default function AgentPage() {
                       daily_cap_usd: Number(daily),
                       auto_approve_usd: Number(autoApprove),
                       allow_new_recipients: allowNew,
+                      chat_approval: chatApproval,
                       expires_in_days: Math.round(Number(days)),
                     })
                     setDescribed(null)
@@ -301,6 +313,7 @@ export default function AgentPage() {
                     <div className="text-white">{s.label}</div>
                     <div>${s.per_payment_cap_usd} per payment, ${s.daily_cap_usd} a day, sends without asking up to ${s.auto_approve_usd}. Ends {new Date(s.expires_at).toLocaleDateString()}.</div>
                     <div>{s.allow_new_recipients ? 'Can pay new people without asking.' : 'Asks before paying someone new.'}</div>
+                    <div>{s.chat_approval ? 'You can approve in chat.' : 'Approvals happen in the app or Telegram.'}</div>
                   </div>
                   <div className="flex shrink-0 gap-4">
                     <button type="button" className="text-lg text-white/60 underline underline-offset-2 hover:text-white" onClick={() => setEditing(editing === s.id ? null : s.id)}>

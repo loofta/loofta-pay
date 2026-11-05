@@ -68,7 +68,7 @@ export class AgentController {
   async approve(@PrivyUser() user: { id: string }, @Body() dto: ApproveLoginDto) {
     const s = await this.auth.approveDevice(user.id, dto.user_code, {
       label: dto.label, scopes: dto.scopes, perPaymentCapUsd: dto.per_payment_cap_usd, dailyCapUsd: dto.daily_cap_usd,
-      autoApproveUsd: dto.auto_approve_usd, allowNewRecipients: dto.allow_new_recipients === true, expiresInDays: dto.expires_in_days,
+      autoApproveUsd: dto.auto_approve_usd, allowNewRecipients: dto.allow_new_recipients === true, chatApproval: dto.chat_approval === true, expiresInDays: dto.expires_in_days,
     });
     return { id: s.id, label: s.label, scopes: s.scopes, expires_at: s.expiresAt };
   }
@@ -95,7 +95,7 @@ export class AgentController {
   update(@PrivyUser() user: { id: string }, @Param('id') id: string, @Body() dto: UpdateSessionDto) {
     return this.auth.updateSession(user.id, id, {
       perPaymentCapUsd: dto.per_payment_cap_usd, dailyCapUsd: dto.daily_cap_usd,
-      autoApproveUsd: dto.auto_approve_usd, allowNewRecipients: dto.allow_new_recipients,
+      autoApproveUsd: dto.auto_approve_usd, allowNewRecipients: dto.allow_new_recipients, chatApproval: dto.chat_approval,
     });
   }
 
@@ -200,6 +200,14 @@ export class AgentController {
   @RateLimit(10, 60, 'agent:cash-out')
   cashOut(@Req() req: { agentSession: AgentSession }, @Body() body: any) {
     return this.payments.cashPay(req.agentSession, body ?? {}, String(body?.idempotency_key ?? ''));
+  }
+
+  @Post('v1/payments/:id/approve')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AgentGuard, RateLimitGuard)
+  @RateLimit(20, 60, 'agent:chat-approve')
+  approveInChat(@Req() req: { agentSession: AgentSession }, @Param('id') id: string) {
+    return this.payments.approveFromAgent(req.agentSession, id);
   }
 
   @Post('v1/cash-out/:id/cancel')

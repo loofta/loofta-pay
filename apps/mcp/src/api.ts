@@ -40,6 +40,7 @@ export const loofta = (api: string, token: string) => ({
   cashOut: (b: Record<string, unknown>) => request<any>(api, '/agent/v1/cash-out', { token, body: b }),
   cashCancel: (id: string) => request<any>(api, `/agent/v1/cash-out/${encodeURIComponent(id)}/cancel`, { token, body: {} }),
   pay: (b: PaymentInput, idempotencyKey: string) => request<any>(api, '/agent/v1/payments', { token, body: b, headers: { 'Idempotency-Key': idempotencyKey } }),
+  approve: (id: string) => request<any>(api, `/agent/v1/payments/${encodeURIComponent(id)}/approve`, { token, body: {} }),
   get: (id: string) => request<any>(api, `/agent/v1/payments/${encodeURIComponent(id)}`, { token }),
   contacts: (limit = 30) => request<any>(api, `/agent/v1/contacts?limit=${limit}`, { token }),
   lookup: (recipient: string) => request<any>(api, `/agent/v1/lookup?recipient=${encodeURIComponent(recipient)}`, { token }),

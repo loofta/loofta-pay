@@ -441,6 +441,20 @@ export class AgentPaymentsService implements OnModuleInit {
     return this.run(claimed[0]);
   }
 
+  /**
+   * The person told the agent to approve. Only for sessions they opted in, and only for this session's own
+   * requests, so one connected agent can never approve what another one asked for.
+   */
+  async approveFromAgent(session: AgentSession, actionId: string) {
+    this.requireScope(session, 'pay');
+    if (!session.chatApproval) {
+      throw agentError('chat_approval_off', `Approving in chat is not turned on for this connection. Use the approval link, or turn on "Approve in chat" under Edit limits at ${this.appUrl}/app/agent.`, 'forbidden');
+    }
+    const { data: row } = await this.db.getClient().from('agent_actions').select('session_id').eq('id', actionId).eq('user_id', session.userId).maybeSingle();
+    if (!row || row.session_id !== session.id) throw new NotFoundException('Request not found.');
+    return this.approve(session.userId, actionId);
+  }
+
   async deny(userId: string, actionId: string) {
     const { data } = await this.db.getClient().from('agent_actions').update({ status: 'denied', updated_at: new Date().toISOString() }).eq('id', actionId).eq('user_id', userId).eq('status', 'needs_approval').select('*');
     if (!data?.length) throw new NotFoundException('Nothing waiting for approval with that id.');

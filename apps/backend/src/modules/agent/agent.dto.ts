@@ -16,6 +16,7 @@ export class UpdateSessionDto {
   @IsOptional() @IsNumber() daily_cap_usd?: number;
   @IsOptional() @IsNumber() auto_approve_usd?: number;
   @IsOptional() @IsBoolean() allow_new_recipients?: boolean;
+  @IsOptional() @IsBoolean() chat_approval?: boolean;
 }
 export class ApproveLoginDto extends UserCodeDto {
   @IsOptional() @IsString() @MaxLength(60) label?: string;
@@ -24,6 +25,7 @@ export class ApproveLoginDto extends UserCodeDto {
   @IsOptional() @IsNumber() daily_cap_usd?: number;
   @IsOptional() @IsNumber() auto_approve_usd?: number;
   @IsOptional() @IsBoolean() allow_new_recipients?: boolean;
+  @IsOptional() @IsBoolean() chat_approval?: boolean;
   @IsOptional() @IsInt() @Min(1) @Max(90) expires_in_days?: number;
 }
 export class PaymentItemDto {
