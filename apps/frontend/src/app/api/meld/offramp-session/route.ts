@@ -92,42 +92,43 @@ export async function POST(request: Request) {
       }),
     });
     const quoteData = await quoteRes.json().catch(() => null) as { quotes?: { serviceProvider: string; destinationAmount: number }[] } | null;
-    const best = [...(quoteData?.quotes ?? [])].filter((q) => REDIRECT_FLOW_PROVIDERS.has(q.serviceProvider)).sort((a, b) => b.destinationAmount - a.destinationAmount)[0];
-    if (!quoteRes.ok || !best) {
+    const quotes = [...(quoteData?.quotes ?? [])].sort((a, b) => b.destinationAmount - a.destinationAmount);
+    if (!quoteRes.ok || !quotes.length) {
       console.error(`${LOG} No Meld quote ${quoteRes.status}:`, JSON.stringify(quoteData));
       return new NextResponse(JSON.stringify({ error: "Cash-out isn't available for this amount or country yet." }), { status: 502, headers });
     }
+    // Providers with the redirect flow first (best quote within each group); fall through if one refuses the session
+    const ordered = [...quotes.filter((q) => REDIRECT_FLOW_PROVIDERS.has(q.serviceProvider)), ...quotes.filter((q) => !REDIRECT_FLOW_PROVIDERS.has(q.serviceProvider))];
 
-    const res = await fetch(`${MELD_API_BASE}/crypto/session/widget`, {
-      method: "POST",
-      headers: meldHeaders,
-      body: JSON.stringify({
-        sessionType: "SELL",
-        externalCustomerId: userId ?? "dev-user",
-        sessionData: {
-          countryCode,
-          serviceProvider: best.serviceProvider,
-          sourceCurrencyCode: "USDC_SOLANA",
-          destinationCurrencyCode: "USD",
-          walletAddress,
-          ...(clientIpAddress ? { clientIpAddress } : {}),
-          ...(amount ? { sourceAmount: String(amount) } : {}),
-          redirectFlow: true,
-          ...(redirectUrl ? { redirectUrl } : {}),
-        },
-      }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      console.error(`${LOG} Meld API ${res.status}:`, text);
-      const detail = process.env.NODE_ENV === "development" ? text : undefined;
-      return new NextResponse(JSON.stringify({ error: "Failed to create Meld session", detail }), { status: 502, headers });
+    let data: { id?: string; widgetUrl?: string } | null = null;
+    let lastFailure = "";
+    for (const quote of ordered) {
+      const res = await fetch(`${MELD_API_BASE}/crypto/session/widget`, {
+        method: "POST",
+        headers: meldHeaders,
+        body: JSON.stringify({
+          sessionType: "SELL",
+          externalCustomerId: userId ?? "dev-user",
+          sessionData: {
+            countryCode,
+            serviceProvider: quote.serviceProvider,
+            sourceCurrencyCode: "USDC_SOLANA",
+            destinationCurrencyCode: "USD",
+            walletAddress,
+            ...(clientIpAddress ? { clientIpAddress } : {}),
+            ...(amount ? { sourceAmount: String(amount) } : {}),
+            redirectFlow: true,
+            ...(redirectUrl ? { redirectUrl } : {}),
+          },
+        }),
+      });
+      if (res.ok) { data = await res.json() as { id?: string; widgetUrl?: string }; if (data.widgetUrl) break; continue; }
+      lastFailure = await res.text();
+      console.error(`${LOG} ${quote.serviceProvider} refused ${res.status}:`, lastFailure);
     }
-
-    const data = await res.json() as { id?: string; widgetUrl?: string };
-    if (!data.widgetUrl) {
-      return new NextResponse(JSON.stringify({ error: "Meld returned no widget URL" }), { status: 502, headers });
+    if (!data?.widgetUrl) {
+      const detail = process.env.NODE_ENV === "development" ? lastFailure : undefined;
+      return new NextResponse(JSON.stringify({ error: "Couldn't start the cash-out. Try a different amount.", detail }), { status: 502, headers });
     }
     return new NextResponse(JSON.stringify({ widgetUrl: data.widgetUrl, sessionId: data.id }), { status: 200, headers });
   } catch (err: unknown) {

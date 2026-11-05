@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 // PoolRip runs as its own server but logs in with this same Privy app, so the user's Privy bearer token is valid
 // there as-is. The browser talks to this route (same origin) and we forward only the few calls the seat upsell needs.
-const POOLRIP_API_URL = (process.env.POOLRIP_API_URL || "").replace(/\/+$/, "");
+// Defaults to PoolRip's public API so the home card works even when the host has no env var set. Not a secret.
+const POOLRIP_API_URL = (process.env.POOLRIP_API_URL || "https://riptide-server.fly.dev").replace(/\/+$/, "");
 
 const ALLOWED: Array<{ method: string; re: RegExp }> = [
   { method: "GET", re: /^config$/ },

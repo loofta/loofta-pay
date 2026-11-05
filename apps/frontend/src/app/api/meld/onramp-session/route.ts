@@ -69,39 +69,47 @@ export async function POST(request: Request) {
       }),
     });
     const quoteData = await quoteRes.json().catch(() => null) as { quotes?: { serviceProvider: string; destinationAmount: number }[] } | null;
-    const best = [...(quoteData?.quotes ?? [])].sort((a, b) => b.destinationAmount - a.destinationAmount)[0];
-    if (!quoteRes.ok || !best) {
+    const ranked = [...(quoteData?.quotes ?? [])].sort((a, b) => b.destinationAmount - a.destinationAmount);
+    if (!quoteRes.ok || !ranked.length) {
       console.error(`${LOG} No Meld quote ${quoteRes.status}:`, JSON.stringify(quoteData));
       return json({ error: "Card deposits aren't available for this amount or country yet." }, 502);
     }
 
+    // Best quote first; if a provider refuses the session (limits, country, KYC rules) fall through to the next
     const externalSessionId = `dep_${randomUUID()}`;
-    const res = await fetch(`${MELD_API_BASE}/crypto/session/widget`, {
-      method: "POST",
-      headers: meldHeaders,
-      body: JSON.stringify({
-        sessionType: "BUY",
-        externalCustomerId: userId,
-        externalSessionId,
-        sessionData: {
-          countryCode,
-          serviceProvider: best.serviceProvider,
-          sourceCurrencyCode: "USD",
-          destinationCurrencyCode: "USDC_SOLANA",
-          walletAddress,
-          ...(clientIpAddress ? { clientIpAddress } : {}),
-          ...(amount ? { sourceAmount: String(amount) } : {}),
-          ...(redirectUrl ? { redirectUrl } : {}),
-        },
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      console.error(`${LOG} Meld API ${res.status}:`, text);
-      return json({ error: "Couldn't start the card deposit.", detail: process.env.NODE_ENV === "development" ? text : undefined }, 502);
+    let widgetUrl: string | undefined;
+    let lastFailure = "";
+    for (const quote of ranked) {
+      const res = await fetch(`${MELD_API_BASE}/crypto/session/widget`, {
+        method: "POST",
+        headers: meldHeaders,
+        body: JSON.stringify({
+          sessionType: "BUY",
+          externalCustomerId: userId,
+          externalSessionId,
+          sessionData: {
+            countryCode,
+            serviceProvider: quote.serviceProvider,
+            sourceCurrencyCode: "USD",
+            destinationCurrencyCode: "USDC_SOLANA",
+            walletAddress,
+            ...(clientIpAddress ? { clientIpAddress } : {}),
+            ...(amount ? { sourceAmount: String(amount) } : {}),
+            ...(redirectUrl ? { redirectUrl } : {}),
+          },
+        }),
+      });
+      if (res.ok) {
+        widgetUrl = ((await res.json()) as { widgetUrl?: string }).widgetUrl;
+        if (widgetUrl) break;
+        continue;
+      }
+      lastFailure = await res.text();
+      console.error(`${LOG} ${quote.serviceProvider} refused ${res.status}:`, lastFailure);
     }
-    const data = await res.json() as { widgetUrl?: string };
-    if (!data.widgetUrl) return json({ error: "Meld returned no checkout link." }, 502);
+    if (!widgetUrl) {
+      return json({ error: "Couldn't start the card deposit.", detail: process.env.NODE_ENV === "development" ? lastFailure : undefined }, 502);
+    }
 
     const { error: insertError } = await getSupabaseAdmin().from("user_deposits").insert({
       user_id: userId,
@@ -113,7 +121,7 @@ export async function POST(request: Request) {
     });
     if (insertError) console.error(`${LOG} deposit row failed (history will miss this one):`, insertError.message);
 
-    return json({ widgetUrl: data.widgetUrl });
+    return json({ widgetUrl });
   } catch (err) {
     console.error(`${LOG} Error:`, err instanceof Error ? err.message : String(err));
     return json({ error: "Internal error" }, 500);
