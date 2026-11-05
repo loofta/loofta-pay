@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNumber, IsOptional, IsString, IsBoolean, IsIn, IsNotEmpty, Min, Max, MaxLength } from 'class-validator';
 
-export const PAYOUT_RECIPIENT_TYPES = ['email', 'username', 'twitter', 'discord', 'github', 'telegram'] as const;
+export const PAYOUT_RECIPIENT_TYPES = ['email', 'username', 'twitter', 'discord', 'github', 'telegram', 'partner_user'] as const;
 export type PayoutRecipientType = (typeof PAYOUT_RECIPIENT_TYPES)[number];
 
 // gram_ton pays with native TON coin (NEAR Intents/most bridges label it "GRAM", TON's original

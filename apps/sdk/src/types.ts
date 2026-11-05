@@ -1,4 +1,6 @@
 export type RecipientType = "email" | "username" | "twitter" | "discord" | "github" | "telegram";
+/** Bulk payouts can also target your own user id (`partner_user`): they claim in the payout portal with no Loofta account. */
+export type PayoutRecipientType = RecipientType | "partner_user";
 
 export interface PayHumanParams {
   to: { type: RecipientType; value: string };
@@ -84,4 +86,94 @@ export interface LooftaPayClientOptions {
   signer?: Uint8Array | string | { secretKey: Uint8Array };
   /** Defaults to https://api.loofta.xyz */
   baseUrl?: string;
+  /** Solana RPC used by payouts.sendBatch. Defaults to the public mainnet RPC; use your own in production. */
+  rpcUrl?: string;
+}
+
+export interface PayoutRow {
+  /** USD amount the recipient gets. */
+  amount: number;
+  to: { type: PayoutRecipientType; value: string };
+  /** Your own id for this row (invoice, user, referral). Returned in results and webhooks. */
+  externalRef?: string;
+  message?: string;
+}
+
+export interface CreatePayoutBatchParams {
+  /** Unique per batch. Retrying with the same key never pays twice. */
+  idempotencyKey: string;
+  label?: string;
+  /** 1 to 100 rows. */
+  rows: PayoutRow[];
+  isPrivate?: boolean;
+}
+
+export interface PayoutBatchItemResult {
+  rowIndex: number;
+  externalRef: string | null;
+  status: "created" | "failed";
+  paymentId: string | null;
+  claimLink: string | null;
+  error: string | null;
+  unsignedTransaction: string | null;
+}
+
+export interface PayoutBatchResult {
+  batchId: string;
+  itemCount: number;
+  failedCount: number;
+  totalAmount: number;
+  /** Packed funding transactions for public batches; each funds the listed payments. Sign and send all of them. */
+  transactions: Array<{ paymentIds: string[]; unsignedTransaction: string; transactionVersion: "legacy" | "v0" }>;
+  items: PayoutBatchItemResult[];
+}
+
+export interface SentPayoutBatch extends PayoutBatchResult {
+  signatures: string[];
+  /** Payments whose funding transaction failed to send or confirm. Retry them with a new batch. */
+  unfundedPaymentIds: string[];
+}
+
+export interface PayoutBatchStatus {
+  batchId: string;
+  label: string | null;
+  itemCount: number;
+  failedCount: number;
+  totalAmount: number;
+  createdAt: string;
+  items: Array<{
+    rowIndex: number;
+    externalRef: string | null;
+    amount: number;
+    status: "created" | "failed";
+    paymentId: string | null;
+    /** e.g. OPEN until funded, SUCCESS once funded. A claimed payout shows via the payout.claimed webhook. */
+    paymentStatus: string | null;
+    error: string | null;
+  }>;
+}
+
+export interface PortalToken {
+  token: string;
+  expiresAt: string;
+}
+
+export interface PortalLink {
+  url: string;
+  expiresAt: string;
+}
+
+export interface WebhookConfig {
+  url: string | null;
+  /** Use with verifyWebhook() to check X-Loofta-Signature. Shown here, keep it server-side. */
+  secret: string;
+}
+
+export interface PayoutWebhookEvent {
+  event: "payout.funded" | "payout.claimed";
+  payment_id: string;
+  batch_id: string;
+  row_index: number;
+  external_ref: string | null;
+  amount: number;
 }

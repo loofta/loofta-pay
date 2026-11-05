@@ -10,6 +10,7 @@ import {
   getAccount,
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
+  createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -456,13 +457,16 @@ export class ClaimsService {
   static readonly PENDING_USERNAME_PREFIX = 'PENDING_USERNAME:';
   /** Sentinel prefix for claims addressed to a Discord/GitHub/Telegram handle with no connected account yet. Format: PENDING_SOCIAL:<platform>:<handle> */
   static readonly PENDING_SOCIAL_PREFIX = 'PENDING_SOCIAL:';
+  /** Owed to a partner recipient who has no Loofta account (see claimAsPartnerRecipient). */
+  static readonly PENDING_PARTNER_PREFIX = 'PENDING_PARTNER:';
 
   private isPendingRecipientAddress(addr?: string | null): boolean {
     const v = (addr || '').trim();
     return (
       v.startsWith(ClaimsService.PENDING_EMAIL_PREFIX) ||
       v.startsWith(ClaimsService.PENDING_USERNAME_PREFIX) ||
-      v.startsWith(ClaimsService.PENDING_SOCIAL_PREFIX)
+      v.startsWith(ClaimsService.PENDING_SOCIAL_PREFIX) ||
+      v.startsWith(ClaimsService.PENDING_PARTNER_PREFIX)
     );
   }
 
@@ -1339,6 +1343,172 @@ export class ClaimsService {
       transactionBase64: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
       version: 'legacy',
     };
+  }
+
+  /**
+   * Bulk variant of buildPublicTransferForPayer: packs many claims' funding transfers into as few
+   * transactions as fit, sharing one blockhash and one RPC round trip instead of one per claim.
+   * Token-account creation uses the idempotent instruction, so there is no per-claim existence
+   * check and a burner account that already exists is a harmless no-op rather than a failure.
+   * Every claim still gets the same checks as the single-claim path (payer is not the recipient,
+   * valid recipient and amount), and sender_user_id is stamped so the payer sees them in history.
+   * Claims must all live on one cluster/mint (partner batches always do).
+   */
+  async buildPackedPublicTransfersForPayer(
+    claimIds: string[],
+    privyUserId: string,
+    senderWallet: string,
+    maxTransfersPerTx = 8,
+  ): Promise<Array<{ claimIds: string[]; transactionBase64: string; version: 'legacy' }>> {
+    if (!claimIds.length) return [];
+    if (!isValidSolanaAddress(senderWallet)) throw new BadRequestException('Invalid sender_wallet.');
+    const payer = new PublicKey(senderWallet.trim());
+
+    const prepared: Array<{ claimId: string; burner: PublicKey; baseUnits: number }> = [];
+    let network: ReturnType<ClaimsService['resolveClaimNetwork']> | null = null;
+    for (const claimId of claimIds) {
+      const claim = await this.findOneRaw(claimId);
+      const { isRecipient } = await this.checkIsRecipient(claimId, privyUserId);
+      if (isRecipient) throw new ForbiddenException('This action is for the payer. Recipients complete payment on the claim side.');
+      const to = this.resolveEffectiveRecipientForPrivatePayment(claim as Claim & { claim_burner_address?: string | null });
+      if (!to || !isValidSolanaAddress(to)) throw new BadRequestException('Recipient is not available for this claim yet.');
+      const amountUsd = parseFloat(String(claim.amount || '0'));
+      const baseUnits = Math.round(amountUsd * 1_000_000);
+      if (!Number.isFinite(amountUsd) || baseUnits < 1) throw new BadRequestException('Invalid claim amount');
+      const net = this.resolveClaimNetwork(claim);
+      if (network && (network.cluster !== net.cluster || !network.claimMint.equals(net.claimMint))) {
+        throw new BadRequestException('Batch rows must all use the same network and token.');
+      }
+      network = net;
+      prepared.push({ claimId, burner: new PublicKey(to), baseUnits });
+    }
+
+    const { conn, claimMint } = network!;
+    const payerAta = await getAssociatedTokenAddress(claimMint, payer);
+    const { blockhash } = await conn.getLatestBlockhash('confirmed');
+
+    const out: Array<{ claimIds: string[]; transactionBase64: string; version: 'legacy' }> = [];
+    for (let i = 0; i < prepared.length; i += maxTransfersPerTx) {
+      const group = prepared.slice(i, i + maxTransfersPerTx);
+      const tx = new Transaction();
+      for (const item of group) {
+        const burnerAta = await getAssociatedTokenAddress(claimMint, item.burner);
+        tx.add(
+          createAssociatedTokenAccountIdempotentInstruction(payer, burnerAta, item.burner, claimMint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID),
+          createTransferInstruction(payerAta, burnerAta, payer, item.baseUnits, [], TOKEN_PROGRAM_ID),
+        );
+      }
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = payer;
+      out.push({
+        claimIds: group.map((g) => g.claimId),
+        transactionBase64: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+        version: 'legacy',
+      });
+    }
+
+    await this.supabaseService.payments.update({ sender_user_id: privyUserId }).in('id', claimIds);
+    return out;
+  }
+
+  /**
+   * Claim owed to a partner's end user (no Loofta account). Same shape as createFromEmail: a fresh
+   * burner receives the funds and the recipient later sweeps it out. The placeholder recipient
+   * address matches no wallet and no Privy identity, so only claimAsPartnerRecipient (reached with
+   * a portal token the partner's own server minted) can ever move these funds.
+   */
+  async createForPartnerRecipient(params: {
+    amount: number;
+    userId: string;
+    partnerRecipientId: string;
+    description?: string;
+    expiresAt?: string;
+  }): Promise<{ id: string; short_id: string | null; link: string }> {
+    const burner = this.createClaimBurner();
+    if (!burner) throw new BadRequestException('Payouts are temporarily unavailable.');
+    const shortId = generateShortId();
+    const { data, error } = await this.supabaseService.payments
+      .insert({
+        amount: Number(params.amount),
+        direction: 'from_sender',
+        recipient_address: `${ClaimsService.PENDING_PARTNER_PREFIX}${params.partnerRecipientId}`,
+        partner_recipient_id: params.partnerRecipientId,
+        created_by: params.userId,
+        status: 'OPEN',
+        to_chain: 'solana',
+        to_token: 'USDC',
+        is_devnet: isSolanaDevnetFromConfig(this.configService),
+        is_private: false,
+        short_id: shortId,
+        description: params.description ?? null,
+        expires_at: params.expiresAt ?? null,
+        burner_address: burner.claim_burner_address,
+        burner_encrypted_secret: burner.claim_burner_encrypted_secret,
+      })
+      .select('id')
+      .single();
+    if (error || !data) {
+      this.logger.error('Failed to create partner claim:', error);
+      throw new Error(`Database error: ${error?.message}`);
+    }
+    return { id: data.id, short_id: shortId, link: `${this.baseUrl}/c/${shortId}` };
+  }
+
+  /**
+   * Withdraw one partner payout to a Solana wallet the recipient chose, authorized by the partner
+   * recipient id taken from a verified portal token (never from the request body). Public SPL
+   * sweep only; refuses unfunded claims instead of scheduling retries, so nothing can later move
+   * funds the recipient didn't explicitly ask to withdraw.
+   */
+  async claimAsPartnerRecipient(
+    claimId: string,
+    partnerRecipientId: string,
+    destinationAddress: string,
+  ): Promise<{ sweepTxHash: string; sweptAmount?: string }> {
+    const dest = (destinationAddress || '').trim();
+    if (!isValidSolanaAddress(dest)) throw new BadRequestException('Invalid destination address.');
+
+    const claim = await this.findOneRaw(claimId);
+    const row = claim as Claim & { partner_recipient_id?: string | null; claim_burner_address?: string | null };
+    if (!row.partner_recipient_id || row.partner_recipient_id !== partnerRecipientId) {
+      // Same answer for "doesn't exist" and "not yours" so ids can't be probed.
+      throw new NotFoundException('Payout not found.');
+    }
+    const ra = (claim.recipient_address || '').trim();
+    if (!ra.startsWith(ClaimsService.PENDING_PARTNER_PREFIX)) {
+      throw new BadRequestException('This payout has already been withdrawn.');
+    }
+    if ((claim.status || '').toUpperCase() === 'CANCELLED') {
+      throw new BadRequestException('This payout was cancelled.');
+    }
+
+    // Same recipient-claim lock the Privy flow uses, so two simultaneous withdrawals can't both sweep.
+    const lockCutoff = this.recipientClaimLockStaleCutoffIso();
+    const { data: locked } = await this.supabaseService.payments
+      .update({ recipient_claim_lock_at: new Date().toISOString() })
+      .eq('id', claimId)
+      .eq('recipient_address', ra)
+      .or(`recipient_claim_lock_at.is.null,recipient_claim_lock_at.lt.${lockCutoff}`)
+      .select('id');
+    if (!locked?.length) throw new BadRequestException('This payout is already being withdrawn. Refresh and try again.');
+
+    try {
+      const { sweepTxHash, sweptAmount } = await this.sweepClaimBurnerToWallet(claimId, claim, dest, {});
+      if (!sweepTxHash) {
+        throw new BadRequestException('Funds for this payout have not arrived yet. Try again in a minute.');
+      }
+      await this.supabaseService.payments
+        .update({ claim_requested_at: new Date().toISOString(), claim_requested_destination: dest })
+        .eq('id', claimId);
+      // Only after a confirmed sweep: record where it went so it no longer reads as unclaimed.
+      const { error } = await this.updateRow(claimId, { recipient_address: dest });
+      if (error) this.logger.error(`Partner claim ${claimId}: swept but failed to record destination: ${error}`);
+      await this.updateStatus(claimId, 'SUCCESS', { recipientSwept: true, deliveredPrivately: false });
+      this.logger.log(`Partner claim ${claimId} withdrawn by partner recipient ${partnerRecipientId}`);
+      return { sweepTxHash, sweptAmount };
+    } finally {
+      await this.supabaseService.payments.update({ recipient_claim_lock_at: null }).eq('id', claimId);
+    }
   }
 
   /** Resolve the correct Solana connection and USDC mint for a claim based on its is_devnet flag.
@@ -3466,7 +3636,43 @@ export class ClaimsService {
       this.dispatchWebhookForPaidPayment(id);
     }
 
+    if (effectiveStatus === 'SUCCESS' || effectiveStatus === 'PRIVATE_TRANSFER_PENDING') {
+      this.recordPartnerPayoutEvent(id, extra?.recipientSwept === true ? 'payout.claimed' : 'payout.funded').catch((e) =>
+        this.logger.warn(`Partner payout event failed for payment ${id}: ${(e as Error)?.message}`),
+      );
+    }
+
     return { id, status: effectiveStatus } as unknown as Claim;
+  }
+
+  /**
+   * If this payment belongs to a partner bulk batch, queue a webhook event for delivery. A no-op
+   * (one indexed lookup) for every other payment. Deduped by UNIQUE (payment_id, event_type), so
+   * the many places that stamp SUCCESS can't produce duplicate events for the partner.
+   */
+  private async recordPartnerPayoutEvent(paymentId: string, eventType: 'payout.funded' | 'payout.claimed'): Promise<void> {
+    const { data: item } = await this.supabaseService.payoutBatchItems
+      .select('batch_id, row_index, external_ref, amount, payout_batches!inner(integrator_id)')
+      .eq('payment_id', paymentId)
+      .maybeSingle();
+    if (!item) return;
+    const integratorId = (item as unknown as { payout_batches: { integrator_id: string } }).payout_batches.integrator_id;
+    await this.supabaseService.payoutWebhookEvents.upsert(
+      {
+        integrator_id: integratorId,
+        payment_id: paymentId,
+        event_type: eventType,
+        payload: {
+          event: eventType,
+          payment_id: paymentId,
+          batch_id: item.batch_id,
+          row_index: item.row_index,
+          external_ref: item.external_ref ?? null,
+          amount: Number(item.amount),
+        },
+      },
+      { onConflict: 'payment_id,event_type', ignoreDuplicates: true },
+    );
   }
 
   /**

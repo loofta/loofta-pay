@@ -135,7 +135,7 @@ export const PEER_PLATFORMS: PeerPlatform[] = [
     placeholder: 'name@bank',
     currencies: ['INR'],
     logo: '/images/platforms/upi.svg',
-    maxUSDC: null,
+    maxUSDC: 100,
     cooldownHours: null,
   },
 ];

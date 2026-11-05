@@ -58,3 +58,40 @@ const payHumanTool = createPayHumanTool(client);
 - The x402 path constructs and signs a real Solana transaction using `@solana/web3.js` directly
   rather than `@x402/svm`'s client (which uses the newer `@solana/kit`/web3.js-v2 ecosystem) —
   keeps this package's dependency footprint small and consistent with the rest of Loofta's stack.
+
+## Partner payouts (bulk, portal, webhooks)
+
+For platforms that pay many people (creators, affiliates, partners). Needs an `apiKey`.
+
+```ts
+import { LooftaPayClient, verifyWebhook } from "@loofta/pay-sdk";
+
+const loofta = new LooftaPayClient({
+  apiKey: process.env.LOOFTA_API_KEY,
+  signer: process.env.PAYOUT_WALLET_SECRET, // optional: lets sendBatch sign and send for you
+  rpcUrl: process.env.SOLANA_RPC_URL,
+});
+
+// Pay up to 100 people in one call. Retrying with the same key never pays twice.
+const batch = await loofta.payouts.sendBatch({
+  idempotencyKey: "2026-11-creator-payouts",
+  rows: [
+    { amount: 120, to: { type: "partner_user", value: "user_123" }, externalRef: "inv_881" }, // no Loofta account needed
+    { amount: 40, to: { type: "email", value: "alex@example.com" } },
+  ],
+});
+
+// No signer? createBatch returns packed unsigned transactions for your own wallet flow.
+// const { transactions } = await loofta.payouts.createBatch({ ..., senderWallet });
+
+// Your users see and withdraw their payouts:
+const { url } = await loofta.portal.createLink({ externalUserId: "user_123", returnUrl: "https://app.example.com/earnings" }); // hosted page
+const { token } = await loofta.portal.createToken({ externalUserId: "user_123" }); // for @loofta/portal components
+
+// Know when someone is paid:
+const { secret } = await loofta.webhooks.set("https://app.example.com/hooks/loofta");
+// In your handler, with the RAW body:
+const event = verifyWebhook(rawBody, req.headers["x-loofta-signature"], secret); // event.event === "payout.claimed"
+```
+
+`partner_user` recipients withdraw USDC to their own Solana wallet from the portal. Email, username and social recipients get a claim link instead.

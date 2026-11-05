@@ -21,6 +21,11 @@ const SHORT_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ
 const SHORT_ID_MAX_VALID = Math.floor(256 / SHORT_ID_ALPHABET.length) * SHORT_ID_ALPHABET.length;
 const PLATFORM_NAMES: Record<string, string> = { venmo: 'Venmo', cashapp: 'Cash App', revolut: 'Revolut', chime: 'Chime', monzo: 'Monzo', upi: 'UPI', xmoney: 'X Money' };
 
+/** Per-platform Loofta-side limits. The cooldown is per recipient identifier, across all senders. */
+const PLATFORM_LIMITS: Record<string, { maxUsdc?: number; cooldownHours?: number }> = {
+  upi: { maxUsdc: 100, cooldownHours: 8 },
+};
+
 function generateShortId(length = 8): string {
   let result = '';
   while (result.length < length) {
@@ -157,12 +162,45 @@ export class OfframpService {
   }
 
   // Non-custodial: bridge goes to the user's own Base wallet (dto.baseWalletAddress).
+  private async enforcePlatformLimits(dto: CreateOfframpDto) {
+    const limits = PLATFORM_LIMITS[dto.platform];
+    if (!limits) return;
+    const name = PLATFORM_NAMES[dto.platform] ?? dto.platform;
+    if (limits.maxUsdc != null && dto.amountUSDC > limits.maxUsdc) {
+      throw new BadRequestException(`${name} payments are limited to $${limits.maxUsdc} per payment.`);
+    }
+    if (!limits.cooldownHours) return;
+    const since = new Date(Date.now() - limits.cooldownHours * 3600_000).toISOString();
+    // Escape LIKE wildcards so the identifier is matched literally (case-insensitive).
+    const identifier = dto.identifier.trim().replace(/[\\%_]/g, (c) => `\\${c}`);
+    const { data, error } = await this.supabase.getClient()
+      .from('offramp_requests')
+      .select('created_at')
+      .eq('platform', dto.platform)
+      .ilike('platform_identifier', identifier)
+      .gte('created_at', since)
+      .not('status', 'in', '(CANCELLED,DELETED,FAILED)')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error) {
+      this.logger.error('Cooldown lookup failed:', error.message);
+      throw new BadRequestException('Could not verify the payment cooldown, please try again.');
+    }
+    if (data?.length) {
+      const readyAt = new Date(data[0].created_at).getTime() + limits.cooldownHours * 3600_000;
+      const mins = Math.max(1, Math.ceil((readyAt - Date.now()) / 60_000));
+      const wait = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+      throw new BadRequestException(`This ${name} ID was paid recently. Please wait ${wait} before sending to it again.`);
+    }
+  }
+
   async prepareOfframp(userId: string, dto: CreateOfframpDto) {
     // Same ownership requirement as fundGas — this also triggers a real ETH top-up below.
     const isOwnWallet = await this.usersService.isEvmAddressInLinkedAccounts(userId, dto.baseWalletAddress);
     if (!isOwnWallet) {
       throw new ForbiddenException('baseWalletAddress must be one of your own linked wallets');
     }
+    await this.enforcePlatformLimits(dto);
     const requestedUnits = BigInt(Math.round(dto.amountUSDC * 1_000_000));
     let grossUnits = requestedUnits;
     let looftaFeeUnits = cashoutLooftaFeeAtomic(grossUnits);

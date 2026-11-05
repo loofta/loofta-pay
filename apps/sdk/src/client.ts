@@ -1,6 +1,7 @@
 import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { createTransferCheckedInstruction, getAssociatedTokenAddress } from "@solana/spl-token";
 import bs58 from "bs58";
+import { PayoutsApi, PortalApi, WebhooksApi, type Requester } from "./payouts";
 import type { LooftaPayClientOptions, PayHumanParams, PayHumanResult, CreatePaymentLinkParams, CreatePaymentLinkResult, PaymentLinkStatus } from "./types";
 
 const DEFAULT_BASE_URL = "https://api.loofta.xyz";
@@ -56,10 +57,18 @@ function toRequestBody(params: PayHumanParams) {
  *     402 -> sign -> settle round trip against /x402/pay-human using your own Solana keypair,
  *     and only resolves once the payment is confirmed funded on-chain.
  */
-export class LooftaPayClient {
+export class LooftaPayClient implements Requester {
   private readonly apiKey?: string;
-  private readonly signer?: Keypair;
+  readonly signer?: Keypair;
+  readonly rpcUrl?: string;
   private readonly baseUrl: string;
+
+  /** Bulk payouts (needs an apiKey). */
+  readonly payouts: PayoutsApi;
+  /** The payout portal your users see (needs an apiKey). */
+  readonly portal: PortalApi;
+  /** Webhook setup for payout events (needs an apiKey). */
+  readonly webhooks: WebhooksApi;
 
   constructor(options: LooftaPayClientOptions) {
     if (!options.apiKey && !options.signer) {
@@ -68,6 +77,23 @@ export class LooftaPayClient {
     this.apiKey = options.apiKey;
     this.signer = options.signer ? toKeypair(options.signer) : undefined;
     this.baseUrl = options.baseUrl || DEFAULT_BASE_URL;
+    this.rpcUrl = options.rpcUrl;
+    this.payouts = new PayoutsApi(this);
+    this.portal = new PortalApi(this);
+    this.webhooks = new WebhooksApi(this);
+  }
+
+  /** Authenticated JSON request for the payout namespaces. */
+  async request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+    if (!this.apiKey) throw new Error("This call requires an API key");
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
+    return data as T;
   }
 
   async payHuman(params: PayHumanParams): Promise<PayHumanResult> {

@@ -147,6 +147,26 @@ export class SupabaseService implements OnModuleInit {
     return this.client.from('integrator_api_keys');
   }
 
+  get partnerSettings() {
+    return this.client.from('partner_settings');
+  }
+
+  get payoutBatches() {
+    return this.client.from('payout_batches');
+  }
+
+  get partnerRecipients() {
+    return this.client.from('partner_recipients');
+  }
+
+  get payoutWebhookEvents() {
+    return this.client.from('payout_webhook_events');
+  }
+
+  get payoutBatchItems() {
+    return this.client.from('payout_batch_items');
+  }
+
   get twitterAutopayEnrollments() {
     return this.client.from('twitter_autopay_enrollments');
   }

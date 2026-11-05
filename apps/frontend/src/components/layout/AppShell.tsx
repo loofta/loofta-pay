@@ -32,6 +32,9 @@ function ShellContent({ children }: { children: ReactNode }) {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
   }, [pathname]);
 
+  // The hosted partner payout portal (partners redirect their users here): no Loofta header,
+  // footer, login sync or promo toasts, just the partner-branded page itself.
+  const isEmbed = pathname === '/portal' || pathname === '/app/portal';
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
   // Loofta Rewards is a full-page spec with its own header. The app rewrite serves it at
   // /rewards-rail (internally /app/rewards-rail), so both shapes need to skip this chrome.
@@ -52,6 +55,8 @@ function ShellContent({ children }: { children: ReactNode }) {
   );
   const showMinimalHeader = !isCheckoutPage && !isRewardsRail;
   const showFooter = !isCheckoutPage && !isRewardsRail;
+
+  if (isEmbed) return <>{children}</>;
 
   return (
     <div className="min-h-screen bg-[#0f0f12]">
