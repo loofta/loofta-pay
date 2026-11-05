@@ -6,6 +6,7 @@ import { useLooftaSigner } from "@/components/deposit/DepositSheet";
 import { useToast } from "@/components/ui/use-toast";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { usePoolRipSeat } from "@/hooks/usePoolRipSeat";
+import { collabMaxMultiple } from "@/lib/poolripPayout";
 
 const MONO = "var(--font-home-mono), 'JetBrains Mono', monospace";
 const LANE = "collab-25";
@@ -100,7 +101,7 @@ export function PoolRipPoolCard({ balanceUsd, getAccessToken, solanaAddress }: {
         <img src="/images/poolrip-icon.svg" alt="" width={28} height={28} style={{ width: 28, height: 28, objectFit: "contain", flex: "none" }} />
         <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: "1 1 0" }}>
           <span style={{ fontWeight: 800, fontSize: 15 }}>Rip a pack together</span>
-          <span style={{ fontSize: 13, color: "#9A98A3", fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>{money(raised)} / {money(target)}{players.length > 0 ? ` · ${players.length} in` : ""}</span>
+          <span style={{ fontSize: 13, color: "#9A98A3", fontFamily: MONO, fontVariantNumeric: "tabular-nums" }}>{`Win up to ${Math.round(collabMaxMultiple())}x · ${money(raised)} / ${money(target)}`}</span>
         </div>
         <button type="button" onClick={() => setOpen(true)} style={{ flex: "none", cursor: "pointer", padding: "8px 16px", borderRadius: 12, border: 0, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontWeight: 800, fontSize: 14 }}>Chip in</button>
       </div>

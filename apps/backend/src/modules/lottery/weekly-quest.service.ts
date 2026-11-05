@@ -39,7 +39,7 @@ export class WeeklyQuestService {
     const { data } = await this.supabase.getClient().from('weekly_quest_settings').select('*').eq('id', 1).maybeSingle();
     return {
       enabled: data?.enabled ?? false,
-      targetUsd: Number(data?.target_usd ?? 150),
+      targetUsd: Number(data?.target_usd ?? 500),
       maxTicketsPerWinner: Number(data?.max_tickets_per_winner ?? 5),
       weeklyBudgetUsd: Number(data?.weekly_budget_usd ?? 10),
     };
@@ -206,32 +206,35 @@ export class WeeklyQuestService {
   }
 
   /**
-   * Pays the award in PoolRip totems (the old reward was Megapot entries, which shut down). The unit count stays in
-   * the `tickets` column. PoolRip dedupes on the ref, so retrying an award can never credit twice; this is why a
-   * failure here, unlike the old ticket purchase, is safe to retry.
+   * Pays the award as free shares of PoolRip's open $25 card pool ($1 per unit, sponsored by PoolRip's treasury). The
+   * unit count stays in the `tickets` column. PoolRip dedupes on the ref, so retrying an award can never credit twice.
+   * If the pool cannot seat the share right now PoolRip answers granted:false and the award is marked failed for an
+   * admin retry, instead of silently paying nothing.
    */
-  private async award(awardId: string, userId: string, totems: number): Promise<void> {
+  private async award(awardId: string, userId: string, shares: number): Promise<void> {
     const db = this.supabase.getClient();
     try {
       const base = (process.env.POOLRIP_API_URL ?? '').replace(/\/+$/, '');
       const key = process.env.POOLRIP_SERVICE_KEY ?? '';
       if (!base || !key) throw new Error('POOLRIP_API_URL / POOLRIP_SERVICE_KEY are not set');
-      const res = await fetch(`${base}/api/service/totems/grant`, {
+      const res = await fetch(`${base}/api/service/pool-share/grant`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-service-key': key },
-        body: JSON.stringify({ userId, qty: totems, ref: `weekly-quest:${awardId}` }),
+        body: JSON.stringify({ userId, usdc: shares, ref: `weekly-quest:${awardId}` }),
         signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) throw new Error(`PoolRip answered ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+      const out = (await res.json().catch(() => ({}))) as { granted?: boolean; reason?: string | null };
+      if (!out.granted && out.reason !== 'duplicate') throw new Error(`PoolRip could not seat the share (${out.reason ?? 'unknown'})`);
       await db.from('weekly_quest_awards').update({ status: 'awarded', awarded_at: new Date().toISOString(), failure_reason: null }).eq('id', awardId);
-      this.logger.log(`Weekly quest: granted ${totems} PoolRip totem(s) to ${userId}`);
+      this.logger.log(`Weekly quest: granted a $${shares} PoolRip pool share to ${userId}`);
     } catch (e: any) {
       this.logger.error(`Weekly quest: award for ${userId} failed: ${e?.message ?? e}`);
       await db.from('weekly_quest_awards').update({ status: 'failed', failure_reason: String(e?.message ?? e).slice(0, 500) }).eq('id', awardId);
     }
   }
 
-  /** The user acknowledged the "you received X totems" toast. */
+  /** The user acknowledged the "you received a free share" toast. */
   async markSeen(userId: string, awardId: string): Promise<void> {
     await this.supabase.getClient().from('weekly_quest_awards').update({ seen_at: new Date().toISOString() }).eq('id', awardId).eq('user_id', userId);
   }

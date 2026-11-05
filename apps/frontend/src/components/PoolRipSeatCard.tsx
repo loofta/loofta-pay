@@ -5,6 +5,7 @@ import { CheckCircle2 } from "lucide-react";
 import posthog from "posthog-js";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { deathSeatBestCase } from "@/lib/poolripPayout";
 
 interface PoolRipSeatCardProps {
   checked: boolean;
@@ -65,7 +66,7 @@ export function PoolRipSeatCard({
           <div className="flex-1 min-w-0">
             <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>{title}</p>
             <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
-              {`$${price.toFixed(2)} buys a seat in the next $25 pack instead of leaving. Your first vote is set to take someone out, and the card is split by survivors.`}
+              {`Survive the vote-outs and split the card when it sells. Best case about $${Math.round(deathSeatBestCase(price))} back on $${price.toFixed(2)}, and your first vote is set to take someone out.`}
             </p>
           </div>
           <Switch

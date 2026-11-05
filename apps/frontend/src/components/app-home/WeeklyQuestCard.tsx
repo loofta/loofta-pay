@@ -6,14 +6,14 @@ import { QuestHistoryDialog, type QuestReward } from "@/components/QuestHistoryD
 import { useToast } from "@/components/ui/use-toast";
 
 const MONO = "var(--font-home-mono), 'JetBrains Mono', monospace";
-const WEEKLY_QUEST_TARGET_USD = 150;
+const WEEKLY_QUEST_TARGET_USD = 500;
 const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const totems = (n: number) => `${n} ${n === 1 ? "totem" : "totems"}`;
+const shares = (n: number) => `${n} free ${n === 1 ? "share" : "shares"}`;
 
 type Quest = { volumeUsd: number; targetUsd: number; daysUntilNext: number; qualified: boolean; projectedTickets?: number; history?: QuestReward[]; unseenAward?: (QuestReward & { id: string }) | null };
 
 /**
- * Weekly quest on the app home: move a set amount in a week (sends + withdrawals) and PoolRip totems are granted when
+ * Weekly quest on the app home: move a set amount in a week (sends + withdrawals) and a free share of a PoolRip card is added when
  * the week ends. The server is the source of truth (the same numbers the hourly award job uses).
  */
 export function WeeklyQuestCard({ userId, getAccessToken }: { userId?: string; getAccessToken: () => Promise<string | null> }) {
@@ -37,7 +37,7 @@ export function WeeklyQuestCard({ userId, getAccessToken }: { userId?: string; g
     if (!unseen) return;
     toast({
       title: "Your weekly reward is in",
-      description: `You received ${totems(unseen.tickets)} for last week's ${money(unseen.volumeUsd)} volume. Use them in a PoolRip Death room.`,
+      description: `You got ${shares(unseen.tickets)} of a PoolRip card for last week's ${money(unseen.volumeUsd)} volume. It pays out when the card is sold back.`,
       duration: 12000,
     });
     void (async () => {
@@ -62,8 +62,8 @@ export function WeeklyQuestCard({ userId, getAccessToken }: { userId?: string; g
       <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "14px 16px", borderRadius: 18, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: "1 1 0" }}>
-            <span style={{ fontWeight: 800, fontSize: 15 }}>{done ? "Quest complete" : "Weekly quest: free PoolRip totems"}</span>
-            <span style={{ fontSize: 13, color: "#9A98A3" }}>A totem saves your seat from one vote-out.</span>
+            <span style={{ fontWeight: 800, fontSize: 15 }}>{done ? "Quest complete" : "Weekly quest: win a free card share"}</span>
+            <span style={{ fontSize: 13, color: "#9A98A3" }}>Reach the goal and get a free share of a PoolRip card.</span>
           </div>
           <span style={{ flex: "none", fontFamily: MONO, fontSize: 13, color: "#9A98A3", fontVariantNumeric: "tabular-nums" }}>{money(Math.min(shown, target))} / {money(target)}</span>
         </div>
@@ -72,8 +72,8 @@ export function WeeklyQuestCard({ userId, getAccessToken }: { userId?: string; g
         </div>
         <span style={{ fontSize: 14, color: "#9A98A3", lineHeight: 1.35 }}>
           {done
-            ? `You are on track for ${totems(projected)}, granted automatically when the week ends.${newQuest}`
-            : `${money(Math.max(0, target - shown))} more sent or withdrawn this week earns you free totems, granted when the week ends.${newQuest}`}
+            ? `You are on track for ${shares(projected)}, added automatically when the week ends.${newQuest}`
+            : `${money(Math.max(0, target - shown))} more sent or withdrawn this week earns you a free card share, added when the week ends.${newQuest}`}
         </span>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <button type="button" onClick={() => setHistoryOpen(true)} style={{ background: "none", border: 0, padding: 0, cursor: "pointer", color: "#FF8A4A", fontWeight: 700, fontSize: 14 }}>Past rewards{history.length > 0 ? ` (${history.length})` : ""}</button>
