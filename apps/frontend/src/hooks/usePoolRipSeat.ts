@@ -11,6 +11,9 @@ export const POOLRIP_SEAT_PRICE_USDC = 2.5;
 /** Below this balance the upsell is hidden so it can never eat the whole withdrawal. */
 export const POOLRIP_SEAT_MIN_BALANCE_USDC = POOLRIP_SEAT_PRICE_USDC * 2;
 
+/** What to buy. Defaults to the Death room seat; the home pool card passes a collab lane and a dollar amount. */
+export interface SeatOptions { lane?: string; amountUsdc?: number; autoVote?: boolean }
+
 type Json = Record<string, any>;
 
 class PoolRipError extends Error {
@@ -39,8 +42,11 @@ async function poolrip<T = Json>(path: string, token: string | null, method: "GE
  */
 export function usePoolRipSeat(getAccessToken: () => Promise<string | null>, source: string) {
   const { signAndSendTransaction } = useSignAndSendTransaction();
-  return useCallback(async (wallet: { address: string } | undefined | null): Promise<boolean> => {
+  return useCallback(async (wallet: { address: string } | undefined | null, opts: SeatOptions = {}): Promise<boolean> => {
     if (!wallet?.address) return false;
+    const lane = opts.lane ?? POOLRIP_SEAT_LANE;
+    const amountUsdc = opts.amountUsdc ?? POOLRIP_SEAT_PRICE_USDC;
+    const autoVote = opts.autoVote ?? lane.startsWith("death-");
     let holdId: string | null = null;
     let token: string | null = null;
     try {
@@ -48,7 +54,7 @@ export function usePoolRipSeat(getAccessToken: () => Promise<string | null>, sou
       const cfg = await poolrip<{ network?: string }>("config", null, "GET").catch(() => ({} as { network?: string }));
       const chain = cfg.network === "devnet" ? "solana:devnet" : "solana:mainnet";
       const prep = await poolrip<{ txBase64: string; holdId: string | null; queue: boolean }>(
-        `lanes/${POOLRIP_SEAT_LANE}/join-tx`, token, "POST", { amountUsdc: POOLRIP_SEAT_PRICE_USDC },
+        `lanes/${lane}/join-tx`, token, "POST", { amountUsdc },
       );
       holdId = prep.holdId;
       const bytes = Uint8Array.from(atob(prep.txBase64), (c) => c.charCodeAt(0));
@@ -63,8 +69,8 @@ export function usePoolRipSeat(getAccessToken: () => Promise<string | null>, sou
       let res: { appliedUsdc: number; refundedUsdc: number; poolId: string | null } | null = null;
       for (let attempt = 0; !res; attempt++) {
         try {
-          res = await poolrip(`lanes/${POOLRIP_SEAT_LANE}/join`, await getAccessToken(), "POST", {
-            paymentTxHash: sig, amountUsdc: POOLRIP_SEAT_PRICE_USDC, holdId,
+          res = await poolrip(`lanes/${lane}/join`, await getAccessToken(), "POST", {
+            paymentTxHash: sig, amountUsdc, holdId,
           });
         } catch (e) {
           const retriable = !(e instanceof PoolRipError) || e.status >= 500 || /not found on-chain/i.test(e.message);
@@ -78,11 +84,11 @@ export function usePoolRipSeat(getAccessToken: () => Promise<string | null>, sou
         posthog.capture("poolrip_seat_refunded", { source });
         return false;
       }
-      if (res.poolId) {
+      if (res.poolId && autoVote) {
         // Seat is held; the auto-vote is a bonus, so a failure here never undoes the purchase.
         await poolrip(`pools/${res.poolId}/prevote`, await getAccessToken(), "PUT", { plan: ["yes"] }).catch((e) => console.warn("[poolrip] pre-vote failed:", e));
       }
-      posthog.capture("poolrip_seat_purchased", { source, price_usdc: POOLRIP_SEAT_PRICE_USDC });
+      posthog.capture("poolrip_seat_purchased", { source, price_usdc: amountUsdc, lane });
       return true;
     } catch (err) {
       if (holdId) void poolrip(`holds/${holdId}/release`, token, "POST").catch(() => undefined);

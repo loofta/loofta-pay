@@ -1,6 +1,7 @@
 "use client";
 
 import { useDashboardStore } from "@/store/dashboard";
+import { PoolRipPoolCard } from "@/components/app-home/PoolRipPoolCard";
 import { WeeklyQuestCard } from "@/components/app-home/WeeklyQuestCard";
 import { RankBadge } from "@/components/RankBadge";
 import { RankProgressDialog } from "@/components/RankProgressDialog";
@@ -198,6 +199,7 @@ export function AppHome() {
               </span>
               <span style={{ fontSize: 14, color: "#6E6C78" }}>USDC on Solana</span>
             </div>
+            {authenticated && <PoolRipPoolCard balanceUsd={balanceUSD ?? 0} getAccessToken={getAccessToken} solanaAddress={null} />}
             {authenticated && <WeeklyQuestCard userId={userId} getAccessToken={getAccessToken} />}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8, position: "relative", marginTop: "auto" }}>
               <button type="button" onClick={goDeposit} style={{ cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "14px 4px", minWidth: 0, textAlign: "center", lineHeight: 1.15, borderRadius: 16, border: 0, background: "linear-gradient(90deg,#FF2D0A,#F5B70C)", color: "#fff", fontWeight: 700, fontSize: 15, boxShadow: "0 10px 30px rgba(255,70,10,0.3)" }}>+ Deposit</button>

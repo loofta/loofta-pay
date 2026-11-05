@@ -6,6 +6,8 @@ const POOLRIP_API_URL = (process.env.POOLRIP_API_URL || "").replace(/\/+$/, "");
 
 const ALLOWED: Array<{ method: string; re: RegExp }> = [
   { method: "GET", re: /^config$/ },
+  { method: "GET", re: /^lobby$/ },
+  { method: "GET", re: /^pools\/[0-9a-f-]{36}$/i },
   { method: "POST", re: /^lanes\/(death|collab)-25\/join-tx$/ },
   { method: "POST", re: /^lanes\/(death|collab)-25\/join$/ },
   { method: "POST", re: /^holds\/[0-9a-f-]{36}\/release$/i },
@@ -19,7 +21,7 @@ async function forward(request: NextRequest, path: string[]) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const authHeader = request.headers.get("authorization") ?? "";
-  if (sub !== "config" && !authHeader) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (request.method !== "GET" && !authHeader) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const hasBody = request.method !== "GET";
   const res = await fetch(`${POOLRIP_API_URL}/api/${sub}`, {
     method: request.method,

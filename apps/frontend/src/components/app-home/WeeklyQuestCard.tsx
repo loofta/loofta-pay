@@ -60,9 +60,7 @@ export function WeeklyQuestCard({ userId, getAccessToken }: { userId?: string; g
   return (
     <>
       <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "14px 16px", borderRadius: 18, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/images/poolrip-icon.svg" alt="" width={40} height={40} style={{ width: 40, height: 40, objectFit: "contain", flex: "none" }} />
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: "1 1 0" }}>
             <span style={{ fontWeight: 800, fontSize: 15 }}>{done ? "Quest complete" : "Weekly quest: free PoolRip totems"}</span>
             <span style={{ fontSize: 13, color: "#9A98A3" }}>A totem saves your seat from one vote-out.</span>
