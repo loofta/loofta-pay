@@ -3,8 +3,8 @@ import { getVerifiedUserId } from "@/lib/serverAuth";
 
 const LOG = "[meld/offramp-session]";
 
-// Sandbox keys only work on api-sb.meld.io, production keys only on api.meld.io
-const MELD_API_BASE = process.env.MELD_API_BASE || "https://api-sb.meld.io";
+// Production keys only work on api.meld.io, sandbox keys only on api-sb.meld.io
+const MELD_API_BASE = process.env.MELD_API_BASE || "https://api.meld.io";
 
 const ALLOWED_ORIGINS = [
   "https://pay.loofta.xyz",
