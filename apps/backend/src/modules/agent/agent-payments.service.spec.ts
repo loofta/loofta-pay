@@ -124,9 +124,9 @@ describe('limits and refusals', () => {
     db.rows('agent_actions').push({ session_id: 'sess-1', status: 'paid', amount_usd: 95, created_at: new Date().toISOString() });
     await expect(pay(svc, session(), [{ recipient: 'alice_w', amount_usd: 10 }])).rejects.toMatchObject({ response: { code: 'over_session_limit' } });
   });
-  it('also respects the persons own account limits', async () => {
+  it('ignores the wallet auto-pay limits, which belong to the Telegram and X bots', async () => {
     const { svc } = build({ accountLimit: true });
-    await expect(pay(svc, session(), [{ recipient: 'alice_w', amount_usd: 3 }])).rejects.toMatchObject({ response: { code: 'over_account_limit' } });
+    await expect(pay(svc, session(), [{ recipient: 'alice_w', amount_usd: 3 }])).resolves.toBeDefined();
   });
   it('refuses when auto-pay is off, or the wallet cannot cover it with fees', async () => {
     await expect(pay(build({ autoPayOn: false }).svc, session(), [{ recipient: 'alice_w', amount_usd: 3 }])).rejects.toMatchObject({ response: { code: 'auto_pay_off' } });

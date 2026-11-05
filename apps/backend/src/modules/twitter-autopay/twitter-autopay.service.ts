@@ -351,16 +351,16 @@ export class TwitterAutopayService {
     amountUsd: number,
     /** excludeTelegramBatchId: this batch's own rows are not "already spent". dailyTotalUsd: what the
      *  daily limit is checked against (a batch's combined amount), while amountUsd stays the per-payment check. */
-    opts?: { excludeTelegramBatchId?: string; excludeAgentActionId?: string; dailyTotalUsd?: number },
+    opts?: { excludeTelegramBatchId?: string; dailyTotalUsd?: number },
   ): Promise<void> {
     const whose = payer.ownerHandle ? `@${payer.ownerHandle}'s wallet` : 'your wallet';
     if (amountUsd > payer.perPaymentCapUsd) {
       throw new BadRequestException(
-        `$${amountUsd} is over the $${payer.perPaymentCapUsd} per-payment limit set on ${whose}`,
+        `$${amountUsd} is over the $${payer.perPaymentCapUsd} per-payment limit set on ${whose} (raise it at /app/auto-pay)`,
       );
     }
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const [x, tg, ag] = await Promise.all([
+    const [x, tg] = await Promise.all([
       this.supabaseService.getClient()
         .from('twitter_payment_requests')
         .select('amount_usd')
@@ -377,19 +377,9 @@ export class TwitterAutopayService {
           .gte('created_at', since);
         return opts?.excludeTelegramBatchId ? q.or(`batch_id.is.null,batch_id.neq.${opts.excludeTelegramBatchId}`) : q;
       })(),
-      // What AI agents spent on the person's behalf counts the same, so no route around the daily limit.
-      (() => {
-        const q = this.supabaseService.getClient()
-          .from('agent_actions')
-          .select('amount_usd')
-          .eq('user_id', payer.userId)
-          .in('status', ['paid', 'partial', 'processing', 'unconfirmed'])
-          .gte('created_at', since);
-        return opts?.excludeAgentActionId ? q.neq('id', opts.excludeAgentActionId) : q;
-      })(),
     ]);
     const sum = (rows: { amount_usd: unknown }[] | null) => (rows ?? []).reduce((t, r) => t + Number(r.amount_usd ?? 0), 0);
-    const spent = sum(x.data) + sum(tg.data) + sum(ag.data);
+    const spent = sum(x.data) + sum(tg.data);
     const dailyCheck = opts?.dailyTotalUsd ?? amountUsd;
     if (spent + dailyCheck > payer.dailyCapUsd) {
       throw new BadRequestException(

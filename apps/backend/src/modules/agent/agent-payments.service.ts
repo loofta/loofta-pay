@@ -273,16 +273,10 @@ export class AgentPaymentsService implements OnModuleInit {
     const payer = await this.autopay.resolvePayerByUserId(session.userId);
     if (!payer?.signerGranted) throw agentError('auto_pay_off', `Turn on auto-pay first: ${this.appUrl}/app/auto-pay`, 'forbidden');
 
-    // Limits: this session's, then the person's own.
+    // Limits: this session's own. The wallet's auto-pay limits belong to the Telegram and X bots, not to agents.
     const spent = await this.spentByAgentToday(session.id);
     if (spent + n.total > session.dailyCapUsd) {
       throw agentError('over_session_limit', `That would take this session past its $${session.dailyCapUsd} daily limit ($${spent} already used in the last 24 hours).`, 'forbidden');
-    }
-    try {
-      for (const i of n.items) await this.autopay.assertWithinLimits(payer, i.amount, { dailyTotalUsd: n.total });
-    } catch (e) {
-      if (e instanceof BadRequestException) throw agentError('over_account_limit', (e.getResponse() as any)?.message ?? e.message, 'forbidden');
-      throw e;
     }
     const plans = await Promise.all(n.items.map((i) => this.autopay.planPayment(i.ref, n.isPrivate, this.isDevnet, i.amount)));
     // Never turn a payment private behind the person's back. Someone who only accepts private payments
@@ -377,7 +371,6 @@ export class AgentPaymentsService implements OnModuleInit {
     let unconfirmed = false;
     try {
       if (!payer?.signerGranted) throw agentError('auto_pay_off', 'Auto-pay is turned off.', 'forbidden');
-      await this.autopay.assertWithinLimits(payer, row.amount_usd, { excludeAgentActionId: row.id, dailyTotalUsd: row.amount_usd });
     } catch (e) {
       const msg = e instanceof BadRequestException || e instanceof ForbiddenException ? String((e.getResponse() as any)?.message ?? e.message) : 'Could not start the payment.';
       await supabase.from('agent_actions').update({ status: 'failed', error: msg, updated_at: new Date().toISOString() }).eq('id', row.id);
@@ -502,12 +495,6 @@ export class AgentPaymentsService implements OnModuleInit {
     }
     const payer = await this.autopay.resolvePayerByUserId(session.userId);
     if (!payer?.signerGranted) throw agentError('auto_pay_off', 'Auto-pay is turned off. Turn it on in the Loofta app so this agent can send from your wallet.', 'forbidden');
-    try {
-      await this.autopay.assertWithinLimits(payer, plan.total_from_wallet_usd, { dailyTotalUsd: plan.total_from_wallet_usd });
-    } catch (e) {
-      if (e instanceof BadRequestException) throw agentError('over_account_limit', (e.getResponse() as any)?.message ?? e.message, 'forbidden');
-      throw e;
-    }
     const balance = await this.users.getSolanaWalletBalanceAndAddress(session.userId).then((r) => r.balanceUSD).catch(() => null);
     if (balance != null && balance + 1e-9 < plan.total_from_wallet_usd) {
       throw agentError('insufficient_balance', `The wallet has $${money(balance)} and this needs $${plan.total_from_wallet_usd} with fees. Call fund_wallet right away and show the user the wallet address and options; do not ask them questions first.`, 'forbidden');
