@@ -14,6 +14,25 @@ const ALLOWED_ORIGINS = [
   ...(process.env.NODE_ENV === "development" ? ["http://localhost:3000", "http://localhost:3001"] : []),
 ];
 
+/** Meld says the exact minimum when an amount is too low ("below the minimum allowed, which is 5.00 USD"); pass that on. */
+function tooLow(quoteData: unknown): string | null {
+  const q = quoteData as { code?: string; message?: string } | null;
+  const min = q?.message?.match(/minimum[^0-9]*([0-9.]+)\s*(USD|USDC)/i);
+  return q?.code?.startsWith("INVALID_AMOUNT") && min ? `The minimum is ${Number(min[1])} ${min[2].toUpperCase()}. Enter a bit more.` : null;
+}
+
+/** The caller's country from Vercel's edge geolocation; the client never sends one, so "US" was applied to everyone. */
+function requestCountry(request: Request): string {
+  const c = request.headers.get("x-vercel-ip-country");
+  return c && /^[A-Za-z]{2}$/.test(c) ? c.toUpperCase() : "US";
+}
+
+/** Meld's own error code from a failed response body (e.g. "INVALID_PARAMETER"); safe to show, carries no secrets. */
+function meldReason(body: string, status: number): string {
+  try { const j = JSON.parse(body) as { code?: string }; if (j.code) return `${status} ${j.code}`; } catch { /* not JSON */ }
+  return String(status);
+}
+
 function json(body: unknown, status = 200) {
   return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
@@ -40,7 +59,7 @@ export async function POST(request: Request) {
   if (!ownWallets.includes(walletAddress)) return json({ error: "That wallet isn't on your account." }, 403);
 
   const amount = Number(body.amount) > 0 ? Number(body.amount) : undefined;
-  const countryCode = typeof body.countryCode === "string" && /^[A-Za-z]{2}$/.test(body.countryCode) ? body.countryCode.toUpperCase() : "US";
+  const countryCode = typeof body.countryCode === "string" && /^[A-Za-z]{2}$/.test(body.countryCode) ? body.countryCode.toUpperCase() : requestCountry(request);
   const origin = request.headers.get("origin");
   const redirectUrl = typeof body.redirectUrl === "string" && ALLOWED_ORIGINS.some((o) => body.redirectUrl!.startsWith(`${o}/`) || body.redirectUrl === o)
     ? body.redirectUrl
@@ -71,8 +90,8 @@ export async function POST(request: Request) {
     const quoteData = await quoteRes.json().catch(() => null) as { quotes?: { serviceProvider: string; destinationAmount: number }[] } | null;
     const ranked = [...(quoteData?.quotes ?? [])].sort((a, b) => b.destinationAmount - a.destinationAmount);
     if (!quoteRes.ok || !ranked.length) {
-      console.error(`${LOG} No Meld quote ${quoteRes.status}:`, JSON.stringify(quoteData));
-      return json({ error: "Card deposits aren't available for this amount or country yet." }, 502);
+      console.error(`${LOG} No Meld quote ${quoteRes.status} (base ${MELD_API_BASE}):`, JSON.stringify(quoteData));
+      return json({ error: tooLow(quoteData) ?? `Card deposits aren't available for this amount or country yet (ref quote ${quoteRes.status}).` }, 502);
     }
 
     // Best quote first; if a provider refuses the session (limits, country, KYC rules) fall through to the next
@@ -104,11 +123,12 @@ export async function POST(request: Request) {
         if (widgetUrl) break;
         continue;
       }
-      lastFailure = await res.text();
-      console.error(`${LOG} ${quote.serviceProvider} refused ${res.status}:`, lastFailure);
+      const text = await res.text();
+      lastFailure = meldReason(text, res.status);
+      console.error(`${LOG} ${quote.serviceProvider} refused ${res.status} (base ${MELD_API_BASE}):`, text);
     }
     if (!widgetUrl) {
-      return json({ error: "Couldn't start the card deposit.", detail: process.env.NODE_ENV === "development" ? lastFailure : undefined }, 502);
+      return json({ error: `Couldn't start the card deposit${lastFailure ? ` (ref ${lastFailure})` : ""}.` }, 502);
     }
 
     const { error: insertError } = await getSupabaseAdmin().from("user_deposits").insert({

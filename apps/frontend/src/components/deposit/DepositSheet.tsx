@@ -1876,6 +1876,14 @@ function BankWithdraw({
   const { user } = usePrivy();
   const [app, setApp] = useState<string | null>(null);
   const [peerOpen, setPeerOpen] = useState(false);
+  // Bank cash-out only exists in some countries; hide the row elsewhere (shown until we know)
+  const [bankSupported, setBankSupported] = useState(true);
+  useEffect(() => {
+    fetch("/api/meld/offramp-session", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((b: { supported?: boolean }) => { if (b.supported === false) setBankSupported(false); })
+      .catch(() => { /* keep the row */ });
+  }, []);
   const [amount, setAmount] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1993,6 +2001,7 @@ function BankWithdraw({
 
   return (
     <div className="mt-4 flex flex-col gap-2">
+      {bankSupported && (
       <button type="button" disabled={!solanaAddress || busy} onClick={() => { void openMeld(); }} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20 disabled:opacity-50">
         <img src="/images/icons/card.svg" alt="" className="h-9 w-9 rounded-xl bg-[#1C1C22] object-contain p-1.5" />
         <span className="min-w-0 flex-1">
@@ -2000,6 +2009,7 @@ function BankWithdraw({
           <span className="block text-sm text-[#8A8893]">Bank account or debit card</span>
         </span>
       </button>
+      )}
       {PAJ_CASH_ENABLED && (
         <button type="button" onClick={onPaj} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20">
           <img src="/images/icons/paj-cash-logo.svg" alt="" className="h-9 w-9 rounded-xl object-contain" />

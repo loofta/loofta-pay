@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getVerifiedUserId } from "@/lib/serverAuth";
+import { MELD_SELL_COUNTRIES } from "@/lib/meldOfframp";
 
 const LOG = "[meld/offramp-session]";
 
@@ -20,6 +21,35 @@ const ALLOWED_ORIGINS = [
     : []),
 ];
 
+/** Meld says the exact minimum when an amount is too low ("below the minimum allowed, which is 5.00 USD"); pass that on. */
+function tooLow(quoteData: unknown): string | null {
+  const q = quoteData as { code?: string; message?: string } | null;
+  const min = q?.message?.match(/minimum[^0-9]*([0-9.]+)\s*(USD|USDC)/i);
+  return q?.code?.startsWith("INVALID_AMOUNT") && min ? `The minimum is ${Number(min[1])} ${min[2].toUpperCase()}. Enter a bit more.` : null;
+}
+
+/** Meld's own error code from a failed response body (e.g. "INVALID_PARAMETER"); safe to show, carries no secrets. */
+function meldReason(body: string, status: number): string {
+  try { const j = JSON.parse(body) as { code?: string }; if (j.code) return `${status} ${j.code}`; } catch { /* not JSON */ }
+  return String(status);
+}
+
+/** The caller's country from Vercel's edge geolocation; the client never sends one, so "US" was applied to everyone. */
+function requestCountry(request: Request): string {
+  const c = request.headers.get("x-vercel-ip-country");
+  return c && /^[A-Za-z]{2}$/.test(c) ? c.toUpperCase() : "US";
+}
+
+/** Currencies to try for a payout: the country's own first (Meld's default for it), then dollars and euros. */
+async function payoutCurrencies(country: string, headers: Record<string, string>): Promise<string[]> {
+  let local: string | undefined;
+  try {
+    const res = await fetch(`${MELD_API_BASE}/service-providers/properties/defaults/by-country?countries=${country}`, { headers, cache: "no-store" });
+    if (res.ok) local = ((await res.json()) as { defaultCurrencyCode?: string }[])[0]?.defaultCurrencyCode;
+  } catch { /* fall back to dollars and euros */ }
+  return [...new Set([local, "USD", "EUR"].filter((c): c is string => !!c))];
+}
+
 function corsHeaders(origin: string | null): Record<string, string> {
   return {
     "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -31,6 +61,12 @@ function corsHeaders(origin: string | null): Record<string, string> {
 
 export async function OPTIONS(request: Request) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(request.headers.get("origin")) });
+}
+
+// GET: does bank cash-out exist where this caller is? Lets the sheet hide the row instead of failing on click.
+export async function GET(request: Request) {
+  const country = requestCountry(request);
+  return NextResponse.json({ country, supported: MELD_SELL_COUNTRIES.has(country) }, { headers: { "Cache-Control": "no-store" } });
 }
 
 // POST: create a Meld widget session to sell USDC (Solana) for fiat
@@ -45,7 +81,7 @@ export async function POST(request: Request) {
 
   let walletAddress: string | undefined;
   let amount: number | undefined;
-  let countryCode = "US";
+  let countryCode = requestCountry(request);
   let redirectUrl: string | undefined;
   try {
     const body = await request.json();
@@ -80,22 +116,30 @@ export async function POST(request: Request) {
   };
 
   try {
-    // Meld needs a serviceProvider: take the one paying the user the most fiat
-    const quoteRes = await fetch(`${MELD_API_BASE}/payments/crypto/quote`, {
-      method: "POST",
-      headers: meldHeaders,
-      body: JSON.stringify({
-        countryCode,
-        sourceCurrencyCode: "USDC_SOLANA",
-        sourceAmount: String(amount ?? 20),
-        destinationCurrencyCode: "USD",
-      }),
-    });
-    const quoteData = await quoteRes.json().catch(() => null) as { quotes?: { serviceProvider: string; destinationAmount: number }[] } | null;
-    const quotes = [...(quoteData?.quotes ?? [])].sort((a, b) => b.destinationAmount - a.destinationAmount);
-    if (!quoteRes.ok || !quotes.length) {
-      console.error(`${LOG} No Meld quote ${quoteRes.status}:`, JSON.stringify(quoteData));
-      return new NextResponse(JSON.stringify({ error: "Cash-out isn't available for this amount or country yet." }), { status: 502, headers });
+    // Meld needs a serviceProvider and a payout currency: try the user's own currency first, then dollars and euros
+    let quotes: { serviceProvider: string; destinationAmount: number }[] = [];
+    let payoutCurrency = "USD";
+    let quoteStatus = 0;
+    let quoteData: unknown = null;
+    for (const currency of await payoutCurrencies(countryCode, meldHeaders)) {
+      const quoteRes = await fetch(`${MELD_API_BASE}/payments/crypto/quote`, {
+        method: "POST",
+        headers: meldHeaders,
+        body: JSON.stringify({
+          countryCode,
+          sourceCurrencyCode: "USDC_SOLANA",
+          sourceAmount: String(amount ?? 20),
+          destinationCurrencyCode: currency,
+        }),
+      });
+      quoteStatus = quoteRes.status;
+      quoteData = await quoteRes.json().catch(() => null);
+      quotes = [...((quoteData as { quotes?: typeof quotes } | null)?.quotes ?? [])].sort((a, b) => b.destinationAmount - a.destinationAmount);
+      if (quoteRes.ok && quotes.length) { payoutCurrency = currency; break; }
+    }
+    if (!quotes.length) {
+      console.error(`${LOG} No Meld quote ${quoteStatus} for ${countryCode} (base ${MELD_API_BASE}):`, JSON.stringify(quoteData));
+      return new NextResponse(JSON.stringify({ error: tooLow(quoteData) ?? `Bank cash-out isn't available in your country yet (ref quote ${quoteStatus}).` }), { status: 502, headers });
     }
     // Providers with the redirect flow first (best quote within each group); fall through if one refuses the session
     const ordered = [...quotes.filter((q) => REDIRECT_FLOW_PROVIDERS.has(q.serviceProvider)), ...quotes.filter((q) => !REDIRECT_FLOW_PROVIDERS.has(q.serviceProvider))];
@@ -113,7 +157,7 @@ export async function POST(request: Request) {
             countryCode,
             serviceProvider: quote.serviceProvider,
             sourceCurrencyCode: "USDC_SOLANA",
-            destinationCurrencyCode: "USD",
+            destinationCurrencyCode: payoutCurrency,
             walletAddress,
             ...(clientIpAddress ? { clientIpAddress } : {}),
             ...(amount ? { sourceAmount: String(amount) } : {}),
@@ -123,12 +167,12 @@ export async function POST(request: Request) {
         }),
       });
       if (res.ok) { data = await res.json() as { id?: string; widgetUrl?: string }; if (data.widgetUrl) break; continue; }
-      lastFailure = await res.text();
-      console.error(`${LOG} ${quote.serviceProvider} refused ${res.status}:`, lastFailure);
+      const text = await res.text();
+      lastFailure = meldReason(text, res.status);
+      console.error(`${LOG} ${quote.serviceProvider} refused ${res.status} (base ${MELD_API_BASE}):`, text);
     }
     if (!data?.widgetUrl) {
-      const detail = process.env.NODE_ENV === "development" ? lastFailure : undefined;
-      return new NextResponse(JSON.stringify({ error: "Couldn't start the cash-out. Try a different amount.", detail }), { status: 502, headers });
+      return new NextResponse(JSON.stringify({ error: `Couldn't start the cash-out${lastFailure ? ` (ref ${lastFailure})` : ""}. Try a different amount.` }), { status: 502, headers });
     }
     return new NextResponse(JSON.stringify({ widgetUrl: data.widgetUrl, sessionId: data.id }), { status: 200, headers });
   } catch (err: unknown) {

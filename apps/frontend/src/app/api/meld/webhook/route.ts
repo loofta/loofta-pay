@@ -5,7 +5,7 @@ import { getSupabaseAdmin } from "@/lib/supabaseServer";
 const LOG = "[meld/webhook]";
 const MELD_API_BASE = process.env.MELD_API_BASE || "https://api.meld.io";
 // Meld signs over the exact URL it was configured to call
-const WEBHOOK_URL = process.env.MELD_WEBHOOK_URL || "https://pay.loofta.xyz/api/meld/webhook";
+const WEBHOOK_URL = process.env.MELD_WEBHOOK_URL || "https://pay.loofta.com/api/meld/webhook";
 const MAX_SKEW_MS = 10 * 60 * 1000;
 
 type Payload = {
