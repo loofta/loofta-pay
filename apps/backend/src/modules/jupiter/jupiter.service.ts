@@ -52,7 +52,7 @@ const PRIORITY_FEE_CAP_LAMPORTS = 100_000;
 const SIGNATURE_FEE_LAMPORTS = 5_000;
 const PENDING_TTL_MS = 60_000; // a Solana blockhash only lives about this long anyway
 const MAX_SPONSORED_SWAPS_PER_USER_PER_DAY = 30;
-const FEE_PAYER_RESERVE_LAMPORTS = 300_000_000; // never sponsor below 0.3 SOL left in the fee payer
+const FEE_PAYER_RESERVE_LAMPORTS = 50_000_000; // never sponsor below 0.05 SOL left in the fee payer
 const TOKEN_ACCOUNT_RENT_LAMPORTS = 2_039_280;
 const MIN_SOL_FOR_SWAP_LAMPORTS = 3_000_000; // 0.003 SOL: what a swap needs when the user pays its own network fee
 
