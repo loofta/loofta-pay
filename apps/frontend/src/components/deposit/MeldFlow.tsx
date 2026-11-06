@@ -48,6 +48,8 @@ function MethodIcon({ method, label }: { method?: string; label?: string }) {
   );
 }
 
+const OPEN_IN_NEW_TAB = false;
+
 function fiat(n: number, currency: string) {
   try {
     return new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: n >= 1000 ? 0 : 2 }).format(n);
@@ -123,9 +125,9 @@ export function MeldFlow({
 
   const go = async () => {
     if (!choice) return;
-    // A cash-out opens in its own tab. Browsers only allow that straight from the click, so open it blank now
-    // and point it at the checkout once the session exists. If it's blocked, we fall back to this tab below.
-    const tab = sell ? window.open("", "_blank") : null;
+    // Off for now: a cash-out opened in a new tab (blank tab, then pointed at the checkout) made the payout provider
+    // refuse the link ("only opens from the network it was created on"), while the same tab works. Flip once fixed.
+    const tab = sell && OPEN_IN_NEW_TAB ? window.open("", "_blank") : null;
     if (tab) tab.opener = null;
     setBusy(true);
     try {
@@ -265,16 +267,14 @@ export function MeldFlow({
                   <MethodIcon method={o.method} label={o.label} />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
-                    <span className="text-base font-bold text-white" style={{ fontFamily: SORA }}>{o.label}</span>
-                    {options.length > 1 && o.receive === bestReceive && (
-                      <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-sm font-semibold text-emerald-300">Best rate</span>
-                    )}
-                  </span>
+                  {options.length > 1 && o.receive === bestReceive && (
+                    <span className="mb-1 inline-block whitespace-nowrap rounded-full bg-emerald-500/15 px-2 py-0.5 text-sm font-semibold text-emerald-300">Best rate</span>
+                  )}
+                  <span className="block text-base font-bold leading-tight text-white" style={{ fontFamily: SORA }}>{o.label}</span>
                   <span className="mt-0.5 block text-sm text-[#8A8893]">
                     {sell
                       ? `1 USDC = ${fiat(o.rate ?? 0, o.currency)} · ${o.fee > 0 ? `costs about ${fiat(o.fee, o.currency)}` : "lowest cost"}`
-                      : o.fee > 0 ? `Total cost ${fiat(o.fee, o.currency)}, fee and rate included` : "No extra cost"}
+                      : o.fee > 0 ? `All-in cost ${fiat(o.fee, o.currency)}` : "No extra cost"}
                   </span>
                   {o.eta && (
                     <span className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-[#C8C6D0]">
