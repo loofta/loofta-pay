@@ -531,9 +531,6 @@ export class SolanaSponsorService {
     }
     if (chargeable.length === 0) return;
 
-    // Set only by the unbound branch below once the tx has been shown to pay the rent back to us.
-    let rentRecovered = false;
-
     // Structured, greppable log line for every chargeable sponsor call — this is what a future
     // "was this a drain" investigation should read first, instead of manually decoding raw
     // transactions off Solscan. `intentSource` says exactly which real backing record justified
@@ -741,7 +738,6 @@ export class SolanaSponsorService {
         );
         throw new Error('This transaction does not cover the cost of creating the recipient token account.');
       }
-      rentRecovered = true;
       this.logger.log(
         `SolanaSponsor[${label}]: unbound ATA creation self-funded — ${chargeable.length} account(s), cost ${requiredUnits} USDC base units, tx pays back ${paidUnits} (user=${userId ?? 'unknown'})`,
       );
@@ -785,7 +781,6 @@ export class SolanaSponsorService {
         this.emailService,
         userId,
         primarySigner,
-        rentRecovered,
       );
       if (!allowed) {
         this.logger.warn(
