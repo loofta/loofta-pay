@@ -20,6 +20,7 @@ export type QuoteOption = {
   id: string;           // provider id, sent back when the session is opened (never shown to the user)
   method?: string;      // payment method for a buy (APPLE_PAY, GOOGLE_PAY, CREDIT_DEBIT_CARD, ACH...), sent back too
   label: string;        // "Bank transfer", "Debit or credit card"
+  eta: string;          // typical arrival, e.g. "about 1 business day"
   receive: number;      // fiat for a sell, USDC for a buy
   currency: string;     // fiat code of the payout (sell) or the card charge (buy)
   fee: number;          // in the fiat currency
@@ -52,6 +53,22 @@ function methodLabel(type: string | undefined, side: "buy" | "sell"): string {
   if (type && METHOD_LABELS[type]) return METHOD_LABELS[type];
   if (type) return type.toLowerCase().replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
   return side === "sell" ? "Bank transfer" : "Debit or credit card";
+}
+
+/**
+ * Typical arrival time per payment rail. Meld gives no timing in quotes or provider data, so these are the usual
+ * times for each rail, not a promise; a first-time verification adds a few minutes on top.
+ */
+function methodEta(type: string | undefined, side: "buy" | "sell"): string {
+  if (side === "buy") {
+    if (!type || type === "CREDIT_DEBIT_CARD" || type === "APPLE_PAY" || type === "GOOGLE_PAY") return "a few minutes";
+    if (type === "ACH" || type === "SAME_DAY_ACH") return "1 to 3 business days";
+    return "up to 1 business day";
+  }
+  if (type === "SEPA" || type === "SEPA_INSTANT") return "about 1 business day";
+  if (type === "ACH") return "1 to 3 business days";
+  if (type === "PAYOUT_TO_BANK") return "minutes to a few hours";
+  return "1 to 2 business days";
 }
 
 async function meld<T>(path: string, init?: RequestInit): Promise<{ ok: boolean; status: number; data: T | null }> {
@@ -147,6 +164,7 @@ export async function POST(request: Request) {
         id: q.serviceProvider,
         method: side === "buy" ? (q.paymentMethodType ?? "CREDIT_DEBIT_CARD") : undefined,
         label: methodLabel(q.paymentMethodType, side),
+        eta: methodEta(q.paymentMethodType, side),
         receive: q.destinationAmount,
         currency: side === "sell" ? q.destinationCurrencyCode || currency : "USD",
         fee: Number(q.totalFee ?? 0),

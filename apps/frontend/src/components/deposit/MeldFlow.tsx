@@ -1,28 +1,50 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Clock, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { MELD_SESSION_KEY } from "@/lib/meldOfframp";
 import { cn } from "@/lib/utils";
 
 const SORA = "var(--font-home-sora), Sora, sans-serif";
 
-type Option = { id: string; method?: string; label: string; receive: number; currency: string; fee: number; rate: number | null };
+type Option = { id: string; method?: string; label: string; eta?: string; receive: number; currency: string; fee: number; rate: number | null };
 type QuoteResult = { supported?: boolean; options?: Option[]; currency?: string; error?: string };
 
 const MIN_SELL_USDC = 3;
 
 const keyOf = (o: Option) => `${o.id}:${o.method ?? ""}`;
-const METHOD_ORDER = ["APPLE_PAY", "GOOGLE_PAY", "CREDIT_DEBIT_CARD"];
-const onApple = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
 
-/** Wallets first (Apple Pay only on Apple devices), then card, then bank; sells keep the server's best-first order. */
+const ua = () => (typeof navigator === "undefined" ? "" : navigator.userAgent);
+const onIOS = () => /iPhone|iPad|iPod/.test(ua());
+const onApple = () => onIOS() || /Macintosh|Mac OS X/.test(ua());
+
+/** The wallet that fits this device goes first; the other is hidden where it can't work (Google Pay on iPhone/iPad, Apple Pay off Apple). */
 function arrange(options: Option[], side: "buy" | "sell"): Option[] {
   if (side === "sell") return options;
-  const usable = options.filter((o) => o.method !== "APPLE_PAY" || onApple());
-  const rank = (o: Option) => { const i = METHOD_ORDER.indexOf(o.method ?? ""); return i === -1 ? METHOD_ORDER.length : i; };
+  const apple = onApple();
+  const order = apple ? ["APPLE_PAY", "GOOGLE_PAY", "CREDIT_DEBIT_CARD"] : ["GOOGLE_PAY", "CREDIT_DEBIT_CARD"];
+  const usable = options.filter((o) => (o.method !== "APPLE_PAY" || apple) && (o.method !== "GOOGLE_PAY" || !onIOS()));
+  const rank = (o: Option) => { const i = order.indexOf(o.method ?? ""); return i === -1 ? order.length : i; };
   return [...usable].sort((a, b) => rank(a) - rank(b));
+}
+
+/** Square tile for a payment method: the real wallet marks on white (their guidelines want a plain mark), our card and bank icons on dark. */
+function MethodIcon({ method }: { method?: string }) {
+  const wallet = method === "APPLE_PAY" ? "applepay" : method === "GOOGLE_PAY" ? "googlepay" : null;
+  if (wallet) {
+    return (
+      <span className="grid h-11 w-11 place-items-center rounded-xl bg-white">
+        <img src={`/images/icons/${wallet}.svg`} alt="" className="h-7 w-7 object-contain" />
+      </span>
+    );
+  }
+  const card = method === "CREDIT_DEBIT_CARD";
+  return (
+    <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#1C1C22]">
+      <img src={`/images/icons/${card ? "card-chip" : "bank"}.svg`} alt="" className="h-7 w-7 object-contain" />
+    </span>
+  );
 }
 
 function fiat(n: number, currency: string) {
@@ -58,6 +80,7 @@ export function MeldFlow({
   const [notice, setNotice] = useState<string | null>(null);
   const [unsupported, setUnsupported] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [opened, setOpened] = useState<string | null>(null);
   const request = useRef(0);
 
   const amountNum = Number(amount);
@@ -99,6 +122,10 @@ export function MeldFlow({
 
   const go = async () => {
     if (!choice) return;
+    // A cash-out opens in its own tab. Browsers only allow that straight from the click, so open it blank now
+    // and point it at the checkout once the session exists. If it's blocked, we fall back to this tab below.
+    const tab = sell ? window.open("", "_blank") : null;
+    if (tab) tab.opener = null;
     setBusy(true);
     try {
       const access = await getAccessToken();
@@ -120,8 +147,15 @@ export function MeldFlow({
         if (!body.sessionId) throw new Error("Couldn't continue.");
         try { window.localStorage.setItem(MELD_SESSION_KEY, body.sessionId); } catch { /* storage blocked, the return page then needs the sessionId param */ }
       }
+      if (tab && !tab.closed) {
+        tab.location.href = body.widgetUrl;
+        setOpened(body.widgetUrl);
+        setBusy(false);
+        return;
+      }
       window.location.assign(body.widgetUrl);
     } catch (err) {
+      tab?.close();
       toast({ variant: "destructive", title: sell ? "Couldn't open cash-out" : "Couldn't start the deposit", description: err instanceof Error ? err.message : "Try again." });
       setBusy(false);
     }
@@ -134,6 +168,26 @@ export function MeldFlow({
         { label: "Max", value: spendable },
       ].map((c) => ({ label: c.label, value: String(Math.floor(c.value * 100) / 100) }))
     : [20, 50, 100, 250].map((v) => ({ label: `$${v}`, value: String(v) }));
+
+  if (opened) {
+    return (
+      <div className="mt-4 flex flex-col gap-4">
+        <div className="rounded-2xl border border-white/10 bg-[#1A1A20] p-4">
+          <p className="text-base font-bold text-white" style={{ fontFamily: SORA }}>Finish your cash-out in the new tab</p>
+          <p className="mt-1.5 text-sm text-[#C8C6D0]">Add your bank details there. When you are done, it brings you back to Loofta to send the USDC.</p>
+        </div>
+        <a
+          href={opened}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full rounded-2xl bg-gradient-to-r from-[#FF1301] to-[#EAB308] py-4 text-center text-base font-bold text-white hover:opacity-90"
+        >
+          Open it again
+        </a>
+        <button type="button" onClick={() => setOpened(null)} className="text-sm font-semibold text-[#C8C6D0] hover:text-white">Change the amount</button>
+      </div>
+    );
+  }
 
   if (unsupported) {
     return (
@@ -206,8 +260,13 @@ export function MeldFlow({
                   loading && "opacity-60",
                 )}
               >
-                <span className={cn("grid h-6 w-6 shrink-0 place-items-center rounded-full border-2", on ? "border-[#FF7A2A] bg-[#FF7A2A]" : "border-white/20")}>
-                  {on && <Check className="h-3.5 w-3.5 text-black" strokeWidth={3} />}
+                <span className="relative shrink-0">
+                  <MethodIcon method={o.method} />
+                  {on && (
+                    <span className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full border-2 border-[#1A1A20] bg-[#FF7A2A]">
+                      <Check className="h-3 w-3 text-black" strokeWidth={3.5} />
+                    </span>
+                  )}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
@@ -221,6 +280,12 @@ export function MeldFlow({
                       ? `1 USDC = ${fiat(o.rate ?? 0, o.currency)} · fee ${fiat(o.fee, o.currency)}`
                       : `Fee ${fiat(o.fee, o.currency)} included`}
                   </span>
+                  {o.eta && (
+                    <span className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-[#C8C6D0]">
+                      <Clock className="h-3.5 w-3.5" />
+                      Usually {o.eta}
+                    </span>
+                  )}
                 </span>
                 <span className="text-right">
                   <span className="block text-sm text-[#8A8893]">You get</span>
@@ -249,7 +314,7 @@ export function MeldFlow({
             : "Continue"}
       </button>
       <p className="text-center text-sm text-[#8A8893]">
-        {sell ? "You add your bank details next. Loofta covers the network fee." : "You confirm your card or Apple Pay next. USDC lands in your Loofta balance."}
+        {sell ? "You add your bank details next. Loofta covers the network fee. Times are typical, and a first-time verification can add a few minutes." : "You confirm your card or Apple Pay next. USDC lands in your Loofta balance. Times are typical, and a first-time verification can add a few minutes."}
       </p>
     </div>
   );
