@@ -239,6 +239,9 @@ export async function guardAtaSponsorship(
   emailService?: EmailService,
   callerUserId?: string,
   signerWalletAddress?: string,
+  // True when the transaction itself pays the account rent back to the fee payer (self-funded
+  // unbound withdrawals). A repeat then costs us nothing, so it is allowed with no alert.
+  rentRecovered = false,
 ): Promise<boolean> {
   if (breakerTrippedAt !== null) {
     log.error(
@@ -273,6 +276,14 @@ export async function guardAtaSponsorship(
   }
   // Postgres unique-violation — this (wallet, mint) was already sponsored once before.
   if (error.code === '23505') {
+    // The requester already paid this account's rent back in the same transaction, so the
+    // create→close→re-sponsor loop this guard exists to stop is free of cost to us. Refusing here
+    // only broke honest users whose wallet app auto-closed their empty USDC account. Volume is
+    // still bounded by the per-user / per-signer-wallet caps applied by the caller.
+    if (rentRecovered) {
+      log.log(`ALLOWED repeat sponsorship for wallet=${walletAddress.slice(0, 8)}… mint=${mint.slice(0, 8)}… — rent recovered from the requester in the same transaction.`);
+      return true;
+    }
     if (callerUserId) {
       const { data: existingRow } = await supabaseService.ataSponsorships
         .select('context, repeat_count')

@@ -1372,9 +1372,19 @@ export class TelegramBotService implements OnModuleInit {
   // Send
 
   private async onSend(msg: TgMessage, from: TgUser, parsed: ReturnType<typeof parseSendCommand>) {
-    const chatId = msg.chat.id;
-    const reply = (text: string, keyboard?: InlineKeyboard) =>
-      this.api!.sendMessage(chatId, text, { replyTo: msg.message_id, keyboard });
+    const inGroup = msg.chat.type !== 'private';
+    // In a group the details (fees, balance, the Confirm card) go to the person's private chat, never the group.
+    let target = msg.chat.id;
+    let replyToId: number | undefined = msg.message_id;
+    let notedInGroup = false;
+    const reply = async (text: string, keyboard?: InlineKeyboard) => {
+      const sent = await this.api!.sendMessage(target, text, { replyTo: replyToId, keyboard });
+      if (inGroup && target !== msg.chat.id && !notedInGroup) {
+        notedInGroup = true;
+        await this.api!.sendMessage(msg.chat.id, 'I sent you the details in private.', { replyTo: msg.message_id }).catch(() => undefined);
+      }
+      return sent;
+    };
 
     if (!parsed) return;
     if (!parsed.ok) return void (await reply(escapeHtml(parsed.error)));
@@ -1397,6 +1407,18 @@ export class TelegramBotService implements OnModuleInit {
     for (const it of items) {
       if (it.handle === from.username?.toLowerCase()) return void (await reply('You cannot pay yourself.'));
       if (it.handle === this.botUsername.toLowerCase()) return void (await reply('I would love to keep it, but no.'));
+    }
+
+    if (inGroup) {
+      const { data: dm } = await this.db.getClient().from('telegram_bot_users').select('chat_id').eq('telegram_user_id', from.id).maybeSingle();
+      if (!dm?.chat_id) {
+        return void (await reply(
+          'I only show your balance and fees in private. Open a chat with me, press Start, then ask again.',
+          { inline_keyboard: [[{ text: 'Open chat', url: `https://t.me/${this.botUsername}` }]] },
+        ));
+      }
+      target = Number(dm.chat_id);
+      replyToId = undefined;
     }
 
     const userId = await this.resolveLinkedUser(from.id);
@@ -1485,7 +1507,8 @@ export class TelegramBotService implements OnModuleInit {
           batch_id: batchId,
           telegram_user_id: from.id,
           privy_user_id: userId,
-          chat_id: chatId,
+          chat_id: target,
+          ...(inGroup ? { source_chat_id: msg.chat.id, source_message_id: msg.message_id } : {}),
           recipient_handle: it.handle,
           amount_usd: it.amount,
           is_private: parsed.isPrivate,
@@ -1846,10 +1869,35 @@ export class TelegramBotService implements OnModuleInit {
     const inPrivate = cb.message?.chat.type === 'private';
     if (inPrivate && !outcomes.some((o) => o.uncertain)) linkRows.push([{ text: 'Send again', callback_data: 'menu:send' }]);
     await this.api!.editMessage(chatId, messageId, lines.join('\n'), linkRows.length ? { inline_keyboard: linkRows } : undefined);
+    await this.postGroupOutcome(claimedRows[0]?.id, outcomes);
     // Bring the Send button back at the bottom of the chat, and again after a quiet while.
     if (inPrivate) {
       await this.showReady(chatId, 'Ready for the next one.');
       this.scheduleNudge(chatId);
+    }
+  }
+
+  /**
+   * A payment started in a group is confirmed in private. The group only gets the outcome: who was paid and how
+   * much, never the fees, the balance or the reason one failed.
+   */
+  private async postGroupOutcome(
+    firstActionId: string | undefined,
+    outcomes: Array<{ handle: string; amount: number; isPrivate: boolean; error?: string; uncertain?: boolean }>,
+  ) {
+    if (!firstActionId) return;
+    try {
+      const { data } = await this.db.getClient().from('telegram_bot_actions').select('source_chat_id, source_message_id').eq('id', firstActionId).maybeSingle();
+      if (!data?.source_chat_id) return;
+      const line = (o: (typeof outcomes)[number]) =>
+        o.error || o.uncertain
+          ? `The payment to <b>@${escapeHtml(o.handle)}</b> did not go through.`
+          : `Sent <b>${money(o.amount)}</b>${o.isPrivate ? ' privately' : ''} to <b>@${escapeHtml(o.handle)}</b>.`;
+      await this.api!.sendMessage(Number(data.source_chat_id), outcomes.map(line).join('\n'), {
+        replyTo: data.source_message_id ? Number(data.source_message_id) : undefined,
+      });
+    } catch (e) {
+      this.logger.warn(`Could not post the outcome to the group: ${(e as Error).message}`);
     }
   }
 
