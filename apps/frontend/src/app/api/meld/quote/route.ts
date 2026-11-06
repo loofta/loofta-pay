@@ -158,6 +158,14 @@ export async function POST(request: Request) {
       return json({ country, supported: side === "buy", options: [] });
     }
 
+    // Providers report fees inconsistently: one lists a fee and a good rate, another lists 0 but pays a worse rate
+    // (the cost is hidden in the spread). For a sell, price every option against the best gross payout seen
+    // (payout + reported fee) so "fee" always means the real cost of that option, and 0 only if it truly is the best.
+    const grossBest = side === "sell" ? Math.max(...quotes.map((q) => q.destinationAmount + Number(q.totalFee ?? 0))) : 0;
+    const realFee = (q: MeldQuote) => side === "sell"
+      ? Math.max(Number(q.totalFee ?? 0), Math.round((grossBest - q.destinationAmount) * 100) / 100)
+      : Number(q.totalFee ?? 0);
+
     const options: QuoteOption[] = quotes
       .sort((a, b) => b.destinationAmount - a.destinationAmount)
       .map((q) => ({
@@ -167,7 +175,7 @@ export async function POST(request: Request) {
         eta: methodEta(q.paymentMethodType, side),
         receive: q.destinationAmount,
         currency: side === "sell" ? q.destinationCurrencyCode || currency : "USD",
-        fee: Number(q.totalFee ?? 0),
+        fee: realFee(q),
         rate: side === "sell" ? (q.destinationAmount > 0 ? q.destinationAmount / amount : null) : null,
       }));
     return json({ country, supported: true, side, currency: side === "sell" ? currency : "USD", options });

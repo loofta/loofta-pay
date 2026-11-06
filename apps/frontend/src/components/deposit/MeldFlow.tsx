@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Clock, Loader2 } from "lucide-react";
+import { Clock, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { MELD_SESSION_KEY } from "@/lib/meldOfframp";
 import { cn } from "@/lib/utils";
@@ -30,7 +30,7 @@ function arrange(options: Option[], side: "buy" | "sell"): Option[] {
 }
 
 /** Square tile for a payment method: the real wallet marks on white (their guidelines want a plain mark), our card and bank icons on dark. */
-function MethodIcon({ method }: { method?: string }) {
+function MethodIcon({ method, label }: { method?: string; label?: string }) {
   const wallet = method === "APPLE_PAY" ? "applepay" : method === "GOOGLE_PAY" ? "googlepay" : null;
   if (wallet) {
     return (
@@ -39,7 +39,8 @@ function MethodIcon({ method }: { method?: string }) {
       </span>
     );
   }
-  const card = method === "CREDIT_DEBIT_CARD";
+  // Cash-out options carry no method, so a card payout is told apart by its label
+  const card = method === "CREDIT_DEBIT_CARD" || /card/i.test(label ?? "");
   return (
     <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#1C1C22]">
       <img src={`/images/icons/${card ? "card-chip" : "bank"}.svg`} alt="" className="h-7 w-7 object-contain" />
@@ -260,13 +261,8 @@ export function MeldFlow({
                   loading && "opacity-60",
                 )}
               >
-                <span className="relative shrink-0">
-                  <MethodIcon method={o.method} />
-                  {on && (
-                    <span className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full border-2 border-[#1A1A20] bg-[#FF7A2A]">
-                      <Check className="h-3 w-3 text-black" strokeWidth={3.5} />
-                    </span>
-                  )}
+                <span className="shrink-0">
+                  <MethodIcon method={o.method} label={o.label} />
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
@@ -277,8 +273,8 @@ export function MeldFlow({
                   </span>
                   <span className="mt-0.5 block text-sm text-[#8A8893]">
                     {sell
-                      ? `1 USDC = ${fiat(o.rate ?? 0, o.currency)} · fee ${fiat(o.fee, o.currency)}`
-                      : `Fee ${fiat(o.fee, o.currency)} included`}
+                      ? `1 USDC = ${fiat(o.rate ?? 0, o.currency)} · ${o.fee > 0 ? `costs about ${fiat(o.fee, o.currency)}` : "lowest cost"}`
+                      : o.fee > 0 ? `Fee ${fiat(o.fee, o.currency)} included` : "No extra fee"}
                   </span>
                   {o.eta && (
                     <span className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-[#C8C6D0]">

@@ -1,7 +1,7 @@
 // layout.tsx
 
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { QueryProvider } from "@/providers/QueryProvider";
@@ -13,8 +13,9 @@ import { AppErrorBoundary } from "@/components/AppErrorBoundary"
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 
-const inter = Inter({
-  subsets: ["latin"],
+const inter = localFont({
+  src: "../fonts/inter.woff2",
+  weight: "100 900",
   display: "swap",
   variable: "--font-inter",
 });

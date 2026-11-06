@@ -1,22 +1,23 @@
-import { JetBrains_Mono, Manrope, Sora } from "next/font/google";
+import localFont from "next/font/local";
 
-export const sora = Sora({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
+// Self-hosted (latin, variable) so the build never depends on fetching Google Fonts.
+export const sora = localFont({
+  src: "../../fonts/sora.woff2",
+  weight: "100 800",
   variable: "--font-home-sora",
   display: "swap",
 });
 
-export const manrope = Manrope({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+export const manrope = localFont({
+  src: "../../fonts/manrope.woff2",
+  weight: "200 800",
   variable: "--font-home-manrope",
   display: "swap",
 });
 
-export const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
+export const jetbrainsMono = localFont({
+  src: "../../fonts/jetbrainsmono.woff2",
+  weight: "100 800",
   variable: "--font-home-mono",
   display: "swap",
 });
