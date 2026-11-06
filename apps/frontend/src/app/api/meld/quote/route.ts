@@ -18,6 +18,7 @@ type MeldQuote = {
 
 export type QuoteOption = {
   id: string;           // provider id, sent back when the session is opened (never shown to the user)
+  method?: string;      // payment method for a buy (APPLE_PAY, GOOGLE_PAY, CREDIT_DEBIT_CARD, ACH...), sent back too
   label: string;        // "Bank transfer", "Debit or credit card"
   receive: number;      // fiat for a sell, USDC for a buy
   currency: string;     // fiat code of the payout (sell) or the card charge (buy)
@@ -104,17 +105,33 @@ export async function POST(request: Request) {
     let quotes: MeldQuote[] = [];
     let currency = currencies[0];
     let lastData: unknown = null;
-    for (const c of currencies) {
-      const r = await meld<{ quotes?: MeldQuote[] }>("/payments/crypto/quote", {
+    const buyMethods = ["APPLE_PAY", "GOOGLE_PAY", "CREDIT_DEBIT_CARD"];
+    if (side === "buy") {
+      // A quote with no method only returns each provider's default (a card or ACH), so ask for each wallet and the
+      // card by name, plus the plain quote to catch bank transfer. Keep the best provider per method.
+      const ask = (method?: string) => meld<{ quotes?: MeldQuote[] }>("/payments/crypto/quote", {
         method: "POST",
-        body: JSON.stringify(side === "sell"
-          ? { countryCode: country, sourceCurrencyCode: "USDC_SOLANA", sourceAmount: String(amount), destinationCurrencyCode: c }
-          : { countryCode: country, sourceCurrencyCode: "USD", sourceAmount: String(amount), destinationCurrencyCode: "USDC_SOLANA" }),
+        body: JSON.stringify({ countryCode: country, sourceCurrencyCode: "USD", sourceAmount: String(amount), destinationCurrencyCode: "USDC_SOLANA", ...(method ? { paymentMethodType: method } : {}) }),
       });
-      lastData = r.data;
-      quotes = r.data?.quotes ?? [];
-      if (r.ok && quotes.length) { currency = c; break; }
-      if (side === "buy") break;
+      const results = await Promise.all([...buyMethods.map((m) => ask(m)), ask()]);
+      lastData = results.find((r) => !r.ok)?.data ?? results[0].data;
+      const best = new Map<string, MeldQuote>();
+      for (const q of results.flatMap((r) => r.data?.quotes ?? [])) {
+        const key = q.paymentMethodType ?? "CREDIT_DEBIT_CARD";
+        const cur = best.get(key);
+        if (!cur || q.destinationAmount > cur.destinationAmount) best.set(key, q);
+      }
+      quotes = [...best.values()];
+    } else {
+      for (const c of currencies) {
+        const r = await meld<{ quotes?: MeldQuote[] }>("/payments/crypto/quote", {
+          method: "POST",
+          body: JSON.stringify({ countryCode: country, sourceCurrencyCode: "USDC_SOLANA", sourceAmount: String(amount), destinationCurrencyCode: c }),
+        });
+        lastData = r.data;
+        quotes = r.data?.quotes ?? [];
+        if (r.ok && quotes.length) { currency = c; break; }
+      }
     }
 
     if (!quotes.length) {
@@ -128,6 +145,7 @@ export async function POST(request: Request) {
       .sort((a, b) => b.destinationAmount - a.destinationAmount)
       .map((q) => ({
         id: q.serviceProvider,
+        method: side === "buy" ? (q.paymentMethodType ?? "CREDIT_DEBIT_CARD") : undefined,
         label: methodLabel(q.paymentMethodType, side),
         receive: q.destinationAmount,
         currency: side === "sell" ? q.destinationCurrencyCode || currency : "USD",

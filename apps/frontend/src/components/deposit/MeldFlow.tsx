@@ -8,10 +8,22 @@ import { cn } from "@/lib/utils";
 
 const SORA = "var(--font-home-sora), Sora, sans-serif";
 
-type Option = { id: string; label: string; receive: number; currency: string; fee: number; rate: number | null };
+type Option = { id: string; method?: string; label: string; receive: number; currency: string; fee: number; rate: number | null };
 type QuoteResult = { supported?: boolean; options?: Option[]; currency?: string; error?: string };
 
 const MIN_SELL_USDC = 3;
+
+const keyOf = (o: Option) => `${o.id}:${o.method ?? ""}`;
+const METHOD_ORDER = ["APPLE_PAY", "GOOGLE_PAY", "CREDIT_DEBIT_CARD"];
+const onApple = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
+
+/** Wallets first (Apple Pay only on Apple devices), then card, then bank; sells keep the server's best-first order. */
+function arrange(options: Option[], side: "buy" | "sell"): Option[] {
+  if (side === "sell") return options;
+  const usable = options.filter((o) => o.method !== "APPLE_PAY" || onApple());
+  const rank = (o: Option) => { const i = METHOD_ORDER.indexOf(o.method ?? ""); return i === -1 ? METHOD_ORDER.length : i; };
+  return [...usable].sort((a, b) => rank(a) - rank(b));
+}
 
 function fiat(n: number, currency: string) {
   try {
@@ -52,7 +64,8 @@ export function MeldFlow({
   const sell = side === "sell";
   const spendable = Math.floor(balanceNum * 100) / 100;
   const overBalance = sell && amountNum > spendable;
-  const choice = options?.find((o) => o.id === selected) ?? options?.[0] ?? null;
+  const choice = options?.find((o) => keyOf(o) === selected) ?? options?.[0] ?? null;
+  const bestReceive = options?.length ? Math.max(...options.map((o) => o.receive)) : 0;
 
   // Live options: refetch shortly after the amount stops changing, keeping the old list on screen meanwhile
   useEffect(() => {
@@ -71,9 +84,10 @@ export function MeldFlow({
         if (mine !== request.current) return;
         if (data.supported === false) { setUnsupported(true); setOptions([]); return; }
         setUnsupported(false);
-        setOptions(data.options ?? []);
-        setNotice(data.options?.length ? null : data.error ?? (sell ? `Nothing available for this amount. Try ${MIN_SELL_USDC} USDC or more.` : "Nothing available for this amount."));
-        setSelected((cur) => (data.options?.some((o) => o.id === cur) ? cur : data.options?.[0]?.id ?? null));
+        const list = arrange(data.options ?? [], side);
+        setOptions(list);
+        setNotice(list.length ? null : data.error ?? (sell ? `Nothing available for this amount. Try ${MIN_SELL_USDC} USDC or more.` : "Nothing available for this amount."));
+        setSelected((cur) => (list.some((o) => keyOf(o) === cur) ? cur : list[0] ? keyOf(list[0]) : null));
       } catch {
         if (mine === request.current) setNotice("Couldn't load options. Check your connection.");
       } finally {
@@ -95,6 +109,7 @@ export function MeldFlow({
           walletAddress: solanaAddress,
           amount: amountNum,
           serviceProvider: choice.id,
+          ...(choice.method ? { paymentMethodType: choice.method } : {}),
           ...(sell ? { currency: choice.currency } : {}),
           redirectUrl: sell ? `${window.location.origin}/cash-out/meld` : `${window.location.origin}/`,
         }),
@@ -178,13 +193,13 @@ export function MeldFlow({
             </div>
           )}
 
-          {options?.map((o, i) => {
-            const on = o.id === choice?.id;
+          {options?.map((o) => {
+            const on = !!choice && keyOf(o) === keyOf(choice);
             return (
               <button
-                key={o.id}
+                key={keyOf(o)}
                 type="button"
-                onClick={() => setSelected(o.id)}
+                onClick={() => setSelected(keyOf(o))}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-2xl border bg-[#1A1A20] px-3.5 py-3 text-left transition-opacity",
                   on ? "border-[#FF7A2A]" : "border-white/[0.07] hover:border-white/20",
@@ -197,7 +212,7 @@ export function MeldFlow({
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
                     <span className="text-base font-bold text-white" style={{ fontFamily: SORA }}>{o.label}</span>
-                    {i === 0 && options.length > 1 && (
+                    {options.length > 1 && o.receive === bestReceive && (
                       <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-sm font-semibold text-emerald-300">Best rate</span>
                     )}
                   </span>
@@ -230,7 +245,7 @@ export function MeldFlow({
         {busy
           ? <span className="inline-flex items-center justify-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Opening…</span>
           : choice
-            ? sell ? `Cash out ${amountNum} USDC` : `Pay $${amountNum}`
+            ? sell ? `Cash out ${amountNum} USDC` : `Pay $${amountNum}${choice.method === "APPLE_PAY" || choice.method === "GOOGLE_PAY" ? ` with ${choice.label}` : ""}`
             : "Continue"}
       </button>
       <p className="text-center text-sm text-[#8A8893]">

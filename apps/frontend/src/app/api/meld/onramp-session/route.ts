@@ -49,7 +49,7 @@ export async function POST(request: Request) {
   const apiKey = process.env.MELD_API_KEY;
   if (!apiKey) return json({ error: "Card deposits aren't configured." }, 503);
 
-  let body: { walletAddress?: string; amount?: number; countryCode?: string; redirectUrl?: string; serviceProvider?: string };
+  let body: { walletAddress?: string; amount?: number; countryCode?: string; redirectUrl?: string; serviceProvider?: string; paymentMethodType?: string };
   try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
 
   const walletAddress = String(body.walletAddress || "").trim();
@@ -58,6 +58,7 @@ export async function POST(request: Request) {
   const ownWallets = await getVerifiedSolanaWallets(userId);
   if (!ownWallets.includes(walletAddress)) return json({ error: "That wallet isn't on your account." }, 403);
 
+  const paymentMethodType = typeof body.paymentMethodType === "string" && /^[A-Z_]{3,40}$/.test(body.paymentMethodType) ? body.paymentMethodType : undefined;
   const amount = Number(body.amount) > 0 ? Number(body.amount) : undefined;
   const countryCode = typeof body.countryCode === "string" && /^[A-Za-z]{2}$/.test(body.countryCode) ? body.countryCode.toUpperCase() : requestCountry(request);
   const origin = request.headers.get("origin");
@@ -117,6 +118,7 @@ export async function POST(request: Request) {
             ...(clientIpAddress ? { clientIpAddress } : {}),
             // Meld rejects a session with no amount; 50 matches the quote above and the user can change it in checkout
             sourceAmount: String(amount ?? 50),
+            ...(paymentMethodType ? { paymentMethodType } : {}),
             ...(redirectUrl ? { redirectUrl } : {}),
           },
         }),
