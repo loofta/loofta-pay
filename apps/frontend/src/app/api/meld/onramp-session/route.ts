@@ -49,7 +49,7 @@ export async function POST(request: Request) {
   const apiKey = process.env.MELD_API_KEY;
   if (!apiKey) return json({ error: "Card deposits aren't configured." }, 503);
 
-  let body: { walletAddress?: string; amount?: number; countryCode?: string; redirectUrl?: string };
+  let body: { walletAddress?: string; amount?: number; countryCode?: string; redirectUrl?: string; serviceProvider?: string };
   try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
 
   const walletAddress = String(body.walletAddress || "").trim();
@@ -89,6 +89,8 @@ export async function POST(request: Request) {
     });
     const quoteData = await quoteRes.json().catch(() => null) as { quotes?: { serviceProvider: string; destinationAmount: number }[] } | null;
     const ranked = [...(quoteData?.quotes ?? [])].sort((a, b) => b.destinationAmount - a.destinationAmount);
+    // The user picked an option on the quote screen: try that provider first, the rest only as a fallback
+    if (body.serviceProvider) ranked.sort((a, b) => Number(b.serviceProvider === body.serviceProvider) - Number(a.serviceProvider === body.serviceProvider));
     if (!quoteRes.ok || !ranked.length) {
       console.error(`${LOG} No Meld quote ${quoteRes.status} (base ${MELD_API_BASE}):`, JSON.stringify(quoteData));
       return json({ error: tooLow(quoteData) ?? `Card deposits aren't available for this amount or country yet (ref quote ${quoteRes.status}).` }, 502);
@@ -113,7 +115,8 @@ export async function POST(request: Request) {
             destinationCurrencyCode: "USDC_SOLANA",
             walletAddress,
             ...(clientIpAddress ? { clientIpAddress } : {}),
-            ...(amount ? { sourceAmount: String(amount) } : {}),
+            // Meld rejects a session with no amount; 50 matches the quote above and the user can change it in checkout
+            sourceAmount: String(amount ?? 50),
             ...(redirectUrl ? { redirectUrl } : {}),
           },
         }),

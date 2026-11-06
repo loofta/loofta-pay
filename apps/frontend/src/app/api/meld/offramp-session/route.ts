@@ -83,11 +83,15 @@ export async function POST(request: Request) {
   let amount: number | undefined;
   let countryCode = requestCountry(request);
   let redirectUrl: string | undefined;
+  let chosenProvider: string | undefined;
+  let chosenCurrency: string | undefined;
   try {
     const body = await request.json();
     walletAddress = body.walletAddress;
     amount = Number(body.amount) > 0 ? Number(body.amount) : undefined;
     if (typeof body.countryCode === "string" && /^[A-Za-z]{2}$/.test(body.countryCode)) countryCode = body.countryCode.toUpperCase();
+    if (typeof body.serviceProvider === "string" && /^[A-Z_]{2,30}$/.test(body.serviceProvider)) chosenProvider = body.serviceProvider;
+    if (typeof body.currency === "string" && /^[A-Z]{3}$/.test(body.currency)) chosenCurrency = body.currency;
     if (typeof body.redirectUrl === "string" && ALLOWED_ORIGINS.some((o) => body.redirectUrl.startsWith(`${o}/`) || body.redirectUrl === o)) {
       redirectUrl = body.redirectUrl;
     }
@@ -121,7 +125,7 @@ export async function POST(request: Request) {
     let payoutCurrency = "USD";
     let quoteStatus = 0;
     let quoteData: unknown = null;
-    for (const currency of await payoutCurrencies(countryCode, meldHeaders)) {
+    for (const currency of [...new Set([chosenCurrency, ...(await payoutCurrencies(countryCode, meldHeaders))].filter((c): c is string => !!c))]) {
       const quoteRes = await fetch(`${MELD_API_BASE}/payments/crypto/quote`, {
         method: "POST",
         headers: meldHeaders,
@@ -142,7 +146,8 @@ export async function POST(request: Request) {
       return new NextResponse(JSON.stringify({ error: tooLow(quoteData) ?? `Bank cash-out isn't available in your country yet (ref quote ${quoteStatus}).` }), { status: 502, headers });
     }
     // Providers with the redirect flow first (best quote within each group); fall through if one refuses the session
-    const ordered = [...quotes.filter((q) => REDIRECT_FLOW_PROVIDERS.has(q.serviceProvider)), ...quotes.filter((q) => !REDIRECT_FLOW_PROVIDERS.has(q.serviceProvider))];
+    const preferFirst = <T extends { serviceProvider: string }>(list: T[]) => [...list].sort((a, b) => Number(b.serviceProvider === chosenProvider) - Number(a.serviceProvider === chosenProvider));
+    const ordered = preferFirst([...quotes.filter((q) => REDIRECT_FLOW_PROVIDERS.has(q.serviceProvider)), ...quotes.filter((q) => !REDIRECT_FLOW_PROVIDERS.has(q.serviceProvider))]);
 
     let data: { id?: string; widgetUrl?: string } | null = null;
     let lastFailure = "";
@@ -160,7 +165,8 @@ export async function POST(request: Request) {
             destinationCurrencyCode: payoutCurrency,
             walletAddress,
             ...(clientIpAddress ? { clientIpAddress } : {}),
-            ...(amount ? { sourceAmount: String(amount) } : {}),
+            // Meld rejects a sell session with no amount; same default as the quote above
+            sourceAmount: String(amount ?? 20),
             redirectFlow: true,
             ...(redirectUrl ? { redirectUrl } : {}),
           },

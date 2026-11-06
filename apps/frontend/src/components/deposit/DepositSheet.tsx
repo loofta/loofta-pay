@@ -23,7 +23,7 @@ import { useSolDomain } from "@/hooks/useSolDomain";
 import { useSolPriceOrNull } from "@/hooks/useSolPrice";
 import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
 import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
-import { MELD_SESSION_KEY } from "@/lib/meldOfframp";
+import { MeldFlow } from "@/components/deposit/MeldFlow";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { addWithdrawal } from "@/lib/withdrawalHistory";
 import { PrivacyTimingControls } from "@/components/app/PrivacyTimingControls";
@@ -902,18 +902,6 @@ function CardDeposit({
     if (chosen === "paj") { onPaj(); return; }
     setBusy(true);
     try {
-      if (chosen === "card") {
-        const access = await getAccessToken();
-        const res = await fetch("/api/meld/onramp-session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(access ? { Authorization: `Bearer ${access}` } : {}) },
-          body: JSON.stringify({ walletAddress: solanaAddress, redirectUrl: `${window.location.origin}/`, ...(amountNum > 0 ? { amount: amountNum } : {}) }),
-        });
-        const body = await res.json().catch(() => ({})) as { widgetUrl?: string; error?: string };
-        if (!res.ok || !body.widgetUrl) throw new Error(body.error || "Could not start the card deposit.");
-        window.location.assign(body.widgetUrl);
-        return;
-      }
       await startPeerCheckout({
         amount: String(amountNum),
         solanaAddress,
@@ -930,6 +918,10 @@ function CardDeposit({
     }
   };
 
+  if (provider === "card") {
+    return <MeldFlow side="buy" solanaAddress={solanaAddress} getAccessToken={getAccessToken} onBack={() => setProvider(null)} />;
+  }
+
   return (
     <div className="mt-4 flex flex-col gap-4">
       <div className="flex flex-col gap-3">
@@ -940,7 +932,7 @@ function CardDeposit({
             disabled={busy}
             onClick={() => {
               setProvider(item.id);
-              if (item.id !== "peer") void continueWith(item.id);
+              if (item.id !== "peer" && item.id !== "card") void continueWith(item.id);
             }}
             className={cn(
               "flex w-full items-center gap-3 rounded-2xl border bg-[#1A1A20] px-3.5 py-3.5 text-left disabled:opacity-50",
@@ -1876,6 +1868,7 @@ function BankWithdraw({
   const { user } = usePrivy();
   const [app, setApp] = useState<string | null>(null);
   const [peerOpen, setPeerOpen] = useState(false);
+  const [bankOpen, setBankOpen] = useState(false);
   // Bank cash-out only exists in some countries; hide the row elsewhere (shown until we know)
   const [bankSupported, setBankSupported] = useState(true);
   useEffect(() => {
@@ -1906,33 +1899,12 @@ function BankWithdraw({
     onCashOut?.({ platformId: platform.id, identifier: identifier.trim(), amountUsd: amountNum, intent: "receive" });
   };
 
-  const openMeld = async () => {
-    if (!solanaAddress) return;
-    setBusy(true);
-    try {
-      const access = await getAccessToken();
-      const sessionRes = await fetch("/api/meld/offramp-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(access ? { Authorization: `Bearer ${access}` } : {}) },
-        body: JSON.stringify({ walletAddress: solanaAddress, redirectUrl: `${window.location.origin}/cash-out/meld` }),
-      });
-      if (!sessionRes.ok) {
-        const err = await sessionRes.json().catch(() => ({})) as { error?: string; detail?: string };
-        throw new Error(err.detail || err.error || "Could not start cash-out");
-      }
-      const { widgetUrl, sessionId } = await sessionRes.json() as { widgetUrl?: string; sessionId?: string };
-      if (!widgetUrl || !sessionId) throw new Error("No cash-out session");
-      try { window.localStorage.setItem(MELD_SESSION_KEY, sessionId); } catch { /* storage blocked, the return page then needs the sessionId param */ }
-      window.location.assign(widgetUrl);
-    } catch (err) {
-      toast({ variant: "destructive", title: "Couldn't open cash-out", description: err instanceof Error ? err.message : "Try again." });
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (devnetMode) {
     return <p className="mt-4 text-sm text-[#C8C6D0]">Bank cash-out is available on mainnet. Switch networks to cash out to a bank, PAJ Cash, or a bank app.</p>;
+  }
+
+  if (bankOpen && solanaAddress) {
+    return <MeldFlow side="sell" solanaAddress={solanaAddress} balanceNum={balanceNum} getAccessToken={getAccessToken} onBack={() => setBankOpen(false)} />;
   }
 
   if (platform) {
@@ -2002,7 +1974,7 @@ function BankWithdraw({
   return (
     <div className="mt-4 flex flex-col gap-2">
       {bankSupported && (
-      <button type="button" disabled={!solanaAddress || busy} onClick={() => { void openMeld(); }} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20 disabled:opacity-50">
+      <button type="button" disabled={!solanaAddress} onClick={() => setBankOpen(true)} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20 disabled:opacity-50">
         <img src="/images/icons/card.svg" alt="" className="h-9 w-9 rounded-xl bg-[#1C1C22] object-contain p-1.5" />
         <span className="min-w-0 flex-1">
           <span className="block text-base font-bold text-white">Bank or card</span>
