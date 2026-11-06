@@ -164,7 +164,7 @@ export async function POST(request: Request) {
     const grossBest = side === "sell" ? Math.max(...quotes.map((q) => q.destinationAmount + Number(q.totalFee ?? 0))) : 0;
     const realFee = (q: MeldQuote) => side === "sell"
       ? Math.max(Number(q.totalFee ?? 0), Math.round((grossBest - q.destinationAmount) * 100) / 100)
-      : Number(q.totalFee ?? 0);
+      : Math.max(Number(q.totalFee ?? 0), Math.round((amount - q.destinationAmount) * 100) / 100); // buy: dollars paid minus USDC received (USDC ~ $1) is the true all-in cost, spread included
 
     const options: QuoteOption[] = quotes
       .sort((a, b) => b.destinationAmount - a.destinationAmount)

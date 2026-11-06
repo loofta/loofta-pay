@@ -274,7 +274,7 @@ export function MeldFlow({
                   <span className="mt-0.5 block text-sm text-[#8A8893]">
                     {sell
                       ? `1 USDC = ${fiat(o.rate ?? 0, o.currency)} · ${o.fee > 0 ? `costs about ${fiat(o.fee, o.currency)}` : "lowest cost"}`
-                      : o.fee > 0 ? `Fee ${fiat(o.fee, o.currency)} included` : "No extra fee"}
+                      : o.fee > 0 ? `Total cost ${fiat(o.fee, o.currency)}, fee and rate included` : "No extra cost"}
                   </span>
                   {o.eta && (
                     <span className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-[#C8C6D0]">
@@ -287,6 +287,9 @@ export function MeldFlow({
                   <span className="block text-sm text-[#8A8893]">You get</span>
                   <span className="block text-lg font-bold text-white" style={{ fontFamily: SORA }}>
                     {sell ? fiat(o.receive, o.currency) : `${o.receive.toFixed(2)} USDC`}
+                  </span>
+                  <span className="block text-sm text-[#8A8893]">
+                    {sell ? `for ${amountNum} USDC` : `for $${amountNum}`}
                   </span>
                 </span>
               </button>

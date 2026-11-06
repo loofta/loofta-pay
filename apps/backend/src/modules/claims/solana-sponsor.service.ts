@@ -431,6 +431,24 @@ export class SolanaSponsorService {
     return BigInt(Math.floor(perAtaUsd * 1e6)) * BigInt(count);
   }
 
+  private lastCapAlertAt = 0;
+
+  /** Email the owner when a sponsorship cap blocks someone. A single hit means an account was
+   *  already farming the fee payer up to the cap (2026-11-06: five rotating accounts did exactly
+   *  this and no alert fired). Throttled to one email per 30 minutes. */
+  private alertCapHit(detail: string): void {
+    const now = Date.now();
+    if (now - this.lastCapAlertAt < 30 * 60_000) return;
+    this.lastCapAlertAt = now;
+    this.emailService
+      ?.sendOpsAlertEmail({
+        to: 'lisa.bechina@gmail.com',
+        subject: 'Fee payer: sponsorship cap hit',
+        lines: [detail, 'An account sent many payments needing sponsored token accounts. Check recent payments for rotating throwaway senders.'],
+      })
+      .catch(() => undefined);
+  }
+
   /**
    * Refuse to pay ATA rent twice for the same (wallet, mint).
    *
@@ -494,6 +512,14 @@ export class SolanaSponsorService {
         throw new Error('This claim has no resolvable recipient; cannot verify this payment.');
       }
       const claimAmountUsd = parseFloat(String(claimRow.amount ?? '0'));
+      // Hard floor on sponsor-paid new token accounts: a sub-$1 payment never justifies our
+      // paying rent (~$0.30) for the recipient. Only applies when we would actually pay rent.
+      if (Number.isFinite(claimAmountUsd) && claimAmountUsd > 0 && claimAmountUsd < 1 && details.some((d) => d.payer === this.feePayerAddress)) {
+        this.logger.error(
+          `SolanaSponsor[${label}]: BLOCKED — claimId=${claimId} is $${claimAmountUsd} (< $1 minimum) and needs a sponsored token account (user=${userId ?? 'unknown'})`,
+        );
+        throw new Error('Minimum payment amount is $1.00.');
+      }
       if (Number.isFinite(claimAmountUsd) && claimAmountUsd > 0) {
         const requiredUnits = BigInt(Math.round(claimAmountUsd * 1_000_000));
         let paidUnits = 0n;
@@ -760,7 +786,12 @@ export class SolanaSponsorService {
     // regardless of which intent id (if any) was supplied. Skipped only when userId is absent
     // (cron/backend-only callers have no identity to cap against).
     if (userId) {
-      await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, userId, chargeable.length, `SolanaSponsor:${label}`);
+      try {
+        await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, userId, chargeable.length, `SolanaSponsor:${label}`);
+      } catch (e) {
+        this.alertCapHit(`per-user cap hit by ${userId}`);
+        throw e;
+      }
     }
 
     // Second, independent axis on the same cap — see assertPerWalletAtaCreationCapNotExceeded.
@@ -769,7 +800,12 @@ export class SolanaSponsorService {
     // sponsorships while (apparently) rotating Privy accounts to dodge the check above.
     const primarySigner = this.getRequiredUserSigners(serializedBase64)[0];
     if (primarySigner) {
-      await assertPerWalletAtaCreationCapNotExceeded(this.supabaseService, primarySigner, chargeable.length, `SolanaSponsor:${label}`);
+      try {
+        await assertPerWalletAtaCreationCapNotExceeded(this.supabaseService, primarySigner, chargeable.length, `SolanaSponsor:${label}`);
+      } catch (e) {
+        this.alertCapHit(`per-wallet cap hit by signer ${primarySigner}`);
+        throw e;
+      }
     }
 
     for (const d of chargeable) {

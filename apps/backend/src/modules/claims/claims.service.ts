@@ -146,6 +146,16 @@ export class ClaimsService {
     return BURNER_INBOUND_BACKGROUND_MAX_MS_MAINNET;
   }
 
+  /** Minimum USD value of a user-created payment. Added 2026-11-06 after a fee-payer drain of
+   *  0.01 USDC sends to fresh recipients, where each send cost us a token-account rent deposit
+   *  far above the payment. Partner/bot flows (createForPartnerRecipient) are not routed here. */
+  private assertMinimumPaymentAmount(amount: unknown): void {
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n < 1) {
+      throw new BadRequestException('Minimum payment amount is $1.00.');
+    }
+  }
+
   /**
    * Create a new payment claim
    */
@@ -155,6 +165,7 @@ export class ClaimsService {
     if (!amount || !toSel?.symbol || !toSel?.chain || !recipient) {
       throw new BadRequestException('Missing required fields');
     }
+    this.assertMinimumPaymentAmount(amount);
 
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
@@ -285,6 +296,7 @@ export class ClaimsService {
    */
   async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
     const { username, amount, userId, isPrivate = false, description, cluster, treatUnregisteredAsTwitter, expiresAt, split, maxDelayMs } = dto;
+    this.assertMinimumPaymentAmount(amount);
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
     // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
@@ -374,6 +386,7 @@ export class ClaimsService {
    */
   async createFromSocial(dto: CreateClaimFromSocialDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
     const { platform, handle, amount, userId, isPrivate = false, description, cluster, expiresAt, split, maxDelayMs } = dto;
+    this.assertMinimumPaymentAmount(amount);
     const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
     const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
     // Strip a trailing Discord discriminator (e.g. "username#0") — senders no longer need to type one.
@@ -833,6 +846,7 @@ export class ClaimsService {
    */
   async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
     const { email, amount, userId, isPrivate = false, description, cluster, expiresAt, split, maxDelayMs } = dto;
+    this.assertMinimumPaymentAmount(amount);
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
     // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).

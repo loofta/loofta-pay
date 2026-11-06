@@ -865,6 +865,48 @@ export class EmailService {
     }
   }
 
+  /** Plain ops alert to the owner (drain attempts, caps hit). Callers must throttle. */
+  async sendOpsAlertEmail(data: { to: string; subject: string; lines: string[] }): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`Ops alert NOT sent (RESEND_API_KEY unset): ${data.subject} :: ${data.lines.join(' | ')}`);
+      return;
+    }
+    const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const html = `<div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+      <h2 style="color:#0f172a;margin:0 0 12px;">${esc(data.subject)}</h2>
+      ${data.lines.map((l) => `<p style="color:#334155;font-size:14px;margin:4px 0;">${esc(l)}</p>`).join('')}
+    </div>`;
+    try {
+      await this.resend.emails.send({ from: `Loofta Ops <${this.fromEmail}>`, to: data.to, subject: data.subject, html });
+    } catch (err: any) {
+      this.logger.error(`Failed to send ops alert: ${err?.message ?? err}`);
+    }
+  }
+
+  /** Told to a user whose account was suspended for abusing sponsored payments. */
+  async sendAccountSuspendedEmail(data: { recipientEmail: string }): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`Suspension email NOT sent (RESEND_API_KEY unset) to ${data.recipientEmail}`);
+      return;
+    }
+    const html = `<div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
+      <h2 style="color:#0f172a;margin:0 0 12px;">Your Loofta account has been suspended</h2>
+      <p style="color:#334155;font-size:15px;line-height:1.5;">We detected a large number of tiny payments to newly created accounts from your account. Each one costs Loofta network fees, and this pattern is not normal use, so we have suspended the account.</p>
+      <p style="color:#334155;font-size:15px;line-height:1.5;">If you think this is a mistake, reply to this email and we will take a look.</p>
+    </div>`;
+    try {
+      await this.resend.emails.send({
+        from: `Loofta <${this.fromEmail}>`,
+        to: data.recipientEmail,
+        replyTo: 'hello@loofta.xyz',
+        subject: 'Your Loofta account has been suspended',
+        html,
+      });
+    } catch (err: any) {
+      this.logger.error(`Failed to send suspension email to ${data.recipientEmail}: ${err?.message ?? err}`);
+    }
+  }
+
   /** Fired when a creator submits a new giveaway for review — PENDING_APPROVAL sits invisible
    *  until someone checks the admin dashboard, so this makes a submission show up immediately
    *  instead of relying on remembering to look. Not sent for an official ("create as Loofta")
