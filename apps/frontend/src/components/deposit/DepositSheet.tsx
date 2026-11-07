@@ -860,7 +860,11 @@ async function requestConfidentialQuote(args: {
   try {
     return await getDepositInfo({ ...base, confidentiality: "advanced" });
   } catch {
-    return getDepositInfo({ ...base, confidentiality: "basic" });
+    try {
+      return await getDepositInfo({ ...base, confidentiality: "basic" });
+    } catch {
+      return getDepositInfo({ ...base, confidentiality: "public" });
+    }
   }
 }
 
@@ -1020,7 +1024,8 @@ async function startPeerCheckout(args: {
     recipient: args.solanaAddress,
     sender: wallet.address,
     refundAddress: wallet.address,
-    confidentiality: args.privately ? "advanced" : "public",
+    // Payment-app deposits are not private, and 1Click rejects confidential quotes without per-user auth.
+    confidentiality: "public",
   });
   if (!info.depositAddress) throw new Error("Could not get a deposit address");
   const access = await args.getAccessToken();
