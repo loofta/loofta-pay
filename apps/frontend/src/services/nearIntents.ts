@@ -435,7 +435,9 @@ export async function getDepositInfo(params: {
     (req as QuoteRequest & { confidentiality?: string }).confidentiality = confidentiality;
   }
   try {
-    const raw = await OneClickService.getQuote(req);
+    const r = await fetch("/api/deposit/quote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) });
+    const raw = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((raw as any)?.message || "Failed to get deposit address");
     const q = (raw as any)?.quote || raw || {};
     // Try to expose minimum deposit as human-readable
     let minDepositFormatted: string | undefined = q?.minAmountInFormatted;
