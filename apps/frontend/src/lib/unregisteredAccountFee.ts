@@ -8,7 +8,7 @@ export const UNREGISTERED_ACCOUNT_FEE_USD = 0.1;
 
 /** The web app waives the claim fee (shown as "Waived"). The Telegram bot and MCP still charge it
  *  through their own backend paths, which do not read this flag. */
-export const UNREGISTERED_ACCOUNT_FEE_WAIVED = true;
+export const UNREGISTERED_ACCOUNT_FEE_WAIVED = false;
 
 /** Loofta fee-collection wallet (same env as private-transfer Loofta cut). Undefined when not
  *  configured — callers should skip collecting the fee rather than fail the whole payment. */

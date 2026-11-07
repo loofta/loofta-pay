@@ -536,6 +536,29 @@ export class SolanaSponsorService {
       }
     }
 
+    // Relay (Robinhood Chain) withdrawals carry a USDC fee recorded on the order before signing.
+    // Enforced here, outside the new-ATA early return below, so a client cannot dodge it by
+    // pointing at a deposit address whose token account already exists.
+    if (nearIntentsOrderId) {
+      const { data: feeRow } = await this.supabaseService.nearIntentsWithdrawalOrders
+        .select('provider, fee_usdc, user_id')
+        .eq('id', nearIntentsOrderId)
+        .maybeSingle();
+      if (feeRow?.provider === 'relay') {
+        if (userId && feeRow.user_id && feeRow.user_id !== userId) {
+          throw new Error('This withdrawal order does not belong to your account.');
+        }
+        const requiredFeeUnits = BigInt(Math.round(Number(feeRow.fee_usdc ?? 0) * 1_000_000));
+        const paidFeeUnits = this.sumUsdcTransfersToFeePayer(serializedBase64);
+        if (paidFeeUnits < requiredFeeUnits) {
+          this.logger.error(
+            `SolanaSponsor[${label}]: BLOCKED — relay order ${nearIntentsOrderId} requires a ${requiredFeeUnits} base-unit fee but tx pays ${paidFeeUnits} (user=${userId ?? 'unknown'})`,
+          );
+          throw new Error('This withdrawal does not include the required network fee.');
+        }
+      }
+    }
+
     if (details.length === 0) return;
 
     // Which creations we would actually be paying rent for right now.
@@ -620,12 +643,29 @@ export class SolanaSponsorService {
       // different Loofta account, so the payer can't hold that wallet's key; the once-per-wallet and
       // per-user/per-wallet ATA caps below still bound the rent. Lets a bot/auto-pay send land
       // directly in a registered user's wallet even before they hold a USDC account.
-      const paidToOtherRegisteredUser = !!claimRow!.recipient_user_id && claimRow!.recipient_user_id !== userId;
+      const paidToOtherRegisteredUser =!!claimRow!.recipient_user_id && claimRow!.recipient_user_id !== userId;
       if (userId && !claimRow!.burner_address && !paidToOtherRegisteredUser && claimRow!.created_by && claimRow!.created_by === userId) {
         this.logger.error(
           `SolanaSponsor[${label}]: BLOCKED — claimId=${claimId} (no burner) was created and is being paid by the same user=${userId} — refusing to sponsor a new token account for a self-issued claim`,
         );
         throw new Error('You cannot sponsor a new token account for a claim you created yourself.');
+      }
+      // 2026-11-07 drain: payments straight into a registered user's wallet (no burner) let one
+      // person pay $1 into their own throwaway accounts; we paid the rent for each new account
+      // and they could close it afterwards and keep it. Those creations must now be paid for by
+      // the sender inside the same transaction (the client retries with the rent leg when it
+      // sees ATA_RENT_REQUIRED). Burner claims are exempt: the sweep closes the burner account
+      // and the rent comes back to us.
+      if (!claimRow!.burner_address) {
+        const requiredUnits = await this.ataRentCostUsdcUnits(chargeable.length);
+        const paidUnits = this.sumUsdcTransfersToFeePayer(serializedBase64);
+        if (paidUnits < requiredUnits) {
+          this.logger.warn(
+            `SolanaSponsor[${label}]: claimId=${claimId} has no burner and needs a sponsored token account — requiring ${requiredUnits} rent units, tx pays ${paidUnits} (user=${userId ?? 'unknown'})`,
+          );
+          // Ask for ~25% over raw rent so price skew between quote and check cannot reject a retry.
+          throw new Error(`ATA_RENT_REQUIRED:${(requiredUnits * 125n) / 100n + 1n}`);
+        }
       }
     } else if (pajOrderId && chargeable.length > 0) {
       const { data: orderRow, error: orderLookupError } = await this.supabaseService.pajCashOrders

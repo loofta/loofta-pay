@@ -167,7 +167,7 @@ const MAX_SAME_CALLER_REPEATS = 2;
  *  cost (claims sweep, lottery/private-balance withdrawals that close their burner, multi-send's
  *  upfront pricing) — this is a blunt backstop for the unpriced paths, not a universal tax. */
 const ATA_PER_USER_WINDOW_HOURS = Number(process.env.ATA_PER_USER_WINDOW_HOURS) || 24;
-const ATA_PER_USER_CAP = Number(process.env.ATA_PER_USER_CAP) || 10;
+const ATA_PER_USER_CAP = Number(process.env.ATA_PER_USER_CAP) || 4;
 
 export async function assertPerUserAtaCreationCapNotExceeded(
   supabaseService: SupabaseService,

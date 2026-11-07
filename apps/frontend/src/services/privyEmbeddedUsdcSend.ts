@@ -126,38 +126,50 @@ export async function sendUsdcWithBackendFeePayer(params: {
   const feePayerAddress = await fetchSolanaFeePayerAddress(privyUserId, accessToken);
   if (!feePayerAddress) throw new Error("Backend fee payer not available — contact support.");
 
-  const unsignedTx = await buildUSDCTransferTransaction({
-    senderAddress,
-    recipientAddress: recipientAddress.trim(),
-    amountUSDC,
-    connection,
-    memo: memo ?? undefined,
-    usdcMint,
-    feePayerAddress,
-    extraTransfer: looftaFeeUsdc && looftaFeeUsdc > 0
-      ? { recipientAddress: feePayerAddress, amountUSDC: looftaFeeUsdc }
-      : undefined,
-  });
+  const buildSignBroadcast = async (rentUsdc: number): Promise<string> => {
+    const feeLeg = (looftaFeeUsdc && looftaFeeUsdc > 0 ? looftaFeeUsdc : 0) + rentUsdc;
+    const unsignedTx = await buildUSDCTransferTransaction({
+      senderAddress,
+      recipientAddress: recipientAddress.trim(),
+      amountUSDC,
+      connection,
+      memo: memo ?? undefined,
+      usdcMint,
+      feePayerAddress,
+      extraTransfer: feeLeg > 0 ? { recipientAddress: feePayerAddress, amountUSDC: feeLeg } : undefined,
+    });
 
-  // showWalletUIs: false — skip Privy's SOL-balance preflight.
-  // The fee payer is the backend, not the user's wallet.
-  const { signedTransaction } = await signTransaction({
-    transaction: unsignedTx.serialize(),
-    wallet,
-    chain,
-    options: { uiOptions: { showWalletUIs: false } },
-  });
+    // showWalletUIs: false — skip Privy's SOL-balance preflight.
+    // The fee payer is the backend, not the user's wallet.
+    const { signedTransaction } = await signTransaction({
+      transaction: unsignedTx.serialize(),
+      wallet,
+      chain,
+      options: { uiOptions: { showWalletUIs: false } },
+    });
 
-  return signAndBroadcastSponsoredTx(
-    signedTransaction,
-    privyUserId,
-    "withdrawal",
-    accessToken,
-    network,
-    claimId,
-    pajOrderId,
-    nearIntentsOrderId,
-    offrampRequestId,
-    giveawayId,
-  );
+    return signAndBroadcastSponsoredTx(
+      signedTransaction,
+      privyUserId,
+      "withdrawal",
+      accessToken,
+      network,
+      claimId,
+      pajOrderId,
+      nearIntentsOrderId,
+      offrampRequestId,
+      giveawayId,
+    );
+  };
+
+  try {
+    return await buildSignBroadcast(0);
+  } catch (err) {
+    // Paying straight into a wallet that has no USDC account yet: the backend asks the sender to
+    // cover that account's rent in the same transaction (see assertAtaCreationsAllowed).
+    const m = /ATA_RENT_REQUIRED:(\d+)/.exec(err instanceof Error ? err.message : String(err));
+    if (!m) throw err;
+    const rentUsdc = Math.ceil(Number(m[1]) / 10_000) / 100; // base units -> USDC, rounded up to the cent
+    return buildSignBroadcast(rentUsdc);
+  }
 }

@@ -156,6 +156,72 @@ export class ClaimsService {
     }
   }
 
+  private lastAbuseAlertAt = 0;
+
+  /** Called when a sender trips the velocity limit. Emails the owner (one per 30 min) and
+   *  auto-suspends accounts under 24h old, which is the throwaway-account pattern. Older
+   *  accounts are only blocked and alerted on, never auto-suspended. Best effort. */
+  private async flagAbusiveSender(userId: string, reason: string, suspend: boolean): Promise<void> {
+    try {
+      if (suspend) {
+        await this.supabaseService.appUsers
+          .update({ suspended_at: new Date().toISOString(), suspended_reason: `auto: ${reason}` })
+          .eq('privy_user_id', userId);
+      }
+      const now = Date.now();
+      if (now - this.lastAbuseAlertAt < 30 * 60_000) return;
+      this.lastAbuseAlertAt = now;
+      await this.emailService.sendOpsAlertEmail({
+        to: 'lisa.bechina@gmail.com',
+        subject: suspend ? 'Abusive sender blocked and suspended' : 'Abusive sender blocked',
+        lines: [`User ${userId}`, reason, suspend ? 'Account is under 24h old, so it was suspended automatically.' : 'Account is older than 24h, so it was only blocked.'],
+      });
+    } catch (e) {
+      this.logger.warn(`[Velocity] flag failed: ${(e as Error)?.message}`);
+    }
+  }
+
+  /** Rate limits per sender, added 2026-11-07 after rotating throwaway accounts each sent ~10
+   *  tiny payments to their own fresh accounts in a few minutes. Real people do not pay this
+   *  fast: more than 8 payments in 10 minutes is blocked, and an account under 24h old may
+   *  create at most 3 payments per 24h. Fails open on a DB error so real sends never break. */
+  private async assertSenderVelocity(userId?: string): Promise<void> {
+    if (!userId) return;
+    try {
+      const now = Date.now();
+      const since10m = new Date(now - 10 * 60_000).toISOString();
+      const { count: recent } = await this.supabaseService.payments
+        .select('id', { count: 'exact', head: true })
+        .eq('created_by', userId)
+        .gte('created_at', since10m);
+      const { data: u } = await this.supabaseService.appUsers
+        .select('created_at')
+        .eq('privy_user_id', userId)
+        .maybeSingle();
+      const createdAt = u?.created_at ? new Date(u.created_at as string).getTime() : 0;
+      const isNewAccount = !!createdAt && now - createdAt < 24 * 60 * 60_000;
+      if ((recent ?? 0) >= 4) {
+        this.logger.error(`[Velocity] BLOCKED user=${userId} — ${recent} payments in 10 minutes`);
+        await this.flagAbusiveSender(userId, `${recent} payments in 10 minutes`, isNewAccount);
+        throw new BadRequestException('You are sending too fast. Please wait a few minutes and try again.');
+      }
+      if (isNewAccount) {
+        const { count: today } = await this.supabaseService.payments
+          .select('id', { count: 'exact', head: true })
+          .eq('created_by', userId)
+          .gte('created_at', new Date(now - 24 * 60 * 60_000).toISOString());
+        if ((today ?? 0) >= 3) {
+          this.logger.error(`[Velocity] BLOCKED new account user=${userId} — ${today} payments in its first 24h`);
+          await this.flagAbusiveSender(userId, `${today} payments in its first 24h`, true);
+          throw new BadRequestException('New accounts can send up to 3 payments in their first day. Please try again tomorrow.');
+        }
+      }
+    } catch (e) {
+      if (e instanceof BadRequestException) throw e;
+      this.logger.warn(`[Velocity] check failed (failing open): ${(e as Error)?.message}`);
+    }
+  }
+
   /**
    * Create a new payment claim
    */
@@ -166,6 +232,7 @@ export class ClaimsService {
       throw new BadRequestException('Missing required fields');
     }
     this.assertMinimumPaymentAmount(amount);
+    await this.assertSenderVelocity(userId);
 
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
@@ -297,6 +364,7 @@ export class ClaimsService {
   async createFromUsername(dto: CreateClaimFromUsernameDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
     const { username, amount, userId, isPrivate = false, description, cluster, treatUnregisteredAsTwitter, expiresAt, split, maxDelayMs } = dto;
     this.assertMinimumPaymentAmount(amount);
+    await this.assertSenderVelocity(userId);
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
     // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
@@ -387,6 +455,7 @@ export class ClaimsService {
   async createFromSocial(dto: CreateClaimFromSocialDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
     const { platform, handle, amount, userId, isPrivate = false, description, cluster, expiresAt, split, maxDelayMs } = dto;
     this.assertMinimumPaymentAmount(amount);
+    await this.assertSenderVelocity(userId);
     const serverIsDevnet = isSolanaDevnetFromConfig(this.configService);
     const isDevnet = serverIsDevnet ? (cluster !== 'mainnet') : false;
     // Strip a trailing Discord discriminator (e.g. "username#0") — senders no longer need to type one.
@@ -847,6 +916,7 @@ export class ClaimsService {
   async createFromEmail(dto: CreateClaimFromEmailDto): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
     const { email, amount, userId, isPrivate = false, description, cluster, expiresAt, split, maxDelayMs } = dto;
     this.assertMinimumPaymentAmount(amount);
+    await this.assertSenderVelocity(userId);
     // Server config is the source of truth for mainnet vs devnet.
     // In mainnet mode, reject any client-supplied cluster override — prevents creating
     // fake-mainnet claims that actually route to devnet (recipient gets worthless USDC).
