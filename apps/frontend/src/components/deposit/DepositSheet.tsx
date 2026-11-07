@@ -246,7 +246,7 @@ export function DepositSheet({
         className={cn(
           sora.variable,
           manrope.variable,
-          "max-h-[min(92vh,880px)] w-[calc(100%-28px)] max-w-[440px] gap-0 overflow-y-auto rounded-[28px] border border-white/10 bg-[#141418] p-5 text-[#F2EFE8] shadow-2xl sm:rounded-[28px] [&>button.absolute]:hidden",
+          "max-h-[min(92vh,880px)] w-[calc(100%-28px)] max-w-[480px] gap-0 overflow-y-auto rounded-[28px] border border-white/10 bg-[#141418] p-5 text-[#F2EFE8] shadow-2xl sm:rounded-[28px] [&>button.absolute]:hidden",
         )}
         style={{ fontFamily: "var(--font-home-manrope), Manrope, sans-serif" }}
       >
