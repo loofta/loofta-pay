@@ -314,11 +314,36 @@ export class ClaimsService {
     recipientEmail?: string | null;
     split?: number;
     maxDelayMs?: number;
-  }): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: null; payTo: string | null; requirePrivate: boolean }> {
+  }): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
     const requirePrivate = params.requirePrivatePayments;
     const isPrivate = requirePrivate || params.requestedPrivate;
+
+    // 2026-11-07: pay straight into a wallet ONLY if it already holds a USDC account. A wallet that
+    // has never received USDC gets the old burner + claim flow instead, so our fee payer never
+    // creates a token account inside a wallet someone else controls (the rent drain). If the check
+    // itself fails we also fall back to the burner: refusing to guess costs a claim step, guessing
+    // wrong costs rent.
+    let hasUsdcAccount = false;
+    try {
+      const conn = this.solanaSponsor.getConnectionForCluster(params.isDevnet ? 'devnet' : 'mainnet');
+      const mint = new PublicKey(
+        params.isDevnet
+          ? (this.configService.get<string>('SOLANA_USDC_MINT_DEVNET') || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
+          : (this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'),
+      );
+      const ata = await getAssociatedTokenAddress(mint, new PublicKey(params.recipientAddress));
+      hasUsdcAccount = await tokenAccountExists(conn, ata);
+    } catch (e) {
+      this.logger.warn(`Recipient USDC account check failed, using burner claim: ${(e as Error)?.message}`);
+    }
+    const burner = hasUsdcAccount ? null : this.createClaimBurner();
+    if (!hasUsdcAccount && !burner) {
+      this.logger.warn('Registered recipient has no USDC account and burner creation is unavailable (SEND_PAYMENT_ENC_KEY missing).');
+    }
+
     const { data: claim, error } = await this.supabaseService.payments
       .insert({
+        ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
         amount: Number(params.amount),
         direction: 'from_sender',
         recipient_address: params.recipientAddress,
@@ -332,7 +357,7 @@ export class ClaimsService {
         to_token: 'USDC',
         is_devnet: params.isDevnet,
         is_private: isPrivate,
-        fee_on_sender: true,
+        ...(burner ? {} : { fee_on_sender: true }),
         short_id: generateShortId(),
         expires_at: params.expiresAt ?? null,
       })
@@ -349,8 +374,8 @@ export class ClaimsService {
       id: claim.id,
       short_id: claim.short_id ?? null,
       link,
-      burnerAddress: null,
-      payTo: isPrivate ? null : params.recipientAddress,
+      burnerAddress: burner?.claim_burner_address ?? null,
+      payTo: burner || isPrivate ? null : params.recipientAddress,
       requirePrivate,
     };
   }

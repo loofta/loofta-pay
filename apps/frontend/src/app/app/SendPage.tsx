@@ -1023,7 +1023,7 @@ export default function Home() {
                       {payTarget.requirePrivatePayments
                         ? "They only accept private payments. The privacy fee is added on top of what you pay."
                         : payTarget.registered
-                          ? "Pays straight to their Loofta wallet. If this is their first USDC payment, a one-time $0.20 account setup fee is added."
+                          ? "Pays straight to their Loofta wallet."
                           : authenticated || sendMethod !== "username"
                             ? claimFeeWaived
                               ? isPrivateMode
