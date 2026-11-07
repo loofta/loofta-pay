@@ -17,14 +17,14 @@ const keyOf = (o: Option) => `${o.id}:${o.method ?? ""}`;
 
 const ua = () => (typeof navigator === "undefined" ? "" : navigator.userAgent);
 const onIOS = () => /iPhone|iPad|iPod/.test(ua());
-const onApple = () => onIOS() || /Macintosh|Mac OS X/.test(ua());
+const onAndroid = () => /Android/.test(ua());
 
-/** The wallet that fits this device goes first; the other is hidden where it can't work (Google Pay on iPhone/iPad, Apple Pay off Apple). */
+/** Wallets only where the device has one: Apple Pay on iPhone/iPad, Google Pay on Android, neither on desktop (card only). */
 function arrange(options: Option[], side: "buy" | "sell"): Option[] {
   if (side === "sell") return options;
-  const apple = onApple();
-  const order = apple ? ["APPLE_PAY", "GOOGLE_PAY", "CREDIT_DEBIT_CARD"] : ["GOOGLE_PAY", "CREDIT_DEBIT_CARD"];
-  const usable = options.filter((o) => (o.method !== "APPLE_PAY" || apple) && (o.method !== "GOOGLE_PAY" || !onIOS()));
+  const ios = onIOS(), android = onAndroid();
+  const order = ios ? ["APPLE_PAY", "CREDIT_DEBIT_CARD"] : android ? ["GOOGLE_PAY", "CREDIT_DEBIT_CARD"] : ["CREDIT_DEBIT_CARD"];
+  const usable = options.filter((o) => (o.method !== "APPLE_PAY" || ios) && (o.method !== "GOOGLE_PAY" || android));
   const rank = (o: Option) => { const i = order.indexOf(o.method ?? ""); return i === -1 ? order.length : i; };
   return [...usable].sort((a, b) => rank(a) - rank(b));
 }
@@ -271,11 +271,11 @@ export function MeldFlow({
                     <span className="mb-1 inline-block whitespace-nowrap rounded-full bg-emerald-500/15 px-2 py-0.5 text-sm font-semibold text-emerald-300">Best rate</span>
                   )}
                   <span className="block text-base font-bold leading-tight text-white" style={{ fontFamily: SORA }}>{o.label}</span>
-                  <span className="mt-0.5 block text-sm text-[#8A8893]">
-                    {sell
-                      ? `1 USDC = ${fiat(o.rate ?? 0, o.currency)} · ${o.fee > 0 ? `costs about ${fiat(o.fee, o.currency)}` : "lowest cost"}`
-                      : o.fee > 0 ? `All-in cost ${fiat(o.fee, o.currency)}` : "No extra cost"}
-                  </span>
+                  {!sell && (
+                    <span className="mt-0.5 block text-sm text-[#8A8893]">
+                      {o.fee > 0 ? `All-in cost ${fiat(o.fee, o.currency)}` : "No extra cost"}
+                    </span>
+                  )}
                   {o.eta && (
                     <span className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-[#C8C6D0]">
                       <Clock className="h-3.5 w-3.5" />
