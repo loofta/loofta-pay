@@ -10,7 +10,7 @@ import matter from "gray-matter";
 //   ctaLabel:    string  — optional, end-of-post CTA button text; defaults to "Try Loofta"
 //   ctaHref:     string  — optional, end-of-post CTA button target; defaults to the app root.
 //     Use a topic-specific destination when the post is about a specific feature, e.g.
-//     "/giveaways" for giveaway posts, "/megapot" for lottery posts.
+//     "/giveaways" for giveaway posts.
 // The slug is always the filename without ".md".
 
 const BLOG_DIR = path.join(process.cwd(), "src/content/blog");

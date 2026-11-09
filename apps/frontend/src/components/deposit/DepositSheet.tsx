@@ -23,6 +23,8 @@ import { useSolDomain } from "@/hooks/useSolDomain";
 import { useSolPriceOrNull } from "@/hooks/useSolPrice";
 import { privyStandardWalletToAnchorWallet } from "@/lib/per/signer";
 import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
+import { previewRelayWithdrawal, prepareRelayWithdrawal } from "@/services/relayWithdraw";
+import { RELAY_TOKENS, RELAY_MIN_WITHDRAW_USDC, isRelayToken, relayAssetKey } from "@/lib/relayAssets";
 import { MeldFlow } from "@/components/deposit/MeldFlow";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { addWithdrawal } from "@/lib/withdrawalHistory";
@@ -860,7 +862,11 @@ async function requestConfidentialQuote(args: {
   try {
     return await getDepositInfo({ ...base, confidentiality: "advanced" });
   } catch {
-    return getDepositInfo({ ...base, confidentiality: "basic" });
+    try {
+      return await getDepositInfo({ ...base, confidentiality: "basic" });
+    } catch {
+      return getDepositInfo({ ...base, confidentiality: "public" });
+    }
   }
 }
 
@@ -1575,6 +1581,9 @@ function SolanaWithdraw({
   );
 }
 
+/** Reserve used before the quote returns so Max never lets the fee push the total over the balance. */
+const RELAY_FEE_ESTIMATE_USDC = 0.6;
+
 function CryptoWithdraw({
   privately,
   balanceNum,
@@ -1607,18 +1616,26 @@ function CryptoWithdraw({
   const [sent, setSent] = useState<string | null>(null);
   const confirmRef = useRef<null | { resolve: () => void; reject: (err: Error) => void }>(null);
   const usdc = findUsdcOnSolana(tokens);
-  const token = findTokenBySelection(tokens, selection);
-  const choices = tokens.filter((t) => !isSolanaChain(t.chain) && (!usdc || t.tokenId !== usdc.tokenId));
+  // ETH / USDG on Robinhood Chain are not in the NEAR Intents list; they route through Relay.
+  // Relay has no private path and no devnet, so they only appear for plain mainnet withdrawals.
+  const relayEnabled = !privately && !devnetMode;
+  const allTokens = useMemo(() => (relayEnabled ? [...tokens, ...RELAY_TOKENS] : tokens), [tokens, relayEnabled]);
+  const token = findTokenBySelection(allTokens, selection);
+  const relay = isRelayToken(token);
+  const [relayFee, setRelayFee] = useState<number | null>(null);
+  const choices = allTokens.filter((t) => !isSolanaChain(t.chain) && (!usdc || t.tokenId !== usdc.tokenId));
   const amountNum = Number(amount);
   const addressOk = !!token && isValidAddressForChain(destination.trim(), token.chain);
   const [seat, setSeat] = useState(false);
   const buySeat = usePoolRipSeat(getAccessToken, "withdraw_crypto");
   const seatCost = seat ? POOLRIP_SEAT_PRICE_USDC : 0;
+  const relayFeeReserve = relay ? (relayFee ?? RELAY_FEE_ESTIMATE_USDC) : 0;
   const maxSendable = Math.max(
     0,
-    (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - seatCost,
+    (privately ? balanceNum - PRIVATE_WITHDRAW_FEE_HEADROOM_USDC : balanceNum) - seatCost - relayFeeReserve,
   );
   const over = amountNum > maxSendable;
+  const relayBelowMin = relay && amountNum > 0 && amountNum < RELAY_MIN_WITHDRAW_USDC;
   const privateFeeExceedsBalance =
     privately && privateFee != null && amountNum + privateFee > balanceNum + 1e-6;
   const formatMax = (n: number) => (n > 0 ? n.toFixed(6).replace(/\.?0+$/, "") : "");
@@ -1631,17 +1648,32 @@ function CryptoWithdraw({
 
   useEffect(() => {
     if (selection || choices.length === 0) return;
-    const first = choices.find((t) => t.symbol.toUpperCase() === "ETH") ?? choices[0];
+    const first = choices.find((t) => t.symbol.toUpperCase() === "ETH" && !isRelayToken(t)) ?? choices[0];
     if (first) setSelection({ symbol: first.symbol, chain: first.chain });
   }, [selection, choices]);
 
+  // Switching to a private withdrawal removes the Relay tokens; don't leave one selected.
+  useEffect(() => {
+    if (selection && !token) setSelection(undefined);
+  }, [selection, token]);
+
   useEffect(() => {
     setQuote(null);
+    setRelayFee(null);
     if (!token || !usdc || !(amountNum > 0)) return;
     let cancelled = false;
     setQuoting(true);
     const timer = setTimeout(async () => {
       try {
+        if (isRelayToken(token)) {
+          if (amountNum < RELAY_MIN_WITHDRAW_USDC) return;
+          const preview = await previewRelayWithdrawal(relayAssetKey(token), String(amountNum), await getAccessToken());
+          if (!cancelled) {
+            setQuote(preview.amountOutFormatted);
+            setRelayFee(preview.feeUsdc);
+          }
+          return;
+        }
         const result = await getAccurateQuote({
           fromToken: usdc,
           toToken: token,
@@ -1666,6 +1698,53 @@ function CryptoWithdraw({
       await takeSeat();
       const access = await getAccessToken();
       const cluster = devnetMode ? "devnet" : "mainnet";
+      if (isRelayToken(token)) {
+        // Gasless: the sponsor pays SOL, and the fee (rent for Relay's deposit address + margin)
+        // rides along as a second USDC transfer in the same signed transaction.
+        const relayOrder = await prepareRelayWithdrawal({
+          assetKey: relayAssetKey(token),
+          amountUsdc: String(amountNum),
+          destinationAddress: destination.trim(),
+          refundAddress: solanaAddress,
+        }, access);
+        if (!relayOrder.depositAddress || !isValidAddressForChain(relayOrder.depositAddress, "solana")) {
+          throw new Error("Couldn't get a deposit address for that token.");
+        }
+        if (amountNum + relayOrder.feeUsdc > balanceNum + 1e-6) {
+          throw new Error("Amount plus the $" + relayOrder.feeUsdc.toFixed(2) + " network fee is more than your $" + balanceNum.toFixed(2) + " balance. Lower the amount.");
+        }
+        const relaySig = await sendUsdcWithBackendFeePayer({
+          senderAddress: solanaAddress,
+          recipientAddress: relayOrder.depositAddress,
+          amountUSDC: amountNum,
+          looftaFeeUsdc: relayOrder.feeUsdc,
+          connection: new Connection(getRpcForMode(cluster), "confirmed"),
+          wallet,
+          privyUserId: userId,
+          signTransaction,
+          usdcMint: getUsdcMintForMode(cluster),
+          chain: getPrivySolanaChainForMode(cluster),
+          accessToken: access,
+          network: cluster,
+          nearIntentsOrderId: relayOrder.id,
+        });
+        await saveWithdrawal({
+          id: relaySig,
+          amountUSDC: amountNum,
+          txSignature: relaySig,
+          destinationAddress: destination.trim(),
+          destinationChain: token.chain,
+          destinationToken: token.symbol,
+          isNearIntents: true,
+          depositAddress: relayOrder.depositAddress,
+          estimatedOut: relayOrder.amountOutFormatted ?? quote ?? undefined,
+          nearIntentsStatus: "PENDING",
+          nearIntentsComplete: false,
+        }, access, devnetMode);
+        setSent(relaySig);
+        onRefresh?.();
+        return;
+      }
       if (privately) {
         const anchor = privyStandardWalletToAnchorWallet(wallet, signTransaction, getPrivySolanaChainForMode(cluster));
         const result = await withdrawPrivately(anchor, {
@@ -1791,6 +1870,12 @@ function CryptoWithdraw({
       )}
       {quoting && <p className="text-sm text-[#8A8893]">Getting a quote…</p>}
       {quote && token && <p className="text-sm text-[#C8C6D0]">You receive about {quote} {token.symbol}</p>}
+      {relay && relayFee != null && (
+        <p className="text-sm text-[#8A8893]">
+          Network fee ${relayFee.toFixed(2)} in USDC, added to your ${amountNum.toFixed(2)}. No SOL needed.
+        </p>
+      )}
+      {relayBelowMin && <p className="text-sm text-red-400">Minimum for {formatChainLabel(token?.chain)} is ${RELAY_MIN_WITHDRAW_USDC}.</p>}
       <label className="block">
         <span className="text-sm font-semibold text-[#C8C6D0]">{token ? `${formatChainLabel(token.chain)} address` : "Destination address"}</span>
         <input
@@ -1839,7 +1924,7 @@ function CryptoWithdraw({
       )}
       <SendButton
         busy={busy}
-        disabled={!token || !addressOk || !(amountNum > 0) || over || privateFee != null || !wallet}
+        disabled={!token || !addressOk || !(amountNum > 0) || over || relayBelowMin || privateFee != null || !wallet}
         label={privately ? "Withdraw privately" : `Withdraw${token ? ` to ${token.symbol}` : ""}`}
         busyLabel="Sending…"
         onClick={() => { void go(); }}

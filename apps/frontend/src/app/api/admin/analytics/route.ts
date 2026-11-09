@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
       .select("id", { count: "exact", head: true })
       .not("twitter_username", "is", null)
       .neq("twitter_username", ""),
-    // Lottery (Megapot) — mainnet-only feature, no devnet split. Only count tickets that
+    // Lottery — mainnet-only feature, no devnet split. Only count tickets that
     // actually completed a purchase (active/won/lost/withdrawn) — pending/bridging tickets
     // haven't committed the spend yet, and failed tickets get refunded. "withdrawn" is a later
     // terminal status reached from "won" once a payout is claimed/replayed, not a refund — it

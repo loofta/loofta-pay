@@ -14,6 +14,8 @@ import { WalletTokenLogo } from "@/components/wallet/WalletTokenLogo";
 import { useLooftaSigner, saveWithdrawal } from "@/components/deposit/DepositSheet";
 import { getAccurateQuote, getDepositInfo } from "@/services/nearIntents";
 import { prepareNearIntentsWithdrawal } from "@/services/solanaSponsor";
+import { previewRelayWithdrawal, prepareRelayWithdrawal } from "@/services/relayWithdraw";
+import { RELAY_TOKENS, RELAY_MIN_WITHDRAW_USDC, isRelayToken, relayAssetKey } from "@/lib/relayAssets";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { getPrivySolanaChainForMode, getRpcForMode, getUsdcMintForMode } from "@/lib/solanaRpc";
@@ -33,7 +35,7 @@ type PayAsset = "USDC" | "SOL";
 
 const isSolanaChain = (c?: string) => !!c && ["sol", "solana"].includes(c.toLowerCase());
 const isEvmChain = (c?: string) =>
-  !!c && ["eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism", "pol", "polygon", "bsc", "bnb", "avax", "avalanche", "gnosis", "xdai", "linea", "scroll", "berachain", "bera"].includes(c.toLowerCase());
+  !!c && ["eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism", "pol", "polygon", "bsc", "bnb", "avax", "avalanche", "gnosis", "xdai", "linea", "scroll", "berachain", "bera", "robinhood"].includes(c.toLowerCase());
 
 const card = { display: "flex", flexDirection: "column", gap: 8, padding: 16, borderRadius: 22, background: "#1A1A20", border: "1px solid rgba(255,255,255,0.07)" } as const;
 const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -63,17 +65,24 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
   const usdcToken = findUsdcOnSolana(tokens);
   const solToken = tokens.find((t) => t.symbol.toUpperCase() === "SOL" && isSolanaChain(t.chain));
   const payToken = pay === "USDC" ? usdcToken : solToken;
-  const toToken = findTokenBySelection(tokens, selection);
+  // ETH / USDG on Robinhood Chain route through Relay, not NEAR Intents. Only offered when paying
+  // with USDC on mainnet: the gasless fee is a USDC transfer, and Relay has no private path.
+  const relayEnabled = pay === "USDC" && !devnetMode;
+  const allTokens = useMemo(() => (relayEnabled ? [...tokens, ...RELAY_TOKENS] : tokens), [tokens, relayEnabled]);
+  const toToken = findTokenBySelection(allTokens, selection);
+  const relay = isRelayToken(toToken);
+  const [relayFee, setRelayFee] = useState<number | null>(null);
   const payHolding = holdings.find((h) => h.symbol === pay && (pay === "SOL" ? h.mint === null : true));
   const balance = payHolding?.amount ?? 0;
   const amountNum = Number(amount);
   const isCross = true;
 
   const choices = useMemo(
-    () => tokens.filter((t) => isSolanaChain(t.chain) === !isCross && !(payToken && t.tokenId === payToken.tokenId)),
-    [tokens, payToken, isCross],
+    () => allTokens.filter((t) => isSolanaChain(t.chain) === !isCross && !(payToken && t.tokenId === payToken.tokenId)),
+    [allTokens, payToken, isCross],
   );
-  const maxSendable = Math.max(0, pay === "USDC" ? balance : balance - SOL_RESERVE);
+  const maxSendable = Math.max(0, pay === "USDC" ? balance - (relay ? relayFee ?? 0.6 : 0) : balance - SOL_RESERVE);
+  const relayBelowMin = relay && amountNum > 0 && amountNum < RELAY_MIN_WITHDRAW_USDC;
   const over = amountNum > maxSendable + 1e-9;
   const defaultDestination = toToken ? (isSolanaChain(toToken.chain) ? solanaAddress : isEvmChain(toToken.chain) ? evmAddress : null) : null;
   const addressOk = !!toToken && isValidAddressForChain(destination.trim(), toToken.chain);
@@ -101,11 +110,21 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
 
   useEffect(() => {
     setQuote(null);
+    setRelayFee(null);
     if (!payToken || !toToken || !(amountNum > 0)) return;
     let cancelled = false;
     setQuoting(true);
     const timer = setTimeout(async () => {
       try {
+        if (isRelayToken(toToken)) {
+          if (amountNum < RELAY_MIN_WITHDRAW_USDC) return;
+          const preview = await previewRelayWithdrawal(relayAssetKey(toToken), String(amountNum), await getAccessToken());
+          if (!cancelled) {
+            setQuote(preview.amountOutFormatted);
+            setRelayFee(preview.feeUsdc);
+          }
+          return;
+        }
         const result = await getAccurateQuote({ fromToken: payToken, toToken, amount: String(amountNum), slippageBps: 100, dryRun: true });
         if (!cancelled) setQuote(result.amountOut && !result.error ? result.amountOut : null);
       } catch {
@@ -147,7 +166,38 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
     try {
       const access = await getAccessToken();
       const dest = destination.trim();
-      if (pay === "USDC" && isCross) {
+      if (pay === "USDC" && isRelayToken(toToken)) {
+        // Gasless via Relay: sponsor pays SOL, the USDC fee rides along as a second transfer.
+        const relayOrder = await prepareRelayWithdrawal({
+          assetKey: relayAssetKey(toToken),
+          amountUsdc: String(amountNum),
+          destinationAddress: dest,
+          refundAddress: solanaAddress,
+        }, access);
+        if (!relayOrder.depositAddress || !isValidAddressForChain(relayOrder.depositAddress, "solana")) throw new Error(tr("cross.noDeposit"));
+        if (amountNum + relayOrder.feeUsdc > balance + 1e-6) {
+          throw new Error("Amount plus the $" + relayOrder.feeUsdc.toFixed(2) + " network fee is more than your balance. Lower the amount.");
+        }
+        const relaySig = await sendUsdcWithBackendFeePayer({
+          senderAddress: solanaAddress,
+          recipientAddress: relayOrder.depositAddress,
+          amountUSDC: amountNum,
+          looftaFeeUsdc: relayOrder.feeUsdc,
+          connection: new Connection(getRpcForMode(cluster), "confirmed"),
+          wallet,
+          privyUserId: userId,
+          signTransaction,
+          usdcMint: getUsdcMintForMode(cluster),
+          chain: getPrivySolanaChainForMode(cluster),
+          accessToken: access,
+          network: cluster,
+          nearIntentsOrderId: relayOrder.id,
+        });
+        await saveWithdrawal({ id: relaySig, amountUSDC: amountNum, txSignature: relaySig, destinationAddress: dest, destinationChain: toToken.chain, destinationToken: toToken.symbol, isNearIntents: true, depositAddress: relayOrder.depositAddress, estimatedOut: relayOrder.amountOutFormatted ?? quote ?? undefined, nearIntentsStatus: "PENDING", nearIntentsComplete: false }, access, devnetMode);
+        tagWalletTx(relaySig, { kind: "bridge", label: "Cross-chain", private: false });
+        setSent({ sig: relaySig, cross: true });
+        onDone?.();
+      } else if (pay === "USDC" && isCross) {
         const order = await prepareNearIntentsWithdrawal({ fromToken: payToken, toToken, amountUsdc: String(amountNum), destinationAddress: dest, refundAddress: solanaAddress, isDevnet: devnetMode }, access);
         if (!order.depositAddress || !isValidAddressForChain(order.depositAddress, "solana")) throw new Error(tr("cross.noDeposit"));
         const sig = await sendUsdcWithBackendFeePayer({
@@ -213,7 +263,7 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
   if (over) cta = tr("swap.ctaNotEnough", { symbol: pay });
   else if (isCross && toToken && destination.trim() && !addressOk) cta = tr("cross.checkAddress", { chain: formatChainLabel(toToken.chain) });
   else if (isCross && toToken && !destination.trim() && amountNum > 0) cta = tr("cross.addAddress", { chain: formatChainLabel(toToken.chain) });
-  const ready = !!wallet && !!toToken && addressOk && amountNum > 0 && !over;
+  const ready = !!wallet && !!toToken && addressOk && amountNum > 0 && !over && !relayBelowMin;
 
   const paste = async () => {
     try {
@@ -302,9 +352,19 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
           <span style={{ textAlign: "right" }}>{rate && toToken ? `1 ${pay} = ${rate.toLocaleString("en-US", { maximumSignificantDigits: 6 })} ${toToken.symbol}` : "-"}</span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#77757F" }}>{tr("swap.route")}</span><span>{tr("cross.routeValue")}</span></div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#77757F" }}>{tr("common.networkFee")}</span><span>{pay === "SOL" ? tr("swap.feePaidSol") : tr("common.covered")}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#77757F" }}>{tr("common.networkFee")}</span><span>{relay ? (relayFee != null ? `$${relayFee.toFixed(2)} USDC` : "-") : pay === "SOL" ? tr("swap.feePaidSol") : tr("common.covered")}</span></div>
       </div>
 
+      {relayBelowMin && <span style={{ fontSize: 13, color: "#F87171", padding: "0 6px" }}>{`Minimum for ${formatChainLabel(toToken?.chain)} is $${RELAY_MIN_WITHDRAW_USDC}.`}</span>}
+
+      {relay ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 18, background: "#0E0E12", border: "1px solid rgba(255,255,255,0.07)" }}>
+          <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontWeight: 700, fontSize: 15 }}>Routed through Relay</span>
+            <span style={{ fontSize: 13, color: "#9A98A3" }}>This route is not confidential. No SOL needed, the network fee is taken in USDC.</span>
+          </span>
+        </div>
+      ) : (
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 18, background: "rgba(255,90,26,0.08)", border: "1px solid rgba(255,122,42,0.35)" }}>
         <Lock size={20} color="#FF8A4A" />
         <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
@@ -312,6 +372,7 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
           <span style={{ fontSize: 13, color: "#9A98A3" }}>{tr("cross.confBody")}</span>
         </span>
       </div>
+      )}
 
       <button type="button" onClick={() => void go()} disabled={!ready || busy} style={{ ...BTN_PRIMARY, flex: "none", width: "100%", marginTop: "auto", opacity: !ready || busy ? 0.4 : 1 }}>
         {busy ? tr("common.swapping") : cta}

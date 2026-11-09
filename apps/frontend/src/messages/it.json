@@ -85,21 +85,6 @@
     "retryFailed": "Riprova {count} non riuscite",
     "dismiss": "Chiudi"
   },
-  "UnclaimedGiftToast": {
-    "titleOne": "Hai un regalo non riscosso",
-    "titleMany": "Hai {count} regali non riscossi",
-    "ticketWaitingOne": "1 biglietto della lotteria ti sta aspettando.",
-    "ticketWaitingMany": "{numTickets} biglietti della lotteria ti stanno aspettando.",
-    "claimOne": "Riscuoti",
-    "claimMany": "Riscuoti",
-    "dismiss": "Chiudi"
-  },
-  "FreeSpinToast": {
-    "title": "Hai un giro gratuito del Mystery Pack",
-    "body": "Nessun pagamento richiesto — aprilo quando vuoi.",
-    "open": "Apri",
-    "dismiss": "Chiudi"
-  },
   "AddEmailToast": {
     "title": "Non perdere nessun pagamento",
     "body": "Aggiungi la tua email per ricevere notifiche su nuovi pagamenti e regali.",

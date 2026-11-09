@@ -73,7 +73,7 @@ export interface GiveawayLivePreviewProps {
   totalPool: number;
   winnerCount: number;
   selectionMode: "random" | "first_come" | "manual";
-  rewardType?: "usdc" | "megapot_ticket";
+  rewardType?: "usdc";
   entriesCloseAt: string;
   minFollowers: string;
   verifiedOnly: boolean;
@@ -154,9 +154,9 @@ export function GiveawayLivePreview({
           </div>
           <p className="flex items-baseline gap-2 mb-2.5">
             <span className="text-4xl font-bold tracking-tight text-white">
-              <CountUp value={totalPool} prefix={rewardType === "megapot_ticket" ? "" : "$"} />
+              <CountUp value={totalPool} prefix="$" />
             </span>
-            <span className="text-sm text-slate-400">{rewardType === "megapot_ticket" ? `ticket${totalPool === 1 ? "" : "s"}` : "USDC"}</span>
+            <span className="text-sm text-slate-400">USDC</span>
           </p>
           <div className="flex flex-wrap gap-1.5 mb-2.5">
             {/* Each chip's CountUp + suffix text must share one wrapping <span> — as two direct
@@ -165,17 +165,8 @@ export function GiveawayLivePreview({
                 following word (e.g. "10tickets"). */}
             <span className={CHIP_CLS}>
               <span>
-                {rewardType === "megapot_ticket" ? (
-                  <>
-                    <CountUp value={prizeAmount} />
-                    {` ticket${prizeAmount === 1 ? "" : "s"} each`}
-                  </>
-                ) : (
-                  <>
-                    <CountUp value={prizeAmount} prefix="$" />
-                    {" each"}
-                  </>
-                )}
+                <CountUp value={prizeAmount} prefix="$" />
+                {" each"}
               </span>
             </span>
             <span className={CHIP_CLS}>

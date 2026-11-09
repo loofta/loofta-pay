@@ -8,6 +8,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -26,6 +27,7 @@ import {
 import { AuthGuard } from '@/common/guards';
 import { NearIntentsService, NearToken, QuoteResult } from './near-intents.service';
 import { StatusService, UnifiedStatus } from './status.service';
+import { RelayWithdrawalService, isRelayAssetKey } from './relay-withdrawal.service';
 
 export class GetQuoteDto {
   @IsString()
@@ -57,6 +59,24 @@ export class GetQuoteDto {
   @IsOptional()
   @IsNumber()
   slippageBps?: number;
+}
+
+export class RelayWithdrawalDto {
+  @IsString()
+  @IsNotEmpty()
+  assetKey: string;
+
+  @IsString()
+  @IsNotEmpty()
+  amountUsdc: string;
+
+  @IsOptional()
+  @IsString()
+  destinationAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  refundAddress?: string;
 }
 
 export class CreateWithdrawalOrderDto {
@@ -113,6 +133,7 @@ export class IntentsController {
   constructor(
     private readonly nearIntentsService: NearIntentsService,
     private readonly statusService: StatusService,
+    private readonly relayWithdrawals: RelayWithdrawalService,
   ) {}
 
   /**
@@ -180,6 +201,52 @@ export class IntentsController {
       refundAddress: dto.refundAddress,
       isDevnet: dto.isDevnet,
     });
+  }
+
+  /**
+   * Non-persisting preview for the Robinhood Chain withdraw routes (Relay): what the user would
+   * receive plus the USDC fee we add on top. No deposit address is issued here.
+   */
+  @Post('withdraw/relay-preview')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Preview a gasless USDC -> Robinhood Chain withdrawal via Relay' })
+  async previewRelayWithdrawal(@Body() dto: RelayWithdrawalDto) {
+    if (!isRelayAssetKey(dto.assetKey)) throw new BadRequestException('Unsupported destination token.');
+    return this.relayWithdrawals.preview(dto.assetKey, Number(dto.amountUsdc));
+  }
+
+  /**
+   * Creates a backend-tracked Relay withdrawal order BEFORE the user signs: quotes with a Relay
+   * deposit address and persists it so the sponsor can bind the ATA it pays for to this order and
+   * enforce the USDC fee. Pass the returned `id` as `nearIntentsOrderId` and `feeUsdc` as the
+   * `looftaFeeUsdc` leg of the sponsored send.
+   */
+  @Post('withdraw/prepare-relay')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthGuard)
+  @ApiSecurity('privy-auth')
+  @ApiOperation({ summary: 'Create a backend-tracked Relay withdrawal order (Robinhood Chain)' })
+  async prepareRelayWithdrawal(
+    @Req() req: { user?: { id: string } },
+    @Body() dto: RelayWithdrawalDto,
+  ) {
+    if (!isRelayAssetKey(dto.assetKey)) throw new BadRequestException('Unsupported destination token.');
+    if (!dto.destinationAddress || !dto.refundAddress) {
+      throw new BadRequestException('destinationAddress and refundAddress are required.');
+    }
+    try {
+      return await this.relayWithdrawals.createOrder({
+        userId: req.user!.id,
+        assetKey: dto.assetKey,
+        amountUsdc: Number(dto.amountUsdc),
+        destinationAddress: dto.destinationAddress.trim(),
+        refundAddress: dto.refundAddress.trim(),
+      });
+    } catch (e: any) {
+      throw new BadRequestException(e?.message ?? 'Could not prepare this withdrawal.');
+    }
   }
 
   /**

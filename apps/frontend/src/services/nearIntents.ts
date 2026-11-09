@@ -6,6 +6,7 @@ import { OneClickService, QuoteRequest, OpenAPI } from '@defuse-protocol/one-cli
 import { ONECLICK_API_BASE } from "@/config/oneClick";
 import { assertNotDemoMode } from "@/config/demoMode";
 import { getRefundToForChain } from "@/lib/refundAddresses";
+import { clientApiBase } from "@/services/api/client";
 const REFERRAL_CODE = (process as any)?.env?.NEXT_PUBLIC_REFERRAL_CODE || (process as any)?.env?.NEXT_PUBLIC_ONECLICK_REFERRAL || undefined;
 const APP_FEE_BPS = Number((process as any)?.env?.NEXT_PUBLIC_APP_FEE_BPS || "");
 const APP_FEE_RECIPIENT = (process as any)?.env?.NEXT_PUBLIC_APP_FEE_RECIPIENT || undefined;
@@ -498,8 +499,22 @@ export const getQuote = getAccurateQuote;
 
 export async function getExecutionStatus(depositAddress: string): Promise<any> {
   if (!depositAddress) throw new Error("Missing depositAddress");
-  const status = await OneClickService.getExecutionStatus(depositAddress);
-  return status;
+  try {
+    return await OneClickService.getExecutionStatus(depositAddress);
+  } catch (err) {
+    // Withdrawals routed through Relay (Robinhood Chain) have deposit addresses 1Click has never
+    // seen; the backend knows them and answers in the same status vocabulary.
+    try {
+      const r = await fetch(`${clientApiBase()}/intents/status?depositAddress=${encodeURIComponent(depositAddress)}`);
+      if (r.ok) {
+        const j = await r.json();
+        if (j?.provider === "relay") return { status: j.status, txHash: j.txHash };
+      }
+    } catch {
+      /* fall through to the original error */
+    }
+    throw err;
+  }
 }
 
 

@@ -85,7 +85,7 @@ export function LotteryTab({
         </div>
       </div>
 
-      {/* Gift a Megapot ticket — foldable, see giftSectionOpen above */}
+      {/* Gift a lottery ticket — foldable, see giftSectionOpen above */}
       <div className="rounded-xl border border-gray-800 p-4 space-y-3">
         <button
           type="button"
@@ -147,10 +147,10 @@ export function LotteryTab({
         )}
       </div>
 
-      {/* Megapot referral fees — unclaimed balance is read-only on-chain; claiming is done from
+      {/* Lottery referral fees — unclaimed balance is read-only on-chain; claiming is done from
           the admin's own connected EVM wallet, then recorded here for tracking. */}
       <div className="rounded-xl border border-gray-800 p-4 space-y-3">
-        <div className="text-base font-semibold text-gray-200">Megapot referral fees</div>
+        <div className="text-base font-semibold text-gray-200">Lottery referral fees</div>
         <p className="text-sm text-gray-500">
           Accrues automatically from Loofta-referred tickets (10% of winners&apos; payouts). This backend never
           holds that wallet&apos;s private key — connect the wallet that controls it below to claim.

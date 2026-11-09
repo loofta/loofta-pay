@@ -85,21 +85,6 @@
     "retryFailed": "{count} fehlgeschlagene erneut versuchen",
     "dismiss": "Schließen"
   },
-  "UnclaimedGiftToast": {
-    "titleOne": "Sie haben ein nicht beanspruchtes Geschenk",
-    "titleMany": "Sie haben {count} nicht beanspruchte Geschenke",
-    "ticketWaitingOne": "1 Lotterie-Ticket wartet auf Sie.",
-    "ticketWaitingMany": "{numTickets} Lotterie-Tickets warten auf Sie.",
-    "claimOne": "Beanspruchen",
-    "claimMany": "Beanspruchen",
-    "dismiss": "Schließen"
-  },
-  "FreeSpinToast": {
-    "title": "Sie haben einen kostenlosen Mystery-Pack-Dreh",
-    "body": "Keine Zahlung nötig — öffnen Sie ihn, wann Sie möchten.",
-    "open": "Öffnen",
-    "dismiss": "Schließen"
-  },
   "AddEmailToast": {
     "title": "Verpasse keine Zahlung mehr",
     "body": "Füge deine E-Mail-Adresse hinzu, um über neue Zahlungen und Geschenke benachrichtigt zu werden.",

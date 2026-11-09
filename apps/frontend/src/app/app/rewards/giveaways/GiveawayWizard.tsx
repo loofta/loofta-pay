@@ -753,7 +753,7 @@ interface GiveawayDraft {
   totalPool: number;
   winnerCount: number;
   selectionMode: "random" | "first_come" | "manual";
-  rewardType: "usdc" | "megapot_ticket" | "token";
+  rewardType: "usdc" | "token";
   prizeToken: PrizeToken | null;
   entriesCloseAt: string;
   minFollowers: string;
@@ -797,7 +797,7 @@ interface RemoteGiveaway {
   winner_count: number;
   selection_mode: "random" | "first_come" | "manual";
   prize_amount_usd: string;
-  reward_type?: "usdc" | "megapot_ticket";
+  reward_type?: "usdc";
   prize_mint?: string | null;
   prize_token_symbol?: string | null;
   prize_token_name?: string | null;
@@ -1084,10 +1084,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   }, [updateDraft]);
 
   const step1Valid = title.trim().length > 0;
-  // Megapot tickets are $1 each and lottery_gifts caps a single gift at 100 tickets — prizeAmount
-  // is already always a whole number here (winnerCount is snapped to a divisor of totalPool).
   const step2Valid = prizeAmount > 0 && winnerCount > 0 && totalPool >= effectiveMinPool
-    && (rewardType !== "megapot_ticket" || prizeAmount <= 100)
     && (rewardType !== "token" || Boolean(prizeToken?.mint));
   const step3Valid = tasks.every(rowIsValid);
   const step4Valid = Boolean(entriesCloseAt);
@@ -1159,33 +1156,22 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   }, [entriesCloseAt, setEntriesCloseAt]);
 
   const pickReward = useCallback((next: GiveawayDraft["rewardType"]) => {
-    if (next === "megapot_ticket") {
-      const per = Math.max(1, Math.min(100, Math.round(prizeAmount) || 10));
-      updateDraft({ rewardType: next, winnerCount, totalPool: per * winnerCount, prizeToken: null });
-      return;
-    }
     if (next === "usdc") {
       updateDraft({ rewardType: next, prizeToken: null });
       return;
     }
     updateDraft({ rewardType: next });
-  }, [prizeAmount, updateDraft, winnerCount]);
+  }, [updateDraft]);
 
   const bumpWinners = useCallback((dir: 1 | -1) => {
     if (rewardType === "token") {
       updateDraft({ winnerCount: Math.min(MAX_WINNERS, Math.max(1, winnerCount + dir)) });
       return;
     }
-    if (rewardType === "megapot_ticket") {
-      const next = Math.min(MAX_WINNERS, Math.max(1, winnerCount + dir));
-      const per = Math.max(1, Math.min(100, Math.round(prizeAmount) || 1));
-      updateDraft({ winnerCount: next, totalPool: per * next });
-      return;
-    }
     const valid = divisorsUpTo(totalPool, MAX_WINNERS);
     const idx = Math.max(0, valid.indexOf(winnerCount));
     setWinnerCount(valid[Math.min(valid.length - 1, Math.max(0, idx + dir))] ?? valid[0]);
-  }, [prizeAmount, rewardType, setWinnerCount, totalPool, updateDraft, winnerCount]);
+  }, [rewardType, setWinnerCount, totalPool, updateDraft, winnerCount]);
 
   const [tokenQuery, setTokenQuery] = useState("");
   const [tokenHits, setTokenHits] = useState<PrizeToken[]>([]);
@@ -1213,7 +1199,6 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   }, [updateDraft]);
 
   const platformFee = mode === "create" && createAsAdmin ? 0 : (totalPool > 0 ? Math.min(80, Math.max(5, Math.round(totalPool * 10) / 100)) : 0);
-  const ticketsEach = Math.max(0, Math.round(prizeAmount) || 0);
 
   const goNext = useCallback(() => {
     if (step === 1 && !step1Valid) {
@@ -1316,9 +1301,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
     if (!step2Valid) {
       toast({
         variant: "destructive",
-        title: rewardType === "megapot_ticket" && prizeAmount > 100
-          ? "Ticket prizes are capped at 100 per winner"
-          : `Total prize pool must be at least $${effectiveMinPool}`,
+        title: `Total prize pool must be at least $${effectiveMinPool}`,
       });
       return;
     }
@@ -1337,7 +1320,6 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   const backHref = mode === "edit" && giveawayId ? `/app/rewards/giveaways/${giveawayId}` : "/app/rewards/giveaways";
   const backLabel = mode === "edit" ? "Back to giveaway" : "Back to giveaways";
   const showForm = authenticated && !(mode === "edit" && (draftLoading || draftError)) && !submitted;
-  const isTickets = rewardType === "megapot_ticket";
   const closeWhen = (() => {
     if (!entriesCloseAt) return "—";
     const d = new Date(entriesCloseAt);
@@ -1357,7 +1339,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
   const closeTimePart = entriesCloseAt && entriesCloseAt.length >= 16 ? entriesCloseAt.slice(11, 16) : "18:00";
   const todayStr = toLocalInputValue(new Date()).slice(0, 10);
   const prizeChips = [
-    isTickets ? `${ticketsEach} each` : `${usd(prizeAmount).replace(/\.00$/, "")} each`,
+    `${usd(prizeAmount).replace(/\.00$/, "")} each`,
     `${winnerCount} winner${winnerCount === 1 ? "" : "s"}`,
     SELECTION_MODE_LABELS[selectionMode],
   ];
@@ -1412,36 +1394,26 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
 
                 <Fold
                   title="What are you giving?"
-                  hint={`${title.trim() || "Add a title"} · ${isTickets ? `${ticketsEach * winnerCount} tickets` : usd(totalPool)} · ${rewardType === "token" ? (prizeToken?.symbol ?? "Any token") : isTickets ? "Lucky Prize" : "USDC"}`}
+                  hint={`${title.trim() || "Add a title"} · ${usd(totalPool)} · ${rewardType === "token" ? (prizeToken?.symbol ?? "Any token") : "USDC"}`}
                   open={prizeOpen}
                   onToggle={() => setPrizeOpen((v) => !v)}
                 >
                   <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Giveaway title, e.g. October community drop" style={FIELD} />
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 }}>
                     {([
                       { key: "usdc" as const, label: "USDC", sub: "Cash prize", tile: "radial-gradient(120% 120% at 28% 18%,#9CC8FF 0%,#2775CA 48%,#1A55A0 100%)", rim: "#123E78", ink: "#fff" },
                       { key: "token" as const, label: "Any token", sub: "Search or mint", tile: "#111318", rim: "#2A2A32", ink: "#fff" },
-                      { key: "megapot_ticket" as const, label: "Lucky Prize", sub: "$1.1M+ daily", tile: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", rim: "#8E5202", ink: "#6A3500" },
                     ]).map((p) => {
                       const on = rewardType === p.key;
                       return (
                         <button key={p.key} type="button" onClick={() => pickReward(p.key)} style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "14px 8px", borderRadius: 18, background: on ? "rgba(255,90,26,0.1)" : "#0E0E12", border: `1.5px solid ${on ? "rgba(255,122,42,0.75)" : "rgba(255,255,255,0.07)"}`, textAlign: "center", color: "#F2EFE8" }}>
                           <span style={{ width: 40, height: 40, borderRadius: 13, display: "grid", placeItems: "center", overflow: "hidden", fontFamily: SORA, fontWeight: 800, fontSize: 17, color: p.ink, background: p.tile, boxShadow: p.key === "token" ? "none" : `inset 0 2px 4px rgba(255,255,255,0.5),0 3px 0 ${p.rim}` }}>
-                            {p.key === "usdc" ? "$" : p.key === "token" ? (
+                            {p.key === "usdc" ? "$" : (
                               <img src="/images/sol.png" alt="" width={28} height={28} style={{ width: 28, height: 28, objectFit: "contain" }} />
-                            ) : (
-                              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6A3500" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                                <path d="M3 8.5V6.5a1.5 1.5 0 0 1 1.5-1.5h15A1.5 1.5 0 0 1 21 6.5v2a2.5 2.5 0 0 0 0 5v2a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 15.5v-2a2.5 2.5 0 0 0 0-5z" />
-                                <path d="M14 5v12" strokeDasharray="2 2.4" />
-                              </svg>
                             )}
                           </span>
                           <span style={{ fontWeight: 700, fontSize: 14 }}>{p.label}</span>
-                          {p.key === "megapot_ticket" && on ? (
-                            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", color: "#C9B27A" }}>Megapot</span>
-                          ) : (
-                            <span style={{ fontSize: 13, color: "#8A8893" }}>{p.sub}</span>
-                          )}
+                          <span style={{ fontSize: 13, color: "#8A8893" }}>{p.sub}</span>
                         </button>
                       );
                     })}
@@ -1497,38 +1469,19 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                       </span>
                     </div>
                   )}
-                  {isTickets && (
-                    <div style={{ display: "flex", gap: 14, alignItems: "center", padding: "14px 16px", borderRadius: 18, background: "linear-gradient(135deg,#2A120C,#120F12)", border: "1px solid rgba(255,90,26,0.28)" }}>
-                      <img src="/megapot.svg" alt="Megapot" style={{ height: 24, width: "auto" }} />
-                      <span style={{ fontSize: 14, lineHeight: 1.5, color: "#E6C9B8" }}>
-                        <span style={{ fontWeight: 800, color: "#fff" }}>Megapot is a daily lottery with a $1.1M+ prize pool.</span>{" "}
-                        Each winner gets tickets for the next draw, at $1 per ticket.
-                      </span>
-                    </div>
-                  )}
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>{isTickets ? "TICKETS PER WINNER" : "TOTAL PRIZE"}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#9A98A3", letterSpacing: "0.04em" }}>TOTAL PRIZE</span>
                       <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 14px", borderRadius: 14, background: "#0E0E12", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        {!isTickets && <span style={{ color: "#5E6880", fontWeight: 700, fontSize: 18 }}>$</span>}
+                        <span style={{ color: "#5E6880", fontWeight: 700, fontSize: 18 }}>$</span>
                         <input
-                          value={isTickets ? (ticketsEach ? String(ticketsEach) : "") : totalPoolInput}
+                          value={totalPoolInput}
                           onChange={(e) => {
                             const raw = e.target.value.replace(/[^0-9.]/g, "").slice(0, 7);
-                            if (isTickets) {
-                              const n = Math.min(100, parseInt(raw || "0", 10) || 0);
-                              updateDraft({ totalPool: n * Math.max(1, winnerCount) });
-                            } else {
-                              setTotalPoolInput(raw);
-                            }
+                            setTotalPoolInput(raw);
                           }}
                           onBlur={() => {
-                            if (isTickets) {
-                              const n = Math.max(1, Math.min(100, ticketsEach || 1));
-                              updateDraft({ totalPool: n * Math.max(1, winnerCount) });
-                            } else {
-                              commitTotalPool(Number(totalPoolInput));
-                            }
+                            commitTotalPool(Number(totalPoolInput));
                           }}
                           inputMode="decimal"
                           style={{ flex: 1, minWidth: 0, background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontFamily: SORA, fontWeight: 700, fontSize: 22, padding: "11px 0" }}
@@ -1545,16 +1498,11 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                     </div>
                   </div>
                   <span style={{ fontSize: 14, color: "#8A8893" }}>
-                    {isTickets
-                      ? `${winnerCount} winners × ${ticketsEach} tickets = ${ticketsEach * winnerCount} tickets (${usd(ticketsEach * winnerCount)})`
-                      : rewardType === "token"
+                    {rewardType === "token"
                         ? `Each winner gets ${usd(prizeAmount)} in ${prizeToken?.symbol ?? "the token"}${prizeToken?.usdPrice ? ` (about ${(prizeAmount / prizeToken.usdPrice).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${prizeToken.symbol})` : ""}`
                         : `Each winner gets ${usd(prizeAmount)} USDC`}
                   </span>
-                  {rewardType === "megapot_ticket" && prizeAmount > 100 && (
-                    <span style={{ fontSize: 14, color: "#F87171" }}>Ticket prizes are capped at 100 per winner.</span>
-                  )}
-                  {!isTickets && totalPool < effectiveMinPool && (
+                  {totalPool < effectiveMinPool && (
                     <span style={{ fontSize: 14, color: "#F87171" }}>Prize pool must be at least ${effectiveMinPool}.</span>
                   )}
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1769,7 +1717,7 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15 }}>
                       <span style={{ color: "#B5B2BC" }}>Prize</span>
-                      <span style={{ fontWeight: 700 }}>{isTickets ? `${ticketsEach * winnerCount} tickets · ${usd(totalPool)}` : usd(totalPool)}</span>
+                      <span style={{ fontWeight: 700 }}>{usd(totalPool)}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15 }}>
                       <span style={{ color: "#B5B2BC" }}>Platform fee (10%, $5 min, $80 max)</span>
@@ -1811,18 +1759,18 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                     <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>{title.trim() || "Your giveaway title"}</span>
                     {description.trim() ? <span style={{ fontSize: 14, color: "#9A98A3" }}>{description}</span> : null}
                   </div>
-                  <div style={{ padding: 20, borderRadius: 22, background: isTickets ? "linear-gradient(150deg,#2E1E06,#15120E)" : "linear-gradient(150deg,#0F2016,#101513)", border: `1px solid ${isTickets ? "rgba(245,183,12,0.35)" : "rgba(60,200,120,0.3)"}`, display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ padding: 20, borderRadius: 22, background: "linear-gradient(150deg,#0F2016,#101513)", border: "1px solid rgba(60,200,120,0.3)", display: "flex", flexDirection: "column", gap: 12 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontFamily: MONO, fontSize: 13, letterSpacing: "0.16em", color: isTickets ? "#F5B70C" : "#5FD38E" }}>PRIZE POOL · IN ESCROW</span>
-                      <span style={{ width: 34, height: 34, borderRadius: 11, display: "grid", placeItems: "center", fontFamily: SORA, fontWeight: 800, fontSize: 14, color: isTickets ? "#6A3500" : "#fff", background: isTickets ? "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)" : "#2775CA" }}>
-                        {isTickets ? "M" : "$"}
+                      <span style={{ fontFamily: MONO, fontSize: 13, letterSpacing: "0.16em", color: "#5FD38E" }}>PRIZE POOL · IN ESCROW</span>
+                      <span style={{ width: 34, height: 34, borderRadius: 11, display: "grid", placeItems: "center", fontFamily: SORA, fontWeight: 800, fontSize: 14, color: "#fff", background: "#2775CA" }}>
+                        $
                       </span>
                     </div>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                       <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 44, letterSpacing: "-0.05em", lineHeight: 1 }}>
-                        {isTickets ? String(ticketsEach * winnerCount) : usd(totalPool).replace(/\.00$/, "")}
+                        {usd(totalPool).replace(/\.00$/, "")}
                       </span>
-                      <span style={{ fontSize: 15, fontWeight: 700, color: "#B5B2BC" }}>{isTickets ? "tickets" : "USDC"}</span>
+                      <span style={{ fontSize: 15, fontWeight: 700, color: "#B5B2BC" }}>USDC</span>
                     </div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       {prizeChips.map((pc) => (
@@ -1833,11 +1781,6 @@ export function GiveawayWizard({ mode, giveawayId }: { mode: "create" | "edit"; 
                       Closes in <span style={{ color: "#F2EFE8", fontWeight: 700 }}>{remain}</span>
                     </span>
                   </div>
-                  {isTickets && (
-                    <span style={{ fontSize: 13, color: "#9A98A3", lineHeight: 1.5 }}>
-                      Tickets for Megapot&apos;s daily draw. Today&apos;s jackpot: <span style={{ color: "#F5B70C", fontWeight: 800 }}>$1.1M+</span>
-                    </span>
-                  )}
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <span style={{ fontFamily: MONO, fontSize: 13, letterSpacing: "0.16em", color: "#77757F" }}>TO ENTER</span>
                     {previewTasks.length === 0 ? (

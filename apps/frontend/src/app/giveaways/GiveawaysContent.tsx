@@ -11,7 +11,7 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "/app";
 const STEPS = [
   {
     title: "Fund the prize pool",
-    body: "Put USDC or Megapot tickets into escrow upfront, before anyone can enter. Entrants aren't trusting your word that the prize is real.",
+    body: "Put USDC into escrow upfront, before anyone can enter. Entrants aren't trusting your word that the prize is real.",
   },
   {
     title: "Set the entry rule",

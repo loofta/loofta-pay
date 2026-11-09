@@ -40,7 +40,6 @@ type SpecInstance = {
 
 const IMAGES: Record<string, string> = {
   "1ac1c4b2-ce57-406f-a26e-001273c631a5": "/images/loofta-rewards-logo.svg",
-  "88291337-3169-4524-b973-656ec9a3678d": "/images/megapot-wordmark.svg",
 };
 
 const SKIP_ATTR = new Set(["hint-placeholder-count", "hint-placeholder-val", "style-hover"]);

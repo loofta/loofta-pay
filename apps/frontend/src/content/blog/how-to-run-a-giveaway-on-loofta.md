@@ -12,7 +12,7 @@ If you're a creator, a freelancer building an audience, or a small team trying t
 
 You fund a prize pool upfront into escrow, set the rule for entering (for example, a quote-tweet), and open it up. Entrants don't need to trust that you'll actually pay out or that the winner was picked fairly, both of those are handled by the platform, not by you.
 
-The prize itself can be **USDC** or **Megapot lottery tickets** — useful if you'd rather give people a shot at the daily jackpot than a fixed cash amount.
+The prize itself is paid in **USDC** (or any Solana token you pick), split evenly between the winners.
 
 ## Setting the rules
 

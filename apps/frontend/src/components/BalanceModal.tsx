@@ -175,21 +175,6 @@ const PRIVATE_DEPOSIT_SESSION_KEY = "loofta_private_deposit_id";
 const PRIVATE_WITHDRAW_SESSION_KEY = "loofta_private_withdraw_id";
 const PRIVATE_TRANSFER_TERMINAL_STATUSES = new Set(["complete", "failed"]);
 const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
-// Withdraw-flow lottery ticket add-on. Mirrors megapot/page.tsx's handlePublicBuy/randomTicket
-// (numbers only matter for display — the backend accepts a quick-pick pick same as a manual one).
-const LOTTERY_TICKET_PRICE_USDC = 1;
-// Below this, adding a ticket would eat the whole withdrawal (or more) — hide the upsell rather
-// than tempt someone into a $0 withdrawal.
-const LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC = LOTTERY_TICKET_PRICE_USDC * 2;
-const LOTTERY_MAIN_MAX = 30;
-const LOTTERY_MAIN_COUNT = 5;
-const LOTTERY_BONUS_MAX = 10;
-function randomLotteryQuickPick(): { main: number[]; bonus: number } {
-  const s = new Set<number>();
-  while (s.size < LOTTERY_MAIN_COUNT) s.add(Math.ceil(Math.random() * LOTTERY_MAIN_MAX));
-  return { main: [...s].sort((a, b) => a - b), bonus: Math.ceil(Math.random() * LOTTERY_BONUS_MAX) };
-}
-
 type WithdrawalStep = "idle" | "submitting" | "sent" | "bridging" | "complete" | "failed" | "settling";
 type PeerStep = "platform" | "form" | "bridging" | "creating-deposit" | "deposit-error" | "deposited" | "complete" | "cancelling" | "cancelled" | "failed";
 
@@ -520,9 +505,6 @@ export function BalanceModal({
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
-  // Withdraw-flow lottery ticket upsell ("add 1 ticket to basket before withdraw")
-  const [addLotteryTicket, setAddLotteryTicket] = useState(false);
-  const [lotteryPrizePool, setLotteryPrizePool] = useState<string | null>(null);
   const [fromSel, setFromSel] = useState<TokenSelection | undefined>(undefined);
   const [addressRiskStatus, setAddressRiskStatus] = useState<"idle" | "checking" | "safe" | "unsafe">("idle");
   const [recipientNeedsUsdcAccount, setRecipientNeedsUsdcAccount] = useState(false);
@@ -681,7 +663,6 @@ export function BalanceModal({
   const { refreshUser } = useUser();
   const { wallets: solanaWallets } = useWallets();
   const { signTransaction } = useSignTransaction();
-  const { signAndSendTransaction: signAndSendLotteryTx } = useSignAndSendTransaction();
   const { fundWallet: privyFundWallet } = useFundWallet();
   const { wallets: evmWallets } = useEvmWallets();
   const { createWallet: createEvmWallet } = useCreateWallet();
@@ -1153,76 +1134,6 @@ export function BalanceModal({
     // The Privy embedded wallet is the one that can actually sign the payment.
     return match ?? list.find((w) => (w as { walletClientType?: string }).walletClientType === "privy") ?? list[0];
   }, [solanaAddress, solanaWallets]);
-
-  // Withdraw-flow lottery ticket add-on: same /api/lottery/buy + buy-confirm public-route quick-pick
-  // purchase as megapot/page.tsx's handlePublicBuy, using the embedded Solana wallet already in scope
-  // here. Kept intentionally soft-fail — a failed add-on never blocks the underlying withdrawal.
-  const buyQuickLotteryTicket = useCallback(async (): Promise<boolean> => {
-    if (!wallet?.address) return false;
-    try {
-      const token = await getAccessToken();
-      const authHeader: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-      const pick = randomLotteryQuickPick();
-      const initRes = await fetch("/api/lottery/buy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({
-          numTickets: 1,
-          userSolanaAddress: wallet.address,
-          tickets: [{ main: pick.main, bonus: pick.bonus }],
-          route: "solana_public",
-        }),
-      });
-      if (!initRes.ok) {
-        const err = await initRes.json().catch(() => ({} as { message?: string }));
-        throw new Error(err.message ?? "Failed to buy ticket");
-      }
-      const { ticketId, txBase64 } = await initRes.json();
-      const txBytes = Buffer.from(txBase64, "base64");
-      const { signature: sigBytes } = await signAndSendLotteryTx({
-        transaction: txBytes as unknown as Uint8Array,
-        wallet: wallet as any,
-      });
-      const signature = bs58.encode(sigBytes as Uint8Array);
-      await fetch("/api/lottery/buy-confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeader },
-        body: JSON.stringify({ ticketId, senderTxHash: signature }),
-      });
-      posthog.capture("chance_purchased", { source: "balance_modal", count: 1, price_usdc: LOTTERY_TICKET_PRICE_USDC });
-      return true;
-    } catch (err: unknown) {
-      console.warn(`${LOG_PREFIX} lottery ticket add-on failed:`, err);
-      posthog.capture("chance_purchase_failed", { source: "balance_modal", count: 1 });
-      return false;
-    }
-  }, [wallet, getAccessToken, signAndSendLotteryTx]);
-
-  // Live prize pool for the upsell copy — fetched once when the primary withdraw form is reached;
-  // falls back to the same "$1,100,000+" marketing snapshot used elsewhere in the app.
-  useEffect(() => {
-    if (tab !== "withdraw" || withdrawMethod !== "usdc-sol" || lotteryPrizePool) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const token = await getAccessToken();
-        const res = await fetch("/api/lottery/dashboard", { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-        if (!res.ok) return;
-        const data = await res.json();
-        const pool = data?.nextDraw?.prizePool;
-        if (!cancelled && pool) setLotteryPrizePool(pool);
-      } catch { /* non-fatal — fallback copy used */ }
-    })();
-    return () => { cancelled = true; };
-  }, [tab, withdrawMethod, lotteryPrizePool, getAccessToken]);
-
-  const lotteryPrizePoolDisplay = useMemo(() => {
-    if (lotteryPrizePool) {
-      const amount = Math.round(parseFloat(lotteryPrizePool) / 100_000) * 100_000;
-      if (amount > 0) return `$${amount.toLocaleString()}+`;
-    }
-    return "$1,100,000+";
-  }, [lotteryPrizePool]);
 
   const pajPrefillEmail = user?.email?.address || undefined;
 
@@ -2555,24 +2466,12 @@ export function BalanceModal({
       toast({ variant: "destructive", title: `${platform.name} limit is $${platform.maxUSDC} USDC` });
       return;
     }
-    const wantsChance = addLotteryTicket && !peerPay;
-    if (wantsChance && depositUsdc + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
-      toast({ variant: "destructive", title: "Insufficient balance", description: "Lower the amount a little to keep $1 for your chance to win." });
-      return;
-    }
     const cooldownRemaining = getPlatformCooldownRemaining(platform.id, platform.cooldownHours);
     if (cooldownRemaining > 0) {
       toast({ variant: "destructive", title: `${platform.name} is in cooldown`, description: `${formatCooldown(cooldownRemaining)}` });
       return;
     }
     setPeerSubmitting(true);
-    // The chance goes first and never blocks the cash out: a failed purchase just means no
-    // chance, the cash out proceeds for the full amount.
-    if (wantsChance) {
-      const added = await buyQuickLotteryTicket();
-      if (added) toast({ title: "You're in for today's draw", description: "Good luck, your chance to win $200K is in." });
-      setAddLotteryTicket(false);
-    }
     console.log(PEER_LOG, "submit", { platform: platform.id, amount: withdrawAmountNum, depositUsdc, currency: peerCurrency });
     try {
       // Cash-out spends Base USDC from a wallet Privy has linked to this user. Peer does not
@@ -2893,10 +2792,6 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "Insufficient balance", description: `You have ${spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC available.` });
       return;
     }
-    if (addLotteryTicket && amount + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
-      toast({ variant: "destructive", title: "Insufficient balance", description: `Adding a $${LOTTERY_TICKET_PRICE_USDC.toFixed(2)} ticket needs a bit more USDC than you have available.` });
-      return;
-    }
     if (!solanaAddress || !wallet) {
       toast({ variant: "destructive", title: "Wallet not ready", description: "Your Loofta wallet is not available. Try refreshing or logging out and back in." });
       return;
@@ -2952,35 +2847,6 @@ export function BalanceModal({
     setWithdrawStep("submitting");
 
     try {
-      // Ticket add-on goes first and never blocks the withdrawal itself — a failed purchase just
-      // means no ticket, the user's actual withdrawal still proceeds for the full requested amount.
-      if (addLotteryTicket) {
-        const ticketAdded = await buyQuickLotteryTicket();
-        if (ticketAdded) {
-          toast({
-            duration: Infinity,
-            title: "You're in for today's draw",
-            description: (
-              <span className="text-base">
-                Good luck, your chance to win $200K is in.
-              </span>
-            ),
-            action: (
-              <ToastAction altText="View your Megapot tickets" asChild>
-                <Link
-                  href="/app/megapot?tab=history"
-                  className="!bg-gradient-to-r !from-[#FF1301] !to-[#EAB308] !text-white !border-0 !font-semibold hover:!opacity-90"
-                >
-                  View tickets
-                </Link>
-              </ToastAction>
-            ),
-          });
-        } else {
-          toast({ variant: "destructive", title: "Couldn't add your ticket", description: "Continuing with your withdrawal." });
-        }
-      }
-
       const mode = devnetMode ? "devnet" : "mainnet";
       const connection = new Connection(getRpcForMode(mode), "confirmed");
       const accessToken = await getAccessToken();
@@ -3090,7 +2956,6 @@ export function BalanceModal({
       setWithdrawAddress("");
       setAddressRiskStatus("idle");
       setAtaFeeConfirmPending(false);
-      setAddLotteryTicket(false);
 
       if (isNearIntentsWithdraw && depositAddr) {
         setWithdrawStep("bridging");
@@ -3158,10 +3023,6 @@ export function BalanceModal({
       toast({ variant: "destructive", title: "Insufficient balance", description: `You have ${spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC available.` });
       return;
     }
-    if (addLotteryTicket && amount + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
-      toast({ variant: "destructive", title: "Insufficient balance", description: `Adding a $${LOTTERY_TICKET_PRICE_USDC.toFixed(2)} ticket needs a bit more USDC than you have available.` });
-      return;
-    }
     if (!rawAddress || !isValidAddressForChain(rawAddress, "solana")) {
       toast({ variant: "destructive", title: "Invalid address", description: "Enter a valid Solana wallet address." });
       return;
@@ -3207,36 +3068,6 @@ export function BalanceModal({
     setSolWithdrawStep("signing");
     setSolWithdrawError(null);
     try {
-      // Ticket add-on goes first and never blocks the withdrawal itself — a failed purchase just
-      // means no ticket, the swap (already quoted for the requested amount, unaffected by the
-      // ticket) still proceeds. Mirrors handleWithdraw's identical pattern.
-      if (addLotteryTicket) {
-        const ticketAdded = await buyQuickLotteryTicket();
-        if (ticketAdded) {
-          toast({
-            duration: Infinity,
-            title: "You're in for today's draw",
-            description: (
-              <span className="text-base">
-                Good luck, your chance to win $200K is in.
-              </span>
-            ),
-            action: (
-              <ToastAction altText="View your Megapot tickets" asChild>
-                <Link
-                  href="/app/megapot?tab=history"
-                  className="!bg-gradient-to-r !from-[#FF1301] !to-[#EAB308] !text-white !border-0 !font-semibold hover:!opacity-90"
-                >
-                  View tickets
-                </Link>
-              </ToastAction>
-            ),
-          });
-        } else {
-          toast({ variant: "destructive", title: "Couldn't add your ticket", description: "Continuing with your withdrawal." });
-        }
-      }
-
       const mode = devnetMode ? "devnet" : "mainnet";
       const rawTxBytes = Buffer.from(solWithdrawPrepared.swapTransactionBase64, "base64");
       const { signedTransaction } = await signTransaction({
@@ -3265,7 +3096,6 @@ export function BalanceModal({
       setRecentWithdrawals(getWithdrawalHistory());
       saveWithdrawalToDB(item);
       optimisticWithdrawBalance(withdrawAmountNum);
-      setAddLotteryTicket(false);
 
       setSolWithdrawStep("complete");
       toast({ title: "Sent!", description: "Your SOL is on its way." });
@@ -4433,7 +4263,7 @@ export function BalanceModal({
                   />
                   <Button type="button" variant="outline" size="sm"
                     onClick={() => {
-                      const max = Math.max(0, spendableBalance - (addLotteryTicket ? LOTTERY_TICKET_PRICE_USDC : 0));
+                      const max = Math.max(0, spendableBalance);
                       setWithdrawAmount(max.toFixed(6).replace(/\.?0+$/, ""));
                     }}
                     disabled={solWithdrawStep !== "form"}
@@ -4446,9 +4276,6 @@ export function BalanceModal({
                 )}
                 {withdrawAmountNum > spendableBalance && spendableBalance > 0 && (
                   <p className="text-base text-red-400 mt-1">Exceeds available balance of {spendableBalance.toFixed(6).replace(/\.?0+$/, "")} USDC.</p>
-                )}
-                {addLotteryTicket && withdrawAmountNum > 0 && withdrawAmountNum <= spendableBalance && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance && (
-                  <p className="text-base text-red-400 mt-1">Not enough left over for the ${LOTTERY_TICKET_PRICE_USDC.toFixed(2)} ticket — lower the amount or turn it off.</p>
                 )}
               </div>
 
@@ -4472,66 +4299,6 @@ export function BalanceModal({
                   <p className="text-base text-red-400 mt-1.5">This address did not pass our compliance check.</p>
                 )}
               </div>
-
-              {spendableBalance >= LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC && withdrawAmountNum > 0 && (
-                <div className="relative rounded-2xl">
-                  <style>{`
-                    @keyframes looftaGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
-                    @keyframes looftaGlowPulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
-                  `}</style>
-                  <div
-                    aria-hidden
-                    className="absolute -inset-[2.5px] rounded-2xl blur-[7px]"
-                    style={{
-                      background: "linear-gradient(110deg,#FF1301,#FF6A00,#EAB308,#FF4A26,#FF1301)",
-                      backgroundSize: "220% 100%",
-                      animation: reduceMotion ? undefined : "looftaGlowShift 2.4s linear infinite, looftaGlowPulse 2.4s ease-in-out infinite",
-                      opacity: reduceMotion ? 0.7 : undefined,
-                    }}
-                  />
-                  <div
-                    className={cn(
-                      "relative rounded-2xl border p-4",
-                      dark ? "bg-[#15110d] border-white/10" : "bg-white border-orange-100"
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <span className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_8px_20px_rgba(255,122,42,0.35)]">
-                        <Ticket className="h-5 w-5 text-white" />
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
-                          Keep $1 for a chance to win $200K
-                        </p>
-                        <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                          $1 stays in the draw instead of leaving. Winners are paid straight to the balance.
-                        </p>
-                      </div>
-                      <Switch
-                        checked={addLotteryTicket}
-                        disabled={solWithdrawStep !== "form"}
-                        onCheckedChange={(checked) => {
-                          setAddLotteryTicket(checked);
-                          if (checked && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
-                            const adjusted = Math.max(0, spendableBalance - LOTTERY_TICKET_PRICE_USDC);
-                            setWithdrawAmount(adjusted.toFixed(6).replace(/\.?0+$/, ""));
-                          }
-                        }}
-                        className="shrink-0 mt-1 data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-[#FF4A26] data-[state=checked]:to-[#E1A041]"
-                      />
-                    </div>
-                    {addLotteryTicket && (
-                      <div className={cn(
-                        "mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-base font-semibold",
-                        dark ? "bg-white/10 text-white" : "bg-orange-50 text-gray-900"
-                      )}>
-                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 chance to win today added</span>
-                        <span>+${LOTTERY_TICKET_PRICE_USDC.toFixed(2)}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
 
               {solWithdrawError && <p className="text-base text-red-400">{solWithdrawError}</p>}
 
@@ -5068,7 +4835,7 @@ export function BalanceModal({
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      const max = Math.max(0, spendableBalance - (addLotteryTicket ? LOTTERY_TICKET_PRICE_USDC : 0));
+                      const max = Math.max(0, spendableBalance);
                       setWithdrawAmount(max.toFixed(6).replace(/\.?0+$/, ""));
                     }}
                     className={`shrink-0 px-3 text-base ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}
@@ -5133,69 +4900,6 @@ export function BalanceModal({
                   </p>
                 )}
               </div>
-
-              {/* Lottery ticket upsell — high-conversion "add to basket" toggle before withdrawing.
-                  Toggling on never blocks on balance: it reduces the withdraw amount by the ticket
-                  price instead, so there's always room. Flowing glow border matches the one used
-                  around the ticket-purchase confirm button on the lottery page (SlideToPay.tsx). */}
-              {isUSDCOnSolana && spendableBalance >= LOTTERY_TICKET_UPSELL_MIN_BALANCE_USDC && withdrawAmountNum > 0 && !ataFeeConfirmPending && (
-                <div className="relative rounded-2xl">
-                  <style>{`
-                    @keyframes looftaGlowShift { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
-                    @keyframes looftaGlowPulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
-                  `}</style>
-                  <div
-                    aria-hidden
-                    className="absolute -inset-[2.5px] rounded-2xl blur-[7px]"
-                    style={{
-                      background: "linear-gradient(110deg,#FF1301,#FF6A00,#EAB308,#FF4A26,#FF1301)",
-                      backgroundSize: "220% 100%",
-                      animation: reduceMotion ? undefined : "looftaGlowShift 2.4s linear infinite, looftaGlowPulse 2.4s ease-in-out infinite",
-                      opacity: reduceMotion ? 0.7 : undefined,
-                    }}
-                  />
-                  <div
-                    className={cn(
-                      "relative rounded-2xl border p-4",
-                      dark ? "bg-[#15110d] border-white/10" : "bg-white border-orange-100"
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <span className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-[#FF4A26] via-[#FF7A2A] to-[#E1A041] shadow-[0_8px_20px_rgba(255,122,42,0.35)]">
-                        <Ticket className="h-5 w-5 text-white" />
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-base font-semibold ${dark ? "text-white" : "text-gray-900"}`}>
-                          Keep $1 for a chance to win $200K
-                        </p>
-                        <p className={`text-base mt-0.5 ${dark ? "text-slate-300" : "text-gray-600"}`}>
-                          $1 stays in the draw instead of leaving. Winners are paid straight to the balance.
-                        </p>
-                      </div>
-                      <Switch
-                        checked={addLotteryTicket}
-                        onCheckedChange={(checked) => {
-                          setAddLotteryTicket(checked);
-                          if (checked && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) {
-                            const adjusted = Math.max(0, spendableBalance - LOTTERY_TICKET_PRICE_USDC);
-                            setWithdrawAmount(adjusted.toFixed(6).replace(/\.?0+$/, ""));
-                          }
-                        }}
-                        className="shrink-0 mt-1 data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-[#FF4A26] data-[state=checked]:to-[#E1A041]"
-                      />
-                    </div>
-                    {addLotteryTicket && (
-                      <div className={cn(
-                        "mt-3 flex items-center justify-between rounded-xl px-3 py-2 text-base font-semibold",
-                        dark ? "bg-white/10 text-white" : "bg-orange-50 text-gray-900"
-                      )}>
-                        <span className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />1 chance to win today added</span>
-                        <span>+${LOTTERY_TICKET_PRICE_USDC.toFixed(2)}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
 
               {/* One-time USDC-account setup fee — shown as an explicit confirm step after the
                   user hits Withdraw, so the deduction is acknowledged rather than just displayed.
@@ -5269,7 +4973,6 @@ export function BalanceModal({
                     withdrawing ||
                     withdrawAmountNum <= 0 ||
                     withdrawAmountNum > spendableBalance ||
-                    (addLotteryTicket && withdrawAmountNum + LOTTERY_TICKET_PRICE_USDC > spendableBalance) ||
                     !effectiveWithdrawAddress.trim() ||
                     !wallet ||
                     (withdrawMethod === "near-intents" && !selectedFrom) ||
@@ -5284,8 +4987,6 @@ export function BalanceModal({
                     </span>
                   ) : isNearIntentsWithdraw ? (
                     `Bridge to ${effectiveToken?.symbol || "token"}`
-                  ) : addLotteryTicket ? (
-                    "Withdraw + Add Ticket"
                   ) : (
                     "Withdraw USDC"
                   )}
@@ -5530,7 +5231,7 @@ export function BalanceModal({
                       className="flex-1"
                     />
                     <Button type="button" variant="outline" size="sm"
-                      onClick={() => setWithdrawAmount(Math.min(Math.max(0, spendableBalance - (addLotteryTicket ? LOTTERY_TICKET_PRICE_USDC : 0)), platformCap).toFixed(2).replace(/\.00$/, ""))}
+                      onClick={() => setWithdrawAmount(Math.min(Math.max(0, spendableBalance), platformCap).toFixed(2).replace(/\.00$/, ""))}
                       className={`shrink-0 px-3 ${dark ? "border-white/20 bg-white/10 text-slate-300 hover:bg-white/20 hover:text-white" : ""}`}>
                       Max
                     </Button>

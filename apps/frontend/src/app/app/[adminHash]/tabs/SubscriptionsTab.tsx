@@ -89,7 +89,7 @@ export function SubscriptionsTab() {
       {/* Net revenue = $28 bundles collected minus refunds issued (full refunds for pre-first-
           batch cancellations, prorated refunds for the 30-month stale safety net, and any manual
           failed-batch refunds) minus what the tickets actually delivered cost — see
-          MegapotSubscriptionService.getRevenue. */}
+          the subscription service getRevenue. */}
       {revenue && (
         <div className="rounded-xl border border-gray-800 p-4">
           <div className="text-base font-semibold text-gray-200 mb-3">Ticket subscription revenue</div>

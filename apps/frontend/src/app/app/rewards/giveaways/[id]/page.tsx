@@ -17,8 +17,6 @@ export async function generateMetadata({
 
   const prizeLabel = preview.reward_type === "custom" && preview.custom_prize_text
     ? preview.custom_prize_text
-    : preview.reward_type === "megapot_ticket"
-    ? `${preview.prize_amount_usd} Megapot ticket${preview.prize_amount_usd === 1 ? "" : "s"}`
     : `$${preview.prize_amount_usd}`;
   const title = `${preview.title} — ${prizeLabel} × ${preview.winner_count} winners on Loofta`;
   const description = "Enter this giveaway on Loofta — funded, verified, and paid out automatically.";

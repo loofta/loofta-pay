@@ -13,6 +13,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/vs/paypal",
     "/usdc-to-ngn",
     "/dollar-to-naira-today",
+    "/play",
     "/blog",
     "/about",
     "/careers",

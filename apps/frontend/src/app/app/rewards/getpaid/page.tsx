@@ -16,7 +16,7 @@ const GETPAID_END_DATE = new Date("2026-07-23T00:00:00.000Z");
 const MIN_PAYMENT_USD = 5;
 const PRIZE_USD = 20;
 const WINNERS_COUNT = 3;
-const ACCENT = "#4ADE80"; // green — distinct from Blink's yellow, Megapot's teal, Sparks' amber
+const ACCENT = "#4ADE80"; // green — distinct from Blink's yellow, Sparks' amber
 
 interface GetPaidCampaignData {
   paymentsReceived: number;

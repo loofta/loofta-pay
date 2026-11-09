@@ -99,7 +99,7 @@ import { PredictionMarketsCard } from "@/components/nest/PredictionMarketsCard";
 import { PreIpoBasket } from "@/components/nest/PreIpoBasket";
 
 const DepositModal = dynamic(() => import("@/components/nest/DepositModal").then(m => ({ default: m.DepositModal })), { ssr: false });
-// Touches WebGL — client-only, lazy-loaded, same convention as MegapotPack's 3D scene.
+// Touches WebGL — client-only, lazy-loaded, lazy-loaded like other 3D scenes.
 const NestHero = dynamic(() => import("@/components/nest/NestHero"), { ssr: false });
 
 const RISK_COLORS = [0xaaa9a0, 0x66865f, 0x9d8056, 0x9b746b, 0x7d927f, 0x8a9a86];

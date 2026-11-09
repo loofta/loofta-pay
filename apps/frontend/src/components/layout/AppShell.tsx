@@ -15,10 +15,6 @@ import { useAddEmailToast } from "@/hooks/useAddEmailToast";
 import { AddEmailToast } from "@/components/AddEmailToast";
 import { useTerminalPromoToast } from "@/hooks/useTerminalPromoToast";
 import { TerminalPromoToast } from "@/components/TerminalPromoToast";
-import { useUnclaimedGiftToast } from "@/hooks/useUnclaimedGiftToast";
-import { UnclaimedGiftToast } from "@/components/UnclaimedGiftToast";
-import { useFreeSpinToast } from "@/hooks/useFreeSpinToast";
-import { FreeSpinToast } from "@/components/FreeSpinToast";
 
 function ShellContent({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -26,8 +22,6 @@ function ShellContent({ children }: { children: ReactNode }) {
   const { unclaimed, dismiss: dismissUnclaimed } = useUnclaimedPaymentToast();
   const { showAddEmail, addEmail, linking: addingEmail, error: addEmailError, dismiss: dismissAddEmail } = useAddEmailToast();
   const { showTerminalPromo, dismiss: dismissTerminalPromo } = useTerminalPromoToast();
-  const { unclaimed: unclaimedGifts, dismiss: dismissUnclaimedGifts } = useUnclaimedGiftToast();
-  const { hasFreeSpin, dismiss: dismissFreeSpin } = useFreeSpinToast();
   useEffect(() => {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
   }, [pathname]);
@@ -39,11 +33,6 @@ function ShellContent({ children }: { children: ReactNode }) {
   // Loofta Rewards is a full-page spec with its own header. The app rewrite serves it at
   // /rewards-rail (internally /app/rewards-rail), so both shapes need to skip this chrome.
   const isRewardsRail = pathname === "/rewards-rail" || pathname === "/app/rewards-rail" || pathname?.startsWith("/rewards-rail/") || pathname?.startsWith("/app/rewards-rail/");
-  // Mystery Pack is a full-screen immersive page sized as calc(100svh - var(--header-h,0px)) —
-  // that var only tracks MinimalHeader's own height, not this banner's, so showing it here would
-  // push the pack canvas down by an unaccounted amount (the same overlap bug the header itself
-  // used to have, one layer up).
-  const isImmersivePage = pathname?.startsWith('/megapot/packs') || pathname?.startsWith('/app/megapot/packs');
   const showBottomNav = !isCheckoutPage && (
     pathname === '/' || pathname === '/app' || pathname === '/app/send' || pathname === '/app/receive' ||
     pathname === '/history' || pathname === '/app/history' ||
@@ -63,14 +52,9 @@ function ShellContent({ children }: { children: ReactNode }) {
       {/* Checkout is meant to feel like a self-contained payment page (Stripe-style) — none of
           these promo/update overlays belong on top of someone else's embedded payment flow. */}
       {!isCheckoutPage && !isRewardsRail && <UpdateJun26Modal show={updateShow} />}
-      {!isCheckoutPage && !isRewardsRail && (unclaimed || unclaimedGifts || (false && hasFreeSpin && !isImmersivePage) || showAddEmail || showTerminalPromo) && (
+      {!isCheckoutPage && !isRewardsRail && (unclaimed || showAddEmail || showTerminalPromo) && (
         <div className="fixed bottom-20 left-4 right-4 sm:left-auto sm:bottom-4 z-[100] sm:max-w-sm flex flex-col-reverse gap-3">
           {unclaimed && <UnclaimedPaymentToast payments={unclaimed} onDismiss={dismissUnclaimed} />}
-          {unclaimedGifts && <UnclaimedGiftToast gifts={unclaimedGifts} onDismiss={dismissUnclaimedGifts} />}
-          {/* Suppressed on the Mystery Pack page itself (isImmersivePage) — nudging someone to go
-              open a free spin while they're already there is redundant, and the page's own
-              SlideToPay gate already surfaces it (see packs/page.tsx). */}
-          {false && hasFreeSpin && !isImmersivePage && <FreeSpinToast onDismiss={dismissFreeSpin} />}
           {showAddEmail && (
             <AddEmailToast
               onAddEmail={addEmail}

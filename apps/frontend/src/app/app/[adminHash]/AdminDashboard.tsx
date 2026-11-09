@@ -169,7 +169,7 @@ export default function AdminDashboard() {
   const [lotteryStatusFilter, setLotteryStatusFilter] = useState("");
   const [lotteryExpandedId, setLotteryExpandedId] = useState<string | null>(null);
 
-  // Gift a Megapot ticket — one field accepts an email, X handle, or Loofta username, same as Send
+  // Gift a lottery ticket — one field accepts an email, X handle, or Loofta username, same as Send
   const [giftIdentifierInput, setGiftIdentifierInput] = useState("");
   const [giftNumTicketsInput, setGiftNumTicketsInput] = useState("1");
   const [giftNoteInput, setGiftNoteInput] = useState("");
@@ -181,7 +181,7 @@ export default function AdminDashboard() {
   const [giftsTotal, setGiftsTotal] = useState(0);
   const [giftsPage, setGiftsPage] = useState(1);
 
-  // Megapot referral fees — unclaimed balance is read-only on-chain; claiming happens from the
+  // Lottery referral fees — unclaimed balance is read-only on-chain; claiming happens from the
   // admin's own connected EVM wallet (e.g. Enkrypt), then the tx is recorded server-side.
   const [referralFeesBalance, setReferralFeesBalance] = useState<number | null>(null);
   const [referralFeesLoading, setReferralFeesLoading] = useState(false);

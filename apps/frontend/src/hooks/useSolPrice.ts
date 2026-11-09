@@ -1,10 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-/**
- * Live SOL/USD price via Alchemy. Same source/fallback as megapot's local useSolPrice
- * (apps/frontend/src/app/app/megapot/page.tsx) — kept as a separate copy here rather than a
- * shared import so this fee-estimate code doesn't pull in or get affected by megapot's module.
- */
+/** Live SOL/USD price via Alchemy. */
 export function useSolPrice(): number {
   return useSolPriceOrNull() ?? 150;
 }

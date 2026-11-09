@@ -227,7 +227,7 @@ function rememberPreferredClaimMethod(key: string, method: string) {
 
 // ─── Dev preview: jump the claim-panel/sender-card UI into any state via ?preview=... ─────────
 // Disabled for now (localhost included). Flip this back on to restore the panel and overrides.
-// Same pattern as /app/megapot's DevPreviewPanel — localhost-only, overrides local derived
+// Localhost-only dev preview panel, overrides local derived
 // booleans on the REAL page instead of mocking a separate component, so what you see is the
 // actual render path. Visit any real claim link (any [id] works) and append ?preview=<key>.
 const CLAIM_DEV_PREVIEW_ENABLED = false;
@@ -1387,7 +1387,7 @@ const CHECKOUT_INFO_FAQ_ITEMS: { question: string; answer: React.ReactNode }[] =
   },
 ];
 
-// ─── Privacy FAQ (same accordion style as send/receive and megapot) ───────────
+// ─── Privacy FAQ (same accordion style as send/receive) ───────────
 
 const CLAIM_PRIVACY_FAQ_ITEMS: { question: string; answer: React.ReactNode }[] = [
   {
@@ -7524,7 +7524,7 @@ export function ClaimPayView({
 
       {/* FAQ — checkout gets its own, payer-relevant explainer (light theme, matches checkout's
           card); the regular claim page keeps the original privacy FAQ (dark theme, matches that
-          page). Same accordion mechanics either way, same style as send/receive and megapot.
+          page). Same accordion mechanics either way, same style as send/receive.
           This section is a sibling AFTER </ClaimPayLayout> closes, so it sits on the outer page
           div's own always-dark bg-[#0f0f12] — not inside ClaimPayLayout's chrome="minimal" light
           wrapper. Needs its own matching light/dark background here, or the light-mode text above

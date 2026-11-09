@@ -27,7 +27,7 @@ export function RecipientSuggestionList({
   return (
     <ul
       role="listbox"
-      className="absolute left-0 right-0 top-full z-30 mt-1.5 overflow-hidden rounded-2xl border border-white/10 bg-[#17171E] p-1 shadow-xl"
+      className="absolute left-0 right-0 top-full z-50 mt-1.5 overflow-hidden rounded-2xl border border-white/10 bg-[#17171E] p-1 shadow-xl"
     >
       {items.map((s, i) => {
         const cash = s.kind === "cash" ? DIRECT_CASH_PLATFORMS.find((p) => p.id === s.platform) : null;

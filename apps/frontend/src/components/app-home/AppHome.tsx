@@ -233,7 +233,7 @@ export function AppHome() {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <span style={{ fontFamily: MONO, fontSize: 14, letterSpacing: "0.2em", color: "#77757F" }}>START SOMETHING</span>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,420px),1fr))", gap: 20 }}>
-            <div className="lh-7" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A1A0C,#16110D 60%)", border: "1px solid rgba(245,183,12,0.22)" }}>
+            <Link href="/stake" className="lh-7" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A1A0C,#16110D 60%)", border: "1px solid rgba(245,183,12,0.22)" }}>
               <div style={{ flex: "none", width: 96, height: 96, borderRadius: 30, transform: "rotate(-6deg)", background: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.55), inset 0 -8px 14px rgba(120,60,0,0.3), 0 8px 0 #8E5202, 0 26px 44px rgba(0,0,0,0.5)", display: "grid", placeItems: "center" }}>
                 <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#6A3500" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                   <rect x="3" y="4" width="18" height="16" rx="3" />
@@ -244,9 +244,8 @@ export function AppHome() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 26, letterSpacing: "-0.04em" }}>Stake to win</span>
                 <span style={{ fontSize: 15, lineHeight: 1.5, color: "#B9B3A6" }}>Stake your USDC and get a shot at weekly rewards, without risking your deposit.</span>
-                <span style={{ alignSelf: "flex-start", padding: "4px 12px", borderRadius: 999, background: "rgba(245,183,12,0.14)", border: "1px solid rgba(245,183,12,0.35)", fontWeight: 700, fontSize: 14, color: "#F5B70C" }}>Coming soon</span>
               </div>
-            </div>
+            </Link>
             {SHOW_GIVEAWAY_CARD && (
             <Link href="/rewards-rail" className="lh-7" style={{ color: "inherit", display: "flex", gap: 22, alignItems: "center", padding: 28, borderRadius: 30, background: "linear-gradient(135deg,#2A1A0C,#16110D 60%)", border: "1px solid rgba(245,183,12,0.22)" }}>
               <div style={{ flex: "none", width: 96, height: 96, borderRadius: 30, transform: "rotate(-6deg)", background: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", boxShadow: "inset 0 4px 8px rgba(255,255,255,0.55), inset 0 -8px 14px rgba(120,60,0,0.3), 0 8px 0 #8E5202, 0 26px 44px rgba(0,0,0,0.5)", display: "grid", placeItems: "center" }}>

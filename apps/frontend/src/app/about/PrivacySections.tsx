@@ -7,7 +7,7 @@ export const PRIVACY_TOC = [
   { id: "privacy-information-collected", label: "2. Information We Collect" },
   { id: "privacy-how-we-use", label: "3. How We Use Your Information" },
   { id: "privacy-third-parties", label: "4. Third-Party Services" },
-  { id: "privacy-chance-features", label: "5. Megapot, Mystery Pack & Giveaway Data" },
+  { id: "privacy-chance-features", label: "5. Mystery Pack & Giveaway Data" },
   { id: "privacy-fiat-offramp-data", label: "6. Fiat Off-Ramp Data (Naira)" },
   { id: "privacy-blockchain", label: "7. Blockchain & Public Data" },
   { id: "privacy-sharing", label: "8. Information Sharing" },
@@ -45,7 +45,7 @@ export function PrivacySections() {
               "Transaction records — sender/recipient identifiers, amount, timestamp, transaction hash, and status for all payments you send or receive through the Service.",
               "Payment links — metadata associated with payment links you create, including any message or emoji attached.",
               "Deposit and withdrawal records — including third-party protocol identifiers and transaction hashes.",
-              "Megapot, Mystery Pack, and giveaway activity — ticket purchase records, purchase amount, associated wallet address, giveaway entries you submit or create, and draw or winner results. See Section 5 for details.",
+              "Mystery Pack and giveaway activity — purchase records, purchase amount, associated wallet address, giveaway entries you submit or create, and draw or winner results. See Section 5 for details.",
               "Fiat off-ramp activity — if you use the Naira withdrawal feature, we record the withdrawal amount, wallet address used, and transaction status. See Section 6 for details.",
               "Rewards and referral activity.",
             ]} />
@@ -74,7 +74,7 @@ export function PrivacySections() {
               "Authenticate you via Privy when you log in.",
               "Process, record, and display payment transactions you initiate or receive.",
               "Enable you to find other users by email or username to send payments.",
-              "Process Megapot, Mystery Pack, and giveaway participation, including verifying giveaway entries and recording draw results.",
+              "Process Mystery Pack and giveaway participation, including verifying giveaway entries and recording draw results.",
               "Facilitate fiat off-ramp transactions by sharing necessary wallet and transaction details with our third-party partner.",
               "Screen wallet addresses against sanctions lists and risk databases as required by law.",
               "Provide customer support and respond to your inquiries.",
@@ -107,15 +107,15 @@ export function PrivacySections() {
             </P>
           </Section>
 
-          <Section id="privacy-chance-features" title="5. Megapot, Mystery Pack & Giveaway Data">
+          <Section id="privacy-chance-features" title="5. Mystery Pack & Giveaway Data">
             <P>
-              When you purchase Megapot tickets, purchase a Mystery Pack, or create or enter a giveaway, we collect and store records of that activity, including the wallet address used, amount paid, ticket count, entry timestamp, and (where applicable) draw or winner results. This data is used to operate the feature, display your activity history to you, and detect abuse.
+              When you purchase a Mystery Pack, or create or enter a giveaway, we collect and store records of that activity, including the wallet address used, amount paid, ticket count, entry timestamp, and (where applicable) draw or winner results. This data is used to operate the feature, display your activity history to you, and detect abuse.
             </P>
             <P>
               For giveaways tied to a linked X (Twitter) post, we process public X data (such as the identifier of an account that quote-tweets the linked post) solely to verify entry eligibility, as described in Section 2(d). We do not access private X account data, and we do not use this data for advertising.
             </P>
             <P>
-              Because Megapot, Mystery Pack, and giveaway transactions are recorded on the Solana blockchain, the wallet-level activity associated with these features is subject to the public-ledger considerations described in Section 7.
+              Because Mystery Pack and giveaway transactions are recorded on the Solana blockchain, the wallet-level activity associated with these features is subject to the public-ledger considerations described in Section 7.
             </P>
           </Section>
 
@@ -158,7 +158,7 @@ export function PrivacySections() {
               We retain your account information and transaction history for as long as your account is active, plus a reasonable period thereafter to comply with legal obligations, resolve disputes, and enforce our agreements.
             </P>
             <P>
-              If you request deletion of your account, we will delete or anonymize your personal information within 30 days, subject to our obligation to retain certain records under applicable law (e.g., AML regulations may require us to retain transaction, Megapot, giveaway, and fiat off-ramp records for up to 5 years).
+              If you request deletion of your account, we will delete or anonymize your personal information within 30 days, subject to our obligation to retain certain records under applicable law (e.g., AML regulations may require us to retain transaction, giveaway, and fiat off-ramp records for up to 5 years).
             </P>
             <P>
               Blockchain transaction data is permanent and cannot be deleted, as described in Section 7.

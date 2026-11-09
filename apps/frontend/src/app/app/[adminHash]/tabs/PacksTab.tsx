@@ -187,7 +187,7 @@ export function PacksTab() {
 
   useEffect(() => { fetchTiers(); fetchTreasury(); fetchRevenue(); fetchSettings(); fetchOpenings(1); fetchFreeSpins(1); }, [fetchTiers, fetchTreasury, fetchRevenue, fetchSettings, fetchOpenings, fetchFreeSpins]);
 
-  // recipientType is auto-detected the same way the Megapot ticket gift form does — an "@" +
+  // recipientType is auto-detected the same way the lottery ticket gift form does — an "@" +
   // "." reads as an email, anything else as an X handle or Loofta username.
   const grantFreeSpin = useCallback(async () => {
     const identifier = grantIdentifier.trim();
@@ -386,7 +386,7 @@ export function PacksTab() {
       </div>
 
       {/* Grant a free spin — a distinct entitlement from a demo open: it still rolls the real
-          tier ladder and buys a real Megapot ticket, funded from the same treasury as a paid
+          tier ladder and buys a real lottery ticket, funded from the same treasury as a paid
           pack. Recipient must already have a Loofta account (redeemed in-app, no claim link). */}
       <div className="rounded-xl border border-gray-800 p-4 space-y-3">
         <div className="text-base font-semibold text-gray-200">Grant a free Mystery Pack spin</div>

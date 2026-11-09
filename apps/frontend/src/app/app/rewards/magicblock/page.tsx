@@ -13,7 +13,7 @@ const BACKEND_URL = clientApiBase();
 const ACCENT = "#f97316"; // Loofta primary brand orange (--primary in globals.css)
 const MAGICBLOCK_PROJECT_URL = "https://quests.magicblock.app/projects/loofta-pay";
 
-type MagicblockQuestType = "lottery_ticket" | "private_payment";
+type MagicblockQuestType = "private_payment";
 
 interface MagicblockQuestStatusItem {
   questType: MagicblockQuestType;
@@ -30,13 +30,6 @@ interface MagicblockQuestStatus {
 }
 
 const QUEST_COPY: Record<MagicblockQuestType, { title: string; description: string; icon: string; ctaLabel: string; ctaHref: string }> = {
-  lottery_ticket: {
-    title: "Purchase 1 Megapot ticket privately",
-    description: "Buy a Megapot ticket using a private payment on Loofta.",
-    icon: "🎟️",
-    ctaLabel: "Buy a ticket",
-    ctaHref: "/megapot",
-  },
   private_payment: {
     title: "Make 1 private payment",
     description: "Send any private payment to someone on Loofta.",

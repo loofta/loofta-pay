@@ -19,7 +19,7 @@ interface PublicGiveawayListItem {
   winner_count: number;
   selection_mode: "random" | "first_come" | "manual";
   prize_amount_usd: string;
-  reward_type?: "usdc" | "megapot_ticket" | "custom";
+  reward_type?: "usdc" | "custom";
   custom_prize_text?: string | null;
   prize_token_symbol?: string | null;
   prize_token_logo?: string | null;
@@ -32,13 +32,12 @@ interface PublicGiveawayListItem {
   entry_avatars?: string[];
 }
 
-/** Big headline figure for a list card's prize pool — dollars for a usdc giveaway, ticket count
- *  for a megapot_ticket one (tickets are $1 each, so total pool === total ticket count). */
+/** Big headline figure for a list card's prize pool — dollars for a usdc giveaway. */
 function poolLabel(g: Pick<PublicGiveawayListItem, "reward_type" | "prize_token_symbol" | "custom_prize_text">, total: number): string {
   if (g.reward_type === "custom" && g.custom_prize_text) return g.custom_prize_text;
   const formatted = total.toLocaleString(undefined, { maximumFractionDigits: 2 });
   if (g.prize_token_symbol) return `$${formatted} in ${g.prize_token_symbol}`;
-  return g.reward_type === "megapot_ticket" ? `${formatted} ticket${total === 1 ? "" : "s"}` : `$${formatted}`;
+  return `$${formatted}`;
 }
 
 interface GiveawayStats {
@@ -110,9 +109,6 @@ function GiveawayMark({ g }: { g: PublicGiveawayListItem }) {
 }
 
 function prizeGlyph(g: PublicGiveawayListItem) {
-  if (g.reward_type === "megapot_ticket") {
-    return { glyph: "M", tile: "radial-gradient(120% 120% at 28% 18%,#FFF0B8 0%,#F5B70C 42%,#D17A04 100%)", rim: "#8E5202", ink: "#6A3500" };
-  }
   if (g.is_official) {
     return { glyph: "L", tile: "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)", rim: "#9C2802", ink: "#fff" };
   }
@@ -163,7 +159,7 @@ export default function GiveawaysListPage() {
           <div style={{ flex: 1, minWidth: 240, display: "flex", flexDirection: "column", gap: 8 }}>
             <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: "clamp(30px,5vw,42px)", letterSpacing: "-0.05em", lineHeight: 1 }}>Giveaways</span>
             <span style={{ fontSize: 15, lineHeight: 1.5, color: "#B9B3A6" }}>
-              Enter an open giveaway, or launch your own in USDC or Megapot tickets.
+              Enter an open giveaway, or launch your own in USDC.
             </span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: "none" }}>

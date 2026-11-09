@@ -22,7 +22,7 @@ interface MessageInputProps {
   gifUrl?: string | null;
   onGifChange?: (gifUrl: string | null) => void;
   /** Search term the GIF picker prefills with when it opens — defaults to "money" (send flow);
-   *  pass e.g. "lottery" for contexts like gifting a Megapot ticket. */
+   *  pass something else for contexts that need a different default. */
   defaultGifQuery?: string;
 }
 

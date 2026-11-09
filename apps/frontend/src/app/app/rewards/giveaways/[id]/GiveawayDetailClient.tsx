@@ -259,7 +259,7 @@ function taskDisplayTitle(task: PublicTask): string {
 
 interface PublicGiveaway {
   id: string; title: string; description: string | null; logo_url: string | null; project_name: string | null; short_id: string | null;
-  winner_count: number; selection_mode: string; prize_amount_usd: string; reward_type?: "usdc" | "megapot_ticket" | "custom"; custom_prize_text?: string | null; prize_mint?: string | null; prize_token_symbol?: string | null; entries_close_at: string;
+  winner_count: number; selection_mode: string; prize_amount_usd: string; reward_type?: "usdc" | "custom"; custom_prize_text?: string | null; prize_mint?: string | null; prize_token_symbol?: string | null; entries_close_at: string;
   eligibility: { min_followers?: number; min_account_age_days?: number; verified_only?: boolean; required_countries?: string[]; required_continents?: string[] };
   status: string; burner_address: string | null; mint: string | null; is_devnet: boolean;
   funding_required_usd: string | null; funding_confirmed_usd: string; entry_count: number;
@@ -280,8 +280,7 @@ interface MyEntry {
   completions: TaskCompletion[];
 }
 
-/** A winner's prize claim link — /c/[id] for a usdc giveaway, /gift/[shortId] (already claimed,
- *  real Megapot ticket numbers) for a megapot_ticket one. Null until the payout lands.
+/** A winner's prize claim link — /c/[id]. Null until the payout lands.
  *
  *  Requires payout_status === "succeeded" before trusting either id field — an admin reversing a
  *  draw (giveaway un-completed, reward_type changed, entry reset back to entered) can otherwise
@@ -290,7 +289,6 @@ interface MyEntry {
  *  belongs to this entrant. */
 function myEntryClaimPath(entry: MyEntry): string | null {
   if (entry.payout_status !== "succeeded") return null;
-  if (entry.claim_gift_id && entry.claim_gift_short_id) return `/gift/${entry.claim_gift_short_id}`;
   if (entry.claim_payment_id) return `/c/${entry.claim_payment_id}`;
   return null;
 }
@@ -926,7 +924,7 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
               <ShareLinkMenu
                 url={giveawayUrl}
                 title={giveaway.title}
-                text={`${giveaway.reward_type === "megapot_ticket" ? `${giveaway.prize_amount_usd} Megapot ticket${Number(giveaway.prize_amount_usd) === 1 ? "" : "s"}` : `$${giveaway.prize_amount_usd}`} × ${giveaway.winner_count} winner${giveaway.winner_count === 1 ? "" : "s"} — enter "${giveaway.title}" on Loofta 🎁`}
+                text={`$${giveaway.prize_amount_usd} × ${giveaway.winner_count} winner${giveaway.winner_count === 1 ? "" : "s"} — enter "${giveaway.title}" on Loofta 🎁`}
                 ogUrl={`${siteUrl}/api/giveaways/${shareId}/og`}
                 triggerLabel="Share"
                 triggerClassName="h-11 w-full"
@@ -963,18 +961,16 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
             <p className="flex items-baseline gap-2.5 mb-3">
               <span className="text-5xl font-bold tracking-tight text-white">${totalPoolLabel}</span>
               <span className="text-base text-slate-400">
-                {giveaway.reward_type === "megapot_ticket" ? "worth of Megapot tickets" : giveaway.prize_token_symbol ? `in ${giveaway.prize_token_symbol}` : "USDC"}
+                {giveaway.prize_token_symbol ? `in ${giveaway.prize_token_symbol}` : "USDC"}
               </span>
             </p>
             )}
             <div className="flex flex-wrap gap-2 mb-3">
               {giveaway.reward_type !== "custom" && (
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
-                {giveaway.reward_type === "megapot_ticket"
-                  ? `${giveaway.prize_amount_usd} ticket${Number(giveaway.prize_amount_usd) === 1 ? "" : "s"} each`
-                  : giveaway.prize_token_symbol
-                    ? `$${giveaway.prize_amount_usd} in ${giveaway.prize_token_symbol} each`
-                    : `$${giveaway.prize_amount_usd} each`}
+                {giveaway.prize_token_symbol
+                  ? `$${giveaway.prize_amount_usd} in ${giveaway.prize_token_symbol} each`
+                  : `$${giveaway.prize_amount_usd} each`}
               </span>
               )}
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium border bg-white/[0.06] text-slate-300 border-white/10">
@@ -1563,12 +1559,10 @@ export default function GiveawayDetailClient({ id }: { id: string }) {
                 You won!{myEntry.rank != null && ` Ranked #${myEntry.rank}`}
               </p>
               <p className="text-base text-slate-300 mb-3">
-                {myEntry.claim_gift_id
-                  ? "Your Megapot tickets are already in — check them out below."
-                  : "Claim your prize below — you can choose to claim it publicly or privately. You have 30 days to claim it."}
+                Claim your prize below — you can choose to claim it publicly or privately. You have 30 days to claim it.
               </p>
               <GradientActionButton onClick={() => router.push(myEntryClaimPath(myEntry)!)}>
-                {myEntry.claim_gift_id ? "View your tickets" : "Claim your prize"}
+                Claim your prize
               </GradientActionButton>
             </div>
           ) : myEntry?.status === "winner" ? (

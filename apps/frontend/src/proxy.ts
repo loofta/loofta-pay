@@ -88,6 +88,7 @@ export function proxy(request: NextRequest) {
     "/blog",
     "/docs",
     "/how-it-works",
+    "/play",
   ]);
   // /blog/[slug] and /docs/[slug] are dynamic, so the exact-match Set above can't cover their
   // sub-pages — treat any path under either as marketing too, same as their index page.

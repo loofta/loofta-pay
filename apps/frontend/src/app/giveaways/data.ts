@@ -2,7 +2,7 @@ export const GIVEAWAYS_FAQ = [
   {
     question: "What can I give away?",
     answer:
-      "USDC or Megapot lottery tickets. Either way, you fund the prize pool upfront into escrow before entries open.",
+      "USDC. You fund the prize pool upfront into escrow before entries open.",
   },
   {
     question: "How are winners picked?",

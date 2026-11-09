@@ -17,7 +17,7 @@ interface MyGiveaway {
   status: string;
   winner_count: number;
   prize_amount_usd: string;
-  reward_type?: "usdc" | "megapot_ticket" | "custom";
+  reward_type?: "usdc" | "custom";
   custom_prize_text?: string | null;
   funding_required_usd: string | null;
   funding_confirmed_usd: string;
@@ -126,8 +126,6 @@ export default function MyGiveawaysPage() {
                   <p className="text-base text-slate-400 mb-3">
                     {g.reward_type === "custom"
                       ? g.custom_prize_text
-                      : g.reward_type === "megapot_ticket"
-                      ? `${g.prize_amount_usd} ticket${Number(g.prize_amount_usd) === 1 ? "" : "s"}`
                       : `$${g.prize_amount_usd}`} × {g.winner_count} winner{g.winner_count === 1 ? "" : "s"}
                   </p>
 

@@ -76,10 +76,11 @@ export async function POST(request: Request) {
     return new NextResponse(JSON.stringify({ error: "amountUsdc must be greater than 0" }), { status: 400, headers });
   }
 
-  // 3. Validate Peer Pay credentials. PEER_PAY_LIVE must be explicitly set to "true" to use the
-  // live key — absent/false always falls back to sandbox, so go-live is a deliberate opt-in
-  // rather than something that happens automatically once the var exists in a deployed env.
-  const isLive = process.env.PEER_PAY_LIVE === "true";
+  // 3. Validate Peer Pay credentials. Live is the default in production builds; set
+  // PEER_PAY_LIVE=false to force sandbox there. Outside production, PEER_PAY_LIVE=true opts in.
+  const isLive = process.env.PEER_PAY_LIVE
+    ? process.env.PEER_PAY_LIVE === "true"
+    : process.env.NODE_ENV === "production";
   const apiKey = isLive ? process.env.PEER_PAY_API_KEY_LIVE : process.env.PEER_PAY_API_KEY_SANDBOX;
   if (!apiKey) {
     console.error(`${LOG} Missing ${isLive ? "PEER_PAY_API_KEY_LIVE" : "PEER_PAY_API_KEY_SANDBOX"}`);

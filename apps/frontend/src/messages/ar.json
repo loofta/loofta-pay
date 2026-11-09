@@ -85,21 +85,6 @@
     "retryFailed": "إعادة محاولة {count} فشلت",
     "dismiss": "إغلاق"
   },
-  "UnclaimedGiftToast": {
-    "titleOne": "لديك هدية لم يُطالَب بها",
-    "titleMany": "لديك {count} هدايا لم يُطالَب بها",
-    "ticketWaitingOne": "تذكرة يانصيب واحدة في انتظارك.",
-    "ticketWaitingMany": "{numTickets} تذكرة يانصيب في انتظارك.",
-    "claimOne": "المطالبة",
-    "claimMany": "المطالبة بالكل",
-    "dismiss": "إغلاق"
-  },
-  "FreeSpinToast": {
-    "title": "لديك دورة مجانية في Mystery Pack",
-    "body": "لا حاجة للدفع — افتحها في أي وقت تشاء.",
-    "open": "افتحها",
-    "dismiss": "إغلاق"
-  },
   "AddEmailToast": {
     "title": "لا تفوت أي دفعة",
     "body": "أضف بريدك الإلكتروني لتصلك إشعارات بالمدفوعات والهدايا الجديدة.",

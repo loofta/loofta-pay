@@ -69,7 +69,6 @@ function Overview({ onNavigate }: { onNavigate: (slug: string) => void }) {
         <Card slug="telegram-bot" title="Telegram bot" body="Send money by messaging the Loofta bot, like a chat — to one person or many." onNavigate={onNavigate} />
         <Card slug="deposit" title="Deposit" body="Top up your balance from any token, any chain." onNavigate={onNavigate} />
         <Card slug="withdraw" title="Withdraw" body="Cash out to Naira, USD, or any crypto." onNavigate={onNavigate} />
-        <Card slug="megapot" title="Megapot" body="A daily-draw lottery, played from Solana, with a private-entry option." onNavigate={onNavigate} />
         <Card slug="giveaways" title="Giveaways" body="Escrow-funded prize pools with a provably random, on-chain draw." onNavigate={onNavigate} />
         <Card slug="privacy" title="Privacy" body="How Loofta hides amounts and wallets on-chain using MagicBlock." onNavigate={onNavigate} />
       </div>
@@ -118,7 +117,7 @@ function GuideContent({ slug, onNavigate }: { slug: string; onNavigate: (slug: s
       return (
         <Page title="Telegram bot">
           <p>The Loofta bot on Telegram lets you send money by chat — message what you want to happen ("send $20 to alice@x.com") instead of filling out a form.</p>
-          <p>It can split a payment across <strong>multiple recipients at once</strong>, and it can <strong>gift a Megapot ticket</strong> directly from the conversation, in place of a plain cash payment.</p>
+          <p>It can split a payment across <strong>multiple recipients at once</strong>.</p>
           <p>Non-custodial: you always confirm the exact payment before anything sends — the bot never sends anything without your approval.</p>
           <Cta href="https://t.me/looftapay_bot" label="Open the Telegram bot" />
         </Page>
@@ -169,23 +168,6 @@ function GuideContent({ slug, onNavigate }: { slug: string; onNavigate: (slug: s
             <li><strong>SOL</strong> — swap your balance to SOL and withdraw directly to a Solana wallet.</li>
           </ul>
           <Cta href={`${APP_URL}?balance=withdraw`} label="Withdraw" />
-        </Page>
-      );
-    case "megapot":
-      return (
-        <Page title="How Megapot works" logo="/images/megapot/logo.svg">
-          <p>Megapot is a lottery that runs on Base, playable from Solana — Loofta bridges your ticket purchase over automatically, so you never have to leave the app or hold ETH for gas.</p>
-          <p>Draws happen <strong>daily</strong>. Buy a ticket publicly, or pay for it with a MagicBlock private transfer so the purchase itself isn't a plain public payment.</p>
-          <p>Wins are tracked automatically — small wins can be played forward into another ticket, larger ones can be withdrawn.</p>
-          <Cta href={`${APP_URL}/megapot`} label="Play Megapot" />
-        </Page>
-      );
-    case "gift-tickets":
-      return (
-        <Page title="Gift a ticket" logo="/images/megapot/logo.svg">
-          <p>Send someone a Megapot ticket instead of cash — from the Megapot page directly, or by asking the Telegram bot to gift one in chat.</p>
-          <p>They get a claim link the same way any other payment works; claiming it enters the ticket in their name for the next draw.</p>
-          <Cta href={`${APP_URL}/megapot`} label="Gift a ticket" />
         </Page>
       );
     case "rewards":

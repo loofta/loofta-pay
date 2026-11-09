@@ -876,7 +876,7 @@ export default function Home() {
                   </div>
 
                   {destKind === "cash" ? (
-                    <div className="relative">
+                    <div className={`relative ${suggestions.length > 0 ? "z-40" : ""}`}>
                       <span className="absolute left-3 top-1/2 -translate-y-1/2">
                         <img
                           src={DIRECT_CASH_PLATFORMS.find((p) => p.id === cashPlatform)?.logo}
@@ -925,7 +925,7 @@ export default function Home() {
                       row and shifts this input's position. For Username, "loo-" is a fixed, non-editable
                       prefix rendered outside the actual input value — it can't be backspaced away since
                       it was never part of the editable text. */
-                  <div className="relative">
+                  <div className={`relative ${suggestions.length > 0 ? "z-40" : ""}`}>
                     {sendMethod === "social" ? (
                       <Popover>
                         <PopoverTrigger asChild>

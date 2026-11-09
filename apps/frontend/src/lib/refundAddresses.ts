@@ -35,7 +35,7 @@ export function isValidAddressForChain(address: string, chain: string): boolean 
   const evmChains = new Set([
     "eth", "ethereum", "base", "arb", "arbitrum", "op", "optimism",
     "bsc", "berachain", "pol", "polygon", "avax", "avalanche", "gnosis",
-    "fantom", "ftm", "linea", "scroll", "zksync", "zk", "blast", "matic", "monad",
+    "fantom", "ftm", "linea", "scroll", "zksync", "zk", "blast", "matic", "monad", "robinhood",
   ]);
   if (evmChains.has(ch)) return /^0x[a-fA-F0-9]{40}$/.test(raw);
 

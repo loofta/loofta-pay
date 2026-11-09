@@ -53,7 +53,6 @@ import {
   Icon3DArrowUser,
   Icon3DNumber,
   Icon3DShield,
-  Icon3DStar,
 } from "@/components/ui/icons3d";
 import { GlossyAppIcon, PEER_GLOSSY_DESTS } from "@/components/ui/GlossyAppIcon";
 import { LaunchDeck } from "@/components/LaunchDeck";
@@ -1102,7 +1101,6 @@ function ProofStrip() {
     { src: "/images/home-v2/solana-wordmark.svg", alt: "Solana", width: 170 },
     { src: "/images/home-v2/magicblock-wordmark.svg", alt: "MagicBlock", width: 144 },
     { src: "/images/home-v2/blink-wordmark-white.png", alt: "Blink", width: 88 },
-    { src: "/images/home-v2/megapot-wordmark.svg", alt: "Megapot", width: 137 },
     { src: "/images/home-v2/superteam-th-wordmark.png", alt: "Superteam Thailand", width: 120 },
   ];
 
@@ -1561,98 +1559,6 @@ function BusinessSection() {
 }
 
 /* =====================================================
-   REWARDS — daily jackpot (illustrative), live countdown
-   ===================================================== */
-
-function useCountdownTo710PMCET() {
-  const [time, setTime] = useState({ h: "00", m: "00", s: "00" });
-
-  useEffect(() => {
-    const tick = () => {
-      const now = new Date();
-      const target = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 18, 10, 0));
-      if (target.getTime() - now.getTime() <= 0) target.setUTCDate(target.getUTCDate() + 1);
-      let secs = Math.floor((target.getTime() - now.getTime()) / 1000);
-      const h = Math.floor(secs / 3600); secs %= 3600;
-      const m = Math.floor(secs / 60);
-      const s = secs % 60;
-      const pad = (n: number) => String(n).padStart(2, "0");
-      setTime({ h: pad(h), m: pad(m), s: pad(s) });
-    };
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  return time;
-}
-
-function RewardsSection() {
-  const { h, m, s } = useCountdownTo710PMCET();
-
-  return (
-    <section id="rewards" className="px-6 py-24 md:px-10 md:py-28">
-      <div className="mx-auto max-w-[1240px]">
-        <motion.div
-          {...fadeUp}
-          className="relative overflow-hidden rounded-[40px] bg-[#131319] px-5 py-12 text-center shadow-[0_40px_90px_-40px_rgba(0,0,0,0.75)] sm:px-8 md:px-16 md:py-14"
-        >
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0"
-            style={{
-              background:
-                "radial-gradient(ellipse 60% 60% at 50% 0%, rgba(255,106,0,0.35), transparent 60%), radial-gradient(ellipse 70% 50% at 50% 120%, rgba(234,179,8,0.25), transparent 60%)",
-            }}
-          />
-          <div className="relative z-[1]">
-            <span className="inline-flex items-center gap-2 font-grotesk text-base font-semibold uppercase tracking-[0.22em] text-[#EAB308]">
-              Daily prize pool · powered by Megapot
-            </span>
-
-            <div className={`mt-[34px] font-display text-[clamp(38px,11vw,110px)] font-semibold leading-[0.9] tracking-[-0.03em] ${BRAND_GRADIENT} bg-clip-text text-transparent`}>
-              $1,100,000
-            </div>
-            <p className={`mt-1.5 font-grotesk text-base ${INK_3}`}>
-              draws every day at 5:10pm UTC
-            </p>
-
-            <div className="mt-[34px] flex justify-center gap-2.5 sm:gap-5">
-              {[{ v: h, l: "Hrs" }, { v: m, l: "Min" }, { v: s, l: "Sec" }].map((c) => (
-                <div key={c.l} className="min-w-[76px] rounded-2xl bg-white/[0.06] px-3 py-3.5 sm:min-w-[110px] sm:px-[26px] sm:py-5">
-                  <div className={`font-display text-[32px] font-medium leading-none tabular-nums sm:text-[52px] ${INK}`}>{c.v}</div>
-                  <div className="mt-1 font-grotesk text-sm font-semibold uppercase tracking-[0.16em] text-white/50">{c.l}</div>
-                </div>
-              ))}
-            </div>
-
-            <p className="mx-auto mt-10 max-w-[760px] font-grotesk text-[clamp(22px,2.6vw,32px)] font-medium leading-[1.4] text-white">
-              Sending payments earns you Megapot tickets. Pay your friends,
-              get paid, and stack entries into the jackpot, automatically.
-            </p>
-
-            <div className="mx-auto mt-8 inline-flex flex-col items-center gap-2 rounded-2xl bg-white/[0.06] px-8 py-6 font-grotesk text-white sm:px-12 sm:py-8">
-              <span className="h-[26px] w-[26px] sm:h-[34px] sm:w-[34px] [&>svg]:h-full [&>svg]:w-full">
-                <Icon3DStar size={34} />
-              </span>
-              <span className="font-display text-2xl font-medium text-[#EAB308] sm:text-[32px]">Win tickets</span>
-              <span className="text-base text-white/60 sm:text-lg">just by sending payments, no cost, no catch</span>
-            </div>
-
-            <a
-              href="/blog/how-loofta-daily-lottery-works"
-              className="mt-6 block font-grotesk text-sm font-medium text-white/60 underline decoration-white/30 underline-offset-4 transition-colors hover:text-white"
-            >
-              Learn how the daily draw works
-            </a>
-          </div>
-        </motion.div>
-      </div>
-    </section>
-  );
-}
-
-/* =====================================================
    FINAL CTA
    ===================================================== */
 
@@ -1673,7 +1579,7 @@ function FinalCTA() {
           })}
         </h2>
         <p className={`mx-auto mt-[26px] max-w-[600px] font-grotesk text-[22px] ${INK_2}`}>
-          Free to start. Your recipient claims in seconds. You collect Megapot tickets along the way.
+          Free to start. Your recipient claims in seconds.
         </p>
         <div className="mt-9 flex justify-center">
           <Link
@@ -1732,7 +1638,6 @@ export default function HomeV3Content() {
         <HowItWorks />
         <GiveawaysSection />
         <BusinessSection />
-        <RewardsSection />
         <FinalCTA />
       </main>
       <Footer />

@@ -85,21 +85,6 @@
     "retryFailed": "Subukan muli ang {count} na nabigo",
     "dismiss": "Isara"
   },
-  "UnclaimedGiftToast": {
-    "titleOne": "May hindi mo pa nakuhang regalo",
-    "titleMany": "May {count} hindi mo pa nakuhang regalo",
-    "ticketWaitingOne": "1 tiket ng Megapot ang naghihintay sa'yo.",
-    "ticketWaitingMany": "{numTickets} tiket ng Megapot ang naghihintay sa'yo.",
-    "claimOne": "Kunin ito",
-    "claimMany": "Kunin ang mga ito",
-    "dismiss": "Isara"
-  },
-  "FreeSpinToast": {
-    "title": "May libreng Mystery Pack spin ka",
-    "body": "Walang bayad na kailangan — buksan anumang oras.",
-    "open": "Buksan",
-    "dismiss": "Isara"
-  },
   "AddEmailToast": {
     "title": "Huwag palampasin ang anumang bayad",
     "body": "Idagdag ang iyong email para maabisuhan sa mga bagong bayad at regalo.",

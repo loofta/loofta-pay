@@ -26,13 +26,6 @@ export const GUIDE_NAV: GuideNavSection[] = [
     ],
   },
   {
-    section: "Megapot",
-    pages: [
-      { slug: "megapot", title: "How Megapot works" },
-      { slug: "gift-tickets", title: "Gift a ticket" },
-    ],
-  },
-  {
     section: "Rewards & giveaways",
     pages: [
       { slug: "rewards", title: "Rewards" },

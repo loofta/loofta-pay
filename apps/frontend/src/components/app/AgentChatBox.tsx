@@ -29,9 +29,7 @@ import {
   type MultiSendRecipient,
   type MultiSendLinkItem,
 } from '@/services/api/sendPayment'
-import { buyGift, confirmGiftSend } from '@/services/api/lotteryGift'
 import { parseAgentCommand, type ParsedRecipient } from '@/lib/parseAgentCommand'
-import { parseGiftCommand, type ParsedGiftRecipient } from '@/lib/parseGiftCommand'
 import { TELEGRAM_SEND_ENABLED } from '@/lib/socialPlatforms'
 import { getRpcForMode, getRpcFallbackForMode, getPrivySolanaChainForMode } from '@/lib/solanaRpc'
 import { getEphemeralRpcForMode } from '@/lib/per/constants'
@@ -43,7 +41,7 @@ import { IncognitoModeToggle } from '@/components/IncognitoModeToggle'
 import { SocialPlatformIcon, type SocialIconPlatform } from '@/components/SocialPlatformIcon'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Send, Loader2, Copy, Check, ExternalLink, AlertCircle, Clock, Ticket } from 'lucide-react'
+import { Send, Loader2, Copy, Check, ExternalLink, AlertCircle, Clock } from 'lucide-react'
 
 function fireConfetti() {
   confetti({
@@ -109,21 +107,6 @@ interface PaymentCard {
   errorMessage?: string
 }
 
-interface GiftCard {
-  recipient: ParsedGiftRecipient
-  numTickets: number
-  state: CardState
-  message: string
-  gifUrl: string | null
-  isPrivate: boolean
-  /** Set once buy-gift has returned an id — a gift is only actually created once buy-gift-confirm
-   *  succeeds, so unlike PaymentCard there's no meaningful "reuse across retries" state here; a
-   *  retry after a failure just runs the whole buy → sign → confirm sequence again, same as the
-   *  existing self-service gift UI on /app/megapot already does. */
-  claimUrl?: string
-  errorMessage?: string
-}
-
 interface PlatformChoice {
   identifier: string
   amount: number
@@ -163,7 +146,6 @@ interface ChatMessage {
   tone?: 'error' | 'info'
   card?: PaymentCard
   multiCard?: MultiPaymentCard
-  giftCard?: GiftCard
   platformChoice?: PlatformChoice
   multiPlatformChoice?: MultiPlatformChoice
   insufficientFunds?: { neededUsd: number }
@@ -176,9 +158,9 @@ const PLATFORM_CHOICES: { id: Exclude<SocialIconPlatform, "loofta">; label: stri
   { id: 'twitter', label: 'X' },
 ]
 
-const EXAMPLE_PROMPTS = ['send $5 to @alice on X', 'send $10 to @bob on Telegram', 'send $5 to @alice on X and $10 to @bob on telegram', 'gift 5 Megapot tickets to @alice']
+const EXAMPLE_PROMPTS = ['send $5 to @alice on X', 'send $10 to @bob on Telegram', 'send $5 to @alice on X and $10 to @bob on telegram']
 
-function platformLabel(p: ParsedRecipient['platform'] | ParsedGiftRecipient['platform']) {
+function platformLabel(p: ParsedRecipient['platform']) {
   switch (p) {
     case 'twitter': return 'X'
     case 'telegram': return 'Telegram'
@@ -195,7 +177,7 @@ function looUsername(identifier: string) {
   return `loo-${identifier.replace(/^loo-/i, '')}`
 }
 
-function recipientDisplay(rec: ParsedRecipient | ParsedGiftRecipient) {
+function recipientDisplay(rec: ParsedRecipient) {
   if (rec.platform === 'email') return rec.identifier
   if (rec.platform === 'username') return looUsername(rec.identifier)
   return `@${rec.identifier}`
@@ -229,7 +211,7 @@ export function AgentChatBox() {
     {
       id: nextId(),
       role: 'assistant',
-      text: 'Hey! Try "send $5 to @alice on X" or "gift 5 Megapot tickets to @alice". Works with X, Telegram, Discord, Github, loofta username and email.',
+      text: 'Hey! Try "send $5 to @alice on X". Works with X, Telegram, Discord, Github, loofta username and email.',
     },
   ])
   const [input, setInput] = useState('')
@@ -604,72 +586,6 @@ export function AgentChatBox() {
     finalizeMultiSend(resolvedRecipients, choice.isPrivate)
   }
 
-  function updateGiftCard(id: string, patch: Partial<GiftCard>) {
-    setMessages((m) => m.map((msg) => (msg.id === id && msg.giftCard ? { ...msg, giftCard: { ...msg.giftCard, ...patch } } : msg)))
-  }
-
-  function pushGiftCard(recipient: ParsedGiftRecipient, numTickets: number, isPrivate: boolean) {
-    setMessages((m) => [
-      ...m,
-      {
-        id: nextId(),
-        role: 'assistant',
-        text: "Here's your gift — confirm to send.",
-        giftCard: { recipient, numTickets, state: 'pending', message: '', gifUrl: null, isPrivate },
-      },
-    ])
-  }
-
-  function handleCancelGift(id: string) {
-    updateGiftCard(id, { state: 'cancelled' })
-  }
-
-  /** Builds, signs, and confirms the gift's funding tx — mirrors /app/megapot's own
-   *  handleGiftBuy (buy-gift → one signature → buy-gift-confirm). Unlike handleConfirm's
-   *  claimId-reuse-on-retry logic, a retry here just runs the whole sequence again — the existing
-   *  self-service gift UI doesn't track partial progress across a failure either, since nothing
-   *  is actually funded until buy-gift-confirm succeeds. */
-  async function handleConfirmGift(id: string, card: GiftCard) {
-    updateGiftCard(id, { state: 'sending', errorMessage: undefined })
-    try {
-      if (!user?.id) throw new Error('Not authenticated')
-      const accessToken = await getAccessToken()
-      const senderAddress = deriveSolanaEmbeddedAddress(user)
-      const wallet = solanaWallets.find((w) => w.address === senderAddress) ?? solanaWallets[0]
-      if (!wallet) throw new Error('Loofta wallet not found. Try logging out and back in.')
-
-      const recipientType: 'email' | 'handle' = card.recipient.platform === 'email' ? 'email' : 'handle'
-      const note = [card.message.trim(), card.gifUrl].filter(Boolean).join(' ').trim() || undefined
-      const { giftId, txBase64 } = await buyGift(
-        {
-          numTickets: card.numTickets,
-          userSolanaAddress: wallet.address,
-          recipientType,
-          recipientIdentifier: card.recipient.identifier,
-          note,
-          route: card.isPrivate ? 'solana_private' : 'solana_public',
-        },
-        user.id,
-        accessToken,
-      )
-
-      // showWalletUIs defaults on for this hook (unlike the fee-payer-sponsored multi-send path
-      // above) — this is the sender's own wallet funding the gift, so Privy's normal confirm UI
-      // is expected here, same as /app/megapot's own gift flow.
-      const { signature: sigBytes } = await signAndSendTransaction({
-        transaction: Buffer.from(txBase64, 'base64') as unknown as Uint8Array,
-        wallet: wallet as unknown as Parameters<typeof signAndSendTransaction>[0]['wallet'],
-      })
-      const signature = bs58.encode(sigBytes as Uint8Array)
-
-      const { claimUrl } = await confirmGiftSend(giftId, signature, user.id, accessToken)
-      updateGiftCard(id, { state: 'sent', claimUrl })
-      fireConfetti()
-    } catch (e: unknown) {
-      updateGiftCard(id, { state: 'failed', errorMessage: e instanceof Error ? e.message : 'Something went wrong.' })
-    }
-  }
-
   async function handleSubmit() {
     const text = input.trim()
     if (!text) return
@@ -680,38 +596,6 @@ export function AgentChatBox() {
     if (!authenticated) {
       pushAssistant('Log in first, then tell me who to pay.', 'info')
       login({ loginMethods: ['email', 'twitter', 'discord', 'github'], disableSignup: false })
-      return
-    }
-
-    // Checked before the payment parser — "gift 5 tickets to @alice" has a different quantity
-    // unit ($amount vs a ticket count) and a different resulting action entirely, so it's a fully
-    // separate command shape rather than a variant of the payment one.
-    const giftParsed = parseGiftCommand(text)
-    if (giftParsed) {
-      if (giftParsed.error) {
-        pushAssistant(giftParsed.error, 'error')
-        return
-      }
-      // Gifts can only resolve to an email or a handle checked against BOTH X and Loofta
-      // username at claim time (see lottery.service.ts's isGiftRecipient) — there's no
-      // discord/telegram/github matching path on the backend at all, unlike payments.
-      if (giftParsed.recipient.platform === 'discord' || giftParsed.recipient.platform === 'telegram' || giftParsed.recipient.platform === 'github') {
-        pushAssistant('Gifts can only go to an email or an X/Loofta handle right now — drop the platform, or use email instead.', 'error')
-        return
-      }
-      let giftRecipient = giftParsed.recipient
-      if (giftRecipient.platform === 'username') {
-        const exists = await checkUsernameExists(looUsername(giftRecipient.identifier))
-        if (!exists) {
-          // Not a hard block — a gift's "handle" recipient is checked against BOTH X and Loofta
-          // username at claim time, so this still works if @identifier turns out to be (or later
-          // becomes) someone's X handle. Just relabel so the card is honest about what's actually
-          // being sent, instead of implying a confirmed Loofta username.
-          pushAssistant(`@${giftRecipient.identifier} isn't a registered Loofta user — sending this as a gift claimable by whoever links that as their X handle or username.`, 'info')
-          giftRecipient = { ...giftRecipient, platform: 'twitter' }
-        }
-      }
-      pushGiftCard(giftRecipient, giftParsed.numTickets, giftParsed.isPrivate)
       return
     }
 
@@ -816,7 +700,6 @@ export function AgentChatBox() {
           }
           const card = msg.card
           const multiCard = msg.multiCard
-          const giftCard = msg.giftCard
           return (
             <div key={msg.id} className="flex items-start gap-2.5 justify-start max-w-[90%]">
               <Avatar />
@@ -983,138 +866,6 @@ export function AgentChatBox() {
                           type="button"
                           variant="outline"
                           onClick={() => updateCard(msg.id, { state: 'pending', errorMessage: undefined })}
-                          className="w-full h-11 rounded-xl text-lg md:text-lg font-medium bg-transparent border-white/15 text-slate-300 hover:bg-white/5 hover:text-white"
-                        >
-                          Try again
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {giftCard && (
-                  <div className="rounded-2xl border border-white/[0.12] bg-white/[0.04] p-4 min-w-[280px]">
-                    <div className="flex items-baseline justify-between mb-3">
-                      <span className="text-base uppercase tracking-wide text-slate-500">Gift</span>
-                      <span className="flex items-center gap-1.5 font-display font-semibold text-2xl text-white">
-                        <Ticket className="h-5 w-5 text-amber-400" />
-                        {giftCard.numTickets} {giftCard.numTickets === 1 ? 'ticket' : 'tickets'}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-lg mb-3.5">
-                      <span className="text-slate-500">To</span>
-                      <span className="text-slate-200 truncate">{recipientDisplay(giftCard.recipient)}</span>
-                      <span className="text-slate-500">Fee</span>
-                      <span className="text-slate-200">Free</span>
-                      {giftCard.isPrivate && (
-                        <>
-                          <span className="text-slate-500">Privacy</span>
-                          <span className="text-slate-200">Private</span>
-                        </>
-                      )}
-                    </div>
-
-                    {giftCard.state === 'pending' && (
-                      <div className="space-y-2.5">
-                        <MessageInput
-                          value={giftCard.message}
-                          onChange={(v) => updateGiftCard(msg.id, { message: v })}
-                          gifUrl={giftCard.gifUrl}
-                          onGifChange={(url) => updateGiftCard(msg.id, { gifUrl: url })}
-                          placeholder="Add a note or GIF (optional)"
-                          defaultGifQuery="lottery"
-                          maxLength={500}
-                          className="[&_input]:h-10 [&_input]:bg-white/5 [&_input]:border-white/10 [&_input]:text-white [&_input]:placeholder:text-slate-500 [&_input]:text-base [&_input]:md:text-base"
-                        />
-                        <div className="flex gap-2">
-                          <Button
-                            type="button"
-                            onClick={() => handleConfirmGift(msg.id, giftCard)}
-                            className="flex-1 h-11 rounded-xl text-lg md:text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90"
-                          >
-                            Confirm
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => handleCancelGift(msg.id)}
-                            className="flex-1 h-11 rounded-xl text-lg md:text-lg font-medium bg-transparent border-white/15 text-slate-400 hover:bg-white/5 hover:text-white"
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                    {giftCard.state === 'sending' && (
-                      <Button disabled className="w-full h-11 rounded-xl text-lg md:text-lg font-semibold bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white opacity-80">
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" /> Sending…
-                      </Button>
-                    )}
-
-                    {giftCard.state === 'sent' && (
-                      <div className="space-y-2">
-                        <p className="flex items-center gap-1.5 text-lg font-medium text-green-400">
-                          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-green-400/15">
-                            <Check className="h-2.5 w-2.5" strokeWidth={3} />
-                          </span>
-                          Confirmed
-                        </p>
-                        {giftCard.claimUrl && (
-                          <div className="flex gap-2">
-                            <Input readOnly value={giftCard.claimUrl} className="font-mono text-base md:text-base flex-1 min-w-0 h-9 bg-white/5 border-white/10 text-white" />
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="icon"
-                              onClick={() => copyLink(msg.id, giftCard.claimUrl!)}
-                              className="h-9 w-9 shrink-0 bg-transparent border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
-                            >
-                              {copiedId === msg.id ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4" />}
-                            </Button>
-                            <a
-                              href={giftCard.claimUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10 text-slate-300 hover:bg-white/10 hover:text-white transition-colors"
-                            >
-                              <ExternalLink className="h-4 w-4" />
-                            </a>
-                            <ShareLinkMenu
-                              url={giftCard.claimUrl}
-                              title="Gift sent"
-                              text={`I gifted ${giftCard.numTickets} Megapot ${giftCard.numTickets === 1 ? 'ticket' : 'tickets'} on Loofta 🎟️`}
-                              // Without this, ShareLinkMenu defaults to the payment share route
-                              // (/api/share/:id/og) — a gift claim link needs the lottery gift OG
-                              // route instead, same as the claim page's own ShareLinkMenu usages.
-                              ogUrl={(() => {
-                                try {
-                                  const u = new URL(giftCard.claimUrl!)
-                                  const shareId = u.pathname.split('/').filter(Boolean).pop()
-                                  return shareId ? `${u.origin}/api/gift/${shareId}/og` : undefined
-                                } catch {
-                                  return undefined
-                                }
-                              })()}
-                              variant="subtle"
-                              triggerClassName="h-9 w-9"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {giftCard.state === 'cancelled' && <p className="text-lg text-slate-500">Cancelled — nothing was sent.</p>}
-
-                    {giftCard.state === 'failed' && (
-                      <div className="space-y-2">
-                        <p className="flex items-start gap-1.5 text-lg text-red-300">
-                          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> {giftCard.errorMessage}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => updateGiftCard(msg.id, { state: 'pending', errorMessage: undefined })}
                           className="w-full h-11 rounded-xl text-lg md:text-lg font-medium bg-transparent border-white/15 text-slate-300 hover:bg-white/5 hover:text-white"
                         >
                           Try again

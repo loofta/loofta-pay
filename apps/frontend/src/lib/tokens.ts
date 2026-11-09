@@ -54,6 +54,7 @@ export function findTokenBySelection<T extends { symbol: string; chain: string }
 // "ethereum"/"zcash" which never matched live token data, so those chains fell through to the
 // generic short-code fallback below and weren't findable by their full name in search.
 const CHAIN_LABELS: Record<string, string> = {
+	robinhood: "Robinhood Chain",
 	eth: "Ethereum",
 	ethereum: "Ethereum",
 	arb: "Arbitrum",
