@@ -4,9 +4,11 @@ import { ConfigService } from '@nestjs/config';
 import { PrivyVerificationService } from '@/auth/privy-verification.service';
 import { MAINNET_WALLET_UPDATE_ID } from '@/common/force-update';
 import { RedisService } from '@/redis/redis.service';
-import { Connection } from '@solana/web3.js';
+import { Connection, PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
+import { tokenAccountExists } from '@/common/token-account-exists';
 import { TldParser } from '@onsol/tldparser';
-import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
+import { getMainnetSolanaRpcUrl, isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 
 const FORCE_UPDATE_TTL = 60 * 60 * 24 * 7; // 7 days — completed state is permanent
 function forceUpdateKey(privyUserId: string, updateId: string) {
@@ -522,7 +524,7 @@ export class UsersService {
     kind: 'email' | 'username' | 'twitter' | 'social';
     value: string;
     platform?: SocialPlatform;
-  }): Promise<{ registered: boolean; requirePrivatePayments: boolean }> {
+  }): Promise<{ registered: boolean; requirePrivatePayments: boolean; needsClaim: boolean }> {
     try {
       const user = opts.kind === 'email'
         ? await this.findByEmail(opts.value)
@@ -531,10 +533,34 @@ export class UsersService {
           : opts.kind === 'social' && opts.platform
             ? await this.findBySocialHandle(opts.platform, opts.value)
             : await this.findByUsername(opts.value);
-      return { registered: true, requirePrivatePayments: user.requirePrivatePayments };
+      return {
+        registered: true,
+        requirePrivatePayments: user.requirePrivatePayments,
+        needsClaim: await this.recipientNeedsClaim(user.privyUserId),
+      };
     } catch (err) {
-      if (err instanceof NotFoundException) return { registered: false, requirePrivatePayments: false };
+      if (err instanceof NotFoundException) return { registered: false, requirePrivatePayments: false, needsClaim: true };
       throw err;
+    }
+  }
+
+  /**
+   * True when a registered recipient has never received USDC (no USDC account yet). Their first
+   * payment goes through a burner + claim, same as an unregistered recipient, so it carries the
+   * same flat claim fee. Mirrors the check in ClaimsService.insertDirectRegisteredPayment; when
+   * the check fails we say true, matching that path's burner fallback.
+   */
+  private async recipientNeedsClaim(privyUserId: string): Promise<boolean> {
+    try {
+      if (isSolanaDevnetFromConfig(this.configService)) return false;
+      const wallet = await this.getSolanaWalletAddress(privyUserId);
+      const mint = new PublicKey(this.configService.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+      const ata = await getAssociatedTokenAddress(mint, new PublicKey(wallet));
+      const conn = new Connection(getMainnetSolanaRpcUrl(this.configService), 'confirmed');
+      return !(await tokenAccountExists(conn, ata));
+    } catch (e) {
+      this.logger.warn(`pay-target USDC account check failed, assuming claim: ${(e as Error)?.message}`);
+      return true;
     }
   }
 

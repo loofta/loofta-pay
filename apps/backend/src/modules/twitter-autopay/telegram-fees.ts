@@ -8,7 +8,7 @@ import {
 /** Loofta's own fee on every Telegram payment, public or private, on top of everything else. */
 export const TELEGRAM_LOOFTA_FEE_BPS = 20;
 /** Flat fee when the recipient is not on Loofta yet (same as the web send flow). */
-export const UNREGISTERED_CLAIM_FEE_USD = 0.1;
+export const UNREGISTERED_CLAIM_FEE_USD = 0.2;
 
 export interface TelegramFees {
   /** Everything the privacy API takes, shown as one "MagicBlock" line: its flat $0.20 relay, its
@@ -17,7 +17,7 @@ export interface TelegramFees {
   privateFeeUsd: number;
   /** Loofta's separate 20 bps, charged on every payment as its own transfer to the fee account. */
   looftaFeeUsd: number;
-  /** $0.10 when the recipient is not on Loofta, else 0. */
+  /** $0.20 when the recipient is not on Loofta, else 0. */
   claimFeeUsd: number;
   /** What leaves the wallet in total. */
   totalUsd: number;

@@ -525,7 +525,7 @@ export class TwitterAutopayService {
   /**
    * What a Telegram payment to @handle would do, so the Confirm card can say it up front and the
    * balance check can include fees. Registered + public + already has a USDC account: instant,
-   * straight to their wallet. Anyone else: a claim link. Not on Loofta at all: a flat $0.10 claim
+   * straight to their wallet. Anyone else: a claim link. Not on Loofta at all: a flat $0.20 claim
    * fee is added on top, same as the web send flow. Private: MagicBlock private transfer.
    */
   async planTelegramPayment(handle: string, isPrivate: boolean, isDevnet: boolean, amountUsd = 0): Promise<TelegramPaymentPlan> {
@@ -578,7 +578,7 @@ export class TwitterAutopayService {
   /**
    * Telegram auto-pay. Public: instant to a registered wallet that can already hold USDC, else a
    * burner claim (never asks the sponsor to create a token account for a payment the same user
-   * made, which its drain guard refuses). Not on Loofta: the $0.10 claim fee goes to the Loofta
+   * made, which its drain guard refuses). Not on Loofta: the $0.20 claim fee goes to the Loofta
    * fee account in the same transaction. Private: MagicBlock private transfer with the chosen
    * delay and split, signed by the sender's granted key.
    */

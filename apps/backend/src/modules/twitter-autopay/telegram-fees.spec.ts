@@ -9,10 +9,10 @@ describe('computeTelegramFees', () => {
     expect(f.totalUsd).toBeCloseTo(10.02, 6);
   });
 
-  it('public to an unregistered user adds the $0.10 claim fee', () => {
+  it('public to an unregistered user adds the $0.20 claim fee', () => {
     const f = computeTelegramFees(10, { isPrivate: false, registered: false });
-    expect(f.claimFeeUsd).toBe(0.1);
-    expect(f.totalUsd).toBeCloseTo(10.12, 6);
+    expect(f.claimFeeUsd).toBe(0.2);
+    expect(f.totalUsd).toBeCloseTo(10.22, 6);
   });
 
   it('private: $0.20 + 10 bps MagicBlock + 10 bps Loofta platform fee under one line, plus Loofta 20 bps', () => {
@@ -26,7 +26,7 @@ describe('computeTelegramFees', () => {
     const f = computeTelegramFees(1, { isPrivate: true, registered: false });
     expect(f.privateFeeUsd).toBeCloseTo(0.202, 6);
     expect(f.looftaFeeUsd).toBeCloseTo(0.002, 6);
-    expect(f.claimFeeUsd).toBe(0.1);
-    expect(f.totalUsd).toBeCloseTo(1 + 0.202 + 0.002 + 0.1, 6);
+    expect(f.claimFeeUsd).toBe(0.2);
+    expect(f.totalUsd).toBeCloseTo(1 + 0.202 + 0.002 + 0.2, 6);
   });
 });

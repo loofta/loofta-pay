@@ -365,6 +365,8 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
     destApplies: isHandleDest && !isLooftaUsername && trimmedRecipient.length > 0,
     registered: payTarget.registered,
     lookupResolved: payTargetResolved,
+    needsClaim: !!payTarget.needsClaim,
+    usernameDest: isHandleDest && isLooftaUsername && trimmedRecipient.length > 0,
   };
   const platformFeeUsd = unregisteredClaimFeeUsd(claimFeeOpts);
   const claimFeeWaived = platformFeeUsd === 0 && unregisteredClaimFeeWouldApply(claimFeeOpts);
@@ -861,7 +863,7 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
                     : payTarget.registered
                       ? "Paid straight to their Loofta wallet"
                       : platformFeeUsd > 0
-                        ? "Paid from your Loofta balance · includes the $0.10 claim fee"
+                        ? "Paid from your Loofta balance · includes the $0.20 claim fee"
                         : "Paid from your Loofta balance"
                   : t("signInToSendHandleHint")}
               </div>

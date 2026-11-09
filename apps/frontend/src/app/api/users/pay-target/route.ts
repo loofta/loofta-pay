@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
   const kind = (searchParams.get("kind") ?? "").trim();
   const value = (searchParams.get("value") ?? "").trim();
   const platform = (searchParams.get("platform") ?? "").trim();
-  const empty = { registered: false, requirePrivatePayments: false };
+  const empty = { registered: false, requirePrivatePayments: false, needsClaim: false };
 
   if (!value || value.length > 200 || !KINDS.has(kind)) {
     return NextResponse.json(empty);
@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       registered: !!body.registered,
       requirePrivatePayments: !!body.requirePrivatePayments,
+      needsClaim: !!body.needsClaim,
     });
   } catch {
     return NextResponse.json(empty);

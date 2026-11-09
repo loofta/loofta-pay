@@ -1,7 +1,7 @@
 /** Whether a send recipient already has a Loofta account, and whether they only accept
  *  private payments. */
 
-export type PayTarget = { registered: boolean; requirePrivatePayments: boolean };
+export type PayTarget = { registered: boolean; requirePrivatePayments: boolean; needsClaim?: boolean };
 export type PayTargetKind = "email" | "username" | "twitter" | "social";
 
 const EMPTY: PayTarget = { registered: false, requirePrivatePayments: false };
@@ -52,5 +52,6 @@ export async function lookupPayTarget(
   return {
     registered: !!body.registered,
     requirePrivatePayments: !!body.requirePrivatePayments,
+    needsClaim: !!body.needsClaim,
   };
 }

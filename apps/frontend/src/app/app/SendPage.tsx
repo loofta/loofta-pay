@@ -495,6 +495,8 @@ export default function Home() {
     destApplies: destKind === "handle" && !isLooftaUsernameDest && recipient.replace(/^@/, "").trim().length > 0,
     registered: payTarget.registered,
     lookupResolved: payTargetResolved,
+    needsClaim: !!payTarget.needsClaim,
+    usernameDest: destKind === "handle" && isLooftaUsernameDest && recipient.replace(/^@/, "").trim().length > 0,
   };
   const platformFeeUsd = unregisteredClaimFeeUsd(claimFeeOpts);
   const claimFeeWaived = platformFeeUsd === 0 && unregisteredClaimFeeWouldApply(claimFeeOpts);
@@ -1022,6 +1024,8 @@ export default function Home() {
                     <p className="-mt-2" style={{ fontSize: 13, fontWeight: 400, color: "#77757F" }}>
                       {payTarget.requirePrivatePayments
                         ? "They only accept private payments. The privacy fee is added on top of what you pay."
+                        : payTarget.registered && platformFeeUsd > 0
+                          ? `First payment to this wallet goes through a claim · $${UNREGISTERED_ACCOUNT_FEE_USD.toFixed(2)} claim fee is included in the price`
                         : payTarget.registered
                           ? "Pays straight to their Loofta wallet."
                           : authenticated || sendMethod !== "username"
@@ -1218,13 +1222,13 @@ export default function Home() {
                         ? "Private only · the privacy fee is included in the price"
                         : `Paid from your Loofta balance${
                           payingPrivate && platformFeeUsd > 0
-                            ? " · price includes the privacy fee and the $0.10 claim fee"
+                            ? " · price includes the privacy fee and the $0.20 claim fee"
                             : payingPrivate
                               ? " · price includes the privacy fee"
                               : claimFeeWaived
                                 ? " · claim fee waived"
                               : platformFeeUsd > 0
-                                ? " · price includes the $0.10 claim fee"
+                                ? " · price includes the $0.20 claim fee"
                                 : payTarget.registered
                                   ? " · pays their Loofta wallet"
                                   : ""
