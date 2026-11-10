@@ -57,3 +57,17 @@ export const ampleBuildWithdraw = (vaultId: string, amount: string, o: RequestOp
 export const ampleBuildClaim = (payoutId: string, o: RequestOptions) => post<AmpleSolanaTx>('/ample/claim', { payoutId }, o);
 export const ampleTxStatus = (hash: string, o: RequestOptions) =>
   fetchApi<{ status: 'PENDING' | 'SUCCESS' | 'FAILED' | 'PARTIAL'; detail?: string }>(`/ample/tx/${encodeURIComponent(hash)}/status`, o);
+
+export interface AmpleStats {
+  vaultId: string;
+  symbol: string;
+  decimals: number;
+  tvlUsd: number;
+  monthlyPayoutsUsd: number;
+  totalPaidUsd: number;
+  /** Last month's payouts annualised over TVL, in percent. */
+  avgApr: number | null;
+  /** Best-case APR ceiling, in percent. */
+  maxApr: number | null;
+}
+export const getAmpleStats = () => fetchApi<AmpleStats | null>('/ample/stats');

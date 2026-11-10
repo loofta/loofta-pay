@@ -1,6 +1,7 @@
 import { Body, Controller, ForbiddenException, Get, HttpCode, HttpStatus, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { AuthGuard, RateLimitGuard } from '@/common/guards';
+import { Public } from '@/common/guards/auth.guard';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { UsersService } from '@/modules/users/users.service';
 import { AmpleService } from './ample.service';
@@ -21,6 +22,15 @@ export class AmpleController {
     if (!(await this.users.isSolanaAddressInLinkedAccounts(userId, address))) {
       throw new ForbiddenException('walletAddress must be one of your own linked wallets');
     }
+  }
+
+  @Get('stats')
+  @Public()
+  @RateLimit(60, 60, 'ample:stats')
+  @ApiOperation({ summary: 'Public staking numbers for the home card and marketing page' })
+  async stats() {
+    if (!this.ample.isEnabled()) return null;
+    return this.ample.publicStats();
   }
 
   @Get('status')

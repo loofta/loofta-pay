@@ -136,6 +136,24 @@ export class AmpleService {
     return data;
   }
 
+  /** Public marketing numbers for the offered vault. avgApr is last month's payouts annualised over TVL (what savers actually earned on average); maxApr is Ample's best-case ceiling. */
+  async publicStats() {
+    const v: any = (await this.listVaults())[0];
+    if (!v) return null;
+    const tvl = Number(v.tvlUsd) || 0;
+    const monthly = Number(v.payouts?.monthlyUsd) || 0;
+    return {
+      vaultId: v.id as string,
+      symbol: (v.token?.symbol as string) ?? 'USDC',
+      decimals: (v.token?.decimals as number) ?? 6,
+      tvlUsd: tvl,
+      monthlyPayoutsUsd: monthly,
+      totalPaidUsd: Number(v.payouts?.cumulativeUsd) || 0,
+      avgApr: tvl > 0 ? Math.round(((monthly * 12) / tvl) * 1000) / 10 : null,
+      maxApr: Number(v.aprRange?.max) || null,
+    };
+  }
+
   // ---- tier 2 (per-user session) ----
 
   async overview(userId: string) {
