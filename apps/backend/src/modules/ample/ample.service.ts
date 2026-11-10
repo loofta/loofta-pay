@@ -1,6 +1,13 @@
 import { HttpException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
+import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
+import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
+import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
+import { Connection, PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
+
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
 const BASE = 'https://api.ample.money/v1';
 const NETWORK = 'SOLANA';
@@ -31,6 +38,7 @@ export class AmpleService {
   constructor(
     private readonly config: ConfigService,
     private readonly supabase: SupabaseService,
+    private readonly solanaSponsor: SolanaSponsorService,
   ) {}
 
   private get apiKey(): string {
@@ -130,14 +138,71 @@ export class AmpleService {
 
   // ---- vaults (cached 2 min, Solana only) ----
 
-  async listVaults() {
+  /** Every Solana vault (USDC, SOL, JupUSD...). Prizes can be paid in any of them, so token info is needed for all. */
+  async allVaults(): Promise<any[]> {
     if (this.vaultCache && Date.now() - this.vaultCache.at < 120_000) return this.vaultCache.data;
     const res = await this.call('GET', '/vaults', { kind: 'key' }, { query: { limit: '100' } });
     const rows: any[] = Array.isArray(res) ? res : res?.data ?? [];
-    // Only the Solana USDC vault is on offer ("stake your USDC"); the SOL and JupUSD vaults are not.
-    const data = rows.filter(v => (v?.network ?? '').toUpperCase() === NETWORK && v?.token?.symbol === 'USDC');
+    const data = rows.filter(v => (v?.network ?? '').toUpperCase() === NETWORK);
     this.vaultCache = { at: Date.now(), data };
     return data;
+  }
+
+  /** Only the Solana USDC vault is on offer ("stake your USDC"); the SOL and JupUSD vaults are not. */
+  async listVaults() {
+    return (await this.allVaults()).filter(v => v?.token?.symbol === 'USDC');
+  }
+
+  // ---- USD conversion (rates cached 2h) ----
+
+  private readonly rateCache = new Map<string, { usdPerToken: number; at: number }>();
+  private static readonly RATE_TTL_MS = 2 * 60 * 60 * 1000;
+
+  /**
+   * USD value of one whole token of a vault, cached for 2 hours. Learned from the user's own position
+   * (Ample's depositsUsd / depositsToken) when they hold one, otherwise stablecoins are $1 and SOL uses the live price.
+   */
+  private async usdPerToken(vaultId: string, symbol: string | undefined, learned?: number | null): Promise<number | null> {
+    const hit = this.rateCache.get(vaultId);
+    if (learned && learned > 0) {
+      this.rateCache.set(vaultId, { usdPerToken: learned, at: Date.now() });
+      return learned;
+    }
+    if (hit && Date.now() - hit.at < AmpleService.RATE_TTL_MS) return hit.usdPerToken;
+    let rate: number | null = null;
+    const sym = (symbol ?? '').toUpperCase();
+    if (sym === 'SOL') rate = await fetchSolPriceUsd();
+    else if (['USDC', 'USDT', 'JUPUSD', 'PYUSD', 'USDS'].includes(sym)) rate = 1;
+    if (rate && rate > 0) {
+      this.rateCache.set(vaultId, { usdPerToken: rate, at: Date.now() });
+      return rate;
+    }
+    return hit?.usdPerToken ?? null; // stale beats nothing
+  }
+
+  private loggedClaimShape = false;
+
+  /** Which vault paid a prize: its own vault id when Ample sends one, otherwise matched by token address or symbol. */
+  private payoutVaultId(p: any, vaults: any[]): string | null {
+    const direct = p?.vaultId ?? p?.vault?.id;
+    if (direct) return String(direct);
+    const addr = p?.tokenAddress ?? p?.token?.address;
+    const sym = p?.tokenSymbol ?? p?.symbol ?? p?.token?.symbol;
+    const hit = (addr && vaults.find(v => v?.token?.address === addr)) || (sym && vaults.find(v => v?.token?.symbol === sym));
+    return hit?.id ? String(hit.id) : null;
+  }
+
+  /** USD millionths for a raw payout/position amount of the given vault. null when the token cannot be priced. */
+  private async usdMicro(vaultId: string | undefined, rawBase: string, ctx: { vaults: any[]; balances: any[] }): Promise<bigint | null> {
+    if (!vaultId || !/^\d+$/.test(String(rawBase))) return null;
+    const bal = ctx.balances.find(b => b?.vaultId === vaultId);
+    const vault = ctx.vaults.find(v => v?.id === vaultId);
+    const dec = Number(bal?.token?.decimals ?? vault?.token?.decimals ?? 6);
+    const symbol: string | undefined = bal?.token?.symbol ?? vault?.token?.symbol;
+    const learned = bal && Number(bal.depositsToken) > 0 && Number(bal.depositsUsd) > 0 ? Number(bal.depositsUsd) / (Number(bal.depositsToken) / 10 ** dec) : null;
+    const rate = await this.usdPerToken(vaultId, symbol, learned);
+    if (rate === null) return null;
+    return BigInt(Math.round((Number(rawBase) / 10 ** dec) * rate * 1e6));
   }
 
   private drawCache: { at: number; data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null } | null } | null = null;
@@ -191,13 +256,37 @@ export class AmpleService {
       this.call('GET', '/me/streak', t, { query: q }),
       this.call('GET', '/me/payouts/claimable', t, { query: { ...q, limit: '50' } }),
     ]);
-    const bal: any[] = Array.isArray(balances) ? balances : balances?.data ?? [];
+    const vaults = await this.allVaults().catch(() => [] as any[]);
+    const bal: any[] = (Array.isArray(balances) ? balances : balances?.data ?? []).filter((b: any) => (b?.network ?? '').toUpperCase() === NETWORK);
+    const ctx = { vaults, balances: bal };
+    // Positions and prizes can sit in several vaults (USDC, SOL, JupUSD). Every one gets a USD value (rates cached 2h)
+    // and the token mint, so the page can show one dollar total and convert to USDC through Jupiter on withdrawal.
+    const positions = await Promise.all(bal.map(async (b: any) => ({
+      ...b,
+      tokenMint: vaults.find(v => v?.id === b.vaultId)?.token?.address ?? null,
+      usdMicro: (await this.usdMicro(b.vaultId, String(b.depositsToken ?? '0'), ctx))?.toString() ?? null,
+    })));
+    const claimList: any[] = Array.isArray(claimable) ? claimable : claimable?.data ?? [];
+    if (claimList[0] && !this.loggedClaimShape) {
+      this.loggedClaimShape = true;
+      this.logger.log(`claimable payout fields: ${Object.keys(claimList[0]).join(', ')}`);
+    }
+    const claimDecorated = await Promise.all(claimList.map(async (p: any) => {
+      // A prize is paid in the token of the vault that won it, so the vault must be known to price it. Never guess USDC.
+      const vaultId: string | null = this.payoutVaultId(p, vaults);
+      return {
+        ...p,
+        vaultId,
+        usdMicro: (await this.usdMicro(vaultId ?? undefined, String(p.payoutAmount ?? '0'), ctx))?.toString() ?? null,
+      };
+    }));
     return {
       tickets,
-      balances: bal.filter(b => (b?.network ?? '').toUpperCase() === NETWORK),
+      balances: positions,
       streak,
-      claimable: Array.isArray(claimable) ? claimable : claimable?.data ?? [],
-      ...(await this.earnings(userId, bal.filter(b => (b?.network ?? '').toUpperCase() === NETWORK))),
+      claimable: claimDecorated,
+      withdrawFeeBps: this.withdrawFeeBps,
+      ...(await this.earnings(userId, bal, ctx)),
     };
   }
 
@@ -210,9 +299,62 @@ export class AmpleService {
     return this.call('POST', '/tx/deposit/quote', { kind: 'session', userId }, { body: { vaultId, fromAmount: amount } });
   }
 
+  /** Withdrawal fee in basis points (default 0.25%, a typical DeFi vault exit fee). Set STAKE_WITHDRAW_FEE_BPS=0 to switch off. */
+  get withdrawFeeBps(): number {
+    const raw = Number(this.config.get<string>('STAKE_WITHDRAW_FEE_BPS') ?? 25);
+    return Number.isFinite(raw) ? Math.min(Math.max(Math.round(raw), 0), 100) : 25;
+  }
+
   async buildWithdraw(userId: string, vaultId: string, amount: string) {
     this.requireTx();
-    return this.call('POST', '/tx/withdraw', { kind: 'session', userId }, { body: { vaultId, amount } });
+    const tx: any = await this.call('POST', '/tx/withdraw', { kind: 'session', userId }, { body: { vaultId, amount } });
+    const vault = (await this.listVaults().catch(() => [] as any[])).find(v => v?.id === vaultId);
+    if (!vault || this.withdrawFeeBps <= 0) return { ...tx, fee: null };
+    return this.withFee(userId, tx, amount);
+  }
+
+  /**
+   * Adds the withdrawal fee to the same transaction the user signs: one extra USDC transfer from their wallet to the Loofta fee
+   * wallet, placed after Ample's own instructions so it is paid out of the USDC that was just withdrawn. Fails open: if the
+   * transaction cannot be safely extended (size, lookup tables, unexpected signer, missing fee account) the plain withdrawal is
+   * returned and no fee is taken, so a withdrawal is never blocked or made unsafe by the fee.
+   */
+  private async withFee(userId: string, tx: any, amountBase: string) {
+    const plain = { ...tx, fee: null };
+    try {
+      const feeWallet = this.solanaSponsor.getFeePayerAddress();
+      const link = await this.getLink(userId);
+      if (!feeWallet || !link.walletAddress || !tx?.transaction?.unsigned) return plain;
+      const fee = (BigInt(amountBase) * BigInt(this.withdrawFeeBps)) / 10000n;
+      if (fee <= 0n) return plain;
+
+      const user = new PublicKey(link.walletAddress);
+      const mint = new PublicKey(USDC_MINT);
+      const from = getAssociatedTokenAddressSync(mint, user);
+      const to = getAssociatedTokenAddressSync(mint, new PublicKey(feeWallet));
+      const conn = new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
+      if (!(await conn.getAccountInfo(to))) return plain;
+
+      const vtx = VersionedTransaction.deserialize(Buffer.from(tx.transaction.unsigned, 'base64'));
+      if (vtx.message.header.numRequiredSignatures !== 1 || !vtx.message.staticAccountKeys[0].equals(user)) return plain;
+      const tables = (await Promise.all(vtx.message.addressTableLookups.map(async l => (await conn.getAddressLookupTable(l.accountKey)).value)))
+        .filter((t): t is NonNullable<typeof t> => !!t);
+      if (tables.length !== vtx.message.addressTableLookups.length) return plain;
+
+      const msg = TransactionMessage.decompile(vtx.message, { addressLookupTableAccounts: tables });
+      msg.instructions.push(createTransferCheckedInstruction(from, mint, to, user, fee, 6));
+      const out = new VersionedTransaction(msg.compileToV0Message(tables));
+      const bytes = out.serialize();
+      if (bytes.length > 1232) return plain;
+      return {
+        ...tx,
+        transaction: { ...tx.transaction, unsigned: Buffer.from(bytes).toString('base64') },
+        fee: { bps: this.withdrawFeeBps, amountBase: fee.toString() },
+      };
+    } catch (e: any) {
+      this.logger.warn(`withdraw fee skipped: ${e?.message}`);
+      return plain;
+    }
   }
 
   /** Solana claims take exactly one payout id per call and compound back into the vault. */
@@ -261,30 +403,37 @@ export class AmpleService {
    * balance steps up on deposits and claims (claims compound) and down on withdrawals. Only reported after a full week
    * and only when the ledger agrees with the real vault balance, otherwise null so we never show a wrong number.
    */
-  private async earnings(userId: string, balances: any[]) {
+  private async earnings(userId: string, balances: any[], ctx: { vaults: any[]; balances: any[] }) {
     const none = { totalWonBase: null as string | null, yourApy: null as number | null, trackedSince: null as string | null };
     try {
       const { data, error } = await this.supabase.getClient()
-        .from('stake_events').select('kind, amount_base, created_at')
+        .from('stake_events').select('kind, amount_base, created_at, vault_id')
         .eq('privy_user_id', userId).order('created_at', { ascending: true }).limit(5000);
       if (error || !data?.length) return none;
       let won = 0n, bal = 0n;
       let dollarMs = 0, last = new Date(data[0].created_at).getTime();
       const dec = Number((balances[0]?.token?.decimals as number) ?? 6);
       const scale = 10 ** dec;
+      const usdcVaultId = (balances.find(b => b?.token?.symbol === 'USDC') ?? balances[0])?.vaultId;
       for (const r of data) {
         const t = new Date(r.created_at).getTime();
         dollarMs += (Number(bal) / scale) * (t - last);
         last = t;
         const a = BigInt(String(r.amount_base).split('.')[0] || '0');
         if (r.kind === 'deposit') bal += a;
-        else if (r.kind === 'claim') { bal += a; won += a; }
+        // Claims are stored in the raw token of the vault that paid them. They count as winnings in dollars (2h cached rate),
+        // but only a USDC prize adds to the USDC balance.
+        else if (r.kind === 'claim') {
+          won += (await this.usdMicro(r.vault_id, a.toString(), ctx)) ?? 0n;
+          if (r.vault_id === usdcVaultId) bal += a;
+        }
         else { bal = bal > a ? bal - a : 0n; }
       }
       const now = Date.now();
       dollarMs += (Number(bal) / scale) * (now - last);
       const spanMs = now - new Date(data[0].created_at).getTime();
-      const actual = balances.reduce((acc, b) => acc + (/^\d+$/.test(String(b?.depositsToken ?? '')) ? BigInt(b.depositsToken) : 0n), 0n);
+      const usdcPos = balances.find(b => b?.vaultId === usdcVaultId);
+      const actual = /^\d+$/.test(String(usdcPos?.depositsToken ?? '')) ? BigInt(usdcPos.depositsToken) : 0n;
       const agrees = actual > 0n ? Math.abs(Number(bal - actual)) / Number(actual) < 0.05 : bal === 0n;
       const dollarYears = dollarMs / (365 * 24 * 3600 * 1000);
       const apy = spanMs >= 7 * 24 * 3600 * 1000 && agrees && dollarYears > 0

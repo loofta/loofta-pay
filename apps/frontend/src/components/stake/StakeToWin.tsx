@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import bs58 from "bs58";
+import { Connection } from "@solana/web3.js";
+import { getSolanaHttpRpc } from "@/lib/solanaCluster";
+import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
+import { buildJupiterSwap } from "@/services/api/jupiterSwap";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignMessage, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
 import { useAuth } from "@/hooks/useAuth";
@@ -29,6 +33,7 @@ const SORA = "var(--font-home-sora), Sora, sans-serif";
 const MONO = "var(--font-home-mono), ui-monospace, monospace";
 const TICKETS_PER_DOLLAR = 100;
 const MIN_STAKE_USD = 1;
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 function toBase(input: string, decimals: number): string | null {
   const t = input.trim();
@@ -136,7 +141,7 @@ export function StakeToWin() {
     try { localStorage.setItem("loofta_stake_onboarded", "1"); } catch { /* ignore */ }
   }, []);
   // Prizes already claimed are folded into the stake by Ample, so total winnings are tracked here (per user, this browser) once claimed.
-  const claimedKey = userId ? `loofta_stake_claimed_${userId}` : null;
+  const claimedKey = userId ? `loofta_stake_won_usd_${userId}` : null;
   const [claimedBase, setClaimedBase] = useState<string>("0");
   useEffect(() => {
     try { setClaimedBase((claimedKey && localStorage.getItem(claimedKey)) || "0"); } catch { setClaimedBase("0"); }
@@ -148,6 +153,8 @@ export function StakeToWin() {
       return next;
     });
   };
+  // The backend prices every prize and position in USD (rates cached 2h) because they can be paid in USDC, SOL or JupUSD.
+  const microOf = (p: { usdMicro?: string | null }): bigint => (p.usdMicro && /^\d+$/.test(p.usdMicro) ? BigInt(p.usdMicro) : BigInt(0));
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -232,14 +239,21 @@ export function StakeToWin() {
     return null;
   };
 
-  // Feeds the earnings ledger (total won, personal APY). Never blocks or fails the user's action.
-  const report = async (kind: "deposit" | "withdraw" | "claim", amountBase: string, sig: string | null, payoutId?: string) => {
+  // Feeds the earnings ledger (total won, personal APR). Never blocks or fails the user's action.
+  const report = async (kind: "deposit" | "withdraw" | "claim", amountBase: string, sig: string | null, payoutId?: string, vaultId?: string) => {
     if (!sig || !vault) return;
-    try { await ampleRecordEvent({ kind, vaultId: vault.id, amountBase, txSignature: sig, payoutId }, await opts()); } catch { /* ignore */ }
+    // A claim without a known paying vault is never recorded: it would be priced as USDC and overstate winnings.
+    if (kind === "claim" && !vaultId) return;
+    try { await ampleRecordEvent({ kind, vaultId: vaultId ?? vault.id, amountBase, txSignature: sig, payoutId }, await opts()); } catch { /* ignore */ }
   };
 
   const heldDisplay = fromBase(held?.depositsToken, held?.token?.decimals ?? decimals);
-  const stakedNum = Number(held?.depositsToken ?? 0) > 0 ? Number(heldDisplay) : 0;
+  const usdcStaked = Number(held?.depositsToken ?? 0) > 0 ? Number(heldDisplay) : 0;
+  // Prizes can land in other vaults (SOL, JupUSD). They are shown as part of one USDC value and swapped to USDC on withdrawal.
+  const otherPositions = (overview?.balances ?? []).filter((b: any) => (!vault || b.vaultId !== vault.id) && Number(b.depositsToken) > 0 && b.tokenMint);
+  const convertible = otherPositions.filter((b: any) => microOf(b) >= BigInt(10_000)); // $0.01 and up, smaller ones stay in the vault
+  const otherUsd = otherPositions.reduce((a: number, b: any) => a + Number(microOf(b)) / 1e6, 0);
+  const stakedNum = usdcStaked + otherUsd;
   const hasStake = stakedNum > 0;
   const amt = Math.max(0, Number(amount) || 0);
 
@@ -252,13 +266,44 @@ export function StakeToWin() {
     await refresh();
   });
 
+  // Withdrawn prize tokens are swapped to USDC with Jupiter, signed and paid for by the user's own wallet.
+  const swapToUsdc = async (b: any) => {
+    if (!wallet) throw new Error("No Solana wallet found");
+    const dec = b.token?.decimals ?? 6;
+    const raw = String(b.depositsToken).padStart(dec + 1, "0");
+    const amountStr = `${raw.slice(0, raw.length - dec)}.${raw.slice(raw.length - dec)}`.replace(/\.?0+$/, "") || "0";
+    const built = await buildJupiterSwap({ inputMint: b.tokenMint, outputMint: USDC_MINT, amount: amountStr, slippageBps: 100 }, userId ?? "", await getAccessToken().catch(() => null));
+    const bytes = Uint8Array.from(atob(built.swapTransaction), (c) => c.charCodeAt(0));
+    const { signature } = await signAndSendTransaction({ transaction: bytes, wallet });
+    await waitForSignatureConfirmation(new Connection(getSolanaHttpRpc(), "confirmed"), bs58.encode(signature as Uint8Array));
+  };
+
   const withdraw = () => run("unstake", async () => {
-    if (!vault || !held) return;
-    const full = amt >= stakedNum;
-    const base = full ? String(held.depositsToken) : toBase(amount, decimals);
-    if (!base) throw new Error("Enter an amount");
-    await report("withdraw", base, await sendTx(await ampleBuildWithdraw(vault.id, base, await opts())));
-    setNote("Withdrawn to your wallet.");
+    if (!vault) return;
+    const eps = 0.0001;
+    // Asking for more than the USDC vault holds, or the whole balance, withdraws everything and converts the rest to USDC.
+    const everything = amt >= stakedNum - eps || amt > usdcStaked + eps;
+    let withdrawn = 0;
+    if (usdcStaked > 0 && held) {
+      const base = everything || amt >= usdcStaked - eps ? String(held.depositsToken) : toBase(amount, decimals);
+      if (!base) throw new Error("Enter an amount");
+      await report("withdraw", base, await sendTx(await ampleBuildWithdraw(vault.id, base, await opts())));
+      withdrawn++;
+    }
+    let converted = 0;
+    let kept = 0;
+    if (everything) {
+      for (const b of convertible as any[]) {
+        try {
+          await report("withdraw", String(b.depositsToken), await sendTx(await ampleBuildWithdraw(b.vaultId, String(b.depositsToken), await opts())), undefined, b.vaultId);
+          withdrawn++;
+          try { await swapToUsdc(b); converted++; } catch (e) { console.warn("[stake] swap to USDC skipped:", e); kept++; }
+        } catch (e) { console.warn("[stake] other-vault withdraw skipped:", e); kept++; }
+      }
+    }
+    setNote(kept > 0
+      ? "Withdrawn to your wallet. Some prizes could not be converted to USDC, they are in your wallet as their own token."
+      : converted > 0 ? "Withdrawn to your wallet, prizes converted to USDC." : withdrawn > 0 ? "Withdrawn to your wallet." : null);
     setAmount("25");
     await refresh();
   });
@@ -266,7 +311,7 @@ export function StakeToWin() {
   const claim = (payoutId: string) => run("claim", async () => {
     const p = overview?.claimable.find((c) => c.payoutId === payoutId);
     const sig = await sendTx(await ampleBuildClaim(payoutId, await opts()));
-    if (p) { addClaimed(String(p.payoutAmount)); await report("claim", String(p.payoutAmount), sig, p.payoutId); }
+    if (p) { addClaimed(microOf(p).toString()); await report("claim", String(p.payoutAmount), sig, p.payoutId, p.vaultId); }
     setNote("Reward added to your stake.");
     await refresh();
   });
@@ -278,8 +323,8 @@ export function StakeToWin() {
     try {
       for (const p of list) {
         const sig = await sendTx(await ampleBuildClaim(p.payoutId, await opts()));
-        addClaimed(String(p.payoutAmount));
-        await report("claim", String(p.payoutAmount), sig, p.payoutId);
+        addClaimed(microOf(p).toString());
+        await report("claim", String(p.payoutAmount), sig, p.payoutId, p.vaultId);
         done++;
       }
     } finally {
@@ -290,7 +335,7 @@ export function StakeToWin() {
   const switchTab = (t: "stake" | "withdraw") => {
     setTab(t);
     setError(null); setNote(null);
-    setAmount(t === "stake" ? "25" : hasStake ? heldDisplay : "0");
+    setAmount(t === "stake" ? "25" : hasStake ? String(Math.floor(stakedNum * 10000) / 10000) : "0");
   };
 
   const t = overview?.tickets;
@@ -307,7 +352,7 @@ export function StakeToWin() {
     : [
         { label: "25%", value: String(Math.floor(stakedNum * 25) / 100) },
         { label: "50%", value: String(Math.floor(stakedNum * 50) / 100) },
-        { label: "Max", value: heldDisplay },
+        { label: "Max", value: String(Math.floor(stakedNum * 10000) / 10000) },
       ];
 
   const linked = !!(authenticated && status?.enabled && vault && status.linked);
@@ -328,14 +373,15 @@ export function StakeToWin() {
     else if (isStake && eff < MIN_STAKE_USD) { ctaDisabled = true; ctaLabel = "Minimum stake is $1"; }
   }
 
-  const claimableBase = (overview?.claimable ?? []).reduce((a, p) => a + (/^\d+$/.test(String(p.payoutAmount)) ? BigInt(p.payoutAmount) : BigInt(0)), BigInt(0));
-  const claimableTotal = fromBase(claimableBase.toString(), decimals);
+  const claimableBase = (overview?.claimable ?? []).reduce((a, p) => a + microOf(p), BigInt(0));
+  const usdText = (micro: bigint) => { const n = Number(micro) / 1e6; return `$${n < 1 ? n.toFixed(4) : n.toFixed(2)}`; };
+  const claimableTotal = usdText(claimableBase);
   const localWon = BigInt(claimedBase || "0") + claimableBase;
   const ledgerWon = overview?.totalWonBase ? BigInt(overview.totalWonBase) + claimableBase : BigInt(0);
   const wonBase = ledgerWon > localWon ? ledgerWon : localWon;
-  const wonTotal = wonBase > BigInt(0) ? fromBase(wonBase.toString(), decimals) : null;
+  const wonTotal = wonBase > BigInt(0) ? usdText(wonBase) : null;
   const apr = stats?.avgApr ?? null;
-  const wonReturnPct = wonBase > BigInt(0) && stakedNum > 0 ? (Number(fromBase(wonBase.toString(), decimals)) / stakedNum) * 100 : null;
+  const wonReturnPct = wonBase > BigInt(0) && stakedNum > 0 ? (Number(wonBase) / 1e6 / stakedNum) * 100 : null;
 
   return (
     <div
@@ -412,7 +458,7 @@ export function StakeToWin() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "14px 16px", borderRadius: 18, background: "#0B0B0E", border: "1px solid rgba(255,255,255,0.08)" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>Your earnings</span>
-                      <button type="button" aria-label="About your APY" aria-expanded={infoOpen} onClick={() => setInfoOpen((v) => !v)}
+                      <button type="button" aria-label="About your APR" aria-expanded={infoOpen} onClick={() => setInfoOpen((v) => !v)}
                         style={{ width: 22, height: 22, borderRadius: "50%", cursor: "pointer", display: "grid", placeItems: "center", fontSize: 14, fontWeight: 800, fontFamily: "inherit", lineHeight: 1, padding: 0, color: infoOpen ? "#FF8A3D" : "#8A8893", background: "transparent", border: `1.5px solid ${infoOpen ? "#FF8A3D" : "#8A8893"}` }}>
                         i
                       </button>
@@ -422,21 +468,21 @@ export function StakeToWin() {
                       <Mini label="Tickets" value={fmt(ticketCount)} />
                       <Mini label="Weekly odds" value={oddsText(oddsBefore)} />
                     </div>
-                    <EarnRow label="Won so far" value={`${wonTotal ?? "0"} ${symbol}`} strong />
-                    {claimableBase > BigInt(0) ? <EarnRow label="Waiting to claim" value={`${claimableTotal} ${symbol}`} /> : null}
+                    <EarnRow label="Won so far" value={wonTotal ?? "$0"} strong />
+                    {claimableBase > BigInt(0) ? <EarnRow label="Waiting to claim" value={claimableTotal} /> : null}
                     {overview?.yourApy !== null && overview?.yourApy !== undefined
-                      ? <EarnRow label="Your APY" value={pct(overview.yourApy)} strong />
-                      : apr ? <EarnRow label="Estimated yield (APY)" value={`~${pct(apr)}`} /> : null}
+                      ? <EarnRow label="Your APR" value={pct(overview.yourApy)} strong />
+                      : apr ? <EarnRow label="Estimated yield (APR)" value={`~${pct(apr)}`} /> : null}
                     {wonReturnPct !== null ? <EarnRow label="Return so far" value={`${wonReturnPct < 0.01 ? "<0.01" : wonReturnPct.toFixed(2)}% of your stake`} /> : null}
                     {claimableBase > BigInt(0) ? (
                       <button type="button" disabled={busy !== null || !status?.canTransact} onClick={claimAll}
                         style={{ padding: "12px 24px", borderRadius: 14, border: "none", background: GRAD, color: "#fff", fontFamily: SORA, fontWeight: 700, fontSize: 16, cursor: "pointer", opacity: busy !== null ? 0.6 : 1 }}>
-                        {busy === "claim" ? "Claiming..." : `Claim all ${claimableTotal} ${symbol}`}
+                        {busy === "claim" ? "Claiming..." : `Claim all ${claimableTotal}`}
                       </button>
                     ) : null}
                     {infoOpen && (
                       <span style={{ fontSize: 15, lineHeight: 1.5, color: "#C9C6CF", padding: "10px 12px", borderRadius: 12, background: "#15151B", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        Your APY appears after a week of history, until then the pool average of the last month is shown. Not a promise.
+                        Your APR appears after a week of history, until then the pool average of the last month is shown. It varies from week to week and is not a promise.
                       </span>
                     )}
                   </div>
@@ -478,7 +524,7 @@ export function StakeToWin() {
 
                 {note && <p style={{ margin: 0, fontSize: 15, color: "#5FD38E", textAlign: "center" }}>{note}</p>}
                 {error && <p style={{ margin: 0, fontSize: 15, color: "#FF8A7A", textAlign: "center" }}>{error}</p>}
-                <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>Principal stays yours · no lockup · no entry fee</span>
+                <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{`Principal stays yours · no lockup · no entry fee${overview?.withdrawFeeBps ? ` · ${(overview.withdrawFeeBps / 100).toFixed(2)}% withdrawal fee` : ""}`}</span>
               </div>
             </div>
           </div>

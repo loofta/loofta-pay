@@ -38,11 +38,13 @@ export interface AmpleOverview {
     twabUsd?: number | string;
     [k: string]: unknown;
   };
-  balances: Array<{ vaultId?: string; depositsToken: string; depositsUsd: number | string | null; token?: { symbol?: string; decimals?: number }; [k: string]: unknown }>;
+  balances: Array<{ vaultId?: string; tokenMint?: string | null; usdMicro?: string | null; depositsToken: string; depositsUsd: number | string | null; token?: { symbol?: string; decimals?: number }; [k: string]: unknown }>;
   streak: Record<string, any>;
-  claimable: Array<{ payoutId: string; payoutAmount: string; vaultId?: string; [k: string]: unknown }>;
+  claimable: Array<{ payoutId: string; payoutAmount: string; vaultId?: string; usdMicro?: string | null; [k: string]: unknown }>;
   /** Sum of every payout ever won, in token base units. null when Ample returned no history. */
   totalWonBase?: string | null;
+  /** Withdrawal fee on the USDC vault in basis points (0.25% = 25). */
+  withdrawFeeBps?: number;
   /** Personal APY from the earnings ledger, percent. null until a week of history agrees with the real balance. */
   yourApy?: number | null;
   trackedSince?: string | null;
