@@ -27,6 +27,7 @@ const GRAD = "linear-gradient(90deg,#FF3D0F,#FF7A2A)";
 const SORA = "var(--font-home-sora), Sora, sans-serif";
 const MONO = "var(--font-home-mono), ui-monospace, monospace";
 const TICKETS_PER_DOLLAR = 100;
+const MIN_STAKE_USD = 1;
 
 function toBase(input: string, decimals: number): string | null {
   const t = input.trim();
@@ -122,6 +123,16 @@ export function StakeToWin() {
   const [amount, setAmount] = useState("25");
   const [focus, setFocus] = useState(false);
   const [openFaq, setOpenFaq] = useState(0);
+  const [howOpen, setHowOpen] = useState(false);
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem("loofta_stake_onboarded")) setHowOpen(true);
+    } catch { /* ignore */ }
+  }, []);
+  const closeHow = useCallback(() => {
+    setHowOpen(false);
+    try { localStorage.setItem("loofta_stake_onboarded", "1"); } catch { /* ignore */ }
+  }, []);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -213,6 +224,7 @@ export function StakeToWin() {
   const stake = () => run("stake", async () => {
     const base = toBase(amount, decimals);
     if (!base || !vault) throw new Error("Enter an amount");
+    if (amt < MIN_STAKE_USD) throw new Error("The minimum stake is $1.");
     await sendTx(await ampleBuildDeposit(vault.id, base, await opts()));
     setNote("Staked. You are in the next draw.");
     await refresh();
@@ -273,6 +285,7 @@ export function StakeToWin() {
     if (!status?.canTransact) ctaDisabled = true;
     if (!isStake && !hasStake) ctaDisabled = true;
     if (eff <= 0) ctaDisabled = true;
+    else if (isStake && eff < MIN_STAKE_USD) { ctaDisabled = true; ctaLabel = "Minimum stake is $1"; }
   }
 
   const winners = (overview?.claimable ?? []).length > 0;
@@ -477,6 +490,93 @@ export function StakeToWin() {
           </div>
         </section>
       </main>
+      <button type="button" onClick={() => setHowOpen(true)} aria-label="How it works"
+        style={{ position: "fixed", right: 20, bottom: 20, zIndex: 60, display: "flex", alignItems: "center", gap: 10, padding: "12px 18px 12px 12px", borderRadius: 999, cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)", background: "#1A1A20", color: "#F2EFE8", fontFamily: SORA, fontWeight: 700, fontSize: 15, boxShadow: "0 14px 40px rgba(0,0,0,0.5)" }}>
+        <span style={{ width: 28, height: 28, borderRadius: 999, display: "grid", placeItems: "center", background: GRAD, color: "#fff", fontSize: 16, fontWeight: 800 }}>?</span>
+        How it works
+      </button>
+      <HowItWorks open={howOpen} onClose={closeHow} />
+    </div>
+  );
+}
+
+const HOW_STEPS: { title: string; body: string; note?: string; icon: React.ReactNode }[] = [
+  {
+    title: "Put idle assets to work",
+    body: "Earn yield-funded payouts every week, just for holding USDC in the pool.",
+    icon: <><path d="M12 3l9 5-9 5-9-5 9-5z" /><path d="M3 13l9 5 9-5" /><path d="M3 17.5l9 5 9-5" /></>,
+  },
+  {
+    title: "Deposit your money",
+    body: "Your principal stays safe and always available. Withdraw any time.",
+    note: "Audited by Pashov Audit Group",
+    icon: <><rect x="4.5" y="11" width="15" height="10" rx="2.5" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
+  },
+  {
+    title: "Get tickets",
+    body: "Tickets represent your eligible participation in a cycle and help determine your chance of receiving a payout.",
+    icon: <><path d="M3 9a2 2 0 0 0 0 6v3h18v-3a2 2 0 0 1 0-6V6H3v3z" /><path d="M13 6v12" strokeDasharray="2 2.5" /></>,
+  },
+  {
+    title: "Join cycles",
+    body: "The protocol works in weekly cycles. Each week it distributes accrued protocol yield to winners.",
+    icon: <><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 4v5h-5" /></>,
+  },
+  {
+    title: "Earn upside",
+    body: "Up to 80 recipients receive yield-funded upside on top of your savings.",
+    icon: <><path d="M8 4h8v6a4 4 0 0 1-8 0V4z" /><path d="M8 6H4v2a3 3 0 0 0 4 2.8M16 6h4v2a3 3 0 0 1-4 2.8" /><path d="M12 14v4M8 21h8M10 18h4" /></>,
+  },
+];
+
+function HowItWorks({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [i, setI] = useState(0);
+  useEffect(() => { if (open) setI(0); }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [open, onClose]);
+  if (!open) return null;
+  const st = HOW_STEPS[i];
+  const last = i === HOW_STEPS.length - 1;
+  return (
+    <div role="dialog" aria-modal="true" aria-label="How staking works" onClick={onClose} className="hiw-ov"
+      style={{ position: "fixed", inset: 0, zIndex: 80, display: "grid", placeItems: "center", padding: 16, background: "rgba(6,6,9,0.72)", backdropFilter: "blur(6px)" }}>
+      <style>{`
+        @media (max-width:640px){
+          .hiw-icon{margin-top:auto !important}
+          .hiw-cta{margin-bottom:auto !important}
+          .hiw-ov{padding:0 !important;background:#0f0f12 !important;backdrop-filter:none !important}
+          .hiw-card{max-width:none !important;height:100% !important;border-radius:0 !important;border:none !important;justify-content:flex-start !important;padding:max(14px,env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom)) !important}
+        }
+      `}</style>
+      <div onClick={(e) => e.stopPropagation()} className="hiw-card"
+        style={{ position: "relative", width: "100%", maxWidth: 440, borderRadius: 32, padding: "14px 20px 28px", background: "radial-gradient(90% 60% at 50% 0%,rgba(255,90,26,0.18),rgba(255,90,26,0) 70%),#121217", border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 40px 100px rgba(0,0,0,0.6)", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 18 }}>
+        <div style={{ width: "100%", display: "flex", alignItems: "center", gap: 14 }}>
+          <button type="button" aria-label="Back" onClick={() => setI(i - 1)} disabled={i === 0}
+            style={{ width: 40, height: 40, flex: "none", borderRadius: 999, border: "none", cursor: i === 0 ? "default" : "pointer", background: "transparent", color: "#C9C6CF", fontSize: 24, lineHeight: 1, visibility: i === 0 ? "hidden" : "visible" }}>←</button>
+          <div style={{ flex: 1, display: "flex", gap: 6 }}>
+            {HOW_STEPS.map((_, n) => (
+              <span key={n} style={{ flex: 1, height: 4, borderRadius: 4, background: n <= i ? GRAD : "rgba(255,255,255,0.12)" }} />
+            ))}
+          </div>
+          <button type="button" aria-label="Close" onClick={onClose}
+            style={{ width: 40, height: 40, flex: "none", borderRadius: 999, border: "none", cursor: "pointer", background: "transparent", color: "#C9C6CF", fontSize: 26, lineHeight: 1 }}>×</button>
+        </div>
+        <span className="hiw-icon" style={{ marginTop: 40, width: 104, height: 104, borderRadius: 32, transform: "rotate(-6deg)", display: "grid", placeItems: "center", background: "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)", boxShadow: "inset 0 4px 6px rgba(255,255,255,0.5),inset 0 -6px 12px rgba(0,0,0,0.25),0 8px 0 #9C2802,0 24px 40px rgba(255,70,10,0.35)" }}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{st.icon}</svg>
+        </span>
+        <span style={{ fontFamily: MONO, fontSize: 15, letterSpacing: "0.18em", color: "#FF6A2A" }}>{`STEP ${i + 1} OF ${HOW_STEPS.length}`}</span>
+        <h2 style={{ margin: 0, fontFamily: SORA, fontWeight: 700, fontSize: 30, lineHeight: 1.1, letterSpacing: "-0.04em" }}>{st.title}</h2>
+        <p style={{ margin: 0, fontSize: 17, lineHeight: 1.55, color: "#A9A7B0", textWrap: "pretty" as never }}>{st.body}</p>
+        {st.note && <span style={{ fontSize: 15, fontWeight: 700, color: "#F2EFE8" }}>{st.note}</span>}
+        <button type="button" className="hiw-cta" onClick={() => (last ? onClose() : setI(i + 1))}
+          style={{ width: "100%", marginTop: 6, cursor: "pointer", padding: "16px", borderRadius: 18, border: "none", fontFamily: SORA, fontWeight: 700, fontSize: 17, color: "#fff", background: GRAD, boxShadow: "0 12px 30px rgba(255,74,18,0.35),inset 0 1px 0 rgba(255,255,255,0.3)" }}>
+          {last ? "Start staking" : "Continue"}
+        </button>
+      </div>
     </div>
   );
 }
