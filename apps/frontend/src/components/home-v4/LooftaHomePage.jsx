@@ -6,6 +6,7 @@ import {
 } from "@/app/home-v3/HomeV3Content";
 import { jetbrainsMono, manrope, sora } from "./fonts";
 import "./loofta-home.css";
+import { Vault3D } from "@/components/stake/Vault3D";
 
 const SORA = "var(--font-home-sora), system-ui, sans-serif";
 const MONO = "var(--font-home-mono), ui-monospace, monospace";
@@ -940,8 +941,8 @@ class HomePage extends React.Component {
                 justifyContent: "center",
               }}
             >
-              <a href="#giveaways" style={{ color: "#C9C6CF" }}>
-                Giveaways
+              <a href="#stake" style={{ color: "#C9C6CF" }}>
+                Stake to win
               </a>
               <a href="#cashout" style={{ color: "#C9C6CF" }}>
                 Cash out
@@ -1025,10 +1026,10 @@ class HomePage extends React.Component {
               aria-label="Site menu"
             >
               <a
-                href="#giveaways"
+                href="#stake"
                 onClick={() => this.setState({ menuOpen: false })}
               >
-                Giveaways
+                Stake to win
               </a>
               <a
                 href="#cashout"
@@ -1393,100 +1394,17 @@ class HomePage extends React.Component {
             }}
           >
             {"Loofta pays a handle or an email, and they cash out to "}
-            <span
-              data-float=""
-              style={{
-                display: "inline-flex",
-                verticalAlign: "middle",
-                width: "1.05em",
-                height: "1.05em",
-                borderRadius: "0.3em",
-                transform: "rotate(-6deg)",
-                background:
-                  "radial-gradient(120% 120% at 28% 18%,#9AD4F5 0%,#3D95CE 45%,#1E6CA4 100%)",
-                boxShadow:
-                  "inset 0 0.04em 0.06em rgba(255,255,255,0.6),inset 0 -0.06em 0.1em rgba(0,0,0,0.25),0 0.07em 0 #14507E,0 0.2em 0.4em rgba(0,0,0,0.5)",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "0.8em",
-                fontWeight: "800",
-                fontStyle: "italic",
-                color: "#fff",
-                textShadow: "0 0.04em 0 rgba(0,0,0,0.2)",
-              }}
-            >
-              V
-            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img data-float="" src="/images/platforms/venmo.png" alt="Venmo" style={{ display: "inline-block", verticalAlign: "middle", width: "1.05em", height: "1.05em", borderRadius: "0.3em", objectFit: "cover", transform: "rotate(-6deg)", boxShadow: "0 0.2em 0.4em rgba(0,0,0,0.5)" }} />
             {" Venmo, "}
-            <span
-              data-float=""
-              style={{
-                display: "inline-flex",
-                verticalAlign: "middle",
-                width: "1.05em",
-                height: "1.05em",
-                borderRadius: "0.3em",
-                transform: "rotate(4deg)",
-                background:
-                  "radial-gradient(120% 120% at 28% 18%,#8DF5A6 0%,#00D632 45%,#00A326 100%)",
-                boxShadow:
-                  "inset 0 0.04em 0.06em rgba(255,255,255,0.6),inset 0 -0.06em 0.1em rgba(0,0,0,0.25),0 0.07em 0 #00761C,0 0.2em 0.4em rgba(0,0,0,0.5)",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "0.8em",
-                fontWeight: "800",
-                color: "#fff",
-                textShadow: "0 0.04em 0 rgba(0,0,0,0.2)",
-              }}
-            >
-              $
-            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img data-float="" src="/images/platforms/cashapp.webp" alt="Cash App" style={{ display: "inline-block", verticalAlign: "middle", width: "1.05em", height: "1.05em", borderRadius: "0.3em", objectFit: "cover", transform: "rotate(4deg)", boxShadow: "0 0.2em 0.4em rgba(0,0,0,0.5)" }} />
             {" Cash App, "}
-            <span
-              data-float=""
-              style={{
-                display: "inline-flex",
-                verticalAlign: "middle",
-                width: "1.05em",
-                height: "1.05em",
-                borderRadius: "0.3em",
-                transform: "rotate(-3deg)",
-                background:
-                  "radial-gradient(120% 120% at 28% 18%,#FFFFFF 0%,#ECEAF0 45%,#BDBAC6 100%)",
-                boxShadow:
-                  "inset 0 0.04em 0.06em rgba(255,255,255,0.9),inset 0 -0.06em 0.1em rgba(0,0,0,0.18),0 0.07em 0 #8C8898,0 0.2em 0.4em rgba(0,0,0,0.5)",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "0.72em",
-                fontWeight: "800",
-                color: "#111",
-              }}
-            >
-              R
-            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img data-float="" src="/images/platforms/revolut.png" alt="Revolut" style={{ display: "inline-block", verticalAlign: "middle", width: "1.05em", height: "1.05em", borderRadius: "0.3em", objectFit: "cover", transform: "rotate(-3deg)", background: "#fff", padding: "0.14em", boxSizing: "border-box", boxShadow: "0 0.2em 0.4em rgba(0,0,0,0.5)" }} />
             {" Revolut, "}
-            <span
-              data-float=""
-              style={{
-                display: "inline-flex",
-                verticalAlign: "middle",
-                width: "1.05em",
-                height: "1.05em",
-                borderRadius: "0.3em",
-                transform: "rotate(5deg)",
-                background:
-                  "radial-gradient(120% 120% at 28% 18%,#C49BFF 0%,#6D1ED4 50%,#4A0FA0 100%)",
-                boxShadow:
-                  "inset 0 0.04em 0.06em rgba(255,255,255,0.5),inset 0 -0.06em 0.1em rgba(0,0,0,0.25),0 0.07em 0 #36087A,0 0.2em 0.4em rgba(0,0,0,0.5)",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "0.78em",
-                fontWeight: "800",
-                color: "#fff",
-              }}
-            >
-              Z
-            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img data-float="" src="/images/platforms/zelle.png" alt="Zelle" style={{ display: "inline-block", verticalAlign: "middle", width: "1.05em", height: "1.05em", borderRadius: "0.3em", objectFit: "cover", transform: "rotate(5deg)", boxShadow: "0 0.2em 0.4em rgba(0,0,0,0.5)" }} />
             {" Zelle, or "}
             <span
               data-float=""
@@ -1781,29 +1699,8 @@ class HomePage extends React.Component {
                   transition: "transform .3s ease-out",
                 }}
               >
-                <span
-                  data-float=""
-                  style={{
-                    marginTop: "28px",
-                    width: "150px",
-                    height: "150px",
-                    borderRadius: "44px",
-                    background:
-                      "radial-gradient(120% 120% at 28% 18%,#9AD4F5 0%,#3D95CE 45%,#1E6CA4 100%)",
-                    boxShadow:
-                      "inset 0 6px 10px rgba(255,255,255,0.55),inset 0 -10px 18px rgba(0,0,0,0.25),0 12px 0 #14507E,0 40px 60px rgba(0,0,0,0.5)",
-                    display: "grid",
-                    placeItems: "center",
-                    fontFamily: SORA,
-                    fontWeight: "800",
-                    fontStyle: "italic",
-                    fontSize: "92px",
-                    color: "#fff",
-                    textShadow: "0 4px 0 rgba(0,0,0,0.15)",
-                  }}
-                >
-                  V
-                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img data-float="" src="/images/platforms/venmo.png" alt="Venmo" style={{ display: "block", width: "150px", height: "150px", borderRadius: "44px", objectFit: "cover", marginTop: "28px", boxShadow: "0 24px 50px rgba(0,0,0,0.5)" }} />
                 <div
                   style={{
                     width: "100%",
@@ -1849,28 +1746,8 @@ class HomePage extends React.Component {
                   transition: "transform .3s ease-out",
                 }}
               >
-                <span
-                  data-float=""
-                  style={{
-                    marginTop: "28px",
-                    width: "150px",
-                    height: "150px",
-                    borderRadius: "44px",
-                    background:
-                      "radial-gradient(120% 120% at 28% 18%,#8DF5A6 0%,#00D632 45%,#00A326 100%)",
-                    boxShadow:
-                      "inset 0 6px 10px rgba(255,255,255,0.55),inset 0 -10px 18px rgba(0,0,0,0.25),0 12px 0 #00761C,0 40px 60px rgba(0,0,0,0.5)",
-                    display: "grid",
-                    placeItems: "center",
-                    fontFamily: SORA,
-                    fontWeight: "800",
-                    fontSize: "92px",
-                    color: "#fff",
-                    textShadow: "0 4px 0 rgba(0,0,0,0.15)",
-                  }}
-                >
-                  $
-                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img data-float="" src="/images/platforms/cashapp.webp" alt="Cash App" style={{ display: "block", width: "150px", height: "150px", borderRadius: "44px", objectFit: "cover", marginTop: "28px", boxShadow: "0 24px 50px rgba(0,0,0,0.5)" }} />
                 <div
                   style={{
                     width: "100%",
@@ -1916,27 +1793,8 @@ class HomePage extends React.Component {
                   transition: "transform .3s ease-out",
                 }}
               >
-                <span
-                  data-float=""
-                  style={{
-                    marginTop: "28px",
-                    width: "150px",
-                    height: "150px",
-                    borderRadius: "44px",
-                    background:
-                      "radial-gradient(120% 120% at 28% 18%,#FFFFFF 0%,#ECEAF0 45%,#BDBAC6 100%)",
-                    boxShadow:
-                      "inset 0 6px 10px rgba(255,255,255,0.9),inset 0 -10px 18px rgba(0,0,0,0.16),0 12px 0 #8C8898,0 40px 60px rgba(0,0,0,0.5)",
-                    display: "grid",
-                    placeItems: "center",
-                    fontFamily: SORA,
-                    fontWeight: "800",
-                    fontSize: "84px",
-                    color: "#111",
-                  }}
-                >
-                  R
-                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img data-float="" src="/images/platforms/revolut.png" alt="Revolut" style={{ display: "block", width: "150px", height: "150px", borderRadius: "44px", objectFit: "cover", marginTop: "28px", background: "#fff", padding: "22px", boxSizing: "border-box", boxShadow: "0 24px 50px rgba(0,0,0,0.5)" }} />
                 <div
                   style={{
                     width: "100%",
@@ -1983,28 +1841,8 @@ class HomePage extends React.Component {
                   transition: "transform .3s ease-out",
                 }}
               >
-                <span
-                  data-float=""
-                  style={{
-                    marginTop: "28px",
-                    width: "150px",
-                    height: "150px",
-                    borderRadius: "44px",
-                    background:
-                      "radial-gradient(120% 120% at 28% 18%,#C49BFF 0%,#6D1ED4 50%,#4A0FA0 100%)",
-                    boxShadow:
-                      "inset 0 6px 10px rgba(255,255,255,0.45),inset 0 -10px 18px rgba(0,0,0,0.25),0 12px 0 #36087A,0 40px 60px rgba(0,0,0,0.5)",
-                    display: "grid",
-                    placeItems: "center",
-                    fontFamily: SORA,
-                    fontWeight: "800",
-                    fontSize: "92px",
-                    color: "#fff",
-                    textShadow: "0 4px 0 rgba(0,0,0,0.15)",
-                  }}
-                >
-                  Z
-                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img data-float="" src="/images/platforms/zelle.png" alt="Zelle" style={{ display: "block", width: "150px", height: "150px", borderRadius: "44px", objectFit: "cover", marginTop: "28px", boxShadow: "0 24px 50px rgba(0,0,0,0.5)" }} />
                 <div
                   style={{
                     width: "100%",
@@ -2256,8 +2094,8 @@ class HomePage extends React.Component {
           </div>
         </section>
         <section
-          id="giveaways"
-          data-screen-label="Giveaways"
+          id="stake"
+          data-screen-label="Stake to win"
           style={{ padding: "0 clamp(20px,4vw,64px) clamp(100px,10vw,160px)" }}
         >
           <div
@@ -2278,13 +2116,7 @@ class HomePage extends React.Component {
                 alignItems: "center",
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "22px",
-                }}
-              >
+              <div style={{ display: "flex", flexDirection: "column", gap: "22px" }}>
                 <span
                   style={{
                     fontFamily: MONO,
@@ -2293,7 +2125,7 @@ class HomePage extends React.Component {
                     color: "#FF6A2A",
                   }}
                 >
-                  GIVEAWAYS
+                  STAKE TO WIN
                 </span>
                 <h2
                   style={{
@@ -2305,9 +2137,9 @@ class HomePage extends React.Component {
                     letterSpacing: "-0.06em",
                   }}
                 >
-                  <span style={{ display: "block" }}>Grow your community</span>
+                  <span style={{ display: "block" }}>Stake USDC.</span>
                   <span style={{ display: "block", color: "#66646E" }}>
-                    with a giveaway.
+                    Win every week.
                   </span>
                 </h2>
                 <p
@@ -2320,17 +2152,16 @@ class HomePage extends React.Component {
                     textWrap: "pretty",
                   }}
                 >
-                  Fund a prize, share one link, let people enter. The draw is
-                  on-chain and the prize is already in escrow. Nothing to
-                  manually pay out, nothing to argue about after.
+                  Your deposit stays yours and can be withdrawn any time. Every
+                  dollar staked earns tickets into a weekly prize draw.
                 </p>
                 <div style={{ display: "flex" }}>
                   <a
-                    href="/rewards-rail"
+                    href={`${this.state.appUrl}/stake`}
                     style={{
                       padding: "18px 30px",
                       borderRadius: "999px",
-                      background: "linear-gradient(90deg,#FF2D0A,#F5B70C)",
+                      background: "linear-gradient(90deg,#FF2D0A,#FF7A2A)",
                       color: "#fff",
                       fontFamily: SORA,
                       fontWeight: "600",
@@ -2338,7 +2169,7 @@ class HomePage extends React.Component {
                       boxShadow: "0 14px 40px rgba(255,70,10,0.35)",
                     }}
                   >
-                    Launch a giveaway
+                    Stake now
                   </a>
                 </div>
               </div>
@@ -2358,60 +2189,7 @@ class HomePage extends React.Component {
                     pointerEvents: "none",
                   }}
                 ></div>
-                {/* Reduced-motion: static gift. Desktop mounts WebGL into the ref below. */}
-                {v.lite ? (
-                  <div
-                    className="lh-gift-static"
-                    aria-hidden
-                    style={{
-                      position: "absolute",
-                      inset: "0",
-                      display: "grid",
-                      placeItems: "center",
-                      pointerEvents: "none",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: "min(52%,220px)",
-                        aspectRatio: "1",
-                        borderRadius: "28%",
-                        background:
-                          "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)",
-                        boxShadow:
-                          "inset 0 6px 10px rgba(255,255,255,0.45),inset 0 -10px 18px rgba(0,0,0,0.28),0 14px 0 #9C2802,0 36px 60px rgba(255,70,10,0.35)",
-                        display: "grid",
-                        placeItems: "center",
-                        transform: "rotate(-6deg)",
-                      }}
-                    >
-                      <svg
-                        width="42%"
-                        height="42%"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="#fff"
-                        strokeWidth="2.2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <rect x="3" y="8" width="18" height="13" rx="2" />
-                        <path d="M12 8v13M3 12h18" />
-                        <path d="M12 8c-1.5-3-4-4-6-3.5S4 8 6.5 9.5 12 8 12 8zM12 8c1.5-3 4-4 6-3.5S20 8 17.5 9.5 12 8 12 8z" />
-                      </svg>
-                    </div>
-                  </div>
-                ) : (
-                  <div
-                    ref={v.heroRef}
-                    title="Click to open"
-                    style={{
-                      position: "absolute",
-                      inset: "0",
-                      cursor: "pointer",
-                    }}
-                  ></div>
-                )}
+                {v.lite ? null : <Vault3D />}
               </div>
             </div>
             <div
@@ -2422,272 +2200,61 @@ class HomePage extends React.Component {
                 gap: "20px",
               }}
             >
-              <div
-                onPointerMove={v.tilt}
-                onPointerLeave={v.untilt}
-                style={{
-                  borderRadius: "32px",
-                  background:
-                    "radial-gradient(80% 60% at 30% 25%,rgba(255,90,26,0.22),rgba(255,90,26,0) 70%),#0F0F13",
-                  border: "1px solid rgba(255,255,255,0.07)",
-                  padding: "40px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "18px",
-                  minHeight: "380px",
-                  transition: "transform .3s ease-out",
-                }}
-              >
+              {[
+                ["01", "Stake", "Deposit USDC in a couple of taps. It earns yield and stays yours.", <><path d="M12 3l9 5-9 5-9-5 9-5z" /><path d="M3 13l9 5 9-5" /><path d="M3 17.5l9 5 9-5" /></>],
+                ["02", "Get tickets", "Every dollar staked earns tickets into the weekly draw.", <><path d="M3 9a2 2 0 0 0 0 6v3h18v-3a2 2 0 0 1 0-6V6H3v3z" /><path d="M13 6v12" strokeDasharray="2 2.5" /></>],
+                ["03", "Win weekly", "One draw a week. Prizes land ready to claim, withdraw any time.", <><path d="M8 4h8v6a4 4 0 0 1-8 0V4z" /><path d="M8 6H4v2a3 3 0 0 0 4 2.8M16 6h4v2a3 3 0 0 1-4 2.8" /><path d="M12 14v4M8 21h8M10 18h4" /></>],
+              ].map(([n, t, d, icon]) => (
                 <div
+                  key={n}
+                  onPointerMove={v.tilt}
+                  onPointerLeave={v.untilt}
                   style={{
+                    borderRadius: "32px",
+                    background:
+                      "radial-gradient(80% 60% at 30% 25%,rgba(255,90,26,0.22),rgba(255,90,26,0) 70%),#0F0F13",
+                    border: "1px solid rgba(255,255,255,0.07)",
+                    padding: "40px",
                     display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
+                    flexDirection: "column",
+                    gap: "18px",
+                    minHeight: "300px",
+                    transition: "transform .3s ease-out",
                   }}
                 >
-                  <span
-                    data-float=""
-                    style={{
-                      width: "96px",
-                      height: "96px",
-                      borderRadius: "30px",
-                      transform: "rotate(-6deg)",
-                      background:
-                        "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)",
-                      boxShadow:
-                        "inset 0 4px 6px rgba(255,255,255,0.5),inset 0 -6px 12px rgba(0,0,0,0.25),0 8px 0 #9C2802,0 24px 40px rgba(255,70,10,0.35)",
-                      display: "grid",
-                      placeItems: "center",
-                    }}
-                  >
-                    <svg
-                      width="42"
-                      height="42"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="#fff"
-                      strokeWidth="2.4"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <span
+                      data-float=""
+                      style={{
+                        width: "96px",
+                        height: "96px",
+                        borderRadius: "30px",
+                        transform: "rotate(-6deg)",
+                        background: "radial-gradient(120% 120% at 28% 18%,#FFC79A 0%,#FF5A1A 45%,#D23806 100%)",
+                        boxShadow: "inset 0 4px 6px rgba(255,255,255,0.5),inset 0 -6px 12px rgba(0,0,0,0.25),0 8px 0 #9C2802,0 24px 40px rgba(255,70,10,0.35)",
+                        display: "grid",
+                        placeItems: "center",
+                      }}
                     >
-                      <rect
-                        x="4.5"
-                        y="11"
-                        width="15"
-                        height="10"
-                        rx="2.5"
-                      ></rect>
-                      <path d="M8 11V8a4 4 0 0 1 8 0v3"></path>
-                    </svg>
-                  </span>
-                  <span
+                      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{icon}</svg>
+                    </span>
+                    <span style={{ fontFamily: SORA, fontWeight: "800", fontSize: "88px", lineHeight: "0.9", letterSpacing: "-0.06em", color: "transparent", WebkitTextStroke: "2px rgba(255,255,255,0.14)" }}>{n}</span>
+                  </div>
+                  <div style={{ flex: "1" }}></div>
+                  <h3
                     style={{
-                      fontFamily: MONO,
-                      fontSize: "14px",
-                      color: "#6E6C78",
+                      margin: "0",
+                      fontFamily: SORA,
+                      fontWeight: "700",
+                      fontSize: "32px",
+                      letterSpacing: "-0.04em",
                     }}
                   >
-                    01
-                  </span>
+                    {t}
+                  </h3>
+                  <p style={{ margin: "0", fontSize: "17px", lineHeight: "1.55", color: "#A9A7B0" }}>{d}</p>
                 </div>
-                <div style={{ flex: "1" }}></div>
-                <h3
-                  style={{
-                    margin: "0",
-                    fontFamily: SORA,
-                    fontWeight: "700",
-                    fontSize: "32px",
-                    letterSpacing: "-0.04em",
-                  }}
-                >
-                  Escrow-funded
-                </h3>
-                <p
-                  style={{
-                    margin: "0",
-                    fontSize: "17px",
-                    lineHeight: "1.55",
-                    color: "#A9A7B0",
-                  }}
-                >
-                  Prize sits in escrow the moment you launch it, nothing to
-                  trust after that.
-                </p>
-              </div>
-              <div
-                onPointerMove={v.tilt}
-                onPointerLeave={v.untilt}
-                style={{
-                  borderRadius: "32px",
-                  background:
-                    "radial-gradient(80% 60% at 30% 25%,rgba(245,183,12,0.18),rgba(245,183,12,0) 70%),#0F0F13",
-                  border: "1px solid rgba(255,255,255,0.07)",
-                  padding: "40px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "18px",
-                  minHeight: "380px",
-                  transition: "transform .3s ease-out",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <span
-                    data-float=""
-                    style={{
-                      width: "96px",
-                      height: "96px",
-                      borderRadius: "30px",
-                      transform: "rotate(5deg)",
-                      background:
-                        "radial-gradient(120% 120% at 28% 18%,#FFE9A8 0%,#F5B70C 45%,#C98A04 100%)",
-                      boxShadow:
-                        "inset 0 4px 6px rgba(255,255,255,0.6),inset 0 -6px 12px rgba(0,0,0,0.2),0 8px 0 #8E6002,0 24px 40px rgba(245,183,12,0.3)",
-                      display: "grid",
-                      placeItems: "center",
-                    }}
-                  >
-                    <svg
-                      width="42"
-                      height="42"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="#3A2400"
-                      strokeWidth="2.4"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <rect x="4" y="4" width="16" height="16" rx="4"></rect>
-                      <circle cx="9" cy="9" r="0.6" fill="#3A2400"></circle>
-                      <circle cx="15" cy="15" r="0.6" fill="#3A2400"></circle>
-                      <circle cx="15" cy="9" r="0.6" fill="#3A2400"></circle>
-                      <circle cx="9" cy="15" r="0.6" fill="#3A2400"></circle>
-                    </svg>
-                  </span>
-                  <span
-                    style={{
-                      fontFamily: MONO,
-                      fontSize: "14px",
-                      color: "#6E6C78",
-                    }}
-                  >
-                    02
-                  </span>
-                </div>
-                <div style={{ flex: "1" }}></div>
-                <h3
-                  style={{
-                    margin: "0",
-                    fontFamily: SORA,
-                    fontWeight: "700",
-                    fontSize: "32px",
-                    letterSpacing: "-0.04em",
-                  }}
-                >
-                  Winners paid automatically
-                </h3>
-                <p
-                  style={{
-                    margin: "0",
-                    fontSize: "17px",
-                    lineHeight: "1.55",
-                    color: "#A9A7B0",
-                  }}
-                >
-                  Drawn on-chain and paid straight from escrow, nothing to send
-                  manually.
-                </p>
-              </div>
-              <div
-                onPointerMove={v.tilt}
-                onPointerLeave={v.untilt}
-                style={{
-                  borderRadius: "32px",
-                  background:
-                    "radial-gradient(80% 60% at 30% 25%,rgba(255,255,255,0.1),rgba(255,255,255,0) 70%),#0F0F13",
-                  border: "1px solid rgba(255,255,255,0.07)",
-                  padding: "40px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "18px",
-                  minHeight: "380px",
-                  transition: "transform .3s ease-out",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <span
-                    data-float=""
-                    style={{
-                      width: "96px",
-                      height: "96px",
-                      borderRadius: "30px",
-                      transform: "rotate(-4deg)",
-                      background:
-                        "radial-gradient(120% 120% at 28% 18%,#FFFFFF 0%,#ECEAF0 45%,#BDBAC6 100%)",
-                      boxShadow:
-                        "inset 0 4px 6px rgba(255,255,255,0.9),inset 0 -6px 12px rgba(0,0,0,0.16),0 8px 0 #8C8898,0 24px 40px rgba(255,90,26,0.25)",
-                      display: "grid",
-                      placeItems: "center",
-                    }}
-                  >
-                    <svg
-                      width="42"
-                      height="42"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="#16161C"
-                      strokeWidth="2.4"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <rect x="3" y="8" width="18" height="4" rx="1"></rect>
-                      <path d="M5 12v9h14v-9M12 8v13M12 8S10.5 3 8 4.5 9 8 12 8zm0 0s1.5-5 4-3.5S15 8 12 8z"></path>
-                    </svg>
-                  </span>
-                  <span
-                    style={{
-                      fontFamily: MONO,
-                      fontSize: "14px",
-                      color: "#6E6C78",
-                    }}
-                  >
-                    03
-                  </span>
-                </div>
-                <div style={{ flex: "1" }}></div>
-                <h3
-                  style={{
-                    margin: "0",
-                    fontFamily: SORA,
-                    fontWeight: "700",
-                    fontSize: "32px",
-                    letterSpacing: "-0.04em",
-                  }}
-                >
-                  Easy to list
-                </h3>
-                <p
-                  style={{
-                    margin: "0",
-                    fontSize: "17px",
-                    lineHeight: "1.55",
-                    color: "#A9A7B0",
-                  }}
-                >
-                  Live in minutes, no code required.
-                </p>
-              </div>
+              ))}
             </div>
           </div>
         </section>

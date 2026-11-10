@@ -1,7 +1,7 @@
 "use client";
 
-import { PoolRipSeatCard } from "@/components/PoolRipSeatCard";
-import { POOLRIP_SEAT_PRICE_USDC, POOLRIP_SEAT_MIN_BALANCE_USDC, usePoolRipSeat } from "@/hooks/usePoolRipSeat";
+import { StakeUpsellCard } from "@/components/StakeUpsellCard";
+import { STAKE_UPSELL_MIN_BALANCE_USDC, useStakeUpsell } from "@/hooks/useStakeUpsell";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,8 +81,7 @@ export function PajCashOfframpView({
   const [savingAccount, setSavingAccount] = useState(false);
 
   const [amount, setAmount] = useState("");
-  const [seat, setSeat] = useState(false);
-  const buySeat = usePoolRipSeat(getAccessToken, "cash_out_naira");
+  const stakeUp = useStakeUpsell(getAccessToken, userId, "cash_out_naira");
   const [quote, setQuote] = useState<number | null>(null);
   const looftaFee = computeLooftaFeeUsdc(parseFloat(amount) || 0);
   const [quoteLoading, setQuoteLoading] = useState(false);
@@ -245,8 +244,8 @@ export function PajCashOfframpView({
       toast({ variant: "destructive", title: "Insufficient balance", description: `You have ${maxAmountUsdc.toFixed(6).replace(/\.?0+$/, "")} USDC available.` });
       return;
     }
-    if (seat && amountNum + POOLRIP_SEAT_PRICE_USDC > maxAmountUsdc) {
-      toast({ variant: "destructive", title: "Insufficient balance", description: "Lower the amount a little to keep $2.50 for your PoolRip seat." });
+    if (stakeUp.on && amountNum + stakeUp.amount > maxAmountUsdc) {
+      toast({ variant: "destructive", title: "Insufficient balance", description: "Lower the amount a little to keep your stake." });
       return;
     }
     if (!solanaAddress || !wallet || !userId) {
@@ -256,11 +255,11 @@ export function PajCashOfframpView({
 
     setSubmitting(true);
     try {
-      // The seat goes first and never blocks the cash out: a failed purchase just means no seat.
-      if (seat) {
-        const added = await buySeat(wallet);
-        setSeat(false);
-        if (added) toast({ title: "Your PoolRip seat is in", description: "Your first vote is set to take someone out. Follow the room at play.loofta.com." });
+      // The seat goes first and never blocks the cash out: a failed stake just means no stake.
+      if (stakeUp.on) {
+        const added = await stakeUp.buy(wallet);
+        stakeUp.set(false, stakeUp.amount);
+        if (added) toast({ title: "You are staked", description: "Your tickets are in this week's draw. See them at loofta.com/stake." });
       }
       const accessToken = await getAccessToken();
       const created = await pajCreateOfframp(selectedAccountId, amountNum, accessToken);
@@ -489,16 +488,18 @@ export function PajCashOfframpView({
           </div>
         </div>
 
-        {!devnetMode && maxAmountUsdc >= POOLRIP_SEAT_MIN_BALANCE_USDC && parseFloat(amount) > 0 && (
-          <PoolRipSeatCard
+        {!devnetMode && maxAmountUsdc >= STAKE_UPSELL_MIN_BALANCE_USDC && parseFloat(amount) > 0 && (
+          <StakeUpsellCard
             dark={dark}
-            price={POOLRIP_SEAT_PRICE_USDC}
+            source="cash_out_naira"
             disabled={submitting}
-            checked={seat}
-            onCheckedChange={(checked) => {
-              setSeat(checked);
-              if (checked && (parseFloat(amount) || 0) + POOLRIP_SEAT_PRICE_USDC > maxAmountUsdc) {
-                setAmount(Math.max(0, maxAmountUsdc - POOLRIP_SEAT_PRICE_USDC).toFixed(2).replace(/\.00$/, ""));
+            checked={stakeUp.on}
+            amount={stakeUp.amount}
+            max={maxAmountUsdc}
+            onChange={(checked, stakeAmt) => {
+              stakeUp.set(checked, stakeAmt);
+              if (checked && (parseFloat(amount) || 0) + stakeAmt > maxAmountUsdc) {
+                setAmount(Math.max(0, maxAmountUsdc - stakeAmt).toFixed(2).replace(/\.00$/, ""));
               }
             }}
           />

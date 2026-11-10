@@ -136,12 +136,31 @@ export class AmpleService {
     return data;
   }
 
+  private drawCache: { at: number; data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null } | null } | null = null;
+
+  /** Next draw time from Ample (cached 10s). Null if the call fails so stats still render. */
+  async nextDraw() {
+    if (this.drawCache && Date.now() - this.drawCache.at < 10_000) return this.drawCache.data;
+    let data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null } | null = null;
+    try {
+      const r: any = await this.call('GET', '/draws/next', { kind: 'key' }, { query: { network: NETWORK } });
+      if (r?.nextDrawAt) {
+        data = { nextDrawAt: String(r.nextDrawAt), drawIntervalSeconds: Number(r.drawIntervalSeconds) || 604800, lastDrawStatus: r.lastDrawStatus ?? null };
+      }
+    } catch {
+      data = null;
+    }
+    this.drawCache = { at: Date.now(), data };
+    return data;
+  }
+
   /** Public marketing numbers for the offered vault. avgApr is last month's payouts annualised over TVL (what savers actually earned on average); maxApr is Ample's best-case ceiling. */
   async publicStats() {
     const v: any = (await this.listVaults())[0];
     if (!v) return null;
     const tvl = Number(v.tvlUsd) || 0;
     const monthly = Number(v.payouts?.monthlyUsd) || 0;
+    const draw = await this.nextDraw();
     return {
       vaultId: v.id as string,
       symbol: (v.token?.symbol as string) ?? 'USDC',
@@ -151,6 +170,9 @@ export class AmpleService {
       totalPaidUsd: Number(v.payouts?.cumulativeUsd) || 0,
       avgApr: tvl > 0 ? Math.round(((monthly * 12) / tvl) * 1000) / 10 : null,
       maxApr: Number(v.aprRange?.max) || null,
+      nextDrawAt: draw?.nextDrawAt ?? null,
+      drawIntervalSeconds: draw?.drawIntervalSeconds ?? null,
+      lastDrawStatus: draw?.lastDrawStatus ?? null,
     };
   }
 

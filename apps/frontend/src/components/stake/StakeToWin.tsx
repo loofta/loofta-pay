@@ -37,11 +37,18 @@ function toBase(input: string, decimals: number): string | null {
   return out === "" ? null : out;
 }
 
-// Ample's partner API has no draw time. Observed: payouts land weekly, and on 2026-11-10 the Ample site
-// showed 07h53m to the next one, i.e. Tuesday ~17:00 UTC. Re-check after a draw and fix here if it drifts.
+// Draw time comes from Ample (GET /v1/draws/next via /ample/stats). Fallback if the call failed: Tuesday ~17:00 UTC.
 const DRAW_DAY_UTC = 2; // 0 = Sunday
 const DRAW_HOUR_UTC = 17;
-function msToNextDraw(now: number): number {
+function msToNextDraw(now: number, nextDrawAt?: string | null, intervalSec?: number | null): number {
+  const base = nextDrawAt ? Date.parse(nextDrawAt) : NaN;
+  if (Number.isFinite(base)) {
+    const step = (intervalSec && intervalSec > 0 ? intervalSec : 604800) * 1000;
+    let t = base;
+    // Keep counting down past the draw without re-fetching: roll forward by whole intervals.
+    if (t <= now) t += Math.ceil((now - t + 1) / step) * step;
+    return t - now;
+  }
   const d = new Date(now);
   const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), DRAW_HOUR_UTC));
   t.setUTCDate(t.getUTCDate() + ((DRAW_DAY_UTC - t.getUTCDay() + 7) % 7));
@@ -49,7 +56,7 @@ function msToNextDraw(now: number): number {
   return t.getTime() - now;
 }
 
-function Countdown() {
+function Countdown({ nextDrawAt, intervalSec }: { nextDrawAt?: string | null; intervalSec?: number | null }) {
   const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
     setNow(Date.now());
@@ -57,7 +64,7 @@ function Countdown() {
     return () => clearInterval(i);
   }, []);
   if (now === null) return <div style={{ height: 40 }} />;
-  let ms = msToNextDraw(now);
+  let ms = msToNextDraw(now, nextDrawAt, intervalSec);
   const dd = Math.floor(ms / 864e5); ms -= dd * 864e5;
   const hh = Math.floor(ms / 36e5); ms -= hh * 36e5;
   const mm = Math.floor(ms / 6e4);
@@ -319,7 +326,7 @@ export function StakeToWin() {
                   {NEXT_PAYOUT[0]}<span style={{ color: "#7A7884" }}>{NEXT_PAYOUT[1]}</span>
                 </span>
               </div>
-              <Countdown />
+              <Countdown nextDrawAt={stats?.nextDrawAt} intervalSec={stats?.drawIntervalSeconds} />
             </div>
 
           {winners && (
@@ -351,14 +358,14 @@ export function StakeToWin() {
               </div>
 
               <div style={{ padding: "clamp(18px,3.2vh,30px) 20px clamp(16px,2.6vh,24px)", display: "flex", flexDirection: "column", gap: "clamp(12px,2.3vh,24px)" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, textAlign: "center" }}>
                   <Mini label="Your stake" value={`$${fmt(stakedNum)}`} />
                   <Mini label="Tickets" value={fmt(ticketCount)} />
                   <Mini label="Weekly odds" value={oddsText(oddsBefore)} />
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "clamp(12px,2.2vh,20px) 18px", borderRadius: 18, background: "#0B0B0E", border: `1px solid ${focus ? "rgba(255,122,42,0.6)" : "rgba(255,255,255,0.08)"}` }}>
-                  <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 32, color: ACC }}>$</span>
+                  <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 32, color: "#6E6C78" }}>$</span>
                   <input inputMode="decimal" aria-label={isStake ? "Amount to stake" : "Amount to withdraw"} value={amount}
                     onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
                     style={{ flex: 1, minWidth: 0, background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontFamily: SORA, fontWeight: 700, fontSize: 28, letterSpacing: "-0.03em" }} />
@@ -476,7 +483,7 @@ export function StakeToWin() {
 
 function Mini({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 0 }}>
       <span style={{ fontSize: 15, color: "#8A8893" }}>{label}</span>
       <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 20, letterSpacing: "-0.03em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
     </div>

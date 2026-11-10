@@ -69,5 +69,10 @@ export interface AmpleStats {
   avgApr: number | null;
   /** Best-case APR ceiling, in percent. */
   maxApr: number | null;
+  /** ISO time entries close and the next draw runs (from Ample). */
+  nextDrawAt: string | null;
+  drawIntervalSeconds: number | null;
+  /** PROCESSING while winners are worked out, SETTLED once payouts can be claimed. */
+  lastDrawStatus: string | null;
 }
 export const getAmpleStats = () => fetchApi<AmpleStats | null>('/ample/stats');
