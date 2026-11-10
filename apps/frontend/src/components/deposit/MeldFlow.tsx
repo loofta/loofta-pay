@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 const SORA = "var(--font-home-sora), Sora, sans-serif";
 
-type Option = { id: string; method?: string; label: string; eta?: string; receive: number; currency: string; fee: number; rate: number | null };
+type Option = { id: string; method?: string; label: string; eta?: string; receive: number; currency: string; fee: number; feeUsdc?: number | null; rate: number | null };
 type QuoteResult = { supported?: boolean; options?: Option[]; currency?: string; error?: string };
 
 const MIN_SELL_USDC = 3;
@@ -271,6 +271,11 @@ export function MeldFlow({
                     <span className="mb-1 inline-block whitespace-nowrap rounded-full bg-emerald-500/15 px-2 py-0.5 text-sm font-semibold text-emerald-300">Best rate</span>
                   )}
                   <span className="block text-base font-bold leading-tight text-white" style={{ fontFamily: SORA }}>{o.label}</span>
+                  {sell && o.feeUsdc != null && (
+                    <span className="mt-0.5 block text-sm text-[#8A8893]">
+                      {o.feeUsdc > 0.005 ? `Fee about ${o.feeUsdc.toFixed(2)} USDC` : "No fee"}
+                    </span>
+                  )}
                   {!sell && (
                     <span className="mt-0.5 block text-sm text-[#8A8893]">
                       {o.fee > 0 ? `All-in cost ${fiat(o.fee, o.currency)}` : "No extra cost"}
@@ -289,7 +294,7 @@ export function MeldFlow({
                     {sell ? fiat(o.receive, o.currency) : `${o.receive.toFixed(2)} USDC`}
                   </span>
                   <span className="block text-sm text-[#8A8893]">
-                    {sell ? `for ${amountNum} USDC` : `for $${amountNum}`}
+                    {sell ? (o.feeUsdc != null ? `= ${(amountNum - o.feeUsdc).toFixed(2)} USDC` : `for ${amountNum} USDC`) : `for $${amountNum}`}
                   </span>
                 </span>
               </button>

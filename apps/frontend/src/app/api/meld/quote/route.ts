@@ -24,6 +24,7 @@ export type QuoteOption = {
   receive: number;      // fiat for a sell, USDC for a buy
   currency: string;     // fiat code of the payout (sell) or the card charge (buy)
   fee: number;          // in the fiat currency
+  feeUsdc: number | null; // sell only: what the fee and spread cost, in USDC, against the market rate
   rate: number | null;  // fiat per 1 USDC
 };
 
@@ -84,6 +85,20 @@ async function meld<T>(path: string, init?: RequestInit): Promise<{ ok: boolean;
   return { ok: res.ok, status: res.status, data: (await res.json().catch(() => null)) as T | null };
 }
 
+
+/** Fiat per 1 USD at the market rate (USDC is pegged), so a payout can be converted back to USDC and the real cost shown. */
+async function marketRate(currency: string): Promise<number | null> {
+  if (currency === "USD") return 1;
+  try {
+    const r = await fetch(`https://api.frankfurter.dev/v1/latest?base=USD&symbols=${currency}`, { next: { revalidate: 3600 } });
+    const d = (await r.json()) as { rates?: Record<string, number> };
+    const v = d.rates?.[currency];
+    return typeof v === "number" && v > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Meld words the minimum as "below the minimum allowed, which is 5.00 USD"; pass the number on. */
 function minimumFrom(data: unknown): string | null {
   const q = data as { code?: string; message?: string } | null;
@@ -140,14 +155,24 @@ export async function POST(request: Request) {
       }
       quotes = [...best.values()];
     } else {
+      // Same as a buy: a quote with no method returns only each provider's default, and a provider that is slow
+      // drops out, so a bank transfer comes and goes. Ask for each payout method by name too and keep the best per method.
+      const sellMethods = ["SEPA", "PAYOUT_TO_CARD", "PAYOUT_TO_BANK", "ACH"];
       for (const c of currencies) {
-        const r = await meld<{ quotes?: MeldQuote[] }>("/payments/crypto/quote", {
+        const ask = (method?: string) => meld<{ quotes?: MeldQuote[] }>("/payments/crypto/quote", {
           method: "POST",
-          body: JSON.stringify({ countryCode: country, sourceCurrencyCode: "USDC_SOLANA", sourceAmount: String(amount), destinationCurrencyCode: c }),
+          body: JSON.stringify({ countryCode: country, sourceCurrencyCode: "USDC_SOLANA", sourceAmount: String(amount), destinationCurrencyCode: c, ...(method ? { paymentMethodType: method } : {}) }),
         });
-        lastData = r.data;
-        quotes = r.data?.quotes ?? [];
-        if (r.ok && quotes.length) { currency = c; break; }
+        const results = await Promise.all([ask(), ...sellMethods.map((m) => ask(m))]);
+        lastData = results.find((r) => !r.ok)?.data ?? results[0].data;
+        const best = new Map<string, MeldQuote>();
+        for (const q of results.flatMap((r) => r.data?.quotes ?? [])) {
+          const key = q.paymentMethodType ?? "PAYOUT_TO_BANK";
+          const cur = best.get(key);
+          if (!cur || q.destinationAmount > cur.destinationAmount) best.set(key, q);
+        }
+        quotes = [...best.values()];
+        if (quotes.length) { currency = c; break; }
       }
     }
 
@@ -166,6 +191,7 @@ export async function POST(request: Request) {
       ? Math.max(Number(q.totalFee ?? 0), Math.round((grossBest - q.destinationAmount) * 100) / 100)
       : Math.max(Number(q.totalFee ?? 0), Math.round((amount - q.destinationAmount) * 100) / 100); // buy: dollars paid minus USDC received (USDC ~ $1) is the true all-in cost, spread included
 
+    const mid = side === "sell" ? await marketRate(currency) : null;
     const options: QuoteOption[] = quotes
       .sort((a, b) => b.destinationAmount - a.destinationAmount)
       .map((q) => ({
@@ -176,6 +202,7 @@ export async function POST(request: Request) {
         receive: q.destinationAmount,
         currency: side === "sell" ? q.destinationCurrencyCode || currency : "USD",
         fee: realFee(q),
+        feeUsdc: side === "sell" && mid ? Math.max(0, Math.round((amount - q.destinationAmount / mid) * 100) / 100) : null,
         rate: side === "sell" ? (q.destinationAmount > 0 ? q.destinationAmount / amount : null) : null,
       }));
     return json({ country, supported: true, side, currency: side === "sell" ? currency : "USD", options });

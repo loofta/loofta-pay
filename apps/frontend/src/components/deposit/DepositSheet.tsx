@@ -60,7 +60,7 @@ type Screen = "home" | "solana" | "address" | "card" | "paj";
 type CardProvider = "card" | "paj" | "peer" | "revolut" | "venmo" | "cashapp";
 
 const CARD_PROVIDERS: { id: CardProvider; name: string; hint: string; logos: string[] }[] = [
-  { id: "card", name: "Card or Apple Pay", hint: "Debit or credit card, Apple Pay, Google Pay", logos: ["/images/icons/card.svg"] },
+  { id: "card", name: "Cards or bank", hint: "Debit or credit card, Apple Pay, Google Pay, bank transfer", logos: ["/images/icons/card-chip.svg"] },
   { id: "paj", name: "PAJ Cash", hint: "Naira bank transfer", logos: ["/images/icons/paj-cash-logo.svg"] },
   {
     id: "peer",
@@ -345,11 +345,11 @@ export function DepositSheet({
               icons={[{ src: "/images/usdc.svg", bg: "#2775CA" }, { src: "/images/logo/magicblock-mark.svg", bg: "#111" }]}
             />
             <MethodRow
-              title="Card"
-              hint="Card, Apple Pay, PAJ Cash, Revolut, Venmo, Cash App"
+              title="Cards or bank"
+              hint="Card, Apple Pay, bank transfer, PAJ Cash, Revolut, Venmo, Cash App"
               onClick={() => setScreen("card")}
               disabled={blinkDepositing}
-              icons={[{ src: "/images/icons/card.svg", bg: "#1C1C22" }]}
+              icons={[{ src: "/images/icons/card-chip.svg", bg: "#1C1C22" }]}
             />
             {blinkError && <p className="text-sm text-orange-500 text-center px-1">{blinkError}</p>}
             </>
@@ -2059,9 +2059,9 @@ function BankWithdraw({
     <div className="mt-4 flex flex-col gap-2">
       {bankSupported && (
       <button type="button" disabled={!solanaAddress} onClick={() => setBankOpen(true)} className="flex w-full items-center gap-3 rounded-2xl border border-white/[0.07] bg-[#1A1A20] px-3.5 py-3 text-left hover:border-white/20 disabled:opacity-50">
-        <img src="/images/icons/card.svg" alt="" className="h-9 w-9 rounded-xl bg-[#1C1C22] object-contain p-1.5" />
+        <img src="/images/icons/card-chip.svg" alt="" className="h-9 w-9 rounded-xl bg-[#1C1C22] object-contain p-1.5" />
         <span className="min-w-0 flex-1">
-          <span className="block text-base font-bold text-white">Bank or card</span>
+          <span className="block text-base font-bold text-white">Cards or bank</span>
           <span className="block text-sm text-[#8A8893]">Bank account or debit card</span>
         </span>
       </button>
