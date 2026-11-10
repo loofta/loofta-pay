@@ -84,6 +84,9 @@ function generateShortId(length = 8): string {
   return result;
 }
 
+/** Account-setup fee taken from the claim when a registered recipient's first payment goes through a burner. */
+export const REGISTERED_BURNER_CLAIM_FEE_USD = 0.2;
+
 @Injectable()
 export class ClaimsService {
   private readonly logger = new Logger(ClaimsService.name);
@@ -2829,6 +2832,15 @@ export class ClaimsService {
         // Never skim the recipient's claim for a sender-side recipient edit (older rows may still carry
         // recipient_edit_fee_usdc; it is intentionally ignored).
         const editFeeUnits = BigInt(0);
+        // 2026-11-10: a registered recipient with no USDC account yet gets a burner claim (see
+        // insertDirectRegisteredPayment). Throwaway accounts were farming those: tiny payment to a
+        // fresh @loo- account, claim, close the token account we paid rent for, repeat. The web
+        // form's fee never applied (the attackers call the API directly), so the fee is taken HERE,
+        // out of the claim itself, where it cannot be skipped. Never more than half the claim.
+        const registeredBurnerFeeUnits =
+          (claim as { recipient_user_id?: string | null }).recipient_user_id && !isSplPrize
+            ? BigInt(Math.round(REGISTERED_BURNER_CLAIM_FEE_USD * 1_000_000))
+            : BigInt(0);
         const looftaFeeUnits = isSplPrize
           ? BigInt(0)
           : feePayerKp && opts?.looftaFeeUsdc
@@ -2837,7 +2849,9 @@ export class ClaimsService {
               ? balance - expectedUnits
               : feePayerKp && editFeeUnits > BigInt(0) && balance > editFeeUnits
                 ? editFeeUnits
-                : BigInt(0);
+                : feePayerKp && registeredBurnerFeeUnits > BigInt(0) && balance > registeredBurnerFeeUnits * BigInt(2)
+                  ? registeredBurnerFeeUnits
+                  : BigInt(0);
         const netUnits = balance - looftaFeeUnits;
         if (looftaFeeUnits > BigInt(0) && feePayerKp) {
           const feeAta = await getAssociatedTokenAddress(claimMint, feePayerKp.publicKey, false, tokenProgram);

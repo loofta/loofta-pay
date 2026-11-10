@@ -45,6 +45,7 @@ export function unregisteredClaimFeeWouldApply(opts: {
   usernameDest?: boolean;
 }): boolean {
   if (!opts.lookupResolved) return false;
-  if (opts.registered) return !!opts.needsClaim && (opts.destApplies || !!opts.usernameDest);
+  // Registered recipients are charged server-side, out of their first claim, so the sender is not charged here.
+  if (opts.registered) return false;
   return opts.destApplies && !opts.registered;
 }
