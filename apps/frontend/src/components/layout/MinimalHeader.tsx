@@ -62,6 +62,7 @@ function MobileMenu({
     { href: "/app", label: "Home", description: "Your balance and recent activity" },
     { href: "/app/send", label: "Send & Receive", description: "Send and receive payments" },
     { href: TELEGRAM_BOT_URL, label: "Telegram bot", description: "Send payments by chat on Telegram", external: true },
+    { href: "/app/stake", label: "Stake", description: "Stake USDC and win every week" },
     { href: "/rewards", label: t('rewards'), description: t('earnSparks') },
     { href: "/app/portfolio", label: "Portfolio", description: "Hold, send, swap and receive any token" },
   ];
@@ -336,6 +337,7 @@ export function MinimalHeader() {
   const isRewardsActive = pathname?.startsWith("/rewards");
   const isAppHome = pathname === "/app";
   const isWallet = !!pathname && pathname.startsWith("/app/portfolio");
+  const isStake = !!pathname && pathname.startsWith("/app/stake");
   const isSendReceive =
     !!pathname &&
     (pathname.startsWith("/app/send") ||
@@ -346,6 +348,7 @@ export function MinimalHeader() {
     { href: "/app", label: "Home", active: isAppHome },
     { href: "/app/send", label: "Send & Receive", active: isSendReceive },
     { href: TELEGRAM_BOT_URL, label: "Telegram bot", active: false, external: true },
+    { href: "/app/stake", label: "Stake", active: isStake },
     { href: "/rewards", label: t("rewards"), active: isRewardsActive },
     { href: "/app/portfolio", label: "Portfolio", active: isWallet },
   ];
