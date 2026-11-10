@@ -4693,9 +4693,19 @@ export function ClaimPayView({
   const { total: privatePayTotal, protocolFee: privatePayProtocolFee, gasFee: privatePayGasFee } = estimatePrivateTotal(claimAmountUSD);
   // $0.10 claim fee for an email or social handle that does not have an account yet.
   // A Loofta username (pending or registered) is not charged. Applies to public and private.
+  // A registered recipient with no USDC account yet is paid through a burner claim: same claim fee,
+  // sent on top into the burner (the sweep then takes it, so the recipient still gets the full amount).
+  const feeInBurner = !!(
+    claim?.recipient_user_id &&
+    claim?.claim_burner_address &&
+    !claim?.is_private &&
+    !claim?.recipient_pending_email &&
+    !claim?.recipient_pending_social
+  );
   const claimFeeApplies = !!(
     claim?.recipient_pending_email ||
-    claim?.recipient_pending_social
+    claim?.recipient_pending_social ||
+    feeInBurner
   );
   const claimFeeUsd = claimFeeApplies && !UNREGISTERED_ACCOUNT_FEE_WAIVED ? UNREGISTERED_ACCOUNT_FEE_USD : 0;
   const chargeClaimFee = claimFeeUsd > 0;
@@ -4885,7 +4895,7 @@ export function ClaimPayView({
         sig = await sendUsdcWithBackendFeePayer({
           senderAddress,
           recipientAddress: effectiveRecipient,
-          amountUSDC: amountUSD,
+          amountUSDC: amountUSD + (feeInBurner ? claimFeeUsd : 0),
           connection,
           wallet,
           privyUserId: user.id,
@@ -4902,7 +4912,7 @@ export function ClaimPayView({
           // instruction entirely, which is why this stayed hidden).
           usdcMint: getUsdcMintForMode(networkMode === "mainnet" ? "mainnet" : "devnet"),
           claimId: claim.id,
-          looftaFeeUsdc: claimFeeUsd > 0 ? claimFeeUsd : undefined,
+          looftaFeeUsdc: claimFeeUsd > 0 && !feeInBurner ? claimFeeUsd : undefined,
         });
       }
       setPerTransferPhase(null);

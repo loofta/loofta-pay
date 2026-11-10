@@ -45,7 +45,7 @@ export function unregisteredClaimFeeWouldApply(opts: {
   usernameDest?: boolean;
 }): boolean {
   if (!opts.lookupResolved) return false;
-  // Registered recipients are charged server-side, out of their first claim, so the sender is not charged here.
-  if (opts.registered) return false;
+  // A registered recipient who has never received USDC is paid through a claim too: same fee.
+  if (opts.registered) return !!opts.needsClaim && (opts.destApplies || !!opts.usernameDest);
   return opts.destApplies && !opts.registered;
 }

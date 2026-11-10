@@ -1024,8 +1024,8 @@ export default function Home() {
                     <p className="-mt-2" style={{ fontSize: 13, fontWeight: 400, color: "#77757F" }}>
                       {payTarget.requirePrivatePayments
                         ? "They only accept private payments. The privacy fee is added on top of what you pay."
-                        : payTarget.registered && payTarget.needsClaim
-                          ? `First payment to this wallet goes through a claim · a $${UNREGISTERED_ACCOUNT_FEE_USD.toFixed(2)} claim fee comes out of what they claim`
+                        : payTarget.registered && platformFeeUsd > 0
+                          ? `$${UNREGISTERED_ACCOUNT_FEE_USD.toFixed(2)} claim fee is included in the price · their first payment goes through a claim`
                         : payTarget.registered
                           ? "Pays straight to their Loofta wallet."
                           : authenticated || sendMethod !== "username"
