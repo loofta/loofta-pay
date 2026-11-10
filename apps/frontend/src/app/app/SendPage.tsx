@@ -1025,7 +1025,7 @@ export default function Home() {
                       {payTarget.requirePrivatePayments
                         ? "They only accept private payments. The privacy fee is added on top of what you pay."
                         : payTarget.registered && payTarget.needsClaim
-                          ? `First payment to this wallet goes through a claim · a $${UNREGISTERED_ACCOUNT_FEE_USD.toFixed(2)} setup fee comes out of what they claim`
+                          ? `First payment to this wallet goes through a claim · a $${UNREGISTERED_ACCOUNT_FEE_USD.toFixed(2)} claim fee comes out of what they claim`
                         : payTarget.registered
                           ? "Pays straight to their Loofta wallet."
                           : authenticated || sendMethod !== "username"

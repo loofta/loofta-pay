@@ -15,6 +15,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/dollar-to-naira-today",
     "/play",
     "/blog",
+    "/docs/stake",
     "/about",
     "/careers",
     "/brand",

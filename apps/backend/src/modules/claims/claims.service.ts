@@ -84,7 +84,7 @@ function generateShortId(length = 8): string {
   return result;
 }
 
-/** Account-setup fee taken from the claim when a registered recipient's first payment goes through a burner. */
+/** Claim fee taken from the claim when a registered recipient's first payment goes through a burner. */
 export const REGISTERED_BURNER_CLAIM_FEE_USD = 0.2;
 
 @Injectable()

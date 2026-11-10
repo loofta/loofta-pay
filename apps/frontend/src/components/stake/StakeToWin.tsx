@@ -472,6 +472,7 @@ export function StakeToWin() {
           <div style={{ flex: "1 1 260px", display: "flex", flexDirection: "column", gap: 12, maxWidth: 360 }}>
             <h2 style={{ margin: 0, fontFamily: SORA, fontWeight: 800, fontSize: 36, letterSpacing: "-0.05em" }}>Questions</h2>
             <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "#8A8893" }}>Staking is provided by Ample. Prizes are not guaranteed and past payouts do not predict future ones.</p>
+            <a href="/docs/stake" style={{ fontSize: 15, fontWeight: 700, color: "#FF7A2A" }}>Read the full docs →</a>
           </div>
           <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
             {FAQ.map((f, i) => {
