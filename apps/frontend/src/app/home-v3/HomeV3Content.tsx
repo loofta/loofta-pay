@@ -646,7 +646,7 @@ export function SendWidget({ still = false }: { still?: boolean } = {}) {
             </div>
           )}
 
-          <div className="relative">
+          <div className="relative z-30">
             {isCashDest ? (
               <span className="absolute left-4 top-1/2 -translate-y-1/2" aria-hidden>
                 <img
