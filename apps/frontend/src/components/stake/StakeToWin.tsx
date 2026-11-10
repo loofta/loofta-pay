@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import bs58 from "bs58";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets, useSignMessage, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
@@ -20,6 +20,7 @@ import {
   type AmpleStatus,
 } from "@/services/api/ample";
 import { compactUsd, fromBase, pct, useAmpleStats } from "./useAmpleStats";
+import { Vault3D } from "./Vault3D";
 
 const ACC = "#FF5A1A";
 const GRAD = "linear-gradient(90deg,#FF3D0F,#FF7A2A)";
@@ -55,7 +56,7 @@ function Countdown() {
     const i = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(i);
   }, []);
-  if (now === null) return <div style={{ height: 52 }} />;
+  if (now === null) return <div style={{ height: 40 }} />;
   let ms = msToNextDraw(now);
   const dd = Math.floor(ms / 864e5); ms -= dd * 864e5;
   const hh = Math.floor(ms / 36e5); ms -= hh * 36e5;
@@ -64,22 +65,29 @@ function Countdown() {
   const p2 = (n: number) => String(n).padStart(2, "0");
   const parts = [{ v: String(dd), u: "d" }, { v: p2(hh), u: "h" }, { v: p2(mm), u: "m" }, { v: p2(ss), u: "s" }];
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginTop: 14 }}>
-      <div style={{ display: "flex", gap: 6 }}>
-        {parts.map((c) => (
-          <div key={c.u} style={{ display: "flex", alignItems: "baseline", gap: 2, padding: "7px 10px", borderRadius: 12, background: "#17171D", border: "1px solid rgba(255,255,255,0.08)" }}>
-            <span style={{ fontFamily: MONO, fontWeight: 600, fontSize: 18 }}>{c.v}</span>
-            <span style={{ fontSize: 15, color: "#8A8893" }}>{c.u}</span>
-          </div>
-        ))}
-      </div>
-      <span style={{ fontSize: 15, color: "#8A8893" }}>until the next draw</span>
+    <div style={{ display: "flex", gap: 6 }}>
+      {parts.map((c) => (
+        <div key={c.u} style={{ display: "flex", alignItems: "baseline", gap: 2, padding: "7px 9px", borderRadius: 12, background: "#121217", border: "1px solid rgba(255,255,255,0.1)" }}>
+          <span style={{ fontFamily: MONO, fontWeight: 600, fontSize: 16 }}>{c.v}</span>
+          <span style={{ fontSize: 15, color: "#A9A6B0" }}>{c.u}</span>
+        </div>
+      ))}
     </div>
   );
 }
 
 const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 const oddsText = (v: number | null) => (v === null || !Number.isFinite(v) || v <= 0 ? "-" : v * 100 < 0.01 ? "<0.01%" : `${(v * 100).toFixed(2)}%`);
+
+// Mocked until Ample exposes next-payout size and a winners feed.
+const NEXT_PAYOUT = ["$297", ".90"];
+const MOCK_WINNERS = [
+  { handle: "mira.sol", v: 85.08, ago: "6 days ago", hue: 25 },
+  { handle: "0xkenji", v: 45.07, ago: "13 days ago", hue: 60 },
+  { handle: "dorothy", v: 112.17, ago: "20 days ago", hue: 140 },
+  { handle: "looftaxyz", v: 76.76, ago: "27 days ago", hue: 300 },
+  { handle: "satsmaxi", v: 797.85, ago: "41 days ago", hue: 200 },
+];
 
 const STEPS = [
   { n: "1", title: "Stake USDC", sub: "Your funds stay yours" },
@@ -268,203 +276,190 @@ export function StakeToWin() {
       style={{ minHeight: "calc(100vh - var(--header-h, 0px))", background: "radial-gradient(900px 520px at 78% 18%,rgba(255,74,18,0.10),rgba(255,74,18,0) 70%),#0f0f12", color: "#F2EFE8", fontFamily: "var(--font-home-manrope), system-ui, sans-serif", overflow: "hidden" }}
     >
       <style>{`
-        @keyframes lfloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
-        @keyframes lglow{0%,100%{opacity:.55}50%{opacity:.9}}
-        .stk-hero{display:flex;flex-direction:column;gap:32px}
-        .stk-stage{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-        .stk-deco{display:none}
-        .stk-center{grid-column:1/-1;text-align:center;padding:22px 16px;border-radius:24px;background:#16161C;border:1px solid rgba(255,255,255,0.09)}
-        .stk-stats{display:grid;grid-template-columns:1fr 1fr}
-        .stk-steps{display:grid;grid-template-columns:1fr;gap:16px}
-        .stk-faq{display:flex;flex-direction:column;gap:24px}
-        @media (min-width:960px){
-          .stk-hero{flex-direction:row;align-items:center;gap:56px}
-          .stk-left{flex:1 1 0;max-width:500px}
-          .stk-stage{display:block;position:relative;flex:1 1 0;min-width:0;height:580px}
-          .stk-deco{display:block;position:absolute;left:50%;top:50%;border-radius:50%;transform:translate(-50%,-50%)}
-          .stk-center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:300px;padding:0;background:none;border:none}
-          .stk-fc{position:absolute;width:200px;animation:lfloat 6s ease-in-out infinite}
-          .stk-fc.a{top:30px;left:4%;rotate:-3deg}
-          .stk-fc.b{top:60px;right:0;rotate:2deg;animation-delay:-1.3s}
-          .stk-fc.c{bottom:90px;left:0;rotate:2deg;animation-delay:-2.6s}
-          .stk-fc.d{bottom:30px;right:6%;rotate:-2deg;animation-delay:-3.9s}
-          .stk-stats{grid-template-columns:repeat(4,1fr)}
-          .stk-steps{grid-template-columns:repeat(3,1fr)}
-          .stk-faq{flex-direction:row;gap:40px;align-items:flex-start}
+        @keyframes lmarquee{to{transform:translateX(-50%)}}
+        .stk-hero{display:grid;grid-template-columns:minmax(0,1fr);grid-template-areas:"title" "stage" "form";column-gap:clamp(24px,4vw,56px);row-gap:8px;align-content:center;align-items:start}
+        .stk-title{grid-area:title;align-self:end;min-width:0;display:flex;flex-direction:column;align-items:center;text-align:center;margin-bottom:24px}
+        .stk-stage{grid-area:stage;min-width:0;display:flex;justify-content:center}
+        .stk-vault{position:relative;width:min(100%,600px);height:clamp(220px,34vh,300px);background:radial-gradient(closest-side,rgba(255,74,18,0.2),rgba(255,74,18,0) 80%)}
+        .stk-form{grid-area:form;width:100%;max-width:480px;min-width:0;justify-self:center;align-self:center;display:flex;flex-direction:column;gap:24px}
+        .stk-pad{padding:clamp(9px,1.5vh,13px)}
+        .stk-fine{display:block}
+        .stk-pay{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;padding:0 8px}
+        .stk-preset:hover{border-color:rgba(255,122,42,0.5)!important}
+        .stk-cta:hover:not(:disabled){filter:brightness(1.08)}
+        .stk-win{flex:none;display:flex;align-items:center;gap:12px;padding:12px 18px 12px 12px;border-radius:18px;background:#14141A;border:1px solid rgba(255,255,255,0.09);transition:transform .25s ease-out}
+        .stk-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+        @media (min-width:900px){
+          .stk-hero{grid-template-columns:minmax(0,1fr) 480px;grid-template-areas:"title form" "stage form";row-gap:0;min-height:calc(100vh - var(--header-h,0px) - 48px)}
+          .stk-title{align-items:flex-start;text-align:left;margin-bottom:0}
+          .stk-stage{justify-content:flex-start}
+          .stk-vault{height:clamp(200px,calc(100vh - var(--header-h,0px) - 400px),460px)}
         }
+        @media (max-height:640px){ .stk-fine{display:none} }
       `}</style>
 
-      <main style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 16px 96px", display: "flex", flexDirection: "column", gap: 64 }}>
-        <section style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-          <div className="stk-hero">
-            <div className="stk-left" style={{ display: "flex", flexDirection: "column", gap: 24, minWidth: 0 }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                <h1 style={{ margin: 0, fontFamily: SORA, fontWeight: 800, fontSize: "clamp(38px,5.2vw,62px)", lineHeight: 0.98, letterSpacing: "-0.055em", textWrap: "balance" as any }}>
-                  Put your <span style={{ color: ACC }}>USDC</span> to work. Win every week.
-                </h1>
-                <p style={{ margin: 0, fontSize: 17, lineHeight: 1.55, color: "#A9A6B0", maxWidth: 440 }}>
-                  Earn tickets over time for a chance at yield-funded weekly prizes. Withdraw any time.
-                </p>
+      <main style={{ maxWidth: 1200, margin: "0 auto", padding: "clamp(16px,4vh,32px) clamp(16px,4vw,28px) 80px", boxSizing: "border-box" }}>
+        <section className="stk-hero">
+          <div className="stk-title">
+            <h1 style={{ margin: 0, fontFamily: SORA, fontWeight: 800, fontSize: "clamp(36px,min(4.8vw,7.5vh),72px)", lineHeight: 1, letterSpacing: "-0.055em" }}>
+              <span style={{ display: "block" }}>Stake USDC.</span>
+              <span style={{ display: "block", color: "#8A8893" }}>Win every week.</span>
+            </h1>
+          </div>
+
+          <div className="stk-stage">
+            <div className="stk-vault"><Vault3D /></div>
+          </div>
+
+          <div className="stk-form">
+            <div className="stk-pay">
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>Next payout</span>
+                <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(36px,min(4vw,6vh),48px)", lineHeight: 1, letterSpacing: "-0.06em" }}>
+                  {NEXT_PAYOUT[0]}<span style={{ color: "#7A7884" }}>{NEXT_PAYOUT[1]}</span>
+                </span>
               </div>
-
-              {winners && (
-                <div style={{ padding: 20, borderRadius: 24, background: "linear-gradient(135deg,#2A150C,#16110D 70%)", border: "1px solid rgba(255,90,26,0.45)", display: "flex", flexDirection: "column", gap: 12 }}>
-                  <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: 22, color: ACC }}>You won!</span>
-                  {overview!.claimable.map((p) => (
-                    <div key={p.payoutId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                      <span style={{ fontFamily: SORA, fontSize: 22, fontWeight: 700 }}>{fromBase(p.payoutAmount, decimals)} {symbol}</span>
-                      <button
-                        disabled={busy !== null || !status?.canTransact}
-                        onClick={() => claim(p.payoutId)}
-                        style={{ padding: "12px 24px", borderRadius: 14, border: "none", background: GRAD, color: "#fff", fontFamily: SORA, fontWeight: 700, fontSize: 16, cursor: "pointer", opacity: busy !== null ? 0.6 : 1 }}
-                      >
-                        {busy === "claim" ? "Claiming..." : "Claim"}
-                      </button>
-                    </div>
-                  ))}
-                  <p style={{ margin: 0, fontSize: 15, color: "#9A98A3" }}>Claimed prizes are added to your stake. Withdraw to take them out.</p>
-                </div>
-              )}
-
-              {/* Stake card */}
-              <div id="stake" style={{ padding: 8, borderRadius: 28, background: "#121217", border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 40px 100px rgba(0,0,0,0.55)" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, padding: 4, borderRadius: 20, background: "#0B0B0E" }}>
-                  {(["stake", "withdraw"] as const).map((k) => (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => switchTab(k)}
-                      style={{ cursor: "pointer", border: "none", textAlign: "center", padding: 10, borderRadius: 16, fontWeight: 800, fontSize: 15, background: tab === k ? "#1D1D24" : "transparent", color: tab === k ? "#F2EFE8" : "#6E6C78", fontFamily: "inherit" }}
-                    >
-                      {k === "stake" ? "Stake" : "Withdraw"}
-                    </button>
-                  ))}
-                </div>
-
-                <div style={{ padding: "20px 16px 16px", display: "flex", flexDirection: "column", gap: 16 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                    <Mini label="Your stake" value={`$${fmt(stakedNum)}`} />
-                    <Mini label="Tickets" value={fmt(ticketCount)} />
-                    <Mini label="Pool share" value={oddsText(oddsBefore)} />
-                  </div>
-
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderRadius: 18, background: "#0B0B0E", border: `1px solid ${focus ? "rgba(255,122,42,0.6)" : "rgba(255,255,255,0.08)"}` }}>
-                    <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 28, color: ACC }}>$</span>
-                    <input
-                      inputMode="decimal"
-                      aria-label={isStake ? "Amount to stake" : "Amount to withdraw"}
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-                      onFocus={() => setFocus(true)}
-                      onBlur={() => setFocus(false)}
-                      style={{ flex: 1, minWidth: 0, background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontFamily: SORA, fontWeight: 700, fontSize: 28, letterSpacing: "-0.03em" }}
-                    />
-                    <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 15, fontWeight: 700, color: "#8A8893" }}>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src="/images/usdc.svg" alt="" style={{ width: 18, height: 18 }} />
-                      {symbol}
-                    </span>
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: `repeat(${presets.length},1fr)`, gap: 8 }}>
-                    {presets.map((p) => {
-                      const on = p.value === amount;
-                      return (
-                        <button
-                          key={p.label}
-                          type="button"
-                          onClick={() => setAmount(p.value)}
-                          style={{ cursor: "pointer", textAlign: "center", padding: "10px 0", borderRadius: 14, fontWeight: 700, fontSize: 15, background: on ? "rgba(255,90,26,0.12)" : "#0B0B0E", border: `1px solid ${on ? "rgba(255,122,42,0.6)" : "rgba(255,255,255,0.08)"}`, color: on ? "#FF8A3D" : "#F2EFE8", fontFamily: "inherit" }}
-                        >
-                          {p.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 15, color: "#8A8893" }}>
-                    <span>{isStake ? `Est. +${fmt(eff * TICKETS_PER_DOLLAR)} tickets` : `Est. -${fmt(eff * TICKETS_PER_DOLLAR)} tickets`}</span>
-                    <span style={{ fontWeight: 700, color: "#F2EFE8" }}>Pool share {oddsText(oddsBefore)} → {oddsText(oddsAfter)}</span>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={ctaDisabled}
-                    onClick={ctaAction}
-                    style={{ cursor: ctaDisabled ? "default" : "pointer", border: "none", textAlign: "center", padding: 17, borderRadius: 18, fontFamily: SORA, fontWeight: 700, fontSize: 16, color: ctaDisabled ? "#77757F" : "#fff", background: ctaDisabled ? "#2A2A32" : GRAD, boxShadow: ctaDisabled ? "none" : "0 12px 30px rgba(255,74,18,0.35),inset 0 1px 0 rgba(255,255,255,0.3)" }}
-                  >
-                    {ctaLabel}
-                  </button>
-
-                  {note && <p style={{ margin: 0, fontSize: 15, color: "#5FD38E", textAlign: "center" }}>{note}</p>}
-                  {error && <p style={{ margin: 0, fontSize: 15, color: "#FF8A7A", textAlign: "center" }}>{error}</p>}
-                  <span style={{ textAlign: "center", fontSize: 14, color: "#6E6C78" }}>Principal stays yours · no lockup · no entry fee</span>
-                </div>
-              </div>
+              <Countdown />
             </div>
 
-            {/* Stage: real numbers */}
-            {stats && (
-              <div className="stk-stage">
-                <div className="stk-deco" style={{ width: 420, height: 420, background: "radial-gradient(circle,rgba(255,74,18,0.22),rgba(255,74,18,0) 65%)", animation: "lglow 4s ease-in-out infinite" }} />
-                <div className="stk-deco" style={{ width: 360, height: 360, border: "1px dashed rgba(255,255,255,0.08)" }} />
-                <div className="stk-center">
-                  <span style={{ fontSize: 15, fontWeight: 600, color: "#A9A6B0" }}>Paid to stakers so far</span>
-                  <div style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(52px,9vw,76px)", lineHeight: 1, letterSpacing: "-0.06em", margin: "10px 0" }}>{compactUsd(stats.totalPaidUsd)}</div>
-                  <span style={{ fontSize: 15, color: "#8A8893" }}>Funded by yield, not entry fees</span>
-                  <Countdown />
+          {winners && (
+            <div style={{ padding: 20, borderRadius: 24, background: "linear-gradient(135deg,#2A150C,#16110D 70%)", border: "1px solid rgba(255,90,26,0.45)", display: "flex", flexDirection: "column", gap: 12 }}>
+              <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: 22, color: ACC }}>You won!</span>
+              {overview!.claimable.map((p) => (
+                <div key={p.payoutId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <span style={{ fontFamily: SORA, fontSize: 22, fontWeight: 700 }}>{fromBase(p.payoutAmount, decimals)} {symbol}</span>
+                  <button
+                    disabled={busy !== null || !status?.canTransact}
+                    onClick={() => claim(p.payoutId)}
+                    style={{ padding: "12px 24px", borderRadius: 14, border: "none", background: GRAD, color: "#fff", fontFamily: SORA, fontWeight: 700, fontSize: 16, cursor: "pointer", opacity: busy !== null ? 0.6 : 1 }}
+                  >
+                    {busy === "claim" ? "Claiming..." : "Claim"}
+                  </button>
                 </div>
-                <FloatCard cls="a" label="Last 30 days" value={compactUsd(stats.monthlyPayoutsUsd)} />
-                {stats.avgApr ? <FloatCard cls="b" label="Average yearly yield" value={`~${pct(stats.avgApr)}`} accent /> : null}
-                {stats.maxApr ? <FloatCard cls="c" label="Best week, annualised" value={pct(stats.maxApr)} /> : null}
-                <FloatCard cls="d" label="In the pool" value={compactUsd(stats.tvlUsd)} />
+              ))}
+              <p style={{ margin: 0, fontSize: 15, color: "#9A98A3" }}>Claimed prizes are added to your stake. Withdraw to take them out.</p>
+            </div>
+          )}
+            <div id="stake" style={{ padding: 8, borderRadius: 28, background: "#121217", border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 40px 100px rgba(0,0,0,0.55)" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, padding: 4, borderRadius: 20, background: "#0B0B0E" }}>
+                {(["stake", "withdraw"] as const).map((k) => (
+                  <button key={k} type="button" className="stk-pad" onClick={() => switchTab(k)}
+                    style={{ cursor: "pointer", border: "none", textAlign: "center", borderRadius: 16, fontWeight: 800, fontSize: 15, background: tab === k ? "#1D1D24" : "transparent", color: tab === k ? "#F2EFE8" : "#6E6C78", fontFamily: "inherit" }}>
+                    {k === "stake" ? "Stake" : "Withdraw"}
+                  </button>
+                ))}
               </div>
-            )}
+
+              <div style={{ padding: "clamp(18px,3.2vh,30px) 20px clamp(16px,2.6vh,24px)", display: "flex", flexDirection: "column", gap: "clamp(12px,2.3vh,24px)" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                  <Mini label="Your stake" value={`$${fmt(stakedNum)}`} />
+                  <Mini label="Tickets" value={fmt(ticketCount)} />
+                  <Mini label="Weekly odds" value={oddsText(oddsBefore)} />
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "clamp(12px,2.2vh,20px) 18px", borderRadius: 18, background: "#0B0B0E", border: `1px solid ${focus ? "rgba(255,122,42,0.6)" : "rgba(255,255,255,0.08)"}` }}>
+                  <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 32, color: ACC }}>$</span>
+                  <input inputMode="decimal" aria-label={isStake ? "Amount to stake" : "Amount to withdraw"} value={amount}
+                    onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
+                    style={{ flex: 1, minWidth: 0, background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontFamily: SORA, fontWeight: 700, fontSize: 28, letterSpacing: "-0.03em" }} />
+                  <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 15, fontWeight: 700, color: "#8A8893" }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/images/usdc.svg" alt="" style={{ width: 18, height: 18 }} />
+                    {symbol}
+                  </span>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${presets.length},1fr)`, gap: 8 }}>
+                  {presets.map((pr) => {
+                    const on = pr.value === amount;
+                    return (
+                      <button key={pr.label} type="button" className="stk-pad stk-preset" onClick={() => setAmount(pr.value)}
+                        style={{ cursor: "pointer", textAlign: "center", borderRadius: 14, fontWeight: 700, fontSize: 15, background: on ? "rgba(255,90,26,0.12)" : "#0B0B0E", border: `1px solid ${on ? "rgba(255,122,42,0.6)" : "rgba(255,255,255,0.08)"}`, color: on ? "#FF8A3D" : "#F2EFE8", fontFamily: "inherit" }}>
+                        {pr.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 15, color: "#8A8893" }}>
+                  <span>{isStake ? "+" : "−"}{fmt(eff * TICKETS_PER_DOLLAR)} tickets</span>
+                  <span style={{ fontWeight: 700, color: "#F2EFE8" }}>Odds {oddsText(oddsBefore)} → {oddsText(oddsAfter)}</span>
+                </div>
+
+                <button type="button" className="stk-cta" disabled={ctaDisabled} onClick={ctaAction}
+                  style={{ cursor: ctaDisabled ? "default" : "pointer", border: "none", textAlign: "center", padding: "clamp(14px,2.3vh,20px)", borderRadius: 18, fontFamily: SORA, fontWeight: 700, fontSize: 17, color: ctaDisabled ? "#77757F" : "#fff", background: ctaDisabled ? "#2A2A32" : GRAD, boxShadow: ctaDisabled ? "none" : "0 12px 30px rgba(255,74,18,0.35),inset 0 1px 0 rgba(255,255,255,0.3)" }}>
+                  {ctaLabel}
+                </button>
+
+                {note && <p style={{ margin: 0, fontSize: 15, color: "#5FD38E", textAlign: "center" }}>{note}</p>}
+                {error && <p style={{ margin: 0, fontSize: 15, color: "#FF8A7A", textAlign: "center" }}>{error}</p>}
+                <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>Principal stays yours · no lockup · no entry fee</span>
+              </div>
+            </div>
           </div>
         </section>
 
-        {/* Stats strip */}
+        <section style={{ marginTop: "clamp(56px,8vw,96px)" }}><Reveal /></section>
+
+        <section style={{ marginTop: 48, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+            <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 20, letterSpacing: "-0.02em" }}>Latest payouts</span>
+            <span style={{ fontSize: 15, color: "#8A8893" }}>Paid every week</span>
+          </div>
+          <div style={{ overflow: "hidden", WebkitMaskImage: "linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)", maskImage: "linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)" }}>
+            <div style={{ display: "flex", gap: 12, width: "max-content", padding: "6px 0 10px", animation: "lmarquee 40s linear infinite" }}>
+              {[...MOCK_WINNERS, ...MOCK_WINNERS, ...MOCK_WINNERS, ...MOCK_WINNERS].map((w, i) => (
+                <div key={i} className="stk-win"
+                  onMouseMove={(e) => { const el = e.currentTarget, r = el.getBoundingClientRect(); const x = (e.clientX - r.left) / r.width - 0.5, y = (e.clientY - r.top) / r.height - 0.5; el.style.transform = `perspective(600px) rotateX(${-y * 14}deg) rotateY(${x * 16}deg) scale(1.04)`; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.transform = ""; }}>
+                  <div style={{ flex: "none", width: 38, height: 38, borderRadius: "50%", background: `oklch(0.78 0.14 ${w.hue})`, display: "grid", placeItems: "center", fontFamily: SORA, fontWeight: 800, fontSize: 16, color: "#0B0B0E" }}>{w.handle.replace(/^0x/, "")[0].toUpperCase()}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 20, letterSpacing: "-0.03em", lineHeight: 1.1 }}>${Math.floor(w.v)}<span style={{ color: "#7A7884" }}>.{String(Math.round((w.v % 1) * 100)).padStart(2, "0")}</span></span>
+                    <span style={{ fontSize: 15, color: "#A9A6B0", whiteSpace: "nowrap" }}>@{w.handle} · {w.ago}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
         {stats && (
-          <section className="stk-stats" style={{ borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)", background: "#101015", overflow: "hidden" }}>
+          <section style={{ marginTop: 32, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)", background: "#101015", overflow: "hidden" }}>
             <Stat label="Paid to stakers" value={compactUsd(stats.totalPaidUsd)} note="Funded by yield, not entry fees" />
             <Stat label="In the pool" value={compactUsd(stats.tvlUsd)} note="USDC staked right now" />
-            {stats.avgApr ? <Stat label="Average yearly yield" value={`~${pct(stats.avgApr)}`} note="Goes into the weekly prize" accent /> : <span />}
-            {stats.maxApr ? <Stat label="Best week, annualised" value={pct(stats.maxApr)} note={`Last 30 days: ${compactUsd(stats.monthlyPayoutsUsd)} paid`} /> : <span />}
+            {stats.avgApr ? <Stat label="Average yearly yield" value={`~${pct(stats.avgApr)}`} note="Goes into the weekly prize" accent /> : null}
+            {stats.maxApr ? <Stat label="Best week, annualised" value={pct(stats.maxApr)} note={`Last 30 days: ${compactUsd(stats.monthlyPayoutsUsd)} paid`} /> : null}
           </section>
         )}
 
-        {/* How it works */}
-        <section style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+        <section style={{ marginTop: 96, display: "flex", flexDirection: "column", gap: 32 }}>
           <h2 style={{ margin: 0, fontFamily: SORA, fontWeight: 800, fontSize: 36, letterSpacing: "-0.05em" }}>How it works</h2>
           <div className="stk-steps">
-            {STEPS.map((s) => (
-              <div key={s.n} style={{ padding: 26, borderRadius: 24, background: "#121217", border: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", gap: 40 }}>
-                <span style={{ fontFamily: SORA, fontSize: 56, lineHeight: 1, fontWeight: 800, letterSpacing: "-0.05em", color: "#FF7A2A" }}>{s.n}</span>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>{s.title}</span>
-                  <span style={{ fontSize: 16, color: "#8A8893" }}>{s.sub}</span>
+            {STEPS.map((st) => (
+              <div key={st.n} style={{ position: "relative", overflow: "hidden", padding: 28, borderRadius: 24, background: "linear-gradient(160deg,#17141A,#111115 60%)", border: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", gap: 56, minHeight: 220, boxSizing: "border-box" }}>
+                <span aria-hidden style={{ position: "absolute", right: -6, top: -34, fontFamily: SORA, fontWeight: 800, fontSize: 180, lineHeight: 1, letterSpacing: "-0.08em", color: "transparent", WebkitTextStroke: "1.5px rgba(255,122,42,0.22)" }}>{st.n}</span>
+                <span style={{ position: "relative", width: 44, height: 44, borderRadius: 14, background: "linear-gradient(135deg,#FF3D0F,#FF8A2A)", boxShadow: "0 10px 24px rgba(255,74,18,0.35),inset 0 1px 0 rgba(255,255,255,0.35)", display: "grid", placeItems: "center", fontFamily: SORA, fontWeight: 800, fontSize: 22, color: "#0B0B0E" }}>{st.n}</span>
+                <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 6 }}>
+                  <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 22, letterSpacing: "-0.03em" }}>{st.title}</span>
+                  <span style={{ fontSize: 15, color: "#8A8893" }}>{st.sub}</span>
                 </div>
               </div>
             ))}
           </div>
         </section>
 
-        {/* FAQ */}
-        <section className="stk-faq">
+        <section style={{ marginTop: 96, display: "flex", flexWrap: "wrap", gap: "24px 40px", alignItems: "flex-start" }}>
           <div style={{ flex: "1 1 260px", display: "flex", flexDirection: "column", gap: 12, maxWidth: 360 }}>
             <h2 style={{ margin: 0, fontFamily: SORA, fontWeight: 800, fontSize: 36, letterSpacing: "-0.05em" }}>Questions</h2>
-            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "#6E6C78" }}>Staking is provided by Ample. Prizes are not guaranteed and past payouts do not predict future ones.</p>
+            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "#8A8893" }}>Staking is provided by Ample. Prizes are not guaranteed and past payouts do not predict future ones.</p>
           </div>
           <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
             {FAQ.map((f, i) => {
               const open = openFaq === i;
               return (
                 <div key={f.q} style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-                  <button
-                    type="button"
-                    onClick={() => setOpenFaq(open ? -1 : i)}
-                    style={{ width: "100%", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "22px 0", fontWeight: 700, fontSize: 17, background: "transparent", border: 0, color: "inherit", textAlign: "left", fontFamily: "inherit" }}
-                  >
+                  <button type="button" onClick={() => setOpenFaq(open ? -1 : i)}
+                    style={{ width: "100%", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, padding: "22px 0", fontWeight: 700, fontSize: 17, background: "transparent", border: 0, color: "inherit", textAlign: "left", fontFamily: "inherit" }}>
                     {f.q}
                     <span style={{ flex: "none", width: 30, height: 30, borderRadius: "50%", background: "#17171D", display: "grid", placeItems: "center", fontSize: 18, color: "#FF7A2A" }}>{open ? "−" : "+"}</span>
                   </button>
@@ -498,11 +493,34 @@ function Stat({ label, value, note, accent }: { label: string; value: string; no
   );
 }
 
-function FloatCard({ cls, label, value, accent }: { cls: string; label: string; value: string; accent?: boolean }) {
+const REVEAL = [
+  ...("Earn tickets over time for a chance at yield-funded weekly prizes.".split(" ").map((t) => [t, "#F2EFE8"] as const)),
+  ...("Withdraw any time.".split(" ").map((t) => [t, "#8A8893"] as const)),
+];
+
+/** Big statement whose words light up as it scrolls into view. */
+function Reveal() {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [p, setP] = useState(0);
+  useEffect(() => {
+    const on = () => {
+      const el = ref.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect(), vh = window.innerHeight;
+      const v = Math.max(0, Math.min(1, (vh * 0.85 - r.top) / (vh * 0.55)));
+      setP(Math.round(v * 40) / 40);
+    };
+    on();
+    window.addEventListener("scroll", on, { passive: true });
+    window.addEventListener("resize", on);
+    return () => { window.removeEventListener("scroll", on); window.removeEventListener("resize", on); };
+  }, []);
+  const lit = p * REVEAL.length;
   return (
-    <div className={`stk-fc ${cls}`} style={{ padding: "14px 16px", borderRadius: 18, background: "#16161C", border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 20px 50px rgba(0,0,0,0.5)", display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 15, color: "#A9A6B0" }}>{label}</span>
-      <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 24, letterSpacing: "-0.03em", color: accent ? ACC : "#F2EFE8" }}>{value}</span>
-    </div>
+    <p ref={ref} style={{ margin: 0, fontFamily: SORA, fontWeight: 700, fontSize: "clamp(32px,5.2vw,72px)", lineHeight: 1.12, letterSpacing: "-0.045em" }}>
+      {REVEAL.map(([t, c], i) => (
+        <span key={i} style={{ color: i < lit ? c : "#3A3942", transition: "color .25s ease" }}>{t}{i < REVEAL.length - 1 ? " " : ""}</span>
+      ))}
+    </p>
   );
 }
