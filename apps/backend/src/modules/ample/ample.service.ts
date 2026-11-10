@@ -1,5 +1,6 @@
 import { HttpException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SupabaseService } from '@/database/supabase.service';
 
 const BASE = 'https://api.ample.money/v1';
 const NETWORK = 'SOLANA';
@@ -27,7 +28,10 @@ export class AmpleService {
   private txScopeDenied = false;
   private vaultCache: { at: number; data: any } | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly supabase: SupabaseService,
+  ) {}
 
   private get apiKey(): string {
     return (this.config.get<string>('AMPLE_API_KEY') || '').trim();
@@ -193,6 +197,7 @@ export class AmpleService {
       balances: bal.filter(b => (b?.network ?? '').toUpperCase() === NETWORK),
       streak,
       claimable: Array.isArray(claimable) ? claimable : claimable?.data ?? [],
+      ...(await this.earnings(userId, bal.filter(b => (b?.network ?? '').toUpperCase() === NETWORK))),
     };
   }
 
@@ -218,5 +223,77 @@ export class AmpleService {
 
   txStatus(userId: string, hash: string) {
     return this.call('GET', `/tx/${encodeURIComponent(hash)}/status`, { kind: 'session', userId }, { query: { fromChainId: '101' } });
+  }
+
+  // ---- earnings ledger (stake_events) ----
+
+  /**
+   * Records one confirmed stake / withdraw / claim. The caller reports the event after its own tx polling; we only store it
+   * if Ample's tx status says SUCCESS, and the signature is unique so repeats are no-ops. The amount is self-reported, but the
+   * ledger only drives the caller's own stats (never money), and earnings() sanity-checks it against the real balance.
+   */
+  async recordEvent(
+    userId: string,
+    e: { kind: 'deposit' | 'withdraw' | 'claim'; vaultId: string; amountBase: string; txSignature: string; payoutId?: string },
+  ) {
+    const st: any = await this.txStatus(userId, e.txSignature);
+    if (String(st?.status ?? '').toUpperCase() !== 'SUCCESS') return { recorded: false, reason: 'not_confirmed' };
+    const link = await this.getLink(userId);
+    if (!link.linked || !link.walletAddress) return { recorded: false, reason: 'not_linked' };
+    const { error } = await this.supabase.getClient().from('stake_events').insert({
+      privy_user_id: userId,
+      wallet_address: link.walletAddress,
+      vault_id: e.vaultId,
+      kind: e.kind,
+      amount_base: e.amountBase,
+      tx_signature: e.txSignature,
+      payout_id: e.kind === 'claim' ? e.payoutId ?? null : null,
+    });
+    if (error && error.code !== '23505') {
+      this.logger.warn(`stake_events insert failed: ${error.message}`);
+      return { recorded: false, reason: 'db_error' };
+    }
+    return { recorded: true };
+  }
+
+  /**
+   * Total won (sum of claimed prizes) and a personal APY from the ledger. APY = winnings / dollar-years held, where the
+   * balance steps up on deposits and claims (claims compound) and down on withdrawals. Only reported after a full week
+   * and only when the ledger agrees with the real vault balance, otherwise null so we never show a wrong number.
+   */
+  private async earnings(userId: string, balances: any[]) {
+    const none = { totalWonBase: null as string | null, yourApy: null as number | null, trackedSince: null as string | null };
+    try {
+      const { data, error } = await this.supabase.getClient()
+        .from('stake_events').select('kind, amount_base, created_at')
+        .eq('privy_user_id', userId).order('created_at', { ascending: true }).limit(5000);
+      if (error || !data?.length) return none;
+      let won = 0n, bal = 0n;
+      let dollarMs = 0, last = new Date(data[0].created_at).getTime();
+      const dec = Number((balances[0]?.token?.decimals as number) ?? 6);
+      const scale = 10 ** dec;
+      for (const r of data) {
+        const t = new Date(r.created_at).getTime();
+        dollarMs += (Number(bal) / scale) * (t - last);
+        last = t;
+        const a = BigInt(String(r.amount_base).split('.')[0] || '0');
+        if (r.kind === 'deposit') bal += a;
+        else if (r.kind === 'claim') { bal += a; won += a; }
+        else { bal = bal > a ? bal - a : 0n; }
+      }
+      const now = Date.now();
+      dollarMs += (Number(bal) / scale) * (now - last);
+      const spanMs = now - new Date(data[0].created_at).getTime();
+      const actual = balances.reduce((acc, b) => acc + (/^\d+$/.test(String(b?.depositsToken ?? '')) ? BigInt(b.depositsToken) : 0n), 0n);
+      const agrees = actual > 0n ? Math.abs(Number(bal - actual)) / Number(actual) < 0.05 : bal === 0n;
+      const dollarYears = dollarMs / (365 * 24 * 3600 * 1000);
+      const apy = spanMs >= 7 * 24 * 3600 * 1000 && agrees && dollarYears > 0
+        ? Math.round(((Number(won) / scale) / dollarYears) * 1000) / 10
+        : null;
+      return { totalWonBase: won.toString(), yourApy: apy, trackedSince: data[0].created_at as string };
+    } catch (e: any) {
+      this.logger.warn(`earnings failed: ${e?.message}`);
+      return none;
+    }
   }
 }

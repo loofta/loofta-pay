@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, MaxLength, Matches } from 'class-validator';
+import { IsString, IsNotEmpty, IsIn, IsOptional, MaxLength, Matches } from 'class-validator';
 
 export class AmpleChallengeDto {
   @IsString() @IsNotEmpty() @MaxLength(64)
@@ -25,4 +25,17 @@ export class AmpleAmountDto {
 export class AmpleClaimDto {
   @IsString() @IsNotEmpty() @MaxLength(64)
   payoutId: string;
+}
+
+export class AmpleEventDto {
+  @IsIn(['deposit', 'withdraw', 'claim'])
+  kind: 'deposit' | 'withdraw' | 'claim';
+  @IsString() @IsNotEmpty() @MaxLength(80)
+  vaultId: string;
+  @IsString() @Matches(/^[0-9]{1,30}$/)
+  amountBase: string;
+  @IsString() @IsNotEmpty() @MaxLength(120)
+  txSignature: string;
+  @IsOptional() @IsString() @MaxLength(64)
+  payoutId?: string;
 }

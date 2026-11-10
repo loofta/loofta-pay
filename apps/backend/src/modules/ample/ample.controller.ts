@@ -5,7 +5,7 @@ import { Public } from '@/common/guards/auth.guard';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { UsersService } from '@/modules/users/users.service';
 import { AmpleService } from './ample.service';
-import { AmpleAmountDto, AmpleChallengeDto, AmpleClaimDto, AmpleLinkDto } from './dto/ample.dto';
+import { AmpleAmountDto, AmpleChallengeDto, AmpleClaimDto, AmpleEventDto, AmpleLinkDto } from './dto/ample.dto';
 
 @ApiTags('ample')
 @Controller('ample')
@@ -89,5 +89,13 @@ export class AmpleController {
   @RateLimit(120, 60, 'ample:txstatus')
   txStatus(@Req() req: any, @Param('hash') hash: string) {
     return this.ample.txStatus(req.user!.id, hash.slice(0, 120));
+  }
+
+  @Post('events')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(60, 60, 'ample:events')
+  @ApiOperation({ summary: 'Record a confirmed stake, withdraw or claim for the earnings ledger' })
+  events(@Req() req: any, @Body() dto: AmpleEventDto) {
+    return this.ample.recordEvent(req.user!.id, dto);
   }
 }

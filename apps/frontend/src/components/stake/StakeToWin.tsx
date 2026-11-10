@@ -10,6 +10,7 @@ import {
   ampleBuildClaim,
   ampleBuildDeposit,
   ampleBuildWithdraw,
+  ampleRecordEvent,
   ampleChallenge,
   ampleLink,
   ampleTxStatus,
@@ -124,6 +125,7 @@ export function StakeToWin() {
   const [focus, setFocus] = useState(false);
   const [openFaq, setOpenFaq] = useState(0);
   const [howOpen, setHowOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
   useEffect(() => {
     try {
       if (!localStorage.getItem("loofta_stake_onboarded")) setHowOpen(true);
@@ -133,6 +135,19 @@ export function StakeToWin() {
     setHowOpen(false);
     try { localStorage.setItem("loofta_stake_onboarded", "1"); } catch { /* ignore */ }
   }, []);
+  // Prizes already claimed are folded into the stake by Ample, so total winnings are tracked here (per user, this browser) once claimed.
+  const claimedKey = userId ? `loofta_stake_claimed_${userId}` : null;
+  const [claimedBase, setClaimedBase] = useState<string>("0");
+  useEffect(() => {
+    try { setClaimedBase((claimedKey && localStorage.getItem(claimedKey)) || "0"); } catch { setClaimedBase("0"); }
+  }, [claimedKey]);
+  const addClaimed = (base: string) => {
+    setClaimedBase((prev) => {
+      const next = (BigInt(prev || "0") + BigInt(/^\d+$/.test(base) ? base : "0")).toString();
+      try { if (claimedKey) localStorage.setItem(claimedKey, next); } catch { /* ignore */ }
+      return next;
+    });
+  };
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -211,9 +226,16 @@ export function StakeToWin() {
     for (let i = 0; i < 20; i++) {
       await new Promise((r) => setTimeout(r, 2000));
       const st = await ampleTxStatus(sig, o).catch(() => null);
-      if (st?.status === "SUCCESS") return;
+      if (st?.status === "SUCCESS") return sig;
       if (st?.status === "FAILED") throw new Error("The transaction did not land. Nothing was taken.");
     }
+    return null;
+  };
+
+  // Feeds the earnings ledger (total won, personal APY). Never blocks or fails the user's action.
+  const report = async (kind: "deposit" | "withdraw" | "claim", amountBase: string, sig: string | null, payoutId?: string) => {
+    if (!sig || !vault) return;
+    try { await ampleRecordEvent({ kind, vaultId: vault.id, amountBase, txSignature: sig, payoutId }, await opts()); } catch { /* ignore */ }
   };
 
   const heldDisplay = fromBase(held?.depositsToken, held?.token?.decimals ?? decimals);
@@ -225,7 +247,7 @@ export function StakeToWin() {
     const base = toBase(amount, decimals);
     if (!base || !vault) throw new Error("Enter an amount");
     if (amt < MIN_STAKE_USD) throw new Error("The minimum stake is $1.");
-    await sendTx(await ampleBuildDeposit(vault.id, base, await opts()));
+    await report("deposit", base, await sendTx(await ampleBuildDeposit(vault.id, base, await opts())));
     setNote("Staked. You are in the next draw.");
     await refresh();
   });
@@ -235,16 +257,34 @@ export function StakeToWin() {
     const full = amt >= stakedNum;
     const base = full ? String(held.depositsToken) : toBase(amount, decimals);
     if (!base) throw new Error("Enter an amount");
-    await sendTx(await ampleBuildWithdraw(vault.id, base, await opts()));
+    await report("withdraw", base, await sendTx(await ampleBuildWithdraw(vault.id, base, await opts())));
     setNote("Withdrawn to your wallet.");
     setAmount("25");
     await refresh();
   });
 
   const claim = (payoutId: string) => run("claim", async () => {
-    await sendTx(await ampleBuildClaim(payoutId, await opts()));
+    const p = overview?.claimable.find((c) => c.payoutId === payoutId);
+    const sig = await sendTx(await ampleBuildClaim(payoutId, await opts()));
+    if (p) { addClaimed(String(p.payoutAmount)); await report("claim", String(p.payoutAmount), sig, p.payoutId); }
     setNote("Reward added to your stake.");
     await refresh();
+  });
+
+  // Ample takes one payout per transaction, so "claim all" signs them one after another.
+  const claimAll = () => run("claim", async () => {
+    const list = [...(overview?.claimable ?? [])];
+    let done = 0;
+    try {
+      for (const p of list) {
+        const sig = await sendTx(await ampleBuildClaim(p.payoutId, await opts()));
+        addClaimed(String(p.payoutAmount));
+        await report("claim", String(p.payoutAmount), sig, p.payoutId);
+        done++;
+      }
+    } finally {
+      if (done > 0) { setNote(`${done} reward${done === 1 ? "" : "s"} added to your stake.`); await refresh(); }
+    }
   });
 
   const switchTab = (t: "stake" | "withdraw") => {
@@ -288,7 +328,14 @@ export function StakeToWin() {
     else if (isStake && eff < MIN_STAKE_USD) { ctaDisabled = true; ctaLabel = "Minimum stake is $1"; }
   }
 
-  const winners = (overview?.claimable ?? []).length > 0;
+  const claimableBase = (overview?.claimable ?? []).reduce((a, p) => a + (/^\d+$/.test(String(p.payoutAmount)) ? BigInt(p.payoutAmount) : BigInt(0)), BigInt(0));
+  const claimableTotal = fromBase(claimableBase.toString(), decimals);
+  const localWon = BigInt(claimedBase || "0") + claimableBase;
+  const ledgerWon = overview?.totalWonBase ? BigInt(overview.totalWonBase) + claimableBase : BigInt(0);
+  const wonBase = ledgerWon > localWon ? ledgerWon : localWon;
+  const wonTotal = wonBase > BigInt(0) ? fromBase(wonBase.toString(), decimals) : null;
+  const apr = stats?.avgApr ?? null;
+  const wonReturnPct = wonBase > BigInt(0) && stakedNum > 0 ? (Number(fromBase(wonBase.toString(), decimals)) / stakedNum) * 100 : null;
 
   return (
     <div
@@ -342,24 +389,6 @@ export function StakeToWin() {
               <Countdown nextDrawAt={stats?.nextDrawAt} intervalSec={stats?.drawIntervalSeconds} />
             </div>
 
-          {winners && (
-            <div style={{ padding: 20, borderRadius: 24, background: "linear-gradient(135deg,#2A150C,#16110D 70%)", border: "1px solid rgba(255,90,26,0.45)", display: "flex", flexDirection: "column", gap: 12 }}>
-              <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: 22, color: ACC }}>You won!</span>
-              {overview!.claimable.map((p) => (
-                <div key={p.payoutId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                  <span style={{ fontFamily: SORA, fontSize: 22, fontWeight: 700 }}>{fromBase(p.payoutAmount, decimals)} {symbol}</span>
-                  <button
-                    disabled={busy !== null || !status?.canTransact}
-                    onClick={() => claim(p.payoutId)}
-                    style={{ padding: "12px 24px", borderRadius: 14, border: "none", background: GRAD, color: "#fff", fontFamily: SORA, fontWeight: 700, fontSize: 16, cursor: "pointer", opacity: busy !== null ? 0.6 : 1 }}
-                  >
-                    {busy === "claim" ? "Claiming..." : "Claim"}
-                  </button>
-                </div>
-              ))}
-              <p style={{ margin: 0, fontSize: 15, color: "#9A98A3" }}>Claimed prizes are added to your stake. Withdraw to take them out.</p>
-            </div>
-          )}
             <div id="stake" style={{ padding: 8, borderRadius: 28, background: "#121217", border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 40px 100px rgba(0,0,0,0.55)" }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, padding: 4, borderRadius: 20, background: "#0B0B0E" }}>
                 {(["stake", "withdraw"] as const).map((k) => (
@@ -371,11 +400,47 @@ export function StakeToWin() {
               </div>
 
               <div style={{ padding: "clamp(18px,3.2vh,30px) 20px clamp(16px,2.6vh,24px)", display: "flex", flexDirection: "column", gap: "clamp(12px,2.3vh,24px)" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, textAlign: "center" }}>
-                  <Mini label="Your stake" value={`$${fmt(stakedNum)}`} />
-                  <Mini label="Tickets" value={fmt(ticketCount)} />
-                  <Mini label="Weekly odds" value={oddsText(oddsBefore)} />
-                </div>
+                {!(!isStake && hasStake) && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, textAlign: "center" }}>
+                    <Mini label="Your stake" value={`$${fmt(stakedNum)}`} />
+                    <Mini label="Tickets" value={fmt(ticketCount)} />
+                    <Mini label="Weekly odds" value={oddsText(oddsBefore)} />
+                  </div>
+                )}
+
+                {!isStake && hasStake && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "14px 16px", borderRadius: 18, background: "#0B0B0E", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>Your earnings</span>
+                      <button type="button" aria-label="About your APY" aria-expanded={infoOpen} onClick={() => setInfoOpen((v) => !v)}
+                        style={{ width: 22, height: 22, borderRadius: "50%", cursor: "pointer", display: "grid", placeItems: "center", fontSize: 14, fontWeight: 800, fontFamily: "inherit", lineHeight: 1, padding: 0, color: infoOpen ? "#FF8A3D" : "#8A8893", background: "transparent", border: `1.5px solid ${infoOpen ? "#FF8A3D" : "#8A8893"}` }}>
+                        i
+                      </button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, textAlign: "center" }}>
+                      <Mini label="Your stake" value={`$${fmt(stakedNum)}`} />
+                      <Mini label="Tickets" value={fmt(ticketCount)} />
+                      <Mini label="Weekly odds" value={oddsText(oddsBefore)} />
+                    </div>
+                    <EarnRow label="Won so far" value={`${wonTotal ?? "0"} ${symbol}`} strong />
+                    {claimableBase > BigInt(0) ? <EarnRow label="Waiting to claim" value={`${claimableTotal} ${symbol}`} /> : null}
+                    {overview?.yourApy !== null && overview?.yourApy !== undefined
+                      ? <EarnRow label="Your APY" value={pct(overview.yourApy)} strong />
+                      : apr ? <EarnRow label="Estimated yield (APY)" value={`~${pct(apr)}`} /> : null}
+                    {wonReturnPct !== null ? <EarnRow label="Return so far" value={`${wonReturnPct < 0.01 ? "<0.01" : wonReturnPct.toFixed(2)}% of your stake`} /> : null}
+                    {claimableBase > BigInt(0) ? (
+                      <button type="button" disabled={busy !== null || !status?.canTransact} onClick={claimAll}
+                        style={{ padding: "12px 24px", borderRadius: 14, border: "none", background: GRAD, color: "#fff", fontFamily: SORA, fontWeight: 700, fontSize: 16, cursor: "pointer", opacity: busy !== null ? 0.6 : 1 }}>
+                        {busy === "claim" ? "Claiming..." : `Claim all ${claimableTotal} ${symbol}`}
+                      </button>
+                    ) : null}
+                    {infoOpen && (
+                      <span style={{ fontSize: 15, lineHeight: 1.5, color: "#C9C6CF", padding: "10px 12px", borderRadius: 12, background: "#15151B", border: "1px solid rgba(255,255,255,0.08)" }}>
+                        Your APY appears after a week of history, until then the pool average of the last month is shown. Not a promise.
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "clamp(12px,2.2vh,20px) 18px", borderRadius: 18, background: "#0B0B0E", border: `1px solid ${focus ? "rgba(255,122,42,0.6)" : "rgba(255,255,255,0.08)"}` }}>
                   <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 32, color: "#6E6C78" }}>$</span>
@@ -578,6 +643,15 @@ function HowItWorks({ open, onClose }: { open: boolean; onClose: () => void }) {
           {last ? "Start staking" : "Continue"}
         </button>
       </div>
+    </div>
+  );
+}
+
+function EarnRow({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 15 }}>
+      <span style={{ color: "#8A8893" }}>{label}</span>
+      <span style={{ fontWeight: 700, color: strong ? "#FF8A3D" : "#F2EFE8" }}>{value}</span>
     </div>
   );
 }

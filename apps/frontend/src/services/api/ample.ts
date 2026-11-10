@@ -41,6 +41,11 @@ export interface AmpleOverview {
   balances: Array<{ vaultId?: string; depositsToken: string; depositsUsd: number | string | null; token?: { symbol?: string; decimals?: number }; [k: string]: unknown }>;
   streak: Record<string, any>;
   claimable: Array<{ payoutId: string; payoutAmount: string; vaultId?: string; [k: string]: unknown }>;
+  /** Sum of every payout ever won, in token base units. null when Ample returned no history. */
+  totalWonBase?: string | null;
+  /** Personal APY from the earnings ledger, percent. null until a week of history agrees with the real balance. */
+  yourApy?: number | null;
+  trackedSince?: string | null;
 }
 
 const post = <T>(path: string, body: unknown, o: RequestOptions) =>
@@ -55,6 +60,10 @@ export const ampleLink = (b: { walletAddress: string; message: string; signature
 export const ampleBuildDeposit = (vaultId: string, amount: string, o: RequestOptions) => post<AmpleSolanaTx>('/ample/deposit', { vaultId, amount }, o);
 export const ampleBuildWithdraw = (vaultId: string, amount: string, o: RequestOptions) => post<AmpleSolanaTx>('/ample/withdraw', { vaultId, amount }, o);
 export const ampleBuildClaim = (payoutId: string, o: RequestOptions) => post<AmpleSolanaTx>('/ample/claim', { payoutId }, o);
+export const ampleRecordEvent = (
+  b: { kind: 'deposit' | 'withdraw' | 'claim'; vaultId: string; amountBase: string; txSignature: string; payoutId?: string },
+  o: RequestOptions,
+) => post<{ recorded: boolean; reason?: string }>('/ample/events', b, o);
 export const ampleTxStatus = (hash: string, o: RequestOptions) =>
   fetchApi<{ status: 'PENDING' | 'SUCCESS' | 'FAILED' | 'PARTIAL'; detail?: string }>(`/ample/tx/${encodeURIComponent(hash)}/status`, o);
 

@@ -8,6 +8,7 @@ import {
   ampleBuildDeposit,
   ampleChallenge,
   ampleLink,
+  ampleRecordEvent,
   ampleTxStatus,
   getAmpleStatus,
 } from "@/services/api/ample";
@@ -74,6 +75,7 @@ export function useStakeUpsell(
         const st = await ampleTxStatus(sig, o).catch(() => null);
         if (st?.status === "SUCCESS") {
           posthog.capture("stake_upsell_purchased", { source, amount_usdc: stakeUsdc });
+          await ampleRecordEvent({ kind: "deposit", vaultId: vault.id, amountBase: toBase(stakeUsdc, decimals), txSignature: sig }, o).catch(() => null);
           return true;
         }
         if (st?.status === "FAILED") break;
