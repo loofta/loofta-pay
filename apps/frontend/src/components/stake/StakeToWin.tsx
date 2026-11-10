@@ -287,7 +287,8 @@ export function StakeToWin() {
     if (usdcStaked > 0 && held) {
       const base = everything || amt >= usdcStaked - eps ? String(held.depositsToken) : toBase(amount, decimals);
       if (!base) throw new Error("Enter an amount");
-      await report("withdraw", base, await sendTx(await ampleBuildWithdraw(vault.id, base, await opts())));
+      const built = await ampleBuildWithdraw(vault.id, base, await opts());
+      await report("withdraw", built.withdrawnBase ?? base, await sendTx(built));
       withdrawn++;
     }
     let converted = 0;
@@ -295,7 +296,8 @@ export function StakeToWin() {
     if (everything) {
       for (const b of convertible as any[]) {
         try {
-          await report("withdraw", String(b.depositsToken), await sendTx(await ampleBuildWithdraw(b.vaultId, String(b.depositsToken), await opts())), undefined, b.vaultId);
+          const built = await ampleBuildWithdraw(b.vaultId, String(b.depositsToken), await opts());
+          await report("withdraw", built.withdrawnBase ?? String(b.depositsToken), await sendTx(built), undefined, b.vaultId);
           withdrawn++;
           try { await swapToUsdc(b); converted++; } catch (e) { console.warn("[stake] swap to USDC skipped:", e); kept++; }
         } catch (e) { console.warn("[stake] other-vault withdraw skipped:", e); kept++; }

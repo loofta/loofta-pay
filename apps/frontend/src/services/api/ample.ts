@@ -29,6 +29,7 @@ export interface AmpleSolanaTx {
   expiresAt: string | null;
   estimate?: Record<string, unknown>;
   payoutIds?: string[];
+  withdrawnBase?: string;
 }
 
 export interface AmpleOverview {

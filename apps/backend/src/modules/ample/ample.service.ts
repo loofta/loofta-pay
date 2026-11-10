@@ -307,10 +307,22 @@ export class AmpleService {
 
   async buildWithdraw(userId: string, vaultId: string, amount: string) {
     this.requireTx();
-    const tx: any = await this.call('POST', '/tx/withdraw', { kind: 'session', userId }, { body: { vaultId, amount } });
+    let tx: any;
+    try {
+      tx = await this.call('POST', '/tx/withdraw', { kind: 'session', userId }, { body: { vaultId, amount } });
+    } catch (e: any) {
+      // The displayed balance can be a hair above what Ample lets the user withdraw (rounding / accrual timing).
+      // Ample states the real maximum in the error, so retry once with it instead of failing the withdrawal.
+      const code = e?.getResponse?.()?.code;
+      const max = /at most (\d+)/.exec(String(e?.getResponse?.()?.message ?? ''))?.[1];
+      if (code !== 'AMPLE_WITHDRAW_EXCEEDS_POSITION' || !max || BigInt(max) <= 0n || BigInt(max) >= BigInt(amount)) throw e;
+      this.logger.warn(`withdraw ${amount} exceeds position, retrying with ${max}`);
+      amount = max;
+      tx = await this.call('POST', '/tx/withdraw', { kind: 'session', userId }, { body: { vaultId, amount } });
+    }
     const vault = (await this.listVaults().catch(() => [] as any[])).find(v => v?.id === vaultId);
-    if (!vault || this.withdrawFeeBps <= 0) return { ...tx, fee: null };
-    return this.withFee(userId, tx, amount);
+    if (!vault || this.withdrawFeeBps <= 0) return { ...tx, fee: null, withdrawnBase: amount };
+    return { ...(await this.withFee(userId, tx, amount)), withdrawnBase: amount };
   }
 
   /**
