@@ -33,6 +33,15 @@ export class AmpleController {
     return this.ample.publicStats();
   }
 
+  @Get('payouts/recent')
+  @Public()
+  @RateLimit(60, 60, 'ample:payouts-recent')
+  @ApiOperation({ summary: 'Real prizes recently claimed by Loofta users, anonymised, biggest first' })
+  async recentPayouts() {
+    if (!this.ample.isEnabled()) return [];
+    return this.ample.recentPayouts();
+  }
+
   @Get('status')
   @RateLimit(60, 60, 'ample:status')
   @ApiOperation({ summary: 'Is staking on, is the caller linked, and the Solana vaults on offer' })

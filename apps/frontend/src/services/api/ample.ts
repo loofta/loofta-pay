@@ -30,6 +30,7 @@ export interface AmpleSolanaTx {
   estimate?: Record<string, unknown>;
   payoutIds?: string[];
   withdrawnBase?: string;
+  diag?: { sol: number; usdc: string; plainErr: string | null; finalErr: string | null; sponsored: boolean; requested: string };
 }
 
 export interface AmpleOverview {
@@ -83,8 +84,13 @@ export interface AmpleStats {
   maxApr: number | null;
   /** ISO time entries close and the next draw runs (from Ample). */
   nextDrawAt: string | null;
+  /** Size of the next prize in dollars, when Ample provides it. */
+  nextPrizeUsd?: number | null;
   drawIntervalSeconds: number | null;
   /** PROCESSING while winners are worked out, SETTLED once payouts can be claimed. */
   lastDrawStatus: string | null;
 }
 export const getAmpleStats = () => fetchApi<AmpleStats | null>('/ample/stats');
+
+export interface AmpleRecentPayout { amountUsd: number; wallet: string; at: string }
+export const ampleRecentPayouts = () => fetchApi<AmpleRecentPayout[]>('/ample/payouts/recent');

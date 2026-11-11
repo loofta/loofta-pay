@@ -180,6 +180,36 @@ export class AmpleService {
     return hit?.usdPerToken ?? null; // stale beats nothing
   }
 
+  private recentCache: { at: number; data: { amountUsd: number; wallet: string; at: string }[] } | null = null;
+
+  /**
+   * Prizes our own users really claimed in the last 60 days (from the stake_events ledger), biggest first, wallets shortened.
+   * Only Loofta users are covered, which is exactly what the page says. Cached 5 minutes.
+   */
+  async recentPayouts() {
+    if (this.recentCache && Date.now() - this.recentCache.at < 300_000) return this.recentCache.data;
+    let out: { amountUsd: number; wallet: string; at: string }[] = [];
+    try {
+      const since = new Date(Date.now() - 60 * 24 * 3600 * 1000).toISOString();
+      const { data } = await this.supabase.getClient().from('stake_events')
+        .select('wallet_address, vault_id, amount_base, created_at').eq('kind', 'claim').gte('created_at', since)
+        .order('created_at', { ascending: false }).limit(500);
+      const vaults = await this.allVaults().catch(() => [] as any[]);
+      const rows: { amountUsd: number; wallet: string; at: string }[] = [];
+      for (const r of data ?? []) {
+        const micro = await this.usdMicro(r.vault_id, String(r.amount_base).split('.')[0], { vaults, balances: [] });
+        const usd = micro === null ? 0 : Number(micro) / 1e6;
+        const w = String(r.wallet_address ?? '');
+        if (usd >= 0.01 && w.length > 8) rows.push({ amountUsd: Math.round(usd * 100) / 100, wallet: `${w.slice(0, 4)}...${w.slice(-4)}`, at: r.created_at });
+      }
+      out = rows.sort((a, b) => b.amountUsd - a.amountUsd).slice(0, 12);
+    } catch (e: any) {
+      this.logger.warn(`recent payouts failed: ${e?.message}`);
+    }
+    this.recentCache = { at: Date.now(), data: out };
+    return out;
+  }
+
   private loggedClaimShape = false;
 
   /** Which vault paid a prize: its own vault id when Ample sends one, otherwise matched by token address or symbol. */
@@ -205,16 +235,28 @@ export class AmpleService {
     return BigInt(Math.round((Number(rawBase) / 10 ** dec) * rate * 1e6));
   }
 
-  private drawCache: { at: number; data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null } | null } | null = null;
+  private drawCache: { at: number; data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null; prizeUsd: number | null } | null } | null = null;
+  private loggedDrawShape = false;
 
   /** Next draw time from Ample (cached 10s). Null if the call fails so stats still render. */
   async nextDraw() {
     if (this.drawCache && Date.now() - this.drawCache.at < 10_000) return this.drawCache.data;
-    let data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null } | null = null;
+    let data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null; prizeUsd: number | null } | null = null;
     try {
       const r: any = await this.call('GET', '/draws/next', { kind: 'key' }, { query: { network: NETWORK } });
+      if (!this.loggedDrawShape) { this.loggedDrawShape = true; this.logger.log(`draws/next payload: ${JSON.stringify(r)?.slice(0, 1500)}`); }
       if (r?.nextDrawAt) {
-        data = { nextDrawAt: String(r.nextDrawAt), drawIntervalSeconds: Number(r.drawIntervalSeconds) || 604800, lastDrawStatus: r.lastDrawStatus ?? null };
+        // Prize size is only used when Ample sends it in dollars (a key ending in Usd naming a prize / pool / payout).
+        let prizeUsd: number | null = null;
+        const scan = (o: any, depth: number) => {
+          if (!o || typeof o !== 'object' || depth > 2) return;
+          for (const [k, v] of Object.entries(o)) {
+            if (prizeUsd === null && /(prize|pool|jackpot|payout|reward).*usd$/i.test(k) && Number(v) > 0) prizeUsd = Number(v);
+            else if (v && typeof v === 'object') scan(v, depth + 1);
+          }
+        };
+        scan(r, 0);
+        data = { nextDrawAt: String(r.nextDrawAt), drawIntervalSeconds: Number(r.drawIntervalSeconds) || 604800, lastDrawStatus: r.lastDrawStatus ?? null, prizeUsd };
       }
     } catch {
       data = null;
@@ -240,6 +282,7 @@ export class AmpleService {
       avgApr: tvl > 0 ? Math.round(((monthly * 12) / tvl) * 1000) / 10 : null,
       maxApr: Number(v.aprRange?.max) || null,
       nextDrawAt: draw?.nextDrawAt ?? null,
+      nextPrizeUsd: draw?.prizeUsd ?? null,
       drawIntervalSeconds: draw?.drawIntervalSeconds ?? null,
       lastDrawStatus: draw?.lastDrawStatus ?? null,
     };
@@ -301,7 +344,46 @@ export class AmpleService {
     const vault = (await this.listVaults().catch(() => [] as any[])).find(v => v?.id === vaultId);
     let big = false;
     try { big = BigInt(amount) >= 1_000_000n; } catch { /* not a number */ }
-    return this.sponsorFee(userId, tx, !plain && vault?.token?.address === USDC_MINT && big);
+    const final: any = await this.sponsorFee(userId, tx, !plain && vault?.token?.address === USDC_MINT && big);
+    return this.checkedOnChain(userId, tx, final, amount);
+  }
+
+  private async simulate(conn: Connection, b64: string): Promise<string | null> {
+    try {
+      const sim = await conn.simulateTransaction(VersionedTransaction.deserialize(Buffer.from(b64, 'base64')), { sigVerify: false, replaceRecentBlockhash: true, commitment: 'confirmed' });
+      if (!sim.value.err) return null;
+      const last = (sim.value.logs ?? []).slice(-3).join(' | ');
+      return `${JSON.stringify(sim.value.err)}${last ? ` :: ${last}` : ' :: no program logs'}`;
+    } catch (e: any) {
+      return `simulation unavailable: ${e?.message}`;
+    }
+  }
+
+  /**
+   * Tests the deposit against the chain before it reaches the user's wallet and writes the real reason to the log. If the
+   * sponsored version fails but the plain one works, the plain one is returned. The result carries the user's SOL and USDC
+   * balances and both errors so the page can say exactly what is wrong instead of a generic "would fail".
+   */
+  private async checkedOnChain(userId: string, original: any, final: any, amount: string) {
+    try {
+      const link = await this.getLink(userId);
+      if (!link.walletAddress || !original?.transaction?.unsigned) return final;
+      const conn = new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
+      const user = new PublicKey(link.walletAddress);
+      const [lamports, usdc, plainErr] = await Promise.all([
+        conn.getBalance(user).catch(() => -1),
+        conn.getTokenAccountBalance(getAssociatedTokenAddressSync(new PublicKey(USDC_MINT), user)).then(r => r.value.amount).catch(() => '0'),
+        this.simulate(conn, original.transaction.unsigned),
+      ]);
+      const finalErr = final.sponsored ? await this.simulate(conn, final.transaction.unsigned) : plainErr;
+      const diag = { sol: lamports, usdc, plainErr, finalErr, sponsored: !!final.sponsored, requested: amount };
+      if (plainErr || finalErr) this.logger.warn(`deposit check user=${userId} wallet=${link.walletAddress} ${JSON.stringify(diag)}`);
+      if (final.sponsored && finalErr && !plainErr) return { ...original, diag };
+      return { ...final, diag };
+    } catch (e: any) {
+      this.logger.warn(`deposit check failed: ${e?.message}`);
+      return final;
+    }
   }
 
   private sponsoredToday = new Map<string, { day: string; n: number }>();

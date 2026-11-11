@@ -90,29 +90,61 @@ function Countdown({ nextDrawAt, intervalSec }: { nextDrawAt?: string | null; in
   );
 }
 
+// Snapshot of the public "Top payouts" leaderboard on ample.money (Ample's whole savings pool, not only Loofta users). Past results.
+const TOP_PAYOUTS = [
+  { name: "0xcd76...a8fb", v: 2831.53, apr: 14.5 },
+  { name: "I love Ample!", v: 2483.11, apr: 9.8 },
+  { name: "zamn", v: 1710, apr: 23.2 },
+  { name: "Jer", v: 1574.52, apr: 18.8 },
+  { name: "0x350d...3248", v: 1557.22, apr: 41.7 },
+];
+const hue = (w: string) => [...w].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
+
+/** What the average return means in dollars, so a non-crypto person can picture a year. */
+function Calculator({ apr }: { apr: number | null }) {
+  const [amt, setAmt] = useState(1000);
+  if (!apr) return null;
+  const year = (amt * apr) / 100;
+  const bank = (amt * 0.5) / 100;
+  const row = (label: string, v: number) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 16, color: "#C9C6CF" }}>
+      <span>{label}</span><span style={{ fontFamily: SORA, fontWeight: 700, color: "#F2EFE8" }}>${v < 10 ? v.toFixed(2) : Math.round(v).toLocaleString("en-US")}</span>
+    </div>
+  );
+  return (
+    <section style={{ marginTop: 48, padding: "clamp(20px,4vw,32px)", borderRadius: 28, background: "linear-gradient(160deg,#17141A,#111115 60%)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", flexWrap: "wrap", gap: "28px 48px", alignItems: "center" }}>
+      <div style={{ flex: "1 1 280px", display: "flex", flexDirection: "column", gap: 14 }}>
+        <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: 28, letterSpacing: "-0.04em" }}>What could your money earn?</span>
+        <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: 40, letterSpacing: "-0.05em", color: "#FF8A3D" }}>${amt.toLocaleString("en-US")}</span>
+        <input type="range" min={100} max={10000} step={100} value={amt} aria-label="Amount to save" onChange={(e) => setAmt(Number(e.target.value))} style={{ width: "100%", accentColor: "#FF5A1A" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, color: "#8A8893" }}><span>$100</span><span>$10,000</span></div>
+      </div>
+      <div style={{ flex: "1 1 260px", display: "flex", flexDirection: "column", gap: 12 }}>
+        {row("A year, on average", year)}
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "12px 14px", borderRadius: 14, background: "rgba(255,90,26,0.1)", border: "1px solid rgba(255,122,42,0.4)", fontSize: 16, color: "#FFB27A" }}>
+          <span>If you get lucky, top savers earned 10% to 42% a year</span>
+          <span style={{ fontFamily: SORA, fontWeight: 800, color: "#FF8A3D", whiteSpace: "nowrap" }}>${Math.round(amt * 0.1).toLocaleString("en-US")} to ${Math.round(amt * 0.42).toLocaleString("en-US")}</span>
+        </div>
+        <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 12 }}>{row("A typical bank savings account (about 0.5%)", bank)}</div>
+        <span style={{ fontSize: 15, lineHeight: 1.5, color: "#8A8893" }}>The average is ~{pct(apr)} a year across all savers, paid as weekly prizes. Luck decides who wins big: most savers land near the average, a few land far above it, and none of it is guaranteed.</span>
+      </div>
+    </section>
+  );
+}
+
 const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 const oddsText = (v: number | null) => (v === null || !Number.isFinite(v) || v <= 0 ? "-" : v * 100 < 0.01 ? "<0.01%" : `${(v * 100).toFixed(2)}%`);
 
-// Mocked until Ample exposes next-payout size and a winners feed.
-const NEXT_PAYOUT = ["$297", ".90"];
-const MOCK_WINNERS = [
-  { handle: "mira.sol", v: 85.08, ago: "6 days ago", hue: 25 },
-  { handle: "0xkenji", v: 45.07, ago: "13 days ago", hue: 60 },
-  { handle: "dorothy", v: 112.17, ago: "20 days ago", hue: 140 },
-  { handle: "looftaxyz", v: 76.76, ago: "27 days ago", hue: 300 },
-  { handle: "satsmaxi", v: 797.85, ago: "41 days ago", hue: 200 },
-];
-
 const STEPS = [
-  { n: "1", title: "Stake USDC", sub: "Your funds stay yours" },
-  { n: "2", title: "Collect tickets", sub: "More staked, more chances" },
-  { n: "3", title: "Win every week", sub: "Funded by generated yield" },
+  { n: "1", title: "Add dollars", sub: "Start with $1. It stays yours and you can take it out any time" },
+  { n: "2", title: "Get tickets", sub: "The more you add, the more tickets you hold" },
+  { n: "3", title: "Win every week", sub: "Prizes are paid from the interest your dollars earn, never from fees" },
 ];
 
 const FAQ = [
-  { q: "Can I lose my deposit?", a: "Your USDC sits in an Ample vault and stays yours. Withdraw any time. Like any DeFi product there is smart contract risk, and prizes are never guaranteed." },
-  { q: "Where do prizes come from?", a: "Every dollar in the pool earns yield. That yield is pooled into weekly prizes. Nobody pays to enter." },
-  { q: "How do I win more often?", a: "Tickets build up the longer you stay staked and the more you stake. More tickets means a bigger share of each draw." },
+  { q: "Is my money safe?", a: "Your dollars (held as USDC, a digital dollar) stay yours and you can take them out any time. They are held in a savings pool run by Ample. Like any online financial product there is a small technical risk, and prizes are never guaranteed." },
+  { q: "Where do prizes come from?", a: "Every dollar in the pool earns interest. That interest is collected into weekly prizes and shared out by draw. Nobody pays to enter." },
+  { q: "How do I win more often?", a: "Tickets build up the longer you stay and the more you add. More tickets means a bigger share of each draw." },
 ];
 
 export function StakeToWin() {
@@ -227,6 +259,16 @@ export function StakeToWin() {
   // If the wallet rejects the sponsored (Loofta-paid fee) transaction, build the plain one once and let the user pay the fee.
   const buildSend = async (build: (plain?: boolean) => Promise<AmpleSolanaTx>) => {
     const first = await build();
+    const d = first.diag;
+    // The backend already tested the transaction on-chain. If it cannot work, say why instead of letting the wallet fail.
+    if (d?.finalErr) {
+      if (/^\d+$/.test(d.usdc) && /^\d+$/.test(d.requested) && BigInt(d.usdc) < BigInt(d.requested)) {
+        throw new Error(`Your wallet holds $${(Number(d.usdc) / 1e6).toFixed(2)} USDC, which is less than the $${(Number(d.requested) / 1e6).toFixed(2)} you are adding.`);
+      }
+      if (d.sol >= 0 && d.sol < 3_000_000 && !d.sponsored) {
+        throw new Error("Your wallet needs a tiny bit of SOL (about $0.50) to open your savings account the first time. Add a little SOL and try again.");
+      }
+    }
     try { return { tx: first, sig: await sendTx(first) }; }
     catch (e: any) {
       if (!/fail on-chain|no program logs|simulat/i.test(String(e?.message ?? ""))) throw e;
@@ -272,10 +314,10 @@ export function StakeToWin() {
   const stake = () => run("stake", async () => {
     const base = toBase(amount, decimals);
     if (!base || !vault) throw new Error("Enter an amount");
-    if (amt < MIN_STAKE_USD) throw new Error("The minimum stake is $1.");
+    if (amt < MIN_STAKE_USD) throw new Error("The minimum is $1.");
     const o = await opts();
     await report("deposit", base, (await buildSend((plain) => ampleBuildDeposit(vault.id, base, o, plain))).sig);
-    setNote("Staked. You are in the next draw.");
+    setNote("Done. You are in this week's draw.");
     await refresh();
   });
 
@@ -374,21 +416,21 @@ export function StakeToWin() {
       ];
 
   const linked = !!(authenticated && status?.enabled && vault && status.linked);
-  let ctaLabel = isStake ? `Stake $${fmt(amt)}` : `Withdraw $${fmt(eff)}`;
+  let ctaLabel = isStake ? `Start earning with $${fmt(amt)}` : `Withdraw $${fmt(eff)}`;
   let ctaDisabled = busy !== null;
   let ctaAction: () => void = isStake ? stake : withdraw;
   if (loading) { ctaLabel = "Loading..."; ctaDisabled = true; }
   else if (!authenticated) { ctaLabel = "Sign in to start"; ctaDisabled = false; ctaAction = () => login(); }
-  else if (status && !status.enabled) { ctaLabel = "Staking opens soon"; ctaDisabled = true; }
+  else if (status && !status.enabled) { ctaLabel = "Earn opens soon"; ctaDisabled = true; }
   else if (status?.enabled && !vault) { ctaLabel = "No pool open right now"; ctaDisabled = true; }
-  else if (status?.enabled && vault && !status.linked) { ctaLabel = busy === "link" ? "Confirm in your wallet..." : "Turn on staking"; ctaAction = enable; }
+  else if (status?.enabled && vault && !status.linked) { ctaLabel = busy === "link" ? "Confirm in your wallet..." : "Turn on Earn"; ctaAction = enable; }
   else if (linked) {
-    if (busy === "stake") ctaLabel = "Staking...";
+    if (busy === "stake") ctaLabel = "Adding...";
     if (busy === "unstake") ctaLabel = "Withdrawing...";
     if (!status?.canTransact) ctaDisabled = true;
     if (!isStake && !hasStake) ctaDisabled = true;
     if (eff <= 0) ctaDisabled = true;
-    else if (isStake && eff < MIN_STAKE_USD) { ctaDisabled = true; ctaLabel = "Minimum stake is $1"; }
+    else if (isStake && eff < MIN_STAKE_USD) { ctaDisabled = true; ctaLabel = "Minimum is $1"; }
   }
 
   const claimableBase = (overview?.claimable ?? []).reduce((a, p) => a + microOf(p), BigInt(0));
@@ -399,6 +441,7 @@ export function StakeToWin() {
   const wonBase = ledgerWon > localWon ? ledgerWon : localWon;
   const wonTotal = wonBase > BigInt(0) ? usdText(wonBase) : null;
   const apr = stats?.avgApr ?? null;
+  const weeklyPool = stats?.nextPrizeUsd ?? null;
   const wonReturnPct = wonBase > BigInt(0) && stakedNum > 0 ? (Number(wonBase) / 1e6 / stakedNum) * 100 : null;
 
   return (
@@ -433,8 +476,8 @@ export function StakeToWin() {
         <section className="stk-hero">
           <div className="stk-title">
             <h1 style={{ margin: 0, fontFamily: SORA, fontWeight: 800, fontSize: "clamp(36px,min(4.8vw,7.5vh),72px)", lineHeight: 1, letterSpacing: "-0.055em" }}>
-              <span style={{ display: "block" }}>Stake USDC.</span>
-              <span style={{ display: "block", color: "#8A8893" }}>Win every week.</span>
+              <span style={{ display: "block" }}>{apr ? `Earn ~${pct(apr)} a year.` : "Earn on your dollars."}</span>
+              <span style={{ display: "block", color: "#8A8893" }}>Win prizes every week.</span>
             </h1>
           </div>
 
@@ -445,10 +488,12 @@ export function StakeToWin() {
           <div className="stk-form">
             <div className="stk-pay">
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>Next payout</span>
-                <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(36px,min(4vw,6vh),48px)", lineHeight: 1, letterSpacing: "-0.06em" }}>
-                  {NEXT_PAYOUT[0]}<span style={{ color: "#7A7884" }}>{NEXT_PAYOUT[1]}</span>
-                </span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>{weeklyPool ? "Next prize" : "Next prize draw"}</span>
+                {weeklyPool ? (
+                  <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(36px,min(4vw,6vh),48px)", lineHeight: 1, letterSpacing: "-0.06em" }}>
+                    ${weeklyPool.toLocaleString("en-US", { maximumFractionDigits: 2 })}
+                  </span>
+                ) : null}
               </div>
               <Countdown nextDrawAt={stats?.nextDrawAt} intervalSec={stats?.drawIntervalSeconds} />
             </div>
@@ -458,7 +503,7 @@ export function StakeToWin() {
                 {(["stake", "withdraw"] as const).map((k) => (
                   <button key={k} type="button" className="stk-pad" onClick={() => switchTab(k)}
                     style={{ cursor: "pointer", border: "none", textAlign: "center", borderRadius: 16, fontWeight: 800, fontSize: 15, background: tab === k ? "#1D1D24" : "transparent", color: tab === k ? "#F2EFE8" : "#6E6C78", fontFamily: "inherit" }}>
-                    {k === "stake" ? "Stake" : "Withdraw"}
+                    {k === "stake" ? "Add money" : "Withdraw"}
                   </button>
                 ))}
               </div>
@@ -466,7 +511,7 @@ export function StakeToWin() {
               <div style={{ padding: "clamp(18px,3.2vh,30px) 20px clamp(16px,2.6vh,24px)", display: "flex", flexDirection: "column", gap: "clamp(12px,2.3vh,24px)" }}>
                 {!(!isStake && hasStake) && (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, textAlign: "center" }}>
-                    <Mini label="Your stake" value={`$${fmt(stakedNum)}`} />
+                    <Mini label="Your balance" value={`$${fmt(stakedNum)}`} />
                     <Mini label="Tickets" value={fmt(ticketCount)} />
                     <Mini label="Weekly odds" value={oddsText(oddsBefore)} />
                   </div>
@@ -482,7 +527,7 @@ export function StakeToWin() {
                       </button>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, textAlign: "center" }}>
-                      <Mini label="Your stake" value={`$${fmt(stakedNum)}`} />
+                      <Mini label="Your balance" value={`$${fmt(stakedNum)}`} />
                       <Mini label="Tickets" value={fmt(ticketCount)} />
                       <Mini label="Weekly odds" value={oddsText(oddsBefore)} />
                     </div>
@@ -508,7 +553,7 @@ export function StakeToWin() {
 
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "clamp(12px,2.2vh,20px) 18px", borderRadius: 18, background: "#0B0B0E", border: `1px solid ${focus ? "rgba(255,122,42,0.6)" : "rgba(255,255,255,0.08)"}` }}>
                   <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 32, color: "#6E6C78" }}>$</span>
-                  <input inputMode="decimal" aria-label={isStake ? "Amount to stake" : "Amount to withdraw"} value={amount}
+                  <input inputMode="decimal" aria-label={isStake ? "Amount to add" : "Amount to withdraw"} value={amount}
                     onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
                     style={{ flex: 1, minWidth: 0, background: "transparent", border: 0, outline: "none", color: "#F2EFE8", fontFamily: SORA, fontWeight: 700, fontSize: 28, letterSpacing: "-0.03em" }} />
                   <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 15, fontWeight: 700, color: "#8A8893" }}>
@@ -542,7 +587,7 @@ export function StakeToWin() {
 
                 {note && <p style={{ margin: 0, fontSize: 15, color: "#5FD38E", textAlign: "center" }}>{note}</p>}
                 {error && <p style={{ margin: 0, fontSize: 15, color: "#FF8A7A", textAlign: "center" }}>{error}</p>}
-                <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{"Principal stays yours · no lockup · no entry fee"}</span>
+                <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{"Your money stays yours · withdraw any time · no entry fee · network fees paid by Loofta"}</span>
               </div>
             </div>
           </div>
@@ -550,21 +595,22 @@ export function StakeToWin() {
 
         <section style={{ marginTop: "clamp(56px,8vw,96px)" }}><Reveal /></section>
 
+        {(
         <section style={{ marginTop: 48, display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-            <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 20, letterSpacing: "-0.02em" }}>Latest payouts</span>
-            <span style={{ fontSize: 15, color: "#8A8893" }}>Paid every week</span>
+            <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 20, letterSpacing: "-0.02em" }}>Biggest payouts on Ample</span>
+            <span style={{ fontSize: 15, color: "#8A8893" }}>From Ample's public leaderboard</span>
           </div>
           <div style={{ overflow: "hidden", WebkitMaskImage: "linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)", maskImage: "linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)" }}>
             <div style={{ display: "flex", gap: 12, width: "max-content", padding: "6px 0 10px", animation: "lmarquee 40s linear infinite" }}>
-              {[...MOCK_WINNERS, ...MOCK_WINNERS, ...MOCK_WINNERS, ...MOCK_WINNERS].map((w, i) => (
+              {[...TOP_PAYOUTS, ...TOP_PAYOUTS, ...TOP_PAYOUTS, ...TOP_PAYOUTS].map((w, i) => (
                 <div key={i} className="stk-win"
                   onMouseMove={(e) => { const el = e.currentTarget, r = el.getBoundingClientRect(); const x = (e.clientX - r.left) / r.width - 0.5, y = (e.clientY - r.top) / r.height - 0.5; el.style.transform = `perspective(600px) rotateX(${-y * 14}deg) rotateY(${x * 16}deg) scale(1.04)`; }}
                   onMouseLeave={(e) => { e.currentTarget.style.transform = ""; }}>
-                  <div style={{ flex: "none", width: 38, height: 38, borderRadius: "50%", background: `oklch(0.78 0.14 ${w.hue})`, display: "grid", placeItems: "center", fontFamily: SORA, fontWeight: 800, fontSize: 16, color: "#0B0B0E" }}>{w.handle.replace(/^0x/, "")[0].toUpperCase()}</div>
+                  <div style={{ flex: "none", width: 38, height: 38, borderRadius: "50%", background: `oklch(0.78 0.14 ${hue(w.name)})`, display: "grid", placeItems: "center", fontFamily: SORA, fontWeight: 800, fontSize: 16, color: "#0B0B0E" }}>{w.name.replace(/^0x/, "")[0].toUpperCase()}</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 20, letterSpacing: "-0.03em", lineHeight: 1.1 }}>${Math.floor(w.v)}<span style={{ color: "#7A7884" }}>.{String(Math.round((w.v % 1) * 100)).padStart(2, "0")}</span></span>
-                    <span style={{ fontSize: 15, color: "#A9A6B0", whiteSpace: "nowrap" }}>@{w.handle} · {w.ago}</span>
+                    <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 20, letterSpacing: "-0.03em", lineHeight: 1.1 }}>${Math.floor(w.v).toLocaleString("en-US")}<span style={{ color: "#7A7884" }}>.{String(Math.round((w.v % 1) * 100)).padStart(2, "0")}</span></span>
+                    <span style={{ fontSize: 15, color: "#A9A6B0", whiteSpace: "nowrap" }}>{w.name} · {w.apr}% a year</span>
                   </div>
                 </div>
               ))}
@@ -572,12 +618,16 @@ export function StakeToWin() {
           </div>
         </section>
 
+        )}
+
+        <Calculator apr={apr} />
+
         {stats && (
           <section style={{ marginTop: 32, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)", background: "#101015", overflow: "hidden" }}>
-            <Stat label="Paid to stakers" value={compactUsd(stats.totalPaidUsd)} note="Funded by yield, not entry fees" />
-            <Stat label="In the pool" value={compactUsd(stats.tvlUsd)} note="USDC staked right now" />
-            {stats.avgApr ? <Stat label="Average yearly yield" value={`~${pct(stats.avgApr)}`} note="Goes into the weekly prize" accent /> : null}
-            {stats.maxApr ? <Stat label="Best week, annualised" value={pct(stats.maxApr)} note={`Last 30 days: ${compactUsd(stats.monthlyPayoutsUsd)} paid`} /> : null}
+            <Stat label="Paid out in prizes" value={compactUsd(stats.totalPaidUsd)} note="Funded by yield, not entry fees" />
+            <Stat label="Saved by everyone" value={compactUsd(stats.tvlUsd)} note="Held in the pool right now" />
+            {stats.avgApr ? <Stat label="Average yearly return" value={`~${pct(stats.avgApr)}`} note="Paid out as weekly prizes" accent /> : null}
+            {stats.maxApr ? <Stat label="Best recent week, per year" value={pct(stats.maxApr)} note={`Last 30 days: ${compactUsd(stats.monthlyPayoutsUsd)} paid`} /> : null}
           </section>
         )}
 
@@ -600,7 +650,7 @@ export function StakeToWin() {
         <section style={{ marginTop: 96, display: "flex", flexWrap: "wrap", gap: "24px 40px", alignItems: "flex-start" }}>
           <div style={{ flex: "1 1 260px", display: "flex", flexDirection: "column", gap: 12, maxWidth: 360 }}>
             <h2 style={{ margin: 0, fontFamily: SORA, fontWeight: 800, fontSize: 36, letterSpacing: "-0.05em" }}>Questions</h2>
-            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "#8A8893" }}>Staking is provided by Ample. Prizes are not guaranteed and past payouts do not predict future ones.</p>
+            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "#8A8893" }}>Savings are provided by Ample. Prizes are not guaranteed and past payouts do not predict future ones.</p>
             <a href="/docs/stake" style={{ fontSize: 15, fontWeight: 700, color: "#FF7A2A" }}>Read the full docs →</a>
           </div>
           <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
