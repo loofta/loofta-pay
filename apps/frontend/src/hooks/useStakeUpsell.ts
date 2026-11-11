@@ -52,7 +52,7 @@ export function useStakeUpsell(
       const status = await getAmpleStatus(o);
       const vault = status.vaults?.[0];
       if (!status.enabled || !vault) return false;
-      if (!status.linked) {
+      if (!status.linked || (status.walletAddress && status.walletAddress !== wallet.address)) {
         const ch = await ampleChallenge(wallet.address, o);
         const { signature } = await signMessage({
           message: new TextEncoder().encode(ch.message),

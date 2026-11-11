@@ -36,16 +36,16 @@ export function StakeHomeCard() {
   const tickets = me.data?.tickets?.totalTickets !== undefined ? Math.floor(Number(me.data.tickets.totalTickets)) : 0;
   const claimable = me.data?.claimable?.length ?? 0;
 
-  const title = staked ? `You staked $${staked}` : "Stake USDC, win weekly";
+  const title = staked ? `You have $${staked} earning` : "Earn on your dollars, win weekly";
   const sub = claimable > 0
     ? `You have ${claimable} prize${claimable === 1 ? "" : "s"} to claim`
     : staked
       ? `${tickets.toLocaleString()} tickets in the weekly draw`
       : stats?.avgApr
-        ? `~${pct(stats.avgApr)} avg yield${stats.totalPaidUsd ? ` · ${compactUsd(stats.totalPaidUsd)} paid out` : ""}`
+        ? `~${pct(stats.avgApr)} a year on average${stats.totalPaidUsd ? ` · ${compactUsd(stats.totalPaidUsd)} paid out` : ""}`
         : "Your deposit stays yours";
 
-  const cta = claimable > 0 ? "Claim your prize →" : staked ? "Open your stake →" : "Stake now →";
+  const cta = claimable > 0 ? "Claim your prize →" : staked ? "See your earnings →" : "Start earning →";
 
   return (
     <Link

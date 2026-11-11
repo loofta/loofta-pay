@@ -247,14 +247,17 @@ export function StakeToWin() {
     } finally { setBusy(null); }
   };
 
-  const enable = () => run("link", async () => {
+  // Links the Loofta wallet to the savings pool. Needed once, and again if the account was linked to a different wallet.
+  // Runs silently as part of the first deposit, so the user never sees a separate "turn on" step.
+  const linkWallet = async () => {
     if (!wallet || !solAddress) throw new Error("No Solana wallet found");
     const o = await opts();
     const ch = await ampleChallenge(solAddress, o);
-    const { signature } = await signMessage({ message: new TextEncoder().encode(ch.message), wallet });
+    const { signature } = await signMessage({ message: new TextEncoder().encode(ch.message), wallet, options: { uiOptions: { showWalletUIs: false } } } as never);
     await ampleLink({ walletAddress: solAddress, message: ch.message, signature: bs58.encode(signature as Uint8Array) }, o);
     await refresh();
-  });
+  };
+  const walletMismatch = !!(status?.linked && status.walletAddress && solAddress && status.walletAddress !== solAddress);
 
   // If the wallet rejects the sponsored (Loofta-paid fee) transaction, build the plain one once and let the user pay the fee.
   const buildSend = async (build: (plain?: boolean) => Promise<AmpleSolanaTx>) => {
@@ -315,6 +318,7 @@ export function StakeToWin() {
     const base = toBase(amount, decimals);
     if (!base || !vault) throw new Error("Enter an amount");
     if (amt < MIN_STAKE_USD) throw new Error("The minimum is $1.");
+    if (!status?.linked || walletMismatch) await linkWallet();
     const o = await opts();
     await report("deposit", base, (await buildSend((plain) => ampleBuildDeposit(vault.id, base, o, plain))).sig);
     setNote("Done. You are in this week's draw.");
@@ -423,7 +427,12 @@ export function StakeToWin() {
   else if (!authenticated) { ctaLabel = "Sign in to start"; ctaDisabled = false; ctaAction = () => login(); }
   else if (status && !status.enabled) { ctaLabel = "Earn opens soon"; ctaDisabled = true; }
   else if (status?.enabled && !vault) { ctaLabel = "No pool open right now"; ctaDisabled = true; }
-  else if (status?.enabled && vault && !status.linked) { ctaLabel = busy === "link" ? "Confirm in your wallet..." : "Turn on Earn"; ctaAction = enable; }
+  else if (status?.enabled && vault && !status.linked) {
+    if (busy === "stake") ctaLabel = "Setting up...";
+    if (eff <= 0) ctaDisabled = true;
+    else if (isStake && eff < MIN_STAKE_USD) { ctaDisabled = true; ctaLabel = "Minimum is $1"; }
+    ctaAction = stake;
+  }
   else if (linked) {
     if (busy === "stake") ctaLabel = "Adding...";
     if (busy === "unstake") ctaLabel = "Withdrawing...";
