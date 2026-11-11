@@ -401,11 +401,20 @@ export class AmpleService {
     const feeWallet = this.solanaSponsor.getFeePayerAddress();
     const link = await this.getLink(userId);
     if (!kp || !feeWallet || !link.walletAddress) return null;
-    const lamports = BigInt(Number(this.config.get<string>('STAKE_SETUP_LAMPORTS') ?? 2_100_000));
     const user = new PublicKey(link.walletAddress);
     const conn = new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
+    // What a first deposit really needs, read from the chain: the rent of the new token account, plus the minimum a wallet must keep
+    // when it still holds SOL (an empty system account), plus headroom for the network and priority fee (about 80,000 on real deposits).
+    let target: bigint;
+    const override = Number(this.config.get<string>('STAKE_SETUP_LAMPORTS') ?? 0);
+    if (override > 0) target = BigInt(override);
+    else {
+      const [tokenRent, emptyRent] = await Promise.all([conn.getMinimumBalanceForRentExemption(165), conn.getMinimumBalanceForRentExemption(0)]);
+      target = BigInt(Math.ceil((tokenRent + emptyRent + 150_000) / 10_000) * 10_000);
+    }
     const sol = await conn.getBalance(user).catch(() => -1);
-    if (sol < 0 || BigInt(sol) >= lamports) return null;
+    if (sol < 0 || BigInt(sol) >= target) return null;
+    const lamports = target - BigInt(sol); // top up to the target, so a wallet that already got part of it only pays for the rest
     // The rent is paid once, when the savings account is opened. Anyone who already holds a position has it, and their wallet is
     // back near zero SOL after that, so the SOL check alone would charge them again on every deposit.
     const held: any = await this.call('GET', '/me/balances', { kind: 'session', userId }).catch(() => null);
@@ -417,7 +426,7 @@ export class AmpleService {
     let feeUsdc = BigInt(Math.ceil((Number(lamports) / 1e9) * price * 1e6));
     if (feeUsdc < 170_000n) feeUsdc = 170_000n;
     feeUsdc += 50_000n;
-    if (feeUsdc > 450_000n) throw new BadRequestException('Account setup is not available right now. Try again later.');
+    if (feeUsdc > 900_000n) throw new BadRequestException('Account setup is not available right now. Try again later.');
     return { kp, feeWallet, link, lamports, user, conn, sol, feeUsdc };
   }
 

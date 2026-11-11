@@ -127,9 +127,12 @@ function InfoTip({ text, label = "More info" }: { text: string; label?: string }
 
 function Calculator({ apr }: { apr: number | null }) {
   const [amt, setAmt] = useState(7600);
+  const [years, setYears] = useState(1);
   if (!apr) return null;
   const usd = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
-  const year = (amt * apr) / 100;
+  // Winnings claimed on Solana go straight back into the position, so they compound. Weekly, to match the weekly draw.
+  const gain = (ratePct: number) => amt * (Math.pow(1 + ratePct / 100 / 52, 52 * years) - 1);
+  const year = gain(apr);
   const row = (label: string, value: string, opts: { big?: boolean; color?: string; muted?: boolean } = {}) => (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "clamp(10px,1.4vw,16px) 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
       <span style={{ fontSize: 17, fontWeight: 600, color: opts.muted ? "#8A8893" : "#F2EFE8" }}>{label}</span>
@@ -157,11 +160,22 @@ function Calculator({ apr }: { apr: number | null }) {
           </div>
         </div>
         <div style={{ flex: "1 1 320px", display: "flex", flexDirection: "column" }}>
-          <span style={{ fontSize: 17, fontWeight: 600, color: "#8A8893", paddingBottom: 2 }}>Per year</span>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingBottom: 2 }}>
+            <span style={{ fontSize: 17, fontWeight: 600, color: "#8A8893" }}>{years === 1 ? "Per year" : `After ${years} years`}</span>
+            <div role="group" aria-label="Years" style={{ display: "flex", gap: 4, padding: 3, borderRadius: 999, background: "#0B0B0E" }}>
+              {[1, 5, 10].map((y) => (
+                <button key={y} type="button" onClick={() => setYears(y)} aria-pressed={years === y}
+                  style={{ cursor: "pointer", border: "none", padding: "6px 14px", borderRadius: 999, fontFamily: SORA, fontWeight: 800, fontSize: 15, color: years === y ? "#F2EFE8" : "#6E6C78", background: years === y ? "#1F1F27" : "transparent" }}>
+                  {y}Y
+                </button>
+              ))}
+            </div>
+          </div>
           {row("Average", usd(year), { big: true, color: "#EE6A2C" })}
-          {row("Top savers", `${usd(amt * 0.1)}\u2013${usd(amt * 0.42)}`)}
-          {row("Bank", usd((amt * 0.5) / 100), { muted: true })}
-          <span style={{ fontSize: 15, color: "#8A8893", paddingTop: 12 }}>Paid as weekly prizes.</span>
+          {/* Lucky one-year results only: a best case is not something to compound for years. Simple, not compounded. */}
+          {years === 1 ? row("Top savers", `${usd(amt * 0.1)}\u2013${usd(amt * 0.42)}`) : null}
+          {row("Bank", usd(gain(0.5)), { muted: true })}
+          <span style={{ fontSize: 15, color: "#8A8893", paddingTop: 12 }}>{years === 1 ? "Paid as weekly prizes." : "Paid as weekly prizes, with your winnings kept in."}</span>
         </div>
       </div>
     </section>
@@ -354,7 +368,7 @@ export function StakeToWin() {
   const amt = Math.max(0, Number(amount) || 0);
 
   const stake = () => run("stake", async () => {
-    const base = toBase(amount, decimals);
+    let base = toBase(amount, decimals);
     if (!base) throw new Error("Enter an amount");
     if (!vault) { void refresh(); throw new Error("Earn is not available right now. Try again in a moment."); }
     if (amt < MIN_STAKE_USD) throw new Error("The minimum is $1.");
@@ -364,10 +378,21 @@ export function StakeToWin() {
         const conn = new Connection(getSolanaHttpRpc(), "confirmed");
         const bal = await conn.getTokenAccountBalance(getAssociatedTokenAddressSync(new PublicKey(USDC_MINT), new PublicKey(solAddress)));
         const have = Number(bal.value.amount) / 1e6;
-        const need = amt + (firstFee ?? 0);
-        if (have + 0.000001 < need) {
-          setDeposit({ screen: "home", amount: (Math.ceil((need - have) * 100) / 100).toFixed(2) });
+        const fee = firstFee ?? 0;
+        if (have + 0.000001 < amt) {
+          setDeposit({ screen: "home", amount: (Math.ceil((amt + fee - have) * 100) / 100).toFixed(2) });
           return;
+        }
+        if (have + 0.000001 < amt + fee) {
+          // The wallet covers the amount but not the one-time fee on top: take the fee out of the deposit instead of asking for more money.
+          const net = Math.floor((have - fee) * 100) / 100;
+          if (net < MIN_STAKE_USD) {
+            setDeposit({ screen: "home", amount: (Math.ceil((MIN_STAKE_USD + fee - have) * 100) / 100).toFixed(2) });
+            return;
+          }
+          base = toBase(net.toFixed(2), decimals);
+          if (!base) throw new Error("Enter an amount");
+          setAmount(net.toFixed(2));
         }
       } catch (e: any) {
         // No USDC account yet means a balance of zero. Other RPC errors fall through to the normal flow.
@@ -380,12 +405,14 @@ export function StakeToWin() {
     if (!status?.linked || walletMismatch) await linkWallet();
     const o = await opts();
     // A brand new wallet holds no SOL for the account rent. One small signed step swaps a little USDC for it, shown as dollars.
-    const setup = await ampleBuildSetup(vault.id, base, o);
+    if (!base) throw new Error("Enter an amount");
+    const depositBase: string = base;
+    const setup = await ampleBuildSetup(vault.id, depositBase, o);
     if (setup.needed) {
       setNote(`First-time deposit fee: $${setup.feeUsd.toFixed(2)}`);
       await sendTx(setup, true);
     }
-    await report("deposit", base, (await buildSend((plain) => ampleBuildDeposit(vault.id, base, o, plain))).sig);
+    await report("deposit", depositBase, (await buildSend((plain) => ampleBuildDeposit(vault.id, depositBase, o, plain))).sig);
     setNote("Done. You are in this week's draw.");
     await refresh();
   });
@@ -649,7 +676,7 @@ export function StakeToWin() {
                 {note && <p style={{ margin: 0, fontSize: 15, color: "#5FD38E", textAlign: "center" }}>{note}</p>}
                 {error && <p style={{ margin: 0, fontSize: 15, color: "#FF8A7A", textAlign: "center" }}>{error}</p>}
                 {isStake && firstFee ? (
-                  <span style={{ textAlign: "center", fontSize: 15, fontWeight: 700, color: "#FFB27A" }}>{`First-time deposit fee: $${firstFee.toFixed(2)} (once). You pay $${fmt(amt + firstFee)} in total.`}</span>
+                  <span style={{ textAlign: "center", fontSize: 15, fontWeight: 700, color: "#FFB27A" }}>{`First-time deposit fee: $${firstFee.toFixed(2)} (once), taken from your deposit if your balance is short.`}</span>
                 ) : null}
                 <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{"Your money stays yours · withdraw any time · no entry fee · network fees paid by Loofta"}</span>
               </div>

@@ -25,7 +25,10 @@ const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const IMPACT_WARN_PCT = 1; // yellow
 const IMPACT_DANGER_PCT = 5; // red, the button becomes "Swap anyway"
 const IMPACT_BLOCK_PCT = 20; // so much value would be lost that we do not allow it
-const SOL_RESERVE = 0.01; // kept back when paying with SOL so the network fee can still be paid
+// Kept back when paying with SOL so the network fee can still be paid. Small, since a swap fee is a few thousand lamports; a bit more
+// when the wallet has no account for the token it receives yet, because opening one costs rent.
+const SOL_RESERVE = 0.0006;
+const SOL_RESERVE_NEW_ACCOUNT = 0.0025;
 
 const card = { display: "flex", flexDirection: "column", gap: 8, padding: 16, borderRadius: 22, background: "#1A1A20", border: "1px solid rgba(255,255,255,0.07)" } as const;
 const fmt = (n: number, max = 6) => n.toLocaleString("en-US", { maximumSignificantDigits: max });
@@ -82,7 +85,8 @@ export function JupiterSwap({
   const balance = payHolding?.amount ?? 0;
   const amountNum = Number(amount);
   const isNative = pay?.mint === WSOL;
-  const maxAmount = Math.max(0, isNative ? balance - SOL_RESERVE : balance);
+  const receiveHeld = !!get && holdings.some((h) => (h.mint ?? WSOL) === get.mint);
+  const maxAmount = Math.max(0, isNative ? balance - (receiveHeld ? SOL_RESERVE : SOL_RESERVE_NEW_ACCOUNT) : balance);
   const over = amountNum > maxAmount + 1e-12;
   const sameToken = !!pay && !!get && pay.mint === get.mint;
 
