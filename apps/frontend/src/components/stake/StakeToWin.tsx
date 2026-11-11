@@ -224,6 +224,17 @@ export function StakeToWin() {
     await refresh();
   });
 
+  // If the wallet rejects the sponsored (Loofta-paid fee) transaction, build the plain one once and let the user pay the fee.
+  const buildSend = async (build: (plain?: boolean) => Promise<AmpleSolanaTx>) => {
+    const first = await build();
+    try { return { tx: first, sig: await sendTx(first) }; }
+    catch (e: any) {
+      if (!/fail on-chain|no program logs|simulat/i.test(String(e?.message ?? ""))) throw e;
+      const plain = await build(true);
+      return { tx: plain, sig: await sendTx(plain) };
+    }
+  };
+
   const sendTx = async (tx: AmpleSolanaTx) => {
     if (!wallet) throw new Error("No Solana wallet found");
     if (tx.expiresAt && Date.now() > new Date(tx.expiresAt).getTime()) throw new Error("That quote expired, try again.");
@@ -262,7 +273,8 @@ export function StakeToWin() {
     const base = toBase(amount, decimals);
     if (!base || !vault) throw new Error("Enter an amount");
     if (amt < MIN_STAKE_USD) throw new Error("The minimum stake is $1.");
-    await report("deposit", base, await sendTx(await ampleBuildDeposit(vault.id, base, await opts())));
+    const o = await opts();
+    await report("deposit", base, (await buildSend((plain) => ampleBuildDeposit(vault.id, base, o, plain))).sig);
     setNote("Staked. You are in the next draw.");
     await refresh();
   });
@@ -288,8 +300,9 @@ export function StakeToWin() {
     if (usdcStaked > 0 && held) {
       const base = everything || amt >= usdcStaked - eps ? String(held.depositsToken) : toBase(amount, decimals);
       if (!base) throw new Error("Enter an amount");
-      const built = await ampleBuildWithdraw(vault.id, base, await opts());
-      await report("withdraw", built.withdrawnBase ?? base, await sendTx(built));
+      const o = await opts();
+      const r = await buildSend((plain) => ampleBuildWithdraw(vault.id, base, o, plain));
+      await report("withdraw", r.tx.withdrawnBase ?? base, r.sig);
       withdrawn++;
     }
     let converted = 0;
@@ -313,7 +326,8 @@ export function StakeToWin() {
 
   const claim = (payoutId: string) => run("claim", async () => {
     const p = overview?.claimable.find((c) => c.payoutId === payoutId);
-    const sig = await sendTx(await ampleBuildClaim(payoutId, await opts()));
+    const o = await opts();
+    const { sig } = await buildSend((plain) => ampleBuildClaim(payoutId, o, plain));
     if (p) { addClaimed(microOf(p).toString()); await report("claim", String(p.payoutAmount), sig, p.payoutId, p.vaultId); }
     setNote("Reward added to your stake.");
     await refresh();
@@ -325,7 +339,8 @@ export function StakeToWin() {
     let done = 0;
     try {
       for (const p of list) {
-        const sig = await sendTx(await ampleBuildClaim(p.payoutId, await opts()));
+        const o = await opts();
+        const { sig } = await buildSend((plain) => ampleBuildClaim(p.payoutId, o, plain));
         addClaimed(microOf(p).toString());
         await report("claim", String(p.payoutAmount), sig, p.payoutId, p.vaultId);
         done++;

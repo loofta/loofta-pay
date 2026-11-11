@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsIn, IsOptional, MaxLength, Matches } from 'class-validator';
+import { IsString, IsNotEmpty, IsIn, IsOptional, IsBoolean, MaxLength, Matches } from 'class-validator';
 
 export class AmpleChallengeDto {
   @IsString() @IsNotEmpty() @MaxLength(64)
@@ -20,11 +20,16 @@ export class AmpleAmountDto {
   vaultId: string;
   @IsString() @Matches(/^[1-9][0-9]{0,30}$/)
   amount: string;
+  /** Retry path: ask for the plain transaction (user pays the network fee) if the sponsored one is rejected by the wallet. */
+  @IsOptional() @IsBoolean()
+  plain?: boolean;
 }
 
 export class AmpleClaimDto {
   @IsString() @IsNotEmpty() @MaxLength(64)
   payoutId: string;
+  @IsOptional() @IsBoolean()
+  plain?: boolean;
 }
 
 export class AmpleEventDto {

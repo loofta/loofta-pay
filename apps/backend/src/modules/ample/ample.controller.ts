@@ -68,21 +68,21 @@ export class AmpleController {
   @HttpCode(HttpStatus.OK)
   @RateLimit(20, 60, 'ample:deposit')
   deposit(@Req() req: any, @Body() dto: AmpleAmountDto) {
-    return this.ample.buildDeposit(req.user!.id, dto.vaultId, dto.amount);
+    return this.ample.buildDeposit(req.user!.id, dto.vaultId, dto.amount, dto.plain);
   }
 
   @Post('withdraw')
   @HttpCode(HttpStatus.OK)
   @RateLimit(20, 60, 'ample:withdraw')
   withdraw(@Req() req: any, @Body() dto: AmpleAmountDto) {
-    return this.ample.buildWithdraw(req.user!.id, dto.vaultId, dto.amount);
+    return this.ample.buildWithdraw(req.user!.id, dto.vaultId, dto.amount, dto.plain);
   }
 
   @Post('claim')
   @HttpCode(HttpStatus.OK)
   @RateLimit(20, 60, 'ample:claim')
   claim(@Req() req: any, @Body() dto: AmpleClaimDto) {
-    return this.ample.buildClaim(req.user!.id, dto.payoutId);
+    return this.ample.buildClaim(req.user!.id, dto.payoutId, dto.plain);
   }
 
   @Get('tx/:hash/status')

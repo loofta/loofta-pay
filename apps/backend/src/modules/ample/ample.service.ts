@@ -294,14 +294,14 @@ export class AmpleService {
     if (this.txScopeDenied) throw new ServiceUnavailableException('Staking is opening soon');
   }
 
-  async buildDeposit(userId: string, vaultId: string, amount: string) {
+  async buildDeposit(userId: string, vaultId: string, amount: string, plain = false) {
     this.requireTx();
     const tx: any = await this.call('POST', '/tx/deposit/quote', { kind: 'session', userId }, { body: { vaultId, fromAmount: amount } });
     // Only real USDC stakes of $1 or more are sponsored, so a loop of dust deposits cannot be used to burn the fee payer's SOL.
     const vault = (await this.listVaults().catch(() => [] as any[])).find(v => v?.id === vaultId);
     let big = false;
     try { big = BigInt(amount) >= 1_000_000n; } catch { /* not a number */ }
-    return this.sponsorFee(userId, tx, vault?.token?.address === USDC_MINT && big);
+    return this.sponsorFee(userId, tx, !plain && vault?.token?.address === USDC_MINT && big);
   }
 
   private sponsoredToday = new Map<string, { day: string; n: number }>();
@@ -369,13 +369,13 @@ export class AmpleService {
     }
   }
 
-  /** Withdrawal fee in basis points (default 0.25%, a typical DeFi vault exit fee). Set STAKE_WITHDRAW_FEE_BPS=0 to switch off. */
+  /** Withdrawal fee in basis points (default 0.10%, capped at $25 per withdrawal). Set STAKE_WITHDRAW_FEE_BPS=0 to switch off. */
   get withdrawFeeBps(): number {
-    const raw = Number(this.config.get<string>('STAKE_WITHDRAW_FEE_BPS') ?? 25);
-    return Number.isFinite(raw) ? Math.min(Math.max(Math.round(raw), 0), 100) : 25;
+    const raw = Number(this.config.get<string>('STAKE_WITHDRAW_FEE_BPS') ?? 10);
+    return Number.isFinite(raw) ? Math.min(Math.max(Math.round(raw), 0), 100) : 10;
   }
 
-  async buildWithdraw(userId: string, vaultId: string, amount: string) {
+  async buildWithdraw(userId: string, vaultId: string, amount: string, plain = false) {
     this.requireTx();
     let tx: any;
     try {
@@ -397,7 +397,7 @@ export class AmpleService {
     // so dust withdrawals cannot be looped for free. Prize-token vaults are never sponsored.
     let big = false;
     try { big = BigInt(amount) >= 1_000_000n; } catch { /* not a number */ }
-    const paid = !!withFee.fee && big && vault?.token?.address === USDC_MINT;
+    const paid = !plain && !!withFee.fee && big && vault?.token?.address === USDC_MINT;
     return { ...(await this.sponsorFee(userId, withFee, paid)), withdrawnBase: amount };
   }
 
@@ -413,7 +413,8 @@ export class AmpleService {
       const feeWallet = this.solanaSponsor.getFeePayerAddress();
       const link = await this.getLink(userId);
       if (!feeWallet || !link.walletAddress || !tx?.transaction?.unsigned) return plain;
-      const fee = (BigInt(amountBase) * BigInt(this.withdrawFeeBps)) / 10000n;
+      let fee = (BigInt(amountBase) * BigInt(this.withdrawFeeBps)) / 10000n;
+      if (fee > 25_000_000n) fee = 25_000_000n; // never more than $25 per withdrawal
       if (fee <= 0n) return plain;
 
       const user = new PublicKey(link.walletAddress);
@@ -446,10 +447,10 @@ export class AmpleService {
   }
 
   /** Solana claims take exactly one payout id per call and compound back into the vault. */
-  async buildClaim(userId: string, payoutId: string) {
+  async buildClaim(userId: string, payoutId: string, plain = false) {
     this.requireTx();
     const tx: any = await this.call('POST', '/tx/claim', { kind: 'session', userId }, { body: { payoutIds: [payoutId], sourceChainId: 101 } });
-    return this.sponsorFee(userId, tx);
+    return this.sponsorFee(userId, tx, !plain);
   }
 
   txStatus(userId: string, hash: string) {

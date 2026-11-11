@@ -44,7 +44,7 @@ export interface AmpleOverview {
   claimable: Array<{ payoutId: string; payoutAmount: string; vaultId?: string; usdMicro?: string | null; [k: string]: unknown }>;
   /** Sum of every payout ever won, in token base units. null when Ample returned no history. */
   totalWonBase?: string | null;
-  /** Withdrawal fee on the USDC vault in basis points (0.25% = 25). */
+  /** Withdrawal fee on the USDC vault in basis points (0.10% = 10, capped at $25). */
   withdrawFeeBps?: number;
   /** Personal APY from the earnings ledger, percent. null until a week of history agrees with the real balance. */
   yourApy?: number | null;
@@ -60,9 +60,9 @@ export const ampleChallenge = (walletAddress: string, o: RequestOptions) =>
   post<{ message: string; nonce: string; expiresAt: string }>('/ample/link/challenge', { walletAddress }, o);
 export const ampleLink = (b: { walletAddress: string; message: string; signature: string }, o: RequestOptions) =>
   post<{ walletAddress: string }>('/ample/link', b, o);
-export const ampleBuildDeposit = (vaultId: string, amount: string, o: RequestOptions) => post<AmpleSolanaTx>('/ample/deposit', { vaultId, amount }, o);
-export const ampleBuildWithdraw = (vaultId: string, amount: string, o: RequestOptions) => post<AmpleSolanaTx>('/ample/withdraw', { vaultId, amount }, o);
-export const ampleBuildClaim = (payoutId: string, o: RequestOptions) => post<AmpleSolanaTx>('/ample/claim', { payoutId }, o);
+export const ampleBuildDeposit = (vaultId: string, amount: string, o: RequestOptions, plain?: boolean) => post<AmpleSolanaTx>('/ample/deposit', { vaultId, amount, plain }, o);
+export const ampleBuildWithdraw = (vaultId: string, amount: string, o: RequestOptions, plain?: boolean) => post<AmpleSolanaTx>('/ample/withdraw', { vaultId, amount, plain }, o);
+export const ampleBuildClaim = (payoutId: string, o: RequestOptions, plain?: boolean) => post<AmpleSolanaTx>('/ample/claim', { payoutId, plain }, o);
 export const ampleRecordEvent = (
   b: { kind: 'deposit' | 'withdraw' | 'claim'; vaultId: string; amountBase: string; txSignature: string; payoutId?: string },
   o: RequestOptions,
