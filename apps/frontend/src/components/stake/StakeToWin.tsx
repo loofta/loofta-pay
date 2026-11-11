@@ -580,7 +580,7 @@ export function StakeToWin() {
               <span style={{ display: "block", color: "#FF8A3D" }}>Win prizes every week.</span>
             </h1>
             <p style={{ margin: "14px 0 0", fontSize: 18, lineHeight: 1.45, color: "#8A8893", maxWidth: 500 }}>
-              Every dollar you deposit gets you tickets, eligible for the weekly prizes. The more you hold, the more chances to win.
+              {apr ? `Earn up to an average ${pct(apr)} yield. ` : ""}Every dollar you deposit gets you tickets for the weekly prizes. The more you hold, the more chances to win.
             </p>
           </div>
 
