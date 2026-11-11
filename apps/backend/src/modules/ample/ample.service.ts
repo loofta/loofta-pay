@@ -320,27 +320,27 @@ export class AmpleService {
     try {
       const kp = this.solanaSponsor.getFeePayerKeypair();
       const link = await this.getLink(userId);
-      if (!kp || !link.walletAddress || !tx?.transaction?.unsigned) return tx;
+      if (!kp || !link.walletAddress || !tx?.transaction?.unsigned) { this.logger.warn(`fee sponsorship skipped: no fee payer key / wallet / tx`); return tx; }
       const day = new Date().toISOString().slice(0, 10);
       const cur = this.sponsoredToday.get(userId);
       const n = cur?.day === day ? cur.n : 0;
-      if (n >= 30) return tx;
+      if (n >= 30) { this.logger.warn(`fee sponsorship skipped: user daily cap`); return tx; }
       const g = this.sponsoredGlobal.day === day ? this.sponsoredGlobal.n : 0;
-      if (g >= 3000) return tx; // global daily ceiling, about 0.03 SOL of network fees
+      if (g >= 3000) { this.logger.warn(`fee sponsorship skipped: global daily cap`); return tx; } // global daily ceiling, about 0.03 SOL of network fees
 
       const user = new PublicKey(link.walletAddress);
       const conn = new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
       const vtx = VersionedTransaction.deserialize(Buffer.from(tx.transaction.unsigned, 'base64'));
-      if (vtx.message.header.numRequiredSignatures !== 1 || !vtx.message.staticAccountKeys[0].equals(user)) return tx;
+      if (vtx.message.header.numRequiredSignatures !== 1 || !vtx.message.staticAccountKeys[0].equals(user)) { this.logger.warn(`fee sponsorship skipped: unexpected signers or payer in Ample tx`); return tx; }
       const tables = (await Promise.all(vtx.message.addressTableLookups.map(async l => (await conn.getAddressLookupTable(l.accountKey)).value)))
         .filter((t): t is NonNullable<typeof t> => !!t);
-      if (tables.length !== vtx.message.addressTableLookups.length) return tx;
+      if (tables.length !== vtx.message.addressTableLookups.length) { this.logger.warn(`fee sponsorship skipped: lookup tables missing`); return tx; }
 
       const msg = TransactionMessage.decompile(vtx.message, { addressLookupTableAccounts: tables });
       const sponsorKey = kp.publicKey;
-      // Stop sponsoring when the fee payer runs low, so staking can never starve the other features that rely on it.
+      // Stop sponsoring when the fee payer drops under 0.1 SOL, so staking can never starve the other features that rely on it.
       if (Date.now() - this.payerBalance.at > 60_000) this.payerBalance = { at: Date.now(), lamports: await conn.getBalance(sponsorKey) };
-      if (this.payerBalance.lamports < 500_000_000) return tx;
+      if (this.payerBalance.lamports < 100_000_000) { this.logger.warn(`fee sponsorship skipped: fee payer balance below 0.1 SOL`); return tx; }
       // Bound the fee: refuse transactions carrying a large compute-unit price (priority fee), signatures are already limited to two.
       const CB = 'ComputeBudget111111111111111111111111111111';
       let price = 0n;
@@ -350,16 +350,16 @@ export class AmpleService {
         if (ix.data[0] === 3) price = ix.data.readBigUInt64LE(1);
         if (ix.data[0] === 2) limit = BigInt(ix.data.readUInt32LE(1));
       }
-      if ((price * limit) / 1_000_000n > 20_000n) return tx;
+      if ((price * limit) / 1_000_000n > 20_000n) { this.logger.warn(`fee sponsorship skipped: priority fee too high`); return tx; }
       const touchesSponsor = msg.instructions.some(ix => ix.programId.equals(sponsorKey) || ix.keys.some(k => k.pubkey.equals(sponsorKey)));
-      if (touchesSponsor) return tx;
+      if (touchesSponsor) { this.logger.warn(`fee sponsorship skipped: fee payer referenced by instruction`); return tx; }
 
       const out = new VersionedTransaction(
         new TransactionMessage({ payerKey: sponsorKey, recentBlockhash: msg.recentBlockhash, instructions: msg.instructions }).compileToV0Message(tables),
       );
       out.sign([kp]);
       const bytes = out.serialize();
-      if (bytes.length > 1232) return tx;
+      if (bytes.length > 1232) { this.logger.warn(`fee sponsorship skipped: transaction too large`); return tx; }
       this.sponsoredToday.set(userId, { day, n: n + 1 });
       this.sponsoredGlobal = { day, n: g + 1 };
       return { ...tx, transaction: { ...tx.transaction, unsigned: Buffer.from(bytes).toString('base64') }, sponsored: true };

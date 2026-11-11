@@ -22,7 +22,7 @@ const HEADER_HEIGHT = 64;
 
 /** On pay.loofta.xyz the proxy rewrites /app/* away, so the browser path is /portfolio, not /app/portfolio. */
 function toAppPath(pathname: string | null): string | null {
-  return pathname && /^\/(portfolio|wallet|send|receive|history|c)(\/|$)/.test(pathname) ? `/app${pathname}` : pathname;
+  return pathname && /^\/(portfolio|wallet|send|receive|history|stake|c)(\/|$)/.test(pathname) ? `/app${pathname}` : pathname;
 }
 
 function MobileMenu({
