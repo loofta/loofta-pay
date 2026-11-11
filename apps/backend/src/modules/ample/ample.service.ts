@@ -1,10 +1,10 @@
-import { HttpException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, HttpException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
-import { Connection, PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { Connection, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
 
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -326,13 +326,141 @@ export class AmpleService {
 
   async buildDeposit(userId: string, vaultId: string, amount: string, plain = false) {
     this.requireTx();
-    const tx: any = await this.call('POST', '/tx/deposit/quote', { kind: 'session', userId }, { body: { vaultId, fromAmount: amount } });
+    let tx: any;
+    try {
+      tx = await this.call('POST', '/tx/deposit/quote', { kind: 'session', userId }, { body: { vaultId, fromAmount: amount } });
+    } catch (e: any) {
+      if (e?.getResponse?.()?.code === 'AMPLE_SIMULATION_FAILED') throw await this.explainQuoteFailure(userId, amount, e);
+      throw e;
+    }
     // Only real USDC stakes of $1 or more are sponsored, so a loop of dust deposits cannot be used to burn the fee payer's SOL.
     const vault = (await this.listVaults().catch(() => [] as any[])).find(v => v?.id === vaultId);
     let big = false;
     try { big = BigInt(amount) >= 1_000_000n; } catch { /* not a number */ }
     const final: any = await this.sponsorFee(userId, tx, !plain && vault?.token?.address === USDC_MINT && big);
     return this.checkedOnChain(userId, tx, final, amount);
+  }
+
+  /**
+   * Ample simulates the deposit itself when it builds the quote and answers "no program logs" when the wallet cannot fund it.
+   * Looks up the wallet it linked, writes its real balances to the log and turns the error into something the user can act on.
+   */
+  private async explainQuoteFailure(userId: string, amount: string, original: any) {
+    let wallet = 'unknown';
+    let sol = -1;
+    let usdc = -1n;
+    try {
+      const link = await this.getLink(userId);
+      if (link.walletAddress) {
+        wallet = link.walletAddress;
+        const conn = new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
+        const owner = new PublicKey(wallet);
+        sol = await conn.getBalance(owner).catch(() => -1);
+        usdc = await conn.getTokenAccountBalance(getAssociatedTokenAddressSync(new PublicKey(USDC_MINT), owner)).then(r => BigInt(r.value.amount)).catch(() => 0n);
+      }
+    } catch { /* diagnosis only */ }
+    this.logger.warn(`deposit quote rejected user=${userId} wallet=${wallet} sol=${sol} usdc=${usdc} requested=${amount}`);
+    let message = 'This deposit could not be prepared. Please try again in a moment.';
+    try {
+      if (usdc >= 0n && usdc < BigInt(amount)) message = `Your Loofta wallet holds $${(Number(usdc) / 1e6).toFixed(2)} USDC, which is less than the $${(Number(amount) / 1e6).toFixed(2)} you are adding.`;
+      else if (sol >= 0 && sol < 3_000_000) message = 'Your first deposit needs a one-time account setup fee. Press Add again and approve the setup step.';
+    } catch { /* keep generic message */ }
+    return new HttpException({ statusCode: 400, code: 'AMPLE_SIMULATION_FAILED', message, wallet, sol, usdc: usdc.toString() }, 400);
+  }
+
+  private setupToday = new Map<string, { day: string; n: number }>();
+  private setupGlobal = { day: '', n: 0 };
+
+  /**
+   * One-time account setup for a wallet with no SOL. Opening the savings account needs about 0.002 SOL of rent and a brand new
+   * Loofta wallet holds none, and Ample refuses to build the deposit until it can pass its own simulation. This builds a single
+   * transaction that we construct completely ourselves: the user sends a small USDC amount to the Loofta fee wallet and the fee
+   * wallet sends the SOL to the user, atomically. It is priced, not free (the USDC covers the SOL at the live price plus 5%), so
+   * repeating it for farming costs the caller more than it costs us. The destination is always the user's linked wallet, never a
+   * request field, and it is only offered while the wallet is below the rent amount, so it cannot be used to top a wallet up.
+   */
+  /**
+   * Works out whether this wallet needs the one-time setup and what it costs. Null when it does not. The fee is what the SOL
+   * costs at the live price (STAKE_SETUP_LAMPORTS, about 0.0021 SOL) plus a $0.05 margin, never below $0.17.
+   */
+  private async setupQuote(userId: string) {
+    const kp = this.solanaSponsor.getFeePayerKeypair();
+    const feeWallet = this.solanaSponsor.getFeePayerAddress();
+    const link = await this.getLink(userId);
+    if (!kp || !feeWallet || !link.walletAddress) return null;
+    const lamports = BigInt(Number(this.config.get<string>('STAKE_SETUP_LAMPORTS') ?? 2_100_000));
+    const user = new PublicKey(link.walletAddress);
+    const conn = new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
+    const sol = await conn.getBalance(user).catch(() => -1);
+    if (sol < 0 || BigInt(sol) >= lamports) return null;
+    // The rent is paid once, when the savings account is opened. Anyone who already holds a position has it, and their wallet is
+    // back near zero SOL after that, so the SOL check alone would charge them again on every deposit.
+    const held: any = await this.call('GET', '/me/balances', { kind: 'session', userId }).catch(() => null);
+    const rows: any[] = Array.isArray(held) ? held : held?.data ?? [];
+    if (rows.some((b: any) => (b?.network ?? '').toUpperCase() === NETWORK && Number(b?.depositsToken) > 0)) return null;
+
+    const price = await fetchSolPriceUsd().catch(() => 0);
+    if (!price || price <= 0) throw new BadRequestException('Could not price the account setup right now. Try again in a moment.');
+    let feeUsdc = BigInt(Math.ceil((Number(lamports) / 1e9) * price * 1e6));
+    if (feeUsdc < 170_000n) feeUsdc = 170_000n;
+    feeUsdc += 50_000n;
+    if (feeUsdc > 450_000n) throw new BadRequestException('Account setup is not available right now. Try again later.');
+    return { kp, feeWallet, link, lamports, user, conn, sol, feeUsdc };
+  }
+
+  /** Lets the page show the first-time deposit fee before the user taps anything. */
+  async setupFee(userId: string) {
+    const q = await this.setupQuote(userId).catch(() => null);
+    return q ? { needed: true as const, feeUsd: Number(q.feeUsdc) / 1e6 } : { needed: false as const };
+  }
+
+  async buildSetup(userId: string, amount: string) {
+    this.requireTx();
+    const q = await this.setupQuote(userId);
+    if (!q) return { needed: false as const };
+    const { kp, feeWallet, link, lamports, user, conn, sol, feeUsdc } = q;
+
+    const mint = new PublicKey(USDC_MINT);
+    const from = getAssociatedTokenAddressSync(mint, user);
+    const to = getAssociatedTokenAddressSync(mint, new PublicKey(feeWallet));
+    if (!(await conn.getAccountInfo(to))) throw new BadRequestException('Account setup is not available right now. Try again later.');
+    const usdc = await conn.getTokenAccountBalance(from).then(r => BigInt(r.value.amount)).catch(() => 0n);
+    let want = 0n;
+    try { want = BigInt(amount); } catch { /* ignore */ }
+    if (usdc < feeUsdc + want) {
+      const need = Number(feeUsdc + want) / 1e6;
+      throw new BadRequestException(`You need $${need.toFixed(2)} in your wallet: $${(Number(want) / 1e6).toFixed(2)} to add plus the one-time $${(Number(feeUsdc) / 1e6).toFixed(2)} first-time deposit fee.`);
+    }
+
+    const day = new Date().toISOString().slice(0, 10);
+    const cur = this.setupToday.get(userId);
+    const n = cur?.day === day ? cur.n : 0;
+    const g = this.setupGlobal.day === day ? this.setupGlobal.n : 0;
+    if (n >= 3 || g >= 300) { this.logger.warn(`account setup skipped: daily cap user=${userId}`); throw new BadRequestException('Account setup is not available right now. Try again later.'); }
+    if (Date.now() - this.payerBalance.at > 60_000) this.payerBalance = { at: Date.now(), lamports: await conn.getBalance(kp.publicKey) };
+    if (this.payerBalance.lamports < 100_000_000) { this.logger.warn('account setup skipped: fee payer balance below 0.1 SOL'); throw new BadRequestException('Account setup is not available right now. Try again later.'); }
+
+    const { blockhash } = await conn.getLatestBlockhash('confirmed');
+    const msg = new TransactionMessage({
+      payerKey: kp.publicKey,
+      recentBlockhash: blockhash,
+      instructions: [
+        createTransferCheckedInstruction(from, mint, to, user, feeUsdc, 6),
+        SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: user, lamports }),
+      ],
+    }).compileToV0Message();
+    const tx = new VersionedTransaction(msg);
+    tx.sign([kp]);
+    this.setupToday.set(userId, { day, n: n + 1 });
+    this.setupGlobal = { day, n: g + 1 };
+    this.logger.log(`account setup user=${userId} wallet=${link.walletAddress} sol=${sol} fee=${feeUsdc} lamports=${lamports}`);
+    return {
+      needed: true as const,
+      feeUsd: Number(feeUsdc) / 1e6,
+      network: 'SOLANA',
+      transaction: { chainId: 101, encoding: 'base64' as const, unsigned: Buffer.from(tx.serialize()).toString('base64') },
+      expiresAt: new Date(Date.now() + 45_000).toISOString(),
+    };
   }
 
   private async simulate(conn: Connection, b64: string): Promise<string | null> {

@@ -80,6 +80,19 @@ export class AmpleController {
     return this.ample.buildDeposit(req.user!.id, dto.vaultId, dto.amount, dto.plain);
   }
 
+  @Get('setup-fee')
+  @RateLimit(30, 60, 'ample:setup-fee')
+  setupFee(@Req() req: any) {
+    return this.ample.setupFee(req.user!.id);
+  }
+
+  @Post('setup')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(10, 60, 'ample:setup')
+  setup(@Req() req: any, @Body() dto: AmpleAmountDto) {
+    return this.ample.buildSetup(req.user!.id, dto.amount);
+  }
+
   @Post('withdraw')
   @HttpCode(HttpStatus.OK)
   @RateLimit(20, 60, 'ample:withdraw')

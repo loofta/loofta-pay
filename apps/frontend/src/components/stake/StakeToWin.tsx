@@ -16,6 +16,8 @@ import {
   ampleBuildClaim,
   ampleBuildDeposit,
   ampleBuildWithdraw,
+  ampleBuildSetup,
+  ampleSetupFee,
   ampleRecordEvent,
   ampleChallenge,
   ampleLink,
@@ -109,37 +111,37 @@ function Calculator({ apr }: { apr: number | null }) {
   const usd = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
   const year = (amt * apr) / 100;
   const row = (label: string, value: string, opts: { big?: boolean; color?: string; muted?: boolean } = {}) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "clamp(14px,2.4vw,22px) 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-      <span style={{ fontSize: 18, fontWeight: 600, color: opts.muted ? "#8A8893" : "#F2EFE8" }}>{label}</span>
-      <span style={{ fontFamily: SORA, fontWeight: 800, letterSpacing: "-0.05em", fontSize: opts.big ? "clamp(34px,5vw,56px)" : "clamp(26px,3.6vw,40px)", color: opts.color ?? "#F2EFE8" }}>{value}</span>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "clamp(10px,1.4vw,16px) 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+      <span style={{ fontSize: 17, fontWeight: 600, color: opts.muted ? "#8A8893" : "#F2EFE8" }}>{label}</span>
+      <span style={{ fontFamily: SORA, fontWeight: 800, letterSpacing: "-0.05em", fontSize: opts.big ? "clamp(30px,3.6vw,44px)" : "clamp(24px,2.8vw,34px)", color: opts.color ?? "#F2EFE8" }}>{value}</span>
     </div>
   );
   return (
-    <section style={{ marginTop: 48 }}>
-      <h2 style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(32px,5vw,56px)", letterSpacing: "-0.05em", margin: "0 0 clamp(18px,3vw,32px)" }}>What could you earn?</h2>
-      <div style={{ padding: "clamp(22px,4vw,56px)", borderRadius: 40, background: "#121217", border: "1px solid rgba(255,255,255,0.08)", display: "flex", flexWrap: "wrap", gap: "32px clamp(32px,6vw,80px)", alignItems: "center" }}>
-        <div style={{ flex: "1 1 300px", display: "flex", flexDirection: "column", gap: 18 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 20, color: "#8A8893", fontWeight: 600 }}>
-            <img src="/images/usdc.svg" alt="" style={{ width: 28, height: 28 }} />
+    <section style={{ marginTop: 36 }}>
+      <h2 style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(28px,3.6vw,44px)", letterSpacing: "-0.05em", margin: "0 0 clamp(14px,2vw,22px)" }}>What could you earn?</h2>
+      <div style={{ padding: "clamp(18px,2.6vw,36px)", borderRadius: 32, background: "#121217", border: "1px solid rgba(255,255,255,0.08)", display: "flex", flexWrap: "wrap", gap: "24px clamp(28px,5vw,64px)", alignItems: "center" }}>
+        <div style={{ flex: "1 1 300px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 17, color: "#8A8893", fontWeight: 600 }}>
+            <img src="/images/usdc.svg" alt="" style={{ width: 24, height: 24 }} />
             If you add USDC
           </div>
-          <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(52px,8vw,96px)", lineHeight: 1, letterSpacing: "-0.06em" }}>${amt.toLocaleString("en-US")}</span>
-          <input type="range" min={100} max={10000} step={100} value={amt} aria-label="Amount to add" onChange={(e) => setAmt(Number(e.target.value))} style={{ width: "100%", accentColor: "#EE6A2C", margin: "10px 0" }} />
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+          <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(44px,6vw,72px)", lineHeight: 1, letterSpacing: "-0.06em" }}>${amt.toLocaleString("en-US")}</span>
+          <input type="range" min={100} max={10000} step={100} value={amt} aria-label="Amount to add" onChange={(e) => setAmt(Number(e.target.value))} style={{ width: "100%", accentColor: "#EE6A2C", margin: "4px 0" }} />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
             {[100, 1000, 5000, 10000].map((v) => (
               <button key={v} type="button" onClick={() => setAmt(v)}
-                style={{ cursor: "pointer", padding: "16px 26px", borderRadius: 999, fontFamily: SORA, fontWeight: 800, fontSize: 22, letterSpacing: "-0.03em", color: "#F2EFE8", background: amt === v ? "#1F1F27" : "#0F0F13", border: `1px solid ${amt === v ? "rgba(238,106,44,0.7)" : "rgba(255,255,255,0.08)"}` }}>
+                style={{ cursor: "pointer", padding: "10px 20px", borderRadius: 999, fontFamily: SORA, fontWeight: 800, fontSize: 17, letterSpacing: "-0.03em", color: "#F2EFE8", background: amt === v ? "#1F1F27" : "#0F0F13", border: `1px solid ${amt === v ? "rgba(238,106,44,0.7)" : "rgba(255,255,255,0.08)"}` }}>
                 {v >= 1000 ? `$${v / 1000}k` : `$${v}`}
               </button>
             ))}
           </div>
         </div>
         <div style={{ flex: "1 1 320px", display: "flex", flexDirection: "column" }}>
-          <span style={{ fontSize: 20, fontWeight: 600, color: "#8A8893", paddingBottom: 6 }}>Per year</span>
+          <span style={{ fontSize: 17, fontWeight: 600, color: "#8A8893", paddingBottom: 2 }}>Per year</span>
           {row("Average", usd(year), { big: true, color: "#EE6A2C" })}
           {row("Top savers", `${usd(amt * 0.1)}\u2013${usd(amt * 0.42)}`)}
           {row("Bank", usd((amt * 0.5) / 100), { muted: true })}
-          <span style={{ fontSize: 17, color: "#8A8893", paddingTop: 18 }}>Paid as weekly prizes. Not guaranteed.</span>
+          <span style={{ fontSize: 15, color: "#8A8893", paddingTop: 12 }}>Paid as weekly prizes. Not guaranteed.</span>
         </div>
       </div>
     </section>
@@ -202,6 +204,7 @@ export function StakeToWin() {
   // The backend prices every prize and position in USD (rates cached 2h) because they can be paid in USDC, SOL or JupUSD.
   const microOf = (p: { usdMicro?: string | null }): bigint => (p.usdMicro && /^\d+$/.test(p.usdMicro) ? BigInt(p.usdMicro) : BigInt(0));
   const [deposit, setDeposit] = useState<DepositLaunch | null>(null);
+  const [firstFee, setFirstFee] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -237,6 +240,8 @@ export function StakeToWin() {
       const s = await getAmpleStatus(o);
       setStatus(s);
       if (s.enabled && s.linked) setOverview(await getAmpleOverview(o));
+      // The first deposit from an empty wallet carries a one-time fee. Show it up front, not as a surprise.
+      if (s.enabled) ampleSetupFee(o).then((f) => setFirstFee(f.needed && f.feeUsd ? f.feeUsd : null)).catch(() => setFirstFee(null));
     } catch (e: any) {
       setError(e?.message || "Could not load staking");
     } finally {
@@ -295,11 +300,11 @@ export function StakeToWin() {
     }
   };
 
-  const sendTx = async (tx: AmpleSolanaTx) => {
+  const sendTx = async (tx: AmpleSolanaTx, silent = false) => {
     if (!wallet) throw new Error("No Solana wallet found");
     if (tx.expiresAt && Date.now() > new Date(tx.expiresAt).getTime()) throw new Error("That quote expired, try again.");
     const bytes = Uint8Array.from(atob(tx.transaction.unsigned), (c) => c.charCodeAt(0));
-    const { signature } = await signAndSendTransaction({ transaction: bytes, wallet });
+    const { signature } = await signAndSendTransaction({ transaction: bytes, wallet, ...(silent ? { options: { uiOptions: { showWalletUIs: false } } } : {}) } as never);
     const sig = bs58.encode(signature as Uint8Array);
     const o = await opts();
     for (let i = 0; i < 20; i++) {
@@ -340,20 +345,27 @@ export function StakeToWin() {
         const conn = new Connection(getSolanaHttpRpc(), "confirmed");
         const bal = await conn.getTokenAccountBalance(getAssociatedTokenAddressSync(new PublicKey(USDC_MINT), new PublicKey(solAddress)));
         const have = Number(bal.value.amount) / 1e6;
-        if (have + 0.000001 < amt) {
-          setDeposit({ screen: "home", amount: (Math.ceil((amt - have) * 100) / 100).toFixed(2) });
+        const need = amt + (firstFee ?? 0);
+        if (have + 0.000001 < need) {
+          setDeposit({ screen: "home", amount: (Math.ceil((need - have) * 100) / 100).toFixed(2) });
           return;
         }
       } catch (e: any) {
         // No USDC account yet means a balance of zero. Other RPC errors fall through to the normal flow.
         if (/could not find account|invalid param/i.test(String(e?.message ?? ""))) {
-          setDeposit({ screen: "home", amount: amt.toFixed(2) });
+          setDeposit({ screen: "home", amount: (amt + (firstFee ?? 0)).toFixed(2) });
           return;
         }
       }
     }
     if (!status?.linked || walletMismatch) await linkWallet();
     const o = await opts();
+    // A brand new wallet holds no SOL for the account rent. One small signed step swaps a little USDC for it, shown as dollars.
+    const setup = await ampleBuildSetup(vault.id, base, o);
+    if (setup.needed) {
+      setNote(`First-time deposit fee: $${setup.feeUsd.toFixed(2)}`);
+      await sendTx(setup, true);
+    }
     await report("deposit", base, (await buildSend((plain) => ampleBuildDeposit(vault.id, base, o, plain))).sig);
     setNote("Done. You are in this week's draw.");
     await refresh();
@@ -624,6 +636,9 @@ export function StakeToWin() {
 
                 {note && <p style={{ margin: 0, fontSize: 15, color: "#5FD38E", textAlign: "center" }}>{note}</p>}
                 {error && <p style={{ margin: 0, fontSize: 15, color: "#FF8A7A", textAlign: "center" }}>{error}</p>}
+                {isStake && firstFee ? (
+                  <span style={{ textAlign: "center", fontSize: 15, fontWeight: 700, color: "#FFB27A" }}>{`First-time deposit fee: $${firstFee.toFixed(2)} (once). You pay $${fmt(amt + firstFee)} in total.`}</span>
+                ) : null}
                 <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{"Your money stays yours · withdraw any time · no entry fee · network fees paid by Loofta"}</span>
               </div>
             </div>

@@ -62,6 +62,9 @@ export const ampleChallenge = (walletAddress: string, o: RequestOptions) =>
 export const ampleLink = (b: { walletAddress: string; message: string; signature: string }, o: RequestOptions) =>
   post<{ walletAddress: string }>('/ample/link', b, o);
 export const ampleBuildDeposit = (vaultId: string, amount: string, o: RequestOptions, plain?: boolean) => post<AmpleSolanaTx>('/ample/deposit', { vaultId, amount, plain }, o);
+export const ampleSetupFee = (o: RequestOptions) => fetchApi<{ needed: boolean; feeUsd?: number }>('/ample/setup-fee', o);
+export const ampleBuildSetup = (vaultId: string, amount: string, o: RequestOptions) =>
+  post<{ needed: false } | (AmpleSolanaTx & { needed: true; feeUsd: number })>('/ample/setup', { vaultId, amount }, o);
 export const ampleBuildWithdraw = (vaultId: string, amount: string, o: RequestOptions, plain?: boolean) => post<AmpleSolanaTx>('/ample/withdraw', { vaultId, amount, plain }, o);
 export const ampleBuildClaim = (payoutId: string, o: RequestOptions, plain?: boolean) => post<AmpleSolanaTx>('/ample/claim', { payoutId, plain }, o);
 export const ampleRecordEvent = (
