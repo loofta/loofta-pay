@@ -235,28 +235,16 @@ export class AmpleService {
     return BigInt(Math.round((Number(rawBase) / 10 ** dec) * rate * 1e6));
   }
 
-  private drawCache: { at: number; data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null; prizeUsd: number | null } | null } | null = null;
-  private loggedDrawShape = false;
+  private drawCache: { at: number; data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null } | null } | null = null;
 
   /** Next draw time from Ample (cached 10s). Null if the call fails so stats still render. */
   async nextDraw() {
     if (this.drawCache && Date.now() - this.drawCache.at < 10_000) return this.drawCache.data;
-    let data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null; prizeUsd: number | null } | null = null;
+    let data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null } | null = null;
     try {
       const r: any = await this.call('GET', '/draws/next', { kind: 'key' }, { query: { network: NETWORK } });
-      if (!this.loggedDrawShape) { this.loggedDrawShape = true; this.logger.log(`draws/next payload: ${JSON.stringify(r)?.slice(0, 1500)}`); }
       if (r?.nextDrawAt) {
-        // Prize size is only used when Ample sends it in dollars (a key ending in Usd naming a prize / pool / payout).
-        let prizeUsd: number | null = null;
-        const scan = (o: any, depth: number) => {
-          if (!o || typeof o !== 'object' || depth > 2) return;
-          for (const [k, v] of Object.entries(o)) {
-            if (prizeUsd === null && /(prize|pool|jackpot|payout|reward).*usd$/i.test(k) && Number(v) > 0) prizeUsd = Number(v);
-            else if (v && typeof v === 'object') scan(v, depth + 1);
-          }
-        };
-        scan(r, 0);
-        data = { nextDrawAt: String(r.nextDrawAt), drawIntervalSeconds: Number(r.drawIntervalSeconds) || 604800, lastDrawStatus: r.lastDrawStatus ?? null, prizeUsd };
+        data = { nextDrawAt: String(r.nextDrawAt), drawIntervalSeconds: Number(r.drawIntervalSeconds) || 604800, lastDrawStatus: r.lastDrawStatus ?? null };
       }
     } catch {
       data = null;
@@ -282,7 +270,6 @@ export class AmpleService {
       avgApr: tvl > 0 ? Math.round(((monthly * 12) / tvl) * 1000) / 10 : null,
       maxApr: Number(v.aprRange?.max) || null,
       nextDrawAt: draw?.nextDrawAt ?? null,
-      nextPrizeUsd: draw?.prizeUsd ?? null,
       drawIntervalSeconds: draw?.drawIntervalSeconds ?? null,
       lastDrawStatus: draw?.lastDrawStatus ?? null,
     };

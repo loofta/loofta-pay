@@ -85,7 +85,6 @@ export interface AmpleStats {
   /** ISO time entries close and the next draw runs (from Ample). */
   nextDrawAt: string | null;
   /** Size of the next prize in dollars, when Ample provides it. */
-  nextPrizeUsd?: number | null;
   drawIntervalSeconds: number | null;
   /** PROCESSING while winners are worked out, SETTLED once payouts can be claimed. */
   lastDrawStatus: string | null;

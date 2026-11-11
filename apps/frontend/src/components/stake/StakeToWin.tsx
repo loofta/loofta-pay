@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import bs58 from "bs58";
-import { Connection } from "@solana/web3.js";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { DepositSheet, type DepositLaunch } from "@/components/deposit/DepositSheet";
 import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { buildJupiterSwap } from "@/services/api/jupiterSwap";
@@ -102,31 +104,43 @@ const hue = (w: string) => [...w].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 
 
 /** What the average return means in dollars, so a non-crypto person can picture a year. */
 function Calculator({ apr }: { apr: number | null }) {
-  const [amt, setAmt] = useState(1000);
+  const [amt, setAmt] = useState(7600);
   if (!apr) return null;
+  const usd = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
   const year = (amt * apr) / 100;
-  const bank = (amt * 0.5) / 100;
-  const row = (label: string, v: number) => (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 16, color: "#C9C6CF" }}>
-      <span>{label}</span><span style={{ fontFamily: SORA, fontWeight: 700, color: "#F2EFE8" }}>${v < 10 ? v.toFixed(2) : Math.round(v).toLocaleString("en-US")}</span>
+  const row = (label: string, value: string, opts: { big?: boolean; color?: string; muted?: boolean } = {}) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "clamp(14px,2.4vw,22px) 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+      <span style={{ fontSize: 18, fontWeight: 600, color: opts.muted ? "#8A8893" : "#F2EFE8" }}>{label}</span>
+      <span style={{ fontFamily: SORA, fontWeight: 800, letterSpacing: "-0.05em", fontSize: opts.big ? "clamp(34px,5vw,56px)" : "clamp(26px,3.6vw,40px)", color: opts.color ?? "#F2EFE8" }}>{value}</span>
     </div>
   );
   return (
-    <section style={{ marginTop: 48, padding: "clamp(20px,4vw,32px)", borderRadius: 28, background: "linear-gradient(160deg,#17141A,#111115 60%)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", flexWrap: "wrap", gap: "28px 48px", alignItems: "center" }}>
-      <div style={{ flex: "1 1 280px", display: "flex", flexDirection: "column", gap: 14 }}>
-        <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: 28, letterSpacing: "-0.04em" }}>What could your money earn?</span>
-        <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: 40, letterSpacing: "-0.05em", color: "#FF8A3D" }}>${amt.toLocaleString("en-US")}</span>
-        <input type="range" min={100} max={10000} step={100} value={amt} aria-label="Amount to save" onChange={(e) => setAmt(Number(e.target.value))} style={{ width: "100%", accentColor: "#FF5A1A" }} />
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, color: "#8A8893" }}><span>$100</span><span>$10,000</span></div>
-      </div>
-      <div style={{ flex: "1 1 260px", display: "flex", flexDirection: "column", gap: 12 }}>
-        {row("A year, on average", year)}
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "12px 14px", borderRadius: 14, background: "rgba(255,90,26,0.1)", border: "1px solid rgba(255,122,42,0.4)", fontSize: 16, color: "#FFB27A" }}>
-          <span>If you get lucky, top savers earned 10% to 42% a year</span>
-          <span style={{ fontFamily: SORA, fontWeight: 800, color: "#FF8A3D", whiteSpace: "nowrap" }}>${Math.round(amt * 0.1).toLocaleString("en-US")} to ${Math.round(amt * 0.42).toLocaleString("en-US")}</span>
+    <section style={{ marginTop: 48 }}>
+      <h2 style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(32px,5vw,56px)", letterSpacing: "-0.05em", margin: "0 0 clamp(18px,3vw,32px)" }}>What could you earn?</h2>
+      <div style={{ padding: "clamp(22px,4vw,56px)", borderRadius: 40, background: "#121217", border: "1px solid rgba(255,255,255,0.08)", display: "flex", flexWrap: "wrap", gap: "32px clamp(32px,6vw,80px)", alignItems: "center" }}>
+        <div style={{ flex: "1 1 300px", display: "flex", flexDirection: "column", gap: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 20, color: "#8A8893", fontWeight: 600 }}>
+            <img src="/images/usdc.svg" alt="" style={{ width: 28, height: 28 }} />
+            If you add USDC
+          </div>
+          <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(52px,8vw,96px)", lineHeight: 1, letterSpacing: "-0.06em" }}>${amt.toLocaleString("en-US")}</span>
+          <input type="range" min={100} max={10000} step={100} value={amt} aria-label="Amount to add" onChange={(e) => setAmt(Number(e.target.value))} style={{ width: "100%", accentColor: "#EE6A2C", margin: "10px 0" }} />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+            {[100, 1000, 5000, 10000].map((v) => (
+              <button key={v} type="button" onClick={() => setAmt(v)}
+                style={{ cursor: "pointer", padding: "16px 26px", borderRadius: 999, fontFamily: SORA, fontWeight: 800, fontSize: 22, letterSpacing: "-0.03em", color: "#F2EFE8", background: amt === v ? "#1F1F27" : "#0F0F13", border: `1px solid ${amt === v ? "rgba(238,106,44,0.7)" : "rgba(255,255,255,0.08)"}` }}>
+                {v >= 1000 ? `$${v / 1000}k` : `$${v}`}
+              </button>
+            ))}
+          </div>
         </div>
-        <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 12 }}>{row("A typical bank savings account (about 0.5%)", bank)}</div>
-        <span style={{ fontSize: 15, lineHeight: 1.5, color: "#8A8893" }}>The average is ~{pct(apr)} a year across all savers, paid as weekly prizes. Luck decides who wins big: most savers land near the average, a few land far above it, and none of it is guaranteed.</span>
+        <div style={{ flex: "1 1 320px", display: "flex", flexDirection: "column" }}>
+          <span style={{ fontSize: 20, fontWeight: 600, color: "#8A8893", paddingBottom: 6 }}>Per year</span>
+          {row("Average", usd(year), { big: true, color: "#EE6A2C" })}
+          {row("Top savers", `${usd(amt * 0.1)}\u2013${usd(amt * 0.42)}`)}
+          {row("Bank", usd((amt * 0.5) / 100), { muted: true })}
+          <span style={{ fontSize: 17, color: "#8A8893", paddingTop: 18 }}>Paid as weekly prizes. Not guaranteed.</span>
+        </div>
       </div>
     </section>
   );
@@ -187,6 +201,7 @@ export function StakeToWin() {
   };
   // The backend prices every prize and position in USD (rates cached 2h) because they can be paid in USDC, SOL or JupUSD.
   const microOf = (p: { usdMicro?: string | null }): bigint => (p.usdMicro && /^\d+$/.test(p.usdMicro) ? BigInt(p.usdMicro) : BigInt(0));
+  const [deposit, setDeposit] = useState<DepositLaunch | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -316,8 +331,27 @@ export function StakeToWin() {
 
   const stake = () => run("stake", async () => {
     const base = toBase(amount, decimals);
-    if (!base || !vault) throw new Error("Enter an amount");
+    if (!base) throw new Error("Enter an amount");
+    if (!vault) { void refresh(); throw new Error("Earn is not available right now. Try again in a moment."); }
     if (amt < MIN_STAKE_USD) throw new Error("The minimum is $1.");
+    // Not enough USDC in the wallet: open the top-up sheet for the missing amount instead of failing on-chain.
+    if (solAddress) {
+      try {
+        const conn = new Connection(getSolanaHttpRpc(), "confirmed");
+        const bal = await conn.getTokenAccountBalance(getAssociatedTokenAddressSync(new PublicKey(USDC_MINT), new PublicKey(solAddress)));
+        const have = Number(bal.value.amount) / 1e6;
+        if (have + 0.000001 < amt) {
+          setDeposit({ screen: "home", amount: (Math.ceil((amt - have) * 100) / 100).toFixed(2) });
+          return;
+        }
+      } catch (e: any) {
+        // No USDC account yet means a balance of zero. Other RPC errors fall through to the normal flow.
+        if (/could not find account|invalid param/i.test(String(e?.message ?? ""))) {
+          setDeposit({ screen: "home", amount: amt.toFixed(2) });
+          return;
+        }
+      }
+    }
     if (!status?.linked || walletMismatch) await linkWallet();
     const o = await opts();
     await report("deposit", base, (await buildSend((plain) => ampleBuildDeposit(vault.id, base, o, plain))).sig);
@@ -420,7 +454,7 @@ export function StakeToWin() {
       ];
 
   const linked = !!(authenticated && status?.enabled && vault && status.linked);
-  let ctaLabel = isStake ? `Start earning with $${fmt(amt)}` : `Withdraw $${fmt(eff)}`;
+  let ctaLabel = isStake ? `Add $${fmt(amt)}` : `Withdraw $${fmt(eff)}`;
   let ctaDisabled = busy !== null;
   let ctaAction: () => void = isStake ? stake : withdraw;
   if (loading) { ctaLabel = "Loading..."; ctaDisabled = true; }
@@ -428,7 +462,7 @@ export function StakeToWin() {
   else if (status && !status.enabled) { ctaLabel = "Earn opens soon"; ctaDisabled = true; }
   else if (status?.enabled && !vault) { ctaLabel = "No pool open right now"; ctaDisabled = true; }
   else if (status?.enabled && vault && !status.linked) {
-    if (busy === "stake") ctaLabel = "Setting up...";
+    if (busy === "stake") ctaLabel = "Adding...";
     if (eff <= 0) ctaDisabled = true;
     else if (isStake && eff < MIN_STAKE_USD) { ctaDisabled = true; ctaLabel = "Minimum is $1"; }
     ctaAction = stake;
@@ -450,7 +484,6 @@ export function StakeToWin() {
   const wonBase = ledgerWon > localWon ? ledgerWon : localWon;
   const wonTotal = wonBase > BigInt(0) ? usdText(wonBase) : null;
   const apr = stats?.avgApr ?? null;
-  const weeklyPool = stats?.nextPrizeUsd ?? null;
   const wonReturnPct = wonBase > BigInt(0) && stakedNum > 0 ? (Number(wonBase) / 1e6 / stakedNum) * 100 : null;
 
   return (
@@ -497,12 +530,7 @@ export function StakeToWin() {
           <div className="stk-form">
             <div className="stk-pay">
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>{weeklyPool ? "Next prize" : "Next prize draw"}</span>
-                {weeklyPool ? (
-                  <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(36px,min(4vw,6vh),48px)", lineHeight: 1, letterSpacing: "-0.06em" }}>
-                    ${weeklyPool.toLocaleString("en-US", { maximumFractionDigits: 2 })}
-                  </span>
-                ) : null}
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>Next prize draw</span>
               </div>
               <Countdown nextDrawAt={stats?.nextDrawAt} intervalSec={stats?.drawIntervalSeconds} />
             </div>
@@ -679,6 +707,14 @@ export function StakeToWin() {
           </div>
         </section>
       </main>
+      <DepositSheet
+        open={deposit != null}
+        launch={deposit}
+        onClose={() => setDeposit(null)}
+        balanceUsd="0.00"
+        solanaAddress={solAddress || null}
+        devnetMode={false}
+      />
       <button type="button" onClick={() => setHowOpen(true)} aria-label="How it works"
         style={{ position: "fixed", right: 20, bottom: 20, zIndex: 60, display: "flex", alignItems: "center", gap: 10, padding: "12px 18px 12px 12px", borderRadius: 999, cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)", background: "#1A1A20", color: "#F2EFE8", fontFamily: SORA, fontWeight: 700, fontSize: 15, boxShadow: "0 14px 40px rgba(0,0,0,0.5)" }}>
         <span style={{ width: 28, height: 28, borderRadius: 999, display: "grid", placeItems: "center", background: GRAD, color: "#fff", fontSize: 16, fontWeight: 800 }}>?</span>

@@ -45,7 +45,7 @@ export function StakeHomeCard() {
         ? `~${pct(stats.avgApr)} a year on average${stats.totalPaidUsd ? ` · ${compactUsd(stats.totalPaidUsd)} paid out` : ""}`
         : "Your deposit stays yours";
 
-  const cta = claimable > 0 ? "Claim your prize →" : staked ? "See your earnings →" : "Start earning →";
+  const cta = claimable > 0 ? "Claim your prize →" : staked ? "See your earnings →" : "Add money →";
 
   return (
     <Link
