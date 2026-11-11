@@ -148,6 +148,17 @@ export class AmpleService {
     return data;
   }
 
+  private everyVaultCache: { at: number; data: any[] } | null = null;
+
+  /** Every vault Ample lists, on every network. Used for the headline numbers, never for building transactions. */
+  async everyVault(): Promise<any[]> {
+    if (this.everyVaultCache && Date.now() - this.everyVaultCache.at < 120_000) return this.everyVaultCache.data;
+    const res = await this.call('GET', '/vaults', { kind: 'key' }, { query: { limit: '100' } });
+    const data: any[] = Array.isArray(res) ? res : res?.data ?? [];
+    this.everyVaultCache = { at: Date.now(), data };
+    return data;
+  }
+
   /** Only the Solana USDC vault is on offer ("stake your USDC"); the SOL and JupUSD vaults are not. */
   async listVaults() {
     return (await this.allVaults()).filter(v => v?.token?.symbol === 'USDC');
@@ -260,13 +271,15 @@ export class AmpleService {
     const tvl = Number(v.tvlUsd) || 0;
     const monthly = Number(v.payouts?.monthlyUsd) || 0;
     const draw = await this.nextDraw();
+    // Prizes paid out by Ample in total, every vault on every network (what its own site shows).
+    const allPaid = (await this.everyVault().catch(() => [] as any[])).reduce((a, x) => a + (Number(x?.payouts?.cumulativeUsd) || 0), 0);
     return {
       vaultId: v.id as string,
       symbol: (v.token?.symbol as string) ?? 'USDC',
       decimals: (v.token?.decimals as number) ?? 6,
       tvlUsd: tvl,
       monthlyPayoutsUsd: monthly,
-      totalPaidUsd: Number(v.payouts?.cumulativeUsd) || 0,
+      totalPaidUsd: allPaid || Number(v.payouts?.cumulativeUsd) || 0,
       avgApr: tvl > 0 ? Math.round(((monthly * 12) / tvl) * 1000) / 10 : null,
       maxApr: Number(v.aprRange?.max) || null,
       nextDrawAt: draw?.nextDrawAt ?? null,

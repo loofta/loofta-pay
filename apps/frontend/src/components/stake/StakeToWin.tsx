@@ -37,6 +37,8 @@ const SORA = "var(--font-home-sora), Sora, sans-serif";
 const MONO = "var(--font-home-mono), ui-monospace, monospace";
 const TICKETS_PER_DOLLAR = 100;
 const MIN_STAKE_USD = 1;
+// Estimated size of the next weekly prize, taken from the Ample site. Replace with the value from Ample's estimate endpoint once it ships.
+const NEXT_PAYOUT_ESTIMATE_USD = 1409.57;
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 function toBase(input: string, decimals: number): string | null {
@@ -97,7 +99,6 @@ function Countdown({ nextDrawAt, intervalSec }: { nextDrawAt?: string | null; in
 // Snapshot of the public "Top payouts" leaderboard on ample.money (Ample's whole savings pool, not only Loofta users). Past results.
 const TOP_PAYOUTS = [
   { name: "0xcd76...a8fb", v: 2831.53, apr: 14.5 },
-  { name: "I love Ample!", v: 2483.11, apr: 9.8 },
   { name: "zamn", v: 1710, apr: 23.2 },
   { name: "Jer", v: 1574.52, apr: 18.8 },
   { name: "0x350d...3248", v: 1557.22, apr: 41.7 },
@@ -105,6 +106,25 @@ const TOP_PAYOUTS = [
 const hue = (w: string) => [...w].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
 
 /** What the average return means in dollars, so a non-crypto person can picture a year. */
+/** Small "i" that shows a short note on hover, focus or tap. */
+function InfoTip({ text, label = "More info" }: { text: string; label?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span style={{ position: "relative", display: "inline-flex", verticalAlign: "middle" }}
+      onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button type="button" aria-label={label} aria-expanded={open} onClick={() => setOpen((v) => !v)} onBlur={() => setOpen(false)}
+        style={{ width: 20, height: 20, borderRadius: "50%", cursor: "pointer", display: "grid", placeItems: "center", fontSize: 13, fontWeight: 800, fontFamily: "inherit", lineHeight: 1, padding: 0, color: open ? "#FF8A3D" : "#8A8893", background: "transparent", border: `1.5px solid ${open ? "#FF8A3D" : "#55535E"}` }}>
+        i
+      </button>
+      {open && (
+        <span role="tooltip" style={{ position: "absolute", zIndex: 30, bottom: "calc(100% + 10px)", left: "50%", transform: "translateX(-50%)", width: "min(260px, 72vw)", padding: "10px 12px", borderRadius: 12, background: "#1A1A20", border: "1px solid rgba(255,255,255,0.12)", boxShadow: "0 14px 40px rgba(0,0,0,0.5)", fontSize: 14, fontWeight: 500, lineHeight: 1.45, color: "#E4E1EA", textAlign: "left", letterSpacing: 0, whiteSpace: "normal" }}>
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function Calculator({ apr }: { apr: number | null }) {
   const [amt, setAmt] = useState(7600);
   if (!apr) return null;
@@ -141,7 +161,7 @@ function Calculator({ apr }: { apr: number | null }) {
           {row("Average", usd(year), { big: true, color: "#EE6A2C" })}
           {row("Top savers", `${usd(amt * 0.1)}\u2013${usd(amt * 0.42)}`)}
           {row("Bank", usd((amt * 0.5) / 100), { muted: true })}
-          <span style={{ fontSize: 15, color: "#8A8893", paddingTop: 12 }}>Paid as weekly prizes. Not guaranteed.</span>
+          <span style={{ fontSize: 15, color: "#8A8893", paddingTop: 12 }}>Paid as weekly prizes.</span>
         </div>
       </div>
     </section>
@@ -158,7 +178,7 @@ const STEPS = [
 ];
 
 const FAQ = [
-  { q: "Is my money safe?", a: "Your dollars (held as USDC, a digital dollar) stay yours and you can take them out any time. They are held in a savings pool run by Ample. Like any online financial product there is a small technical risk, and prizes are never guaranteed." },
+  { q: "Is my money safe?", a: "Your dollars (held as USDC, a digital dollar) stay yours and you can take them out any time. They are held in a savings pool. Like any online financial product there is a small technical risk, and prizes are never guaranteed." },
   { q: "Where do prizes come from?", a: "Every dollar in the pool earns interest. That interest is collected into weekly prizes and shared out by draw. Nobody pays to enter." },
   { q: "How do I win more often?", a: "Tickets build up the longer you stay and the more you add. More tickets means a bigger share of each draw." },
 ];
@@ -178,7 +198,6 @@ export function StakeToWin() {
   const [focus, setFocus] = useState(false);
   const [openFaq, setOpenFaq] = useState(0);
   const [howOpen, setHowOpen] = useState(false);
-  const [infoOpen, setInfoOpen] = useState(false);
   useEffect(() => {
     try {
       if (!localStorage.getItem("loofta_stake_onboarded")) setHowOpen(true);
@@ -530,9 +549,12 @@ export function StakeToWin() {
         <section className="stk-hero">
           <div className="stk-title">
             <h1 style={{ margin: 0, fontFamily: SORA, fontWeight: 800, fontSize: "clamp(36px,min(4.8vw,7.5vh),72px)", lineHeight: 1, letterSpacing: "-0.055em" }}>
-              <span style={{ display: "block" }}>{apr ? `Earn ~${pct(apr)} a year.` : "Earn on your dollars."}</span>
-              <span style={{ display: "block", color: "#8A8893" }}>Win prizes every week.</span>
+              <span style={{ display: "block" }}>Deposit dollars.</span>
+              <span style={{ display: "block", color: "#FF8A3D" }}>Win prizes every week.</span>
             </h1>
+            <p style={{ margin: "14px 0 0", fontSize: 18, lineHeight: 1.45, color: "#8A8893", maxWidth: 500 }}>
+              Every dollar you deposit gets you tickets, eligible for the weekly prizes. The more you hold, the more chances to win.
+            </p>
           </div>
 
           <div className="stk-stage">
@@ -542,7 +564,10 @@ export function StakeToWin() {
           <div className="stk-form">
             <div className="stk-pay">
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>Next prize draw</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>Next payout</span>
+                <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(36px,min(4vw,6vh),48px)", lineHeight: 1, letterSpacing: "-0.06em" }}>
+                  ${Math.floor(NEXT_PAYOUT_ESTIMATE_USD).toLocaleString("en-US")}<span style={{ color: "#7A7884" }}>.{String(Math.round((NEXT_PAYOUT_ESTIMATE_USD % 1) * 100)).padStart(2, "0")}</span>
+                </span>
               </div>
               <Countdown nextDrawAt={stats?.nextDrawAt} intervalSec={stats?.drawIntervalSeconds} />
             </div>
@@ -558,7 +583,7 @@ export function StakeToWin() {
               </div>
 
               <div style={{ padding: "clamp(18px,3.2vh,30px) 20px clamp(16px,2.6vh,24px)", display: "flex", flexDirection: "column", gap: "clamp(12px,2.3vh,24px)" }}>
-                {!(!isStake && hasStake) && (
+                {(
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, textAlign: "center" }}>
                     <Mini label="Your balance" value={`$${fmt(stakedNum)}`} />
                     <Mini label="Tickets" value={fmt(ticketCount)} />
@@ -570,15 +595,7 @@ export function StakeToWin() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "14px 16px", borderRadius: 18, background: "#0B0B0E", border: "1px solid rgba(255,255,255,0.08)" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>Your earnings</span>
-                      <button type="button" aria-label="About your APR" aria-expanded={infoOpen} onClick={() => setInfoOpen((v) => !v)}
-                        style={{ width: 22, height: 22, borderRadius: "50%", cursor: "pointer", display: "grid", placeItems: "center", fontSize: 14, fontWeight: 800, fontFamily: "inherit", lineHeight: 1, padding: 0, color: infoOpen ? "#FF8A3D" : "#8A8893", background: "transparent", border: `1.5px solid ${infoOpen ? "#FF8A3D" : "#8A8893"}` }}>
-                        i
-                      </button>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, textAlign: "center" }}>
-                      <Mini label="Your balance" value={`$${fmt(stakedNum)}`} />
-                      <Mini label="Tickets" value={fmt(ticketCount)} />
-                      <Mini label="Weekly odds" value={oddsText(oddsBefore)} />
+                      <InfoTip label="About your APR" text="Your APR appears after a week of history, until then the pool average of the last month is shown. It varies from week to week and is not a promise." />
                     </div>
                     <EarnRow label="Won so far" value={wonTotal ?? "$0"} strong />
                     {claimableBase > BigInt(0) ? <EarnRow label="Waiting to claim" value={claimableTotal} /> : null}
@@ -592,11 +609,6 @@ export function StakeToWin() {
                         {busy === "claim" ? "Claiming..." : `Claim all ${claimableTotal}`}
                       </button>
                     ) : null}
-                    {infoOpen && (
-                      <span style={{ fontSize: 15, lineHeight: 1.5, color: "#C9C6CF", padding: "10px 12px", borderRadius: 12, background: "#15151B", border: "1px solid rgba(255,255,255,0.08)" }}>
-                        Your APR appears after a week of history, until then the pool average of the last month is shown. It varies from week to week and is not a promise.
-                      </span>
-                    )}
                   </div>
                 )}
 
@@ -650,8 +662,8 @@ export function StakeToWin() {
         {(
         <section style={{ marginTop: 48, display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-            <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 20, letterSpacing: "-0.02em" }}>Biggest payouts on Ample</span>
-            <span style={{ fontSize: 15, color: "#8A8893" }}>From Ample's public leaderboard</span>
+            <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 20, letterSpacing: "-0.02em" }}>Biggest payouts</span>
+            <span style={{ fontSize: 15, color: "#8A8893" }}>Top prizes won by savers</span>
           </div>
           <div style={{ overflow: "hidden", WebkitMaskImage: "linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)", maskImage: "linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)" }}>
             <div style={{ display: "flex", gap: 12, width: "max-content", padding: "6px 0 10px", animation: "lmarquee 40s linear infinite" }}>
@@ -702,7 +714,7 @@ export function StakeToWin() {
         <section style={{ marginTop: 96, display: "flex", flexWrap: "wrap", gap: "24px 40px", alignItems: "flex-start" }}>
           <div style={{ flex: "1 1 260px", display: "flex", flexDirection: "column", gap: 12, maxWidth: 360 }}>
             <h2 style={{ margin: 0, fontFamily: SORA, fontWeight: 800, fontSize: 36, letterSpacing: "-0.05em" }}>Questions</h2>
-            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "#8A8893" }}>Savings are provided by Ample. Prizes are not guaranteed and past payouts do not predict future ones.</p>
+            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "#8A8893" }}>Prizes are not guaranteed and past payouts do not predict future ones.</p>
             <a href="/docs/stake" style={{ fontSize: 15, fontWeight: 700, color: "#FF7A2A" }}>Read the full docs →</a>
           </div>
           <div style={{ flex: "2 1 320px", minWidth: 0, display: "flex", flexDirection: "column", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
