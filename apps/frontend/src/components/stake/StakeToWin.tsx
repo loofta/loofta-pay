@@ -208,6 +208,7 @@ export function StakeToWin() {
     catch (e: any) {
       const m = String(e?.message ?? "");
       if (/reject|denied|cancel/i.test(m)) setError("Cancelled.");
+      else if (/fail on-chain|no program logs/i.test(m)) setError("The transaction would fail. Make sure your wallet holds the USDC you are staking, then try again.");
       else if (/simulation/i.test(m)) setError("That transaction would fail, check your balance and try again.");
       else if (/exceeds/i.test(m)) setError("That is more than you have staked.");
       else setError(m || "Something went wrong, try again.");
@@ -526,7 +527,7 @@ export function StakeToWin() {
 
                 {note && <p style={{ margin: 0, fontSize: 15, color: "#5FD38E", textAlign: "center" }}>{note}</p>}
                 {error && <p style={{ margin: 0, fontSize: 15, color: "#FF8A7A", textAlign: "center" }}>{error}</p>}
-                <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{`Principal stays yours · no lockup · no entry fee${overview?.withdrawFeeBps ? ` · ${(overview.withdrawFeeBps / 100).toFixed(2)}% withdrawal fee` : ""}`}</span>
+                <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{"Principal stays yours · no lockup · no entry fee"}</span>
               </div>
             </div>
           </div>

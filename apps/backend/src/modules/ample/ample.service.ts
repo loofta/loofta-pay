@@ -296,7 +296,77 @@ export class AmpleService {
 
   async buildDeposit(userId: string, vaultId: string, amount: string) {
     this.requireTx();
-    return this.call('POST', '/tx/deposit/quote', { kind: 'session', userId }, { body: { vaultId, fromAmount: amount } });
+    const tx: any = await this.call('POST', '/tx/deposit/quote', { kind: 'session', userId }, { body: { vaultId, fromAmount: amount } });
+    // Only real USDC stakes of $1 or more are sponsored, so a loop of dust deposits cannot be used to burn the fee payer's SOL.
+    const vault = (await this.listVaults().catch(() => [] as any[])).find(v => v?.id === vaultId);
+    let big = false;
+    try { big = BigInt(amount) >= 1_000_000n; } catch { /* not a number */ }
+    return this.sponsorFee(userId, tx, vault?.token?.address === USDC_MINT && big);
+  }
+
+  private sponsoredToday = new Map<string, { day: string; n: number }>();
+  private sponsoredGlobal = { day: '', n: 0 };
+  private payerBalance = { at: 0, lamports: 0 };
+
+  /**
+   * Gasless staking: Loofta pays the Solana network fee, the user still pays for anything Ample's own instructions charge them
+   * (token amounts, account rent). Safe by construction: we only sign a transaction we built ourselves from Ample's response for
+   * the user's own linked wallet, and only when the fee payer is NOT referenced by any instruction (so it can pay the fee and
+   * nothing else, never a transfer or rent). Fee payer signature covers the message, so the client cannot alter it afterwards.
+   * Capped per user per day as a speed bump. Fails open: on any doubt the plain transaction is returned and the user pays the fee.
+   */
+  private async sponsorFee(userId: string, tx: any, eligible = true) {
+    if (!eligible) return tx;
+    try {
+      const kp = this.solanaSponsor.getFeePayerKeypair();
+      const link = await this.getLink(userId);
+      if (!kp || !link.walletAddress || !tx?.transaction?.unsigned) return tx;
+      const day = new Date().toISOString().slice(0, 10);
+      const cur = this.sponsoredToday.get(userId);
+      const n = cur?.day === day ? cur.n : 0;
+      if (n >= 30) return tx;
+      const g = this.sponsoredGlobal.day === day ? this.sponsoredGlobal.n : 0;
+      if (g >= 3000) return tx; // global daily ceiling, about 0.03 SOL of network fees
+
+      const user = new PublicKey(link.walletAddress);
+      const conn = new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
+      const vtx = VersionedTransaction.deserialize(Buffer.from(tx.transaction.unsigned, 'base64'));
+      if (vtx.message.header.numRequiredSignatures !== 1 || !vtx.message.staticAccountKeys[0].equals(user)) return tx;
+      const tables = (await Promise.all(vtx.message.addressTableLookups.map(async l => (await conn.getAddressLookupTable(l.accountKey)).value)))
+        .filter((t): t is NonNullable<typeof t> => !!t);
+      if (tables.length !== vtx.message.addressTableLookups.length) return tx;
+
+      const msg = TransactionMessage.decompile(vtx.message, { addressLookupTableAccounts: tables });
+      const sponsorKey = kp.publicKey;
+      // Stop sponsoring when the fee payer runs low, so staking can never starve the other features that rely on it.
+      if (Date.now() - this.payerBalance.at > 60_000) this.payerBalance = { at: Date.now(), lamports: await conn.getBalance(sponsorKey) };
+      if (this.payerBalance.lamports < 500_000_000) return tx;
+      // Bound the fee: refuse transactions carrying a large compute-unit price (priority fee), signatures are already limited to two.
+      const CB = 'ComputeBudget111111111111111111111111111111';
+      let price = 0n;
+      let limit = 200_000n;
+      for (const ix of msg.instructions) {
+        if (ix.programId.toBase58() !== CB) continue;
+        if (ix.data[0] === 3) price = ix.data.readBigUInt64LE(1);
+        if (ix.data[0] === 2) limit = BigInt(ix.data.readUInt32LE(1));
+      }
+      if ((price * limit) / 1_000_000n > 20_000n) return tx;
+      const touchesSponsor = msg.instructions.some(ix => ix.programId.equals(sponsorKey) || ix.keys.some(k => k.pubkey.equals(sponsorKey)));
+      if (touchesSponsor) return tx;
+
+      const out = new VersionedTransaction(
+        new TransactionMessage({ payerKey: sponsorKey, recentBlockhash: msg.recentBlockhash, instructions: msg.instructions }).compileToV0Message(tables),
+      );
+      out.sign([kp]);
+      const bytes = out.serialize();
+      if (bytes.length > 1232) return tx;
+      this.sponsoredToday.set(userId, { day, n: n + 1 });
+      this.sponsoredGlobal = { day, n: g + 1 };
+      return { ...tx, transaction: { ...tx.transaction, unsigned: Buffer.from(bytes).toString('base64') }, sponsored: true };
+    } catch (e: any) {
+      this.logger.warn(`fee sponsorship skipped: ${e?.message}`);
+      return tx;
+    }
   }
 
   /** Withdrawal fee in basis points (default 0.25%, a typical DeFi vault exit fee). Set STAKE_WITHDRAW_FEE_BPS=0 to switch off. */
@@ -322,7 +392,13 @@ export class AmpleService {
     }
     const vault = (await this.listVaults().catch(() => [] as any[])).find(v => v?.id === vaultId);
     if (!vault || this.withdrawFeeBps <= 0) return { ...tx, fee: null, withdrawnBase: amount };
-    return { ...(await this.withFee(userId, tx, amount)), withdrawnBase: amount };
+    const withFee: any = await this.withFee(userId, tx, amount);
+    // Sponsored only when the exit fee is actually in the transaction and is worth more than the network fee we pay (about $1+),
+    // so dust withdrawals cannot be looped for free. Prize-token vaults are never sponsored.
+    let big = false;
+    try { big = BigInt(amount) >= 1_000_000n; } catch { /* not a number */ }
+    const paid = !!withFee.fee && big && vault?.token?.address === USDC_MINT;
+    return { ...(await this.sponsorFee(userId, withFee, paid)), withdrawnBase: amount };
   }
 
   /**
@@ -372,7 +448,8 @@ export class AmpleService {
   /** Solana claims take exactly one payout id per call and compound back into the vault. */
   async buildClaim(userId: string, payoutId: string) {
     this.requireTx();
-    return this.call('POST', '/tx/claim', { kind: 'session', userId }, { body: { payoutIds: [payoutId], sourceChainId: 101 } });
+    const tx: any = await this.call('POST', '/tx/claim', { kind: 'session', userId }, { body: { payoutIds: [payoutId], sourceChainId: 101 } });
+    return this.sponsorFee(userId, tx);
   }
 
   txStatus(userId: string, hash: string) {
