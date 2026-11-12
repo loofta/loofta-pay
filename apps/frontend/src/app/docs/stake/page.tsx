@@ -20,20 +20,21 @@ export const metadata: Metadata = {
 };
 
 const STEPS = [
-  { t: "Stake", d: "Deposit USDC from your Loofta balance. It takes a couple of taps, there is no separate wallet to set up and no gas to hold. The minimum is $1." },
-  { t: "Get tickets", d: "Your stake earns tickets for the current weekly cycle. Tickets represent your eligible participation and set your chance of receiving a payout. You get about 100 tickets per $1 held, averaged over the week, so a bigger stake means more tickets." },
+  { t: "Stake", d: "Add USDC from your Solana wallet. It takes a couple of taps, there is nothing else to set up and no gas to hold. The minimum is $1." },
+  { t: "Get tickets", d: "Your savings earn tickets for the current weekly cycle. Tickets represent your eligible participation and set your chance of receiving a payout. You get about 100 tickets per $1 held, averaged over the week, so a bigger stake means more tickets. Bonuses for staying, for not having won yet and for adding $10 or more every week can lift that further, up to 1.91x." },
   { t: "Join the weekly draw", d: "The protocol runs in weekly cycles. Each week it distributes accrued protocol yield to winners. The countdown on the Stake page shows when the next draw runs." },
-  { t: "Win, claim, withdraw", d: "Prizes show up on the Stake page ready to claim, and a claimed prize is added to your stake. You can withdraw your USDC whenever you like." },
+  { t: "Win, claim, withdraw", d: "Prizes show up on the Stake page ready to claim, and a claimed prize is added to your savings. You can withdraw your USDC whenever you like." },
 ];
 
 const FAQ = [
   { q: "Is this a lottery? Do I pay to enter?", a: "No ticket is bought. You stake USDC and keep ownership of it. The prizes come from the yield the pooled deposits earn." },
   { q: "Can I lose my deposit?", a: "Your USDC sits in an Ample vault and stays yours. Like any DeFi product there is smart contract risk, so only stake what you are comfortable with. Prizes are never guaranteed, and you may go many weeks without winning." },
   { q: "Can I withdraw any time?", a: "Yes. There is no lockup. Open the Withdraw tab on the Stake page, or use the stake option offered on any Loofta withdrawal. Withdrawing lowers your tickets for later draws." },
-  { q: "What does Loofta charge?", a: "Loofta charges a flat $0.10 when you add money and a flat $0.10 when you withdraw. Moving money between your wallet and the savings pool also carries a small bridge cost, about $0.02 each way, and Loofta pays the network fees. Any change will be written here first." },
+  { q: "What does Loofta charge?", a: "Loofta charges 0.05% when you add money and 0.05% when you withdraw, so $100 costs 5 cents each way. Moving money between your wallet and the savings pool also carries a small bridge cost, about $0.02 each way, and Loofta pays the network fees. Any change will be written here first." },
   { q: "How are my chances worked out?", a: "By tickets. The Stake page shows an estimate of your weekly odds based on your stake and the pool size, and the exact ticket count once you are staked. Treat the estimate as a guide, not a promise." },
-  { q: "Who runs the vault?", a: "Ample (ample.money). Loofta is an interface to it: the vault and the draw are Ample's, and your wallet signs every transaction. For contracts, audits and the protocol's own rules, read Ample's documentation." },
-  { q: "Which chain and token?", a: "USDC on Solana." },
+  { q: "Who runs the vault?", a: "Ample (ample.money). Loofta is the interface: the pool and the draw are Ample's, and Loofta moves your money in and out for you. For contracts, audits and the protocol's own rules, read Ample's documentation." },
+  { q: "Which chain and token?", a: "You add and withdraw USDC on Solana. Loofta moves it to and from the pool for you, so you never handle another network." },
+  { q: "What are the ticket bonuses and streaks?", a: "Your tickets can be lifted by three bonuses that stack up to 1.91x: loyalty for holding, luck for every week you have not won, and a streak for adding $10 or more every week. Only deposits of $10 or more in a week count toward the streak, and a missed week resets it. The Stake page shows each bonus and your streak, as estimates until the draw." },
 ];
 
 const TOC = [
@@ -135,7 +136,7 @@ export default function StakeDocsPage() {
             </p>
             <ol className="mt-5 list-decimal space-y-3 pl-6 text-base leading-relaxed text-slate-100 marker:text-slate-300">
               <li><strong className="font-semibold text-white">The prize pool builds up.</strong> Over a 7 day cycle, the yield earned by all the pooled deposits is collected into the weekly prize pool. The pool contains no deposits.</li>
-              <li><strong className="font-semibold text-white">Tickets lock at the end of the cycle.</strong> Your tickets come from your time-weighted balance over the cycle: about 100 tickets for every $1 you held, averaged across the week. You need to have held for at least an hour during the cycle to be eligible. Staying staked longer and keeping a steady stake can add small bonuses on top.</li>
+              <li><strong className="font-semibold text-white">Tickets lock at the end of the cycle.</strong> Your tickets come from your time-weighted balance over the cycle: about 100 tickets for every $1 you held, averaged across the week. You need to have held for at least an hour during the cycle to be eligible. Three bonuses multiply your tickets on top of that. <em>Loyalty</em> is 1.05x after one full week held and 1.1x after two, and a withdrawal of more than 10% of your balance resets it. <em>Luck</em> adds 0.02x for every week without a prize, up to 1.4x, and resets when you win. <em>Streak</em> adds 0.02x for every week in a row you add $10 or more, up to 1.24x after 12 weeks, and a missed week resets it. Together they reach 1.91x at most, and the Stake page shows yours with your current streak.</li>
               <li><strong className="font-semibold text-white">The list is sealed before the draw.</strong> The full ticket list is fixed and published as a cryptographic fingerprint (a merkle root) before any winner is picked, so it cannot be changed afterwards.</li>
               <li><strong className="font-semibold text-white">Winners are drawn with verifiable randomness.</strong> The selection uses an on-chain random function with a proof. Your chance on each pick is your tickets divided by all tickets.</li>
               <li><strong className="font-semibold text-white">The pool is split into tiers.</strong> A grand prize, large prizes, mid prizes and a wide base of smaller prizes, so a lot of people win something each week. A person can win at most one prize per tier per week.</li>
@@ -148,8 +149,8 @@ export default function StakeDocsPage() {
             <H2 id="security">Security</H2>
             <h3 className="mt-5 text-lg font-semibold">Your funds</h3>
             <ul className="mt-3 list-disc space-y-3 pl-6 text-base leading-relaxed text-slate-100 marker:text-slate-300">
-              <li><strong className="font-semibold text-white">Non-custodial.</strong> Loofta never holds your stake. Every stake, withdrawal and claim is a transaction built by Ample and signed by your own wallet. Loofta cannot move your USDC.</li>
-              <li><strong className="font-semibold text-white">No lockup.</strong> Withdrawals are open at all times, with no waiting period. A flat 0.10% (never more than $25) withdrawal fee applies to USDC you take out, which is in line with the 0.1% to 0.5% exit fees common on DeFi vaults.</li>
+              <li><strong className="font-semibold text-white">Your own savings account.</strong> Your money sits in a savings account made for you in Ample&apos;s pool. Loofta&apos;s service operates that account on your behalf: it only moves money when you add, withdraw or claim, and a withdrawal always goes back to your own Solana wallet.</li>
+              <li><strong className="font-semibold text-white">No lockup.</strong> Withdrawals are open at all times, with no waiting period. Loofta&apos;s 0.05% fee applies when you withdraw, as it does when you add money.</li>
               <li><strong className="font-semibold text-white">Prizes are separate from deposits.</strong> The prize pool is yield only, so paying prizes never touches anyone&apos;s principal.</li>
             </ul>
             <h3 className="mt-6 text-lg font-semibold">The protocol</h3>
@@ -173,7 +174,7 @@ export default function StakeDocsPage() {
 
             <H2 id="why-loofta">Why stake in Loofta</H2>
             <ul className="mt-5 list-disc space-y-3 pl-6 text-base leading-relaxed text-slate-100 marker:text-slate-300">
-              <li>One tap from the balance you already hold. No second wallet, no bridging, no gas to top up.</li>
+              <li>One tap from the USDC in your Solana wallet. No second wallet, no bridging to do yourself, no gas to top up.</li>
               <li>Stake a little when you withdraw or cash out. The option appears on every withdrawal path, from $1.</li>
               <li>Withdraw to any wallet, token or bank from the same place you stake.</li>
             </ul>

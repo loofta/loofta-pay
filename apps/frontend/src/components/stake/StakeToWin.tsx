@@ -46,7 +46,7 @@ const MONO = "var(--font-home-mono), ui-monospace, monospace";
 const TICKETS_PER_DOLLAR = 100;
 const MIN_STAKE_USD = 1;
 // Flat fee for moving USDC from the Solana wallet into the savings pool.
-const FUND_FEE_USD = 0.1;
+const FUND_FEE_RATE = 0.0005; // Loofta's fee, 0.05% of the amount moved
 // Prize tiers: the share of each week's pool that goes to each group (from Ample's docs).
 const TIERS = [
   { name: "Grand prize", share: 25, note: "1 winner" },
@@ -196,8 +196,8 @@ const STEPS = [
 
 const FAQ = [
   { q: "Is my money safe?", a: "Your dollars (held as USDC, a digital dollar) stay yours and you can take them out any time. They are held in a savings pool. Like any online financial product there is a small technical risk, and prizes are never guaranteed." },
-  { q: "Where do prizes come from?", a: "Every dollar in the pool earns interest. That interest is collected into weekly prizes and shared out by draw." },
-  { q: "How do I win more often?", a: "Tickets build up the longer you stay and the more you add. More tickets means a bigger share of each draw." },
+  { q: "Where do prizes come from?", a: "The pooled dollars are put to work and earn yield. That yield, never your own dollars, is collected into weekly prizes and shared out by draw." },
+  { q: "How do I win more often?", a: "Tickets build up the longer you stay and the more you add. Bonuses add more on top: loyalty for staying, luck while you have not won, and a streak for adding $10 or more every week. Together they can lift your tickets by up to 1.91x." },
 ];
 
 export function StakeToWin() {
@@ -537,14 +537,14 @@ export function StakeToWin() {
       solUsdc = Number(bal.value.amount) / 1e6;
     } catch { /* no USDC account yet means zero */ }
     const toUnits = (n: number) => String(Math.round(n * 1e6));
-    const shortBy = (Math.ceil((amt + FUND_FEE_USD + 0.05 - solUsdc) * 100) / 100).toFixed(2);
-    if (solUsdc < FUND_FEE_USD + 1) { setDeposit({ screen: "home", amount: shortBy }); return; }
+    const shortBy = (Math.ceil((amt * (1 + FUND_FEE_RATE) + 0.05 - solUsdc) * 100) / 100).toFixed(2);
+    if (solUsdc < 1.05) { setDeposit({ screen: "home", amount: shortBy }); return; }
     const o = await opts();
     // The bridge cost comes out of the deposit when the wallet cannot cover amount + cost, so a full balance still works.
     const prep = await ampleFundPrepare({ solanaAddress: solAddress, outputUnits: toUnits(amt), maxTotalUnits: toUnits(solUsdc) }, o);
     const arriving = Math.floor((Number(prep.outUnits) / 1e6) * 100) / 100;
     if (arriving < MIN_STAKE_USD) { setDeposit({ screen: "home", amount: shortBy }); return; }
-    setNote(`Adding $${fmt(arriving)}. A flat $${FUND_FEE_USD.toFixed(2)} fee applies.`);
+    setNote(`Adding $${fmt(arriving)}.`);
     const built = await ampleFundTx(prep.id, o);
     const { signedTransaction } = await signTransaction({
       transaction: Uint8Array.from(atob(built.transaction), (c) => c.charCodeAt(0)),
@@ -721,8 +721,8 @@ export function StakeToWin() {
         .stk-win{flex:none;display:flex;align-items:center;gap:12px;padding:12px 18px 12px 12px;border-radius:18px;background:#14141A;border:1px solid rgba(255,255,255,0.09);transition:transform .25s ease-out}
         .stk-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
         @media (min-width:900px){
-          .stk-hero{grid-template-columns:minmax(0,1fr) 480px;grid-template-areas:"title form" "stage form";row-gap:0;min-height:calc(100vh - var(--header-h,0px) - 48px)}
-          .stk-title{align-items:flex-start;text-align:left;margin-bottom:0}
+          .stk-hero{grid-template-columns:minmax(0,1fr) 480px;grid-template-areas:"title form" "stage form" "fill form";grid-template-rows:auto auto 1fr;align-content:start;row-gap:0;min-height:calc(100vh - var(--header-h,0px) - 48px)}
+          .stk-title{align-items:flex-start;text-align:left;margin-bottom:0;align-self:start;padding-top:clamp(0px,calc((100vh - var(--header-h,0px) - 48px - 520px) / 5),80px)}
           .stk-stage{justify-content:flex-start}
           .stk-vault{height:clamp(200px,calc(100vh - var(--header-h,0px) - 400px),460px)}
         }
@@ -748,7 +748,7 @@ export function StakeToWin() {
           <div className="stk-form">
             <div className="stk-pay">
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(44px,min(5.2vw,8vh),64px)", lineHeight: 1, letterSpacing: "-0.035em", whiteSpace: "nowrap" }}>
+                <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(38px,min(4.2vw,6.5vh),52px)", lineHeight: 1, letterSpacing: "-0.035em", whiteSpace: "nowrap" }}>
                   {oneIn ? `1 in ${oneIn}` : weeklyPool ? `~$${Math.round(weeklyPool).toLocaleString("en-US")}` : "-"}
                 </span>
                 <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 17, fontWeight: 600, color: "#A9A6B0" }}>
@@ -826,6 +826,8 @@ export function StakeToWin() {
                   </div>
                 )}
 
+                {!isStake && hasStake && overview ? <BoostCard tickets={overview.tickets} streak={overview.streak} boosts={overview.boosts} /> : null}
+
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "clamp(12px,2.2vh,20px) 18px", borderRadius: 18, background: "#0B0B0E", border: `1px solid ${focus ? "rgba(255,122,42,0.6)" : "rgba(255,255,255,0.08)"}` }}>
                   <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 32, color: "#6E6C78" }}>$</span>
                   <input inputMode="decimal" aria-label={isStake ? "Amount to add" : "Amount to withdraw"} value={amount}
@@ -864,9 +866,6 @@ export function StakeToWin() {
                 {error && <p style={{ margin: 0, fontSize: 15, color: "#FF8A7A", textAlign: "center" }}>{error}</p>}
                 {isStake && firstFee && !baseMode ? (
                   <span style={{ textAlign: "center", fontSize: 15, fontWeight: 700, color: "#FFB27A" }}>{`First-time deposit fee: $${firstFee.toFixed(2)} (once), taken from your deposit if your balance is short.`}</span>
-                ) : null}
-                {baseMode && isStake ? (
-                  <span style={{ textAlign: "center", fontSize: 15, color: "#A9A6B0" }}>{`A flat $${FUND_FEE_USD.toFixed(2)} fee applies when you add money from your wallet.`}</span>
                 ) : null}
                 <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{"Your money stays yours · withdraw any time"}</span>
               </div>
@@ -1052,6 +1051,123 @@ function HowItWorks({ open, onClose }: { open: boolean; onClose: () => void }) {
           style={{ width: "100%", marginTop: 6, cursor: "pointer", padding: "16px", borderRadius: 18, border: "none", fontFamily: SORA, fontWeight: 700, fontSize: 17, color: "#fff", background: GRAD, boxShadow: "0 12px 30px rgba(255,74,18,0.35),inset 0 1px 0 rgba(255,255,255,0.3)" }}>
           {last ? "Start staking" : "Continue"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** Ticket bonuses and the weekly deposit streak, from Ample's own numbers. Never computed here, only shown. */
+function BoostCard(props: { tickets: unknown; streak: unknown; boosts: unknown }) {
+  const [open, setOpen] = useState(false);
+  const eff = Number((props.tickets as { oddsModifiers?: { effective?: unknown } } | null)?.oddsModifiers?.effective);
+  const shown = `${(Number.isFinite(eff) && eff > 0 ? eff : 1).toFixed(2).replace(/0$/, "")}x`;
+  return (
+    <>
+      <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, width: "100%", padding: "12px 16px", borderRadius: 18, background: "#0B0B0E", border: "1px solid rgba(255,255,255,0.08)", color: "#F2EFE8", fontFamily: "inherit", cursor: "pointer" }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>Your ticket bonus</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 10, fontFamily: SORA, fontWeight: 800, fontSize: 18, color: eff > 1 ? "#FF8A3D" : "#F2EFE8" }}>
+          {shown}
+          <span aria-hidden style={{ display: "inline-block", fontSize: 14, color: "#8A8893", transition: "transform .2s", transform: open ? "rotate(180deg)" : "none" }}>▾</span>
+        </span>
+      </button>
+      <div aria-hidden={!open} style={{ display: "grid", gridTemplateRows: open ? "1fr" : "0fr", opacity: open ? 1 : 0, marginTop: open ? 0 : "calc(-1 * clamp(12px,2.3vh,24px))", transition: "grid-template-rows .4s cubic-bezier(.22,1,.36,1), opacity .3s ease, margin-top .4s cubic-bezier(.22,1,.36,1)" }}>
+        <div style={{ overflow: "hidden", minHeight: 0 }}><BoostDetails {...props} /></div>
+      </div>
+    </>
+  );
+}
+
+function Flame({ size = 28, lit = true }: { size?: number; lit?: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden style={{ flex: "none", filter: lit ? "drop-shadow(0 0 8px rgba(255,122,42,0.7))" : "none" }}>
+      <defs>
+        <linearGradient id="bc-flame" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0" stopColor="#FF3D0F" />
+          <stop offset="1" stopColor="#FFC24A" />
+        </linearGradient>
+      </defs>
+      <path d="M12 2c.6 3.2-1.2 4.9-2.8 6.6C7.6 10.3 6 12 6 14.8 6 18.2 8.6 21 12 21s6-2.8 6-6.2c0-2.4-1.1-4.1-2.2-5.4-.3 1.3-1 2.2-2 2.6.5-3.6-.3-7.7-1.8-10z" fill={lit ? "url(#bc-flame)" : "#3A3942"} />
+    </svg>
+  );
+}
+
+function BoostDetails({ tickets, streak, boosts }: { tickets: unknown; streak: unknown; boosts: unknown }) {
+  const m = ((tickets as { oddsModifiers?: Record<string, unknown> } | null)?.oddsModifiers ?? {}) as Record<string, unknown>;
+  const num = (v: unknown, d = 1) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d; };
+  const MAX = 1.91;
+  const eff = num(m.effective);
+  const fill = Math.max(0, Math.min(1, (eff - 1) / (MAX - 1)));
+  const dep = ((streak as { deposit?: Record<string, unknown> } | null)?.deposit ?? {}) as Record<string, unknown>;
+  const cur = Math.max(0, Math.floor(Number(dep.currentStreak ?? 0)) || 0);
+  const best = Math.max(0, Math.floor(Number(dep.maxStreak ?? 0)) || 0);
+  const done = dep.qualifiedThisWeek === true;
+  const boost = ((boosts as { data?: Array<Record<string, unknown>> } | null)?.data ?? [])[0];
+  const boostAdd = boost ? Number(boost.modifierAddition ?? 0) : 0;
+  const x = (v: number) => `${v.toFixed(2).replace(/0$/, "")}x`;
+  const chips: { label: string; text: string; on: boolean }[] = [
+    { label: "Loyalty", text: x(num(m.loyalty)), on: num(m.loyalty) > 1 },
+    { label: "Luck", text: x(num(m.luck)), on: num(m.luck) > 1 },
+    { label: "Streak", text: x(num(m.streak)), on: num(m.streak) > 1 },
+    ...(boostAdd > 0 ? [{ label: "Boost", text: `+${boostAdd.toFixed(2).replace(/0$/, "")}x`, on: true }] : []),
+  ];
+  const SLOTS = 12;
+  const message = done
+    ? (cur > 0 ? `Locked in for this week. Come back next week for week ${cur + 1}.` : "Locked in for this week. Come back next week to start a streak.")
+    : cur > 0
+      ? `Add $10 or more this week to keep your ${cur} week streak alive.`
+      : "Add $10 or more this week to light your first flame. Each week in a row adds 0.02x tickets, up to 12 weeks.";
+  const node = 24;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: 16, borderRadius: 18, background: "#0B0B0E", border: "1px solid rgba(255,255,255,0.08)" }}>
+      <style>{`@keyframes bc-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,122,42,0.45)}50%{box-shadow:0 0 0 7px rgba(255,122,42,0)}}@keyframes bc-pop{0%{transform:scale(.7)}60%{transform:scale(1.12)}100%{transform:scale(1)}}`}</style>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 15, color: "#8A8893" }}>Bonus tickets</span>
+        <InfoTip below label="About ticket bonuses" text="Loyalty reaches 1.1x after two full weeks of holding, and a large withdrawal resets it. Luck adds 0.02x for every week without a prize, up to 1.4x, and resets when you win. Streak adds 0.02x for every week in a row you add $10 or more, up to 1.24x. Together they reach 1.91x at most. These are estimates and can change before the draw." />
+      </div>
+      <div style={{ height: 8, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden", marginTop: -6 }}>
+        <div style={{ width: `${Math.max(fill * 100, eff > 1 ? 4 : 0)}%`, height: "100%", borderRadius: 999, background: "linear-gradient(90deg,#FF3D0F,#FF7A2A)", transition: "width .6s ease" }} />
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {chips.map((c) => (
+          <span key={c.label} style={{ display: "inline-flex", gap: 6, padding: "6px 12px", borderRadius: 999, fontSize: 15, background: c.on ? "rgba(255,122,42,0.14)" : "rgba(255,255,255,0.05)", color: c.on ? "#FFB27A" : "#8A8893", border: `1px solid ${c.on ? "rgba(255,122,42,0.35)" : "rgba(255,255,255,0.07)"}` }}>
+            {c.label}<strong style={{ color: c.on ? "#FF8A3D" : "#C9C6CF" }}>{c.text}</strong>
+          </span>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "14px 14px 16px", borderRadius: 16, background: "linear-gradient(180deg,rgba(255,122,42,0.10),rgba(255,122,42,0.02))", border: "1px solid rgba(255,138,61,0.22)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Flame size={34} lit={cur > 0} />
+            <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: 34, lineHeight: 1, letterSpacing: "-0.04em", color: cur > 0 ? "#FF8A3D" : "#6E6C78" }}>{cur}</span>
+            <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF", lineHeight: 1.1 }}>week<br />streak</span>
+          </div>
+          {best > 0 ? <span style={{ fontSize: 15, color: "#A9A6B0", padding: "4px 10px", borderRadius: 999, background: "rgba(255,255,255,0.06)" }}>{`Best ${best}`}</span> : null}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center" }}>
+          {Array.from({ length: SLOTS }).map((_, i) => {
+            const filled = i < Math.min(cur, SLOTS);
+            const target = !done && i === Math.min(cur, SLOTS - 1) && cur < SLOTS;
+            return (
+              <div key={i} style={{ display: "flex", alignItems: "center", flex: i === SLOTS - 1 ? "none" : 1 }}>
+                <span style={{ flex: "none", width: node, height: node, borderRadius: "50%", display: "grid", placeItems: "center", boxSizing: "border-box", fontFamily: SORA, fontWeight: 800, fontSize: 14,
+                  background: filled ? "linear-gradient(160deg,#FF5A1A,#FF9A3D)" : "#15151A",
+                  color: filled ? "#fff" : target ? "#FF8A3D" : "#55535E",
+                  border: filled ? "none" : target ? "2px dashed rgba(255,138,61,0.9)" : "2px solid rgba(255,255,255,0.07)",
+                  boxShadow: filled ? "0 4px 14px rgba(255,90,26,0.4), inset 0 1px 0 rgba(255,255,255,0.35)" : undefined,
+                  animation: target ? "bc-pulse 1.8s ease-in-out infinite" : filled && i === cur - 1 ? "bc-pop .5s ease-out" : undefined }}>
+                  {filled ? <Flame size={14} /> : i === SLOTS - 1 ? "★" : null}
+                </span>
+                {i < SLOTS - 1 ? <span style={{ flex: 1, height: 4, margin: "0 2px", borderRadius: 999, background: i < cur - 1 && i < SLOTS - 1 ? "linear-gradient(90deg,#FF5A1A,#FF9A3D)" : "rgba(255,255,255,0.07)" }} /> : null}
+              </div>
+            );
+          })}
+        </div>
+        {cur >= SLOTS ? <span style={{ fontSize: 15, fontWeight: 700, color: "#FF8A3D" }}>{`Maxed out at ${SLOTS} weeks`}</span> : null}
+        <span style={{ fontSize: 15, lineHeight: 1.4, color: done ? "#5FD38E" : "#C9C6CF" }}>{message}</span>
       </div>
     </div>
   );

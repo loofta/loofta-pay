@@ -18,7 +18,9 @@ const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
 /** Loofta's Base wallet, the same one Megapot rescues and fees go to. Flat fees and swept dust land here. */
 export const LOOFTA_BASE_WALLET = '0x50c236e3B93D3d69fe23F4D648A13901e6DdbC39' as const;
 /** Loofta's flat fee for moving money in or out of the Earn pool: $0.10 in USDC. */
-export const FUND_FEE_UNITS = 100_000n;
+/** Loofta's fee: 0.05% (5 basis points) of the amount moved, on the way in and on the way out. */
+export const FUND_FEE_BPS = 5n;
+export const feeFor = (units: bigint) => (units * FUND_FEE_BPS) / 10_000n;
 const MIN_OUT_UNITS = 1_000_000n;
 const MAX_OUT_UNITS = 1_000_000_000n;
 const MAX_ORDERS_PER_DAY = 10;
@@ -97,7 +99,7 @@ export class AmpleFundService {
         this.logger.error(`Relay quote failed: ${e?.message ?? e}`);
         throw new BadRequestException('Could not get a price to move your funds. Try again in a moment.');
       }
-      const total = quote.requiredInputUnits + FUND_FEE_UNITS;
+      const total = quote.requiredInputUnits + feeFor(out);
       if (!maxTotal || total <= maxTotal) break;
       // Relay charges its fee on top of the output, so shrink the output by the overshoot (plus a hair) and quote again.
       out = out - (total - maxTotal) - 1_000n;
@@ -111,7 +113,8 @@ export class AmpleFundService {
       addressLookupTableAddresses: quote.addressLookupTableAddresses,
       requiredInputUnits: quote.requiredInputUnits.toString(),
     };
-    const total = quote.requiredInputUnits + FUND_FEE_UNITS;
+    const fee = feeFor(out);
+    const total = quote.requiredInputUnits + fee;
     const { data, error } = await this.db.from('ample_fund_orders').insert({
       kind: 'fund',
       user_id: userId,
@@ -119,7 +122,7 @@ export class AmpleFundService {
       base_address: companion.address,
       vault_id: vault.id,
       out_units: out.toString(),
-      fee_units: FUND_FEE_UNITS.toString(),
+      fee_units: fee.toString(),
       total_units: total.toString(),
       quote: stored,
       request_id: quote.requestId,
@@ -128,7 +131,7 @@ export class AmpleFundService {
       this.logger.error(`ample_fund_orders insert failed: ${error?.message}`);
       throw new BadRequestException('Could not start the transfer. Try again.');
     }
-    return { id: data.id as string, outUnits: out.toString(), feeUnits: FUND_FEE_UNITS.toString(), totalUnits: total.toString() };
+    return { id: data.id as string, outUnits: out.toString(), feeUnits: fee.toString(), totalUnits: total.toString() };
   }
 
   private async assertDailyCap(userId: string) {
@@ -143,7 +146,7 @@ export class AmpleFundService {
     return data;
   }
 
-  private feeTransfer(solanaAddress: string) {
+  private feeTransfer(solanaAddress: string, feeUnits: bigint) {
     const feePayer = this.sponsor.getFeePayerAddress();
     if (!feePayer) throw new BadRequestException('Fee payer not configured');
     const mint = new PublicKey(this.config.get<string>('SOLANA_USDC_MINT_MAINNET') || SOLANA_USDC_MINT);
@@ -153,7 +156,7 @@ export class AmpleFundService {
       owner,
       sourceAta: getAssociatedTokenAddressSync(mint, owner),
       destAta: getAssociatedTokenAddressSync(mint, new PublicKey(feePayer)),
-      amountUnits: FUND_FEE_UNITS,
+      amountUnits: feeUnits,
     };
   }
 
@@ -175,7 +178,7 @@ export class AmpleFundService {
       keys: ix.keys.map(k => ({ pubkey: new PublicKey(k.pubkey), isSigner: k.isSigner, isWritable: k.isWritable })),
       data: Buffer.from(ix.data, 'hex'),
     }));
-    const fee = this.feeTransfer(row.solana_address);
+    const fee = this.feeTransfer(row.solana_address, BigInt(row.fee_units));
     ixs.push(createTransferCheckedInstruction(fee.sourceAta, fee.mint, fee.destAta, fee.owner, fee.amountUnits, 6));
     const message = new TransactionMessage({ payerKey: new PublicKey(feePayer), recentBlockhash: blockhash, instructions: ixs }).compileToV0Message();
     return { transaction: Buffer.from(new VersionedTransaction(message).serialize()).toString('base64') };
@@ -195,7 +198,7 @@ export class AmpleFundService {
         transactionBase64,
         userSolanaAddress: row.solana_address,
         instructions: quote.instructions,
-        looftaFee: this.feeTransfer(row.solana_address),
+        looftaFee: this.feeTransfer(row.solana_address, BigInt(row.fee_units)),
       });
       await this.db.from('ample_fund_orders').update({ signature, updated_at: new Date().toISOString() }).eq('id', id);
       return { signature };
@@ -214,7 +217,7 @@ export class AmpleFundService {
       throw new ForbiddenException('solanaAddress must be one of your own linked wallets');
     }
     const amount = BigInt(dto.amount);
-    if (amount < FUND_FEE_UNITS + MIN_OUT_UNITS + 100_000n) throw new BadRequestException('Withdraw at least $1.25 at a time.');
+    if (amount < MIN_OUT_UNITS + feeFor(amount) + 100_000n) throw new BadRequestException('Withdraw at least $1.15 at a time.');
     await this.assertDailyCap(userId);
     const vault = await this.evm.vault();
     if (!vault) throw new BadRequestException('Earn is not available right now. Try again in a moment.');
@@ -225,7 +228,7 @@ export class AmpleFundService {
       solana_address: dto.solanaAddress,
       vault_id: vault.id,
       out_units: amount.toString(),
-      fee_units: FUND_FEE_UNITS.toString(),
+      fee_units: feeFor(amount).toString(),
       total_units: amount.toString(),
     }).select('*').single();
     if (error || !data) {
@@ -358,12 +361,13 @@ export class AmpleFundService {
     // The vault takes its own small fee, so slightly less than asked can arrive. Wait for it, then use what is there.
     if (have < (expected * 99n) / 100n && Date.now() - new Date(row.created_at).getTime() < 10 * 60_000) throw new Error(`waiting for withdrawal: ${have} of ${expected}`);
     const amount = have < expected ? have : expected;
-    const send = amount - FUND_FEE_UNITS;
+    const fee = feeFor(amount);
+    const send = amount - fee;
     if (send < MIN_OUT_UNITS) throw new Error('amount too small to return');
     const q = await this.relay.getBaseToSolQuote({ fromAddress: c.address, toAddress: row.solana_address, amountUnits: send });
     if (q.depositValue > 0n) throw new Error('return needs ETH value');
     const calls: { to: `0x${string}`; data: `0x${string}` }[] = [
-      { to: BASE_USDC, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [LOOFTA_BASE_WALLET, FUND_FEE_UNITS] }) },
+      { to: BASE_USDC, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [LOOFTA_BASE_WALLET, fee] }) },
       { to: BASE_USDC, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [q.approvalAddress as `0x${string}`, send] }) },
       { to: q.depositTo as `0x${string}`, data: q.depositData as `0x${string}` },
     ];

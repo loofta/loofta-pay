@@ -42,6 +42,7 @@ export interface AmpleOverview {
   };
   balances: Array<{ vaultId?: string; tokenMint?: string | null; usdMicro?: string | null; depositsToken: string; depositsUsd: number | string | null; token?: { symbol?: string; decimals?: number }; [k: string]: unknown }>;
   streak: Record<string, any>;
+  boosts?: unknown;
   claimable: Array<{ payoutId: string; payoutAmount: string; vaultId?: string; usdMicro?: string | null; [k: string]: unknown }>;
   /** Sum of every payout ever won, in token base units. null when Ample returned no history. */
   totalWonBase?: string | null;
