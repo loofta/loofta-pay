@@ -27,10 +27,10 @@ const STEPS = [
 ];
 
 const FAQ = [
-  { q: "Is this a lottery? Do I pay to enter?", a: "No ticket is bought. You stake USDC and keep ownership of it. The prizes come from the yield the pooled deposits earn, so nobody pays to enter." },
+  { q: "Is this a lottery? Do I pay to enter?", a: "No ticket is bought. You stake USDC and keep ownership of it. The prizes come from the yield the pooled deposits earn." },
   { q: "Can I lose my deposit?", a: "Your USDC sits in an Ample vault and stays yours. Like any DeFi product there is smart contract risk, so only stake what you are comfortable with. Prizes are never guaranteed, and you may go many weeks without winning." },
   { q: "Can I withdraw any time?", a: "Yes. There is no lockup. Open the Withdraw tab on the Stake page, or use the stake option offered on any Loofta withdrawal. Withdrawing lowers your tickets for later draws." },
-  { q: "What does Loofta charge?", a: "There is no entry fee and no fee on staking or claiming. Loofta takes a 0.10% (never more than $25) withdrawal fee when you withdraw USDC from the vault, taken from the amount you withdraw in the same transaction. Prizes won in other tokens are converted to USDC with Jupiter when you withdraw, and that swap carries Jupiter's own route cost plus Loofta's 0.80% swap fee. Ample's own fee switch is currently off. You also pay the small Solana network cost. Any change will be written here first." },
+  { q: "What does Loofta charge?", a: "Loofta charges a flat $0.10 when you add money and a flat $0.10 when you withdraw. Moving money between your wallet and the savings pool also carries a small bridge cost, about $0.02 each way, and Loofta pays the network fees. Any change will be written here first." },
   { q: "How are my chances worked out?", a: "By tickets. The Stake page shows an estimate of your weekly odds based on your stake and the pool size, and the exact ticket count once you are staked. Treat the estimate as a guide, not a promise." },
   { q: "Who runs the vault?", a: "Ample (ample.money). Loofta is an interface to it: the vault and the draw are Ample's, and your wallet signs every transaction. For contracts, audits and the protocol's own rules, read Ample's documentation." },
   { q: "Which chain and token?", a: "USDC on Solana." },

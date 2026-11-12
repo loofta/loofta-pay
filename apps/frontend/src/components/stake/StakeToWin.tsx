@@ -196,7 +196,7 @@ const STEPS = [
 
 const FAQ = [
   { q: "Is my money safe?", a: "Your dollars (held as USDC, a digital dollar) stay yours and you can take them out any time. They are held in a savings pool. Like any online financial product there is a small technical risk, and prizes are never guaranteed." },
-  { q: "Where do prizes come from?", a: "Every dollar in the pool earns interest. That interest is collected into weekly prizes and shared out by draw. Nobody pays to enter." },
+  { q: "Where do prizes come from?", a: "Every dollar in the pool earns interest. That interest is collected into weekly prizes and shared out by draw." },
   { q: "How do I win more often?", a: "Tickets build up the longer you stay and the more you add. More tickets means a bigger share of each draw." },
 ];
 
@@ -868,7 +868,7 @@ export function StakeToWin() {
                 {baseMode && isStake ? (
                   <span style={{ textAlign: "center", fontSize: 15, color: "#A9A6B0" }}>{`A flat $${FUND_FEE_USD.toFixed(2)} fee applies when you add money from your wallet.`}</span>
                 ) : null}
-                <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{"Your money stays yours · withdraw any time · no entry fee"}</span>
+                <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{"Your money stays yours · withdraw any time"}</span>
               </div>
             </div>
           </div>
@@ -906,7 +906,7 @@ export function StakeToWin() {
 
         {stats && (
           <section style={{ marginTop: 32, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)", background: "#101015", overflow: "hidden" }}>
-            <Stat label="Paid out in prizes" value={compactUsd(stats.totalPaidUsd)} note="Funded by yield, not entry fees" />
+            <Stat label="Paid out in prizes" value={compactUsd(stats.totalPaidUsd)} note="Funded by yield" />
             <Stat label="Saved by everyone" value={compactUsd(stats.tvlUsd)} note="Held in the pool right now" />
             {stats.avgApr ? <Stat label="Average yearly return" value={`~${pct(stats.avgApr)}`} note="Paid out as weekly prizes" accent /> : null}
           </section>
