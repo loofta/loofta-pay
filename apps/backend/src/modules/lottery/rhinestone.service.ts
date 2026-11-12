@@ -374,6 +374,43 @@ export class RhinestoneService {
     this.logger.log(`Rhinestone rescue complete`);
   }
 
+  // ---- Earn companion helpers (Ample links and signs from this account) ----
+
+  private get publicClient() {
+    return createPublicClient({ chain: base, transport: http(this.baseRpcUrl) });
+  }
+
+  async isDeployed(address: Address): Promise<boolean> {
+    const code = await this.publicClient.getCode({ address });
+    return !!code && code !== '0x';
+  }
+
+  /**
+   * An account that is not deployed yet signs with a long counterfactual wrapper (about 2,500 characters) that Ample rejects.
+   * Once deployed the signature is a short ERC-1271 one. A sponsored no-op deploys it, and Rhinestone pays.
+   */
+  async ensureDeployed(ownerKey: `0x${string}`): Promise<Address> {
+    const account = await this.getAccount(ownerKey);
+    const address = account.getAddress() as Address;
+    if (await this.isDeployed(address)) return address;
+    await this.sendSponsored(ownerKey, [{ to: address, data: '0x', value: 0n }]);
+    for (let i = 0; i < 10; i++) {
+      if (await this.isDeployed(address)) return address;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    throw new Error('Companion account did not deploy');
+  }
+
+  async signMessage(ownerKey: `0x${string}`, message: string): Promise<`0x${string}`> {
+    await this.ensureDeployed(ownerKey);
+    const account = await this.getAccount(ownerKey);
+    return account.signMessage(message, base, undefined);
+  }
+
+  async usdcBalance(address: Address): Promise<bigint> {
+    return (await this.publicClient.readContract({ address: USDC_BASE, abi: erc20Abi, functionName: 'balanceOf', args: [address] })) as bigint;
+  }
+
   /**
    * Run calls from the smart account with Rhinestone paying the gas. Returns the transaction hash.
    * The account needs no ETH, only the tokens it moves.

@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { getAmpleOverview, getAmpleStatus } from "@/services/api/ample";
-import { compactUsd, fromBase, pct, useAmpleStats } from "./useAmpleStats";
+import { getAmpleEvmOverview, getAmpleEvmStatus, getAmpleOverview, getAmpleStatus } from "@/services/api/ample";
+import { compactUsd, pct, useAmpleStats } from "./useAmpleStats";
 
 const SORA = "var(--font-home-sora), Sora, sans-serif";
 const GOLD = "#FF7A2A";
@@ -17,6 +17,7 @@ export function StakeHomeCard() {
   const { authenticated, userId, getAccessToken } = useAuth();
   const { data: stats } = useAmpleStats();
 
+  // Savings can sit in the new pool, the old one, or both. The card adds them up.
   const me = useQuery({
     queryKey: ["ample-me", userId],
     enabled: authenticated && !!userId,
@@ -24,23 +25,36 @@ export function StakeHomeCard() {
     retry: 1,
     queryFn: async () => {
       const o = { userId: userId ?? undefined, accessToken: await getAccessToken().catch(() => null) };
-      const s = await getAmpleStatus(o);
-      if (!s.enabled || !s.linked) return null;
-      return getAmpleOverview(o);
+      const read = async (status: () => Promise<{ enabled: boolean; linked: boolean }>, overview: () => Promise<any>) => {
+        try {
+          const st = await status();
+          return st.enabled && st.linked ? await overview() : null;
+        } catch {
+          return null;
+        }
+      };
+      const [sol, evm] = await Promise.all([
+        read(() => getAmpleStatus(o), () => getAmpleOverview(o)),
+        read(() => getAmpleEvmStatus(o), () => getAmpleEvmOverview(o)),
+      ]);
+      const list = [sol, evm].filter(Boolean) as any[];
+      const usd = list.reduce((a, ov) => a + (ov.balances ?? []).reduce((x: number, b: any) => x + (b?.usdMicro && /^\d+$/.test(b.usdMicro) ? Number(b.usdMicro) / 1e6 : 0), 0), 0);
+      const tickets = list.reduce((a, ov) => a + (ov.tickets?.totalTickets !== undefined ? Math.floor(Number(ov.tickets.totalTickets)) : 0), 0);
+      const claimable = list.reduce((a, ov) => a + (ov.claimable?.length ?? 0), 0);
+      return { usd, tickets, claimable };
     },
   });
 
-  const held = me.data?.balances?.find((b: any) => b.vaultId === stats?.vaultId || b.vault?.id === stats?.vaultId) ?? me.data?.balances?.find((b) => b.token?.symbol === (stats?.symbol ?? "USDC"));
-  const decimals = held?.token?.decimals ?? stats?.decimals ?? 6;
-  const staked = held && Number(held.depositsToken) > 0 ? fromBase(held.depositsToken, decimals) : null;
-  const tickets = me.data?.tickets?.totalTickets !== undefined ? Math.floor(Number(me.data.tickets.totalTickets)) : 0;
-  const claimable = me.data?.claimable?.length ?? 0;
+  // Under a cent is leftover dust, not a stake worth announcing.
+  const staked = me.data && me.data.usd >= 0.01 ? me.data.usd.toFixed(2) : null;
+  const tickets = staked ? me.data?.tickets ?? 0 : 0;
+  const claimable = me.data?.claimable ?? 0;
 
   const title = staked ? `You have $${staked} earning` : "Earn on your dollars, win weekly";
   const sub = claimable > 0
     ? `You have ${claimable} prize${claimable === 1 ? "" : "s"} to claim`
     : staked
-      ? `${tickets.toLocaleString()} tickets in the weekly draw`
+      ? `${tickets.toLocaleString()} ticket${tickets === 1 ? "" : "s"} in the weekly draw`
       : stats?.avgApr
         ? `~${pct(stats.avgApr)} a year on average${stats.totalPaidUsd ? ` · ${compactUsd(stats.totalPaidUsd)} paid out` : ""}`
         : "Your deposit stays yours";

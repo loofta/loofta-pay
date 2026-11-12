@@ -36,12 +36,13 @@ const WeeklyQuestTab = dynamic(() => import("./tabs/WeeklyQuestTab").then((m) =>
 const PacksTab = dynamic(() => import("./tabs/PacksTab").then((m) => m.PacksTab), { loading: tabLoading, ssr: false });
 const SubscriptionsTab = dynamic(() => import("./tabs/SubscriptionsTab").then((m) => m.SubscriptionsTab), { loading: tabLoading, ssr: false });
 const AnalyticsTab = dynamic(() => import("./tabs/AnalyticsTab").then((m) => m.AnalyticsTab), { loading: tabLoading, ssr: false });
+const EarnTab = dynamic(() => import("./tabs/EarnTab").then((m) => m.EarnTab), { loading: tabLoading, ssr: false });
 const GiveawaysTab = dynamic(() => import("./tabs/GiveawaysTab").then((m) => m.GiveawaysTab), { loading: tabLoading, ssr: false });
 
-type AdminTab = "payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout" | "lottery" | "packs" | "subscriptions" | "giveaways" | "weekly-quest";
+type AdminTab = "payments" | "sparks" | "waitlist" | "analytics" | "blink" | "cashout" | "lottery" | "packs" | "subscriptions" | "giveaways" | "weekly-quest" | "earn";
 const ADMIN_TAB_STORAGE_KEY = "loofta-admin-active-tab";
 const ADMIN_TAB_QUERY_KEY = ["admin-active-tab"];
-const VALID_ADMIN_TABS: AdminTab[] = ["payments", "sparks", "waitlist", "analytics", "blink", "cashout", "lottery", "packs", "subscriptions", "giveaways", "weekly-quest"];
+const VALID_ADMIN_TABS: AdminTab[] = ["payments", "sparks", "waitlist", "analytics", "blink", "cashout", "lottery", "packs", "subscriptions", "giveaways", "weekly-quest", "earn"];
 
 function loadStoredAdminTab(): AdminTab {
   if (typeof window === "undefined") return "payments";
@@ -873,7 +874,7 @@ export default function AdminDashboard() {
               () => fetchPajCash(pajCashPage, pajCashStatusFilter, pajCashDirectionFilter)
             ) :
             activeTab === "lottery" ? () => { reconcileAndFetchLottery(lotteryPage, lotteryStatusFilter); fetchGifts(giftsPage); fetchReferralFees(); } :
-            activeTab === "giveaways" || activeTab === "weekly-quest" || activeTab === "packs" || activeTab === "subscriptions" ? () => {} : // self-contained tabs refresh themselves
+            activeTab === "giveaways" || activeTab === "weekly-quest" || activeTab === "packs" || activeTab === "subscriptions" || activeTab === "earn" ? () => {} : // self-contained tabs refresh themselves
             () => fetchWaitlist(waitlistPage, { search: waitlistSearch, access: waitlistAccessFilter, sortCol: waitlistSortCol, sortDir: waitlistSortDir })
           }
           disabled={loading || sparksLoading || waitlistLoading || analyticsLoading || blinkLoading || cashoutLoading || withdrawalsLoading || pajCashLoading || lotteryLoading}
@@ -968,6 +969,13 @@ export default function AdminDashboard() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab("earn")}
+          className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "earn" ? "border-orange-500 text-orange-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
+        >
+          Earn
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab("giveaways")}
           className={`px-4 py-2 text-base md:text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activeTab === "giveaways" ? "border-pink-500 text-pink-400" : "border-transparent text-gray-500 hover:text-gray-300"}`}
         >
@@ -1033,6 +1041,7 @@ export default function AdminDashboard() {
       {activeTab === "packs" && <PacksTab />}
       {activeTab === "weekly-quest" && <WeeklyQuestTab />}
       {activeTab === "subscriptions" && <SubscriptionsTab />}
+      {activeTab === "earn" && <EarnTab />}
 
       {activeTab === "giveaways" && <GiveawaysTab />}
 

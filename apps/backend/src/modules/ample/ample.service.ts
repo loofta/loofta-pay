@@ -12,7 +12,24 @@ const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const BASE = 'https://api.ample.money/v1';
 const NETWORK = 'SOLANA';
 
-type Tier = { kind: 'key' } | { kind: 'session'; userId: string };
+export interface DrawTier { tier: number; winners: number; poolPercent: number; poolUsd: number; perWinnerUsd: number }
+export interface DrawInfo {
+  nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null;
+  estimatedPayoutPoolUsd: number | null; depositors: number | null; tiers: DrawTier[];
+}
+/** Ample's own estimate for the coming draw: the pool, how many people are in, and winners and prize per tier. */
+export function drawDetails(r: any): Pick<DrawInfo, 'estimatedPayoutPoolUsd' | 'depositors' | 'tiers'> {
+  return {
+    estimatedPayoutPoolUsd: Number.isFinite(Number(r?.estimatedPayoutPoolUsd)) ? Number(r.estimatedPayoutPoolUsd) : null,
+    depositors: Number.isFinite(Number(r?.depositors)) ? Number(r.depositors) : null,
+    tiers: (Array.isArray(r?.tiers) ? r.tiers : []).map((t: any) => ({
+      tier: Number(t.tier), winners: Number(t.winners), poolPercent: Number(t.prizePoolPercent),
+      poolUsd: Number(t.estimatedPrizePoolUsd), perWinnerUsd: Number(t.estimatedPrizePerWinnerUsd),
+    })),
+  };
+}
+
+export type Tier = { kind: 'key' } | { kind: 'session'; userId: string };
 
 interface CachedSession {
   token: string;
@@ -111,6 +128,19 @@ export class AmpleService {
 
   canBuildTransactions(): boolean {
     return this.isEnabled() && !this.txScopeDenied;
+  }
+
+  /** For the EVM service: the same authenticated Ample call, under any partner user key. */
+  request<T = any>(method: 'GET' | 'POST' | 'DELETE', path: string, tier: Tier, opts: { body?: unknown; query?: Record<string, string | undefined> } = {}): Promise<T> {
+    return this.call<T>(method, path, tier, opts);
+  }
+
+  forgetSession(partnerUserId: string) {
+    this.sessions.delete(partnerUserId);
+  }
+
+  assertCanTransact() {
+    this.requireTx();
   }
 
   // ---- tier 1 ----
@@ -224,7 +254,7 @@ export class AmpleService {
   private loggedClaimShape = false;
 
   /** Which vault paid a prize: its own vault id when Ample sends one, otherwise matched by token address or symbol. */
-  private payoutVaultId(p: any, vaults: any[]): string | null {
+  payoutVaultId(p: any, vaults: any[]): string | null {
     const direct = p?.vaultId ?? p?.vault?.id;
     if (direct) return String(direct);
     const addr = p?.tokenAddress ?? p?.token?.address;
@@ -234,7 +264,7 @@ export class AmpleService {
   }
 
   /** USD millionths for a raw payout/position amount of the given vault. null when the token cannot be priced. */
-  private async usdMicro(vaultId: string | undefined, rawBase: string, ctx: { vaults: any[]; balances: any[] }): Promise<bigint | null> {
+  async usdMicro(vaultId: string | undefined, rawBase: string, ctx: { vaults: any[]; balances: any[] }): Promise<bigint | null> {
     if (!vaultId || !/^\d+$/.test(String(rawBase))) return null;
     const bal = ctx.balances.find(b => b?.vaultId === vaultId);
     const vault = ctx.vaults.find(v => v?.id === vaultId);
@@ -246,21 +276,46 @@ export class AmpleService {
     return BigInt(Math.round((Number(rawBase) / 10 ** dec) * rate * 1e6));
   }
 
-  private drawCache: { at: number; data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null } | null } | null = null;
+  private drawCache: { at: number; data: DrawInfo | null } | null = null;
 
   /** Next draw time from Ample (cached 10s). Null if the call fails so stats still render. */
   async nextDraw() {
     if (this.drawCache && Date.now() - this.drawCache.at < 10_000) return this.drawCache.data;
-    let data: { nextDrawAt: string; drawIntervalSeconds: number; lastDrawStatus: string | null } | null = null;
+    let data: DrawInfo | null = null;
     try {
       const r: any = await this.call('GET', '/draws/next', { kind: 'key' }, { query: { network: NETWORK } });
       if (r?.nextDrawAt) {
-        data = { nextDrawAt: String(r.nextDrawAt), drawIntervalSeconds: Number(r.drawIntervalSeconds) || 604800, lastDrawStatus: r.lastDrawStatus ?? null };
+        data = { nextDrawAt: String(r.nextDrawAt), drawIntervalSeconds: Number(r.drawIntervalSeconds) || 604800, lastDrawStatus: r.lastDrawStatus ?? null, ...drawDetails(r) };
       }
     } catch {
       data = null;
     }
     this.drawCache = { at: Date.now(), data };
+    return data;
+  }
+
+  private lastDrawCache = new Map<string, { at: number; data: any }>();
+
+  /** The most recent settled draw on a network: what was really paid, to how many, out of how many savers. Cached 5 minutes. */
+  async lastDraw(network: string): Promise<{ drawnAt: string; payoutPoolUsd: number; participants: number; winners: number; grandPrizeUsd: number | null } | null> {
+    const hit = this.lastDrawCache.get(network);
+    if (hit && Date.now() - hit.at < 300_000) return hit.data;
+    let data: any = null;
+    try {
+      const r: any = await this.call('GET', '/draws', { kind: 'key' }, { query: { network, limit: '1' } });
+      const d = (r?.data ?? [])[0];
+      if (d) {
+        const tiers: any[] = Array.isArray(d.tiers) ? d.tiers : [];
+        data = {
+          drawnAt: String(d.drawnAt),
+          payoutPoolUsd: Number(d.payoutPoolUsd) || 0,
+          participants: Number(d.participants) || 0,
+          winners: tiers.reduce((a, t) => a + (Number(t.winners) || 0), 0),
+          grandPrizeUsd: Number(tiers.find(t => Number(t.tier) === 1)?.prizePerWinnerUsd) || null,
+        };
+      }
+    } catch { data = null; }
+    this.lastDrawCache.set(network, { at: Date.now(), data });
     return data;
   }
 
@@ -272,12 +327,17 @@ export class AmpleService {
     const monthly = Number(v.payouts?.monthlyUsd) || 0;
     const draw = await this.nextDraw();
     // Prizes paid out by Ample in total, every vault on every network (what its own site shows).
-    const allPaid = (await this.everyVault().catch(() => [] as any[])).reduce((a, x) => a + (Number(x?.payouts?.cumulativeUsd) || 0), 0);
+    const every = await this.everyVault().catch(() => [] as any[]);
+    const allPaid = every.reduce((a, x) => a + (Number(x?.payouts?.cumulativeUsd) || 0), 0);
+    // The whole network shares one draw, so the weekly pool is everything its vaults paid last month.
+    const networkTvl = every.filter(x => String(x?.network ?? '').toUpperCase() === NETWORK).reduce((a, x) => a + (Number(x?.tvlUsd) || 0), 0);
+    const poolMonthly = every.filter(x => String(x?.network ?? '').toUpperCase() === NETWORK).reduce((a, x) => a + (Number(x?.payouts?.monthlyUsd) || 0), 0);
     return {
+      poolMonthlyUsd: Math.round(poolMonthly * 100) / 100,
       vaultId: v.id as string,
       symbol: (v.token?.symbol as string) ?? 'USDC',
       decimals: (v.token?.decimals as number) ?? 6,
-      tvlUsd: tvl,
+      tvlUsd: networkTvl || tvl,
       monthlyPayoutsUsd: monthly,
       totalPaidUsd: allPaid || Number(v.payouts?.cumulativeUsd) || 0,
       avgApr: tvl > 0 ? Math.round(((monthly * 12) / tvl) * 1000) / 10 : null,
@@ -285,6 +345,10 @@ export class AmpleService {
       nextDrawAt: draw?.nextDrawAt ?? null,
       drawIntervalSeconds: draw?.drawIntervalSeconds ?? null,
       lastDrawStatus: draw?.lastDrawStatus ?? null,
+      estimatedPayoutPoolUsd: draw?.estimatedPayoutPoolUsd ?? null,
+      depositors: draw?.depositors ?? null,
+      tiers: draw?.tiers ?? [],
+      lastDraw: await this.lastDraw(NETWORK),
     };
   }
 
@@ -753,5 +817,61 @@ export class AmpleService {
       this.logger.warn(`earnings failed: ${e?.message}`);
       return none;
     }
+  }
+
+  /**
+   * Admin view: every Loofta user who staked, from the stake_events ledger. Deposits and withdrawals are the USDC vault; claimed
+   * prizes are converted to USD at current rates and compound into the position, so in pool = deposited + won - withdrawn.
+   * The ledger only has stakes made through our page (reported after the tx confirmed), not deposits made elsewhere.
+   */
+  async adminStakers() {
+    const db = this.supabase.getClient();
+    const rows: any[] = [];
+    for (let from = 0; from < 50_000; from += 1000) {
+      const { data, error } = await db.from('stake_events')
+        .select('privy_user_id, wallet_address, vault_id, kind, amount_base, tx_signature, created_at')
+        .order('created_at', { ascending: true }).range(from, from + 999);
+      if (error) throw new BadRequestException(`Could not read the stake ledger: ${error.message}`);
+      rows.push(...(data ?? []));
+      if (!data || data.length < 1000) break;
+    }
+    const vaults = await this.everyVault().catch(() => [] as any[]);
+    const ctx = { vaults, balances: [] as any[] };
+    const by = new Map<string, any>();
+    for (const r of rows) {
+      const micro = await this.usdMicro(r.vault_id, String(r.amount_base).split('.')[0], ctx).catch(() => null);
+      const usd = micro === null ? 0 : Number(micro) / 1e6;
+      let u = by.get(r.privy_user_id);
+      if (!u) {
+        u = { userId: r.privy_user_id, wallet: r.wallet_address, depositedUsd: 0, withdrawnUsd: 0, wonUsd: 0, deposits: 0, firstAt: r.created_at, lastAt: r.created_at, lastTx: null };
+        by.set(r.privy_user_id, u);
+      }
+      u.wallet = r.wallet_address;
+      u.lastAt = r.created_at;
+      if (r.kind === 'deposit') { u.depositedUsd += usd; u.deposits += 1; u.lastTx = r.tx_signature; }
+      else if (r.kind === 'withdraw') u.withdrawnUsd += usd;
+      else if (r.kind === 'claim') u.wonUsd += usd;
+    }
+    const ids = [...by.keys()];
+    const names = new Map<string, { username: string | null; email: string | null }>();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data } = await db.from('users').select('privy_user_id, username, email').in('privy_user_id', ids.slice(i, i + 200));
+      for (const d of data ?? []) names.set(d.privy_user_id, { username: d.username ?? null, email: d.email ?? null });
+    }
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const stakers = [...by.values()].map(u => ({
+      ...u,
+      username: names.get(u.userId)?.username ?? null,
+      email: names.get(u.userId)?.email ?? null,
+      depositedUsd: r2(u.depositedUsd),
+      withdrawnUsd: r2(u.withdrawnUsd),
+      wonUsd: r2(u.wonUsd),
+      inPoolUsd: r2(Math.max(0, u.depositedUsd + u.wonUsd - u.withdrawnUsd)),
+    })).sort((a, b) => b.inPoolUsd - a.inPoolUsd || b.depositedUsd - a.depositedUsd);
+    const sum = (k: 'depositedUsd' | 'withdrawnUsd' | 'wonUsd' | 'inPoolUsd') => r2(stakers.reduce((a, x) => a + x[k], 0));
+    return {
+      totals: { stakers: stakers.length, stillIn: stakers.filter(x => x.inPoolUsd >= 0.01).length, depositedUsd: sum('depositedUsd'), withdrawnUsd: sum('withdrawnUsd'), wonUsd: sum('wonUsd'), inPoolUsd: sum('inPoolUsd') },
+      stakers,
+    };
   }
 }

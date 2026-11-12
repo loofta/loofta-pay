@@ -9,7 +9,8 @@ import { getSolanaHttpRpc } from "@/lib/solanaCluster";
 import { waitForSignatureConfirmation } from "@/lib/per/confirmSignature";
 import { buildJupiterSwap } from "@/services/api/jupiterSwap";
 import { usePrivy } from "@privy-io/react-auth";
-import { useWallets, useSignMessage, useSignAndSendTransaction } from "@privy-io/react-auth/solana";
+import { useWallets, useSignMessage, useSignAndSendTransaction, useSignTransaction } from "@privy-io/react-auth/solana";
+import { getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 import { useAuth } from "@/hooks/useAuth";
 import { sora, manrope, jetbrainsMono } from "@/components/home-v4/fonts";
 import {
@@ -17,6 +18,12 @@ import {
   ampleBuildDeposit,
   ampleBuildWithdraw,
   ampleBuildSetup,
+  ampleEvmClaim,
+  ampleEvmWithdraw,
+  ampleFundBroadcast,
+  ampleFundPrepare,
+  ampleFundStatus,
+  ampleFundTx,
   ampleSetupFee,
   ampleRecordEvent,
   ampleChallenge,
@@ -30,6 +37,7 @@ import {
 } from "@/services/api/ample";
 import { compactUsd, fromBase, pct, useAmpleStats } from "./useAmpleStats";
 import { Vault3D } from "./Vault3D";
+import { useAmpleBase } from "./useAmpleBase";
 
 const ACC = "#FF5A1A";
 const GRAD = "linear-gradient(90deg,#FF3D0F,#FF7A2A)";
@@ -37,8 +45,15 @@ const SORA = "var(--font-home-sora), Sora, sans-serif";
 const MONO = "var(--font-home-mono), ui-monospace, monospace";
 const TICKETS_PER_DOLLAR = 100;
 const MIN_STAKE_USD = 1;
-// Estimated size of the next weekly prize, taken from the Ample site. Replace with the value from Ample's estimate endpoint once it ships.
-const NEXT_PAYOUT_ESTIMATE_USD = 1409.57;
+// Flat fee for moving USDC from the Solana wallet into the savings pool.
+const FUND_FEE_USD = 0.1;
+// Prize tiers: the share of each week's pool that goes to each group (from Ample's docs).
+const TIERS = [
+  { name: "Grand prize", share: 25, note: "1 winner" },
+  { name: "Large prizes", share: 15, note: "A few winners" },
+  { name: "Mid prizes", share: 30, note: "More winners" },
+  { name: "Wide base", share: 30, note: "Many small prizes" },
+];
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 function toBase(input: string, decimals: number): string | null {
@@ -107,7 +122,7 @@ const hue = (w: string) => [...w].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 
 
 /** What the average return means in dollars, so a non-crypto person can picture a year. */
 /** Small "i" that shows a short note on hover, focus or tap. */
-function InfoTip({ text, label = "More info" }: { text: string; label?: string }) {
+function InfoTip({ text, label = "More info", below = false }: { text: string; label?: string; below?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <span style={{ position: "relative", display: "inline-flex", verticalAlign: "middle" }}
@@ -117,7 +132,7 @@ function InfoTip({ text, label = "More info" }: { text: string; label?: string }
         i
       </button>
       {open && (
-        <span role="tooltip" style={{ position: "absolute", zIndex: 30, bottom: "calc(100% + 10px)", left: "50%", transform: "translateX(-50%)", width: "min(260px, 72vw)", padding: "10px 12px", borderRadius: 12, background: "#1A1A20", border: "1px solid rgba(255,255,255,0.12)", boxShadow: "0 14px 40px rgba(0,0,0,0.5)", fontSize: 14, fontWeight: 500, lineHeight: 1.45, color: "#E4E1EA", textAlign: "left", letterSpacing: 0, whiteSpace: "normal" }}>
+        <span role="tooltip" style={{ position: "absolute", zIndex: 30, ...(below ? { top: "calc(100% + 10px)", left: -8 } : { bottom: "calc(100% + 10px)", left: "50%", transform: "translateX(-50%)" }), width: "min(260px, 72vw)", padding: "10px 12px", borderRadius: 12, background: "#1A1A20", border: "1px solid rgba(255,255,255,0.12)", boxShadow: "0 14px 40px rgba(0,0,0,0.5)", fontSize: 14, fontWeight: 500, lineHeight: 1.45, color: "#E4E1EA", textAlign: "left", letterSpacing: 0, whiteSpace: "normal" }}>
           {text}
         </span>
       )}
@@ -127,11 +142,10 @@ function InfoTip({ text, label = "More info" }: { text: string; label?: string }
 
 function Calculator({ apr }: { apr: number | null }) {
   const [amt, setAmt] = useState(7600);
-  const [years, setYears] = useState(1);
   if (!apr) return null;
   const usd = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
-  // Winnings claimed on Solana go straight back into the position, so they compound. Weekly, to match the weekly draw.
-  const gain = (ratePct: number) => amt * (Math.pow(1 + ratePct / 100 / 52, 52 * years) - 1);
+  // One year, simple. No compounding: winnings are a random prize, not a rate that stacks.
+  const gain = (ratePct: number) => amt * (ratePct / 100);
   const year = gain(apr);
   const row = (label: string, value: string, opts: { big?: boolean; color?: string; muted?: boolean } = {}) => (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "clamp(10px,1.4vw,16px) 0", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
@@ -160,22 +174,11 @@ function Calculator({ apr }: { apr: number | null }) {
           </div>
         </div>
         <div style={{ flex: "1 1 320px", display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingBottom: 2 }}>
-            <span style={{ fontSize: 17, fontWeight: 600, color: "#8A8893" }}>{years === 1 ? "Per year" : `After ${years} years`}</span>
-            <div role="group" aria-label="Years" style={{ display: "flex", gap: 4, padding: 3, borderRadius: 999, background: "#0B0B0E" }}>
-              {[1, 5, 10].map((y) => (
-                <button key={y} type="button" onClick={() => setYears(y)} aria-pressed={years === y}
-                  style={{ cursor: "pointer", border: "none", padding: "6px 14px", borderRadius: 999, fontFamily: SORA, fontWeight: 800, fontSize: 15, color: years === y ? "#F2EFE8" : "#6E6C78", background: years === y ? "#1F1F27" : "transparent" }}>
-                  {y}Y
-                </button>
-              ))}
-            </div>
-          </div>
+          <span style={{ fontSize: 17, fontWeight: 600, color: "#8A8893", paddingBottom: 2 }}>Per year</span>
           {row("Average", usd(year), { big: true, color: "#EE6A2C" })}
-          {/* Lucky one-year results only: a best case is not something to compound for years. Simple, not compounded. */}
-          {years === 1 ? row("Top savers", `${usd(amt * 0.1)}\u2013${usd(amt * 0.42)}`) : null}
+          {row("Top savers", `${usd(amt * 0.1)}\u2013${usd(amt * 0.42)}`)}
           {row("Bank", usd(gain(0.5)), { muted: true })}
-          <span style={{ fontSize: 15, color: "#8A8893", paddingTop: 12 }}>{years === 1 ? "Paid as weekly prizes." : "Paid as weekly prizes, with your winnings kept in."}</span>
+          <span style={{ fontSize: 15, color: "#8A8893", paddingTop: 12 }}>Paid as weekly prizes.</span>
         </div>
       </div>
     </section>
@@ -203,10 +206,13 @@ export function StakeToWin() {
   const { wallets } = useWallets();
   const { signMessage } = useSignMessage();
   const { signAndSendTransaction } = useSignAndSendTransaction();
-  const { data: stats } = useAmpleStats();
+  const { signTransaction } = useSignTransaction();
+  const { data: solStats } = useAmpleStats();
 
   const [status, setStatus] = useState<AmpleStatus | null>(null);
-  const [overview, setOverview] = useState<AmpleOverview | null>(null);
+  const [solOverview, setSolOverview] = useState<AmpleOverview | null>(null);
+  const [legacy, setLegacy] = useState(false);
+  const [drawInfoOpen, setDrawInfoOpen] = useState(false);
   const [tab, setTab] = useState<"stake" | "withdraw">("stake");
   const [amount, setAmount] = useState("25");
   const [focus, setFocus] = useState(false);
@@ -240,6 +246,13 @@ export function StakeToWin() {
   const [firstFee, setFirstFee] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // Short confirmation after money is added, shown over the page for a few seconds.
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(t);
+  }, [toast]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -260,7 +273,16 @@ export function StakeToWin() {
 
   const opts = useCallback(async () => ({ userId: userId ?? undefined, accessToken: await getAccessToken().catch(() => null) }), [userId, getAccessToken]);
 
-  const vault = status?.vaults?.[0];
+  const bs = useAmpleBase({ enabled: authenticated, opts });
+  // Everyone saves in the Base pool. If it is ever unavailable, or the person opens their old Solana savings to take them out, the Solana path runs instead.
+  const baseMode = !legacy && (bs.loading || !!bs.vault);
+  const stats = bs.stats ?? (bs.statsLoading ? null : solStats);
+  const overview: AmpleOverview | null = baseMode ? (bs.overview as unknown as AmpleOverview | null) : solOverview;
+  const vault = (baseMode ? bs.vault : status?.vaults?.[0]) as AmpleStatus["vaults"][number] | null | undefined;
+  // The same checks the Solana flow makes, read from whichever network is selected.
+  const st = baseMode
+    ? (bs.status ? { enabled: bs.status.enabled, canTransact: bs.status.canTransact, linked: bs.status.linked } : null)
+    : status;
   const decimals = vault?.token?.decimals ?? stats?.decimals ?? 6;
   const symbol = vault?.token?.symbol ?? stats?.symbol ?? "USDC";
   const held =
@@ -272,7 +294,7 @@ export function StakeToWin() {
       const o = await opts();
       const s = await getAmpleStatus(o);
       setStatus(s);
-      if (s.enabled && s.linked) setOverview(await getAmpleOverview(o));
+      if (s.enabled && s.linked) setSolOverview(await getAmpleOverview(o));
       // The first deposit from an empty wallet carries a one-time fee. Show it up front, not as a surprise.
       if (s.enabled) ampleSetupFee(o).then((f) => setFirstFee(f.needed && f.feeUsd ? f.feeUsd : null)).catch(() => setFirstFee(null));
     } catch (e: any) {
@@ -287,8 +309,9 @@ export function StakeToWin() {
     else setLoading(false);
   }, [authenticated, refresh]);
 
-  const run = async (label: string, fn: () => Promise<void>) => {
+  const run = async (label: string, fn: () => Promise<void>): Promise<boolean> => {
     setBusy(label); setError(null); setNote(null);
+    let ok = true;
     try { await fn(); }
     catch (e: any) {
       const m = String(e?.message ?? "");
@@ -297,7 +320,9 @@ export function StakeToWin() {
       else if (/simulation/i.test(m)) setError("That transaction would fail, check your balance and try again.");
       else if (/exceeds/i.test(m)) setError("That is more than you have staked.");
       else setError(m || "Something went wrong, try again.");
+      ok = false;
     } finally { setBusy(null); }
+    return ok;
   };
 
   // Links the Loofta wallet to the savings pool. Needed once, and again if the account was linked to a different wallet.
@@ -354,7 +379,8 @@ export function StakeToWin() {
     if (!sig || !vault) return;
     // A claim without a known paying vault is never recorded: it would be priced as USDC and overstate winnings.
     if (kind === "claim" && !vaultId) return;
-    try { await ampleRecordEvent({ kind, vaultId: vaultId ?? vault.id, amountBase, txSignature: sig, payoutId }, await opts()); } catch { /* ignore */ }
+    const ev = { kind, vaultId: vaultId ?? vault.id, amountBase, txSignature: sig, payoutId };
+    try { await ampleRecordEvent(ev, await opts()); } catch { /* ignore */ }
   };
 
   const heldDisplay = fromBase(held?.depositsToken, held?.token?.decimals ?? decimals);
@@ -367,7 +393,7 @@ export function StakeToWin() {
   const hasStake = stakedNum > 0;
   const amt = Math.max(0, Number(amount) || 0);
 
-  const stake = () => run("stake", async () => {
+  const stakeSolana = () => run("stake", async () => {
     let base = toBase(amount, decimals);
     if (!base) throw new Error("Enter an amount");
     if (!vault) { void refresh(); throw new Error("Earn is not available right now. Try again in a moment."); }
@@ -429,7 +455,7 @@ export function StakeToWin() {
     await waitForSignatureConfirmation(new Connection(getSolanaHttpRpc(), "confirmed"), bs58.encode(signature as Uint8Array));
   };
 
-  const withdraw = () => run("unstake", async () => {
+  const withdrawSolana = () => run("unstake", async () => {
     if (!vault) return;
     const eps = 0.0001;
     // Asking for more than the USDC vault holds, or the whole balance, withdraws everything and converts the rest to USDC.
@@ -446,11 +472,13 @@ export function StakeToWin() {
     let converted = 0;
     let kept = 0;
     if (everything) {
-      for (const b of convertible as any[]) {
+      for (const b of otherPositions as any[]) {
         try {
           const built = await ampleBuildWithdraw(b.vaultId, String(b.depositsToken), await opts());
           await report("withdraw", built.withdrawnBase ?? String(b.depositsToken), await sendTx(built), undefined, b.vaultId);
           withdrawn++;
+          // Too small to be worth a swap: it stays in the wallet as its own token, but it is out of the pool and recovered.
+          if (microOf(b) < BigInt(10_000)) continue;
           try { await swapToUsdc(b); converted++; } catch (e) { console.warn("[stake] swap to USDC skipped:", e); kept++; }
         } catch (e) { console.warn("[stake] other-vault withdraw skipped:", e); kept++; }
       }
@@ -462,7 +490,7 @@ export function StakeToWin() {
     await refresh();
   });
 
-  const claim = (payoutId: string) => run("claim", async () => {
+  const claimSolana = (payoutId: string) => run("claim", async () => {
     const p = overview?.claimable.find((c) => c.payoutId === payoutId);
     const o = await opts();
     const { sig } = await buildSend((plain) => ampleBuildClaim(payoutId, o, plain));
@@ -472,7 +500,7 @@ export function StakeToWin() {
   });
 
   // Ample takes one payout per transaction, so "claim all" signs them one after another.
-  const claimAll = () => run("claim", async () => {
+  const claimAllSolana = () => run("claim", async () => {
     const list = [...(overview?.claimable ?? [])];
     let done = 0;
     try {
@@ -488,6 +516,123 @@ export function StakeToWin() {
     }
   });
 
+  // ---- Earn pool (larger one): the backend holds the Earn account and pays all gas. The person only signs on Solana. ----
+  const waitForOrder = async (id: string, what: string) => {
+    for (let i = 0; i < 150; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const st = await ampleFundStatus(id, await opts()).catch(() => null);
+      if (st?.status === "FAILED") throw new Error(st.detail || `${what} did not finish. Your money is safe and we are looking into it.`);
+      if (st?.status === "SUCCESS") return;
+    }
+    throw new Error(`${what} is taking longer than usual. Your money is safe, check back in a few minutes.`);
+  };
+
+  const stakeBase = () => run("stake", async () => {
+    if (!vault) { void bs.refresh(); throw new Error("Earn is not available right now. Try again in a moment."); }
+    if (amt < MIN_STAKE_USD) throw new Error("The minimum is $1.");
+    if (!solAddress || !wallet) throw new Error("No wallet found");
+    let solUsdc = 0;
+    try {
+      const bal = await new Connection(getSolanaHttpRpc(), "confirmed").getTokenAccountBalance(getAssociatedTokenAddressSync(new PublicKey(USDC_MINT), new PublicKey(solAddress)));
+      solUsdc = Number(bal.value.amount) / 1e6;
+    } catch { /* no USDC account yet means zero */ }
+    const toUnits = (n: number) => String(Math.round(n * 1e6));
+    const shortBy = (Math.ceil((amt + FUND_FEE_USD + 0.05 - solUsdc) * 100) / 100).toFixed(2);
+    if (solUsdc < FUND_FEE_USD + 1) { setDeposit({ screen: "home", amount: shortBy }); return; }
+    const o = await opts();
+    // The bridge cost comes out of the deposit when the wallet cannot cover amount + cost, so a full balance still works.
+    const prep = await ampleFundPrepare({ solanaAddress: solAddress, outputUnits: toUnits(amt), maxTotalUnits: toUnits(solUsdc) }, o);
+    const arriving = Math.floor((Number(prep.outUnits) / 1e6) * 100) / 100;
+    if (arriving < MIN_STAKE_USD) { setDeposit({ screen: "home", amount: shortBy }); return; }
+    setNote(`Adding $${fmt(arriving)}. A flat $${FUND_FEE_USD.toFixed(2)} fee applies.`);
+    const built = await ampleFundTx(prep.id, o);
+    const { signedTransaction } = await signTransaction({
+      transaction: Uint8Array.from(atob(built.transaction), (c) => c.charCodeAt(0)),
+      wallet,
+      chain: getPrivySolanaChainForMode("mainnet"),
+      options: { uiOptions: { showWalletUIs: false } },
+    } as never);
+    const signed = signedTransaction instanceof Uint8Array ? signedTransaction : new Uint8Array(signedTransaction as ArrayBuffer);
+    let bin = "";
+    for (let i = 0; i < signed.length; i++) bin += String.fromCharCode(signed[i]);
+    await ampleFundBroadcast(prep.id, btoa(bin), await opts());
+    // The backend bridges, then deposits. This waits for the whole thing so "Done" is true.
+    await waitForOrder(prep.id, "Your deposit");
+    await bs.refresh();
+    // Land on Withdraw so the person sees their new balance, and say plainly that it worked.
+    setTab("withdraw");
+    setAmount(arriving.toFixed(2));
+    setNote(null);
+    setToast(`$${fmt(arriving)} added. You are in this week's draw.`);
+  });
+
+  const withdrawBase = () => run("unstake", async () => {
+    if (!vault || !held || !solAddress) return;
+    const eps = 0.0001;
+    const everything = amt >= usdcStaked - eps;
+    const b = everything ? String(held.depositsToken) : toBase(amount, decimals);
+    if (!b) throw new Error("Enter an amount");
+    const { id } = await ampleEvmWithdraw({ amount: b, solanaAddress: solAddress }, await opts());
+    setNote("Withdrawing...");
+    await waitForOrder(id, "Your withdrawal");
+    setNote("Withdrawn to your wallet.");
+    setAmount("25");
+    await bs.refresh();
+  });
+
+  const claimBase = (ids: string[]) => run("claim", async () => {
+    const list = (overview?.claimable ?? []).filter((c) => ids.includes(c.payoutId));
+    if (list.length === 0) return;
+    await ampleEvmClaim(list.map((c) => c.payoutId), await opts());
+    for (const p of list) addClaimed(microOf(p).toString());
+    setNote(`${list.length} reward${list.length === 1 ? "" : "s"} added to your stake.`);
+    await bs.refresh();
+  });
+
+  const stake = baseMode ? stakeBase : stakeSolana;
+  // Once the old pool has been withdrawn, go back to the normal page. A tiny leftover Ample will not release stops being offered.
+  const [legacyCleared, setLegacyCleared] = useState(false);
+  const withdraw = baseMode ? withdrawBase : async () => {
+    const ok = await withdrawSolana();
+    setLegacyCleared(true);
+    if (ok) { setLegacy(false); setTab("stake"); setAmount("25"); }
+  };
+  useEffect(() => {
+    if (legacy && busy === null && moving === "idle" && (!solHasAny || (legacyCleared && solPosUsd < 0.01))) {
+      setLegacy(false); setTab("stake"); setAmount("25");
+    }
+  });
+  const claimAll = baseMode ? () => claimBase((overview?.claimable ?? []).map((c) => c.payoutId)) : claimAllSolana;
+
+  // "Move to the new pool": take everything out of the old pool (it lands as USDC in the wallet), then add it to the new one.
+  const [moving, setMoving] = useState<"idle" | "withdraw" | "stake">("idle");
+  const startMove = () => {
+    setLegacy(true); setError(null); setNote(null); setTab("withdraw");
+    setAmount(String(Math.floor(solPosUsd * 10000) / 10000));
+    setMoving("withdraw");
+  };
+  useEffect(() => {
+    if (moving === "withdraw" && legacy && !baseMode && busy === null && tab === "withdraw" && stakedNum > 0 && amt >= stakedNum - 0.0001) {
+      setMoving("idle");
+      void withdrawSolana().then((ok) => {
+        if (!ok) return;
+        setLegacy(false); setTab("stake");
+        setAmount((Math.floor(solPosUsd * 100) / 100).toFixed(2));
+        setMoving("stake");
+      });
+    }
+  });
+  useEffect(() => {
+    if (moving === "stake" && !legacy && baseMode && busy === null && tab === "stake") {
+      setMoving("idle");
+      void stakeBase();
+    }
+  });
+
+  const openLegacy = (on: boolean) => {
+    setLegacy(on); setError(null); setNote(null); setTab(on ? "withdraw" : "stake"); setAmount("25");
+  };
+
   const switchTab = (t: "stake" | "withdraw") => {
     setTab(t);
     setError(null); setNote(null);
@@ -496,7 +641,7 @@ export function StakeToWin() {
 
   const t = overview?.tickets;
   const ticketCount = t?.totalTickets !== undefined ? Math.floor(Number(t.totalTickets)) : 0;
-  const pool = stats?.tvlUsd ?? 0;
+  const pool = (legacy ? solStats?.tvlUsd : stats?.tvlUsd) ?? 0;
   const isStake = tab === "stake";
   const eff = isStake ? amt : Math.min(amt, stakedNum);
   const after = isStake ? stakedNum + eff : Math.max(0, stakedNum - eff);
@@ -511,15 +656,15 @@ export function StakeToWin() {
         { label: "Max", value: String(Math.floor(stakedNum * 10000) / 10000) },
       ];
 
-  const linked = !!(authenticated && status?.enabled && vault && status.linked);
+  const linked = !!(authenticated && st?.enabled && vault && st.linked);
   let ctaLabel = isStake ? `Add $${fmt(amt)}` : `Withdraw $${fmt(eff)}`;
   let ctaDisabled = busy !== null;
   let ctaAction: () => void = isStake ? stake : withdraw;
   if (loading) { ctaLabel = "Loading..."; ctaDisabled = true; }
   else if (!authenticated) { ctaLabel = "Sign in to start"; ctaDisabled = false; ctaAction = () => login(); }
-  else if (status && !status.enabled) { ctaLabel = "Earn opens soon"; ctaDisabled = true; }
-  else if (status?.enabled && !vault) { ctaLabel = "No pool open right now"; ctaDisabled = true; }
-  else if (status?.enabled && vault && !status.linked) {
+  else if (st && !st.enabled) { ctaLabel = "Earn opens soon"; ctaDisabled = true; }
+  else if (st?.enabled && !vault) { ctaLabel = "No pool open right now"; ctaDisabled = true; }
+  else if (st?.enabled && vault && !st.linked) {
     if (busy === "stake") ctaLabel = "Adding...";
     if (eff <= 0) ctaDisabled = true;
     else if (isStake && eff < MIN_STAKE_USD) { ctaDisabled = true; ctaLabel = "Minimum is $1"; }
@@ -528,7 +673,7 @@ export function StakeToWin() {
   else if (linked) {
     if (busy === "stake") ctaLabel = "Adding...";
     if (busy === "unstake") ctaLabel = "Withdrawing...";
-    if (!status?.canTransact) ctaDisabled = true;
+    if (!st?.canTransact) ctaDisabled = true;
     if (!isStake && !hasStake) ctaDisabled = true;
     if (eff <= 0) ctaDisabled = true;
     else if (isStake && eff < MIN_STAKE_USD) { ctaDisabled = true; ctaLabel = "Minimum is $1"; }
@@ -542,6 +687,18 @@ export function StakeToWin() {
   const wonBase = ledgerWon > localWon ? ledgerWon : localWon;
   const wonTotal = wonBase > BigInt(0) ? usdText(wonBase) : null;
   const apr = stats?.avgApr ?? null;
+  // A typical week's prize pool: what the whole network paid last month, split into weeks.
+  const weeklyPool = stats?.estimatedPayoutPoolUsd && stats.estimatedPayoutPoolUsd > 0
+    ? stats.estimatedPayoutPoolUsd
+    : stats?.poolMonthlyUsd && stats.poolMonthlyUsd > 0 ? stats.poolMonthlyUsd / (52 / 12) : null;
+  const totalWinners = (stats?.tiers ?? []).reduce((a, t) => a + t.winners, 0);
+  // "1 in N savers wins": the draw's winners against everyone saving. Needs both numbers, otherwise the prize total shows instead.
+  const oneIn = totalWinners > 0 && stats?.depositors && stats.depositors >= totalWinners ? Math.max(1, Math.round(stats.depositors / totalWinners)) : null;
+  const posUsd = (o: { balances?: Array<{ usdMicro?: string | null }> } | null | undefined) =>
+    (o?.balances ?? []).reduce((a, b) => a + Number(microOf(b)) / 1e6, 0);
+  const solPosUsd = posUsd(solOverview);
+  // Anything at all left in the old pool, including tiny leftovers that round to $0.00.
+  const solHasAny = solPosUsd >= 0.01;
   const wonReturnPct = wonBase > BigInt(0) && stakedNum > 0 ? (Number(wonBase) / 1e6 / stakedNum) * 100 : null;
 
   return (
@@ -590,16 +747,46 @@ export function StakeToWin() {
 
           <div className="stk-form">
             <div className="stk-pay">
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#C9C6CF" }}>Next payout</span>
-                <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(36px,min(4vw,6vh),48px)", lineHeight: 1, letterSpacing: "-0.06em" }}>
-                  ${Math.floor(NEXT_PAYOUT_ESTIMATE_USD).toLocaleString("en-US")}<span style={{ color: "#7A7884" }}>.{String(Math.round((NEXT_PAYOUT_ESTIMATE_USD % 1) * 100)).padStart(2, "0")}</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(44px,min(5.2vw,8vh),64px)", lineHeight: 1, letterSpacing: "-0.035em", whiteSpace: "nowrap" }}>
+                  {oneIn ? `1 in ${oneIn}` : weeklyPool ? `~$${Math.round(weeklyPool).toLocaleString("en-US")}` : "-"}
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 17, fontWeight: 600, color: "#A9A6B0" }}>
+                  {oneIn ? "savers win the next draw" : "in prizes, next draw"}
+                  <button type="button" aria-label="About the next draw" onClick={() => setDrawInfoOpen(true)}
+                    style={{ width: 20, height: 20, borderRadius: "50%", cursor: "pointer", display: "grid", placeItems: "center", fontSize: 13, fontWeight: 800, fontFamily: "inherit", lineHeight: 1, padding: 0, color: "#8A8893", background: "transparent", border: "1.5px solid #55535E" }}>
+                    i
+                  </button>
                 </span>
               </div>
               <Countdown nextDrawAt={stats?.nextDrawAt} intervalSec={stats?.drawIntervalSeconds} />
             </div>
 
             <div id="stake" style={{ padding: 8, borderRadius: 28, background: "#121217", border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 40px 100px rgba(0,0,0,0.55)" }}>
+              {authenticated && !legacy && bs.vault && solHasAny && !(legacyCleared && solPosUsd < 0.01) ? (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", margin: "0 0 6px", padding: "12px 16px", borderRadius: 18, background: "rgba(255,138,61,0.08)", border: "1px solid rgba(255,138,61,0.3)" }}>
+                  <span style={{ fontSize: 15, color: "#E4E1EA" }}>{solPosUsd >= 0.01 ? `You have $${fmt(solPosUsd)} saved in our previous pool.` : "You have a small leftover in our previous pool."}</span>
+                  <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {solPosUsd >= 1.5 ? <button type="button" disabled={busy !== null} onClick={startMove}
+                      style={{ cursor: "pointer", padding: "8px 14px", borderRadius: 12, border: "none", background: GRAD, color: "#fff", fontFamily: "inherit", fontWeight: 700, fontSize: 15 }}>
+                      Move to the new pool
+                    </button> : null}
+                    <button type="button" disabled={busy !== null} onClick={() => openLegacy(true)}
+                      style={{ cursor: "pointer", padding: "8px 14px", borderRadius: 12, border: "1px solid rgba(255,138,61,0.5)", background: "transparent", color: "#FF8A3D", fontFamily: "inherit", fontWeight: 700, fontSize: 15 }}>
+                      Withdraw
+                    </button>
+                  </span>
+                </div>
+              ) : null}
+              {authenticated && legacy && bs.vault ? (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", margin: "0 0 6px", padding: "12px 16px", borderRadius: 18, background: "rgba(255,138,61,0.08)", border: "1px solid rgba(255,138,61,0.3)" }}>
+                  <span style={{ fontSize: 15, color: "#E4E1EA" }}>Withdrawing from our previous pool.</span>
+                  <button type="button" disabled={busy !== null} onClick={() => openLegacy(false)}
+                    style={{ cursor: "pointer", padding: "8px 14px", borderRadius: 12, border: "1px solid rgba(255,138,61,0.5)", background: "transparent", color: "#FF8A3D", fontFamily: "inherit", fontWeight: 700, fontSize: 15 }}>
+                    Back
+                  </button>
+                </div>
+              ) : null}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, padding: 4, borderRadius: 20, background: "#0B0B0E" }}>
                 {(["stake", "withdraw"] as const).map((k) => (
                   <button key={k} type="button" className="stk-pad" onClick={() => switchTab(k)}
@@ -610,7 +797,7 @@ export function StakeToWin() {
               </div>
 
               <div style={{ padding: "clamp(18px,3.2vh,30px) 20px clamp(16px,2.6vh,24px)", display: "flex", flexDirection: "column", gap: "clamp(12px,2.3vh,24px)" }}>
-                {(
+                {!isStake && (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, textAlign: "center" }}>
                     <Mini label="Your balance" value={`$${fmt(stakedNum)}`} />
                     <Mini label="Tickets" value={fmt(ticketCount)} />
@@ -631,7 +818,7 @@ export function StakeToWin() {
                       : apr ? <EarnRow label="Estimated yield (APR)" value={`~${pct(apr)}`} /> : null}
                     {wonReturnPct !== null ? <EarnRow label="Return so far" value={`${wonReturnPct < 0.01 ? "<0.01" : wonReturnPct.toFixed(2)}% of your stake`} /> : null}
                     {claimableBase > BigInt(0) ? (
-                      <button type="button" disabled={busy !== null || !status?.canTransact} onClick={claimAll}
+                      <button type="button" disabled={busy !== null || !st?.canTransact} onClick={claimAll}
                         style={{ padding: "12px 24px", borderRadius: 14, border: "none", background: GRAD, color: "#fff", fontFamily: SORA, fontWeight: 700, fontSize: 16, cursor: "pointer", opacity: busy !== null ? 0.6 : 1 }}>
                         {busy === "claim" ? "Claiming..." : `Claim all ${claimableTotal}`}
                       </button>
@@ -675,10 +862,13 @@ export function StakeToWin() {
 
                 {note && <p style={{ margin: 0, fontSize: 15, color: "#5FD38E", textAlign: "center" }}>{note}</p>}
                 {error && <p style={{ margin: 0, fontSize: 15, color: "#FF8A7A", textAlign: "center" }}>{error}</p>}
-                {isStake && firstFee ? (
+                {isStake && firstFee && !baseMode ? (
                   <span style={{ textAlign: "center", fontSize: 15, fontWeight: 700, color: "#FFB27A" }}>{`First-time deposit fee: $${firstFee.toFixed(2)} (once), taken from your deposit if your balance is short.`}</span>
                 ) : null}
-                <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{"Your money stays yours · withdraw any time · no entry fee · network fees paid by Loofta"}</span>
+                {baseMode && isStake ? (
+                  <span style={{ textAlign: "center", fontSize: 15, color: "#A9A6B0" }}>{`A flat $${FUND_FEE_USD.toFixed(2)} fee applies when you add money from your wallet.`}</span>
+                ) : null}
+                <span className="stk-fine" style={{ textAlign: "center", fontSize: 15, color: "#8A8893" }}>{"Your money stays yours · withdraw any time · no entry fee"}</span>
               </div>
             </div>
           </div>
@@ -712,13 +902,13 @@ export function StakeToWin() {
         )}
 
         <Calculator apr={apr} />
+        <PrizeLadder weeklyPool={weeklyPool} poolUsd={pool} tiers={stats?.tiers ?? []} depositors={stats?.depositors ?? null} lastDraw={stats?.lastDraw ?? null} />
 
         {stats && (
           <section style={{ marginTop: 32, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", borderRadius: 24, border: "1px solid rgba(255,255,255,0.08)", background: "#101015", overflow: "hidden" }}>
             <Stat label="Paid out in prizes" value={compactUsd(stats.totalPaidUsd)} note="Funded by yield, not entry fees" />
             <Stat label="Saved by everyone" value={compactUsd(stats.tvlUsd)} note="Held in the pool right now" />
             {stats.avgApr ? <Stat label="Average yearly return" value={`~${pct(stats.avgApr)}`} note="Paid out as weekly prizes" accent /> : null}
-            {stats.maxApr ? <Stat label="Best recent week, per year" value={pct(stats.maxApr)} note={`Last 30 days: ${compactUsd(stats.monthlyPayoutsUsd)} paid`} /> : null}
           </section>
         )}
 
@@ -769,12 +959,19 @@ export function StakeToWin() {
         solanaAddress={solAddress || null}
         devnetMode={false}
       />
+      {toast ? (
+        <div role="status" style={{ position: "fixed", top: "calc(var(--header-h, 0px) + 16px)", left: "50%", transform: "translateX(-50%)", zIndex: 90, maxWidth: "min(92vw, 420px)", display: "flex", alignItems: "center", gap: 10, padding: "12px 18px", borderRadius: 16, background: "#14261C", border: "1px solid rgba(95,211,142,0.5)", color: "#BFF2D3", fontWeight: 700, fontSize: 16, boxShadow: "0 14px 40px rgba(0,0,0,0.5)" }}>
+          <span aria-hidden style={{ width: 24, height: 24, borderRadius: 999, display: "grid", placeItems: "center", background: "#5FD38E", color: "#0B0B0E", fontWeight: 800 }}>{"\u2713"}</span>
+          {toast}
+        </div>
+      ) : null}
       <button type="button" onClick={() => setHowOpen(true)} aria-label="How it works"
         style={{ position: "fixed", right: 20, bottom: 20, zIndex: 60, display: "flex", alignItems: "center", gap: 10, padding: "12px 18px 12px 12px", borderRadius: 999, cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)", background: "#1A1A20", color: "#F2EFE8", fontFamily: SORA, fontWeight: 700, fontSize: 15, boxShadow: "0 14px 40px rgba(0,0,0,0.5)" }}>
         <span style={{ width: 28, height: 28, borderRadius: 999, display: "grid", placeItems: "center", background: GRAD, color: "#fff", fontSize: 16, fontWeight: 800 }}>?</span>
         How it works
       </button>
       <HowItWorks open={howOpen} onClose={closeHow} />
+      <DrawInfo open={drawInfoOpen} onClose={() => setDrawInfoOpen(false)} stats={stats ?? null} oneIn={oneIn} weeklyPool={weeklyPool} />
     </div>
   );
 }
@@ -917,5 +1114,125 @@ function Reveal() {
         <span key={i} style={{ color: i < lit ? c : "#3A3942", transition: "color .25s ease" }}>{t}{i < REVEAL.length - 1 ? " " : ""}</span>
       ))}
     </p>
+  );
+}
+
+/** Where this week's prize pool goes, from Ample's own estimate: winners and prize per winner in each group. */
+function PrizeLadder({ weeklyPool, poolUsd, tiers, depositors, lastDraw }: { weeklyPool: number | null; poolUsd: number; tiers: Array<{ tier: number; winners: number; poolPercent: number; poolUsd: number; perWinnerUsd: number }>; depositors: number | null; lastDraw: { drawnAt: string; payoutPoolUsd: number; participants: number; winners: number; grandPrizeUsd: number | null } | null }) {
+  const usd = (v: number) => (v >= 10 ? `$${Math.round(v).toLocaleString("en-US")}` : `$${v.toFixed(2)}`);
+  const winners = tiers.reduce((a, t) => a + t.winners, 0);
+  const names = ["Grand prize", "Big prizes", "Mid prizes", "Small prizes"];
+  const rows = tiers.length > 0
+    ? tiers.map((t, i) => ({ key: t.tier, name: names[i] ?? `Prize group ${t.tier}`, big: `~${usd(t.perWinnerUsd)}`, sub: t.winners === 1 ? "1 winner" : `${t.winners.toLocaleString("en-US")} winners, ~${usd(t.perWinnerUsd)} each` }))
+    : TIERS.map((t) => ({ key: t.name, name: t.name, big: weeklyPool ? `~${usd((weeklyPool * t.share) / 100)}` : `${t.share}%`, sub: t.note }));
+  return (
+    <section style={{ marginTop: 36 }}>
+      <h2 style={{ fontFamily: SORA, fontWeight: 800, fontSize: "clamp(28px,3.6vw,44px)", letterSpacing: "-0.05em", margin: "0 0 8px" }}>What you could win</h2>
+      <p style={{ margin: "0 0 clamp(14px,2vw,22px)", fontSize: 17, lineHeight: 1.5, color: "#8A8893", maxWidth: 640 }}>
+        {winners > 0 && depositors
+          ? `This week's estimate: ${weeklyPool ? `about ${usd(weeklyPool)} shared between ` : ""}${winners.toLocaleString("en-US")} winners, out of ${depositors.toLocaleString("en-US")} savers. More tickets means better chances.`
+          : "Each week the pool is split into four groups of prizes, and your tickets decide your chance."}
+        {lastDraw && lastDraw.payoutPoolUsd > 0
+          ? ` Last draw actually paid ${usd(lastDraw.payoutPoolUsd)} to ${lastDraw.winners.toLocaleString("en-US")} winners out of ${lastDraw.participants.toLocaleString("en-US")} savers${lastDraw.grandPrizeUsd ? `, the top prize was ${usd(lastDraw.grandPrizeUsd)}` : ""}.`
+          : ""}
+      </p>
+      <div className="stk-steps">
+        {rows.map((r) => (
+          <div key={r.key} style={{ padding: 24, borderRadius: 24, background: "#121217", border: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", gap: 6 }}>
+            <span style={{ fontSize: 17, fontWeight: 700, color: "#C9C6CF" }}>{r.name}</span>
+            <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: 34, letterSpacing: "-0.05em", color: "#EE6A2C" }}>{r.big}</span>
+            <span style={{ fontSize: 15, color: "#8A8893" }}>{r.sub}</span>
+          </div>
+        ))}
+      </div>
+      {poolUsd > 0 ? (
+        <div style={{ marginTop: 16, padding: "clamp(16px,2.4vw,28px)", borderRadius: 24, background: "#121217", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <span style={{ display: "block", fontSize: 17, fontWeight: 700, color: "#C9C6CF", marginBottom: 6 }}>What a small deposit looks like</span>
+          {[10, 50, 100, 1000].map((v) => (
+            <div key={v} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "12px 0", borderTop: "1px solid rgba(255,255,255,0.08)", fontSize: 17 }}>
+              <span style={{ fontWeight: 700 }}>{`$${v.toLocaleString("en-US")}`}</span>
+              <span style={{ color: "#A9A6B0" }}>{`${(v * TICKETS_PER_DOLLAR).toLocaleString("en-US")} tickets · ${oddsText(v / (poolUsd + v))} of all tickets`}</span>
+            </div>
+          ))}
+          <span style={{ display: "block", paddingTop: 12, fontSize: 15, color: "#8A8893" }}>
+            In any one week a small deposit is less likely to win than a large one. You keep your whole deposit either way, and prizes are not guaranteed.
+          </span>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/** The numbers behind "1 in N savers win": who is in the draw, how many win, and how much is at stake. */
+function DrawInfo({ open, onClose, stats, oneIn, weeklyPool }: { open: boolean; onClose: () => void; stats: import("@/services/api/ample").AmpleStats | null; oneIn: number | null; weeklyPool: number | null }) {
+  useEffect(() => {
+    if (!open) return;
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [open, onClose]);
+  if (!open || !stats) return null;
+  const tiers = stats.tiers ?? [];
+  const winners = tiers.reduce((a, t) => a + t.winners, 0);
+  const usd = (v: number) => (v >= 10 ? `$${Math.round(v).toLocaleString("en-US")}` : `$${v.toFixed(2)}`);
+  const names = ["Grand prize", "Big prizes", "Mid prizes", "Small prizes"];
+  const last = stats.lastDraw;
+  const tile = (label: string, value: string, accent = false) => (
+    <div style={{ padding: "14px 16px", borderRadius: 18, background: "#0B0B0E", border: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+      <span style={{ fontSize: 15, color: "#8A8893" }}>{label}</span>
+      <span style={{ fontFamily: SORA, fontWeight: 800, fontSize: 26, letterSpacing: "-0.04em", color: accent ? "#FF8A3D" : "#F2EFE8" }}>{value}</span>
+    </div>
+  );
+  const line = (label: string, value: string) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "11px 0", borderTop: "1px solid rgba(255,255,255,0.08)", fontSize: 16 }}>
+      <span style={{ color: "#A9A6B0" }}>{label}</span>
+      <span style={{ fontWeight: 700, textAlign: "right" }}>{value}</span>
+    </div>
+  );
+  const heading = (t: string) => <span style={{ display: "block", fontFamily: SORA, fontWeight: 700, fontSize: 18, letterSpacing: "-0.02em", marginBottom: 4 }}>{t}</span>;
+  return (
+    <div role="dialog" aria-modal="true" aria-label="About the next draw" onClick={onClose} className="dw-ov"
+      style={{ position: "fixed", inset: 0, zIndex: 85, display: "grid", placeItems: "center", padding: 16, background: "rgba(6,6,9,0.72)", backdropFilter: "blur(6px)" }}>
+      <style>{`.dw-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.dw-cols{display:grid;grid-template-columns:minmax(0,1fr);gap:22px}.dw-bottom{display:none}@media(max-width:759px){.dw-ov{padding:0 !important;background:#0f0f12 !important;backdrop-filter:none !important;place-items:stretch !important}.dw-card{max-width:none !important;max-height:none !important;height:100% !important;border-radius:0 !important;border:none !important;box-shadow:none !important;padding-top:max(20px,env(safe-area-inset-top)) !important;padding-bottom:0 !important}.dw-x{display:none !important}.dw-bottom{display:block;position:sticky;bottom:0;margin:20px -18px 0;padding:12px 18px calc(14px + env(safe-area-inset-bottom));background:linear-gradient(180deg,rgba(15,15,18,0),#0f0f12 28%)}}@media(min-width:760px){.dw-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.dw-cols{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:32px}}`}</style>
+      <div onClick={(e) => e.stopPropagation()} className="dw-card"
+        style={{ position: "relative", width: "100%", maxWidth: 840, maxHeight: "calc(100vh - 32px)", overflowY: "auto", borderRadius: 28, padding: "26px clamp(18px,3vw,32px) 28px", background: "#121217", border: "1px solid rgba(255,255,255,0.09)", boxShadow: "0 40px 100px rgba(0,0,0,0.6)", color: "#F2EFE8", boxSizing: "border-box" }}>
+        <button type="button" aria-label="Close" onClick={onClose} className="dw-x"
+          style={{ position: "absolute", top: 14, right: 16, width: 40, height: 40, border: "none", background: "transparent", color: "#C9C6CF", fontSize: 26, cursor: "pointer" }}>×</button>
+        <h3 style={{ margin: "0 44px 6px 0", fontFamily: SORA, fontWeight: 800, fontSize: "clamp(28px,3.4vw,38px)", letterSpacing: "-0.04em" }}>{oneIn ? `1 in ${oneIn} savers win` : "The next draw"}</h3>
+        <p style={{ margin: "0 0 18px", fontSize: 16, lineHeight: 1.5, color: "#8A8893", maxWidth: 560 }}>Estimates for the coming draw. They move as people join, and prizes are never guaranteed.</p>
+
+        <div className="dw-grid">
+          {stats.depositors ? tile("Savers", stats.depositors.toLocaleString("en-US")) : null}
+          {winners > 0 ? tile("Winners", winners.toLocaleString("en-US"), true) : null}
+          {weeklyPool ? tile("Prizes to share", `~${usd(weeklyPool)}`) : null}
+          {stats.tvlUsd ? tile("Saved in the pool", compactUsd(stats.tvlUsd)) : null}
+        </div>
+
+        <div className="dw-cols" style={{ marginTop: 24 }}>
+          {tiers.length > 0 ? (
+            <div>
+              {heading("Prize groups")}
+              {tiers.map((t, i) => line(names[i] ?? `Group ${t.tier}`, t.winners === 1 ? `1 winner, ~${usd(t.perWinnerUsd)}` : `${t.winners.toLocaleString("en-US")} winners, ~${usd(t.perWinnerUsd)} each`))}
+            </div>
+          ) : null}
+          {last && last.payoutPoolUsd > 0 ? (
+            <div>
+              {heading("Last draw, what was really paid")}
+              {line("Prizes paid", usd(last.payoutPoolUsd))}
+              {line("Winners / savers", `${last.winners.toLocaleString("en-US")} / ${last.participants.toLocaleString("en-US")}`)}
+              {last.grandPrizeUsd ? line("Top prize", usd(last.grandPrizeUsd)) : null}
+              {oneIn && stats.depositors ? line("Share of savers who win", `${((winners / stats.depositors) * 100).toFixed(1)}%`) : null}
+            </div>
+          ) : null}
+        </div>
+        <p style={{ margin: "20px 0 0", fontSize: 15, lineHeight: 1.5, color: "#8A8893" }}>Your own chance depends on how many tickets you hold. The more you save, the more tickets you get. The pool counts every asset saved in the draw, not only USDC.</p>
+        <div className="dw-bottom">
+          <button type="button" onClick={onClose}
+            style={{ width: "100%", cursor: "pointer", padding: 16, borderRadius: 18, border: "1px solid rgba(255,255,255,0.1)", fontFamily: SORA, fontWeight: 700, fontSize: 17, color: "#CBD5E1", background: "#17171D" }}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

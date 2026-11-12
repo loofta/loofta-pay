@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsIn, IsOptional, IsBoolean, MaxLength, Matches } from 'class-validator';
+import { IsString, IsNotEmpty, IsIn, IsOptional, IsBoolean, IsArray, ArrayMinSize, ArrayMaxSize, MaxLength, Matches } from 'class-validator';
 
 export class AmpleChallengeDto {
   @IsString() @IsNotEmpty() @MaxLength(64)
@@ -43,4 +43,38 @@ export class AmpleEventDto {
   txSignature: string;
   @IsOptional() @IsString() @MaxLength(64)
   payoutId?: string;
+}
+
+/** EVM (Base) amounts: USDC base units, no vault id because the server picks the Base USDC vault itself. */
+export class AmpleEvmAmountDto {
+  @IsString() @Matches(/^[1-9][0-9]{0,30}$/)
+  amount: string;
+}
+
+export class AmpleEvmClaimDto {
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50)
+  @IsString({ each: true }) @MaxLength(64, { each: true })
+  payoutIds: string[];
+}
+
+/** Move Solana USDC to the person's own Base wallet (USDC base units, as digit strings). */
+export class AmpleFundPrepareDto {
+  @IsString() @IsNotEmpty() @MaxLength(64)
+  solanaAddress: string;
+  @IsString() @Matches(/^[1-9][0-9]{0,15}$/)
+  outputUnits: string;
+  @IsOptional() @IsString() @Matches(/^[1-9][0-9]{0,15}$/)
+  maxTotalUnits?: string;
+}
+
+export class AmpleFundBroadcastDto {
+  @IsString() @IsNotEmpty() @MaxLength(20000)
+  transaction: string;
+}
+
+export class AmpleFundWithdrawDto {
+  @IsString() @Matches(/^[1-9][0-9]{0,15}$/)
+  amount: string;
+  @IsString() @IsNotEmpty() @MaxLength(64)
+  solanaAddress: string;
 }
