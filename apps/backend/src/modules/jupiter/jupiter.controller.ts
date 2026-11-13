@@ -4,6 +4,7 @@ import { AuthGuard, RateLimitGuard } from '@/common/guards';
 import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { UsersService } from '@/modules/users/users.service';
 import { JupiterService } from './jupiter.service';
+import { MiniRewardsService } from '@/modules/mini-rewards/mini-rewards.service';
 import { PrepareSolWithdrawalDto } from './dto/prepare-sol-withdrawal.dto';
 import { JupiterSwapDto, JupiterSwapSubmitDto } from './dto/jupiter-swap.dto';
 
@@ -13,6 +14,7 @@ export class JupiterController {
   constructor(
     private readonly jupiter: JupiterService,
     private readonly usersService: UsersService,
+    private readonly rewards: MiniRewardsService,
   ) {}
 
   @Post('prepare-sol-withdrawal')
@@ -57,7 +59,20 @@ export class JupiterController {
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Build a sponsored (gasless) token swap transaction for the caller\'s own wallet' })
   async buildSwap(@Req() req: any, @Body() dto: JupiterSwapDto) {
-    return this.jupiter.buildSwap(req.user!.id, dto);
+    const res: any = await this.jupiter.buildSwap(req.user!.id, dto);
+    // Counted for rewards once the signature is confirmed. Never blocks the swap.
+    const tradeId = await this.rewards.trackBuilt(req.user!.id, {
+      inputMint: dto.inputMint,
+      outputMint: dto.outputMint,
+      inAmount: String(res.inAmount),
+      outAmount: String(res.outAmount),
+      feeAmount: String(res.feeAmount ?? '0'),
+      feeBps: Number(res.feeBps),
+      feeOwner: this.jupiter.platformFeeWallet?.toBase58() ?? null,
+      feeMint: dto.outputMint,
+      gaslessId: res.gasless && res.id ? String(res.id) : null,
+    });
+    return { ...res, tradeId };
   }
 
   @Post('swap/submit')
@@ -67,6 +82,8 @@ export class JupiterController {
   @ApiSecurity('privy-auth')
   @ApiOperation({ summary: 'Co-sign (sponsor) and send a swap the user signed. Only a transaction we built is accepted.' })
   async submitSwap(@Req() req: any, @Body() dto: JupiterSwapSubmitDto) {
-    return this.jupiter.submitSwap(req.user!.id, dto);
+    const res: any = await this.jupiter.submitSwap(req.user!.id, dto);
+    if (res?.signature) void this.rewards.confirmGasless(req.user!.id, dto.id, String(res.signature));
+    return res;
   }
 }

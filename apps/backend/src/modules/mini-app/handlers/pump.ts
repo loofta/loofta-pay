@@ -4,6 +4,10 @@
 const NextResponse = Response;
 import { peek, queueDepth, tracker } from "../lib/tracker";
 import { migratedMints, streamCoins, streamLive } from "../lib/pumpStream";
+import { curveSnapshots } from "../lib/curve";
+import { dexInfo } from "../lib/dex";
+import { peekHolderStats, warmHolderStats } from "../lib/holderStats";
+import { fetchSolPriceUsd } from "@/common/magicblock-private-transfer";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +37,8 @@ const PRO_MIN_REALIZED_USD = 1_000;
 const PUMP_START_SOL = 27.96;
 /** Pump's first batch is full at roughly this market cap. */
 const GRADUATION_MCAP = 69_000;
+/** The graduated list only shows coins with a real market: DexScreener knows the pool and it holds at least this much liquidity. */
+const MIN_GRAD_LIQUIDITY_USD = 5_000;
 
 type Raw = Record<string, any>;
 type StageKey = "new" | "final" | "grad";
@@ -120,20 +126,45 @@ async function buildFeed(wantPro: boolean, stage: StageKey | null): Promise<stri
   // Coins from the live PumpPortal stream. They are seconds old, so the Tracker lists often do not have
   // them yet. They go first, which also puts them first in line for the per-coin refresh below.
   const migrated = migratedMints();
-  const solUsd = solUsdFrom(lists);
+  // SOL price: Tracker's lists carry it when we have them, otherwise a free source. Needed to turn SOL into dollars.
+  const solUsd = solUsdFrom(lists) ?? (await fetchSolPriceUsd().catch(() => null));
   const streamRows: Array<{ r: Raw; source: Source }> = [];
   // Where each coin started, as the stream saw it, so "change since launch" is exact when we have it.
   const startSol = new Map<string, number>();
-  for (const c of streamCoins()) {
+  const streamed = streamCoins();
+  // Live market caps for the newest streamed coins, read from their bonding curves on chain. Free, one batched call.
+  // The app only asks for graduated coins now, so the curve reads (which exist to price coins still on the curve) are skipped.
+  const graduatedOnly = stage === "grad";
+  const curves = graduatedOnly ? new Map<string, { mcapSol: number; complete: boolean }>() : await curveSnapshots(streamed.slice(0, 200).map((c) => c.mint)).catch(() => new Map());
+  // Coins that already graduated have left the curve, so their live numbers come from DexScreener (free, batched).
+  // Coins with no readable SOL curve (quoted in another token, or the account is gone) go there as well.
+  const graduatedMints = streamed.filter((c) => c.migrated || (!graduatedOnly && (!curves.has(c.mint) || curves.get(c.mint)?.complete))).slice(0, 150).map((c) => c.mint);
+  const dex = graduatedMints.length > 0 ? await dexInfo(graduatedMints).catch(() => new Map()) : new Map();
+  for (const c of streamed) {
     if (c.mcapSol > 0) startSol.set(c.mint, c.mcapSol);
     if (seen.has(c.mint)) continue;
     seen.add(c.mint);
-    const usd = solUsd != null ? c.mcapSol * solUsd : null;
+    const snap = curves.get(c.mint);
+    // The stream only reports a coin's market cap at launch. The curve has the current one.
+    const mcapSol = snap ? snap.mcapSol : c.mcapSol;
+    const d = dex.get(c.mint);
+    if (graduatedOnly && (!d || (d.liquidityUsd ?? 0) < MIN_GRAD_LIQUIDITY_USD)) continue;
+    // A graduated coin trades on the open market, so DexScreener has its real market cap. Otherwise it comes from the curve.
+    const usd = d?.mcapUsd ?? (solUsd != null ? mcapSol * solUsd : null);
     streamRows.push({
-      source: c.migrated ? "graduated" : "latest",
+      source: c.migrated || snap?.complete ? "graduated" : "latest",
       r: {
-        token: { mint: c.mint, name: c.name, symbol: c.symbol, image: c.image, website: c.website, twitter: c.twitter, telegram: c.telegram, createdOn: "https://pump.fun" },
-        pools: [{ market: "pumpfun", marketCap: { usd }, liquidity: { usd: 0 }, createdAt: c.createdAt, txns: {} }],
+        token: { mint: c.mint, name: c.name || d?.name || "Unnamed", symbol: c.symbol || d?.symbol || "", image: c.image, website: c.website ?? d?.website ?? null, twitter: c.twitter ?? d?.twitter ?? null, telegram: c.telegram ?? d?.telegram ?? null, createdOn: "https://pump.fun" },
+        pools: [
+          {
+            market: "pumpfun",
+            marketCap: { usd },
+            liquidity: { usd: d?.liquidityUsd ?? 0 },
+            createdAt: c.createdAt,
+            txns: { volume24h: d?.volume24hUsd ?? undefined, buys: d?.buys24h ?? undefined, sells: d?.sells24h ?? undefined },
+          },
+        ],
+        ...(d?.change1h != null ? { events: { "1h": { priceChangePercentage: d.change1h } } } : {}),
       },
     });
   }
@@ -158,6 +189,11 @@ async function buildFeed(wantPro: boolean, stage: StageKey | null): Promise<stri
   }
 
   const now = Date.now();
+  // Read holder numbers from Solana for the newest coins, graduated ones first. A few at a time in the background, kept 5 minutes
+  // and shared by everyone, so this costs the same no matter how many people have the list open.
+  const isGrad = (c: (typeof streamed)[number]) => c.migrated || !!curves.get(c.mint)?.complete;
+  warmHolderStats([...streamed.filter(isGrad).slice(0, 10), ...(graduatedOnly ? [] : streamed.filter((c) => !isGrad(c)).slice(0, 6))].map((c) => ({ mint: c.mint, creator: c.creator || null })));
+
   const items = picked.map(({ r: row, source }) => {
     const fresh = peek<Raw>(`/tokens/${row.token.mint}`);
     const r: Raw = fresh && fresh.ageMs < FRESH_MAX_AGE && fresh.data?.token ? fresh.data : row;
@@ -172,11 +208,17 @@ async function buildFeed(wantPro: boolean, stage: StageKey | null): Promise<stri
     const percent = graduated ? 100 : Math.min(99, Math.round(curve ?? ((mcap ?? 0) / GRADUATION_MCAP) * 100));
     const stageKey = graduated ? "grad" : source.startsWith("graduating") || percent >= 60 ? "final" : "new";
     const risk = r.risk ?? null;
+    // Holder numbers read from Solana for the newest coins (free). Used when the paid source has none.
+    const hs = peekHolderStats(t.mint);
+    const holders = num(r.holders) ?? hs?.count ?? null;
     const bundlerPct = risk ? num(risk.bundlers?.totalPercentage) ?? 0 : null;
-    const devPct = risk ? num(risk.dev?.percentage) : null;
+    const devPct = risk ? num(risk.dev?.percentage) : hs?.devPct ?? null;
     const rugged = risk?.rugged === true;
-    const known = bundlerPct != null && devPct != null && num(r.holders) != null;
-    const bad = rugged || (bundlerPct ?? 0) > 20 || (devPct ?? 0) > 15;
+    // Bundles are not visible without a paid indexer, so "known" and "low risk" stay reserved for the paid data.
+    const known = bundlerPct != null && devPct != null && holders != null;
+    // Own checks: a creator still holding a big share, or a handful of wallets holding most of an established coin.
+    const concentrated = !!hs && hs.count >= 20 && hs.top10Pct > 60;
+    const bad = rugged || (bundlerPct ?? 0) > 20 || (devPct ?? 0) > 15 || concentrated;
     const tx = pool.txns ?? {};
     return {
       mint: t.mint as string,
@@ -192,7 +234,7 @@ async function buildFeed(wantPro: boolean, stage: StageKey | null): Promise<stri
       fresh: ageMinutes != null && ageMinutes < 60,
       mcapUsd: mcap,
       volume24hUsd: num(tx.volume24h) ?? num(tx.volume),
-      holders: num(r.holders),
+      holders,
       priceChange1h: num(r.events?.["1h"]?.priceChangePercentage),
       dexPaid: false,
       liquidityLocked: false,

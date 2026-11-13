@@ -4,7 +4,7 @@ export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export type InlineButton = { text: string; callback_data?: string; url?: string };
+export type InlineButton = { text: string; callback_data?: string; url?: string; web_app?: { url: string } };
 export type InlineKeyboard = { inline_keyboard: InlineButton[][] };
 /** A keyboard that replaces the phone keyboard. A request_users button opens Telegram's people picker. */
 export type ReplyKeyboard = {

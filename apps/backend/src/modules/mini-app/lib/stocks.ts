@@ -15,6 +15,7 @@
  */
 
 const BACKED = "https://api.backed.fi/api/v2/public/assets";
+import { sharedGet, sharedSet } from "./sharedCache";
 const JUP = "https://api.jup.ag/tokens/v2/search";
 const MIN_LIQUIDITY_USD = 3_000;
 const CATALOG_TTL = 6 * 3_600_000;
@@ -79,11 +80,11 @@ const FAMILIES: Array<{ name: string; kind: StockToken["kind"]; pattern: RegExp;
 ];
 const FAMILY_TTL = 12 * 3_600_000;
 /** Bump when the rules for what counts as a stock change, so a list built under the old rules is rebuilt. */
-const LIST_VERSION = 2;
+const LIST_VERSION = 3;
 
 const g = globalThis as unknown as { __stocks?: { catalog: { at: number; mints: string[] } | null;
     families: { at: number; kinds: Map<string, StockToken["kind"]> } | null;
-    discovering: boolean; list: { at: number; items: StockToken[]; v?: number } | null; running: Promise<void> | null } };
+    discovering: boolean; list: { at: number; items: StockToken[]; v?: number } | null; running: Promise<void> | null; hydrated?: boolean } };
 const store = (g.__stocks ??= { catalog: null, families: null, discovering: false, list: null, running: null });
 
 function jupHeaders(): Record<string, string> {
@@ -164,6 +165,8 @@ async function discoverFamilies(): Promise<void> {
       }
       // Publish after each family, so results appear as they are found.
       store.families = { at: Date.now(), kinds: new Map(kinds) };
+      // Saved as they are found: the name search takes minutes, and a restart used to throw all of it away.
+      void sharedSet("stocks:families", { at: store.families.at, kinds: [...kinds] }, 7 * 24 * 3600);
       if (store.list) store.list = { ...store.list, at: 0 };
     }
   } finally {
@@ -220,12 +223,25 @@ async function build(): Promise<StockToken[]> {
  * `building: true` straight away instead of hanging.
  */
 export async function getStocks(opts: { wait?: boolean } = { wait: true }): Promise<{ items: StockToken[]; building: boolean }> {
+  // After a restart memory is empty. Load the last saved list first, so people see stocks at once while a fresh one builds.
+  if (!store.hydrated) {
+    store.hydrated = true;
+    const fam = await sharedGet<{ at: number; kinds: Array<[string, StockToken["kind"]]> }>("stocks:families");
+    if (fam?.kinds?.length && !store.families) store.families = { at: fam.at, kinds: new Map(fam.kinds) };
+    // The saved list only counts if the pre-IPO and Backpack tokens were already found when it was built.
+    const saved = store.families ? await sharedGet<{ at: number; items: StockToken[]; v?: number }>("stocks:list") : null;
+    if (!store.list && saved && saved.v === LIST_VERSION && saved.items?.length > 0) store.list = saved;
+  }
   // A thin list means a batch failed (rate limit), so it is retried after a minute instead of being kept for 30.
   const fresh = store.list && store.list.v === LIST_VERSION && Date.now() - store.list.at < (store.list.items.length >= 15 ? LIST_TTL : 60_000);
   if (!fresh && !store.running) {
     store.running = build()
       .then((items) => {
-        if (items.length > 0) store.list = { at: Date.now(), items, v: LIST_VERSION };
+        if (items.length > 0) {
+          store.list = { at: Date.now(), items, v: LIST_VERSION };
+          // Not saved while the name search is still running, or the saved copy would be missing the pre-IPO tokens.
+          if (store.families?.kinds.size) void sharedSet("stocks:list", store.list, 24 * 3600);
+        }
       })
       .catch(() => {})
       .finally(() => {

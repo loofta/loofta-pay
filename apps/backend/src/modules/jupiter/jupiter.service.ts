@@ -24,6 +24,7 @@ import bs58 from 'bs58';
 import { createHash, createPublicKey, randomUUID, verify as cryptoVerify } from 'crypto';
 import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { UsersService } from '@/modules/users/users.service';
+import { MiniRewardsService } from '@/modules/mini-rewards/mini-rewards.service';
 import { JupiterSwapDto, JupiterSwapSubmitDto } from './dto/jupiter-swap.dto';
 import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 
@@ -96,6 +97,7 @@ export class JupiterService {
   constructor(
     private readonly config: ConfigService,
     private readonly usersService: UsersService,
+    private readonly rewards: MiniRewardsService,
   ) {
     this.connection = new Connection(getMainnetSolanaRpcUrl(this.config), 'confirmed');
 
@@ -302,6 +304,7 @@ export class JupiterService {
 
   /** Gasless quote (spends USDC, buys SOL or any token). The network cost is taken from the USDC amount, and outAmount is net of it and of the fee. */
   private async quoteGasless(userId: string, dto: JupiterSwapDto) {
+    const feeBps = await this.rewards.feeBpsFor(userId);
     const userPk = new PublicKey(await this.usersService.getSolanaWalletAddress(userId));
     const solUsd = await fetchSolPriceUsd();
     if (!solUsd) throw new ServiceUnavailableException('Swaps are temporarily unavailable. Try again shortly.');
@@ -311,7 +314,7 @@ export class JupiterService {
     const ataCount = await this.missingOutputAtaCount(userPk, outMint);
     const cost = this.costFeeUsdcUnits(ataCount, solUsd);
     if (total <= cost) throw this.costTooHigh(total, cost);
-    const q = await this.v1Quote(dto, USDC_DECIMALS, SWAP_FEE_BPS, total - cost);
+    const q = await this.v1Quote(dto, USDC_DECIMALS, feeBps, total - cost);
     // Gas is the real fee. The rest pays for the temporary SOL account, which is closed in the same
     // transaction and its deposit comes back to the user as SOL, so it is shown apart from the fee.
     const networkFee = this.costFeeUsdcUnits(0, solUsd);
@@ -321,7 +324,7 @@ export class JupiterService {
       inAmount: String(total),
       outAmount: String(q.outAmount),
       minOutAmount: String(q.otherAmountThreshold),
-      feeBps: SWAP_FEE_BPS,
+      feeBps,
       feeAmount: String(q.platformFee?.amount ?? '0'),
       networkCostUsdc: cost.toString(),
       priceImpactPct: Number(q.priceImpactPct ?? 0),
@@ -349,10 +352,11 @@ export class JupiterService {
   }
 
   private async quoteUserPays(userId: string, dto: JupiterSwapDto) {
+    const feeBps = await this.rewards.feeBpsFor(userId);
     const outMint = new PublicKey(dto.outputMint);
     const inDecimals = await this.decimalsOf(new PublicKey(dto.inputMint));
     const outDecimals = await this.decimalsOf(outMint);
-    const q = await this.v1Quote(dto, inDecimals, MIN_FEE_BPS);
+    const q = await this.v1Quote(dto, inDecimals, feeBps);
 
     // Estimated cost to the user in SOL: signature + typical priority fee, plus one-time account rent
     // when they do not hold the token they are buying yet (receiving native SOL needs no account).
@@ -375,7 +379,7 @@ export class JupiterService {
       inAmount: String(q.inAmount),
       outAmount: String(q.outAmount),
       minOutAmount: String(q.otherAmountThreshold),
-      feeBps: MIN_FEE_BPS,
+      feeBps,
       feeAmount: String(q.platformFee?.amount ?? '0'),
       priceImpactPct: Number(q.priceImpactPct ?? 0),
       inDecimals,
@@ -389,6 +393,7 @@ export class JupiterService {
    * mint (that is where the 0.80% lands), gated by liquidity and a daily cap.
    */
   private async buildUserPays(userId: string, dto: JupiterSwapDto) {
+    const feeBps = await this.rewards.feeBpsFor(userId);
     const userWallet = await this.usersService.getSolanaWalletAddress(userId);
     const userPk = new PublicKey(userWallet);
     const outMint = new PublicKey(dto.outputMint);
@@ -400,7 +405,7 @@ export class JupiterService {
 
     const inDecimals = await this.decimalsOf(new PublicKey(dto.inputMint));
     const feeAccount = await this.ensureFeeTokenAccount(outMint, userId);
-    const quote = await this.v1Quote(dto, inDecimals, MIN_FEE_BPS);
+    const quote = await this.v1Quote(dto, inDecimals, feeBps);
 
     const res = await fetch(`${JUPITER_V1_BASE}/swap`, {
       method: 'POST',
@@ -434,7 +439,7 @@ export class JupiterService {
       inAmount: String(quote.inAmount),
       outAmount: String(quote.outAmount),
       minOutAmount: String(quote.otherAmountThreshold),
-      feeBps: MIN_FEE_BPS,
+      feeBps,
       feeAmount: String(quote.platformFee?.amount ?? '0'),
       outDecimals: await this.decimalsOf(outMint),
     };
@@ -485,6 +490,7 @@ export class JupiterService {
    * server-side by its hash, and only that exact message can later be co-signed (see submitSwap).
    */
   private async buildGasless(userId: string, dto: JupiterSwapDto) {
+    const feeBps = await this.rewards.feeBpsFor(userId);
     this.assertSwapPair(dto);
     if (!this.isGaslessPair(dto)) throw new BadRequestException('Gasless swaps only spend USDC.');
     if (!this.gaslessEnabled() || !this.feePayerKeypair) throw new ServiceUnavailableException('Swaps are temporarily unavailable.');
@@ -511,7 +517,7 @@ export class JupiterService {
     const total = this.toBaseUnits(dto.amount, USDC_DECIMALS);
     let cost = this.costFeeUsdcUnits(await this.missingOutputAtaCount(userPk, outMint), solUsd);
     if (total <= cost) throw this.costTooHigh(total, cost);
-    let quote = await this.v1Quote(dto, USDC_DECIMALS, SWAP_FEE_BPS, total - cost);
+    let quote = await this.v1Quote(dto, USDC_DECIMALS, feeBps, total - cost);
     let ixs = await this.swapInstructions(quote, userWallet, feeAccount);
     for (let i = 0; i < 2; i++) {
       const sponsored = (ixs.setupInstructions as JupIx[]).filter((x) => this.isOutputAtaCreate(x, userPk, outMint)).length;
@@ -519,7 +525,7 @@ export class JupiterService {
       if (needed <= cost) break;
       cost = needed;
       if (total <= cost) throw this.costTooHigh(total, cost);
-      quote = await this.v1Quote(dto, USDC_DECIMALS, SWAP_FEE_BPS, total - cost);
+      quote = await this.v1Quote(dto, USDC_DECIMALS, feeBps, total - cost);
       ixs = await this.swapInstructions(quote, userWallet, feeAccount);
     }
 
@@ -573,7 +579,7 @@ export class JupiterService {
       inAmount: String(total),
       outAmount: String(quote.outAmount),
       minOutAmount: String(quote.otherAmountThreshold),
-      feeBps: SWAP_FEE_BPS,
+      feeBps,
       feeAmount: String(quote.platformFee?.amount ?? '0'),
       networkCostUsdc: cost.toString(),
       outDecimals: await this.decimalsOf(outMint),

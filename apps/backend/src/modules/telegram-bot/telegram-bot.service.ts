@@ -58,6 +58,8 @@ export class TelegramBotService implements OnModuleInit {
   private readonly autoPayUrl: string;
   /** The docs page for the bot, on the marketing site. */
   private readonly guideUrl: string;
+  /** The Telegram Mini App: trading plus the wallet, opened from /app and the welcome card. */
+  private readonly miniAppUrl: string;
 
   constructor(
     private readonly db: SupabaseService,
@@ -81,6 +83,8 @@ export class TelegramBotService implements OnModuleInit {
     ).replace(/\/$/, '');
     this.autoPayUrl = `${this.appUrl}/app/auto-pay?from=telegram`;
     this.guideUrl = `${(this.config.get<string>('MARKETING_URL') || 'https://loofta.xyz').replace(/\/$/, '')}/docs?p=telegram-bot`;
+    const mini = (this.config.get<string>('TELEGRAM_MINIAPP_URL') || 'https://tg.loofta.com').trim();
+    this.miniAppUrl = /^https:\/\//i.test(mini) ? mini : 'https://tg.loofta.com';
   }
 
   /** Production only: a local/dev backend must never steal the production bot's webhook. */
@@ -99,6 +103,7 @@ export class TelegramBotService implements OnModuleInit {
       // Registered per scope so groups show the menu too (a default-only list is sometimes not shown
       // there). Groups only get the commands that work in a group; the rest are DM-only.
       const privateCommands = [
+        { command: 'app', description: 'Open the Loofta app' },
         { command: 'balance', description: 'Your balance' },
         { command: 'send', description: 'Send money with a few taps' },
         { command: 'fund', description: 'Add money to your wallet' },
@@ -204,6 +209,7 @@ export class TelegramBotService implements OnModuleInit {
     }
 
     // /start is short on purpose: just the two things to try. The whole guide is behind /help.
+    if (name === 'app') return this.privateOnly(msg, isPrivate, () => this.showMiniApp(msg.chat.id));
     if (name === 'start' || name === 'help') return this.sendIntro(msg.chat.id, isPrivate, name === 'help');
     if (name === 'balance') return this.privateOnly(msg, isPrivate, () => this.showBalance(msg.chat.id, from));
     if (name === 'fund') return this.privateOnly(msg, isPrivate, () => this.showFund(msg.chat.id, from));
@@ -328,6 +334,13 @@ export class TelegramBotService implements OnModuleInit {
     };
   }
 
+  /** /app: the Mini App button. Telegram only allows web_app buttons in private chats. */
+  private async showMiniApp(chatId: number) {
+    await this.api!.sendMessage(chatId, 'Trade memecoins and stocks, and manage your wallet in the Loofta app.', {
+      keyboard: { inline_keyboard: [[{ text: 'Open Loofta', web_app: { url: this.miniAppUrl } }]] },
+    });
+  }
+
   /** /start (short) and /help (the whole guide). In a group both give the one-line version. */
   private async sendIntro(chatId: number, isPrivate: boolean, full: boolean) {
     if (!isPrivate) {
@@ -339,19 +352,20 @@ export class TelegramBotService implements OnModuleInit {
       return;
     }
     if (!full) {
-      // Just the two things to try. Everything else is in /help.
+      // The app is the headline: trading lives there. Payments stay one message away.
       await this.api!.sendMessage(
         chatId,
         [
-          '<b>Loofta Pay</b>',
-          'Pay anyone on Telegram in USDC.',
+          '<b>Loofta</b>',
+          'Trade memecoins and stocks, and pay anyone in USDC, right from Telegram.',
           '',
+          'Open the app to do more with Loofta, or pay right here:',
           '<code>pay $5 to @someone</code>',
-          '<code>pay $5 privately to @someone</code>',
         ].join('\n'),
         {
           keyboard: {
             inline_keyboard: [
+              [{ text: 'Open Loofta', web_app: { url: this.miniAppUrl } }],
               [{ text: 'Send', callback_data: 'menu:send' }, { text: 'Help', callback_data: 'menu:help' }],
             ],
           },
@@ -362,13 +376,14 @@ export class TelegramBotService implements OnModuleInit {
     }
     // The guide: what the bot can do, with a copyable example for each.
     const text = [
-          '<b>Loofta Pay help</b>',
-          'Pay anyone on Telegram in USDC, right from this chat.',
+          '<b>Loofta help</b>',
+          'Trade memecoins and stocks, and pay anyone in USDC, right from Telegram.',
           '',
           '<b>Get started</b>',
-          '1. Sign in to Loofta with Telegram and turn on auto-pay.',
-          '2. Add money with /fund.',
-          '3. Pay with a message. Examples below.',
+          '1. Open the app with /app to trade and manage your wallet.',
+          '2. Sign in to Loofta with Telegram and turn on auto-pay.',
+          '3. Add money with /fund.',
+          '4. Pay with a message. Examples below.',
           '',
           '<b>What you can do</b>',
           '<b>Send with taps</b>: /send, then pick who and how much',
@@ -394,13 +409,14 @@ export class TelegramBotService implements OnModuleInit {
           '/fund shows your address, or a private deposit, or lets you add other crypto.',
           '/withdraw sends USDC to any Solana wallet, or other crypto to another network. You see what you receive before you confirm.',
           '',
-          '<b>Commands</b>: /send /balance /fund /withdraw /history /settings /logout /help',
+          '<b>Commands</b>: /app /send /balance /fund /withdraw /history /settings /logout /help',
           '',
           'Need a hand? Talk to us: t.me/looftapay',
         ].join('\n');
     await this.api!.sendMessage(chatId, text, {
       keyboard: {
         inline_keyboard: [
+          [{ text: 'Open Loofta', web_app: { url: this.miniAppUrl } }],
           [{ text: 'Set up auto-pay', url: `${this.autoPayUrl}` }],
           [{ text: 'Read the full guide', url: this.guideUrl }, { text: 'Support', url: 'https://t.me/looftapay' }],
           ...this.mainMenu().inline_keyboard,

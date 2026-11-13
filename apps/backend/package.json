@@ -47,6 +47,7 @@
     "@nestjs/throttler": "^6.2.0",
     "@onsol/tldparser": "^1.2.1",
     "@privy-io/server-auth": "^1.32.5",
+    "@pump-fun/pump-sdk": "4.3.1",
     "@rhinestone/sdk": "1.9.2",
     "@solana/kit": "^5.5.1",
     "@solana/spl-token": "^0.4.14",

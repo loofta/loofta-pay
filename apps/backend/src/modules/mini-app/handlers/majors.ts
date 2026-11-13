@@ -3,6 +3,7 @@
 // Vercel is serverless and cannot hold the PumpPortal websocket or the shared caches and request queue.
 const NextResponse = Response;
 import { STOCK_NAME, knownStockMints } from "../lib/stocks";
+import { sharedGet, sharedSet } from "../lib/sharedCache";
 
 export const dynamic = "force-dynamic";
 
@@ -74,12 +75,20 @@ async function rebuildRank() {
     .map((t) => t.id);
   // The always-there names stay even if a list was thin, at the top in the order given above.
   const final = [...new Set([...mints])];
-  if (final.length > 0) store.rank = { at: Date.now(), mints: final };
+  if (final.length > 0) {
+    store.rank = { at: Date.now(), mints: final };
+    void sharedSet("majors:rank", store.rank, 24 * 3600);
+  }
 }
 
 const shape = (t: JupToken) => ({ mint: t.id, symbol: t.symbol, name: t.name, icon: t.icon ?? null, decimals: t.decimals, usd: t.usdPrice ?? null, mcap: t.mcap ?? null, change24h: t.stats24h?.priceChange ?? null });
 
 export async function GET() {
+  // After a restart, start from the last saved ranking instead of rebuilding it before answering.
+  if (!store.rank && !store.building) {
+    const saved = await sharedGet<{ at: number; mints: string[] }>("majors:rank");
+    if (saved?.mints?.length) store.rank = saved;
+  }
   const rankFresh = store.rank && Date.now() - store.rank.at < RANK_TTL;
   if (!rankFresh && !store.building) {
     store.building = rebuildRank().finally(() => {

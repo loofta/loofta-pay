@@ -31,7 +31,23 @@ const jobs: Job[] = [];
 let draining = false;
 let last = 0;
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+let pausedUntil = 0;
+function pauseFor(ms: number, why: string) {
+  if (Date.now() < pausedUntil) return;
+  pausedUntil = Date.now() + ms;
+  console.warn(`[solana-tracker] paused for ${Math.round(ms / 60_000)} min (${why}). Feeds run on free sources until then.`);
+}
+
+/** Provider failures used to vanish silently, which made an empty feed impossible to diagnose. Logged at most once a minute per message. */
+const warned = new Map<string, number>();
+function warn(msg: string) {
+  const now = Date.now();
+  if (now - (warned.get(msg) ?? 0) < 60_000) return;
+  warned.set(msg, now);
+  console.warn(`[solana-tracker] ${msg}`);
+}
+
+const sleep =(ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** The last answer for a path, if we have one, with its age. Never makes a request. */
 export function peek<T>(path: string): { data: T; ageMs: number } | null {
@@ -59,19 +75,26 @@ async function drain(key: string) {
       try {
         const res = await fetch(`${BASE}${job.path}`, { headers: { "x-api-key": key }, signal: AbortSignal.timeout(8_000), cache: "no-store" });
         if (!res.ok) {
+          warn(`${res.status} on ${job.path}`);
+          // Out of plan or rate limited: stop spending requests for a while. The free sources carry the feed meanwhile.
+          if (res.status === 402 || res.status === 403 || res.status === 429) pauseFor(10 * 60_000, `HTTP ${res.status}`);
           job.resolve(job.stale);
           continue;
         }
         const data = await res.json();
         // Rate limit and other errors come back as {"error": ...}.
         if (data && typeof data === "object" && !Array.isArray(data) && "error" in data && Object.keys(data).length === 1) {
+          const why = String((data as { error: unknown }).error);
+          warn(`error on ${job.path}: ${why.slice(0, 120)}`);
+          if (/limit|quota|exceed|credit|plan/i.test(why)) pauseFor(10 * 60_000, why.slice(0, 60));
           job.resolve(job.stale);
           continue;
         }
         if (cache.size > MAX_CACHE) cache.clear();
         cache.set(job.path, { at: Date.now(), data });
         job.resolve(data);
-      } catch {
+      } catch (e) {
+        warn(`request failed on ${job.path}: ${(e as Error)?.message ?? e}`);
         job.resolve(job.stale);
       }
     }
@@ -82,8 +105,13 @@ async function drain(key: string) {
 
 export function tracker<T>(path: string, ttlMs: number, opts: { priority?: boolean } = {}): Promise<T | null> {
   const key = process.env.SOLANA_TRACKER_API_KEY;
-  if (!key) return Promise.resolve(null);
+  if (!key) {
+    warn("SOLANA_TRACKER_API_KEY is not set, so coin lists, holders and trades come back empty");
+    return Promise.resolve(null);
+  }
   const hit = cache.get(path);
+  // Switched off (SOLANA_TRACKER_DISABLED=1) or paused after a limit error: serve the last answer, spend nothing.
+  if (process.env.SOLANA_TRACKER_DISABLED === "1" || Date.now() < pausedUntil) return Promise.resolve((hit?.data as T) ?? null);
   if (hit && Date.now() - hit.at < ttlMs) return Promise.resolve(hit.data as T);
   const running = inflight.get(path);
   if (running) {

@@ -123,6 +123,39 @@ function onMessage(raw: string) {
   }
 }
 
+/**
+ * Adds graduated coins we already know about (read from our own database by the memecoin module) so the Graduated list is
+ * full right after a restart. Coins the live stream has already seen are left alone.
+ */
+export function seedGraduated(rows: Array<{ mint: string; name?: string | null; symbol?: string | null; image?: string | null; website?: string | null; twitter?: string | null; telegram?: string | null; graduatedAt?: number }>) {
+  for (const r of rows) {
+    // Only coins born on pump.fun (their addresses end in "pump"). The database also holds other launchpads and plain tokens.
+    if (!r.mint.endsWith("pump")) continue;
+    const existing = state.coins.get(r.mint);
+    if (existing) {
+      existing.migrated = true;
+      if (!existing.name && r.name) existing.name = r.name;
+      if (!existing.symbol && r.symbol) existing.symbol = r.symbol;
+      continue;
+    }
+    state.coins.set(r.mint, {
+      mint: r.mint,
+      name: r.name ?? "",
+      symbol: r.symbol ?? "",
+      creator: "",
+      mcapSol: 0,
+      createdAt: r.graduatedAt ?? Date.now(),
+      migrated: true,
+      image: r.image || `https://images.pump.fun/coin-image/${r.mint}?variant=86x86`,
+      website: r.website ?? null,
+      twitter: r.twitter ?? null,
+      telegram: r.telegram ?? null,
+    });
+  }
+}
+
+let lastErrorLog = 0;
+
 function connect() {
   const key = process.env.PUMPPORTAL_API_KEY;
   if (!key || state.connecting || (state.ws && state.ws.readyState <= 1)) return;
@@ -135,7 +168,15 @@ function connect() {
     ws.send(JSON.stringify({ method: "subscribeNewToken" }));
     ws.send(JSON.stringify({ method: "subscribeMigration" }));
   };
-  ws.onmessage = (m) => onMessage(String(m.data));
+  ws.onmessage = (m) => {
+    const text = String(m.data);
+    // PumpPortal answers {"errors": "..."} when the key's wallet is under its minimum SOL balance. Say so, once a minute.
+    if (text.startsWith('{"errors"') && Date.now() - lastErrorLog > 60_000) {
+      lastErrorLog = Date.now();
+      console.warn(`[pumpportal] ${text.slice(0, 200)}`);
+    }
+    onMessage(text);
+  };
   const lost = () => {
     state.connecting = false;
     if (state.ws === ws) state.ws = null;

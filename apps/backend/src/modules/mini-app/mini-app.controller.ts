@@ -5,6 +5,7 @@ import type { Request as ExpressRequest, Response as ExpressResponse } from 'exp
 import { Public } from '@/common/guards';
 import { GET as chart } from './handlers/chart';
 import { GET as holders } from './handlers/holders';
+import { GET as info } from './handlers/info';
 import { GET as live } from './handlers/live';
 import { GET as majors } from './handlers/majors';
 import { GET as prestocks } from './handlers/prestocks';
@@ -42,6 +43,7 @@ export class MiniAppController {
   @Public() @Get('chart') chart(@Req() req: ExpressRequest, @Res() res: ExpressResponse) { return this.run(chart, req, res); }
   @Public() @Get('trades') trades(@Req() req: ExpressRequest, @Res() res: ExpressResponse) { return this.run(trades, req, res); }
   @Public() @Get('holders') holders(@Req() req: ExpressRequest, @Res() res: ExpressResponse) { return this.run(holders, req, res); }
+  @Public() @Get('info') info(@Req() req: ExpressRequest, @Res() res: ExpressResponse) { return this.run(info, req, res); }
   @Public() @Get('tokens/search') search(@Req() req: ExpressRequest, @Res() res: ExpressResponse) { return this.run(search, req, res); }
   @Public() @Get('tokens/stocks') stocks(@Req() req: ExpressRequest, @Res() res: ExpressResponse) { return this.run(stocks as Handler, req, res); }
   @Public() @Get('tokens/prestocks') prestocks(@Req() req: ExpressRequest, @Res() res: ExpressResponse) { return this.run(prestocks as Handler, req, res); }

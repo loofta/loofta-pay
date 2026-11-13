@@ -29,6 +29,7 @@ import { TwitterTicketGiftsModule } from './modules/twitter-ticket-gifts/twitter
 import { OfframpModule } from './modules/offramp/offramp.module';
 import { QrPayModule } from './modules/qr-pay/qr-pay.module';
 import { JupiterModule } from './modules/jupiter/jupiter.module';
+import { PumpTradeModule } from './modules/pump-trade/pump-trade.module';
 import { AmpleModule } from './modules/ample/ample.module';
 import { LotteryModule } from './modules/lottery/lottery.module';
 import { MagicblockQuestModule } from './modules/magicblock-quest/magicblock-quest.module';
@@ -44,6 +45,7 @@ import { PayoutsModule } from './modules/payouts/payouts.module';
 import { FomoModule } from './modules/fomo/fomo.module';
 import { CoinChatModule } from './modules/coin-chat/coin-chat.module';
 import { MiniAppModule } from './modules/mini-app/mini-app.module';
+import { MiniRewardsModule } from './modules/mini-rewards/mini-rewards.module';
 import { MeldOnrampModule } from './modules/meld-onramp/meld-onramp.module';
 import { MemecoinTerminalModule } from './modules/memecoin-terminal/memecoin-terminal.module';
 
@@ -120,6 +122,7 @@ import { MemecoinTerminalModule } from './modules/memecoin-terminal/memecoin-ter
     OfframpModule,
     QrPayModule,
     JupiterModule,
+    PumpTradeModule,
     AmpleModule,
     LotteryModule,
     MagicblockQuestModule,
@@ -136,6 +139,7 @@ import { MemecoinTerminalModule } from './modules/memecoin-terminal/memecoin-ter
     MemecoinTerminalModule,
     CoinChatModule,
     MiniAppModule,
+    MiniRewardsModule,
     MeldOnrampModule,
   ],
   providers: [

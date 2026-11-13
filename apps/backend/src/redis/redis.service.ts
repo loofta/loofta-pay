@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
+import { bindRedis } from '../modules/mini-app/lib/sharedCache';
 
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
@@ -25,6 +26,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           return Math.min(times * 200, 1000);
         },
       });
+
+      // The mini app handlers are plain functions, so they get the connection through this hook.
+      bindRedis(this.client);
 
       this.client.on('connect', () => {
         this.logger.log('Redis connected');
