@@ -14,6 +14,7 @@ import {
 } from '@solana/web3.js';
 import {
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   createAssociatedTokenAccountIdempotentInstruction,
   createTransferCheckedInstruction,
   getAssociatedTokenAddress,
@@ -110,6 +111,11 @@ export class JupiterService {
     } else {
       this.logger.warn('SOLANA_FEE_PAYER_PRIVATE_KEY not set; SOL withdrawal gas top-up disabled.');
     }
+  }
+
+  /** Where Loofta's swap fees are collected: the platform wallet's public address. Never exposes the key. */
+  get platformFeeWallet(): PublicKey | null {
+    return this.feePayerKeypair?.publicKey ?? null;
   }
 
   private getApiKey(): string {
@@ -215,6 +221,14 @@ export class JupiterService {
 
   // ───────────────────────── In-app token swaps (Metis v1, 0.80% platform fee) ─────────────────────────
 
+  /** Which token program owns a mint. Classic and Token-2022 are supported (new Pump coins are Token-2022); anything else is refused. */
+  private async tokenProgramFor(mint: PublicKey): Promise<PublicKey> {
+    const info = await this.connection.getAccountInfo(mint);
+    if (info?.owner.equals(TOKEN_PROGRAM_ID)) return TOKEN_PROGRAM_ID;
+    if (info?.owner.equals(TOKEN_2022_PROGRAM_ID)) return TOKEN_2022_PROGRAM_ID;
+    throw new BadRequestException('That token is not supported for in-app swaps yet.');
+  }
+
   private async decimalsOf(mint: PublicKey): Promise<number> {
     const info = await this.connection.getAccountInfo(mint);
     if (!info) throw new BadRequestException('Unknown token');
@@ -279,19 +293,22 @@ export class JupiterService {
 
   private async missingOutputAtaCount(userPk: PublicKey, outMint: PublicKey): Promise<number> {
     try {
-      return (await this.connection.getAccountInfo(await getAssociatedTokenAddress(outMint, userPk))) ? 0 : 1;
+      const program = await this.tokenProgramFor(outMint);
+      return (await this.connection.getAccountInfo(await getAssociatedTokenAddress(outMint, userPk, false, program))) ? 0 : 1;
     } catch {
       return 0;
     }
   }
 
-  /** Gasless quote (USDC to SOL only). The network cost is taken from the USDC amount, and outAmount is net of it and of the fee. */
+  /** Gasless quote (spends USDC, buys SOL or any token). The network cost is taken from the USDC amount, and outAmount is net of it and of the fee. */
   private async quoteGasless(userId: string, dto: JupiterSwapDto) {
     const userPk = new PublicKey(await this.usersService.getSolanaWalletAddress(userId));
     const solUsd = await fetchSolPriceUsd();
     if (!solUsd) throw new ServiceUnavailableException('Swaps are temporarily unavailable. Try again shortly.');
     const total = this.toBaseUnits(dto.amount, USDC_DECIMALS);
-    const ataCount = await this.missingOutputAtaCount(userPk, new PublicKey(WSOL_MINT));
+    const outMint = new PublicKey(dto.outputMint);
+    await this.tokenProgramFor(outMint);
+    const ataCount = await this.missingOutputAtaCount(userPk, outMint);
     const cost = this.costFeeUsdcUnits(ataCount, solUsd);
     if (total <= cost) throw this.costTooHigh(total, cost);
     const q = await this.v1Quote(dto, USDC_DECIMALS, SWAP_FEE_BPS, total - cost);
@@ -310,13 +327,13 @@ export class JupiterService {
       priceImpactPct: Number(q.priceImpactPct ?? 0),
       needsAccountRent: ataCount > 0,
       inDecimals: USDC_DECIMALS,
-      outDecimals: 9,
+      outDecimals: await this.decimalsOf(outMint),
     };
   }
 
-  /** Only USDC to native SOL is gasless: it is how someone with no SOL gets some. Every other swap pays its own network fee. */
+  /** Any swap that spends USDC is gasless: the network cost and any new token account are priced into the USDC amount, so a wallet with no SOL can still buy. Selling a token, or spending SOL, pays its own network fee. */
   private isGaslessPair(dto: JupiterSwapDto): boolean {
-    return dto.inputMint === USDC_MINT && dto.outputMint === WSOL_MINT;
+    return dto.inputMint === USDC_MINT && dto.outputMint !== USDC_MINT;
   }
 
   async quoteSwap(userId: string, dto: JupiterSwapDto) {
@@ -376,10 +393,7 @@ export class JupiterService {
     const userPk = new PublicKey(userWallet);
     const outMint = new PublicKey(dto.outputMint);
 
-    const outInfo = await this.connection.getAccountInfo(outMint);
-    if (!outInfo || !outInfo.owner.equals(TOKEN_PROGRAM_ID)) {
-      throw new BadRequestException('That token is not supported for in-app swaps yet.');
-    }
+    await this.tokenProgramFor(outMint);
     if ((await this.connection.getBalance(userPk)) < MIN_SOL_FOR_SWAP_LAMPORTS) {
       throw new BadRequestException('You need about 0.003 SOL in your wallet for the network fee. Swap some USDC to SOL first, that one is free.');
     }
@@ -472,7 +486,7 @@ export class JupiterService {
    */
   private async buildGasless(userId: string, dto: JupiterSwapDto) {
     this.assertSwapPair(dto);
-    if (!this.isGaslessPair(dto)) throw new BadRequestException('Gasless swaps only convert USDC to SOL.');
+    if (!this.isGaslessPair(dto)) throw new BadRequestException('Gasless swaps only spend USDC.');
     if (!this.gaslessEnabled() || !this.feePayerKeypair) throw new ServiceUnavailableException('Swaps are temporarily unavailable.');
     this.rollSpendDay();
     const feePayer = this.feePayerKeypair.publicKey;
@@ -480,8 +494,7 @@ export class JupiterService {
     const userPk = new PublicKey(userWallet);
     const outMint = new PublicKey(dto.outputMint);
 
-    const outInfo = await this.connection.getAccountInfo(outMint);
-    if (!outInfo || !outInfo.owner.equals(TOKEN_PROGRAM_ID)) throw new BadRequestException('That token is not supported for in-app swaps yet.');
+    await this.tokenProgramFor(outMint);
     if ((this.swapsByUserDay.get(userId) ?? 0) >= MAX_SPONSORED_SWAPS_PER_USER_PER_DAY) {
       throw new BadRequestException('You have reached today\'s swap limit. Try again tomorrow.');
     }
@@ -619,7 +632,7 @@ export class JupiterService {
 
   /** Only known programs, no stray signers, and the fee payer touching nothing except paying and funding that one token account. */
   private assertSafeInstructions(all: JupIx[], feePayer: PublicKey, user: PublicKey): void {
-    const allowed = new Set([COMPUTE_BUDGET_PROGRAM_ID, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID.toBase58(), ATA_PROGRAM_ID, JUPITER_V6_PROGRAM_ID]);
+    const allowed = new Set([COMPUTE_BUDGET_PROGRAM_ID, SYSTEM_PROGRAM_ID, TOKEN_PROGRAM_ID.toBase58(), TOKEN_2022_PROGRAM_ID.toBase58(), ATA_PROGRAM_ID, JUPITER_V6_PROGRAM_ID]);
     const fp = feePayer.toBase58();
     const u = user.toBase58();
     for (const x of all) {
@@ -652,7 +665,8 @@ export class JupiterService {
   private async ensureFeeTokenAccount(mint: PublicKey, userId: string): Promise<string> {
     if (!this.feePayerKeypair) throw new ServiceUnavailableException('In-app swaps are temporarily unavailable.');
     const owner = this.feePayerKeypair.publicKey;
-    const ata = await getAssociatedTokenAddress(mint, owner);
+    const program = await this.tokenProgramFor(mint);
+    const ata = await getAssociatedTokenAddress(mint, owner, false, program);
     if (await this.connection.getAccountInfo(ata)) return ata.toBase58();
 
     const key = mint.toBase58();
@@ -668,7 +682,7 @@ export class JupiterService {
       this.feeAccountCreations.push(Date.now());
       const payer = this.feePayerKeypair;
       pending = (async () => {
-        const tx = new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(payer.publicKey, ata, payer.publicKey, mint));
+        const tx = new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(payer.publicKey, ata, payer.publicKey, mint, program));
         const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
         tx.recentBlockhash = blockhash;
         tx.feePayer = payer.publicKey;

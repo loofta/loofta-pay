@@ -20,12 +20,18 @@ describe('JupiterService sponsored swap guards', () => {
     const WSOL = 'So11111111111111111111111111111111111111112';
     const pair = (inputMint: string, outputMint: string) => ({ inputMint, outputMint, amount: '10' });
 
-    it('sponsors only USDC to SOL, so a free swap can never be used to farm any other pair', () => {
+    it('sponsors a swap only when it spends USDC, so a wallet with no SOL can still buy', () => {
       const s = service();
       expect(s.isGaslessPair(pair(USDC, WSOL))).toBe(true);
+      expect(s.isGaslessPair(pair(USDC, Keypair.generate().publicKey.toBase58()))).toBe(true);
+    });
+
+    it('never sponsors a swap that spends anything else, or USDC for USDC', () => {
+      const s = service();
       expect(s.isGaslessPair(pair(WSOL, USDC))).toBe(false);
-      expect(s.isGaslessPair(pair(USDC, Keypair.generate().publicKey.toBase58()))).toBe(false);
       expect(s.isGaslessPair(pair(Keypair.generate().publicKey.toBase58(), WSOL))).toBe(false);
+      expect(s.isGaslessPair(pair(Keypair.generate().publicKey.toBase58(), USDC))).toBe(false);
+      expect(s.isGaslessPair(pair(USDC, USDC))).toBe(false);
     });
   });
 
