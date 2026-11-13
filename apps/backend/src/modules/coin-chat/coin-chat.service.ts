@@ -4,6 +4,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { SupabaseService } from '@/database/supabase.service';
 import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { UsersService } from '../users/users.service';
+import { MiniProfileService } from '../mini-feed/mini-profile.service';
 
 const MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const PAGE = 50;
@@ -32,6 +33,7 @@ export class CoinChatService {
     private readonly supabase: SupabaseService,
     private readonly users: UsersService,
     private readonly config: ConfigService,
+    private readonly profiles: MiniProfileService,
   ) {}
 
   private connection(): Connection {
@@ -76,7 +78,11 @@ export class CoinChatService {
     this.lastPost.set(privyUserId, now);
     if (this.lastPost.size > 5000) this.lastPost.clear();
 
-    const [name, holding] = await Promise.all([this.displayName(privyUserId), this.holding(privyUserId, mint)]);
+    const [name, holding] = await Promise.all([this.profiles.displayName(privyUserId), this.holding(privyUserId, mint)]);
+    // Only people who hold the coin can talk about it. If the balance cannot be read, nothing is posted rather than guessed.
+    if (!holding) throw new HttpException('Could not check your balance. Try again in a moment.', HttpStatus.SERVICE_UNAVAILABLE);
+    if (!(holding.amount > 0)) throw new HttpException('Only people who hold this coin can post here. Buy some first.', HttpStatus.FORBIDDEN);
+    void this.profiles.ensureProfile(privyUserId);
     const { data, error } = await this.supabase
       .getClient()
       .from('coin_chat_messages')

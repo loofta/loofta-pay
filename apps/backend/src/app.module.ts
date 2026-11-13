@@ -46,6 +46,7 @@ import { FomoModule } from './modules/fomo/fomo.module';
 import { CoinChatModule } from './modules/coin-chat/coin-chat.module';
 import { MiniAppModule } from './modules/mini-app/mini-app.module';
 import { MiniRewardsModule } from './modules/mini-rewards/mini-rewards.module';
+import { MiniFeedModule } from './modules/mini-feed/mini-feed.module';
 import { MeldOnrampModule } from './modules/meld-onramp/meld-onramp.module';
 import { MemecoinTerminalModule } from './modules/memecoin-terminal/memecoin-terminal.module';
 
@@ -140,6 +141,7 @@ import { MemecoinTerminalModule } from './modules/memecoin-terminal/memecoin-ter
     CoinChatModule,
     MiniAppModule,
     MiniRewardsModule,
+    MiniFeedModule,
     MeldOnrampModule,
   ],
   providers: [
