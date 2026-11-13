@@ -73,6 +73,38 @@ async function geckoCandles(mint: string, tfKey: string, tf: { unit: string; agg
     .sort((a, b) => a.time - b.time);
 }
 
+/**
+ * The big coins trade on Binance with real volume, so their candles there are clean. A Solana pool for the same coin is
+ * thin and noisy: SOL's minute closes jumped by 0.25% up and straight back down. Binance's public market-data host needs
+ * no key and is not region blocked like api.binance.com.
+ */
+const BINANCE_SYMBOL: Record<string, string> = {
+  So11111111111111111111111111111111111111112: "SOLUSDT",
+  cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij: "BTCUSDT",
+  "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh": "BTCUSDT",
+  "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs": "ETHUSDT",
+  JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN: "JUPUSDT",
+  DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263: "BONKUSDT",
+  EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm: "WIFUSDT",
+  jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL: "JTOUSDT",
+  HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3: "PYTHUSDT",
+  "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R": "RAYUSDT",
+};
+async function binanceCandles(mint: string, tfKey: string): Promise<Candle[]> {
+  const symbol = BINANCE_SYMBOL[mint];
+  if (!symbol) return [];
+  try {
+    const r = await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${tfKey}&limit=120`, { signal: AbortSignal.timeout(5_000) });
+    if (!r.ok) return [];
+    const rows = (await r.json()) as Array<[number, string, string, string, string]>;
+    return rows
+      .map((k) => ({ time: Math.floor(k[0] / 1000), open: Number(k[1]), high: Number(k[2]), low: Number(k[3]), close: Number(k[4]) }))
+      .filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite));
+  } catch {
+    return [];
+  }
+}
+
 export async function GET(req: Request) {
   const sp = new URL(req.url).searchParams;
   const mint = sp.get("mint") ?? "";
@@ -100,6 +132,8 @@ export async function GET(req: Request) {
     `chart:${mint}:${tfKey}`,
     TTL_SEC[tfKey] ?? 60,
     async () => {
+      const major = await binanceCandles(mint, tfKey);
+      if (major.length > 1) return { candles: major };
       try {
         const candles = await geckoCandles(mint, tfKey, tf);
         if (candles.length > 0) {
