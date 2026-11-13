@@ -45,6 +45,7 @@ const USDC_MINT_SET = new Set([
 
 const ATA_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 const TOKEN_PROGRAM_ID_STR = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+const ASSOCIATED_TOKEN_PROGRAM_ID_STR = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 const TOKEN_2022_PROGRAM_ID_STR = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
 function isSponsoredTokenProgram(prog: string | undefined): boolean {
@@ -1569,6 +1570,10 @@ export class SolanaSponsorService {
     instructions: { programId: string; keys: { pubkey: string; isSigner: boolean; isWritable: boolean }[]; data: string }[];
     /** Loofta's cut: one trailing USDC TransferChecked from the paying wallet to the fee payer ATA. */
     looftaFee?: { sourceAta: PublicKey; destAta: PublicKey; mint: PublicKey; owner: PublicKey; amountUnits: bigint } | null;
+    /** One idempotent create-ATA first, paid by the fee payer, for a deposit address a bridge issued (NEAR Confidential Intents).
+     *  Pinned to the exact owner/mint/ATA we stored at quote time and run through the per-user, per-wallet and fleet ATA caps. */
+    createAta?: { ata: PublicKey; owner: PublicKey; mint: PublicKey } | null;
+    userId?: string;
   }): Promise<{ signature: string }> {
     if (!this.feePayerKeypair || !this.feePayerAddress) throw new Error('Fee payer not configured');
     const raw = Buffer.from(params.transactionBase64, 'base64');
@@ -1588,13 +1593,37 @@ export class SolanaSponsorService {
     }
     const compiled = message.compiledInstructions;
     const fee = params.looftaFee ?? null;
-    if (compiled.length !== params.instructions.length + (fee ? 1 : 0)) {
+    const create = params.createAta ?? null;
+    const off = create ? 1 : 0;
+    if (compiled.length !== off + params.instructions.length + (fee ? 1 : 0)) {
       throw new Error('Relay deposit does not match the quoted bridge');
     }
     const user = params.userSolanaAddress.trim();
+    if (create) {
+      const ix = compiled[0];
+      const want = [this.feePayerAddress, create.ata.toBase58(), create.owner.toBase58(), create.mint.toBase58(), SystemProgram.programId.toBase58(), TOKEN_PROGRAM_ID_STR];
+      const keys = ix.accountKeyIndexes.map((i) => staticKeys[i]?.toBase58());
+      if (
+        staticKeys[ix.programIdIndex]?.toBase58() !== ASSOCIATED_TOKEN_PROGRAM_ID_STR
+        || ix.data.length !== 1 || ix.data[0] !== 1
+        || keys.length !== want.length
+        || keys.some((k, i) => k !== want[i])
+        || getAssociatedTokenAddressSync(create.mint, create.owner, true).toBase58() !== create.ata.toBase58()
+      ) {
+        throw new Error('Relay deposit token account creation does not match');
+      }
+      const label = 'ample-private-add';
+      if (params.userId) await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, params.userId, 1, `SolanaSponsor:${label}`);
+      await assertPerWalletAtaCreationCapNotExceeded(this.supabaseService, user, 1, `SolanaSponsor:${label}`);
+      const allowed = await guardAtaSponsorship(
+        this.supabaseService, create.owner.toBase58(), create.mint.toBase58(),
+        `sponsor-broadcast:${label}:user:${params.userId ?? 'unknown'}`, this.emailService, params.userId, user,
+      );
+      if (!allowed) throw new Error('Token account creation refused by the sponsorship guard');
+    }
     let userIsSigner = false;
     for (let i = 0; i < params.instructions.length; i++) {
-      const ix = compiled[i];
+      const ix = compiled[off + i];
       const expected = params.instructions[i];
       const programId = staticKeys[ix.programIdIndex]?.toBase58();
       if (programId !== expected.programId) throw new Error('Relay deposit does not match the quoted bridge');
@@ -1610,7 +1639,7 @@ export class SolanaSponsorService {
     }
     if (fee) {
       // Exactly the fee transfer we built: token program, [source, mint, dest, owner], TransferChecked(amount, 6).
-      const ix = compiled[params.instructions.length];
+      const ix = compiled[off + params.instructions.length];
       const expectedData = Buffer.alloc(10);
       expectedData.writeUInt8(12, 0);
       expectedData.writeBigUInt64LE(fee.amountUnits, 1);

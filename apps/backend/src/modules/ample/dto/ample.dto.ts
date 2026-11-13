@@ -65,6 +65,9 @@ export class AmpleFundPrepareDto {
   outputUnits: string;
   @IsOptional() @IsString() @Matches(/^[1-9][0-9]{0,15}$/)
   maxTotalUnits?: string;
+  /** Add through NEAR Confidential Intents (extra $0.25) so the wallet is not linked to the Earn account. */
+  @IsOptional() @IsBoolean()
+  confidential?: boolean;
 }
 
 export class AmpleFundBroadcastDto {
@@ -77,4 +80,7 @@ export class AmpleFundWithdrawDto {
   amount: string;
   @IsString() @IsNotEmpty() @MaxLength(64)
   solanaAddress: string;
+  /** Return through NEAR Confidential Intents. Defaults to on for anyone who added privately. */
+  @IsOptional() @IsBoolean()
+  confidential?: boolean;
 }

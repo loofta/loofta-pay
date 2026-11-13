@@ -67,6 +67,13 @@ export class AmpleEvmController {
     return this.fund.submit(id, req.user!.id, dto.transaction);
   }
 
+  /** Whether this person has added privately, so the app can lock their withdrawals to private. */
+  @Get('fund/privacy')
+  @RateLimit(60, 60, 'ample-evm:fund-privacy')
+  async fundPrivacy(@Req() req: any) {
+    return { privateAdded: await this.fund.hasPrivateAdd(req.user!.id) };
+  }
+
   /** Progress of an add or a withdrawal. Also nudges the order along, so it moves even without the background job. */
   @Get('fund/:id/status')
   @RateLimit(120, 60, 'ample-evm:fund-status')

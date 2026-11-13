@@ -2,8 +2,8 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
-import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { encodeFunctionData, erc20Abi } from 'viem';
+import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
+import { encodeFunctionData, erc20Abi, isAddress } from 'viem';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '@/modules/users/users.service';
 import { RelayService } from '@/modules/lottery/relay.service';
@@ -12,6 +12,7 @@ import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { isCronEnabled } from '@/common/cron-gate';
 import { AmpleCompanionService } from './ample-companion.service';
 import { AmpleEvmService } from './ample-evm.service';
+import { NearIntentsService } from '@/modules/intents/near-intents.service';
 
 const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const;
@@ -21,6 +22,8 @@ export const LOOFTA_BASE_WALLET = '0x50c236e3B93D3d69fe23F4D648A13901e6DdbC39' a
 /** Loofta's fee: 0.05% (5 basis points) of the amount moved, on the way in and on the way out. */
 export const FUND_FEE_BPS = 5n;
 export const feeFor = (units: bigint) => (units * FUND_FEE_BPS) / 10_000n;
+/** Extra flat fee for adding privately through NEAR Confidential Intents instead of Relay: $0.25 in USDC, on top of the usual fee. */
+export const PRIVATE_ADD_FEE_UNITS = 250_000n;
 const MIN_OUT_UNITS = 1_000_000n;
 const MAX_OUT_UNITS = 1_000_000_000n;
 const MAX_ORDERS_PER_DAY = 10;
@@ -37,6 +40,10 @@ interface StoredQuote {
   instructions: { programId: string; keys: { pubkey: string; isSigner: boolean; isWritable: boolean }[]; data: string }[];
   addressLookupTableAddresses: string[];
   requiredInputUnits: string;
+  /** Set when the order goes through NEAR Confidential Intents: `requestId` is then the 1Click deposit address. */
+  private?: boolean;
+  /** Private add only: the deposit address has no USDC account yet, so the first instruction creates it (fee payer pays the rent). */
+  createAta?: { ata: string; owner: string; mint: string };
 }
 
 type Row = any;
@@ -65,6 +72,7 @@ export class AmpleFundService {
     private readonly config: ConfigService,
     private readonly companions: AmpleCompanionService,
     private readonly evm: AmpleEvmService,
+    private readonly near: NearIntentsService,
   ) {}
 
   private get db() {
@@ -77,7 +85,7 @@ export class AmpleFundService {
    * Quotes the bridge. `outputUnits` is what should arrive in the Earn account. When `maxTotalUnits` (the Solana balance) is
    * lower than what that costs, the output shrinks so the total fits, so the bridge cost comes out of the deposit.
    */
-  async prepare(userId: string, dto: { solanaAddress: string; outputUnits: string; maxTotalUnits?: string }) {
+  async prepare(userId: string, dto: { solanaAddress: string; outputUnits: string; maxTotalUnits?: string; confidential?: boolean }) {
     if (!(await this.users.isSolanaAddressInLinkedAccounts(userId, dto.solanaAddress))) {
       throw new ForbiddenException('solanaAddress must be one of your own linked wallets');
     }
@@ -85,6 +93,8 @@ export class AmpleFundService {
     const vault = await this.evm.vault();
     if (!vault) throw new BadRequestException('Earn is not available right now. Try again in a moment.');
     const companion = await this.companions.get(userId);
+
+    if (dto.confidential) return this.preparePrivate(userId, dto, vault.id, companion.address);
 
     let out = BigInt(dto.outputUnits);
     const maxTotal = dto.maxTotalUnits ? BigInt(dto.maxTotalUnits) : null;
@@ -134,6 +144,93 @@ export class AmpleFundService {
     return { id: data.id as string, outUnits: out.toString(), feeUnits: fee.toString(), totalUnits: total.toString() };
   }
 
+  /**
+   * Private add: the same order, but the Solana USDC goes to a NEAR Confidential Intents deposit address instead of Relay, so
+   * the person's wallet is not linked to their Earn account on Base. Only ever `advanced` or `basic`, never a public swap.
+   * The stored instruction is one USDC transfer to that address, so buildTx and submit work exactly as they do for Relay.
+   */
+  private async preparePrivate(userId: string, dto: { solanaAddress: string; outputUnits: string; maxTotalUnits?: string }, vaultId: string, baseAddress: string) {
+    const [from, to] = await Promise.all([this.near.findToken('USDC', ['solana', 'sol']), this.near.findToken('USDC', ['base'])]);
+    if (!from?.tokenId || !to?.tokenId) throw new BadRequestException('Adding privately is not available right now. Try again in a moment.');
+    const mint = new PublicKey(this.config.get<string>('SOLANA_USDC_MINT_MAINNET') || SOLANA_USDC_MINT);
+    const owner = new PublicKey(dto.solanaAddress);
+    const maxTotal = dto.maxTotalUnits ? BigInt(dto.maxTotalUnits) : null;
+    let out = BigInt(dto.outputUnits);
+    if (out > MAX_OUT_UNITS) throw new BadRequestException('That is more than the limit for one transfer.');
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (out < MIN_OUT_UNITS) throw new BadRequestException('That amount is too small once the transfer cost is taken out.');
+      let quote: Awaited<ReturnType<NearIntentsService['getDepositQuote']>> | null = null;
+      for (const level of ['advanced', 'basic'] as const) {
+        try {
+          const q = await this.near.getDepositQuote({
+            fromToken: { tokenId: from.tokenId, chain: from.chain, symbol: from.symbol, decimals: from.decimals },
+            toToken: { tokenId: to.tokenId, chain: to.chain, symbol: to.symbol, decimals: to.decimals },
+            amountOut: (Number(out) / 1e6).toFixed(6),
+            useExactOutput: true,
+            recipient: baseAddress,
+            refundAddress: dto.solanaAddress,
+            confidentiality: level,
+            skipAppFees: true,
+            deadlineMs: 20 * 60_000,
+          });
+          if (q?.depositAddress) { quote = q; break; }
+        } catch (e: any) {
+          this.logger.warn(`confidential quote (${level}) failed: ${e?.body?.message ?? e?.message ?? e}`);
+        }
+      }
+      if (!quote?.depositAddress) throw new BadRequestException('Adding privately is not available for this amount right now. You can add normally instead.');
+
+      const rawIn = (quote.raw as any)?.quote?.amountIn;
+      const inUnits = rawIn ? BigInt(rawIn) : BigInt(Math.ceil(Number(quote.amountInFormatted) * 1e6));
+      if (inUnits <= 0n) throw new BadRequestException('Could not price a private add. Try again.');
+      const fee = feeFor(out) + PRIVATE_ADD_FEE_UNITS;
+      const total = inUnits + fee;
+      if (maxTotal && total > maxTotal) {
+        out = out - (total - maxTotal) - 1_000n;
+        continue;
+      }
+
+      let deposit: PublicKey;
+      try { deposit = new PublicKey(quote.depositAddress); } catch { throw new BadRequestException('Adding privately is not available right now. Try again.'); }
+      const destAta = getAssociatedTokenAddressSync(mint, deposit, true);
+      // A fresh 1Click deposit address has no USDC account. The fee payer creates it in the same transaction, pinned to this exact
+      // address and mint and capped per user, so the person's gasless wallet needs no SOL.
+      const info = await this.sponsor.getConnection().getAccountInfo(destAta, 'confirmed');
+      const ix = createTransferCheckedInstruction(getAssociatedTokenAddressSync(mint, owner), mint, destAta, owner, inUnits, 6);
+      const stored: StoredQuote = {
+        requestId: quote.depositAddress,
+        instructions: [{
+          programId: ix.programId.toBase58(),
+          keys: ix.keys.map(k => ({ pubkey: k.pubkey.toBase58(), isSigner: k.isSigner, isWritable: k.isWritable })),
+          data: Buffer.from(ix.data).toString('hex'),
+        }],
+        addressLookupTableAddresses: [],
+        requiredInputUnits: inUnits.toString(),
+        private: true,
+        ...(info ? {} : { createAta: { ata: destAta.toBase58(), owner: deposit.toBase58(), mint: mint.toBase58() } }),
+      };
+      const { data, error } = await this.db.from('ample_fund_orders').insert({
+        kind: 'fund',
+        user_id: userId,
+        solana_address: dto.solanaAddress,
+        base_address: baseAddress,
+        vault_id: vaultId,
+        out_units: out.toString(),
+        fee_units: fee.toString(),
+        total_units: total.toString(),
+        quote: stored,
+        request_id: quote.depositAddress,
+      }).select('id').single();
+      if (error || !data) {
+        this.logger.error(`ample_fund_orders insert failed: ${error?.message}`);
+        throw new BadRequestException('Could not start the transfer. Try again.');
+      }
+      return { id: data.id as string, outUnits: out.toString(), feeUnits: fee.toString(), totalUnits: total.toString() };
+    }
+    throw new BadRequestException('That amount is too small once the transfer cost is taken out.');
+  }
+
   private async assertDailyCap(userId: string) {
     const since = new Date(Date.now() - 24 * 3600_000).toISOString();
     const { count } = await this.db.from('ample_fund_orders').select('id', { count: 'exact', head: true }).eq('user_id', userId).gte('created_at', since);
@@ -178,6 +275,9 @@ export class AmpleFundService {
       keys: ix.keys.map(k => ({ pubkey: new PublicKey(k.pubkey), isSigner: k.isSigner, isWritable: k.isWritable })),
       data: Buffer.from(ix.data, 'hex'),
     }));
+    if (quote.createAta) {
+      ixs.unshift(createAssociatedTokenAccountIdempotentInstruction(new PublicKey(feePayer), new PublicKey(quote.createAta.ata), new PublicKey(quote.createAta.owner), new PublicKey(quote.createAta.mint)));
+    }
     const fee = this.feeTransfer(row.solana_address, BigInt(row.fee_units));
     ixs.push(createTransferCheckedInstruction(fee.sourceAta, fee.mint, fee.destAta, fee.owner, fee.amountUnits, 6));
     const message = new TransactionMessage({ payerKey: new PublicKey(feePayer), recentBlockhash: blockhash, instructions: ixs }).compileToV0Message();
@@ -199,6 +299,8 @@ export class AmpleFundService {
         userSolanaAddress: row.solana_address,
         instructions: quote.instructions,
         looftaFee: this.feeTransfer(row.solana_address, BigInt(row.fee_units)),
+        userId,
+        createAta: quote.createAta ? { ata: new PublicKey(quote.createAta.ata), owner: new PublicKey(quote.createAta.owner), mint: new PublicKey(quote.createAta.mint) } : null,
       });
       await this.db.from('ample_fund_orders').update({ signature, updated_at: new Date().toISOString() }).eq('id', id);
       return { signature };
@@ -212,7 +314,7 @@ export class AmpleFundService {
 
   // ---- withdraw: entirely on the backend, the person only says how much and where ----
 
-  async startWithdraw(userId: string, dto: { amount: string; solanaAddress: string }) {
+  async startWithdraw(userId: string, dto: { amount: string; solanaAddress: string; confidential?: boolean }) {
     if (!(await this.users.isSolanaAddressInLinkedAccounts(userId, dto.solanaAddress))) {
       throw new ForbiddenException('solanaAddress must be one of your own linked wallets');
     }
@@ -221,7 +323,10 @@ export class AmpleFundService {
     await this.assertDailyCap(userId);
     const vault = await this.evm.vault();
     if (!vault) throw new BadRequestException('Earn is not available right now. Try again in a moment.');
+    // Anyone who added privately gets a private withdrawal too, otherwise the exit would link their wallet back to the stake.
+    const priv = dto.confidential ?? (await this.hasPrivateAdd(userId));
     const { data, error } = await this.db.from('ample_fund_orders').insert({
+      ...(priv ? { quote: { private: true } } : {}),
       kind: 'withdraw',
       status: 'WITHDRAWING',
       user_id: userId,
@@ -237,6 +342,12 @@ export class AmpleFundService {
     }
     void this.advance(data, true);
     return { id: data.id as string };
+  }
+
+  /** True once this person has completed an add through Confidential Intents. */
+  async hasPrivateAdd(userId: string): Promise<boolean> {
+    const { data } = await this.db.from('ample_fund_orders').select('id').eq('user_id', userId).eq('kind', 'fund').eq('status', 'DONE').eq('quote->>private', 'true').limit(1);
+    return !!data?.length;
   }
 
   /** Claims prizes into the person's savings. Quick enough to run inline. */
@@ -306,7 +417,7 @@ export class AmpleFundService {
 
   /** Waits for Relay. Add: then deposit. Withdraw: then done. */
   private async watchBridge(row: Row) {
-    const s = await this.relay.getStatus(row.request_id);
+    const s = (row.quote as StoredQuote | null)?.private ? await this.privateStatus(row.request_id) : await this.relay.getStatus(row.request_id);
     if (s === 'PENDING') return;
     if (s === 'FAILED') {
       await this.setStatus(row.id, 'BRIDGING', { status: 'FAILED', last_error: 'bridge failed or refunded' });
@@ -317,6 +428,19 @@ export class AmpleFundService {
       return;
     }
     if (await this.setStatus(row.id, 'BRIDGING', { status: 'DEPOSITING' })) await this.depositStep({ ...row, status: 'DEPOSITING' });
+  }
+
+  /** Status of a private add: the 1Click swap behind the deposit address. Not seen yet counts as still waiting. */
+  private async privateStatus(depositAddress: string): Promise<'PENDING' | 'SUCCESS' | 'FAILED'> {
+    let st = '';
+    try {
+      st = String((await this.near.getExecutionStatus(depositAddress))?.status ?? '').toUpperCase();
+    } catch (e: any) {
+      throw new Error(`waiting for private swap: ${String(e?.message ?? e).slice(0, 120)}`);
+    }
+    if (st === 'SUCCESS') return 'SUCCESS';
+    if (st === 'REFUNDED' || st === 'FAILED') return 'FAILED';
+    return 'PENDING';
   }
 
   /** Puts what the bridge delivered into the pool: one sponsored batch (approval, deposit) from the Earn account. */
@@ -364,6 +488,7 @@ export class AmpleFundService {
     const fee = feeFor(amount);
     const send = amount - fee;
     if (send < MIN_OUT_UNITS) throw new Error('amount too small to return');
+    if ((row.quote as StoredQuote | null)?.private) return this.returnPrivate(row, c, send, fee);
     const q = await this.relay.getBaseToSolQuote({ fromAddress: c.address, toAddress: row.solana_address, amountUnits: send });
     if (q.depositValue > 0n) throw new Error('return needs ETH value');
     const calls: { to: `0x${string}`; data: `0x${string}` }[] = [
@@ -373,6 +498,40 @@ export class AmpleFundService {
     ];
     const hash = await this.rhinestone.sendSponsored(c.key, calls);
     await this.setStatus(row.id, 'RETURNING', { status: 'BRIDGING', request_id: q.requestId, step_hash: hash });
+  }
+
+  /**
+   * Private return: Base USDC goes to a NEAR Confidential Intents deposit address and arrives in the person's Solana wallet, so the
+   * withdrawal cannot be tied to their Earn account. Never a public swap: if no confidential quote exists the step retries.
+   */
+  private async returnPrivate(row: Row, c: { address: `0x${string}`; key: any }, send: bigint, fee: bigint) {
+    const [from, to] = await Promise.all([this.near.findToken('USDC', ['base']), this.near.findToken('USDC', ['solana', 'sol'])]);
+    if (!from?.tokenId || !to?.tokenId) throw new Error('private return unavailable: token not found');
+    let deposit = '';
+    for (const level of ['advanced', 'basic'] as const) {
+      try {
+        const q = await this.near.getDepositQuote({
+          fromToken: { tokenId: from.tokenId, chain: from.chain, symbol: from.symbol, decimals: from.decimals },
+          toToken: { tokenId: to.tokenId, chain: to.chain, symbol: to.symbol, decimals: to.decimals },
+          amountIn: (Number(send) / 1e6).toFixed(6),
+          recipient: row.solana_address,
+          refundAddress: c.address,
+          confidentiality: level,
+          skipAppFees: true,
+          deadlineMs: 20 * 60_000,
+        });
+        if (q?.depositAddress) { deposit = q.depositAddress; break; }
+      } catch (e: any) {
+        this.logger.warn(`confidential return quote (${level}) failed: ${e?.body?.message ?? e?.message ?? e}`);
+      }
+    }
+    if (!isAddress(deposit)) throw new Error('private return unavailable: no confidential quote');
+    const calls: { to: `0x${string}`; data: `0x${string}` }[] = [
+      { to: BASE_USDC, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [LOOFTA_BASE_WALLET, fee] }) },
+      { to: BASE_USDC, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [deposit as `0x${string}`, send] }) },
+    ];
+    const hash = await this.rhinestone.sendSponsored(c.key, calls);
+    await this.setStatus(row.id, 'RETURNING', { status: 'BRIDGING', request_id: deposit, step_hash: hash });
   }
 
   // ---- background ----
