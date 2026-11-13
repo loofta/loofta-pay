@@ -8,6 +8,7 @@ import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 import { getStocks } from '@/modules/mini-app/lib/stocks';
 import { cached } from '@/modules/mini-app/lib/sharedCache';
+import { MiniCalloutsService } from './mini-callouts.service';
 
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const WSOL = 'So11111111111111111111111111111111111111112';
@@ -78,6 +79,7 @@ export class MiniRewardsService {
     private readonly config: ConfigService,
     private readonly supabase: SupabaseService,
     private readonly users: UsersService,
+    private readonly callouts: MiniCalloutsService,
   ) {
     this.connection = new Connection(getMainnetSolanaRpcUrl(config), 'confirmed');
   }
@@ -148,9 +150,12 @@ export class MiniRewardsService {
   /** Called after the backend builds a trade. Returns the row id. Failures are logged and never block the trade. */
   async recordBuilt(input: RecordTradeInput): Promise<string | null> {
     try {
+      // A buy of a coin the person tailed in the last 24 hours earns the poster a share.
+      const tailId = input.side === 'buy' && input.kind !== 'predict' ? await this.callouts.activeTailFor(input.userId, input.mint) : null;
       const { data, error } = await this.db()
         .from('mini_trades')
         .insert({
+          tail_id: tailId,
           privy_user_id: input.userId,
           kind: input.kind,
           side: input.side,
@@ -269,6 +274,7 @@ export class MiniRewardsService {
       this.logger.warn(`markConfirmed failed: ${error.message}`);
       return;
     }
+    void this.callouts.accrue(id);
     // The inviter's discount starts with their friend's first confirmed trade.
     const { data: ref } = await this.db().from('mini_referrals').update({ qualified_at: new Date().toISOString() }).eq('referee_privy_id', userId).is('qualified_at', null).select('referrer_privy_id').maybeSingle();
     if (ref) this.feeCache.delete(ref.referrer_privy_id);
