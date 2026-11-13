@@ -26,6 +26,8 @@ export const feeFor = (units: bigint) => (units * FUND_FEE_BPS) / 10_000n;
 export const PRIVATE_ADD_FEE_UNITS = 250_000n;
 const MIN_OUT_UNITS = 1_000_000n;
 const MAX_OUT_UNITS = 1_000_000_000n;
+/** The smallest amount that is sent back to the person's wallet after our fee. Relay's own cost is about two cents and comes out of what arrives, so there is no reason to hold back a $1 position. */
+const MIN_WITHDRAW_UNITS = 500_000n;
 const MAX_ORDERS_PER_DAY = 10;
 /** A Solana-side quote older than this is not built or sent any more. */
 const QUOTE_TTL_MS = 5 * 60_000;
@@ -319,7 +321,7 @@ export class AmpleFundService {
       throw new ForbiddenException('solanaAddress must be one of your own linked wallets');
     }
     const amount = BigInt(dto.amount);
-    if (amount < MIN_OUT_UNITS + feeFor(amount) + 100_000n) throw new BadRequestException('Withdraw at least $1.15 at a time.');
+    if (amount < MIN_WITHDRAW_UNITS + feeFor(amount)) throw new BadRequestException('Withdraw at least $0.50 at a time.');
     await this.assertDailyCap(userId);
     const vault = await this.evm.vault();
     if (!vault) throw new BadRequestException('Earn is not available right now. Try again in a moment.');
@@ -487,7 +489,7 @@ export class AmpleFundService {
     const amount = have < expected ? have : expected;
     const fee = feeFor(amount);
     const send = amount - fee;
-    if (send < MIN_OUT_UNITS) throw new Error('amount too small to return');
+    if (send < MIN_WITHDRAW_UNITS) throw new Error('amount too small to return');
     if ((row.quote as StoredQuote | null)?.private) return this.returnPrivate(row, c, send, fee);
     const q = await this.relay.getBaseToSolQuote({ fromAddress: c.address, toAddress: row.solana_address, amountUnits: send });
     if (q.depositValue > 0n) throw new Error('return needs ETH value');
