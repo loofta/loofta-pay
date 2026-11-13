@@ -42,6 +42,10 @@ import { MarketingModule } from './modules/marketing/marketing.module';
 import { PaymentLinksModule } from './modules/payment-links/payment-links.module';
 import { PayoutsModule } from './modules/payouts/payouts.module';
 import { FomoModule } from './modules/fomo/fomo.module';
+import { CoinChatModule } from './modules/coin-chat/coin-chat.module';
+import { MiniAppModule } from './modules/mini-app/mini-app.module';
+import { MeldOnrampModule } from './modules/meld-onramp/meld-onramp.module';
+import { MemecoinTerminalModule } from './modules/memecoin-terminal/memecoin-terminal.module';
 
 @Module({
   imports: [
@@ -129,6 +133,10 @@ import { FomoModule } from './modules/fomo/fomo.module';
     PaymentLinksModule,
     PayoutsModule,
     FomoModule,
+    MemecoinTerminalModule,
+    CoinChatModule,
+    MiniAppModule,
+    MeldOnrampModule,
   ],
   providers: [
     {

@@ -37,8 +37,8 @@ const JUPITER_API_BASE = 'https://api.jup.ag/swap/v2';
 // outAmount already has the fee taken out. (v2's referral fee needs a hand-made referral account.)
 const JUPITER_V1_BASE = 'https://api.jup.ag/swap/v1';
 const JUPITER_TOKENS_BASE = 'https://api.jup.ag/tokens/v2';
-/** Loofta's cut of every in-app swap: 0.80%, taken from the token the user receives. */
-export const SWAP_FEE_BPS = 80;
+/** Loofta's cut of every in-app swap: 0.30%, taken from the token the user receives. */
+export const SWAP_FEE_BPS = 30;
 const ATA_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 const COMPUTE_BUDGET_PROGRAM_ID = 'ComputeBudget111111111111111111111111111111';
 const JUPITER_V6_PROGRAM_ID = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
