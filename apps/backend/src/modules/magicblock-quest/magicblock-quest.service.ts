@@ -11,7 +11,7 @@ const RESET_TIMEZONE = 'Europe/Paris'; // CET/CEST
 const RETRY_COOLDOWN_MS = 15_000;
 const WEEKDAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
-export type MagicblockQuestType = 'lottery_ticket' | 'private_payment';
+export type MagicblockQuestType = 'private_payment';
 
 export interface MagicblockQuestStatusItem {
   questType: MagicblockQuestType;
@@ -99,7 +99,7 @@ export class MagicblockQuestService {
   // per-environment config, and env drift between local/Railway already caused this to silently
   // no-op in production once today (2026-07-24).
   private questId(type: MagicblockQuestType): number {
-    return type === 'lottery_ticket' ? 43 : 44;
+    return 44;
   }
 
   async getWallet(userId: string): Promise<string | null> {
@@ -151,17 +151,6 @@ export class MagicblockQuestService {
   async backfillQuestsForWallet(userId: string): Promise<void> {
     const db = this.supabase.getClient();
 
-    const { data: tickets } = await db
-      .from('lottery_tickets')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('funded_privately', true);
-    for (const t of tickets ?? []) {
-      await this.maybePushLotteryTicketQuest((t as { id: string }).id).catch((e) =>
-        this.logger.warn(`backfill lottery_ticket ${(t as { id: string }).id} failed: ${(e as Error)?.message ?? e}`),
-      );
-    }
-
     const { data: payments } = await db
       .from('payments')
       .select('id')
@@ -193,7 +182,7 @@ export class MagicblockQuestService {
         .order('pushed_at', { ascending: false }),
     ]);
 
-    const types: MagicblockQuestType[] = ['lottery_ticket', 'private_payment'];
+    const types: MagicblockQuestType[] = ['private_payment'];
     const quests: MagicblockQuestStatusItem[] = types.map((questType) => {
       const forType = (rows ?? []).filter((r: any) => r.quest_type === questType);
       const successRows = forType.filter((r: any) => r.success);
@@ -261,7 +250,7 @@ export class MagicblockQuestService {
    * on push, then alreadyCompleted:false two days later with no new purchase in between).
    */
   async revalidateQuest(userId: string, questType: MagicblockQuestType): Promise<{ pushed: boolean; response: unknown }> {
-    if (questType !== 'lottery_ticket' && questType !== 'private_payment') {
+    if (questType !== 'private_payment') {
       throw new BadRequestException('Invalid questType');
     }
 
@@ -312,21 +301,6 @@ export class MagicblockQuestService {
     if (typeof response === 'string') return response;
     const r = response as Record<string, unknown>;
     return (r.error as string) ?? (r.message as string) ?? JSON.stringify(r);
-  }
-
-  /** Fire-and-forget: call after a lottery_tickets row confirms 'sent'. No-op if not a private purchase. */
-  async maybePushLotteryTicketQuest(ticketId: string): Promise<void> {
-    const db = this.supabase.getClient();
-    const { data: ticket } = await db
-      .from('lottery_tickets')
-      .select('user_id, funded_privately')
-      .eq('id', ticketId)
-      .maybeSingle();
-    // funded_privately is the real signal — burner_sol_address is set for public purchases and
-    // admin_treasury-funded gifts too, so it can't distinguish an actual private payment on its own.
-    if (!ticket?.funded_privately) return;
-
-    await this.pushForAction({ userId: ticket.user_id, questType: 'lottery_ticket', sourceId: ticketId });
   }
 
   /** Fire-and-forget: call after a payments row confirms SUCCESS. No-op if not a qualifying private payment. */

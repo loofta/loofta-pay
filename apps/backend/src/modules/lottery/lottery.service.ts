@@ -1216,13 +1216,6 @@ export class LotteryService {
       await db.from('lottery_gifts').update({ resulting_ticket_id: ticket.id }).eq('id', gift.id);
       this.logger.log(`Gift ${gift.id}: claimed by ${claimantPrivyUserId}, ticket ${ticket.id} funded (${numTickets} tickets, sig=${senderTxHash})`);
 
-      // Credits the claimant (ticket owner), not the gifter — maybePushLotteryTicketQuest reads
-      // the ticket's own user_id/funded_privately, so a privately-funded gift counts for whoever
-      // ends up owning the ticket, same as a direct self-purchase.
-      this.magicblockQuest.maybePushLotteryTicketQuest(ticket.id).catch((e) =>
-        this.logger.warn(`MagicBlock quest push failed for gift ticket ${ticket.id}: ${(e as Error)?.message}`),
-      );
-
       // Don't wait for the next processSentTickets cron tick (up to 5s away) — the burner is
       // already known-funded (just topped up, or funded by the sender earlier), so start the
       // bridge right now. Fire-and-forget: tryStartBridge does its own atomic claim against the
@@ -1374,10 +1367,6 @@ export class LotteryService {
 
     this.logger.log(`Treasury-funded purchase: user ${userId} ticket ${ticket.id} (${numTickets} tickets, sig=${senderTxHash})`);
 
-    this.magicblockQuest.maybePushLotteryTicketQuest(ticket.id).catch((e) =>
-      this.logger.warn(`MagicBlock quest push failed for treasury ticket ${ticket.id}: ${(e as Error)?.message}`),
-    );
-
     // Same "don't wait for the cron" reasoning as purchaseGiftTickets — the burner is already
     // known-funded, so start the bridge immediately; tryStartBridge's own atomic claim makes this
     // safe even if the cron picks up the same ticket a moment later.
@@ -1476,9 +1465,6 @@ export class LotteryService {
     }
     this.logger.log(`Ticket ${opts.ticketId} marked sent, tx: ${opts.senderTxHash}`);
 
-    this.magicblockQuest.maybePushLotteryTicketQuest(opts.ticketId).catch((e) =>
-      this.logger.warn(`MagicBlock quest push failed for ticket ${opts.ticketId}: ${(e as Error)?.message}`),
-    );
   }
 
   /** Refunds the upfront fee back to the user, if one was collected and not already refunded. */
@@ -1879,9 +1865,6 @@ export class LotteryService {
           }).eq('id', ticket.id).eq('status', 'pending_send');
           this.logger.log(`Ticket ${ticket.id}: burner funded while still pending_send (user likely closed the tab) — promoted to sent`);
 
-          this.magicblockQuest.maybePushLotteryTicketQuest(ticket.id).catch((e) =>
-            this.logger.warn(`MagicBlock quest push failed for cron-recovered ticket ${ticket.id}: ${(e as Error)?.message}`),
-          );
         }
       }
     } finally {

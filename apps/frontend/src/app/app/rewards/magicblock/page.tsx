@@ -230,7 +230,7 @@ function ConnectWalletForm({ onConnected }: { onConnected: (wallet: string) => v
     <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
       <p className="text-lg font-semibold text-white mb-1">Connect your MagicBlock wallet</p>
       <p className="text-base text-slate-400 mb-4 leading-snug">
-        First, start both quests on MagicBlock&apos;s Questline with the wallet you&apos;ll paste below —
+        First, start the quest on MagicBlock&apos;s Questline with the wallet you&apos;ll paste below —
         the push only works if the quest has already been started there.{" "}
         <a href={MAGICBLOCK_PROJECT_URL} target="_blank" rel="noopener noreferrer" className="text-white underline hover:text-slate-300">
           Start quests on MagicBlock →
@@ -385,7 +385,7 @@ export default function RewardsMagicblockPage() {
     refetchInterval: (query) => {
       const status = query.state.data as MagicblockQuestStatus | undefined;
       if (!status) return false;
-      const hasRetryable = status.quests.some((q) => q.completions === 0 && q.lastError);
+      const hasRetryable = status.quests.filter((q) => QUEST_COPY[q.questType]).some((q) => q.completions === 0 && q.lastError);
       if (!hasRetryable || pollAttemptsRef.current >= 6) return false;
       pollAttemptsRef.current += 1;
       return 5_000;
@@ -464,7 +464,7 @@ export default function RewardsMagicblockPage() {
                   <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Quests</p>
                   <p className="text-sm text-slate-500">Resets {formatResetsAt(data.resetsAt)} · 10:00 CET</p>
                 </div>
-                {data.quests.map((quest) => (
+                {data.quests.filter((quest) => QUEST_COPY[quest.questType]).map((quest) => (
                   <QuestCard
                     key={quest.questType}
                     quest={quest}
