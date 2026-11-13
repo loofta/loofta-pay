@@ -28,12 +28,22 @@ export interface PublicAvatar {
 
 export interface MiniProfile {
   name: string;
+  /** The chosen feed name, without any prefix. */
+  handle: string | null;
   avatar: PublicAvatar;
   showPnl: boolean;
   hideName: boolean;
+  shareActivity: boolean;
   options: { telegram: string | null; twitter: string | null; telegramName: string | null };
 }
 
+const ADJECTIVES = ['swift', 'lucky', 'neon', 'cosmic', 'sneaky', 'bold', 'golden', 'frosty', 'wild', 'zen', 'turbo', 'pixel', 'mellow', 'crimson', 'sunny', 'shadow'];
+const ANIMALS = ['otter', 'falcon', 'panda', 'tiger', 'koala', 'lynx', 'gecko', 'raven', 'shark', 'fox', 'whale', 'cobra', 'moose', 'badger', 'orca', 'yak'];
+const pick = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)];
+/** A fun name like "swiftotter42". Never built from a Telegram name, an X handle or an email. */
+const randomHandle = () => `${pick(ADJECTIVES)}${pick(ANIMALS)}${Math.floor(10 + Math.random() * 90)}`;
+const HANDLE_RE = /^[a-z0-9_]{3,20}$/;
+const RESERVED = /^(admin|loofta|support|staff|mod|official|team|system)/;
 const anon = (id: string) => `trader${id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toLowerCase()}`;
 const colorFor = (id: string): AvatarColor => AVATAR_COLORS[[...id].reduce((n, c) => n + c.charCodeAt(0), 0) % AVATAR_COLORS.length];
 
@@ -76,39 +86,44 @@ export class MiniProfileService {
     });
   }
 
-  /** What shows next to a post: the Telegram username if there is one, else the account's own name, else a short anonymous name. */
+  /** What shows next to a post: the name the person chose, or a short anonymous one if they have none yet. */
   async displayName(userId: string): Promise<string> {
-    const [prof, social] = await Promise.all([this.row(userId), this.social(userId)]);
-    if (prof?.hide_name) return anon(userId);
-    if (social.telegramName) return social.telegramName.slice(0, 24);
-    try {
-      const u = await this.users.findByPrivyId(userId);
-      const n = u?.username || u?.looUsername;
-      if (n) return n.replace(/^@/, '').slice(0, 24);
-    } catch {
-      /* fall through */
-    }
-    return anon(userId);
+    const prof = await this.row(userId);
+    if (prof?.hide_name || !prof?.handle) return anon(userId);
+    return prof.handle;
   }
 
   private async row(userId: string) {
     const { data } = await this.db().from('mini_profiles').select('*').eq('privy_user_id', userId).maybeSingle();
-    return data as { avatar_kind: 'telegram' | 'twitter' | 'color'; avatar_url: string | null; avatar_color: string | null; show_pnl: boolean; hide_name: boolean } | null;
+    return data as { avatar_kind: 'telegram' | 'twitter' | 'color'; avatar_url: string | null; avatar_color: string | null; show_pnl: boolean; hide_name: boolean; share_activity: boolean; handle: string | null } | null;
   }
 
-  /** First post: give the person a picture without asking. Their Telegram photo if there is one, else a colour from their id. */
+  /** First time: give the person a colour picture and a fun name without asking. Nothing is taken from Telegram, X or email. */
   async ensureProfile(userId: string): Promise<void> {
     try {
-      if (await this.row(userId)) return;
-      const s = await this.social(userId);
-      await this.db().from('mini_profiles').insert(
-        s.telegramPhoto
-          ? { privy_user_id: userId, avatar_kind: 'telegram', avatar_url: s.telegramPhoto }
-          : { privy_user_id: userId, avatar_kind: 'color', avatar_color: colorFor(userId) },
-      );
+      const existing = await this.row(userId);
+      if (existing?.handle) return;
+      if (existing) {
+        await this.assignHandle(userId);
+        return;
+      }
+      // A colour to start with. A Telegram or X photo can identify someone, so it is only used when they pick it.
+      const base = { privy_user_id: userId, avatar_kind: 'color', avatar_color: colorFor(userId) };
+      await this.db().from('mini_profiles').upsert(base, { onConflict: 'privy_user_id', ignoreDuplicates: true });
+      await this.assignHandle(userId);
     } catch (e) {
       this.logger.debug(`ensureProfile failed: ${(e as Error).message}`);
     }
+  }
+
+  /** Picks a free fun name. The unique index settles races, so a clash just tries another. */
+  private async assignHandle(userId: string): Promise<string | null> {
+    for (let i = 0; i < 8; i++) {
+      const h = randomHandle();
+      const { error } = await this.db().from('mini_profiles').update({ handle: h, updated_at: new Date().toISOString() }).eq('privy_user_id', userId);
+      if (!error) return h;
+    }
+    return null;
   }
 
   async getProfile(userId: string): Promise<MiniProfile> {
@@ -116,9 +131,11 @@ export class MiniProfileService {
     const [row, s, name] = await Promise.all([this.row(userId), this.social(userId), this.displayName(userId)]);
     return {
       name,
+      handle: row?.handle ?? null,
       avatar: this.toAvatar(userId, row),
       showPnl: row?.show_pnl ?? true,
       hideName: row?.hide_name ?? false,
+      shareActivity: row?.share_activity ?? true,
       options: { telegram: s.telegramPhoto, twitter: s.twitterPhoto, telegramName: s.telegramName },
     };
   }
@@ -129,7 +146,7 @@ export class MiniProfileService {
     return { kind: 'color', url: null, color };
   }
 
-  async setProfile(userId: string, b: { avatar?: string; color?: string; showPnl?: boolean; hideName?: boolean }): Promise<MiniProfile> {
+  async setProfile(userId: string, b: { avatar?: string; color?: string; showPnl?: boolean; hideName?: boolean; shareActivity?: boolean; handle?: string; shuffleHandle?: boolean; useTelegramName?: boolean }): Promise<MiniProfile> {
     await this.ensureProfile(userId);
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (b.avatar !== undefined) {
@@ -147,19 +164,35 @@ export class MiniProfileService {
     }
     if (typeof b.showPnl === 'boolean') patch.show_pnl = b.showPnl;
     if (typeof b.hideName === 'boolean') patch.hide_name = b.hideName;
-    await this.db().from('mini_profiles').update(patch).eq('privy_user_id', userId);
+    if (typeof b.shareActivity === 'boolean') patch.share_activity = b.shareActivity;
+    if (b.shuffleHandle) {
+      await this.assignHandle(userId);
+    } else if (b.handle !== undefined || b.useTelegramName) {
+      let h = b.handle ?? '';
+      // Telegram is only used when the person asks for it.
+      if (b.useTelegramName) h = (await this.social(userId)).telegramName ?? '';
+      h = h.trim().toLowerCase().replace(/^@/, '').replace(/^loo-/, '');
+      if (!HANDLE_RE.test(h)) throw new BadRequestException('Use 3 to 20 letters, numbers or underscores.');
+      if (RESERVED.test(h)) throw new BadRequestException('That name is reserved.');
+      patch.handle = h;
+    }
+    const { error } = await this.db().from('mini_profiles').update(patch).eq('privy_user_id', userId);
+    if (error) {
+      if (/duplicate|unique/i.test(error.message)) throw new BadRequestException('That name is taken. Try another.');
+      throw new BadRequestException('Could not save. Try again.');
+    }
     return this.getProfile(userId);
   }
 
   /** Profiles for many people at once, for the feed. Keyed by Privy id, never sent to the app. */
   async many(ids: string[]) {
-    const out = new Map<string, { avatar: PublicAvatar; showPnl: boolean; hideName: boolean }>();
+    const out = new Map<string, { avatar: PublicAvatar; showPnl: boolean; hideName: boolean; shareActivity: boolean; handle: string | null }>();
     if (!ids.length) return out;
     const { data } = await this.db().from('mini_profiles').select('*').in('privy_user_id', ids);
     const byId = new Map((data ?? []).map((r: any) => [r.privy_user_id as string, r]));
     for (const id of ids) {
       const r = byId.get(id);
-      out.set(id, { avatar: this.toAvatar(id, r), showPnl: r?.show_pnl ?? true, hideName: r?.hide_name ?? false });
+      out.set(id, { avatar: this.toAvatar(id, r), showPnl: r?.show_pnl ?? true, hideName: r?.hide_name ?? false, shareActivity: r?.share_activity ?? true, handle: r?.handle ?? null });
     }
     return out;
   }

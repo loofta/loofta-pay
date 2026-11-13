@@ -42,7 +42,7 @@ export class MiniRewardsController {
   @Post('predict')
   @Throttle({ short: { ttl: 60_000, limit: 20 } })
   @ApiOperation({ summary: 'Report a prediction you placed, for the Predictor badge' })
-  predict(@PrivyUser() user: { id: string }, @Body() body: { signature?: string }) {
-    return this.rewards.confirmPrediction(user.id, String(body?.signature ?? ''));
+  predict(@PrivyUser() user: { id: string }, @Body() body: { signature?: string; picks?: Array<{ marketId?: string; side?: string }> }) {
+    return this.rewards.confirmPrediction(user.id, String(body?.signature ?? ''), Array.isArray(body?.picks) ? body.picks : []);
   }
 }

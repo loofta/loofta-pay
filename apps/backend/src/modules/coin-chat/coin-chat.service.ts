@@ -46,7 +46,7 @@ export class CoinChatService {
     let q = this.supabase
       .getClient()
       .from('coin_chat_messages')
-      .select('id, display_name, text, holding_pct, holding_amount, created_at')
+      .select('id, privy_user_id, display_name, text, holding_pct, holding_amount, created_at')
       .eq('mint', mint)
       .order('created_at', { ascending: false })
       .limit(PAGE);
@@ -56,10 +56,13 @@ export class CoinChatService {
       this.logger.warn(`list failed: ${error.message}`);
       throw new HttpException('Chat is not available right now', HttpStatus.SERVICE_UNAVAILABLE);
     }
+    // Names are the ones people chose, read now, so a change shows on their old messages too. Someone without one shows as an anonymous name.
+    const profs = await this.profiles.many([...new Set((data ?? []).map((r) => r.privy_user_id as string))]);
+    const nameOf = (id: string) => (profs.get(id)?.hideName ? null : profs.get(id)?.handle) ?? `trader${id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toLowerCase()}`;
     // Oldest first, so the client can append.
     const messages = (data ?? []).reverse().map((r) => ({
       id: r.id as string,
-      name: r.display_name as string,
+      name: nameOf(r.privy_user_id as string),
       text: r.text as string,
       holdingPct: r.holding_pct == null ? null : Number(r.holding_pct),
       holdingAmount: r.holding_amount == null ? null : Number(r.holding_amount),
@@ -78,11 +81,11 @@ export class CoinChatService {
     this.lastPost.set(privyUserId, now);
     if (this.lastPost.size > 5000) this.lastPost.clear();
 
+    await this.profiles.ensureProfile(privyUserId);
     const [name, holding] = await Promise.all([this.profiles.displayName(privyUserId), this.holding(privyUserId, mint)]);
     // Only people who hold the coin can talk about it. If the balance cannot be read, nothing is posted rather than guessed.
     if (!holding) throw new HttpException('Could not check your balance. Try again in a moment.', HttpStatus.SERVICE_UNAVAILABLE);
     if (!(holding.amount > 0)) throw new HttpException('Only people who hold this coin can post here. Buy some first.', HttpStatus.FORBIDDEN);
-    void this.profiles.ensureProfile(privyUserId);
     const { data, error } = await this.supabase
       .getClient()
       .from('coin_chat_messages')

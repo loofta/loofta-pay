@@ -10,11 +10,16 @@ import { MiniProfileService, PublicAvatar, anonName } from './mini-profile.servi
 
 const PAGE = 30;
 
-export interface FeedPost {
-  id: string;
+interface Author {
   name: string;
   avatar: PublicAvatar;
-  coin: { mint: string; symbol: string; name: string; icon: string | null; decimals: number; usd: number | null; mcap: number | null; change24h: number | null };
+}
+type CoinCard = { mint: string; symbol: string; name: string; icon: string | null; decimals: number; usd: number | null; mcap: number | null; change24h: number | null };
+
+export interface CommentItem extends Author {
+  type: 'comment';
+  id: string;
+  coin: CoinCard;
   text: string;
   /** Share of the supply the poster held when they wrote it. */
   holdingPct: number | null;
@@ -24,6 +29,26 @@ export interface FeedPost {
   pnl: { usd: number; pct: number } | null;
   createdAt: string;
 }
+export interface PredictionItem extends Author {
+  type: 'prediction';
+  id: string;
+  /** The event, or "Combo of 3 picks". */
+  title: string;
+  /** What they picked, for example "Over 2.5 + Ciryl Gane". */
+  detail: string;
+  amountUsd: number;
+  eventId: string | null;
+  image: string | null;
+  createdAt: string;
+}
+export interface TradeItem extends Author {
+  type: 'trade';
+  id: string;
+  coin: CoinCard;
+  amountUsd: number;
+  createdAt: string;
+}
+export type FeedItem = CommentItem | PredictionItem | TradeItem;
 
 /** The newest posts across every coin, with who wrote them, what they hold and how that trade is doing. */
 @Injectable()
@@ -80,7 +105,7 @@ export class MiniFeedService {
   }
 
   /** What the person holds of one coin right now and how their Loofta trades of it are doing. Null for anything that cannot be known. */
-  private position(userId: string, mint: string, price: number | null): Promise<{ position: FeedPost['position']; pnl: FeedPost['pnl'] }> {
+  private position(userId: string, mint: string, price: number | null): Promise<{ position: CommentItem['position']; pnl: CommentItem['pnl'] }> {
     return cached(`mini:pos:${userId}:${mint}`, 60, async () => {
       const none = { position: null, pnl: null };
       try {
@@ -107,55 +132,79 @@ export class MiniFeedService {
     });
   }
 
-  async feed(before?: string): Promise<{ posts: FeedPost[]; next: string | null }> {
-    let q = this.db()
-      .from('coin_chat_messages')
-      .select('id, mint, privy_user_id, display_name, text, holding_pct, created_at')
-      // Only holders' posts: older messages written without owning the coin are left out.
-      .gt('holding_amount', 0)
-      .order('created_at', { ascending: false })
-      .limit(PAGE);
-    if (before && !Number.isNaN(Date.parse(before))) q = q.lt('created_at', before);
-    const { data, error } = await q;
-    if (error) {
-      this.logger.warn(`feed failed: ${error.message}`);
+  /**
+   * Comments from holders, predictions people placed and coins they bought, newest first. Predictions and buys only
+   * appear for people who share their activity. Each source is read separately and merged by time.
+   */
+  async feed(before?: string): Promise<{ posts: FeedItem[]; next: string | null }> {
+    const cursor = before && !Number.isNaN(Date.parse(before)) ? before : null;
+    let qc = this.db().from('coin_chat_messages').select('id, mint, privy_user_id, text, holding_pct, created_at').gt('holding_amount', 0).order('created_at', { ascending: false }).limit(PAGE);
+    let qp = this.db().from('mini_activity').select('id, privy_user_id, kind, event_id, title, detail, amount_usd, image, created_at').order('created_at', { ascending: false }).limit(PAGE);
+    let qt = this.db().from('mini_trades').select('id, privy_user_id, mint, volume_usd, confirmed_at').eq('status', 'confirmed').eq('side', 'buy').neq('kind', 'predict').gte('volume_usd', 1).order('confirmed_at', { ascending: false }).limit(PAGE);
+    if (cursor) {
+      qc = qc.lt('created_at', cursor);
+      qp = qp.lt('created_at', cursor);
+      qt = qt.lt('confirmed_at', cursor);
+    }
+    const [rc, rp, rt] = await Promise.all([qc, qp, qt]);
+    if (rc.error) {
+      this.logger.warn(`feed failed: ${rc.error.message}`);
       throw new HttpException('The feed is not available right now', HttpStatus.SERVICE_UNAVAILABLE);
     }
-    const rows = data ?? [];
-    const mints = [...new Set(rows.map((r) => r.mint as string))];
-    const authors = [...new Set(rows.map((r) => r.privy_user_id as string))];
+    // Activity tables may not exist yet (migration not applied): the feed still shows comments.
+    const comments = rc.data ?? [];
+    const preds = rp.error ? [] : rp.data ?? [];
+    const trades = rt.error ? [] : rt.data ?? [];
+
+    const merged = [
+      ...comments.map((r) => ({ t: 'c' as const, at: r.created_at as string, r })),
+      ...preds.map((r) => ({ t: 'p' as const, at: r.created_at as string, r })),
+      ...trades.map((r) => ({ t: 't' as const, at: r.confirmed_at as string, r })),
+    ]
+      .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+      .slice(0, PAGE);
+
+    const mints = [...new Set(merged.filter((m) => m.t !== 'p').map((m) => (m.r as any).mint as string))];
+    const authors = [...new Set(merged.map((m) => (m.r as any).privy_user_id as string))];
     const [dex, decimals, profs] = await Promise.all([dexInfo(mints).catch(() => new Map()), this.decimals(mints), this.profiles.many(authors)]);
 
-    const posts: FeedPost[] = await Promise.all(
-      rows.map(async (r) => {
-        const d = dex.get(r.mint);
-        const prof = profs.get(r.privy_user_id);
-        const price = d?.priceUsd ?? null;
-        const show = prof?.showPnl ?? true;
-        const pos = show ? await this.position(r.privy_user_id, r.mint, price) : { position: null, pnl: null };
-        return {
-          id: r.id,
-          name: prof?.hideName ? anonName(r.privy_user_id) : (r.display_name as string),
-          avatar: prof!.avatar,
-          coin: {
-            mint: r.mint,
-            symbol: d?.symbol ?? `${r.mint.slice(0, 4)}...`,
-            name: d?.name ?? d?.symbol ?? `${r.mint.slice(0, 4)}...${r.mint.slice(-4)}`,
-            icon: d?.image ?? null,
-            decimals: decimals.get(r.mint) ?? 6,
-            usd: price,
-            mcap: d?.mcapUsd ?? null,
-            change24h: d?.change24h ?? null,
-          },
-          text: r.text,
-          holdingPct: r.holding_pct == null ? null : Number(r.holding_pct),
-          position: pos.position,
-          pnl: pos.pnl,
-          createdAt: r.created_at,
-        };
+    const author = (id: string): Author & { show: boolean; share: boolean } => {
+      const p = profs.get(id);
+      return { name: p?.hideName || !p?.handle ? anonName(id) : p.handle, avatar: p!.avatar, show: p?.showPnl ?? true, share: p?.shareActivity ?? true };
+    };
+    const coinCard = (mint: string): CoinCard => {
+      const d = dex.get(mint);
+      return {
+        mint,
+        symbol: d?.symbol ?? `${mint.slice(0, 4)}...`,
+        name: d?.name ?? d?.symbol ?? `${mint.slice(0, 4)}...${mint.slice(-4)}`,
+        icon: d?.image ?? null,
+        decimals: decimals.get(mint) ?? 6,
+        usd: d?.priceUsd ?? null,
+        mcap: d?.mcapUsd ?? null,
+        change24h: d?.change24h ?? null,
+      };
+    };
+
+    const out = await Promise.all(
+      merged.map(async (m): Promise<FeedItem | null> => {
+        const r: any = m.r;
+        const a = author(r.privy_user_id);
+        if (m.t === 'c') {
+          const coin = coinCard(r.mint);
+          const pos = a.show ? await this.position(r.privy_user_id, r.mint, coin.usd) : { position: null, pnl: null };
+          return { type: 'comment', id: r.id, name: a.name, avatar: a.avatar, coin, text: r.text, holdingPct: r.holding_pct == null ? null : Number(r.holding_pct), position: pos.position, pnl: pos.pnl, createdAt: r.created_at };
+        }
+        if (!a.share) return null;
+        if (m.t === 'p') {
+          return { type: 'prediction', id: r.id, name: a.name, avatar: a.avatar, title: r.title, detail: r.detail, amountUsd: Number(r.amount_usd) || 0, eventId: r.event_id ?? null, image: r.image ?? null, createdAt: r.created_at };
+        }
+        return { type: 'trade', id: r.id, name: a.name, avatar: a.avatar, coin: coinCard(r.mint), amountUsd: Number(r.volume_usd) || 0, createdAt: r.confirmed_at };
       }),
     );
-    return { posts, next: rows.length === PAGE ? (rows[rows.length - 1].created_at as string) : null };
+    const posts = out.filter((x): x is FeedItem => x !== null);
+    const more = comments.length === PAGE || preds.length === PAGE || trades.length === PAGE;
+    return { posts, next: more && merged.length > 0 ? merged[merged.length - 1].at : null };
   }
 
   validateBefore(before?: string) {

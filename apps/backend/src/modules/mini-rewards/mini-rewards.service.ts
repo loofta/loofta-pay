@@ -7,6 +7,7 @@ import { UsersService } from '@/modules/users/users.service';
 import { getMainnetSolanaRpcUrl } from '@/common/solana-cluster-env';
 import { fetchSolPriceUsd } from '@/common/magicblock-private-transfer';
 import { getStocks } from '@/modules/mini-app/lib/stocks';
+import { cached } from '@/modules/mini-app/lib/sharedCache';
 
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const WSOL = 'So11111111111111111111111111111111111111112';
@@ -74,7 +75,7 @@ export class MiniRewardsService {
   private lbCache: { at: number; rows: Array<{ privy_user_id: string; volume_usd: number; trades: number }> } | null = null;
 
   constructor(
-    config: ConfigService,
+    private readonly config: ConfigService,
     private readonly supabase: SupabaseService,
     private readonly users: UsersService,
   ) {
@@ -229,7 +230,7 @@ export class MiniRewardsService {
     const numSigners = tx.transaction.message.header.numRequiredSignatures;
     const signers = keys.slice(0, numSigners).map((k) => k.toBase58());
     if (!signers.includes(wallet)) return null;
-    return { tx, keys: keys.map((k) => k.toBase58()) };
+    return { tx, keys: keys.map((k) => k.toBase58()), wallet };
   }
 
   /** The fee really reached Loofta: the platform wallet's SOL or token balance went up by about what the quote said. */
@@ -275,14 +276,63 @@ export class MiniRewardsService {
     if (ref) await this.evaluateBadges(ref.referrer_privy_id).catch(() => undefined);
   }
 
-  /** A prediction is placed straight with Jupiter from the app, so the backend only checks the person signed it. Counts for the badge, not for volume. */
-  async confirmPrediction(userId: string, signature: string) {
+  private async jupGet<T>(path: string): Promise<T | null> {
+    return cached<T | null>(`mini:jup:${path}`, 3600, async () => {
+      try {
+        const key = this.config.get<string>('JUPITER_API_KEY');
+        const r = await fetch(`https://api.jup.ag/prediction/v1${path}`, { headers: { accept: 'application/json', ...(key ? { 'x-api-key': key } : {}) }, signal: AbortSignal.timeout(5_000) });
+        if (!r.ok) return null;
+        const j: any = await r.json();
+        return (j?.data ?? j) as T;
+      } catch {
+        return null;
+      }
+    }, (v) => v != null);
+  }
+
+  /** What a pick says, from Jupiter by market id: "Over 2.5", "Ciryl Gane" or "Yes: Fight won by KO/TKO?". Nothing the app sends is shown. */
+  private async describePick(marketId: string, side: string): Promise<{ eventId: string; text: string } | null> {
+    if (!/^[A-Za-z0-9_-]{4,64}$/.test(marketId) || !['yes', 'no'].includes(side)) return null;
+    const m: any = await this.jupGet(`/markets/${encodeURIComponent(marketId)}`);
+    if (!m?.title || !m.eventId) return null;
+    const option = String(m.marketOptions?.[0]?.label ?? '').replace(/^O\s/, 'Over ').replace(/^U\s/, 'Under ');
+    const single = m.isTeamMarket || (m.marketOptions?.length ?? 0) === 1;
+    return { eventId: String(m.eventId), text: single ? option || String(m.title) : `${side === 'yes' ? 'Yes' : 'No'}: ${String(m.title)}` };
+  }
+
+  /** What the signer's wallet spent in USDC in this transaction, read from the chain. */
+  private usdcSpent(read: NonNullable<Awaited<ReturnType<MiniRewardsService['readTx']>>>): number {
+    const meta = read.tx.meta!;
+    const sum = (list: typeof meta.postTokenBalances) => (list ?? []).filter((b) => b.owner === read.wallet && b.mint === USDC).reduce((n, b) => n + Number(b.uiTokenAmount.amount), 0);
+    return Math.max(0, (sum(meta.preTokenBalances) - sum(meta.postTokenBalances)) / 1e6);
+  }
+
+  /** A prediction is placed straight with Jupiter from the app, so the backend only checks the person signed it. Counts for the badge, not for volume. The pick ids make it a feed item. */
+  async confirmPrediction(userId: string, signature: string, picks: Array<{ marketId?: string; side?: string }> = []) {
     const read = await this.readTx(userId, signature, new Date(Date.now() - 15 * 60_000));
     if (!read) return { ok: false, retry: true };
     const { error } = await this.db().from('mini_trades').insert({ privy_user_id: userId, kind: 'predict', status: 'confirmed', signature, confirmed_at: new Date().toISOString(), volume_usd: 0 });
     if (error && !/duplicate/i.test(error.message)) throw new ConflictException('Could not save that prediction.');
+    if (!error) await this.recordActivity(userId, signature, read, picks.slice(0, 10)).catch((e) => this.logger.debug(`activity failed: ${(e as Error).message}`));
     await this.evaluateBadges(userId).catch(() => undefined);
     return { ok: true };
+  }
+
+  private async recordActivity(userId: string, signature: string, read: NonNullable<Awaited<ReturnType<MiniRewardsService['readTx']>>>, picks: Array<{ marketId?: string; side?: string }>) {
+    const described = (await Promise.all(picks.map((p) => this.describePick(String(p.marketId ?? ''), String(p.side ?? ''))))).filter(Boolean) as Array<{ eventId: string; text: string }>;
+    if (!described.length || described.length !== picks.length) return;
+    const event: any = await this.jupGet(`/events/${encodeURIComponent(described[0].eventId)}`);
+    const combo = described.length > 1;
+    await this.db().from('mini_activity').insert({
+      privy_user_id: userId,
+      kind: combo ? 'combo' : 'prediction',
+      event_id: combo ? null : described[0].eventId,
+      title: combo ? `Combo of ${described.length} picks` : String(event?.metadata?.title ?? 'Prediction').slice(0, 200),
+      detail: described.map((d) => d.text).join(' + ').slice(0, 300),
+      amount_usd: this.usdcSpent(read),
+      image: combo ? null : (event?.metadata?.imageUrl ?? null),
+      signature,
+    });
   }
 
   // ---------------------------------------------------------------- badges and summary

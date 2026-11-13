@@ -36,7 +36,7 @@ export class MiniFeedController {
   @ApiBearerAuth()
   @Throttle({ short: { ttl: 60_000, limit: 20 } })
   @ApiOperation({ summary: 'Pick your picture (Telegram, X or a colour) and what you show' })
-  setProfile(@PrivyUser() user: { id: string }, @Body() body: { avatar?: string; color?: string; showPnl?: boolean; hideName?: boolean }) {
+  setProfile(@PrivyUser() user: { id: string }, @Body() body: { avatar?: string; color?: string; showPnl?: boolean; hideName?: boolean; shareActivity?: boolean; handle?: string; shuffleHandle?: boolean; useTelegramName?: boolean }) {
     return this.profiles.setProfile(user.id, body ?? {});
   }
 }
