@@ -1820,6 +1820,8 @@ export class TelegramBotService implements OnModuleInit {
           ? e.message
           : insufficient
             ? 'not enough USDC in your wallet. Use /fund to add money.'
+            : /reached the limit of \d+ new-recipient sends/i.test((e as Error).message)
+              ? 'daily limit for sending to people who are new to Loofta reached, try again later'
             : 'something went wrong, nothing was sent.';
         this.logger.error(`Telegram payment ${row.id} failed: ${(e as Error).message}`);
         await supabase

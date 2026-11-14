@@ -826,7 +826,13 @@ export class SolanaSponsorService {
     // attacker-controlled. The cap is the only thing that actually bounds this, so it must apply
     // regardless of which intent id (if any) was supplied. Skipped only when userId is absent
     // (cron/backend-only callers have no identity to cap against).
-    if (userId) {
+    // Exempt: a claim paid to one of OUR burner wallets (the destination was verified above to be
+    // exactly claim.burner_address). We hold that key, the payer cannot close the account and keep
+    // the rent, and the sweep closes it back to the fee payer, so the rent is only a loan. The cap
+    // exists for destinations nobody at Loofta controls. Without this, bulk bot payments to people
+    // new to Loofta stopped after 4 per 24h.
+    const burnerBackedClaim = !!(claimId && claimRow?.burner_address);
+    if (userId && !burnerBackedClaim) {
       try {
         await assertPerUserAtaCreationCapNotExceeded(this.supabaseService, userId, chargeable.length, `SolanaSponsor:${label}`);
       } catch (e) {
@@ -840,7 +846,7 @@ export class SolanaSponsorService {
     // it's what actually caught the 2026-08-07 recurrence: same signer wallet reused across ~30
     // sponsorships while (apparently) rotating Privy accounts to dodge the check above.
     const primarySigner = this.getRequiredUserSigners(serializedBase64)[0];
-    if (primarySigner) {
+    if (primarySigner && !burnerBackedClaim) {
       try {
         await assertPerWalletAtaCreationCapNotExceeded(this.supabaseService, primarySigner, chargeable.length, `SolanaSponsor:${label}`);
       } catch (e) {
