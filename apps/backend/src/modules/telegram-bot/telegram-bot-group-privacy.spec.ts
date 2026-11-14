@@ -14,7 +14,7 @@ function build(o: { dm?: boolean } = {}) {
     executeTelegramAutoPay: async () => ({ paymentId: 'p1', claimLink: 'https://x/c/1', shortId: 's1' }),
     unclaimedPaymentIds: async () => new Set(),
   };
-  const svc: any = new TelegramBotService(db as any, config, users, autopay, {} as any, {} as any, {} as any);
+  const svc: any = new TelegramBotService(db as any, config, users, autopay, {} as any, {} as any, {} as any, {} as any);
   const api = { answerCallback: jest.fn(), editMessage: jest.fn(), sendMessage: jest.fn(async (..._a: any[]) => ({ message_id: 1 })), deleteMessage: jest.fn() };
   svc.api = api;
   svc.resolveLinkedUser = jest.fn(async () => 'did:privy:u');

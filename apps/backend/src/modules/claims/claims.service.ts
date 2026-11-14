@@ -1804,6 +1804,46 @@ export class ClaimsService {
   }
 
   /**
+   * Payments waiting for this person to claim, for the Telegram bot's balance view. Funded payments
+   * addressed to their Telegram handle (not claimed yet) plus any other unclaimed burner payment
+   * already stamped to their account. Nothing here moves money: claimAsRecipient still verifies
+   * the identity. With no userId (not signed in) it only matches on the handle, to say "sign in".
+   */
+  async listPendingForTelegram(opts: { userId: string | null; telegramHandle: string | null }): Promise<Array<{ id: string; amountUsd: number }>> {
+    const handle = (opts.telegramHandle || '').trim().replace(/^@/, '').toLowerCase();
+    const cols = 'id, amount, status, burner_address, claim_requested_at, recipient_address, solana_mint';
+    type Row = { id: string; amount: string | number | null; status: string | null; burner_address: string | null; claim_requested_at: string | null; recipient_address: string | null; solana_mint: string | null };
+    const rows = new Map<string, Row>();
+    const run = async (col: string, val: string) => {
+      const { data } = await this.supabaseService.payments
+        .select(cols)
+        .eq(col, val)
+        .not('burner_address', 'is', null)
+        .is('claim_requested_at', null)
+        // Private payments wait in PRIVATE_TRANSFER_PENDING ("Unclaimed") until the recipient claims.
+        .in('status', ['SUCCESS', 'PRIVATE_TRANSFER_PENDING'])
+        .order('created_at', { ascending: false })
+        .limit(50);
+      for (const r of (data ?? []) as Row[]) rows.set(r.id, r);
+    };
+    try {
+      if (handle) await run('recipient_address', `${ClaimsService.PENDING_SOCIAL_PREFIX}telegram:${handle}`);
+      if (opts.userId) await run('recipient_user_id', opts.userId);
+    } catch (e) {
+      this.logger.warn(`listPendingForTelegram failed: ${(e as Error)?.message}`);
+      return [];
+    }
+    const out: Array<{ id: string; amountUsd: number }> = [];
+    for (const r of rows.values()) {
+      if (r.solana_mint) continue; // token prizes are claimed in the app
+      const amountUsd = Number(r.amount ?? 0);
+      if (!(amountUsd > 0)) continue;
+      out.push({ id: r.id, amountUsd });
+    }
+    return out;
+  }
+
+  /**
    * Claim a pending payment (PENDING_EMAIL / PENDING_USERNAME) as the authenticated recipient.
    * Updates recipient_address to the user's Solana wallet so the payer can complete deposit.
    */

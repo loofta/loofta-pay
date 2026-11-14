@@ -31,4 +31,11 @@ export class MiniPayController {
   history(@PrivyUser() user: { id: string }) {
     return this.pay.history(user.id);
   }
+
+  @Post('claim')
+  @Throttle({ short: { ttl: 60_000, limit: 6 } })
+  @ApiOperation({ summary: 'Claim a payment waiting for you (by id), or everything waiting' })
+  claim(@PrivyUser() user: { id: string }, @Body() body: { id?: string }) {
+    return this.pay.claim(user.id, typeof body?.id === 'string' ? body.id : undefined);
+  }
 }

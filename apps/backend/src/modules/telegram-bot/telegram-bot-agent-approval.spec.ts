@@ -3,7 +3,7 @@ import { TelegramBotService } from './telegram-bot.service';
 function build(decide?: jest.Mock) {
   const config: any = { get: () => undefined };
   const notifier: any = { decideAgentRequest: decide ?? jest.fn(async () => ({ status: 'paid', summary: 'Sent: x:lisabeyy $1.' })) };
-  const svc: any = new TelegramBotService({} as any, config, {} as any, {} as any, {} as any, {} as any, notifier);
+  const svc: any = new TelegramBotService({} as any, config, {} as any, {} as any, {} as any, {} as any, notifier, {} as any);
   const api = { answerCallback: jest.fn(), editMessage: jest.fn(), sendMessage: jest.fn() };
   svc.api = api;
   svc.resolveLinkedUser = jest.fn(async (id: number) => (id === 7 ? 'did:privy:u' : null));

@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { runWithVelocityAllowance } from '../claims/claims.service';
+import { runWithVelocityAllowance, ClaimsService } from '../claims/claims.service';
 import { Injectable, Logger, OnModuleInit, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrivyClient } from '@privy-io/server-auth';
@@ -70,6 +70,7 @@ export class TelegramBotService implements OnModuleInit {
     private readonly llm: IntentLlmService,
     private readonly wallet: TelegramWalletService,
     private readonly notifier: TelegramNotifierService,
+    private readonly claims: ClaimsService,
   ) {
     const token = this.config.get<string>('TELEGRAM_BOT_TOKEN');
     this.api = token ? new TelegramApi(token) : null;
@@ -526,14 +527,57 @@ export class TelegramBotService implements OnModuleInit {
 
   private async showBalance(chatId: number, from: TgUser) {
     const userId = await this.resolveLinkedUser(from.id);
+    const pending = await this.claims.listPendingForTelegram({ userId, telegramHandle: from.username ?? null });
+    const pendingTotal = pending.reduce((t, p) => t + p.amountUsd, 0);
     if (!userId) {
-      await this.api!.sendMessage(chatId, 'Sign in to Loofta with Telegram first, then I can show your balance.', {
-        keyboard: this.signInKeyboard('Sign in to Loofta'),
-      });
+      await this.api!.sendMessage(
+        chatId,
+        pending.length
+          ? `You have <b>${money(pendingTotal)}</b> waiting for you from ${pending.length === 1 ? 'a payment' : `${pending.length} payments`}. Sign in to Loofta with Telegram to claim it.`
+          : 'Sign in to Loofta with Telegram first, then I can show your balance.',
+        { keyboard: this.signInKeyboard(pending.length ? 'Sign in to claim' : 'Sign in to Loofta') },
+      );
       return;
     }
     const { balanceUSD } = await this.users.getSolanaWalletBalanceAndAddress(userId);
     await this.api!.sendMessage(chatId, `Your balance is <b>${money(balanceUSD)}</b>.`, { keyboard: this.mainMenu() });
+    if (pending.length) {
+      await this.api!.sendMessage(
+        chatId,
+        `You also have <b>${money(pendingTotal)}</b> waiting to claim from ${pending.length === 1 ? 'a payment' : `${pending.length} payments`}. Claim it to move it into your balance.`,
+        { keyboard: { inline_keyboard: [[{ text: `Claim ${money(pendingTotal)}`, callback_data: 'cl:all' }]] } },
+      );
+    }
+  }
+
+  /** Claim button: sweeps every payment waiting for this person into their own wallet. */
+  private async onClaimCallback(cb: TgCallback, chatId: number) {
+    const userId = await this.resolveLinkedUser(cb.from.id);
+    if (!userId) {
+      await this.api!.answerCallback(cb.id, 'Sign in to Loofta with Telegram first.');
+      return void (await this.api!.sendMessage(chatId, 'Sign in to Loofta with Telegram first, then tap Claim again.', { keyboard: this.signInKeyboard('Sign in to claim') }));
+    }
+    await this.api!.answerCallback(cb.id, 'Claiming…');
+    const pending = await this.claims.listPendingForTelegram({ userId, telegramHandle: cb.from.username ?? null });
+    if (!pending.length) return void (await this.api!.sendMessage(chatId, 'Nothing is waiting for you right now.', { keyboard: this.mainMenu() }));
+    let claimedUsd = 0;
+    let failed = 0;
+    for (const p of pending) {
+      try {
+        await this.claims.claimAsRecipient(p.id, userId);
+        claimedUsd += p.amountUsd;
+      } catch (e) {
+        failed += 1;
+        this.logger.warn(`Telegram claim ${p.id} failed for ${userId}: ${(e as Error).message}`);
+      }
+    }
+    await this.api!.sendMessage(
+      chatId,
+      failed
+        ? `Claimed <b>${money(claimedUsd)}</b>. ${failed === 1 ? 'One payment' : `${failed} payments`} could not be claimed yet, tap Claim again in a minute.`
+        : `Claimed <b>${money(claimedUsd)}</b>. It is in your balance now.`,
+      { keyboard: this.mainMenu() },
+    );
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1675,6 +1719,7 @@ export class TelegramBotService implements OnModuleInit {
     }
 
     if (cb.message?.chat.type === 'private') this.touchNudge(cb.message.chat.id);
+    if (kind === 'cl') return this.onClaimCallback(cb, chatId);
     if (kind === 'rc') return this.onReclaimCallback(cb, arg, val);
     if (kind === 'ap') return this.onAgentApprovalCallback(cb, arg, val);
     if (kind === 'snd') return this.onSendCallback(cb, arg, val);
@@ -1981,7 +2026,7 @@ export class TelegramBotService implements OnModuleInit {
       if (!data?.chat_id) return;
       const who = sender.username ? `@${escapeHtml(sender.username)}` : escapeHtml(sender.first_name ?? 'Someone');
       await this.api!.sendMessage(Number(data.chat_id), isPrivate ? `${who} is sending you <b>${money(amount)}</b> privately. It arrives after the delay they chose.` : `${who} sent you <b>${money(amount)}</b>.`, {
-        keyboard: { inline_keyboard: [[{ text: 'Open payment', url: link }, { text: 'Withdraw', url: `${this.appUrl}/app?withdraw=1` }]] },
+        keyboard: { inline_keyboard: [[{ text: 'Claim', callback_data: 'cl:all' }, { text: 'Open payment', url: link }]] },
       });
     } catch (e) {
       this.logger.warn(`Could not notify @${handle}: ${(e as Error).message}`);

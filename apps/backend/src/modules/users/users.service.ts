@@ -217,7 +217,15 @@ export class UsersService {
       walletAccount.wallet_client_type === 'seed_vault' || walletAccount.connector_type === 'solana_mobile_wallet_adapter'
     );
 
+    // Telegram-only logins (the bot and mini app) have no email or X: use their Telegram handle, so they
+    // are loo-theirname (made unique below) instead of an anonymous loo-user30.
+    const telegramAccount = accounts.find((a: any) => ['telegram', 'telegram_oauth'].includes((a.type ?? '').toLowerCase()));
+    const telegramHandle = telegramAccount
+      ? String(telegramAccount.username ?? '').replace(/^@/, '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16) || null
+      : null;
+
     const looHandle = twitterHandle
+      ?? telegramHandle
       ?? (email ? email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16) : null)
       ?? (isSeekerWallet ? `skr-${randomDigits(6)}` : null)
       ?? 'user';

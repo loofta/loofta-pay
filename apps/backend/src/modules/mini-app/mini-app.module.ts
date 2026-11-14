@@ -1,5 +1,6 @@
 import { Injectable, Logger, Module, OnApplicationBootstrap } from '@nestjs/common';
 import { DatabaseModule } from '@/database/database.module';
+import { ClaimsModule } from '../claims/claims.module';
 import { MiniAppController } from './mini-app.controller';
 import { MiniPayController } from './mini-pay.controller';
 import { MiniPayService } from './mini-pay.service';
@@ -28,7 +29,7 @@ class MiniAppWarmup implements OnApplicationBootstrap {
 }
 
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, ClaimsModule],
   controllers: [MiniAppController, MiniPayController],
   providers: [MiniAppWarmup, MiniPayService],
 })

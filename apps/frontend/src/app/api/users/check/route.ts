@@ -118,7 +118,15 @@ export async function POST(request: NextRequest) {
     // Derive the handle to base the loo- username on:
     // - Twitter users  → use their handle (also set as active username + twitter_username)
     // - Email-only     → use the part before @ (sanitised)
+    // Telegram-only logins have no email or X: use their Telegram handle (made unique by the generator)
+    // instead of an anonymous loo-user30.
+    const telegramAccount = (linkedAccounts ?? []).find((a) => a.type === "telegram" || a.type === "telegram_oauth");
+    const telegramHandle = telegramAccount
+      ? (telegramAccount.username ?? "").replace(/^@/, "").toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16) || null
+      : null;
+
     const looHandle = twitterHandle
+      ?? telegramHandle
       ?? (email ? email.split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 16) : null)
       ?? "user";
 

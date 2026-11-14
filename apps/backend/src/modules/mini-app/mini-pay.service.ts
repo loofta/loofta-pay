@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 import { RedisService } from '../../redis/redis.service';
+import { ClaimsService } from '../claims/claims.service';
 
 const PAY_BASE = (process.env.PAY_BASE_URL || 'https://pay.loofta.com').replace(/\/$/, '');
 const RECEIVED_VISIBLE = ['SUCCESS', 'PRIVATE_TRANSFER_PENDING'];
@@ -18,6 +19,8 @@ export interface PayHistoryItem {
   who: string;
   status: string;
   at: string;
+  /** A received payment still waiting for the recipient to claim it into their wallet. */
+  claimable?: boolean;
 }
 
 /**
@@ -32,6 +35,7 @@ export class MiniPayService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly redis: RedisService,
+    private readonly claims: ClaimsService,
   ) {}
 
   private db() {
@@ -82,7 +86,7 @@ export class MiniPayService {
 
   /** Sent, received and deposits, newest first. */
   async history(userId: string): Promise<PayHistoryItem[]> {
-    const select = 'id, amount, status, created_at, recipient_username, recipient_email, sender_user_id';
+    const select = 'id, amount, status, created_at, recipient_username, recipient_email, sender_user_id, burner_address, claim_requested_at';
     const [sent, received, deposits] = await Promise.all([
       this.db().from('payments').select(select).eq('sender_user_id', userId).eq('is_devnet', false).order('created_at', { ascending: false }).limit(40),
       this.db().from('payments').select(select).eq('recipient_user_id', userId).in('status', RECEIVED_VISIBLE).eq('is_devnet', false).order('created_at', { ascending: false }).limit(40),
@@ -113,6 +117,7 @@ export class MiniPayService {
         who: names.get(String(r.sender_user_id)) ?? 'Someone',
         status: String(r.status),
         at: String(r.created_at),
+        claimable: !!r.burner_address && !r.claim_requested_at,
       })),
       ...(deposits.data ?? []).map((d) => ({
         id: String(d.id),
@@ -124,5 +129,35 @@ export class MiniPayService {
       })),
     ];
     return items.sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 60);
+  }
+
+  /**
+   * Claim payments waiting for this person into their own wallet: one by id, or everything waiting.
+   * claimAsRecipient does the real checks (it is theirs, not cancelled, not already claimed).
+   */
+  async claim(userId: string, id?: string): Promise<{ claimedUsd: number; claimed: number; failed: number }> {
+    let ids: Array<{ id: string; amountUsd: number }>;
+    const waiting = await this.claims.listPendingForTelegram({ userId, telegramHandle: null });
+    if (id) {
+      const one = waiting.find((w) => w.id === id);
+      if (!one) throw new BadRequestException('That payment is not waiting to be claimed.');
+      ids = [one];
+    } else {
+      ids = waiting;
+    }
+    let claimedUsd = 0;
+    let claimed = 0;
+    let failed = 0;
+    for (const p of ids) {
+      try {
+        await this.claims.claimAsRecipient(p.id, userId);
+        claimedUsd += p.amountUsd;
+        claimed += 1;
+      } catch (e) {
+        failed += 1;
+        this.logger.warn(`Mini app claim ${p.id} failed for ${userId}: ${(e as Error).message}`);
+      }
+    }
+    return { claimedUsd, claimed, failed };
   }
 }
