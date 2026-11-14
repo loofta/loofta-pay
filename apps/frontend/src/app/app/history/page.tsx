@@ -50,6 +50,8 @@ export type PaymentHistoryClaim = {
   receipt_path?: string | null;
   /** Set for money added to the wallet (a deposit), shown instead of a sender name. */
   source_label?: string | null;
+  /** Connected handles of the registered recipient (from the history API). */
+  recipient_socials?: { platform: string; handle: string }[];
 };
 
 function getSenderDisplay(claim: PaymentHistoryClaim, anonymous: string): string {
@@ -77,6 +79,11 @@ function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string 
     // request, resolved server-side into creator_username.
     if (claim.creator_username) return `@${claim.creator_username}`;
     return anonymous;
+  }
+  // Sent from the Telegram bot: show the Telegram handle that was paid, not the recipient's loo-userNN.
+  if (claim.description?.startsWith("Sent via @looftapay_bot on Telegram")) {
+    const tg = claim.recipient_socials?.find((x) => x.platform === "telegram");
+    if (tg?.handle) return `@${tg.handle} on telegram`;
   }
   if (claim.recipient_username) return `@${claim.recipient_username}`;
   const ra = (claim.recipient_address || "").trim();
