@@ -119,7 +119,8 @@ export class MiniPayService {
         at: String(r.created_at),
         claimable: !!r.burner_address && !r.claim_requested_at,
       })),
-      ...(deposits.data ?? []).map((d) => ({
+      // A card checkout still pending after 30 minutes was abandoned or declined: not shown as in progress.
+      ...(deposits.data ?? []).filter((d) => !(d.status === 'pending' && d.type === 'card-onramp' && Date.now() - Date.parse(String(d.created_at)) > 30 * 60_000)).map((d) => ({
         id: String(d.id),
         kind: 'deposit' as const,
         amount: Number(d.amount_usdc ?? 0),

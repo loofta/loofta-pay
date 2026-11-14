@@ -137,6 +137,8 @@ const DEPOSIT_LABELS: Record<string, string> = {
   "peer-pay": "Cash app deposit",
 };
 
+const CARD_DEPOSIT_TIMEOUT_MS = 30 * 60 * 1000;
+
 /** Money added to the wallet (card, bank, bridge). Lives in user_deposits, not payments. */
 async function loadDeposits(
   supabase: ReturnType<typeof getSupabaseAdmin>,
@@ -149,13 +151,17 @@ async function loadDeposits(
     .order("created_at", { ascending: false })
     .limit(50);
   if (error || !data) return [];
-  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
   return (data as Array<Record<string, unknown>>)
     .filter((row) => {
       const status = String(row.status ?? "");
       if (status === "cancelled") return false;
-      // An abandoned checkout stays "pending" forever, so only show recent ones
-      if (status === "pending") return new Date(String(row.created_at)).getTime() > dayAgo;
+      // An abandoned checkout stays "pending" forever, so only show recent ones. A card checkout that
+      // has not completed within 30 minutes was abandoned or declined: treat it as cancelled.
+      if (status === "pending") {
+        const age = Date.now() - new Date(String(row.created_at)).getTime();
+        if (row.type === "card-onramp" || row.type === "moonpay") return age <= CARD_DEPOSIT_TIMEOUT_MS;
+        return age <= 24 * 60 * 60 * 1000;
+      }
       return true;
     })
     .map((row) => {
