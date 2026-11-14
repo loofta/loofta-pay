@@ -43,6 +43,7 @@ import { guardAtaSponsorship } from '@/common/ata-sponsorship-guard';
 import { tokenAccountExists } from '@/common/token-account-exists';
 import { reclaimBurnerFunds } from '@/common/burner-reclaim';
 import { PajCashOrdersService } from '../paj-cash/paj-cash-orders.service';
+import { AsyncLocalStorage } from 'async_hooks';
 import { computeLooftaFeeUsdc } from '@/common/paj-cash-fee';
 import { resolvePlatformFeeAccount } from '@/common/platform-fee-account';
 
@@ -86,6 +87,12 @@ function generateShortId(length = 8): string {
 
 /** Claim fee taken from the claim when a registered recipient's first payment goes through a burner. */
 export const REGISTERED_BURNER_CLAIM_FEE_USD = 0.2;
+
+/** Extra payment slots for the sender-velocity check while a confirmed batch is being sent. */
+const velocityAllowance = new AsyncLocalStorage<number>();
+export function runWithVelocityAllowance<T>(batchSize: number, fn: () => Promise<T>): Promise<T> {
+  return velocityAllowance.run(Math.max(0, Math.floor(batchSize)), fn);
+}
 
 @Injectable()
 export class ClaimsService {
@@ -190,6 +197,9 @@ export class ClaimsService {
    *  create at most 3 payments per 24h. Fails open on a DB error so real sends never break. */
   private async assertSenderVelocity(userId?: string): Promise<void> {
     if (!userId) return;
+    // A confirmed multi-recipient batch (e.g. 5 payments from the Telegram bot) is one human action,
+    // so it gets that many extra slots. Capped so it can never become a bypass.
+    const extra = Math.min(velocityAllowance.getStore() ?? 0, 10);
     try {
       const now = Date.now();
       const since10m = new Date(now - 10 * 60_000).toISOString();
@@ -203,7 +213,7 @@ export class ClaimsService {
         .maybeSingle();
       const createdAt = u?.created_at ? new Date(u.created_at as string).getTime() : 0;
       const isNewAccount = !!createdAt && now - createdAt < 24 * 60 * 60_000;
-      if ((recent ?? 0) >= 4) {
+      if ((recent ?? 0) >= 4 + extra) {
         this.logger.error(`[Velocity] BLOCKED user=${userId} — ${recent} payments in 10 minutes`);
         await this.flagAbusiveSender(userId, `${recent} payments in 10 minutes`, isNewAccount);
         throw new BadRequestException('You are sending too fast. Please wait a few minutes and try again.');
@@ -213,7 +223,7 @@ export class ClaimsService {
           .select('id', { count: 'exact', head: true })
           .eq('created_by', userId)
           .gte('created_at', new Date(now - 24 * 60 * 60_000).toISOString());
-        if ((today ?? 0) >= 3) {
+        if ((today ?? 0) >= 3 + extra) {
           this.logger.error(`[Velocity] BLOCKED new account user=${userId} — ${today} payments in its first 24h`);
           await this.flagAbusiveSender(userId, `${today} payments in its first 24h`, true);
           throw new BadRequestException('New accounts can send up to 3 payments in their first day. Please try again tomorrow.');

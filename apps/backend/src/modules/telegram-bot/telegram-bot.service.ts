@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { runWithVelocityAllowance } from '../claims/claims.service';
 import { Injectable, Logger, OnModuleInit, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrivyClient } from '@privy-io/server-auth';
@@ -1780,7 +1781,7 @@ export class TelegramBotService implements OnModuleInit {
         if (!payer?.signerGranted) throw new BadRequestException('Auto-pay is turned off.');
         await this.autopay.assertWithinLimits(payer, amount, { excludeTelegramBatchId: arg, dailyTotalUsd: batchTotal });
 
-        const result = await this.autopay.executeTelegramAutoPay({
+        const result = await runWithVelocityAllowance(claimedRows.length, () => this.autopay.executeTelegramAutoPay({
           senderUserId: userId,
           recipientHandle: handle,
           amountUsd: amount,
@@ -1788,7 +1789,7 @@ export class TelegramBotService implements OnModuleInit {
           isDevnet,
           splitOverride: row.private_split ?? null,
           maxDelayMsOverride: row.private_max_delay_ms != null ? Number(row.private_max_delay_ms) : null,
-        });
+        }));
         await supabase
           .from('telegram_bot_actions')
           .update({ status: 'paid', payment_id: result.paymentId, claim_link: result.claimLink, paid_at: new Date().toISOString() })
