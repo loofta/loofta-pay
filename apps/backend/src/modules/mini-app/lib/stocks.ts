@@ -79,6 +79,8 @@ const FAMILIES: Array<{ name: string; kind: StockToken["kind"]; pattern: RegExp;
   },
 ];
 const FAMILY_TTL = 12 * 3_600_000;
+/** Official PreStocks mints (the real ones all start with "Pre"), found with the name search. Only a head start: the search still runs and adds new ones, and tokens with no liquidity are dropped. */
+const SEED_PRESTOCKS = ["Pre8AREmFPtoJFT8mQSXQLh56cwJmM7CFDRuoGBZiUP", "Pre9atBqkocK1QngFy7Q7zvyQictEFpXdLi6bZ2qnYy", "PreANxuXjsy2pvisWWMNB6YaJNzr7681wJJr2rHsfTh", "PreC1KtJ1sBPPqaeeqL6Qb15GTLCYVvyYEwxhdfTwfx", "PreGJxNkwFp8KmtA5rnvgv2z3zAa8c2UQMfN4FjPh4Z", "PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua", "PreZad18qfPtbxNpMtMuAuX2zVpvkEU8DnJx56faCWd", "Preb5VKsmKgMGhMKUhDpe7A2AhMDmrZtMMZmvFEhLbU", "PrekqLJvJ3qVdXmBGDiexvwUTF4rLFDa6HWS4HJbw9S", "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw", "Pres43hQWdY6HaHWckmgzqyQgVwYCXen3VPrXMoKWeY", "PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB", "PreweJYECqtQwBtpxHL171nL2K6umo692gTm7Q3rpgF"];
 /** Bump when the rules for what counts as a stock change, so a list built under the old rules is rebuilt. */
 const LIST_VERSION = 3;
 
@@ -150,7 +152,8 @@ async function jupBatch(mints: string[]): Promise<JupToken[]> {
 async function discoverFamilies(): Promise<void> {
   if (store.discovering) return;
   store.discovering = true;
-  const kinds = new Map<string, StockToken["kind"]>();
+  // Starts from the seed so the Pre-IPO list never shrinks while the search is still partway through.
+  const kinds = new Map<string, StockToken["kind"]>(SEED_PRESTOCKS.map((m) => [m, "prestock" as const]));
   try {
     for (const fam of FAMILIES) {
       for (const q of [fam.name, ...fam.seeds.map((x) => `${x} ${fam.name}`)]) {
@@ -228,6 +231,8 @@ export async function getStocks(opts: { wait?: boolean } = { wait: true }): Prom
     store.hydrated = true;
     const fam = await sharedGet<{ at: number; kinds: Array<[string, StockToken["kind"]]> }>("stocks:families");
     if (fam?.kinds?.length && !store.families) store.families = { at: fam.at, kinds: new Map(fam.kinds) };
+    // Nothing saved (a fresh deploy with no shared cache): start from the official PreStocks mints so Pre-IPO is not empty for minutes while the name search runs.
+    if (!store.families) store.families = { at: 0, kinds: new Map(SEED_PRESTOCKS.map((m) => [m, "prestock" as const])) };
     // The saved list only counts if the pre-IPO and Backpack tokens were already found when it was built.
     const saved = store.families ? await sharedGet<{ at: number; items: StockToken[]; v?: number }>("stocks:list") : null;
     if (!store.list && saved && saved.v === LIST_VERSION && saved.items?.length > 0) store.list = saved;

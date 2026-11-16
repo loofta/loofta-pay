@@ -255,13 +255,28 @@ export class PumpTradeService {
   }
 
   async build(userId: string, dto: PumpTradeDto) {
+    // If the fee payer can cover it, it pays the network fee and the person only signs, so a wallet with no SOL can trade.
+    // Otherwise the person pays their own fee, and a sell first gets a small SOL top-up (limited per person and per day).
+    const feePayer = (await this.jupiter.canSponsor(userId).catch(() => false)) ? this.jupiter.sponsorPublicKey : null;
+    if (!feePayer && dto.side === 'sell') {
+      try {
+        await this.jupiter.sponsorSellGas(userId, new PublicKey(await this.users.getSolanaWalletAddress(userId)), 0n);
+      } catch (e) {
+        this.logger.warn(`[PumpTrade] sell gas top-up skipped: ${(e as Error).message}`);
+      }
+    }
     const p = await this.plan(userId, dto);
+    if (feePayer) this.assertFeePayerOnlyPays(p.instructions, feePayer);
     const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
-    const message = new TransactionMessage({ payerKey: p.userPk, recentBlockhash: blockhash, instructions: p.instructions }).compileToV0Message();
+    const message = new TransactionMessage({ payerKey: feePayer ?? p.userPk, recentBlockhash: blockhash, instructions: p.instructions }).compileToV0Message();
     const tx = new VersionedTransaction(message);
 
-    // The person must be the only signer and the payer of what they are asked to sign.
-    if (tx.message.header.numRequiredSignatures !== 1 || !tx.message.staticAccountKeys[0].equals(p.userPk)) {
+    // Sponsored: exactly two signers, the fee payer first and the person second. Otherwise the person is the only signer and the payer.
+    const keys = tx.message.staticAccountKeys;
+    const layoutOk = feePayer
+      ? tx.message.header.numRequiredSignatures === 2 && keys[0].equals(feePayer) && keys[1].equals(p.userPk)
+      : tx.message.header.numRequiredSignatures === 1 && keys[0].equals(p.userPk);
+    if (!layoutOk) {
       this.logger.error(`[PumpTrade] unexpected signer layout for user ${userId}; refusing`);
       throw new BadRequestException('Could not build a safe transaction. Try again.');
     }
@@ -274,10 +289,30 @@ export class PumpTradeService {
       this.unsupported('this coin cannot be traded on the curve right now');
     }
 
+    const gaslessId = feePayer ? this.jupiter.registerSponsored(userId, tx, lastValidBlockHeight, (COMPUTE_UNITS * PRIORITY_MICRO_LAMPORTS) / 1_000_000) : null;
     return {
       ...this.quoteShape(p),
+      gasless: !!gaslessId,
+      ...(gaslessId ? { id: gaslessId } : {}),
       swapTransaction: Buffer.from(tx.serialize()).toString('base64'),
       lastValidBlockHeight,
     };
+  }
+
+  /**
+   * The fee payer becomes the transaction payer, which gives it signer rights on every instruction that lists it. So it may
+   * appear in exactly one place: as the receiving side of Loofta's fee transfer (the platform wallet is the fee payer).
+   */
+  private assertFeePayerOnlyPays(ixs: TransactionInstruction[], feePayer: PublicKey) {
+    for (const ix of ixs) {
+      ix.keys.forEach((k, i) => {
+        if (!k.pubkey.equals(feePayer)) return;
+        const receivingFee = ix.programId.equals(SystemProgram.programId) && i === 1 && !k.isSigner;
+        if (!receivingFee) {
+          this.logger.error(`[PumpTrade] fee payer found in an instruction of ${ix.programId.toBase58()}; refusing`);
+          throw new BadRequestException('Could not build a safe transaction. Try again.');
+        }
+      });
+    }
   }
 }

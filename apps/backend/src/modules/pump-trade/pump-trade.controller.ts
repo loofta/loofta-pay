@@ -47,6 +47,7 @@ export class PumpTradeController {
       feeBps: res.feeBps,
       feeOwner: this.jupiter.platformFeeWallet?.toBase58() ?? null,
       feeMint: 'SOL',
+      gaslessId: res.gasless && res.id ? String(res.id) : null,
     });
     return { ...res, tradeId };
   }

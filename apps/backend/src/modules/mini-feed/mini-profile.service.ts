@@ -1,7 +1,13 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { SupabaseService } from '@/database/supabase.service';
 import { UsersService } from '@/modules/users/users.service';
 import { cached } from '@/modules/mini-app/lib/sharedCache';
+
+/** Everything except the uploaded image bytes, which only the avatar route reads. */
+const PROFILE_COLS = 'privy_user_id, avatar_kind, avatar_url, avatar_color, show_pnl, hide_name, share_activity, handle';
+const UPLOAD_RE = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/;
+const MAX_UPLOAD_CHARS = 200_000;
 
 export const AVATAR_COLORS = ['orange', 'green', 'blue', 'purple', 'pink', 'gold', 'teal', 'red'] as const;
 export type AvatarColor = (typeof AVATAR_COLORS)[number];
@@ -94,8 +100,8 @@ export class MiniProfileService {
   }
 
   private async row(userId: string) {
-    const { data } = await this.db().from('mini_profiles').select('*').eq('privy_user_id', userId).maybeSingle();
-    return data as { avatar_kind: 'telegram' | 'twitter' | 'color'; avatar_url: string | null; avatar_color: string | null; show_pnl: boolean; hide_name: boolean; share_activity: boolean; handle: string | null } | null;
+    const { data } = await this.db().from('mini_profiles').select(PROFILE_COLS).eq('privy_user_id', userId).maybeSingle();
+    return data as { avatar_kind: 'telegram' | 'twitter' | 'color' | 'upload'; avatar_url: string | null; avatar_color: string | null; show_pnl: boolean; hide_name: boolean; share_activity: boolean; handle: string | null } | null;
   }
 
   /** First time: give the person a colour picture and a fun name without asking. Nothing is taken from Telegram, X or email. */
@@ -178,17 +184,58 @@ export class MiniProfileService {
     }
     const { error } = await this.db().from('mini_profiles').update(patch).eq('privy_user_id', userId);
     if (error) {
-      if (/duplicate|unique/i.test(error.message)) throw new BadRequestException('That name is taken. Try another.');
+      if (/duplicate|unique/i.test(error.message)) throw new BadRequestException(`@${patch.handle ?? 'that name'} is already used by another profile. Try another.`);
       throw new BadRequestException('Could not save. Try again.');
     }
     return this.getProfile(userId);
+  }
+
+  /** Saves a picture the person uploaded. The app has already cut it to a small square, this only checks it is one. */
+  async uploadAvatar(userId: string, image: unknown): Promise<MiniProfile> {
+    await this.ensureProfile(userId);
+    const m = typeof image === 'string' && image.length <= MAX_UPLOAD_CHARS ? UPLOAD_RE.exec(image) : null;
+    if (!m) throw new BadRequestException('Use a JPG, PNG or WebP picture.');
+    const bytes = Buffer.from(m[2], 'base64');
+    // Real image bytes start with a known signature. A text file renamed to .jpg does not.
+    const head = bytes.subarray(0, 12);
+    const ok = (m[1] === 'jpeg' && head[0] === 0xff && head[1] === 0xd8) || (m[1] === 'png' && head[0] === 0x89 && head[1] === 0x50) || (m[1] === 'webp' && head.toString('ascii', 0, 4) === 'RIFF' && head.toString('ascii', 8, 12) === 'WEBP');
+    if (!ok) throw new BadRequestException('That file is not a picture.');
+    const token = randomBytes(12).toString('hex');
+    const { error } = await this.db()
+      .from('mini_profiles')
+      .update({ avatar_kind: 'upload', avatar_url: `/api/backend/mini/feed/avatar/${token}`, avatar_image: image, avatar_token: token, updated_at: new Date().toISOString() })
+      .eq('privy_user_id', userId);
+    if (error) {
+      this.logger.warn(`uploadAvatar failed: ${error.message}`);
+      throw new BadRequestException('Could not save the picture. Try again.');
+    }
+    return this.getProfile(userId);
+  }
+
+  /** The bytes behind an uploaded picture. The token is random and changes on every upload, so it can be cached for good. */
+  async avatarBytes(token: string): Promise<{ type: string; bytes: Buffer }> {
+    if (!/^[a-f0-9]{24}$/.test(token)) throw new NotFoundException();
+    const { data } = await this.db().from('mini_profiles').select('avatar_image').eq('avatar_token', token).maybeSingle();
+    const m = typeof data?.avatar_image === 'string' ? UPLOAD_RE.exec(data.avatar_image) : null;
+    if (!m) throw new NotFoundException();
+    return { type: `image/${m[1]}`, bytes: Buffer.from(m[2], 'base64') };
+  }
+
+  /** Finds someone by their chosen name. People who hide their name cannot be found. The Privy id stays on the server. */
+  async byHandle(handle: string): Promise<{ id: string; handle: string; avatar: PublicAvatar; showPnl: boolean; shareActivity: boolean; joinedAt: string | null } | null> {
+    const h = String(handle ?? '').trim().toLowerCase().replace(/^@/, '');
+    if (!HANDLE_RE.test(h)) return null;
+    const { data } = await this.db().from('mini_profiles').select(`${PROFILE_COLS}, created_at`).ilike('handle', h).maybeSingle();
+    const r: any = data;
+    if (!r || r.hide_name || !r.handle) return null;
+    return { id: r.privy_user_id, handle: r.handle, avatar: this.toAvatar(r.privy_user_id, r), showPnl: r.show_pnl ?? true, shareActivity: r.share_activity ?? true, joinedAt: r.created_at ?? null };
   }
 
   /** Profiles for many people at once, for the feed. Keyed by Privy id, never sent to the app. */
   async many(ids: string[]) {
     const out = new Map<string, { avatar: PublicAvatar; showPnl: boolean; hideName: boolean; shareActivity: boolean; handle: string | null }>();
     if (!ids.length) return out;
-    const { data } = await this.db().from('mini_profiles').select('*').in('privy_user_id', ids);
+    const { data } = await this.db().from('mini_profiles').select(PROFILE_COLS).in('privy_user_id', ids);
     const byId = new Map((data ?? []).map((r: any) => [r.privy_user_id as string, r]));
     for (const id of ids) {
       const r = byId.get(id);

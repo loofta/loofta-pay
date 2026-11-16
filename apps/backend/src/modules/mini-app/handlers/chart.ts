@@ -36,7 +36,7 @@ const TF: Record<string, { unit: "minute" | "hour" | "day"; agg: number }> = {
 // which runs out quickly. With COINGECKO_API_KEY (a free Demo key) the same calls get their own limit.
 const CG_KEY = process.env.COINGECKO_API_KEY;
 const API = CG_KEY ? "https://api.coingecko.com/api/v3/onchain/networks/solana" : "https://api.geckoterminal.com/api/v2/networks/solana";
-const SIZE_SEC: Record<string, number> = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1d": 86400 };
+const SIZE_SEC: Record<string, number> = { "15s": 15, "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1d": 86400 };
 /** How long a set of candles is shared between everyone looking at the coin. Longer for the slower timeframes. */
 const TTL_SEC: Record<string, number> = { "1m": 15, "5m": 30, "15m": 60, "1h": 120, "1d": 300 };
 
@@ -123,7 +123,12 @@ export async function GET(req: Request) {
     );
     const candles = (j?.oclhv ?? []).map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })).filter((c) => [c.open, c.high, c.low, c.close].every(Number.isFinite)).sort((a, b) => a.time - b.time);
     if (candles.length > 0) return NextResponse.json({ candles });
-    if (!tf) return NextResponse.json({ candles: [] });
+    // The Live frame has no second source. Rather than an empty box, draw it from the prices we note ourselves.
+    if (!tf) {
+      const price = (await dexInfo([mint]).catch(() => new Map())).get(mint)?.priceUsd ?? null;
+      if (price) recordTick(mint, price);
+      return NextResponse.json({ candles: ticksToCandles(mint, SIZE_SEC[tfKey] ?? 15, price), own: true });
+    }
   }
 
   // Everyone looking at this coin and timeframe shares one answer. If the provider says no (rate limit), the last good

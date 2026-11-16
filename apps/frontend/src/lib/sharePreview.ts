@@ -38,7 +38,7 @@ export interface SharePreview {
  */
 export async function getSharePreview(shortIdOrUuid: string, viewerUserId?: string | null): Promise<SharePreview | null> {
   const supabase = getSupabaseAdmin();
-  const SELECT = "id, short_id, amount, status, is_devnet, is_private, direction, created_by, sender_user_id, recipient_address, recipient_username, recipient_user_id";
+  const SELECT = "id, short_id, amount, status, is_devnet, is_private, direction, created_by, sender_user_id, recipient_address, recipient_username, recipient_user_id, description";
 
   let { data: payment } = await supabase.from("payments").select(SELECT).eq("short_id", shortIdOrUuid).maybeSingle();
   if (!payment) {
@@ -75,7 +75,7 @@ export async function getSharePreview(shortIdOrUuid: string, viewerUserId?: stri
   const resolvedRecipientUsername: string | null = (recipientAppUser as { username?: string } | null)?.username ?? null;
 
   const recipientAddress = String(payment.recipient_address ?? "").trim();
-  const recipient_username: string | null =
+  let recipient_username: string | null =
     payment.recipient_username ||
     resolvedRecipientUsername ||
     (recipientAddress.startsWith(PENDING_USERNAME_PREFIX)
@@ -84,7 +84,23 @@ export async function getSharePreview(shortIdOrUuid: string, viewerUserId?: stri
 
   let recipient_social_platform: string | null = null;
   let recipient_social_handle: string | null = null;
-  if (!recipient_username && recipientAddress.startsWith(PENDING_SOCIAL_PREFIX)) {
+  // Sent from the Telegram bot to a registered person: show the Telegram handle that was paid, not
+  // their loo-userNN. The card already renders a social handle with its platform.
+  if (!isFromRecipient && recipient_username && String(payment.description ?? "").startsWith("Sent via @looftapay_bot on Telegram") && trueRecipientId.includes("did:privy:")) {
+    const { data: tg } = await supabase
+      .from("social_accounts")
+      .select("handle")
+      .eq("user_id", trueRecipientId)
+      .eq("platform", "telegram")
+      .maybeSingle();
+    const h = String((tg as { handle?: string } | null)?.handle ?? "").replace(/^@/, "").trim();
+    if (h) {
+      recipient_social_platform = "telegram";
+      recipient_social_handle = h;
+      recipient_username = null;
+    }
+  }
+  if (!recipient_username && !recipient_social_handle && recipientAddress.startsWith(PENDING_SOCIAL_PREFIX)) {
     const rest = recipientAddress.slice(PENDING_SOCIAL_PREFIX.length);
     const sep = rest.indexOf(":");
     recipient_social_platform = sep >= 0 ? rest.slice(0, sep).trim() : null;

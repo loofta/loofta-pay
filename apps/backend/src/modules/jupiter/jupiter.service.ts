@@ -73,6 +73,7 @@ const MAX_NEW_FEE_ACCOUNTS_PER_DAY = 40;
  */
 const SOL_GAS_TOPUP_THRESHOLD_LAMPORTS = 3_000_000; // 0.003 SOL
 const SOL_GAS_TOPUP_AMOUNT_LAMPORTS = 5_000_000; // 0.005 SOL
+const MAX_SELL_TOPUPS_PER_USER_PER_DAY = 3;
 
 /**
  * Stateless by design — no DB table. The completed withdrawal is already recorded in the same
@@ -145,6 +146,32 @@ export class JupiterService {
       this.logger.log(`Gas top-up sent to ${address.slice(0, 8)}…: ${sig}`);
     } catch (e: any) {
       this.logger.warn(`ensureSolGas failed for ${address}: ${e.message}`);
+    }
+  }
+
+  /**
+   * A sell is paid for by the person's own wallet, so someone who bought with USDC and holds no SOL could never sell.
+   * Rather than turn them away, the fee payer sends a small SOL top-up first. It is a one-way sponsorship cost, same as the
+   * withdrawal top-up, and is boxed in: only when the wallet really is short, a few per person per day, inside the daily
+   * sponsor budget, and never below the fee payer's own reserve. Nothing here makes the fee payer sign the swap itself.
+   */
+  async sponsorSellGas(userId: string, userPk: PublicKey, spendingLamports: bigint): Promise<void> {
+    if (!this.feePayerKeypair || !this.gaslessEnabled()) return;
+    const balance = await this.connection.getBalance(userPk);
+    if (balance - Number(spendingLamports) >= SOL_GAS_TOPUP_THRESHOLD_LAMPORTS) return;
+    this.rollSpendDay();
+    const key = `topup:${userId}`;
+    if ((this.swapsByUserDay.get(key) ?? 0) >= MAX_SELL_TOPUPS_PER_USER_PER_DAY) return;
+    if (this.spendLamportsToday + SOL_GAS_TOPUP_AMOUNT_LAMPORTS > this.dailyBudgetLamports()) return;
+    if ((await this.connection.getBalance(this.feePayerKeypair.publicKey)) < FEE_PAYER_RESERVE_LAMPORTS + SOL_GAS_TOPUP_AMOUNT_LAMPORTS) return;
+    try {
+      const tx = new Transaction().add(SystemProgram.transfer({ fromPubkey: this.feePayerKeypair.publicKey, toPubkey: userPk, lamports: SOL_GAS_TOPUP_AMOUNT_LAMPORTS }));
+      const sig = await sendAndConfirmTransaction(this.connection, tx, [this.feePayerKeypair], { commitment: 'confirmed' });
+      this.swapsByUserDay.set(key, (this.swapsByUserDay.get(key) ?? 0) + 1);
+      this.spendLamportsToday += SOL_GAS_TOPUP_AMOUNT_LAMPORTS + SIGNATURE_FEE_LAMPORTS;
+      this.logger.log(`[JupiterSwap] sell gas top-up sent to ${userPk.toBase58().slice(0, 8)}…: ${sig}`);
+    } catch (e: any) {
+      this.logger.warn(`sponsorSellGas failed for ${userPk.toBase58().slice(0, 8)}…: ${e.message}`);
     }
   }
 
@@ -302,41 +329,54 @@ export class JupiterService {
     }
   }
 
-  /** Gasless quote (spends USDC, buys SOL or any token). The network cost is taken from the USDC amount, and outAmount is net of it and of the fee. */
+  /** Sponsored quote for any pair. outAmount is what the person receives, net of the swap fee and of any token-account rent we open for them. */
   private async quoteGasless(userId: string, dto: JupiterSwapDto) {
     const feeBps = await this.rewards.feeBpsFor(userId);
     const userPk = new PublicKey(await this.usersService.getSolanaWalletAddress(userId));
     const solUsd = await fetchSolPriceUsd();
     if (!solUsd) throw new ServiceUnavailableException('Swaps are temporarily unavailable. Try again shortly.');
-    const total = this.toBaseUnits(dto.amount, USDC_DECIMALS);
+    const usdcIn = dto.inputMint === USDC_MINT;
+    const inDecimals = await this.decimalsOf(new PublicKey(dto.inputMint));
+    const total = this.toBaseUnits(dto.amount, inDecimals);
     const outMint = new PublicKey(dto.outputMint);
     await this.tokenProgramFor(outMint);
     const ataCount = await this.missingOutputAtaCount(userPk, outMint);
-    const cost = this.costFeeUsdcUnits(ataCount, solUsd);
-    if (total <= cost) throw this.costTooHigh(total, cost);
-    const q = await this.v1Quote(dto, USDC_DECIMALS, feeBps, total - cost);
-    // Gas is the real fee. The rest pays for the temporary SOL account, which is closed in the same
-    // transaction and its deposit comes back to the user as SOL, so it is shown apart from the fee.
-    const networkFee = this.costFeeUsdcUnits(0, solUsd);
+    const cost = this.sponsorCostUnits(ataCount, solUsd);
+    if (usdcIn && total <= cost) throw this.costTooHigh(total, cost);
+    const q = await this.v1Quote(dto, inDecimals, feeBps, usdcIn ? total - cost : undefined);
+    // Paying in USDC takes the cost off what is swapped. Receiving USDC takes it off what comes back.
+    const takeFromOut = !usdcIn && dto.outputMint === USDC_MINT ? cost : 0n;
+    if (takeFromOut > 0n && BigInt(q.otherAmountThreshold) <= takeFromOut) throw this.costTooHigh(BigInt(q.otherAmountThreshold), takeFromOut);
     return {
-      networkFeeUsdc: networkFee.toString(),
-      accountDepositUsdc: (cost - networkFee).toString(),
+      networkFeeUsdc: '0',
+      accountDepositUsdc: cost.toString(),
       inAmount: String(total),
-      outAmount: String(q.outAmount),
-      minOutAmount: String(q.otherAmountThreshold),
+      outAmount: String(BigInt(q.outAmount) - takeFromOut),
+      minOutAmount: String(BigInt(q.otherAmountThreshold) - takeFromOut),
       feeBps,
       feeAmount: String(q.platformFee?.amount ?? '0'),
       networkCostUsdc: cost.toString(),
       priceImpactPct: Number(q.priceImpactPct ?? 0),
       needsAccountRent: ataCount > 0,
-      inDecimals: USDC_DECIMALS,
+      inDecimals,
       outDecimals: await this.decimalsOf(outMint),
     };
   }
 
+
   /** Any swap that spends USDC is gasless: the network cost and any new token account are priced into the USDC amount, so a wallet with no SOL can still buy. Selling a token, or spending SOL, pays its own network fee. */
   private isGaslessPair(dto: JupiterSwapDto): boolean {
-    return dto.inputMint === USDC_MINT && dto.outputMint !== USDC_MINT;
+    // Every swap is sponsored: the fee payer pays the network fee, and the 0.30% swap fee covers it.
+    return dto.inputMint !== dto.outputMint;
+  }
+
+  /**
+   * What a sponsored swap costs the person on top of the swap fee, in USDC. Usually nothing: the network fee is covered by
+   * the swap fee. Only when we open a token account for them (rent we cannot get back) is that rent charged, which is also
+   * what stops anyone farming rent by swapping into many new tokens.
+   */
+  private sponsorCostUnits(ataCount: number, solUsd: number, priorityLamports = PRIORITY_FEE_CAP_LAMPORTS): bigint {
+    return ataCount > 0 ? this.costFeeUsdcUnits(ataCount, solUsd, priorityLamports) : 0n;
   }
 
   async quoteSwap(userId: string, dto: JupiterSwapDto) {
@@ -399,8 +439,11 @@ export class JupiterService {
     const outMint = new PublicKey(dto.outputMint);
 
     await this.tokenProgramFor(outMint);
-    if ((await this.connection.getBalance(userPk)) < MIN_SOL_FOR_SWAP_LAMPORTS) {
-      throw new BadRequestException('You need about 0.003 SOL in your wallet for the network fee. Swap some USDC to SOL first, that one is free.');
+    // Selling SOL itself spends lamports the network fee and any new token account also need.
+    const spendingLamports = dto.inputMint === WSOL_MINT ? this.toBaseUnits(dto.amount, 9) : 0n;
+    await this.sponsorSellGas(userId, userPk, spendingLamports);
+    if ((await this.connection.getBalance(userPk)) - Number(spendingLamports) < MIN_SOL_FOR_SWAP_LAMPORTS) {
+      throw new BadRequestException('Not enough SOL left to cover the network fee. Sell a little less, or add a dollar or two first.');
     }
 
     const inDecimals = await this.decimalsOf(new PublicKey(dto.inputMint));
@@ -492,7 +535,6 @@ export class JupiterService {
   private async buildGasless(userId: string, dto: JupiterSwapDto) {
     const feeBps = await this.rewards.feeBpsFor(userId);
     this.assertSwapPair(dto);
-    if (!this.isGaslessPair(dto)) throw new BadRequestException('Gasless swaps only spend USDC.');
     if (!this.gaslessEnabled() || !this.feePayerKeypair) throw new ServiceUnavailableException('Swaps are temporarily unavailable.');
     this.rollSpendDay();
     const feePayer = this.feePayerKeypair.publicKey;
@@ -507,34 +549,43 @@ export class JupiterService {
     if (this.spendLamportsToday >= this.dailyBudgetLamports()) throw new ServiceUnavailableException('Swaps are busy right now. Try again later.');
     if ((await this.connection.getBalance(feePayer)) < FEE_PAYER_RESERVE_LAMPORTS) throw new ServiceUnavailableException('Swaps are temporarily unavailable.');
 
+    const usdcIn = dto.inputMint === USDC_MINT;
     const inDecimals = await this.decimalsOf(new PublicKey(dto.inputMint));
+    // Selling SOL itself wraps lamports from the wallet first, so top it up if that would leave it short.
+    if (dto.inputMint === WSOL_MINT) await this.sponsorSellGas(userId, userPk, this.toBaseUnits(dto.amount, 9));
     const feeAccount = await this.ensureFeeTokenAccount(outMint, userId);
     const solUsd = await fetchSolPriceUsd();
     if (!solUsd) throw new ServiceUnavailableException('Swaps are temporarily unavailable. Try again shortly.');
 
     // The network cost comes out of the USDC amount. Read how many token accounts the swap really opens and
     // re-quote if that raises the cost.
-    const total = this.toBaseUnits(dto.amount, USDC_DECIMALS);
-    let cost = this.costFeeUsdcUnits(await this.missingOutputAtaCount(userPk, outMint), solUsd);
-    if (total <= cost) throw this.costTooHigh(total, cost);
-    let quote = await this.v1Quote(dto, USDC_DECIMALS, feeBps, total - cost);
+    const total = this.toBaseUnits(dto.amount, inDecimals);
+    let cost = this.sponsorCostUnits(await this.missingOutputAtaCount(userPk, outMint), solUsd);
+    if (usdcIn && total <= cost) throw this.costTooHigh(total, cost);
+    let quote = await this.v1Quote(dto, inDecimals, feeBps, usdcIn ? total - cost : undefined);
     let ixs = await this.swapInstructions(quote, userWallet, feeAccount);
     for (let i = 0; i < 2; i++) {
       const sponsored = (ixs.setupInstructions as JupIx[]).filter((x) => this.isOutputAtaCreate(x, userPk, outMint)).length;
-      const needed = this.costFeeUsdcUnits(sponsored, solUsd, Number(ixs.prioritizationFeeLamports ?? PRIORITY_FEE_CAP_LAMPORTS));
+      const needed = this.sponsorCostUnits(sponsored, solUsd, Number(ixs.prioritizationFeeLamports ?? PRIORITY_FEE_CAP_LAMPORTS));
       if (needed <= cost) break;
       cost = needed;
-      if (total <= cost) throw this.costTooHigh(total, cost);
-      quote = await this.v1Quote(dto, USDC_DECIMALS, feeBps, total - cost);
-      ixs = await this.swapInstructions(quote, userWallet, feeAccount);
+      if (usdcIn) {
+        if (total <= cost) throw this.costTooHigh(total, cost);
+        quote = await this.v1Quote(dto, inDecimals, feeBps, total - cost);
+        ixs = await this.swapInstructions(quote, userWallet, feeAccount);
+      }
     }
+    // Receiving USDC: the cost is taken from what comes back, after the swap. Any other output with a new token account
+    // we open stays covered by the swap fee, and a fresh account is only opened for a token that actually has liquidity.
+    const takeFromOut = !usdcIn && dto.outputMint === USDC_MINT ? cost : 0n;
+    if (takeFromOut > 0n && BigInt(quote.otherAmountThreshold) <= takeFromOut) throw this.costTooHigh(BigInt(quote.otherAmountThreshold), takeFromOut);
 
     // Fund only the OUTPUT token account from the fee payer; everything else stays the user's.
     const setup = (ixs.setupInstructions as JupIx[]).map((x) =>
       this.isOutputAtaCreate(x, userPk, outMint) ? { ...x, accounts: x.accounts.map((a, idx) => (idx === 0 ? { ...a, pubkey: feePayer.toBase58() } : a)) } : x,
     );
     const sponsoredAtas = setup.filter((x) => x.accounts[0]?.pubkey === feePayer.toBase58() && x.programId === ATA_PROGRAM_ID).length;
-    if (this.costFeeUsdcUnits(sponsoredAtas, solUsd, Number(ixs.prioritizationFeeLamports ?? PRIORITY_FEE_CAP_LAMPORTS)) > cost) throw new BadRequestException('Could not price this swap. Try again.');
+    if (this.sponsorCostUnits(sponsoredAtas, solUsd, Number(ixs.prioritizationFeeLamports ?? PRIORITY_FEE_CAP_LAMPORTS)) > cost) throw new BadRequestException('Could not price this swap. Try again.');
 
     const all: JupIx[] = [
       ...(ixs.computeBudgetInstructions ?? []),
@@ -551,12 +602,16 @@ export class JupiterService {
       if (r.value) alts.push(r.value);
     }
     const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
-    const usdcMint = new PublicKey(USDC_MINT);
-    const feeUsdcAta = new PublicKey(await this.ensureFeeTokenAccount(usdcMint, userId));
-    const costIx = createTransferCheckedInstruction(await getAssociatedTokenAddress(usdcMint, userPk), usdcMint, feeUsdcAta, userPk, cost, USDC_DECIMALS);
     const budgetCount = (ixs.computeBudgetInstructions ?? []).length;
     const ordered = all.map((x) => this.toIx(x));
-    ordered.splice(budgetCount, 0, costIx);
+    if (cost > 0n) {
+      const usdcMint = new PublicKey(USDC_MINT);
+      const feeUsdcAta = new PublicKey(await this.ensureFeeTokenAccount(usdcMint, userId));
+      const costIx = createTransferCheckedInstruction(await getAssociatedTokenAddress(usdcMint, userPk), usdcMint, feeUsdcAta, userPk, cost, USDC_DECIMALS);
+      // Paying in USDC: first, out of the amount being swapped. Receiving USDC: last, out of what the swap just paid in.
+      if (usdcIn) ordered.splice(budgetCount, 0, costIx);
+      else ordered.push(costIx);
+    }
     const message = new TransactionMessage({ payerKey: feePayer, recentBlockhash: blockhash, instructions: ordered }).compileToV0Message(alts);
     const tx = new VersionedTransaction(message);
 
@@ -577,8 +632,8 @@ export class JupiterService {
       id,
       swapTransaction: Buffer.from(tx.serialize()).toString('base64'),
       inAmount: String(total),
-      outAmount: String(quote.outAmount),
-      minOutAmount: String(quote.otherAmountThreshold),
+      outAmount: String(BigInt(quote.outAmount) - takeFromOut),
+      minOutAmount: String(BigInt(quote.otherAmountThreshold) - takeFromOut),
       feeBps,
       feeAmount: String(quote.platformFee?.amount ?? '0'),
       networkCostUsdc: cost.toString(),
@@ -630,6 +685,31 @@ export class JupiterService {
     this.logger.log(`SPONSORED_SWAP user=${userId} cost≈${pending.costLamports}lamports sig=${signature.slice(0, 12)}… today=${this.spendLamportsToday}`);
     if (confirmation.value.err) throw new BadRequestException('The swap did not go through. Your tokens were not moved.');
     return { signature };
+  }
+
+  /** True when the fee payer can cover one more sponsored transaction for this person: switched on, in budget, funded, under their daily cap. */
+  async canSponsor(userId: string): Promise<boolean> {
+    if (!this.feePayerKeypair || !this.gaslessEnabled()) return false;
+    this.rollSpendDay();
+    if ((this.swapsByUserDay.get(userId) ?? 0) >= MAX_SPONSORED_SWAPS_PER_USER_PER_DAY) return false;
+    if (this.spendLamportsToday >= this.dailyBudgetLamports()) return false;
+    return (await this.connection.getBalance(this.feePayerKeypair.publicKey)) >= FEE_PAYER_RESERVE_LAMPORTS;
+  }
+
+  get sponsorPublicKey(): PublicKey | null {
+    return this.feePayerKeypair?.publicKey ?? null;
+  }
+
+  /**
+   * Lets another builder (the Pump curve) use the same co-sign path. The fee payer is the transaction payer and pays only the
+   * network fee. The caller must already have checked that the fee payer appears nowhere else in the instructions.
+   * Returns the id the app sends back with the user's signature to /jupiter/swap/submit.
+   */
+  registerSponsored(userId: string, tx: VersionedTransaction, lastValidBlockHeight: number, priorityLamports: number): string {
+    const id = randomUUID();
+    this.pendingSwaps.set(id, { userId, messageHash: this.hashMessage(tx), expiresAt: Date.now() + PENDING_TTL_MS, lastValidBlockHeight, costLamports: this.estimateCostLamports(0, Math.min(priorityLamports, PRIORITY_FEE_CAP_LAMPORTS)) });
+    this.pruneExpired();
+    return id;
   }
 
   private isOutputAtaCreate(x: JupIx, user: PublicKey, outMint: PublicKey): boolean {
