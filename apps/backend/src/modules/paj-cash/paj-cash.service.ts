@@ -212,40 +212,35 @@ export class PajCashService {
 
   // ── Rate / value ─────────────────────────────────────────────────
 
-  async getRate(): Promise<PajRateResponse> {
-    return this.request('GET', '/pub/rate');
+  /** v2: every call below authenticates with the business API key only (no per-user session). */
+  private get keyHeaders(): Record<string, string> {
+    return { 'x-api-key': this.apiKey };
   }
 
-  async getOnrampValue(sessionToken: string, fiatAmount: number, mint: string, currency: string): Promise<PajValueQuote> {
-    const qs = new URLSearchParams({ amount: String(fiatAmount), mint, currency });
-    return this.request<PajValueQuote>('GET', `/pub/rates/onramp-value?${qs}`, { headers: this.bearer(sessionToken) });
+  async getRate(currency: PajCurrency = 'NGN'): Promise<PajRateResponse> {
+    return this.request('GET', `/pub/v2/rate?currency=${currency}`, { headers: this.keyHeaders });
   }
 
-  async getOfframpValue(sessionToken: string, tokenAmount: number, mint: string, currency: string): Promise<PajValueQuote> {
-    const qs = new URLSearchParams({ amount: String(tokenAmount), mint, currency });
-    return this.request<PajValueQuote>('GET', `/pub/rates/offramp-value?${qs}`, { headers: this.bearer(sessionToken) });
+  /** v2 has no quote endpoint; derive from the offramp rate (USDC ~ USD). */
+  async getOfframpValue(_sessionToken: string | null, tokenAmount: number, mint: string, currency: string): Promise<PajValueQuote> {
+    const { offRampRate } = await this.getRate(currency as PajCurrency);
+    return {
+      amount: tokenAmount,
+      fiatAmount: Math.round(tokenAmount * offRampRate.rate * 100) / 100,
+      mint,
+      currency,
+      rate: offRampRate.rate,
+    };
   }
 
   // ── Banks ────────────────────────────────────────────────────────
 
-  async getBanks(sessionToken: string): Promise<PajBank[]> {
-    return this.request<PajBank[]>('GET', '/pub/bank', { headers: this.bearer(sessionToken) });
-  }
-
-  async confirmBankAccount(sessionToken: string, bankId: string, accountNumber: string): Promise<PajResolvedBankAccount> {
-    const qs = new URLSearchParams({ bankId, accountNumber });
-    return this.request<PajResolvedBankAccount>('GET', `/pub/bank-account/confirm?${qs}`, { headers: this.bearer(sessionToken) });
-  }
-
-  async saveBankAccount(sessionToken: string, bankId: string, accountNumber: string): Promise<PajSavedBankAccount> {
-    return this.request<PajSavedBankAccount>('POST', '/pub/bank-account', {
-      body: { bankId, accountNumber },
-      headers: this.bearer(sessionToken),
+  /** v2 register is idempotent and confirms the account with the provider, so it doubles as "confirm". */
+  async registerBankAccount(bankCode: string, accountNumber: string): Promise<PajSavedBankAccount> {
+    return this.request<PajSavedBankAccount>('POST', '/pub/v2/bank-account', {
+      body: { bankCode, accountNumber },
+      headers: this.keyHeaders,
     });
-  }
-
-  async getSavedBankAccounts(sessionToken: string): Promise<PajSavedBankAccount[]> {
-    return this.request<PajSavedBankAccount[]>('GET', '/pub/bank-account', { headers: this.bearer(sessionToken) });
   }
 
   // ── KYC ──────────────────────────────────────────────────────────
@@ -273,8 +268,8 @@ export class PajCashService {
     });
   }
 
-  async createOfframp(sessionToken: string, params: {
-    bank: string;
+  async createOfframp(params: {
+    bankCode: string;
     accountNumber: string;
     currency: PajCurrency;
     fiatAmount?: number;
@@ -282,20 +277,17 @@ export class PajCashService {
     mint: string;
     chain: PajChain;
     description?: string;
+    customerId?: string;
   }): Promise<PajOfframpOrder> {
-    return this.request<PajOfframpOrder>('POST', '/pub/offramp', {
+    return this.request<PajOfframpOrder>('POST', '/pub/v2/offramp', {
       body: params,
-      headers: this.bearer(sessionToken),
+      headers: this.keyHeaders,
     });
   }
 
   // ── Transactions ─────────────────────────────────────────────────
 
-  async getTransaction(sessionToken: string, id: string): Promise<PajTransaction> {
-    return this.request<PajTransaction>('GET', `/pub/transactions/${encodeURIComponent(id)}`, { headers: this.bearer(sessionToken) });
-  }
-
-  async getAllTransactions(sessionToken: string): Promise<PajTransaction[]> {
-    return this.request<PajTransaction[]>('GET', '/pub/transactions', { headers: this.bearer(sessionToken) });
+  async getTransaction(id: string): Promise<PajTransaction> {
+    return this.request<PajTransaction>('GET', `/pub/v2/transaction/${encodeURIComponent(id)}`, { headers: this.keyHeaders });
   }
 }

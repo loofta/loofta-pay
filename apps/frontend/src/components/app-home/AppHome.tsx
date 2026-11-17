@@ -133,7 +133,8 @@ export function AppHome() {
     ...(history.data?.sent ?? []).map((row): Activity => ({ key: `s-${row.id}`, sent: true, title: whoLabel(row, true), sub: cashStatus(row.status, true), amount: Number(row.amount) || 0, created_at: row.created_at, href: row.receipt_path || "/app/history" })),
     ...(history.data?.received ?? []).map((row): Activity => ({ key: `r-${row.id}`, sent: false, title: whoLabel(row, false), sub: cashStatus(row.status, false), amount: Number(row.amount) || 0, created_at: row.created_at, href: row.receipt_path || "/app/history" })),
     ...(moves.data?.withdrawals ?? []).map((w): Activity => ({
-      key: `w-${w.id}`, sent: true, title: "Withdrawal", amount: Number(w.amount_usdc) || 0, created_at: w.created_at, href: "/app/history",
+      key: `w-${w.id}`, sent: true, title: "Withdrawal", amount: Number(w.amount_usdc) || 0, created_at: w.created_at,
+      href: w.is_near_intents && w.deposit_address ? `https://explorer.near-intents.org/transactions/${w.deposit_address}` : "/app/history",
       sub: w.is_near_intents && !w.near_intents_complete ? "Pending" : "Withdrawn",
     })),
     ...(moves.data?.deposits ?? []).filter((d) => ["complete", "completed", "success"].includes(String(d.status).toLowerCase())).map((d): Activity => ({
@@ -219,7 +220,7 @@ export function AppHome() {
             {authenticated && history.isError && <p style={{ fontSize: 15, color: "#9A98A3", padding: "12px 8px" }}>Could not load recent activity.</p>}
             {authenticated && history.isSuccess && recent.length === 0 && <p style={{ fontSize: 15, color: "#9A98A3", padding: "12px 8px" }}>No payments yet. Send the first one.</p>}
             {recent.map((h) => (
-              <Link key={h.key} href={h.href} className="lh-6" style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 8px", borderRadius: 14, color: "inherit", minWidth: 0 }}>
+              <Link key={h.key} href={h.href} {...(h.href.startsWith("http") ? { target: "_blank", rel: "noreferrer" } : {})} className="lh-6" style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 8px", borderRadius: 14, color: "inherit", minWidth: 0 }}>
                 <div style={{ flex: "none", width: 40, height: 40, borderRadius: 13, display: "grid", placeItems: "center", fontWeight: 800, fontSize: 18, background: h.sent ? "rgba(245,150,12,0.14)" : "rgba(60,200,120,0.14)", color: h.sent ? "#F5A623" : "#5FD38E" }}>{h.sent ? "↑" : "↓"}</div>
                 <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
                   <span style={{ display: "block", minWidth: 0, fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.title}</span>

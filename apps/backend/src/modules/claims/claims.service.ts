@@ -325,6 +325,9 @@ export class ClaimsService {
     recipientUserId: string;
     recipientUsername?: string | null;
     recipientEmail?: string | null;
+    /** PENDING_SOCIAL:<platform>:<handle>, stored as the recipient when the money waits in a burner, so the
+     *  payment shows as pending for that handle and is claimed explicitly (instead of a wallet address). */
+    pendingAddress?: string;
     split?: number;
     maxDelayMs?: number;
   }): Promise<{ id: string; short_id: string | null; link: string; burnerAddress: string | null; payTo: string | null; requirePrivate: boolean }> {
@@ -359,8 +362,8 @@ export class ClaimsService {
         ...(burner ? { burner_address: burner.claim_burner_address, burner_encrypted_secret: burner.claim_burner_encrypted_secret } : {}),
         amount: Number(params.amount),
         direction: 'from_sender',
-        recipient_address: params.recipientAddress,
-        recipient_username: params.recipientUsername ?? null,
+        recipient_address: burner && params.pendingAddress ? params.pendingAddress : params.recipientAddress,
+        recipient_username: burner && params.pendingAddress ? null : (params.recipientUsername ?? null),
         recipient_email: params.recipientEmail ?? null,
         recipient_user_id: params.recipientUserId,
         created_by: params.userId ? String(params.userId) : null,
@@ -521,6 +524,7 @@ export class ClaimsService {
         recipientAddress,
         recipientUserId: user.privyUserId,
         recipientUsername: user.username,
+        pendingAddress: `${ClaimsService.PENDING_SOCIAL_PREFIX}${platform}:${cleanHandle}`,
         split,
         maxDelayMs,
       });

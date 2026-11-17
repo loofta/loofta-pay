@@ -77,8 +77,7 @@ export class PajCashOrdersService {
     let fiatAmount: number | null = null;
     let rate: number | null = null;
     try {
-      const token = await this.session.getValidSessionToken(params.userId);
-      const quote = await this.pajCash.getOfframpValue(token, params.amountUsdc, SOLANA_USDC_MINT, 'NGN');
+      const quote = await this.pajCash.getOfframpValue(null, params.amountUsdc, SOLANA_USDC_MINT, 'NGN');
       fiatAmount = quote.fiatAmount;
       rate = quote.rate;
     } catch (e) {
@@ -162,8 +161,6 @@ export class PajCashOrdersService {
     const bankAccount = await this.bankService.getSavedAccount(userId, params.bankAccountId);
     if (!bankAccount) throw new NotFoundException('Bank account not found');
 
-    const token = await this.session.getValidSessionToken(userId);
-
     // params.amountUsdc is the gross amount debited from the user's balance. Loofta's cut is
     // taken by ordering PAJ the *net* amount — what actually gets deposited to order.address —
     // while the fee itself is sent on-chain to Loofta's fee wallet in the same withdraw
@@ -173,8 +170,8 @@ export class PajCashOrdersService {
 
     let order;
     try {
-      order = await this.pajCash.createOfframp(token, {
-        bank: bankAccount.bank_id,
+      order = await this.pajCash.createOfframp({
+        bankCode: this.bankService.bankFor(bankAccount.bank_id).code,
         accountNumber: bankAccount.account_number,
         currency,
         amount: netAmountUsdc,
@@ -263,20 +260,9 @@ export class PajCashOrdersService {
   async reconcileOrder(row: PajCashOrderRow): Promise<PajCashOrderRow> {
     if (!row.paj_order_id) return row;
 
-    let token: string;
-    try {
-      token = await this.session.getValidSessionToken(row.user_id);
-    } catch (err) {
-      if (err instanceof PajLinkRequiredError) {
-        this.logger.warn(`[PajCashReconcile] ${row.id}: user ${row.user_id} has no active PAJ session, cannot reconcile — will retry once relinked`);
-        return row;
-      }
-      throw err;
-    }
-
     let txn;
     try {
-      txn = await this.pajCash.getTransaction(token, row.paj_order_id);
+      txn = await this.pajCash.getTransaction(row.paj_order_id);
     } catch (err) {
       this.logger.warn(`[PajCashReconcile] ${row.id}: getTransaction failed: ${err instanceof Error ? err.message : String(err)}`);
       return row;
@@ -319,6 +305,7 @@ export class PajCashOrdersService {
         // force-marked EXPIRED after 2h even though the user's money had already been taken.
         // PAJ_PAID (non-terminal, rank 3) marks it funded so the CREATED-only expiry filter skips it.
         return row.direction === 'OFF_RAMP' ? 'COMPLETE' : 'PAJ_PAID';
+      case 'ERROR':
       case 'FAILED':
         return 'FAILED';
       case 'CANCELLED':

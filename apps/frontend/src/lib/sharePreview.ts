@@ -67,7 +67,7 @@ export async function getSharePreview(shortIdOrUuid: string, viewerUserId?: stri
     senderId.includes("did:privy:")
       ? supabase.from("app_users").select("username").eq("privy_user_id", senderId).maybeSingle()
       : Promise.resolve({ data: null }),
-    !payment.recipient_username && trueRecipientId.includes("did:privy:")
+    !payment.recipient_username && trueRecipientId.includes("did:privy:") && !String(payment.recipient_address ?? "").startsWith(PENDING_SOCIAL_PREFIX)
       ? supabase.from("app_users").select("username").eq("privy_user_id", trueRecipientId).maybeSingle()
       : Promise.resolve({ data: null }),
   ]);

@@ -60,7 +60,7 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
   const [quote, setQuote] = useState<string | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [sent, setSent] = useState<{ sig: string; cross: boolean } | null>(null);
+  const [sent, setSent] = useState<{ sig: string; cross: boolean; depositAddress?: string } | null>(null);
 
   const usdcToken = findUsdcOnSolana(tokens);
   const solToken = tokens.find((t) => t.symbol.toUpperCase() === "SOL" && isSolanaChain(t.chain));
@@ -195,7 +195,7 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
         });
         await saveWithdrawal({ id: relaySig, amountUSDC: amountNum, txSignature: relaySig, destinationAddress: dest, destinationChain: toToken.chain, destinationToken: toToken.symbol, isNearIntents: true, depositAddress: relayOrder.depositAddress, estimatedOut: relayOrder.amountOutFormatted ?? quote ?? undefined, nearIntentsStatus: "PENDING", nearIntentsComplete: false }, access, devnetMode);
         tagWalletTx(relaySig, { kind: "bridge", label: "Cross-chain", private: false });
-        setSent({ sig: relaySig, cross: true });
+        setSent({ sig: relaySig, cross: true, depositAddress: relayOrder.depositAddress });
         onDone?.();
       } else if (pay === "USDC" && isCross) {
         const order = await prepareNearIntentsWithdrawal({ fromToken: payToken, toToken, amountUsdc: String(amountNum), destinationAddress: dest, refundAddress: solanaAddress, isDevnet: devnetMode }, access);
@@ -217,7 +217,7 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
         });
         await saveWithdrawal({ id: sig, amountUSDC: amountNum, txSignature: sig, destinationAddress: dest, destinationChain: toToken.chain, destinationToken: toToken.symbol, isNearIntents: true, depositAddress: order.depositAddress, estimatedOut: quote ?? undefined, nearIntentsStatus: "PENDING", nearIntentsComplete: false }, access, devnetMode);
         tagWalletTx(sig, { kind: "bridge", label: "Cross-chain", private: true });
-        setSent({ sig, cross: true });
+        setSent({ sig, cross: true, depositAddress: order.depositAddress });
         onDone?.();
       } else {
         const quoteBase = { fromToken: payToken, toToken, amount: String(amountNum), recipient: dest, sender: solanaAddress, refundAddress: solanaAddress, slippageBps: 100 };
@@ -243,8 +243,18 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
             network: cluster,
           });
         }
+        // Persist the NEAR Intents deposit address: it is the only key the explorer / status API
+        // knows this swap by, and the Solana tx alone cannot be used to look it up.
+        if (isCross) {
+          await saveWithdrawal({
+            id: sig, amountUSDC: payPrice != null ? amountNum * payPrice : amountNum, txSignature: sig, destinationAddress: dest,
+            destinationChain: toToken.chain, destinationToken: toToken.symbol, isNearIntents: true, depositAddress: info.depositAddress,
+            estimatedOut: quote ?? undefined, quoteId: info.quoteId, nearIntentsStatus: "PENDING", nearIntentsComplete: false,
+            sourceToken: pay, sourceAmount: amountNum,
+          }, access, devnetMode);
+        }
         tagWalletTx(sig, { kind: "bridge", label: "Cross-chain", private: true });
-        setSent({ sig, cross: isCross });
+        setSent({ sig, cross: isCross, depositAddress: isCross ? info.depositAddress : undefined });
         onDone?.();
       }
     } catch (err) {
@@ -285,8 +295,8 @@ export function WalletSwap({ onClose, onDone }: { onClose: () => void; onDone?: 
         <span style={{ fontSize: 15, lineHeight: 1.5, color: "#9A98A3", maxWidth: 320 }}>
           {toToken ? tr("cross.arrive", { symbol: toToken.symbol, chain: formatChainLabel(toToken.chain) }) : tr("cross.arriveGeneric")}
         </span>
-        <a href={getExplorerTxUrl("solana", sent.sig)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, color: "#9CC8FF" }}>
-          <ExternalLink size={16} /> {tr("common.viewTransaction")}
+        <a href={sent.depositAddress ? `https://explorer.near-intents.org/transactions/${sent.depositAddress}` : getExplorerTxUrl("solana", sent.sig)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, color: "#9CC8FF" }}>
+          <ExternalLink size={16} /> {sent.depositAddress ? "Track swap on NEAR Intents" : tr("common.viewTransaction")}
         </a>
         <button type="button" onClick={onClose} style={{ ...BTN_SECONDARY, flex: "none", width: "100%", marginTop: "auto" }}>{tr("common.done")}</button>
       </div>

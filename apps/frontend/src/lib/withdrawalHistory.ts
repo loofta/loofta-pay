@@ -13,6 +13,9 @@ export type WithdrawalHistoryItem = {
   estimatedOut?: string;         // Estimated output amount (human-readable)
   nearIntentsStatus?: string;    // Latest status from 1Click API
   nearIntentsComplete?: boolean; // True once bridge confirms SUCCESS/REFUNDED
+  quoteId?: string;
+  sourceToken?: string;          // What the user paid (SOL or USDC)
+  sourceAmount?: number;
 };
 
 const STORAGE_KEY = "loofta.withdrawal.history.v1";

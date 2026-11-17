@@ -7,7 +7,8 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace=@loofta/frontend",
-    "dev:backend": "npm run start:dev --workspace=@loofta/backend",
+    "dev:mini": "npm run dev --workspace=@loofta/mini-app",
+    "dev:backend":"npm run start:dev --workspace=@loofta/backend",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:backend\"",
     "build": "npm run build --workspace=@loofta/frontend",
     "build:backend": "npm run build --workspace=@loofta/backend",

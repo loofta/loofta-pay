@@ -126,11 +126,12 @@ export interface AmpleEvmOverview extends Omit<AmpleOverview, 'totalWonBase' | '
 export const getAmpleEvmStatus = (o: RequestOptions) => fetchApi<AmpleEvmStatus>('/ample/evm/status', o);
 export const getAmpleEvmOverview = (o: RequestOptions) => fetchApi<AmpleEvmOverview>('/ample/evm/overview', o);
 export const getAmpleEvmStats = () => fetchApi<AmpleStats | null>('/ample/evm/stats');
-export const ampleEvmWithdraw = (b: { amount: string; solanaAddress: string }, o: RequestOptions) => post<{ id: string }>('/ample/evm/withdraw', b, o);
+export const ampleFundPrivacy = (o: RequestOptions) => fetchApi<{ privateAdded: boolean }>('/ample/evm/fund/privacy', o);
+export const ampleEvmWithdraw = (b: { amount: string; solanaAddress: string; confidential?: boolean }, o: RequestOptions) => post<{ id: string }>('/ample/evm/withdraw', b, o);
 export const ampleEvmClaim = (payoutIds: string[], o: RequestOptions) => post<{ hash: string }>('/ample/evm/claim', { payoutIds }, o);
 
 // Fund the Base pool from Solana USDC: the backend stores a Relay quote, builds the transaction from it and only broadcasts that exact one.
-export const ampleFundPrepare = (b: { solanaAddress: string; outputUnits: string; maxTotalUnits?: string }, o: RequestOptions) =>
+export const ampleFundPrepare = (b: { solanaAddress: string; outputUnits: string; maxTotalUnits?: string; confidential?: boolean }, o: RequestOptions) =>
   post<{ id: string; outUnits: string; feeUnits: string; totalUnits: string }>('/ample/evm/fund/prepare', b, o);
 export const ampleFundTx = (id: string, o: RequestOptions) => post<{ transaction: string }>(`/ample/evm/fund/${encodeURIComponent(id)}/tx`, {}, o);
 export const ampleFundBroadcast = (id: string, transaction: string, o: RequestOptions) =>

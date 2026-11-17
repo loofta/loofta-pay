@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '@/database/supabase.service';
 import { PajCashService, type PajResolvedBankAccount } from './paj-cash.service';
 import { PajCashSessionService } from './paj-cash-session.service';
+import { PAJ_STATIC_BANKS } from './paj-banks-static';
 import type { PajCashBankAccountRow } from './entities/paj-bank-account.entity';
 
 @Injectable()
@@ -14,18 +15,25 @@ export class PajCashBankService {
     private readonly session: PajCashSessionService,
   ) {}
 
+  /** v2 identifies banks by code; our rows/frontend still carry PAJ's bank id. */
+  bankFor(bankId: string) {
+    const bank = PAJ_STATIC_BANKS.find((b) => b.id === bankId || b.code === bankId);
+    if (!bank) throw new NotFoundException(`Unknown bank ${bankId}`);
+    return bank;
+  }
+
   private table() {
     return this.supabase.getClient().from('paj_cash_bank_accounts');
   }
 
   async confirmAccount(userId: string, bankId: string, accountNumber: string): Promise<PajResolvedBankAccount> {
-    const token = await this.session.getValidSessionToken(userId);
-    return this.pajCash.confirmBankAccount(token, bankId, accountNumber);
+    const bank = this.bankFor(bankId);
+    const r = await this.pajCash.registerBankAccount(bank.code, accountNumber);
+    return { accountName: r.accountName, accountNumber: r.accountNumber, bank: { id: bank.id, name: bank.name, code: bank.code, country: bank.country } };
   }
 
   async saveAccount(userId: string, bankId: string, bankName: string, accountNumber: string): Promise<PajCashBankAccountRow> {
-    const token = await this.session.getValidSessionToken(userId);
-    const saved = await this.pajCash.saveBankAccount(token, bankId, accountNumber);
+    const saved = await this.pajCash.registerBankAccount(this.bankFor(bankId).code, accountNumber);
 
     // First bank account a user ever saves becomes their default automatically — zero extra
     // taps for the common single-account case. Later ones stay non-default until the user
@@ -104,8 +112,7 @@ export class PajCashBankService {
     if (!account) throw new NotFoundException('Bank account not found');
 
     if (!account.wallet_address) {
-      const token = await this.session.getValidSessionToken(userId);
-      const refreshed = await this.pajCash.saveBankAccount(token, account.bank_id, account.account_number);
+      const refreshed = await this.pajCash.registerBankAccount(this.bankFor(account.bank_id).code, account.account_number);
       if (refreshed.address) {
         const { error: healError } = await this.table().update({ wallet_address: refreshed.address }).eq('id', accountId);
         if (healError) {

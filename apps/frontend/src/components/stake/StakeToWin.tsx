@@ -22,6 +22,7 @@ import {
   ampleEvmWithdraw,
   ampleFundBroadcast,
   ampleFundPrepare,
+  ampleFundPrivacy,
   ampleFundStatus,
   ampleFundTx,
   ampleSetupFee,
@@ -47,6 +48,7 @@ const TICKETS_PER_DOLLAR = 100;
 const MIN_STAKE_USD = 1;
 // Flat fee for moving USDC from the Solana wallet into the savings pool.
 const FUND_FEE_RATE = 0.0005; // Loofta's fee, 0.05% of the amount moved
+const PRIVATE_ADD_FEE = 0.25; // extra flat fee for adding privately
 // Prize tiers: the share of each week's pool that goes to each group (from Ample's docs).
 const TIERS = [
   { name: "Grand prize", share: 25, note: "1 winner" },
@@ -244,6 +246,12 @@ export function StakeToWin() {
   const microOf = (p: { usdMicro?: string | null }): bigint => (p.usdMicro && /^\d+$/.test(p.usdMicro) ? BigInt(p.usdMicro) : BigInt(0));
   const [deposit, setDeposit] = useState<DepositLaunch | null>(null);
   const [firstFee, setFirstFee] = useState<number | null>(null);
+  // Add through NEAR Confidential Intents instead of Relay, so the wallet is not linked to the Earn account.
+  const [privateAdd, setPrivateAdd] = useState(false);
+  const [showPrivInfo, setShowPrivInfo] = useState(false);
+  // Withdraw privately. Locked on for anyone who has added privately, so the exit never links their wallet back to the stake.
+  const [privateWd, setPrivateWd] = useState(false);
+  const [privateAdded, setPrivateAdded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   // Short confirmation after money is added, shown over the page for a few seconds.
@@ -296,6 +304,7 @@ export function StakeToWin() {
       setStatus(s);
       if (s.enabled && s.linked) setSolOverview(await getAmpleOverview(o));
       // The first deposit from an empty wallet carries a one-time fee. Show it up front, not as a surprise.
+      if (s.enabled) ampleFundPrivacy(o).then((r) => setPrivateAdded(!!r.privateAdded)).catch(() => undefined);
       if (s.enabled) ampleSetupFee(o).then((f) => setFirstFee(f.needed && f.feeUsd ? f.feeUsd : null)).catch(() => setFirstFee(null));
     } catch (e: any) {
       setError(e?.message || "Could not load staking");
@@ -537,11 +546,11 @@ export function StakeToWin() {
       solUsdc = Number(bal.value.amount) / 1e6;
     } catch { /* no USDC account yet means zero */ }
     const toUnits = (n: number) => String(Math.round(n * 1e6));
-    const shortBy = (Math.ceil((amt * (1 + FUND_FEE_RATE) + 0.05 - solUsdc) * 100) / 100).toFixed(2);
+    const shortBy = (Math.ceil((amt * (1 + FUND_FEE_RATE) + 0.05 + (privateAdd ? PRIVATE_ADD_FEE : 0) - solUsdc) * 100) / 100).toFixed(2);
     if (solUsdc < 1.05) { setDeposit({ screen: "home", amount: shortBy }); return; }
     const o = await opts();
     // The bridge cost comes out of the deposit when the wallet cannot cover amount + cost, so a full balance still works.
-    const prep = await ampleFundPrepare({ solanaAddress: solAddress, outputUnits: toUnits(amt), maxTotalUnits: toUnits(solUsdc) }, o);
+    const prep = await ampleFundPrepare({ solanaAddress: solAddress, outputUnits: toUnits(amt), maxTotalUnits: toUnits(solUsdc), ...(privateAdd ? { confidential: true } : {}) }, o);
     const arriving = Math.floor((Number(prep.outUnits) / 1e6) * 100) / 100;
     if (arriving < MIN_STAKE_USD) { setDeposit({ screen: "home", amount: shortBy }); return; }
     setNote(`Adding $${fmt(arriving)}.`);
@@ -558,6 +567,7 @@ export function StakeToWin() {
     await ampleFundBroadcast(prep.id, btoa(bin), await opts());
     // The backend bridges, then deposits. This waits for the whole thing so "Done" is true.
     await waitForOrder(prep.id, "Your deposit");
+    if (privateAdd) setPrivateAdded(true);
     await bs.refresh();
     // Land on Withdraw so the person sees their new balance, and say plainly that it worked.
     setTab("withdraw");
@@ -572,7 +582,7 @@ export function StakeToWin() {
     const everything = amt >= usdcStaked - eps;
     const b = everything ? String(held.depositsToken) : toBase(amount, decimals);
     if (!b) throw new Error("Enter an amount");
-    const { id } = await ampleEvmWithdraw({ amount: b, solanaAddress: solAddress }, await opts());
+    const { id } = await ampleEvmWithdraw({ amount: b, solanaAddress: solAddress, ...(privateWd || privateAdded ? { confidential: true } : {}) }, await opts());
     setNote("Withdrawing...");
     await waitForOrder(id, "Your withdrawal");
     setNote("Withdrawn to your wallet.");
@@ -856,6 +866,52 @@ export function StakeToWin() {
                   <span>{isStake ? "+" : "−"}{fmt(eff * TICKETS_PER_DOLLAR)} tickets</span>
                   <span style={{ fontWeight: 700, color: "#F2EFE8" }}>Odds {oddsText(oddsBefore)} → {oddsText(oddsAfter)}</span>
                 </div>
+
+                {baseMode ? (() => {
+                  const locked = !isStake && privateAdded;
+                  const on = isStake ? privateAdd : (privateWd || privateAdded);
+                  const toggle = () => { if (locked) return; if (isStake) setPrivateAdd((v) => !v); else setPrivateWd((v) => !v); };
+                  return (
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <button type="button" role="switch" aria-checked={on} aria-disabled={locked} aria-label={isStake ? "Add privately" : "Withdraw privately"} onClick={toggle}
+                        style={{ flexShrink: 0, width: 48, height: 28, borderRadius: 999, border: "none", padding: 3, cursor: locked ? "default" : "pointer", opacity: locked ? 0.7 : 1, background: on ? GRAD : "#2A2A32", transition: "background .2s", display: "flex", alignItems: "center", justifyContent: on ? "flex-end" : "flex-start" }}>
+                        <span style={{ width: 22, height: 22, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,0.4)", transition: "all .2s" }} />
+                      </button>
+                      <span style={{ flex: 1, fontSize: 15, color: "#F2EFE8" }}>
+                        {isStake ? `Add privately (+$${PRIVATE_ADD_FEE.toFixed(2)})` : "Withdraw privately"}
+                        <span style={{ color: "#8A8893" }}>{isStake ? " · wallet not linked to your stake" : locked ? " · on, because you added privately" : " · wallet not linked to your stake"}</span>
+                      </span>
+                      <button type="button" aria-label="How private mode works" onClick={() => setShowPrivInfo(true)}
+                        style={{ flexShrink: 0, width: 26, height: 26, borderRadius: "50%", border: "1.5px solid #8A8893", background: "transparent", color: "#8A8893", fontSize: 14, fontWeight: 700, cursor: "pointer", lineHeight: 1 }}>
+                        i
+                      </button>
+                    </div>
+                  );
+                })() : null}
+                {showPrivInfo ? (
+                  <div role="dialog" aria-modal="true" aria-label="How private mode works" onClick={() => setShowPrivInfo(false)}
+                    style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+                    <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 440, borderRadius: 24, background: "#111114", border: "1px solid rgba(255,255,255,0.1)", padding: 24, display: "flex", flexDirection: "column", gap: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                        <span style={{ fontFamily: SORA, fontWeight: 700, fontSize: 20, color: "#F2EFE8" }}>How private mode works</span>
+                        <button type="button" aria-label="Close" onClick={() => setShowPrivInfo(false)} style={{ border: "none", background: "transparent", color: "#8A8893", fontSize: 24, cursor: "pointer", lineHeight: 1 }}>×</button>
+                      </div>
+                      <p style={{ margin: 0, fontSize: 16, lineHeight: 1.55, color: "#C9C6D0" }}>
+                        <b style={{ color: "#F2EFE8" }}>Adding.</b>{" We use a confidential intent swap to move your USDC from your Solana embedded wallet to your own Earn wallet on Base, then stake it. Nobody looking on-chain can tell the money came from your Solana wallet."}
+                      </p>
+                      <p style={{ margin: 0, fontSize: 16, lineHeight: 1.55, color: "#C9C6D0" }}>
+                        <b style={{ color: "#F2EFE8" }}>Withdrawing.</b>{" The same swap in reverse, from your Earn wallet back to your Solana wallet, so your withdrawal can't be tied to your stake. If you added privately, withdrawals are private too."}
+                      </p>
+                      <p style={{ margin: 0, fontSize: 16, lineHeight: 1.55, color: "#8A8893" }}>
+                        {`Adding privately costs $${PRIVATE_ADD_FEE.toFixed(2)} extra and can take a few minutes longer. If a private swap is not available we never fall back to a public one.`}
+                      </p>
+                      <button type="button" onClick={() => setShowPrivInfo(false)}
+                        style={{ cursor: "pointer", border: "none", padding: 14, borderRadius: 16, fontFamily: SORA, fontWeight: 700, fontSize: 16, color: "#fff", background: GRAD }}>
+                        Got it
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
 
                 <button type="button" className="stk-cta" disabled={ctaDisabled} onClick={ctaAction}
                   style={{ cursor: ctaDisabled ? "default" : "pointer", border: "none", textAlign: "center", padding: "clamp(14px,2.3vh,20px)", borderRadius: 18, fontFamily: SORA, fontWeight: 700, fontSize: 17, color: ctaDisabled ? "#77757F" : "#fff", background: ctaDisabled ? "#2A2A32" : GRAD, boxShadow: ctaDisabled ? "none" : "0 12px 30px rgba(255,74,18,0.35),inset 0 1px 0 rgba(255,255,255,0.3)" }}>

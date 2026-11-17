@@ -63,20 +63,17 @@ export async function POST(request: Request) {
       near_intents_status:  body.nearIntentsStatus ?? null,
       near_intents_complete: body.nearIntentsComplete ?? false,
       is_devnet:            body.isDevnet ?? false,
+      ...(body.sourceToken ? { source_token: String(body.sourceToken) } : {}),
+      ...(body.sourceAmount != null ? { source_amount: Number(body.sourceAmount) } : {}),
     };
 
-    let error;
-    if (body.id) {
-      // Update only if this record belongs to the caller
-      ({ error } = await supabase
-        .from("withdrawals")
-        .update(record)
-        .eq("id", body.id)
-        .eq("user_id", userId));
-    } else {
-      ({ error } = await supabase.from("withdrawals").insert(record));
-    }
-
+    // The id is the Solana tx signature. It used to be update-only, which silently saved nothing
+    // for a new swap (no row existed yet). Upsert, but never let one user overwrite another's row.
+    const id = String(body.id || body.txSignature || "");
+    if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+    const { data: existing } = await supabase.from("withdrawals").select("user_id").eq("id", id).maybeSingle();
+    if (existing && existing.user_id !== userId) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const { error } = await supabase.from("withdrawals").upsert({ id, ...record }, { onConflict: "id" });
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (e: any) {

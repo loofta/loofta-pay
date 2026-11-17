@@ -7,7 +7,8 @@ import { ONECLICK_API_BASE } from "@/config/oneClick";
 import { assertNotDemoMode } from "@/config/demoMode";
 import { getRefundToForChain } from "@/lib/refundAddresses";
 import { clientApiBase } from "@/services/api/client";
-const REFERRAL_CODE = (process as any)?.env?.NEXT_PUBLIC_REFERRAL_CODE || (process as any)?.env?.NEXT_PUBLIC_ONECLICK_REFERRAL || undefined;
+// Always "loofta": a stale NEXT_PUBLIC_REFERRAL_CODE on the host (was looftaswap) must not win.
+const REFERRAL_CODE = "loofta";
 const APP_FEE_BPS = Number((process as any)?.env?.NEXT_PUBLIC_APP_FEE_BPS || "");
 const APP_FEE_RECIPIENT = (process as any)?.env?.NEXT_PUBLIC_APP_FEE_RECIPIENT || undefined;
 
@@ -254,7 +255,7 @@ export async function getAccurateQuote(params: {
           deadline: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
           quoteWaitingTimeMs: 3000,
         } as QuoteRequest);
-        if (REFERRAL_CODE) (req as any).referral = REFERRAL_CODE; else (req as any).referral = "unknown";
+        if (REFERRAL_CODE) (req as any).referral = REFERRAL_CODE; else (req as any).referral = "loofta";
       } else {
         // Non-dry requires concrete chain addressing
         if (!sender || !recipient) {
