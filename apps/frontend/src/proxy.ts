@@ -58,6 +58,12 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/", "https://pay.loofta.com"));
   }
 
+  // The trade app is an app page (/app/trade, served as /trade on the app domain). On the marketing domain there is no
+  // such page, so send people to the app host instead of a 404.
+  if (!isAppDomain && !isLocalhost && (pathname === "/trade" || pathname.startsWith("/trade/"))) {
+    return NextResponse.redirect(new URL(`${pathname}${request.nextUrl.search}`, "https://pay.loofta.com"));
+  }
+
   // On localhost, / clashes with the app shell — push it to /home instead
   if (isLocalhost && pathname === "/") {
     return NextResponse.redirect(new URL("/home", request.url));

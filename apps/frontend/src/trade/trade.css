@@ -1,0 +1,220 @@
+/* Variables are on :root, not on the page wrapper, because sheets render in a portal outside it. */
+:root {
+  --bg: #0f0f12;
+  --surface: #1a1a20;
+  --raised: #2a2a33;
+  --ink: #f2efe8;
+  --mute: #9a98a3;
+  --brand: #ff2d0a;
+  --gold: #f5b70c;
+  --up: #3cb371;
+  --down: #ff5a4a;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+
+.trade-root {
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 16px;
+  min-height: calc(100vh - var(--header-h, 0px));
+}
+.trade-root input { font-size: 16px; }
+.trade-root button { touch-action: manipulation; }
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+/* ---------- Loofta Pay look: flat dark surfaces, thin borders, gradient primary ---------- */
+
+/* Icon / category tile */
+.tile3d {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.tile3d.brand {
+  background: linear-gradient(90deg, #ff1301, #eab308);
+  border-color: transparent;
+}
+.tile3d.green {
+  background: rgba(60, 179, 113, 0.18);
+  border-color: rgba(60, 179, 113, 0.35);
+}
+.tile3d.gold {
+  background: rgba(245, 183, 12, 0.18);
+  border-color: rgba(245, 183, 12, 0.35);
+}
+.tile3d.blue {
+  background: rgba(39, 117, 202, 0.2);
+  border-color: rgba(39, 117, 202, 0.4);
+}
+
+/* Buttons. Default is the primary gradient CTA, the same as the rest of the app. */
+.btn3d {
+  background: linear-gradient(90deg, #ff1301, #eab308);
+  background-origin: border-box;
+  background-clip: border-box;
+  color: #fff;
+  font-weight: 600;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  transition: opacity 150ms ease, transform 90ms ease, background-color 150ms ease;
+}
+.btn3d:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.btn3d:active:not(:disabled) {
+  transform: scale(0.99);
+}
+.btn3d:disabled,
+.btn3d.up:disabled,
+.btn3d.down:disabled,
+.btn3d.dark:disabled {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.4);
+}
+.btn3d.up {
+  background: #3cb371;
+  color: #04170c;
+}
+.btn3d.down {
+  background: #ff5a4a;
+  color: #2a0603;
+}
+.btn3d.dark {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+}
+.btn3d.dark:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  opacity: 1;
+}
+
+/* Flat surface card */
+.card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+}
+
+/* ---------- motion ---------- */
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-6deg);
+  }
+  50% {
+    transform: translateY(-6px) rotate(-3deg);
+  }
+}
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+@keyframes confetti {
+  0% {
+    transform: translate(0, 0) rotate(0deg) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0.6);
+    opacity: 0;
+  }
+}
+
+.anim-sheet {
+  animation: sheet-up 260ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+.anim-fade {
+  animation: fade-in 200ms ease both;
+}
+.anim-pop {
+  animation: pop 420ms cubic-bezier(0.2, 1.2, 0.3, 1) both;
+}
+.anim-bob {
+  animation: bob 4.2s ease-in-out infinite;
+}
+.skeleton {
+  background: linear-gradient(90deg, #1a1a20 30%, #26262e 50%, #1a1a20 70%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: 16px;
+}
+.confetti-bit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 14px;
+  border-radius: 3px;
+  animation: confetti 900ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-sheet,
+  .anim-fade,
+  .anim-pop,
+  .anim-bob,
+  .skeleton,
+  .confetti-bit {
+    animation: none;
+  }
+}
+
+/* A number that just changed: briefly green when it went up, red when it went down. */
+@keyframes flash-up { from { color: #3cb371; transform: scale(1.06); } to { transform: scale(1); } }
+@keyframes flash-down { from { color: #ff5a4a; transform: scale(1.06); } to { transform: scale(1); } }
+.flash-up { animation: flash-up 0.7s ease-out; }
+.flash-down { animation: flash-down 0.7s ease-out; }
+@media (prefers-reduced-motion: reduce) { .flash-up, .flash-down { animation: none; } }
+
+/* The size of a trade floating up from the chart line. */
+@keyframes bubble-up { 0% { opacity: 0; transform: translateY(8px) scale(0.9); } 15% { opacity: 1; } 100% { opacity: 0; transform: translateY(-46px) scale(1.08); } }
+.chart-bubble { position: absolute; bottom: 8%; font-weight: 800; font-size: 15px; font-family: inherit; text-shadow: 0 2px 10px rgba(0,0,0,0.6); animation: bubble-up 1.5s ease-out forwards; }
+@media (prefers-reduced-motion: reduce) { .chart-bubble { animation: none; opacity: 0; } }
+
+/* A row that scrolls sideways and nothing else: no scrollbar, no dragging the buttons like objects, no page bounce. */
+.hscroll { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; scrollbar-width: none; user-select: none; -webkit-user-select: none; }
+.hscroll::-webkit-scrollbar { display: none; }
+.hscroll > *, .hscroll img { -webkit-user-drag: none; user-drag: none; }

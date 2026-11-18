@@ -31,6 +31,16 @@ const config = {
         grotesk: ['Clash Grotesk', 'sans-serif'],
       },
       colors: {
+        // Trade app palette (src/trade). Names kept as in the mini app so its classes work unchanged.
+        bg: "#0f0f12",
+        surface: "#1a1a20",
+        raised: "#2a2a33",
+        ink: "#f2efe8",
+        mute: "#9a98a3",
+        brand: "#ff2d0a",
+        gold: "#f5b70c",
+        up: "#3cb371",
+        down: "#ff5a4a",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

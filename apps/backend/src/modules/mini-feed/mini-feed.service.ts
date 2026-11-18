@@ -9,6 +9,8 @@ import { dexInfo } from '@/modules/mini-app/lib/dex';
 import { MiniProfileService, PublicAvatar, anonName } from './mini-profile.service';
 
 const PAGE = 30;
+/** USDC and wrapped SOL are what people pay with, not coins they called. Buying them is not a feed item. */
+const NOT_FEED_MINTS = ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'So11111111111111111111111111111111111111112'];
 
 interface Author {
   name: string;
@@ -145,7 +147,7 @@ export class MiniFeedService {
     let qc = this.db().from('coin_chat_messages').select('id, mint, privy_user_id, text, holding_pct, created_at').gt('holding_amount', 0).is('parent_id', null).order('created_at', { ascending: false }).limit(PAGE);
     let qr = this.db().from('coin_chat_messages').select('parent_id, privy_user_id, created_at').not('parent_id', 'is', null).order('created_at', { ascending: false }).limit(PAGE);
     let qp = this.db().from('mini_activity').select('id, privy_user_id, kind, event_id, title, detail, amount_usd, image, created_at').order('created_at', { ascending: false }).limit(PAGE);
-    let qt = this.db().from('mini_trades').select('id, privy_user_id, mint, volume_usd, confirmed_at').eq('status', 'confirmed').eq('side', 'buy').neq('kind', 'predict').gte('volume_usd', 1).order('confirmed_at', { ascending: false }).limit(PAGE);
+    let qt = this.db().from('mini_trades').select('id, privy_user_id, mint, volume_usd, confirmed_at').eq('status', 'confirmed').eq('side', 'buy').neq('kind', 'predict').not('mint', 'in', `(${NOT_FEED_MINTS.join(',')})`).gte('volume_usd', 1).order('confirmed_at', { ascending: false }).limit(PAGE);
     if (cursor) {
       qc = qc.lt('created_at', cursor);
       qr = qr.lt('created_at', cursor);

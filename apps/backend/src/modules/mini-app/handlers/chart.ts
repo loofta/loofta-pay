@@ -115,7 +115,10 @@ export async function GET(req: Request) {
 
   // First choice: Solana Tracker, which has candles from a coin's first seconds. Skipped when it is switched off or paused.
   if (live) {
-    const to = Math.floor(Date.now() / 1000);
+    // The end time is part of the request path, and the tracker caches and merges by path. A to-the-second end time
+    // meant no two users ever shared an answer. Rounding it to a few seconds lets everyone on a coin share one call.
+    const step = tfKey === "15s" ? 5 : tfKey === "1m" ? 15 : 30;
+    const to = Math.floor(Date.now() / 1000 / step) * step + step;
     const j = await tracker<{ oclhv?: Array<{ open: number; close: number; low: number; high: number; time: number }> }>(
       `/chart/${mint}?type=${live.type}&time_from=${to - live.span}&time_to=${to}&removeOutliers=true`,
       tfKey === "15s" ? 1_500 : 4_000,
