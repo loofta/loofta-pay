@@ -26,9 +26,10 @@ function ShellContent({ children }: { children: ReactNode }) {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
   }, [pathname]);
 
-  // The hosted partner payout portal (partners redirect their users here): no Loofta header,
-  // footer, login sync or promo toasts, just the partner-branded page itself.
-  const isEmbed = pathname === '/portal' || pathname === '/app/portal';
+  // The partner withdraw page (recipients land here from a partner's app): no Loofta header,
+  // footer or promo toasts, just the partner-branded page itself. Login still works through Privy.
+  // The partner portal is a standalone product page for businesses, so it skips the chrome too.
+  const isEmbed = pathname === '/withdraw' || pathname === '/app/withdraw' || pathname === '/partner' || pathname === '/app/partner';
   const isCheckoutPage = pathname?.startsWith('/checkout') === true;
   // Loofta Rewards is a full-page spec with its own header. The app rewrite serves it at
   // /rewards-rail (internally /app/rewards-rail), so both shapes need to skip this chrome.
@@ -44,7 +45,9 @@ function ShellContent({ children }: { children: ReactNode }) {
   const showMinimalHeader = !isCheckoutPage && !isRewardsRail;
   const showFooter = !isCheckoutPage && !isRewardsRail;
 
-  if (isEmbed) return <>{children}</>;
+  // UserSync still runs so someone logging in for the first time here gets their account and wallet
+  // set up; only the onboarding prompts are suppressed.
+  if (isEmbed) return <><UserSync suppressOnboarding />{children}</>;
 
   return (
     <div className="min-h-screen bg-[#0f0f12]">

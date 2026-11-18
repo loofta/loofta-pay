@@ -13,6 +13,20 @@ export interface ClaimEmailData {
   claimUrl?: string;
 }
 
+export interface PartnerPayoutEmailData {
+  id: string;
+  amount: string | number;
+  recipientEmail: string;
+  partnerName: string;
+  /** Public https logo URL the partner uploaded. Ignored unless it is https. */
+  partnerLogoUrl?: string | null;
+  /** Where the recipient signs in and withdraws, on the partner's branded page. */
+  withdrawUrl: string;
+  description?: string | null;
+}
+
+const escapeHtml = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -63,6 +77,88 @@ export class EmailService {
       this.logger.error(`Failed to send payment received email for claim ${data.id}: ${err?.message ?? err}`);
       return null;
     }
+  }
+
+  /**
+   * Tells a recipient a partner paid them, under the partner's own name and logo. Sent right away:
+   * partner payouts cannot be re-addressed by the sender, so the delay the personal emails use is not needed.
+   * Best-effort like the others: a failed email must never fail the payout.
+   */
+  async sendPartnerPayoutEmail(data: PartnerPayoutEmailData): Promise<boolean> {
+    if (!this.resend) return false;
+    const name = data.partnerName.replace(/[\r\n<>"]/g, ' ').trim().slice(0, 80) || 'A Loofta partner';
+    const amountStr = `$${parseFloat(String(data.amount)).toFixed(2)}`;
+    const html = this.buildPartnerPayoutHtml({ ...data, partnerName: name, amountStr });
+    try {
+      await this.resend.emails.send({
+        from: `${name} via Loofta <${this.fromEmail}>`,
+        to: data.recipientEmail,
+        subject: `${name} sent you ${amountStr}`,
+        html,
+      });
+      this.logger.log(`Partner payout email sent to ${data.recipientEmail} (payment ${data.id})`);
+      return true;
+    } catch (err: any) {
+      this.logger.error(`Failed to send partner payout email for payment ${data.id}: ${err?.message ?? err}`);
+      return false;
+    }
+  }
+
+  private buildPartnerPayoutHtml(data: PartnerPayoutEmailData & { amountStr: string }): string {
+    const name = escapeHtml(data.partnerName);
+    const logo = data.partnerLogoUrl && /^https:\/\//i.test(data.partnerLogoUrl)
+      ? `<img src="${escapeHtml(data.partnerLogoUrl)}" alt="${name}" height="44" style="display:block;border:0;margin:0 auto 14px;max-height:44px;max-width:180px;border-radius:8px;" />`
+      : '';
+    const note = data.description
+      ? `<p style="margin:18px 0 0;font-size:14px;color:#9ca3af;text-align:center;line-height:1.6;">&ldquo;${escapeHtml(data.description.slice(0, 500))}&rdquo;</p>`
+      : '';
+    const url = escapeHtml(data.withdrawUrl);
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${name} sent you a payment</title>
+</head>
+<body style="margin:0;padding:0;background:#0f0f12;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f0f12;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" style="max-width:520px;background:#17171a;border-radius:16px;overflow:hidden;border:1px solid #2a2a30;">
+          <tr>
+            <td style="padding:32px 40px 24px;text-align:center;border-bottom:1px solid #2a2a30;">
+              ${logo}
+              <p style="margin:0;font-size:20px;color:#ffffff;font-weight:600;">${name}</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:36px 40px 32px;">
+              <p style="margin:0 0 24px;font-size:18px;color:#ffffff;font-weight:500;text-align:center;">${name} sent you a payment</p>
+              <div style="background:#0f0f12;border:1px solid #2a2a30;border-radius:12px;padding:24px;text-align:center;">
+                <p style="margin:0 0 4px;font-size:12px;color:#9ca3af;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;">Ready to withdraw</p>
+                <p style="margin:0;font-size:40px;font-weight:600;color:#FF6A1F;letter-spacing:-1px;">${data.amountStr}</p>
+              </div>
+              ${note}
+              <div style="margin-top:28px;text-align:center;">
+                <a href="${url}" style="display:inline-block;background:#FF6A1F;color:#140803;text-decoration:none;font-weight:600;font-size:15px;padding:14px 36px;border-radius:10px;">Withdraw your payment</a>
+              </div>
+              <p style="margin:20px 0 0;font-size:13px;color:#6b7280;text-align:center;line-height:1.6;">
+                Sign in with this email address to withdraw. Or copy this link:<br>
+                <a href="${url}" style="color:#FF6A1F;word-break:break-all;">${url}</a>
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 40px;border-top:1px solid #2a2a30;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#6b7280;">Payments powered by Loofta</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
   }
 
   async sendClaimReadyEmail(data: ClaimEmailData): Promise<string | null> {

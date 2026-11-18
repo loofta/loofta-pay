@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 export type PortalTheme = {
   background?: string;
@@ -14,158 +14,150 @@ export type PortalTheme = {
 
 export type PayoutPortalProps = {
   /**
-   * Fetch a portal token from YOUR server (which calls Loofta's POST /payouts/portal-token with
-   * your API key and the signed-in user's id). Called on mount and again if the token expires.
-   * Never put your API key in the browser.
+   * Fetch a widget token from YOUR server (which calls Loofta's POST /partner-portal/token with
+   * your API key and the signed-in user's email, handle or id). Called on mount and again if the
+   * token expires. Never put your API key in the browser.
    */
   getToken: () => Promise<string>;
   /** Defaults to Loofta's public portal API. */
   apiBase?: string;
   theme?: PortalTheme;
-  /** Called after a withdrawal request finishes. */
-  onWithdraw?: (result: { sent: number; failed: number }) => void;
+  /** Called when the user taps Withdraw, before they are sent to Loofta. Return false to cancel. */
+  onWithdraw?: (info: { url: string; availableUsd: number }) => boolean | void;
   className?: string;
 };
 
-type HistoryItem = {
-  payment_id: string;
-  amount: number;
-  message: string | null;
-  created_at: string;
-  state: "processing" | "available" | "withdrawn";
-};
+type HistoryItem = { amount: number; message: string | null; received_at: string; state: "available" | "withdrawn" };
 
 type PortalData = {
-  partner: { name: string | null; logo_url: string | null };
+  partner: { name: string | null; logo_url: string | null; brand_color: string | null };
   available_usd: number;
-  processing_usd: number;
+  withdrawn_usd: number;
+  min_withdraw_usd: number;
+  withdraw_url: string;
+  return_url: string | null;
   history: HistoryItem[];
 };
 
 const DEFAULT_API = "https://pay.loofta.xyz/api/portal";
-const STATE_LABEL: Record<HistoryItem["state"], string> = {
-  processing: "Processing",
-  available: "Ready to withdraw",
-  withdrawn: "Withdrawn",
-};
 const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 /**
- * Payout portal that renders inside your own page. Uses inline styles only, so it needs no CSS
- * file and no Tailwind, and takes colors from the `theme` prop to match your app.
+ * Shows what a user received from you and lets them withdraw it. Withdrawing happens on a Loofta
+ * page branded with your logo, where they sign in as the email or handle you paid. Uses inline
+ * styles only, so it needs no CSS file and no Tailwind, and takes colours from the `theme` prop.
  */
 export function PayoutPortal({ getToken, apiBase = DEFAULT_API, theme, onWithdraw, className }: PayoutPortalProps) {
-  const t = { background: "transparent", surface: "#17171b", border: "rgba(255,255,255,0.15)", text: "#f1f5f9", muted: "#94a3b8", accent: "#EAB308", accentText: "#111114", radius: 16, fontFamily: "inherit", ...theme };
+  const t = {
+    background: "transparent",
+    surface: "#17171b",
+    border: "rgba(255,255,255,0.12)",
+    text: "#f1f5f9",
+    muted: "#94a3b8",
+    accent: "#FF5A1A",
+    accentText: "#ffffff",
+    radius: 16,
+    fontFamily: "inherit",
+    ...theme,
+  };
   const token = useRef<string | null>(null);
   const [data, setData] = useState<PortalData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [wallet, setWallet] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
 
-  const call = useCallback(
-    async (path: string, init?: RequestInit, retried = false): Promise<any> => {
-      if (!token.current) token.current = await getToken();
-      const res = await fetch(`${apiBase.replace(/\/$/, "")}/${path}`, {
-        ...init,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token.current}` },
-      });
-      if (res.status === 401 && !retried) {
-        token.current = null; // expired: ask the partner server for a fresh one, once
-        return call(path, init, true);
+  const load = useCallback(
+    async (retry = true): Promise<void> => {
+      try {
+        if (!token.current) token.current = await getToken();
+        const res = await fetch(`${apiBase}/me`, { headers: { Authorization: `Bearer ${token.current}` } });
+        if (res.status === 401 && retry) {
+          token.current = null;
+          return load(false);
+        }
+        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.message || "Could not load your payouts.");
+        setData((await res.json()) as PortalData);
+        setError(null);
+      } catch (e) {
+        setError((e as Error).message || "Could not load your payouts.");
       }
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.message || "Something went wrong.");
-      return body;
     },
-    [getToken, apiBase],
+    [apiBase, getToken],
   );
 
-  const load = useCallback(async () => {
-    try {
-      setData(await call("me"));
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load payouts.");
-    }
-  }, [call]);
-
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
-  const available = data?.available_usd ?? 0;
-  const walletValid = useMemo(() => SOLANA_ADDRESS.test(wallet.trim()), [wallet]);
-
-  async function withdraw() {
-    setBusy(true);
-    setNotice(null);
-    try {
-      const out = await call("withdraw", { method: "POST", body: JSON.stringify({ destination_address: wallet.trim() }) });
-      const results = out.results as Array<{ ok: boolean }>;
-      const sent = results.filter((r) => r.ok).length;
-      const failed = results.length - sent;
-      setNotice(failed ? `${sent} withdrawn, ${failed} could not be sent yet. Try again in a minute.` : `Sent ${sent} payout${sent === 1 ? "" : "s"} to your wallet.`);
-      onWithdraw?.({ sent, failed });
-      await load();
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : "Withdrawal failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
+  const box: CSSProperties = { background: t.background, color: t.text, fontFamily: t.fontFamily, fontSize: 16, lineHeight: 1.5 };
   const card: CSSProperties = { background: t.surface, border: `1px solid ${t.border}`, borderRadius: t.radius, padding: 20 };
-  const text = (size: number, color = t.text, weight = 400): CSSProperties => ({ margin: 0, fontSize: size, color, fontWeight: weight, lineHeight: 1.4 });
+
+  if (error) return <div className={className} style={{ ...box, ...card, color: t.muted }}>{error}</div>;
+  if (!data) return <div className={className} style={{ ...box, color: t.muted }}>Loading...</div>;
+
+  const canWithdraw = data.available_usd > 0 && data.available_usd >= data.min_withdraw_usd;
+  const withdraw = () => {
+    if (onWithdraw?.({ url: data.withdraw_url, availableUsd: data.available_usd }) === false) return;
+    window.location.href = data.withdraw_url;
+  };
 
   return (
-    <div className={className} style={{ background: t.background, color: t.text, fontFamily: t.fontFamily, maxWidth: 480, boxSizing: "border-box" }}>
-      {error && <p style={{ ...card, ...text(16, t.muted) }}>{error}</p>}
-      {data && (
-        <>
-          <div style={card}>
-            <p style={text(16, t.muted)}>Available to withdraw</p>
-            <p style={{ ...text(36, t.text, 600), marginTop: 4 }}>{usd(available)}</p>
-            {data.processing_usd > 0 && <p style={{ ...text(16, t.muted), marginTop: 8 }}>{usd(data.processing_usd)} still processing</p>}
-            <label htmlFor="loofta-wallet" style={{ ...text(16, t.muted), display: "block", marginTop: 20 }}>
-              USDC wallet address (Solana)
-            </label>
-            <input
-              id="loofta-wallet"
-              value={wallet}
-              onChange={(e) => setWallet(e.target.value)}
-              placeholder="Paste your Solana wallet address"
-              style={{ width: "100%", boxSizing: "border-box", marginTop: 8, padding: "12px 14px", fontSize: 16, color: t.text, background: "rgba(0,0,0,0.35)", border: `1px solid ${t.border}`, borderRadius: t.radius - 4, outline: "none", fontFamily: "inherit" }}
-            />
-            <button
-              onClick={withdraw}
-              disabled={busy || available <= 0 || !walletValid}
-              style={{ width: "100%", marginTop: 16, padding: "12px 20px", fontSize: 16, fontWeight: 600, color: t.accentText, background: t.accent, border: 0, borderRadius: t.radius - 4, cursor: busy || available <= 0 || !walletValid ? "not-allowed" : "pointer", opacity: busy || available <= 0 || !walletValid ? 0.4 : 1, fontFamily: "inherit" }}
-            >
-              {busy ? "Sending..." : `Withdraw ${usd(available)}`}
-            </button>
-            {notice && <p style={{ ...text(16), marginTop: 12 }}>{notice}</p>}
-          </div>
-
-          <h3 style={{ ...text(18, t.text, 600), margin: "28px 0 12px" }}>History</h3>
-          {data.history.length === 0 ? (
-            <p style={text(16, t.muted)}>No payouts yet.</p>
-          ) : (
-            <ul style={{ ...card, listStyle: "none", margin: 0, padding: 0 }}>
-              {data.history.map((h, i) => (
-                <li key={h.payment_id} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: 16, borderTop: i ? `1px solid ${t.border}` : "none" }}>
-                  <div style={{ minWidth: 0 }}>
-                    <p style={text(16, t.text, 500)}>{usd(h.amount)}</p>
-                    <p style={{ ...text(16, t.muted), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.message || new Date(h.created_at).toLocaleDateString()}</p>
-                  </div>
-                  <span style={{ ...text(16, t.muted), flexShrink: 0 }}>{STATE_LABEL[h.state]}</span>
-                </li>
-              ))}
-            </ul>
+    <div className={className} style={box}>
+      <div style={{ ...card, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ color: t.muted, fontSize: 16 }}>Ready to withdraw</div>
+          <div style={{ fontSize: 34, fontWeight: 600, letterSpacing: "-0.02em" }}>{usd(data.available_usd)}</div>
+          {data.min_withdraw_usd > data.available_usd && data.available_usd > 0 && (
+            <div style={{ color: t.muted, fontSize: 16 }}>Minimum withdrawal {usd(data.min_withdraw_usd)}</div>
           )}
-        </>
-      )}
+        </div>
+        <button
+          type="button"
+          onClick={withdraw}
+          disabled={!canWithdraw}
+          style={{
+            background: t.accent,
+            color: t.accentText,
+            border: 0,
+            borderRadius: 999,
+            padding: "12px 26px",
+            fontSize: 17,
+            fontWeight: 600,
+            cursor: canWithdraw ? "pointer" : "not-allowed",
+            opacity: canWithdraw ? 1 : 0.5,
+          }}
+        >
+          Withdraw
+        </button>
+      </div>
+
+      <div style={{ ...card, marginTop: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+          <strong>Payouts received</strong>
+          <span style={{ color: t.muted }}>Withdrawn {usd(data.withdrawn_usd)}</span>
+        </div>
+        {data.history.length === 0 ? (
+          <div style={{ color: t.muted }}>Nothing received yet.</div>
+        ) : (
+          data.history.map((h, i) => (
+            <div
+              key={i}
+              style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "10px 0", borderTop: i ? `1px solid ${t.border}` : 0 }}
+            >
+              <div>
+                <div>{h.message || "Payout"}</div>
+                <div style={{ color: t.muted }}>{new Date(h.received_at).toLocaleDateString()}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div>{usd(h.amount)}</div>
+                <div style={{ color: h.state === "withdrawn" ? t.muted : t.accent }}>{h.state === "withdrawn" ? "Withdrawn" : "Ready"}</div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      <div style={{ color: t.muted, fontSize: 16, marginTop: 10 }}>Payouts powered by Loofta</div>
     </div>
   );
 }
+
+/** Same component under the shorter name used in the docs: `<Payouts getToken={...} />`. */
+export const Payouts = PayoutPortal;

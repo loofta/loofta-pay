@@ -1840,6 +1840,14 @@ export function ClaimPayView({
   useEffect(() => {
     if (privySessionMismatch) void queryClient.invalidateQueries({ queryKey: ["claim", id] });
   }, [privySessionMismatch, id]);
+  // Payouts from a partner are withdrawn on the partner's own page, with the partner's fee shown,
+  // never through the ordinary claim flow. Send the recipient there.
+  const partnerOrgId: string | null = (claim as { partner_org_id?: string | null } | null | undefined)?.partner_org_id ?? null;
+  useEffect(() => {
+    if (!partnerOrgId) return;
+    const base = window.location.pathname.startsWith("/app") ? "/app/withdraw" : "/withdraw";
+    window.location.replace(`${base}?orgId=${encodeURIComponent(partnerOrgId)}`);
+  }, [partnerOrgId]);
   const tokenPrize = claim as {
     solana_mint?: string | null;
     token_amount?: string | number | null;

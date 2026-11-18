@@ -1,29 +1,12 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { createHmac, randomBytes } from 'crypto';
 import { SupabaseService } from '@/database/supabase.service';
+import { assertSafePublicUrl } from '@/common/assert-safe-public-url';
 
 // Retry schedule in seconds after each failed attempt; after the last one the event is marked failed.
 const BACKOFF_SECONDS = [60, 300, 1800, 7200, 21600, 86400];
-
-/**
- * The backend POSTs to whatever URL a partner registers, so refuse anything that could reach our
- * own network (SSRF): https only, no IP literals, no localhost/internal hostnames.
- */
-function assertSafeWebhookUrl(raw: string): void {
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    throw new BadRequestException('webhook url is not a valid URL');
-  }
-  const host = u.hostname.toLowerCase();
-  const isIpLiteral = /^[\d.]+$/.test(host) || host.includes(':') || host.startsWith('[');
-  if (u.protocol !== 'https:' || isIpLiteral || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal') || !host.includes('.')) {
-    throw new BadRequestException('webhook url must be a public https URL with a domain name');
-  }
-}
 
 @Injectable()
 export class PartnerWebhooksService {
@@ -50,7 +33,7 @@ export class PartnerWebhooksService {
   }
 
   async setWebhookUrl(integratorId: string, url: string | null): Promise<{ webhook_url: string | null; webhook_secret: string }> {
-    if (url) assertSafeWebhookUrl(url);
+    if (url) assertSafePublicUrl(url, 'webhook url');
     const secret = await this.ensureSecret(integratorId);
     await this.supabase.partnerSettings.update({ webhook_url: url }).eq('integrator_id', integratorId);
     return { webhook_url: url, webhook_secret: secret };

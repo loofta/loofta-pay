@@ -17,7 +17,6 @@ export type {
   PayoutBatchStatus,
   SentPayoutBatch,
   PortalToken,
-  PortalLink,
   WebhookConfig,
   PayoutWebhookEvent,
 } from "./types";

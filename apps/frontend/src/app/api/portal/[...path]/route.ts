@@ -6,9 +6,9 @@ export const dynamic = "force-dynamic";
  * Public, CORS-open entry to the partner payout portal API for @loofta/portal components that run
  * on a partner's own site. Safe to open to every origin because nothing here is cookie
  * authenticated: every call needs a short-lived portal token (minted by the partner's server) in
- * the Authorization header, and only the two portal endpoints are reachable, not the whole backend.
+ * the Authorization header, and only the read-only portal endpoint is reachable, not the whole backend.
  */
-const ALLOWED: Record<string, string[]> = { me: ["GET"], withdraw: ["POST"] };
+const ALLOWED: Record<string, string[]> = { me: ["GET"] };
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",

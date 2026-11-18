@@ -5,7 +5,14 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useAuthStore } from "@/store/auth";
 
-export type UnclaimedPayment = { id: string; short_id: string | null; amount: string };
+export type UnclaimedPayment = {
+  id: string;
+  short_id: string | null;
+  amount: string;
+  /** Set for a payout from a partner: it is withdrawn on the partner's own page, never claimed here. */
+  partner_org_id?: string | null;
+  partner_name?: string | null;
+};
 
 async function fetchUnclaimedPayments(
   accessToken: string | null,
@@ -23,6 +30,8 @@ async function fetchUnclaimedPayments(
     recipient_address?: string;
     status?: string;
     paid_at?: string | null;
+    partner_org_id?: string | null;
+    partner_name?: string | null;
   }>;
   // recipient_address is present for still-PENDING_EMAIL/PENDING_USERNAME/PENDING_SOCIAL rows —
   // see normalisePayment() in app/api/payments/history/route.ts — which covers an unregistered
@@ -37,7 +46,7 @@ async function fetchUnclaimedPayments(
   // never-funded claim surfaces as an urgent nudge every time.
   return received
     .filter((c) => !!c.paid_at && (!!c.recipient_address || String(c.status || "").toUpperCase() === "PRIVATE_TRANSFER_PENDING"))
-    .map((c) => ({ id: c.id, short_id: c.short_id ?? null, amount: c.amount }));
+    .map((c) => ({ id: c.id, short_id: c.short_id ?? null, amount: c.amount, partner_org_id: c.partner_org_id ?? null, partner_name: c.partner_name ?? null }));
 }
 
 /**

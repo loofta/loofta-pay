@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 import type { UnclaimedPayment } from "@/hooks/useUnclaimedPaymentToast";
 import { useBulkClaim } from "@/hooks/useBulkClaim";
 
-export function UnclaimedPaymentToast({
+function RegularToast({
   payments,
   onDismiss,
 }: {
@@ -93,6 +93,51 @@ export function UnclaimedPaymentToast({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A payout from a partner. It cannot be claimed here: the recipient withdraws it on the partner's own page. */
+function PartnerToast({ orgId, name, payments, onDismiss }: { orgId: string; name: string | null; payments: UnclaimedPayment[]; onDismiss: () => void }) {
+  const total = payments.reduce((sum, p) => sum + parseFloat(p.amount || "0"), 0);
+  return (
+    <div className="animate-in slide-in-from-bottom-4 fade-in duration-300">
+      <div className="relative rounded-2xl border border-white/10 bg-[#0f0f12]/95 backdrop-blur-xl shadow-2xl shadow-black/50 p-4">
+        <button type="button" onClick={onDismiss} aria-label="Dismiss" className="absolute top-3 right-3 text-slate-500 hover:text-white transition-colors">
+          <X size={16} />
+        </button>
+        <div className="flex items-start gap-3 pr-5">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#FF7A2A] to-[#EAB308] shadow-lg shadow-orange-500/40 text-2xl">💌</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-white font-semibold font-sans text-base">{name ? `${name} sent you a payment` : "You received a payment"}</p>
+            <p className="text-slate-400 text-base mt-0.5">${total.toFixed(2)} ready to withdraw</p>
+            <Link
+              href={`/withdraw?orgId=${encodeURIComponent(orgId)}`}
+              onClick={onDismiss}
+              className="inline-flex items-center gap-1 mt-3 rounded-xl px-3 py-1.5 text-base font-medium bg-gradient-to-r from-[#FF1301] to-[#EAB308] text-white hover:opacity-90 transition-opacity"
+            >
+              Withdraw
+            </Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function UnclaimedPaymentToast({ payments, onDismiss }: { payments: UnclaimedPayment[]; onDismiss: () => void }) {
+  if (!payments || payments.length === 0) return null;
+  const regular = payments.filter((p) => !p.partner_org_id);
+  const byPartner = new Map<string, UnclaimedPayment[]>();
+  for (const p of payments) {
+    if (p.partner_org_id) byPartner.set(p.partner_org_id, [...(byPartner.get(p.partner_org_id) ?? []), p]);
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {regular.length > 0 && <RegularToast payments={regular} onDismiss={onDismiss} />}
+      {[...byPartner.entries()].map(([orgId, list]) => (
+        <PartnerToast key={orgId} orgId={orgId} name={list[0].partner_name ?? null} payments={list} onDismiss={onDismiss} />
+      ))}
     </div>
   );
 }

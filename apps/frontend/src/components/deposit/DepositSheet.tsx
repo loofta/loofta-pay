@@ -81,6 +81,9 @@ export type DepositLaunch = {
   receiveExactly?: boolean;
 };
 
+/** Fills the "Any crypto" withdrawal in ahead of time, e.g. from the partner withdraw page. */
+export type CryptoPrefill = { symbol: string; chain: string; address: string; amountUsd: number };
+
 export type CashOutRequest = { platformId: string; identifier: string; amountUsd: number; intent?: "pay" | "receive" };
 
 /** MagicBlock exactOut private withdrawals debit amount + fees ON TOP of the typed amount.
@@ -101,6 +104,7 @@ export function DepositSheet({
   initialMode = "deposit",
   initialScreen = "home",
   onCashOut,
+  cryptoPrefill,
 }: {
   open: boolean;
   onClose: () => void;
@@ -117,6 +121,8 @@ export function DepositSheet({
   initialScreen?: Screen;
   /** Bank-app cash-out continues in the existing Peer flow. */
   onCashOut?: (pay: CashOutRequest) => void;
+  /** Opens the any-crypto withdrawal already filled in. */
+  cryptoPrefill?: CryptoPrefill | null;
 }) {
   const { toast } = useToast();
   const { user, getAccessToken } = usePrivy();
@@ -434,6 +440,7 @@ export function DepositSheet({
             userId={user?.id}
             getAccessToken={getAccessToken}
             onRefresh={onRefresh}
+            prefill={cryptoPrefill ?? null}
           />
         )}
 
@@ -1594,6 +1601,7 @@ function CryptoWithdraw({
   userId,
   getAccessToken,
   onRefresh,
+  prefill,
 }: {
   privately: boolean;
   balanceNum: number;
@@ -1603,8 +1611,10 @@ function CryptoWithdraw({
   userId?: string;
   getAccessToken: () => Promise<string | null>;
   onRefresh?: () => void;
+  prefill?: CryptoPrefill | null;
 }) {
   const { toast } = useToast();
+  const prefillApplied = useRef(false);
   const { withdraw: withdrawPrivately } = usePerPrivateSelfTransfer();
   const { wallet, signTransaction } = useLooftaSigner(solanaAddress);
   const [selection, setSelection] = useState<TokenSelection | undefined>(undefined);
@@ -1646,8 +1656,22 @@ function CryptoWithdraw({
     if (ok) toast({ title: "You are staked", description: "Your tickets are in this week's draw. See them at loofta.com/stake." });
   };
 
+  // Apply a prefill once the token list has loaded. It runs before the default pick below, which then
+  // stands down so it cannot overwrite what was asked for.
+  useEffect(() => {
+    if (!prefill || prefillApplied.current || choices.length === 0) return;
+    prefillApplied.current = true;
+    const wanted = choices.find((t) => t.symbol.toUpperCase() === prefill.symbol.toUpperCase() && String(t.chain).toLowerCase() === prefill.chain.toLowerCase());
+    if (wanted) {
+      setSelection({ symbol: wanted.symbol, chain: wanted.chain });
+      setDestination(prefill.address);
+      setAmount(prefill.amountUsd.toFixed(2).replace(/\.00$/, ""));
+    }
+  }, [prefill, choices]);
+
   useEffect(() => {
     if (selection || choices.length === 0) return;
+    if (prefill && !prefillApplied.current) return;
     const first = choices.find((t) => t.symbol.toUpperCase() === "ETH" && !isRelayToken(t)) ?? choices[0];
     if (first) setSelection({ symbol: first.symbol, chain: first.chain });
   }, [selection, choices]);

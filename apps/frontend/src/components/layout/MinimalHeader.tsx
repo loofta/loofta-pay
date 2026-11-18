@@ -10,6 +10,7 @@ import { useAuthStore } from "@/store/auth";
 import { UserMenu } from "@/components/UserMenu";
 import dynamic from "next/dynamic";
 const BalanceModal = dynamic(() => import("@/components/BalanceModal").then(m => ({ default: m.BalanceModal })), { ssr: false });
+import type { CryptoPrefill } from "@/components/deposit/DepositSheet";
 const DepositSheet = dynamic(() => import("@/components/deposit/DepositSheet").then(m => ({ default: m.DepositSheet })), { ssr: false });
 import { LooftaPayLogoLink } from "@/components/layout/LooftaPayLogoLink";
 import { useEmbeddedSolanaUsdcBalance } from "@/hooks/useEmbeddedSolanaUsdcBalance";
@@ -235,6 +236,7 @@ export function MinimalHeader() {
   const [balanceModalWithdrawMethod, setBalanceModalWithdrawMethod] = useState<"peer" | "paj" | "crypto" | "near" | undefined>(undefined);
   const [balanceTopUpAmount, setBalanceTopUpAmount] = useState<number | undefined>(undefined);
   const [peerPay, setPeerPay] = useState<PeerPayRequest | null>(null);
+  const [cryptoPrefill, setCryptoPrefill] = useState<CryptoPrefill | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const {
@@ -273,6 +275,7 @@ export function MinimalHeader() {
         method?: string;
         amountUsd?: number;
         peerPay?: PeerPayRequest;
+        cryptoPrefill?: CryptoPrefill;
       }>).detail;
       const m = detail?.method;
       const pay = detail?.peerPay;
@@ -282,6 +285,8 @@ export function MinimalHeader() {
       const legacyWithdraw = detail?.tab === "history" || m === "peer" || m === "paj" || !!peerPayDetail;
       setBalanceTopUpAmount(typeof detail?.amountUsd === "number" && detail.amountUsd > 0 ? detail.amountUsd : undefined);
       setPeerPay(peerPayDetail);
+      const cp = detail?.cryptoPrefill;
+      setCryptoPrefill(cp && cp.symbol && cp.chain && cp.address && cp.amountUsd > 0 ? cp : null);
       setBalanceModalWithdrawMethod(
         m === "peer" || m === "paj" || m === "crypto" || m === "near" ? m : undefined,
       );
@@ -466,6 +471,7 @@ export function MinimalHeader() {
             showModeSwitch
             initialMode={depositMode}
             initialScreen={depositScreen}
+            cryptoPrefill={cryptoPrefill}
             onCashOut={(pay) => {
               setShowDeposit(false);
               setPeerPay(pay);

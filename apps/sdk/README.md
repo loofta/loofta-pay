@@ -76,7 +76,7 @@ const loofta = new LooftaPayClient({
 const batch = await loofta.payouts.sendBatch({
   idempotencyKey: "2026-11-creator-payouts",
   rows: [
-    { amount: 120, to: { type: "partner_user", value: "user_123" }, externalRef: "inv_881" }, // no Loofta account needed
+    { amount: 120, to: { type: "email", value: "creator@example.com" }, externalRef: "inv_881" },
     { amount: 40, to: { type: "email", value: "alex@example.com" } },
   ],
 });
@@ -84,8 +84,7 @@ const batch = await loofta.payouts.sendBatch({
 // No signer? createBatch returns packed unsigned transactions for your own wallet flow.
 // const { transactions } = await loofta.payouts.createBatch({ ..., senderWallet });
 
-// Your users see and withdraw their payouts:
-const { url } = await loofta.portal.createLink({ externalUserId: "user_123", returnUrl: "https://app.example.com/earnings" }); // hosted page
+// Your users see their payouts in your app, and withdraw on your branded Loofta page:
 const { token } = await loofta.portal.createToken({ externalUserId: "user_123" }); // for @loofta/portal components
 
 // Know when someone is paid:
@@ -94,4 +93,4 @@ const { secret } = await loofta.webhooks.set("https://app.example.com/hooks/loof
 const event = verifyWebhook(rawBody, req.headers["x-loofta-signature"], secret); // event.event === "payout.claimed"
 ```
 
-`partner_user` recipients withdraw USDC to their own Solana wallet from the portal. Email, username and social recipients get a claim link instead.
+Recipients withdraw at `pay.loofta.xyz/withdraw?orgId=<your org id>` (your logo, your fees shown up front). They log in as the email or handle you paid.

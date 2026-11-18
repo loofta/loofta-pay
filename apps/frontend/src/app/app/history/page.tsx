@@ -52,10 +52,15 @@ export type PaymentHistoryClaim = {
   source_label?: string | null;
   /** Connected handles of the registered recipient (from the history API). */
   recipient_socials?: { platform: string; handle: string }[];
+  /** Set when a partner paid this, so it is labelled with the partner and not the person who funded it. */
+  partner_name?: string | null;
+  partner_org_id?: string | null;
+  partner_logo_url?: string | null;
 };
 
 function getSenderDisplay(claim: PaymentHistoryClaim, anonymous: string): string {
   if (claim.source_label) return claim.source_label;
+  if (claim.partner_name) return claim.partner_name;
   if (claim.direction === "from_recipient") {
     if (claim.sender_username) return `@${claim.sender_username}`;
     // No account, so no username — a guest checkout payer's only identity is the email they
@@ -672,7 +677,10 @@ export default function HistoryPage() {
                                   color: type === "sent" ? "#F5A623" : "#5FD38E",
                                 }}
                               >
-                                {type === "sent" ? "↑" : "↓"}
+                                {type === "received" && claim.partner_logo_url ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={claim.partner_logo_url} alt="" className="h-10 w-10 rounded-[13px] object-cover" referrerPolicy="no-referrer" />
+                                ) : type === "sent" ? "↑" : "↓"}
                               </span>
                               <div className="min-w-0 flex-1">
                                 {hasKnownCounterparty && (

@@ -5,7 +5,6 @@ import type {
   PayoutWebhookEvent,
   PayoutBatchResult,
   PayoutBatchStatus,
-  PortalLink,
   PortalToken,
   SentPayoutBatch,
   WebhookConfig,
@@ -130,23 +129,26 @@ export class PayoutsApi {
 export class PortalApi {
   constructor(private readonly http: Requester) {}
 
-  /** Token for the embedded `<PayoutPortal getToken=... />`. 15 minutes, one user. */
-  async createToken(params: { externalUserId: string; displayName?: string }): Promise<PortalToken> {
-    const d = await this.http.request<any>("POST", "/payouts/portal-token", {
+  /**
+   * Token for the embedded `<Payouts getToken=... />` widget. 15 minutes, one user. Identify the
+   * user by the email or handle you paid, or by the id you imported them with. Call this from your
+   * server with a partner API key; the key never goes to the browser.
+   */
+  async createToken(params: {
+    email?: string;
+    platform?: "twitter" | "discord" | "github" | "telegram";
+    handle?: string;
+    externalUserId?: string;
+    returnUrl?: string;
+  }): Promise<PortalToken> {
+    const d = await this.http.request<any>("POST", "/partner-portal/token", {
+      email: params.email,
+      platform: params.platform,
+      handle: params.handle,
       external_user_id: params.externalUserId,
-      display_name: params.displayName,
-    });
-    return { token: d.token, expiresAt: d.expires_at };
-  }
-
-  /** Hosted portal: redirect your user to `url`. They see their payouts and withdraw, then go back to returnUrl. */
-  async createLink(params: { externalUserId: string; displayName?: string; returnUrl?: string }): Promise<PortalLink> {
-    const d = await this.http.request<any>("POST", "/payouts/portal-link", {
-      external_user_id: params.externalUserId,
-      display_name: params.displayName,
       return_url: params.returnUrl,
     });
-    return { url: d.url, expiresAt: d.expires_at };
+    return { token: d.token, expiresAt: d.expires_at };
   }
 }
 

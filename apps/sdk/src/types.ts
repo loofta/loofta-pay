@@ -1,6 +1,5 @@
 export type RecipientType = "email" | "username" | "twitter" | "discord" | "github" | "telegram";
-/** Bulk payouts can also target your own user id (`partner_user`): they claim in the payout portal with no Loofta account. */
-export type PayoutRecipientType = RecipientType | "partner_user";
+export type PayoutRecipientType = RecipientType;
 
 export interface PayHumanParams {
   to: { type: RecipientType; value: string };
@@ -155,11 +154,6 @@ export interface PayoutBatchStatus {
 
 export interface PortalToken {
   token: string;
-  expiresAt: string;
-}
-
-export interface PortalLink {
-  url: string;
   expiresAt: string;
 }
 

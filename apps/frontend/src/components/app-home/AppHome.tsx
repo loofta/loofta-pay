@@ -33,6 +33,7 @@ type HistoryRow = {
   receipt_path?: string | null;
   creator_username?: string | null;
   sender_username?: string | null;
+  partner_name?: string | null;
 };
 
 const SORA = "var(--font-home-sora), Sora, sans-serif";
@@ -81,6 +82,7 @@ function whoLabel(row: HistoryRow, sent: boolean) {
     if (row.recipient_email) return `To ${row.recipient_email}`;
     return "To someone";
   }
+  if (row.partner_name) return `From ${row.partner_name}`;
   if (row.sender_username) return `From @${row.sender_username}`;
   if (row.creator_username) return `From @${row.creator_username}`;
   return "From someone";

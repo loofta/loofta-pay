@@ -8,7 +8,7 @@ import { getVerifiedSolanaWallets } from "@/lib/serverAuth";
 // missing column makes PostgREST error, and these queries ignore that error, so history
 // (and the home recent list) comes back empty.
 const PAYMENT_SELECT =
-  "id, short_id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, recipient_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, is_private, claimed_privately, guest_sender_email";
+  "id, short_id, amount, direction, status, created_at, paid_at, recipient_username, sender_user_id, recipient_user_id, recipient_email, recipient_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, is_private, claimed_privately, guest_sender_email, partner_id";
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -41,6 +41,10 @@ export type PaymentHistoryClaim = {
   creator_username?: string | null;
   /** Handles the recipient has connected (X, Telegram, ...), used only for send autocomplete. */
   recipient_socials?: { platform: string; handle: string }[];
+  /** Set when a partner paid this: the partner's public name, org id and logo. */
+  partner_name?: string | null;
+  partner_org_id?: string | null;
+  partner_logo_url?: string | null;
   created_by: string | null;
   description: string | null;
   is_devnet?: boolean;
@@ -218,7 +222,7 @@ function isExpiredOpenPayment(p: { status: string; created_at: string }): boolea
 }
 
 /** Normalise a payments row to the shared PaymentHistoryClaim shape. */
-function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & { _recipient_user_id?: string | null } {
+function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & { _recipient_user_id?: string | null; partner_id?: string | null } {
   const rawStatus = String(row.status ?? "");
   // Rows matched via the recipient's own pending username/email (see pendingAddresses below) are
   // funded (SUCCESS) but the money is still sitting in the burner — the recipient hasn't swept it
@@ -259,6 +263,8 @@ function normalisePayment(row: Record<string, unknown>): PaymentHistoryClaim & {
     guest_sender_email: (row.guest_sender_email as string | null) ?? null,
     guest_sender_wallet: (row.guest_sender_wallet as string | null) ?? null,
     _recipient_user_id: (row.recipient_user_id as string | null) ?? null,
+    // Internal id, only used to look up the partner's public name and logo. Never sent to the client.
+    partner_id: (row.partner_id as string | null) ?? null,
   };
 }
 
@@ -380,6 +386,7 @@ export async function GET(request: Request) {
       .from("payments")
       .select(PAYMENT_SELECT)
       .eq("sender_user_id", userId)
+      .is("partner_id", null) // partner payouts are the business's, shown in the partner portal
       .eq("is_devnet", devnetOnly)
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
@@ -392,6 +399,7 @@ export async function GET(request: Request) {
       .select(PAYMENT_SELECT)
       .eq("created_by", userId)
       .is("sender_user_id", null)
+      .is("partner_id", null)
       .not("direction", "eq", "from_recipient")
       .eq("is_devnet", devnetOnly)
       .order("created_at", { ascending: false })
@@ -469,6 +477,7 @@ export async function GET(request: Request) {
       .from("payments")
       .select(TOTAL_SELECT)
       .eq("sender_user_id", userId)
+      .is("partner_id", null)
       .eq("is_devnet", devnetOnly);
     if (dateFilter) sentTotalQuery = sentTotalQuery.gte("created_at", dateFilter);
     const { data: sentTotalRows } = await sentTotalQuery;
@@ -478,6 +487,7 @@ export async function GET(request: Request) {
       .select(TOTAL_SELECT)
       .eq("created_by", userId)
       .is("sender_user_id", null)
+      .is("partner_id", null)
       .not("direction", "eq", "from_recipient")
       .eq("is_devnet", devnetOnly);
     if (dateFilter) legacySentTotalQuery = legacySentTotalQuery.gte("created_at", dateFilter);
@@ -568,6 +578,17 @@ export async function GET(request: Request) {
       }
     }
 
+    // Payouts from a partner are labelled with the partner's name, not the person who funded them,
+    // and open the partner's withdraw page. Only the public org id, name and logo reach the client.
+    const partnerRowIds = [...new Set(allItems.map((c) => ((c as unknown as { partner_id?: string | null }).partner_id ?? null)).filter(Boolean))] as string[];
+    const partnerById: Record<string, { org_id: string; name: string; logo_url: string | null }> = {};
+    if (partnerRowIds.length > 0) {
+      const { data: partnerRows } = await supabase.from("partners").select("id, org_id, name, logo_url").in("id", partnerRowIds);
+      for (const p of (partnerRows || []) as { id: string; org_id: string; name: string; logo_url: string | null }[]) {
+        partnerById[p.id] = { org_id: p.org_id, name: p.name, logo_url: p.logo_url };
+      }
+    }
+
     // Connected handles of people this user paid, so autocomplete can offer "@name on Telegram"
     // even though a registered recipient's row only keeps their Loofta username.
     const socialsByUser: Record<string, { platform: string; handle: string }[]> = {};
@@ -605,9 +626,13 @@ export async function GET(request: Request) {
       // created_by/sender_user_id/_recipient_user_id are raw Privy user IDs used only to look up
       // display usernames above — never send them to the client.
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { _recipient_user_id: _dropped, created_by: _droppedCreatedBy, sender_user_id: _droppedSenderUserId, ...rest } = ec;
+      const { _recipient_user_id: _dropped, created_by: _droppedCreatedBy, sender_user_id: _droppedSenderUserId, partner_id: partnerRowId, ...rest } = ec as EnrichedClaim & { partner_id?: string | null };
+      const partner = partnerRowId ? partnerById[partnerRowId] : undefined;
       return {
         ...rest,
+        partner_name: partner?.name ?? null,
+        partner_org_id: partner?.org_id ?? null,
+        partner_logo_url: partner?.logo_url ?? null,
         recipient_username: recipientUsername,
         creator_username: creatorUsername,
         sender_username: senderUsername,

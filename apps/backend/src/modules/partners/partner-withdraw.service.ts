@@ -1,0 +1,220 @@
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { PublicKey } from '@solana/web3.js';
+import { getAccount, getAssociatedTokenAddress } from '@solana/spl-token';
+import { SupabaseService } from '@/database/supabase.service';
+import { ClaimsService, REGISTERED_BURNER_CLAIM_FEE_USD } from '@/modules/claims/claims.service';
+import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
+import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
+import { isValidSolanaAddress } from '@/common/solana-address';
+import { PartnersService, Partner, PublicPartner } from './partners.service';
+import { allocateFeeUnits, computePartnerFeeUsdc } from './partner-fee';
+
+const MAX_PAYOUTS_PER_WITHDRAWAL = 50;
+const toUnits = (usd: number) => BigInt(Math.round(usd * 1_000_000));
+
+interface PayoutView {
+  payment_id: string;
+  amount: number;
+  message: string | null;
+  created_at: string;
+  funded: boolean;
+}
+
+export interface WithdrawQuote {
+  partner: PublicPartner;
+  available: PayoutView[];
+  processing: PayoutView[];
+  gross_usdc: number;
+  partner_fee_usdc: number;
+  loofta_fee_usdc: number;
+  net_usdc: number;
+  min_usd: number;
+  can_withdraw: boolean;
+  reason: string | null;
+}
+
+/**
+ * The only way to withdraw money a partner paid. A recipient logs in as the identity the payout was
+ * sent to, sees every fee up front, and confirms; the fee is then stamped on each payment BEFORE its
+ * burner is swept (the sweep refuses an unstamped partner payout), so it cannot be skipped.
+ */
+@Injectable()
+export class PartnerWithdrawService {
+  private readonly logger = new Logger(PartnerWithdrawService.name);
+
+  constructor(
+    private readonly supabase: SupabaseService,
+    private readonly config: ConfigService,
+    private readonly partners: PartnersService,
+    private readonly claims: ClaimsService,
+    private readonly sponsor: SolanaSponsorService,
+  ) {}
+
+  private get isDevnet() {
+    return isSolanaDevnetFromConfig(this.config);
+  }
+
+  private usdcMint(): PublicKey {
+    return new PublicKey(
+      this.isDevnet
+        ? this.config.get<string>('SOLANA_USDC_MINT_DEVNET') || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+        : this.config.get<string>('SOLANA_USDC_MINT_MAINNET') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    );
+  }
+
+  private async loadPartner(orgId: string): Promise<Partner> {
+    const { data } = await this.supabase.partners.select('*').eq('org_id', orgId).maybeSingle();
+    if (!data) throw new NotFoundException('Partner not found.');
+    // A suspended partner's recipients can still withdraw: the money is theirs. Only the partner's cut is suspended.
+    return this.partners.promoteFeeWalletIfDue(data as Partner);
+  }
+
+  /** The payouts this logged-in user may withdraw from this partner: identity-checked, and funded on-chain. */
+  private async findPayouts(partner: Partner, userId: string): Promise<{ rows: Array<PayoutView & { units: bigint; registered: boolean }> }> {
+    const { data, error } = await this.supabase.payments
+      .select('id, amount, description, created_at, burner_address, recipient_user_id, is_devnet')
+      .eq('partner_id', partner.id)
+      .is('partner_withdrawn_at', null)
+      .not('burner_address', 'is', null)
+      .not('status', 'in', '("CANCELLED","DELETED")')
+      .order('created_at', { ascending: true })
+      .limit(MAX_PAYOUTS_PER_WITHDRAWAL);
+    // A failed query must never look like "no payouts": a missing column once showed every recipient "nothing to withdraw".
+    if (error) {
+      this.logger.error(`Partner withdraw: could not load payouts for partner ${partner.id}: ${error.message}`);
+      throw new ServiceUnavailableException('Withdrawals are temporarily unavailable. Please try again soon.');
+    }
+
+    const conn = this.sponsor.getConnectionForCluster(this.isDevnet ? 'devnet' : 'mainnet');
+    const mint = this.usdcMint();
+    const rows: Array<PayoutView & { units: bigint; registered: boolean }> = [];
+    for (const p of data ?? []) {
+      if ((p.is_devnet === true) !== this.isDevnet) continue;
+      // Identity comes from the verified login, checked against who the payout was sent to.
+      const { isRecipient } = await this.claims.checkIsRecipient(p.id, userId).catch(() => ({ isRecipient: false }));
+      if (!isRecipient) continue;
+      const units = toUnits(Number(p.amount));
+      let funded = false;
+      try {
+        const ata = await getAssociatedTokenAddress(mint, new PublicKey(p.burner_address as string), true);
+        funded = (await getAccount(conn, ata, 'confirmed')).amount >= units;
+      } catch {
+        funded = false;
+      }
+      rows.push({
+        payment_id: p.id, amount: Number(p.amount), message: p.description ?? null, created_at: p.created_at, funded, units,
+        registered: Boolean(p.recipient_user_id),
+      });
+    }
+    return { rows };
+  }
+
+  private async compute(partner: Partner, userId: string) {
+    const { rows } = await this.findPayouts(partner, userId);
+    const available = rows.filter((r) => r.funded);
+    const processing = rows.filter((r) => !r.funded);
+    const grossUnits = available.reduce((a, r) => a + r.units, BigInt(0));
+    const gross = Number(grossUnits) / 1e6;
+
+    const partnerActive = partner.status === 'active';
+    const partnerFee = partnerActive ? computePartnerFeeUsdc(partner, gross) : 0;
+    const looftaFee = available.reduce(
+      (a, r) => a + (r.registered && r.units > toUnits(REGISTERED_BURNER_CLAIM_FEE_USD) * BigInt(2) ? REGISTERED_BURNER_CLAIM_FEE_USD : 0),
+      0,
+    );
+    const net = gross - partnerFee - looftaFee;
+
+    let reason: string | null = null;
+    if (!available.length) reason = processing.length ? 'Your payout is still being processed.' : 'Nothing to withdraw yet.';
+    else if (gross < Number(partner.withdraw_min_usd)) reason = `The minimum withdrawal is $${Number(partner.withdraw_min_usd).toFixed(2)}.`;
+    else if (net <= 0) reason = 'This amount is too small to withdraw after fees.';
+    else if (partnerFee > 0) {
+      if (!partner.fee_wallet) reason = 'Withdrawals from this partner are unavailable right now.';
+      else {
+        try {
+          await this.partners.assertFeeWalletReady(partner.fee_wallet);
+        } catch {
+          reason = 'Withdrawals from this partner are unavailable right now.';
+        }
+      }
+    }
+
+    const strip = ({ units: _u, registered: _r, ...v }: PayoutView & { units: bigint; registered: boolean }): PayoutView => v;
+    return {
+      available, processing: processing.map(strip), partnerFee, looftaFee, gross, net, reason,
+      view: available.map(strip),
+    };
+  }
+
+  async quote(orgId: string, userId: string): Promise<WithdrawQuote> {
+    const partner = await this.loadPartner(orgId);
+    const c = await this.compute(partner, userId);
+    const { data: pub } = await this.supabase.partners
+      .select('org_id, name, logo_url, brand_color, withdraw_min_usd, fee_fixed_usd, fee_percent_bps').eq('id', partner.id).single();
+    return {
+      partner: pub as unknown as PublicPartner,
+      available: c.view,
+      processing: c.processing,
+      gross_usdc: c.gross,
+      partner_fee_usdc: c.partnerFee,
+      loofta_fee_usdc: c.looftaFee,
+      net_usdc: Math.max(c.net, 0),
+      min_usd: Number(partner.withdraw_min_usd),
+      can_withdraw: c.reason === null,
+      reason: c.reason,
+    };
+  }
+
+  /**
+   * Withdraws everything currently available. `maxFeeUsdc` is the partner fee the recipient was
+   * shown; if the real fee is higher (the partner changed it in between) nothing is stamped or sent.
+   */
+  async confirm(orgId: string, userId: string, opts: { maxFeeUsdc: number; destinationAddress?: string }) {
+    const dest = opts.destinationAddress?.trim();
+    if (dest && !isValidSolanaAddress(dest)) throw new BadRequestException('Invalid destination address.');
+    if (!Number.isFinite(opts.maxFeeUsdc) || opts.maxFeeUsdc < 0) throw new BadRequestException('max_fee_usdc is required.');
+
+    const partner = await this.loadPartner(orgId);
+    const c = await this.compute(partner, userId);
+    if (c.reason) throw new BadRequestException(c.reason);
+    if (c.partnerFee > opts.maxFeeUsdc + 1e-9) {
+      throw new ConflictException('The fee changed since you last looked. Review it and confirm again.');
+    }
+
+    const shares = allocateFeeUnits(c.available.map((r) => r.units), toUnits(c.partnerFee));
+    const wallet = c.partnerFee > 0 ? partner.fee_wallet : null;
+    const results: Array<{ payment_id: string; ok: boolean; tx?: string; error?: string }> = [];
+
+    for (let i = 0; i < c.available.length; i++) {
+      const p = c.available[i];
+      try {
+        // Stamp the fee BEFORE sweeping; conditional so a payout already withdrawn can never be re-stamped.
+        const { data: stamped } = await this.supabase.payments
+          .update({
+            partner_fee_usdc: Number(shares[i]) / 1e6,
+            partner_fee_wallet: shares[i] > BigInt(0) ? wallet : null,
+            partner_fee_stamped_at: new Date().toISOString(),
+          })
+          .eq('id', p.payment_id)
+          .eq('partner_id', partner.id)
+          .is('partner_withdrawn_at', null)
+          .select('id');
+        if (!stamped?.length) throw new Error('This payout is no longer available.');
+
+        const out = await this.claims.claimAsRecipient(p.payment_id, userId, { viaPartnerWithdraw: true, destinationAddress: dest });
+        if (!out.sweepTxHash) throw new Error('Funds have not arrived yet. Try again in a minute.');
+        results.push({ payment_id: p.payment_id, ok: true, tx: out.sweepTxHash });
+      } catch (e) {
+        this.logger.warn(`partner withdraw ${p.payment_id}: ${(e as Error).message}`);
+        results.push({ payment_id: p.payment_id, ok: false, error: (e as Error).message });
+      }
+    }
+
+    const sent = results.filter((r) => r.ok).length;
+    await this.partners.audit(partner.id, userId, 'recipient.withdrew', undefined, {
+      payouts: results.length, sent, partner_fee_usdc: c.partnerFee, to: dest ?? 'own_wallet',
+    });
+    return { results, partner_fee_usdc: c.partnerFee };
+  }
+}

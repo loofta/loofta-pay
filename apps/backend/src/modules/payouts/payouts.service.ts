@@ -254,19 +254,6 @@ export class PayoutsService {
           handle: recipientIdentifier,
         });
         break;
-      case 'partner_user': {
-        // The partner's own user id; recipient has no Loofta account and withdraws via the portal.
-        if (shared.isPrivate) throw new BadRequestException('partner_user payouts cannot be private yet.');
-        const partnerRecipientId = await this.findOrCreatePartnerRecipient(integratorId, recipientIdentifier);
-        created = await this.claimsService.createForPartnerRecipient({
-          amount: shared.amount,
-          userId: shared.userId,
-          partnerRecipientId,
-          description: shared.description,
-          expiresAt: shared.expiresAt,
-        });
-        break;
-      }
       default:
         throw new BadRequestException(`Unsupported recipient_type: ${recipientType}`);
     }

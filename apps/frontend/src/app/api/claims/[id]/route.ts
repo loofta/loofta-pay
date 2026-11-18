@@ -113,7 +113,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   // behind "Payment not found".
   const optionalColumns = ["guest_sender_wallet", "private_split", "private_max_delay_ms", "solana_mint", "token_amount", "token_decimals", "token_base_units", "token_program"];
   let paymentSelect =
-    "id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, claimed_privately, merchant_name, merchant_logo_url, integrator_id, expires_at, sender_user_id, guest_sender_email, guest_sender_wallet, private_split, private_max_delay_ms, solana_mint, token_amount, token_decimals, token_base_units, token_program";
+    "id, short_id, amount, direction, status, created_at, updated_at, paid_at, recipient_address, recipient_username, recipient_user_id, recipient_email, burner_address, created_by, from_chain, from_token, to_chain, to_token, description, is_devnet, sender_tx_hash, legacy_claim_id, fee_paid_usdc, fee_on_sender, is_private, claimed_privately, merchant_name, merchant_logo_url, integrator_id, expires_at, sender_user_id, guest_sender_email, guest_sender_wallet, private_split, private_max_delay_ms, solana_mint, token_amount, token_decimals, token_base_units, token_program, partner_id";
   let { data: paymentRow, error: paymentError } = await supabase
     .from("payments")
     .select(paymentSelect)
@@ -279,6 +279,18 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     // no-auth-required endpoint for from_recipient links, so it must never reach the client.
     sender_user_id: undefined,
   };
+
+  // A payout from a partner is withdrawn on the partner's own page, never through this claim page.
+  // Expose only the partner's public org id, name and logo so the page can send the recipient there;
+  // the internal partner row id stays server-side.
+  const partnerRowId = String(rawPayment?.partner_id ?? "").trim();
+  if (partnerRowId) {
+    const { data: partnerRow } = await supabase.from("partners").select("org_id, name, logo_url").eq("id", partnerRowId).maybeSingle();
+    claim.partner_org_id = (partnerRow as { org_id?: string } | null)?.org_id ?? null;
+    claim.partner_name = (partnerRow as { name?: string } | null)?.name ?? null;
+    claim.partner_logo_url = (partnerRow as { logo_url?: string | null } | null)?.logo_url ?? null;
+  }
+  claim.partner_id = undefined;
 
   // Mask recipient wallet — never expose the real address to the public
   const ra = String(rawPayment?.recipient_address ?? "").trim();

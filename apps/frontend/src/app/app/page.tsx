@@ -20,8 +20,16 @@ export default function AppHomePage() {
     const balance = searchParams.get("balance");
     if (balance === "topup" || balance === "withdraw" || balance === "history") {
       const methodRaw = searchParams.get("method");
-      const method = methodRaw === "peer" || methodRaw === "paj" || methodRaw === "crypto" ? methodRaw : undefined;
-      window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab: balance, method } }));
+      const method = methodRaw === "peer" || methodRaw === "paj" || methodRaw === "crypto" || methodRaw === "cash" ? methodRaw : undefined;
+      // The partner withdraw page can pass a P2P platform, handle and amount so the cash-out opens filled in.
+      const platformId = searchParams.get("platform");
+      const to = searchParams.get("to");
+      const amountUsd = Number(searchParams.get("amount"));
+      const symbol = searchParams.get("symbol");
+      const chain = searchParams.get("chain");
+      const cryptoPrefill = method === "crypto" && symbol && chain && to && Number.isFinite(amountUsd) && amountUsd > 0 ? { symbol, chain, address: to, amountUsd } : undefined;
+      const peerPay = method === "peer" && platformId && to && Number.isFinite(amountUsd) && amountUsd > 0 ? { platformId, identifier: to, amountUsd } : undefined;
+      window.dispatchEvent(new CustomEvent("openBalanceModal", { detail: { tab: balance, method, peerPay, cryptoPrefill } }));
     }
   }, [router, searchParams]);
 
