@@ -229,3 +229,35 @@ describe('partner withdraw when the database is down', () => {
     await expect(svc.quote('org_x', 'u1')).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });
+
+describe('the demo partner (orgId=demo)', () => {
+  it('quotes a sample prize with real fee math, without touching the database', async () => {
+    const { svc } = make();
+    (svc as never as { supabase: unknown }).supabase = new Proxy({}, { get: () => { throw new Error('demo must not use the database'); } });
+    const q = await svc.quote('demo', 'u1');
+    expect(q.partner.name).toBe('Rally');
+    expect(q.gross_usdc).toBe(120);
+    // $0.25 flat + 1% of $120
+    expect(q.partner_fee_usdc).toBeCloseTo(1.45, 6);
+    expect(q.net_usdc).toBeCloseTo(118.55, 6);
+    expect(q.can_withdraw).toBe(true);
+  });
+
+  it('confirms without sweeping anything or moving money', async () => {
+    const { svc, claims, events } = make();
+    const out = await svc.confirm('demo', 'u1', { maxFeeUsdc: 2 });
+    expect(out.results[0]).toMatchObject({ ok: true });
+    expect(claims.claimAsRecipient).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+  });
+
+  it('still validates the destination and the fee ceiling like a real withdrawal', async () => {
+    const { svc } = make();
+    await expect(svc.confirm('demo', 'u1', { maxFeeUsdc: -1 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.confirm('demo', 'u1', { maxFeeUsdc: 2, destinationAddress: 'nope' })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('is a name no real partner can have: real org ids are org_ plus hex', () => {
+    expect('demo').not.toMatch(/^org_[0-9a-f]{12}$/);
+  });
+});

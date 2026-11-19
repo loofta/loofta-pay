@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { IntegratorGuard, RateLimitGuard } from '@/common/guards';
@@ -6,6 +6,8 @@ import { RateLimit } from '@/common/decorators/rate-limit.decorator';
 import { RequireScope } from '@/common/decorators/require-scope.decorator';
 import type { AuthenticatedIntegrator } from '@/modules/integrators/integrators.service';
 import { CreatePartnerBatchDto } from './dto/partner-batch.dto';
+import { SetWebhookDto } from './dto/partner.dto';
+import { PartnerKeysService } from './partner-keys.service';
 import { PartnerPayoutsService } from './partner-payouts.service';
 import { PartnersService } from './partners.service';
 
@@ -24,10 +26,11 @@ export class PartnerApiController {
     private readonly payouts: PartnerPayoutsService,
     private readonly partners: PartnersService,
     private readonly config: ConfigService,
+    private readonly keys: PartnerKeysService,
   ) {}
 
   private approveUrl(orgId: string, batchId: string) {
-    const base = this.config.get<string>('PAY_APP_URL') || 'https://pay.loofta.xyz';
+    const base = this.config.get<string>('PAY_APP_URL') || 'https://pay.loofta.com';
     return `${base.replace(/\/$/, '')}/app/partner?org=${encodeURIComponent(orgId)}&tab=payouts&batch=${encodeURIComponent(batchId)}`;
   }
 
@@ -46,6 +49,8 @@ export class PartnerApiController {
       failed_count: batch.failed_count,
       total_amount: batch.total_amount,
       created_at: batch.created_at,
+      scheduled_for: batch.scheduled_for ?? null,
+      scheduled_error: batch.scheduled_error ?? null,
       approve_url: this.approveUrl(orgId, batch.id),
       items: items.map((i) => ({
         row_index: i.row_index,
@@ -76,5 +81,40 @@ export class PartnerApiController {
   async get(@Param('batchId', new ParseUUIDPipe()) batchId: string, @Req() req: { integrator: AuthenticatedIntegrator }) {
     const batch = await this.payouts.getViaApi(req.integrator.id, batchId);
     return this.shape(req.integrator.id, batch);
+  }
+
+  @Get('batches')
+  @RequireScope('batches:write')
+  @RateLimit(120, 60, 'partner-api:batch-list', 'integrator')
+  @ApiOperation({ summary: 'Your most recent batches, newest first' })
+  async list(@Query('limit') limit: string | undefined, @Req() req: { integrator: AuthenticatedIntegrator }) {
+    const rows = await this.payouts.listViaApi(req.integrator.id, Number(limit) || 25);
+    const orgId = await this.partners.orgIdForIntegrator(req.integrator.id);
+    return {
+      batches: rows.map((b: Record<string, unknown>) => ({
+        batch_id: b.id, status: b.status, label: b.label ?? null, item_count: b.item_count, failed_count: b.failed_count,
+        total_amount: b.total_amount, created_at: b.created_at, scheduled_for: b.scheduled_for ?? null,
+        approve_url: this.approveUrl(orgId, String(b.id)),
+      })),
+    };
+  }
+
+  @Post('batches/:batchId/cancel')
+  @HttpCode(HttpStatus.OK)
+  @RequireScope('batches:write')
+  @RateLimit(60, 60, 'partner-api:batch-cancel', 'integrator')
+  @ApiOperation({ summary: 'Call off a batch that is still waiting for approval, or approved and not yet prepared' })
+  async cancel(@Param('batchId', new ParseUUIDPipe()) batchId: string, @Req() req: { integrator: AuthenticatedIntegrator }) {
+    const batch = await this.payouts.cancelViaApi(req.integrator.id, batchId);
+    return this.shape(req.integrator.id, batch);
+  }
+
+  @Post('webhook')
+  @HttpCode(HttpStatus.OK)
+  @RequireScope('batches:write')
+  @RateLimit(10, 60, 'partner-api:webhook', 'integrator')
+  @ApiOperation({ summary: 'Set (or clear with null) the https URL that receives signed payout and batch events. Returns the signing secret.' })
+  async setWebhook(@Body() dto: SetWebhookDto, @Req() req: { integrator: AuthenticatedIntegrator }) {
+    return this.keys.setWebhookForIntegrator(req.integrator.id, dto.url ?? null);
   }
 }

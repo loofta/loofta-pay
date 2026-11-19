@@ -90,6 +90,8 @@ function MethodRow({ method, onClick }: { method: Method; onClick: () => void })
 
 function WithdrawContent() {
   const orgId = useSearchParams().get("orgId") ?? "";
+  // orgId=demo is a built-in sample partner: the real page and the real fee math, but nothing is sent.
+  const isDemo = orgId === "demo";
   const { ready, authenticated, login, logout, getAccessToken, email } = useAuth();
   const [brand, setBrand] = useState<PublicPartner | null>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -169,6 +171,10 @@ function WithdrawContent() {
     if (!quote || !method) return;
     // Bank or card: nothing is claimed yet. The payout is claimed on the last step, after the provider quote is
     // confirmed, so backing out before then costs nothing.
+    if (method === "bank" && isDemo) {
+      setNotice("Demo: here the live page opens the bank and card checkout. It is skipped so nothing real is charged.");
+      return;
+    }
     if (method === "bank") {
       setBankBalance(quote.net_usdc);
       setBankOpen(true);
@@ -188,10 +194,12 @@ function WithdrawContent() {
       if (failed) {
         setNotice(`${sent} sent, ${failed} could not be sent yet. Try again in a minute.`);
       } else {
-        setNotice(method === "usdc" ? `Sent ${sent} payout${sent === 1 ? "" : "s"}.` : null);
+        setNotice(method === "usdc" ? (isDemo ? "Demo: sent. On a live account the USDC lands in that wallet." : `Sent ${sent} payout${sent === 1 ? "" : "s"}.`) : null);
         // Tokens and P2P need the recipient's own wallet to sign, so they finish in the usual Loofta withdraw screen.
         const next = NEXT_METHOD[method];
-        if (next) {
+        if (next && isDemo) {
+          setNotice("Demo: a live account would now open the Loofta wallet to finish this transfer. Nothing was sent.");
+        } else if (next) {
           navigating = true;
           const home = window.location.pathname.startsWith("/app") ? "/app" : "/";
           // P2P carries the platform, handle and amount, so the cash-out opens already filled in.
@@ -231,6 +239,12 @@ function WithdrawContent() {
             )}
             <p className="truncate text-base font-bold text-white" style={{ fontFamily: SORA }}>{brand ? `${brand.name} payouts` : "Your payouts"}</p>
           </div>
+
+          {isDemo && (
+            <p className="mt-4 rounded-xl border border-[#FF6A1F]/30 bg-[#FF6A1F]/10 px-4 py-3 text-sm leading-relaxed text-[#FFD2B8]">
+              Demo. This is the real withdrawal page with a sample prize. Sign in with any email. Nothing real is paid or charged.
+            </p>
+          )}
 
           {!orgId && <p className="mt-5 text-base text-[#C8C6D0]">This page needs the link from the email {name} sent you.</p>}
           {error && <p className="mt-5 rounded-xl border border-white/10 bg-white/[0.04] p-4 text-base text-[#C8C6D0]">{error}</p>}

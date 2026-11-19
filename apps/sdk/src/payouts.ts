@@ -135,6 +135,8 @@ function mapPartnerBatch(d: any): PartnerBatch {
     itemCount: d.item_count,
     totalAmount: Number(d.total_amount),
     approveUrl: d.approve_url,
+    scheduledFor: d.scheduled_for ?? null,
+    scheduledError: d.scheduled_error ?? null,
     items: (d.items ?? []).map((i: any) => ({
       rowIndex: i.row_index,
       email: i.recipient_identifier,
@@ -161,6 +163,7 @@ export class PartnerApi {
     const d = await this.http.request<unknown>("POST", "/partner-api/batches", {
       idempotency_key: params.idempotencyKey,
       label: params.label,
+      scheduled_for: params.scheduledFor === undefined ? undefined : new Date(params.scheduledFor).toISOString(),
       rows: params.rows.map((r) => ({
         recipient_type: "email",
         recipient_identifier: r.email,
@@ -175,6 +178,31 @@ export class PartnerApi {
   /** Where a batch stands and what happened to each payout. */
   async getBatch(batchId: string): Promise<PartnerBatch> {
     return mapPartnerBatch(await this.http.request<unknown>("GET", `/partner-api/batches/${encodeURIComponent(batchId)}`));
+  }
+
+  /** Your most recent batches, newest first (items are not included, use getBatch for those). */
+  async listBatches(params: { limit?: number } = {}): Promise<PartnerBatch[]> {
+    const q = params.limit ? `?limit=${encodeURIComponent(String(params.limit))}` : "";
+    const d = await this.http.request<{ batches: unknown[] }>("GET", `/partner-api/batches${q}`);
+    return (d.batches ?? []).map(mapPartnerBatch);
+  }
+
+  /**
+   * Calls off a batch that is still waiting for approval, or approved and not yet prepared. Once payouts exist
+   * (awaiting funding or later) it is refused: those are funded or left to lapse from the portal.
+   */
+  async cancelBatch(batchId: string): Promise<PartnerBatch> {
+    return mapPartnerBatch(await this.http.request<unknown>("POST", `/partner-api/batches/${encodeURIComponent(batchId)}/cancel`, {}));
+  }
+
+  /**
+   * Sets (or clears with null) the https URL that receives signed payout and batch events, and returns the
+   * secret to pass to `verifyWebhook`. Events: payout.funded, payout.claimed, payout.withdrawn, batch.created,
+   * batch.approved, batch.ready_to_fund, batch.executed, batch.cancelled, batch.schedule_failed.
+   */
+  async setWebhook(url: string | null): Promise<{ url: string | null; secret: string }> {
+    const d = await this.http.request<{ url: string | null; secret: string }>("POST", "/partner-api/webhook", { url });
+    return { url: d.url ?? null, secret: d.secret };
   }
 }
 
@@ -220,7 +248,7 @@ export class WebhooksApi {
  * X-Loofta-Signature header, and the secret from `webhooks.set`. Returns the parsed event, or
  * throws if the signature is wrong.
  */
-export function verifyWebhook(rawBody: string | Buffer, signatureHeader: string | null | undefined, secret: string): PayoutWebhookEvent {
+export function verifyWebhook<T = PayoutWebhookEvent>(rawBody: string | Buffer, signatureHeader: string | null | undefined, secret: string): T {
   const body = typeof rawBody === "string" ? rawBody : rawBody.toString("utf8");
   const expected = `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
   const given = signatureHeader ?? "";

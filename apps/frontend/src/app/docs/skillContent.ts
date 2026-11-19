@@ -30,7 +30,7 @@ clicks "Buy now" (server-side, from your own backend); never create one link onc
 same URL across multiple purchases, or every buyer lands on the same payment record.
 
 \`\`\`bash
-curl -X POST https://api.loofta.xyz/payment-links \\
+curl -X POST https://api.loofta.com/payment-links \\
   -H "Authorization: Bearer $LOOFTA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -80,7 +80,7 @@ step 2 — that response is the only moment you'll ever see it. Use that saved v
 Poll (no public endpoint needed on your side):
 
 \`\`\`bash
-curl https://api.loofta.xyz/payment-links/aB3xK9pQ -H "Authorization: Bearer $LOOFTA_API_KEY"
+curl https://api.loofta.com/payment-links/aB3xK9pQ -H "Authorization: Bearer $LOOFTA_API_KEY"
 # -> { "short_id": "...", "status": "OPEN" | "PRIVATE_TRANSFER_PENDING" | "SUCCESS" | ...,
 #      "paid": true | false, "amount": 25, "paid_at": null | "..." }
 \`\`\`
@@ -154,7 +154,7 @@ Self-custody: it returns an **unsigned** transaction, never moves funds itself. 
 own \`sender_wallet\` can authorize it, by signing that transaction and broadcasting it.
 
 \`\`\`bash
-curl -X POST https://api.loofta.xyz/payouts \\
+curl -X POST https://api.loofta.com/payouts \\
   -H "Authorization: Bearer $LOOFTA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -229,7 +229,7 @@ in with the same email/handle it was sent to.
 Pass \`funding_source\` instead of \`sender_wallet\` to skip the Solana transaction entirely:
 
 \`\`\`bash
-curl -X POST https://api.loofta.xyz/payouts \\
+curl -X POST https://api.loofta.com/payouts \\
   -H "Authorization: Bearer $LOOFTA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -345,7 +345,7 @@ const batch = await loofta.partner.createBatch({
 // batch.approveUrl is where the admin approves and pays it
 \`\`\`
 
-Raw HTTP: \`POST https://api.loofta.xyz/partner-api/batches\` with \`Authorization: Bearer $LOOFTA_API_KEY\` and
+Raw HTTP: \`POST https://api.loofta.com/partner-api/batches\` with \`Authorization: Bearer $LOOFTA_API_KEY\` and
 \`{ idempotency_key, label?, rows: [{ recipient_type: "email", recipient_identifier, amount, external_ref?, message? }] }\`.
 
 Rules to respect:
@@ -369,7 +369,30 @@ const b = await loofta.partner.getBatch(batchId);
 // b.items[i].withdrawn is true once that person withdrew
 \`\`\`
 
-Poll this from your own admin screen. There are no webhooks for these batches yet, so do not wait for one.
+Poll this from your own admin screen, or use webhooks (below).
+
+## 4b. Schedule a batch (optional)
+
+\`\`\`ts
+await loofta.partner.createBatch({ idempotencyKey, rows, scheduledFor: new Date("2026-12-01T09:00:00Z") });
+\`\`\`
+
+\`scheduledFor\` is 5 minutes to 90 days ahead. The batch is still approved by a person first. At the time, Loofta
+creates the payouts and asks the company wallet's signers to fund them. A schedule NEVER sends money by itself,
+so do not tell the user it will pay automatically. If the run fails, \`batch.scheduledError\` says why.
+
+Also: \`loofta.partner.listBatches({ limit })\` and \`loofta.partner.cancelBatch(id)\` (only before payouts exist).
+
+## 4c. Webhooks (optional)
+
+\`\`\`ts
+const { secret } = await loofta.partner.setWebhook("https://yourapp.com/loofta-webhook"); // store as LOOFTA_WEBHOOK_SECRET
+\`\`\`
+
+Events: batch.created, batch.approved, batch.ready_to_fund, batch.executed, batch.cancelled, batch.schedule_failed,
+payout.funded, payout.claimed, payout.withdrawn (carries partner_fee_usdc, net_usdc, tx_hash). Verify each one with
+\`verifyWebhook(rawBody, req.headers.get("x-loofta-signature"), secret)\` using the RAW body, and dedupe on the
+\`X-Loofta-Event-Id\` header because events can repeat.
 
 ## 5. Show users their earnings (optional)
 

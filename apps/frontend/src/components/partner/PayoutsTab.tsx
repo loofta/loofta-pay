@@ -27,8 +27,22 @@ type Batch = {
   rows_hash: string | null;
   created_by_user_id: string | null;
   created_at: string;
+  scheduled_for?: string | null;
+  scheduled_run_at?: string | null;
+  scheduled_error?: string | null;
   items?: Item[];
 };
+
+const whenFmt = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+/** A scheduled batch that has not come due yet waits; one whose run failed needs a person. */
+function displayStatus(b: Batch): { label: string; tone: "grey" | "blue" | "amber" | "green" | "red" } {
+  if (b.status === "approved" && b.scheduled_for && !b.scheduled_run_at && new Date(b.scheduled_for).getTime() > Date.now()) {
+    return { label: `Scheduled ${whenFmt(b.scheduled_for)}`, tone: "blue" };
+  }
+  if (b.status === "approved" && b.scheduled_error) return { label: "Needs you", tone: "amber" };
+  return STATUS[b.status] ?? { label: b.status, tone: "grey" };
+}
 
 /** Batches that still need someone to do something, shown before finished ones. */
 const ACTIONABLE = new Set(["pending_approval", "approved", "awaiting_funding"]);
@@ -96,7 +110,7 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
   };
 
   /** Saves the rows as a draft batch. Returns true once saved, so the builder can clear itself. */
-  const createDraft = async (rows: DraftRow[], label: string): Promise<boolean> => {
+  const createDraft = async (rows: DraftRow[], label: string, scheduledFor?: string): Promise<boolean> => {
     let saved = false;
     await guard("create", async () => {
       if (!rows.length) throw new Error("Add at least one payout.");
@@ -105,11 +119,18 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
         post({
           idempotency_key: idemKey,
           label: label || undefined,
+          ...(scheduledFor ? { scheduled_for: scheduledFor } : {}),
           rows: rows.map((r) => ({ recipient_type: r.type, recipient_identifier: r.identifier, amount: r.amount, ...(r.message ? { message: r.message } : {}) })),
         }),
       );
       setIdemKey(crypto.randomUUID());
-      setOk(b.status === "pending_approval" ? "Saved. A second member needs to approve it before it can be funded." : "Saved and ready to fund.");
+      setOk(
+        b.status === "pending_approval"
+          ? "Saved. A second member needs to approve it before it can be funded."
+          : scheduledFor
+            ? `Saved. We will prepare it on ${whenFmt(scheduledFor)} and ask your signers to approve the funding.`
+            : "Saved and ready to fund.",
+      );
       setOpen(await call<Batch>(`${base}/batches/${b.id}`));
       saved = true;
       setCreating(false);
@@ -230,7 +251,7 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
         <Section
           title={open.label || "Batch"}
           desc={`${open.item_count} payouts · ${usd(open.total_amount)}`}
-          right={<Pill tone={STATUS[open.status]?.tone ?? "grey"} dot>{STATUS[open.status]?.label ?? open.status}</Pill>}
+          right={<Pill tone={displayStatus(open).tone} dot>{displayStatus(open).label}</Pill>}
         >
           <Table cols={["Recipient", "Amount", "Status"]} template="minmax(0,1fr) 120px 200px">
             {open.items?.map((i) => (
@@ -241,6 +262,18 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
               </Row>
             ))}
           </Table>
+          {open.status === "approved" && open.scheduled_for && !open.scheduled_run_at && new Date(open.scheduled_for).getTime() > Date.now() && (
+            <div className="mt-5">
+              <Notice kind="info">
+                Scheduled for {whenFmt(open.scheduled_for)}. We prepare it then and ask your signers to approve the funding. Nothing is sent until they do. Cancel it to change plans.
+              </Notice>
+            </div>
+          )}
+          {open.status === "approved" && open.scheduled_error && (
+            <div className="mt-5">
+              <Notice kind="error">The scheduled run could not prepare this batch: {open.scheduled_error} You can still fund it by hand below.</Notice>
+            </div>
+          )}
           <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
             {open.status === "pending_approval" && open.created_by_user_id === myUserId && (
               <span className="mr-auto text-[14px] text-[#C9C9D0]">You created this batch, so another owner or admin has to approve it.</span>
@@ -259,7 +292,10 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
               </Btn>
             )}
             {(open.status === "approved" || open.status === "awaiting_funding") && canCreate && (
-              <Btn onClick={() => fund(open)} disabled={busy !== null || !canPropose}>
+              <Btn
+                onClick={() => fund(open)}
+                disabled={busy !== null || !canPropose || (open.status === "approved" && !!open.scheduled_for && !open.scheduled_run_at && new Date(open.scheduled_for).getTime() > Date.now())}
+              >
                 {busy === "fund" ? "Paying..." : solo ? "Pay now" : "Send for approval"}
               </Btn>
             )}
@@ -283,8 +319,8 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBa
                     <span>{usd(b.total_amount)}</span>
                     <span>{b.item_count}</span>
                     <span>
-                      <Pill tone={STATUS[b.status]?.tone ?? "grey"} dot>
-                        {STATUS[b.status]?.label ?? b.status}
+                      <Pill tone={displayStatus(b).tone} dot>
+                        {displayStatus(b).label}
                       </Pill>
                     </span>
                   </Row>

@@ -3111,6 +3111,13 @@ export class ClaimsService {
             .update({ partner_withdrawn_at: new Date().toISOString() }).eq('id', claimId);
           if (markErr) this.logger.error(`CRITICAL partner payout swept but not marked withdrawn payment=${claimId}: ${markErr.message}`);
         }
+        if (partnerId) {
+          this.recordPartnerPayoutEvent(claimId, 'payout.withdrawn', {
+            partner_fee_usdc: Number(partnerFeeUnits) / 1_000_000,
+            net_usdc: Number(netUnits) / 1_000_000,
+            tx_hash: sig,
+          }).catch((e) => this.logger.warn(`Partner withdrawn event failed for payment ${claimId}: ${(e as Error)?.message}`));
+        }
         if (partnerId && partnerFeeUnits > BigInt(0)) {
           await this.recordPartnerEarning(claimId, partnerId, Number(partnerFeeUnits) / 1_000_000, partnerFeeWallet!, sig, (claim as { is_devnet?: boolean | null }).is_devnet === true);
         }
@@ -3982,13 +3989,25 @@ export class ClaimsService {
    * (one indexed lookup) for every other payment. Deduped by UNIQUE (payment_id, event_type), so
    * the many places that stamp SUCCESS can't produce duplicate events for the partner.
    */
-  private async recordPartnerPayoutEvent(paymentId: string, eventType: 'payout.funded' | 'payout.claimed'): Promise<void> {
+  private async recordPartnerPayoutEvent(
+    paymentId: string,
+    eventType: 'payout.funded' | 'payout.claimed' | 'payout.withdrawn',
+    extra: Record<string, unknown> = {},
+  ): Promise<void> {
     const { data: item } = await this.supabaseService.payoutBatchItems
-      .select('batch_id, row_index, external_ref, amount, payout_batches!inner(integrator_id)')
+      .select('batch_id, row_index, external_ref, amount, payout_batches!inner(integrator_id, partner_id)')
       .eq('payment_id', paymentId)
       .maybeSingle();
     if (!item) return;
-    const integratorId = (item as unknown as { payout_batches: { integrator_id: string } }).payout_batches.integrator_id;
+    const owner = (item as unknown as { payout_batches: { integrator_id: string | null; partner_id: string | null } }).payout_batches;
+    // A batch made in the partner portal belongs to the partner, not to an API key: its events go to the
+    // partner's own integrator account (the one that holds the webhook URL).
+    let integratorId = owner.integrator_id;
+    if (!integratorId && owner.partner_id) {
+      const { data: partner } = await this.supabaseService.partners.select('integrator_id').eq('id', owner.partner_id).maybeSingle();
+      integratorId = (partner as { integrator_id?: string | null } | null)?.integrator_id ?? null;
+    }
+    if (!integratorId) return;
     await this.supabaseService.payoutWebhookEvents.upsert(
       {
         integrator_id: integratorId,
@@ -4001,6 +4020,7 @@ export class ClaimsService {
           row_index: item.row_index,
           external_ref: item.external_ref ?? null,
           amount: Number(item.amount),
+          ...extra,
         },
       },
       { onConflict: 'payment_id,event_type', ignoreDuplicates: true },

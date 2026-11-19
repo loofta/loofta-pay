@@ -83,7 +83,7 @@ export interface LooftaPayClientOptions {
    *  (via the resource server's facilitator) a real on-chain payment itself. Accepts a raw
    *  64-byte secret key, a base58-encoded secret key string, or an @solana/web3.js Keypair. */
   signer?: Uint8Array | string | { secretKey: Uint8Array };
-  /** Defaults to https://api.loofta.xyz */
+  /** Defaults to https://api.loofta.com */
   baseUrl?: string;
   /** Solana RPC used by payouts.sendBatch. Defaults to the public mainnet RPC; use your own in production. */
   rpcUrl?: string;
@@ -164,12 +164,35 @@ export interface WebhookConfig {
 }
 
 export interface PayoutWebhookEvent {
-  event: "payout.funded" | "payout.claimed";
+  /**
+   * payout.funded: the money reached the payout. payout.claimed: the recipient opened it.
+   * payout.withdrawn: the recipient cashed out, and your fee was collected (partner accounts only).
+   */
+  event: "payout.funded" | "payout.claimed" | "payout.withdrawn";
   payment_id: string;
   batch_id: string;
   row_index: number;
   external_ref: string | null;
   amount: number;
+  /** payout.withdrawn only: your fee on this payout, USDC. */
+  partner_fee_usdc?: number;
+  /** payout.withdrawn only: what the recipient received, USDC. */
+  net_usdc?: number;
+  /** payout.withdrawn only: the on-chain transaction. */
+  tx_hash?: string;
+}
+
+/** Batch-level events for partner accounts. Use `verifyWebhook<BatchWebhookEvent>(...)`. */
+export interface BatchWebhookEvent {
+  event: "batch.created" | "batch.approved" | "batch.ready_to_fund" | "batch.executed" | "batch.cancelled" | "batch.schedule_failed";
+  batch_id: string;
+  total_amount?: number;
+  item_count?: number;
+  failed_count?: number;
+  /** ISO time the batch was scheduled to run, if it was. */
+  scheduled_for?: string | null;
+  /** batch.schedule_failed only. */
+  error?: string;
 }
 
 /** One person to pay from your partner account. Partner payouts go to email addresses. */
@@ -189,6 +212,12 @@ export interface CreatePartnerBatchParams {
   label?: string;
   /** 1 to 100 rows. */
   rows: PartnerPayoutRow[];
+  /**
+   * Run the batch later: a Date, or an ISO time between 5 minutes and 90 days from now. When it is due and the
+   * batch is approved, Loofta prepares the payouts and asks your company wallet's signers to fund them.
+   * Leave out to run it as soon as it is approved.
+   */
+  scheduledFor?: Date | string;
 }
 
 export interface PartnerBatch {
@@ -200,6 +229,10 @@ export interface PartnerBatch {
   totalAmount: number;
   /** Send your admin here. Your team approves the batch and pays it from the company wallet. */
   approveUrl: string;
+  /** ISO time this batch is set to run, or null. */
+  scheduledFor: string | null;
+  /** Set when the scheduled run could not prepare the batch. Fund it by hand from the portal, or cancel it. */
+  scheduledError: string | null;
   items: Array<{
     rowIndex: number;
     email: string;

@@ -12,6 +12,7 @@ import { tokenAccountExists } from '@/common/token-account-exists';
 import { SolanaSponsorService } from '@/modules/claims/solana-sponsor.service';
 import { CreatePartnerDto, RecipientInputDto, UpdatePartnerDto, UpdatePartnerSettingsDto } from './dto/partner.dto';
 import { MAX_PARTNER_FEE_SHARE, computePartnerFeeUsdc } from './partner-fee';
+import { DEMO_ORG_ID, DEMO_PARTNER } from './partner-demo';
 import { PartnerPermission, PartnerRole, can, canAssignRole, canModifyMember } from './partner-roles';
 
 export interface Partner {
@@ -200,6 +201,7 @@ export class PartnersService {
   }
 
   async findPublicByOrgId(orgId: string): Promise<PublicPartner> {
+    if (orgId === DEMO_ORG_ID) return DEMO_PARTNER;
     const { data } = await this.supabase.partners.select(PUBLIC_COLUMNS).eq('org_id', orgId).eq('status', 'active').maybeSingle();
     if (!data) throw new NotFoundException('Partner not found.');
     return data as unknown as PublicPartner;

@@ -5,6 +5,8 @@ import { SupabaseService } from '@/database/supabase.service';
 import { ClaimsService, runWithPartnerBatchAllowance } from '@/modules/claims/claims.service';
 import { RedisService } from '@/redis/redis.service';
 import { isValidSolanaAddress } from '@/common/solana-address';
+import { EmailService } from '@/modules/email/email.service';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { Partner, PartnersService } from './partners.service';
 import { ApproveBatchDto, ConfirmBatchDto, CreatePartnerBatchDto, PrepareBatchDto } from './dto/partner-batch.dto';
 
@@ -22,6 +24,9 @@ type BatchRow = {
   approved_by_user_id: string | null;
   approved_at: string | null;
   sender_wallet: string | null;
+  scheduled_for: string | null;
+  scheduled_run_at: string | null;
+  scheduled_error: string | null;
   created_at: string;
 };
 
@@ -40,7 +45,7 @@ type ItemRow = {
 };
 
 const BATCH_COLUMNS =
-  'id, partner_id, status, idempotency_key, label, total_amount, item_count, failed_count, rows_hash, created_by_user_id, approved_by_user_id, approved_at, sender_wallet, created_at';
+  'id, partner_id, status, idempotency_key, label, total_amount, item_count, failed_count, rows_hash, created_by_user_id, approved_by_user_id, approved_at, sender_wallet, scheduled_for, scheduled_run_at, scheduled_error, created_at';
 const ITEM_COLUMNS = 'id, row_index, recipient_type, recipient_identifier, amount, external_ref, message, status, error, payment_id, funding_tx';
 
 /** Hash of exactly what an approver reviewed. Identifier case and amount precision are normalised. */
@@ -73,7 +78,40 @@ export class PartnerPayoutsService {
     private readonly claims: ClaimsService,
     private readonly redis: RedisService,
     private readonly config: ConfigService,
+    private readonly email: EmailService,
   ) {}
+
+  // ------------------------------------------------------------------ events
+
+  /**
+   * Queues a batch-level webhook event for the partner's integrator account (it holds the webhook URL).
+   * Never throws: a missed event must not block the batch. One row per (batch, event).
+   */
+  private async emitBatchEvent(partner: Partner, batchId: string, eventType: string, extra: Record<string, unknown> = {}): Promise<void> {
+    if (!partner.integrator_id) return;
+    try {
+      const { error } = await this.supabase.payoutWebhookEvents.insert({
+        integrator_id: partner.integrator_id,
+        batch_id: batchId,
+        payment_id: null,
+        event_type: eventType,
+        payload: { event: eventType, batch_id: batchId, ...extra },
+      });
+      if (error && error.code !== '23505') this.logger.warn(`Partner event ${eventType} for batch ${batchId} not queued: ${error.message}`);
+    } catch (e) {
+      this.logger.warn(`Partner event ${eventType} for batch ${batchId} failed: ${(e as Error).message}`);
+    }
+  }
+
+  /** The time a batch should run, or null. Between 5 minutes and 90 days ahead. */
+  private parseSchedule(value: string | undefined): string | null {
+    if (!value) return null;
+    const at = new Date(value).getTime();
+    if (!Number.isFinite(at)) throw new BadRequestException('scheduled_for is not a valid date.');
+    if (at < Date.now() + 5 * 60_000) throw new BadRequestException('scheduled_for must be at least 5 minutes from now.');
+    if (at > Date.now() + 90 * 24 * 3_600_000) throw new BadRequestException('scheduled_for can be at most 90 days from now.');
+    return new Date(at).toISOString();
+  }
 
   /** Optional hard caps (USD), enforced when a batch is drafted and again when it is prepared. Never at withdrawal. */
   private caps() {
@@ -139,6 +177,7 @@ export class PartnerPayoutsService {
       .maybeSingle();
     if (existing) return this.view(partner.id, existing.id);
 
+    const scheduledFor = this.parseSchedule(dto.scheduled_for);
     const rows = dto.rows.map((r) => ({
       type: r.recipient_type,
       identifier: r.recipient_identifier.trim(),
@@ -166,6 +205,7 @@ export class PartnerPayoutsService {
         total_amount: total,
         status: needsApproval ? 'pending_approval' : 'approved',
         rows_hash: rowsHash,
+        scheduled_for: scheduledFor,
         created_by_user_id: userId,
         ...(needsApproval || !userId ? {} : { approved_by_user_id: userId, approved_at: new Date().toISOString() }),
       })
@@ -196,7 +236,9 @@ export class PartnerPayoutsService {
       throw new BadRequestException('Could not save the batch rows.');
     }
 
-    await this.partners.audit(partner.id, userId, 'batch.created', { type: 'batch', id: batch.id }, { total, rows: rows.length, needsApproval, ...(userId ? {} : { via: 'api' }) });
+    await this.partners.audit(partner.id, userId, 'batch.created', { type: 'batch', id: batch.id }, { total, rows: rows.length, needsApproval, ...(scheduledFor ? { scheduledFor } : {}), ...(userId ? {} : { via: 'api' }) });
+    await this.emitBatchEvent(partner, batch.id, 'batch.created', { status: needsApproval ? 'pending_approval' : 'approved', total_amount: total, item_count: rows.length, scheduled_for: scheduledFor });
+    if (!needsApproval) await this.emitBatchEvent(partner, batch.id, 'batch.approved', { total_amount: total, scheduled_for: scheduledFor });
     return this.view(partner.id, batch.id);
   }
 
@@ -224,6 +266,7 @@ export class PartnerPayoutsService {
     if (!won?.length) throw new ConflictException('This batch was already handled.');
 
     await this.partners.audit(partner.id, userId, 'batch.approved', { type: 'batch', id: batchId }, { rows_hash: batch.rows_hash });
+    await this.emitBatchEvent(partner, batchId, 'batch.approved', { total_amount: Number(batch.total_amount), scheduled_for: batch.scheduled_for });
     return this.view(partner.id, batchId);
   }
 
@@ -241,12 +284,13 @@ export class PartnerPayoutsService {
       .select('id');
     if (!won?.length) throw new ConflictException('This batch can no longer be cancelled.');
     await this.partners.audit(partner.id, userId, 'batch.cancelled', { type: 'batch', id: batchId });
+    await this.emitBatchEvent(partner, batchId, 'batch.cancelled');
     return this.view(partner.id, batchId);
   }
 
   // ----------------------------------------------------------------- prepare
 
-  async prepare(orgId: string, userId: string, batchId: string, dto: PrepareBatchDto) {
+  async prepare(orgId: string, userId: string, batchId: string, dto: PrepareBatchDto, opts: { scheduled?: boolean } = {}) {
     const { partner, member } = await this.partners.requireMembership(orgId, userId, 'payout.create');
     // Payouts are funded from the partner's company wallet (their own multisig). A personal wallet is
     // only a fallback for deployments that explicitly allow it.
@@ -260,9 +304,14 @@ export class PartnerPayoutsService {
     await this.partners.adoptFundingWalletAsFeeWallet(partner, member.role, userId, wallet);
 
     // One prepare at a time per batch: two concurrent runs would each create a burner per row.
+    let firstPrepare = false;
     const result = await this.redis.withLock(`partner-batch-prepare:${batchId}`, async () => {
       let batch = await this.getOwnedBatch(partner.id, batchId);
       if (!['approved', 'awaiting_funding'].includes(batch.status)) throw new ConflictException(`This batch is ${batch.status.replace('_', ' ')}.`);
+      // A scheduled batch waits for its time. Cancel it to change plans; it cannot be run early by accident.
+      if (!opts.scheduled && batch.status === 'approved' && batch.scheduled_for && new Date(batch.scheduled_for).getTime() > Date.now()) {
+        throw new ConflictException(`This batch is scheduled for ${batch.scheduled_for}. It is prepared automatically then.`);
+      }
       if (batch.sender_wallet && batch.sender_wallet !== wallet) {
         throw new ConflictException('This batch was prepared for a different wallet.');
       }
@@ -280,6 +329,7 @@ export class PartnerPayoutsService {
           .eq('status', 'approved')
           .select('id');
         if (!won?.length) throw new ConflictException('This batch was already prepared.');
+        firstPrepare = true;
       }
 
       const queued = items.filter((i) => i.status === 'queued');
@@ -323,8 +373,79 @@ export class PartnerPayoutsService {
     }, 120_000);
 
     if (!result) throw new ConflictException('This batch is being prepared by someone else. Try again in a moment.');
-    await this.partners.audit(partner.id, userId, 'batch.prepared', { type: 'batch', id: batchId }, { wallet });
+    await this.partners.audit(partner.id, userId, 'batch.prepared', { type: 'batch', id: batchId }, { wallet, ...(opts.scheduled ? { scheduled: true } : {}) });
+    if (firstPrepare) await this.announceReady(partner, batchId, !!opts.scheduled);
     return result;
+  }
+
+  /** Tells the partner's server (webhook) and its owners and admins (email) that a batch now waits for the signers. */
+  private async announceReady(partner: Partner, batchId: string, scheduled: boolean): Promise<void> {
+    const batch = await this.getOwnedBatch(partner.id, batchId);
+    await this.emitBatchEvent(partner, batchId, 'batch.ready_to_fund', {
+      total_amount: Number(batch.total_amount), item_count: batch.item_count, failed_count: batch.failed_count, scheduled,
+    });
+    try {
+      const { data: members } = await this.supabase.partnerMembers
+        .select('email, role, status').eq('partner_id', partner.id).in('role', ['owner', 'admin']).eq('status', 'active');
+      const base = (this.config.get<string>('PAY_APP_URL') || 'https://pay.loofta.com').replace(/\/$/, '');
+      const url = `${base}/app/partner?org=${encodeURIComponent(partner.org_id)}&tab=payouts&batch=${encodeURIComponent(batchId)}`;
+      const to = new Set<string>();
+      for (const m of members ?? []) if (m.email) to.add((m.email as string).trim().toLowerCase());
+      if (partner.contact_email) to.add(partner.contact_email.trim().toLowerCase());
+      for (const recipientEmail of to) {
+        await this.email.sendPartnerBatchReadyEmail({
+          recipientEmail, partnerName: partner.name, label: batch.label, total: Number(batch.total_amount),
+          count: batch.item_count, url, scheduled,
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`Batch ${batchId} ready emails failed: ${(e as Error).message}`);
+    }
+  }
+
+  // --------------------------------------------------------------- scheduling
+
+  /**
+   * Every minute: runs approved batches whose time has come. "Run" means prepare: the payouts are created and
+   * the company wallet's signers are asked to approve the funding. Loofta holds no keys, so the money itself
+   * only moves when they sign. Acts as the person who approved the batch, so it has exactly their permissions.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async runScheduledBatches(): Promise<void> {
+    if (process.env.NODE_ENV !== 'production') return;
+    const { data: due } = await this.supabase.payoutBatches
+      .select('id, partner_id, approved_by_user_id, created_by_user_id')
+      .eq('status', 'approved')
+      .is('scheduled_run_at', null)
+      .not('scheduled_for', 'is', null)
+      .lte('scheduled_for', new Date().toISOString())
+      .order('scheduled_for', { ascending: true })
+      .limit(10);
+    for (const b of due ?? []) await this.runScheduledBatch(b as { id: string; partner_id: string; approved_by_user_id: string | null; created_by_user_id: string | null });
+  }
+
+  async runScheduledBatch(b: { id: string; partner_id: string; approved_by_user_id: string | null; created_by_user_id: string | null }): Promise<'ran' | 'skipped' | 'failed'> {
+    // Claim it first, so two instances (or two ticks) can never run the same batch twice.
+    const { data: won } = await this.supabase.payoutBatches
+      .update({ scheduled_run_at: new Date().toISOString() })
+      .eq('id', b.id).eq('status', 'approved').is('scheduled_run_at', null).select('id');
+    if (!won?.length) return 'skipped';
+
+    const actor = b.approved_by_user_id ?? b.created_by_user_id;
+    const { data: partnerRow } = await this.supabase.partners.select('org_id, status').eq('id', b.partner_id).maybeSingle();
+    try {
+      if (!actor || !partnerRow) throw new Error('No approver on record.');
+      if ((partnerRow as { status: string }).status !== 'active') throw new Error('The partner account is not active.');
+      await this.prepare((partnerRow as { org_id: string }).org_id, actor, b.id, {}, { scheduled: true });
+      return 'ran';
+    } catch (e) {
+      const message = (e as Error).message.slice(0, 300);
+      this.logger.warn(`Scheduled batch ${b.id} could not be prepared: ${message}`);
+      await this.supabase.payoutBatches.update({ scheduled_error: message }).eq('id', b.id);
+      const { data: full } = await this.supabase.partners.select('*').eq('id', b.partner_id).maybeSingle();
+      if (full) await this.emitBatchEvent(full as Partner, b.id, 'batch.schedule_failed', { error: message });
+      return 'failed';
+    }
   }
 
   /** Creates one burner-routed, partner-tagged payout. A row that fails is recorded and skipped, never blocking the others. */
@@ -424,6 +545,7 @@ export class PartnerPayoutsService {
     if (!stillOpen) {
       await this.supabase.payoutBatches.update({ status: 'executed' }).eq('id', batchId).eq('partner_id', partner.id).eq('status', 'awaiting_funding');
       await this.partners.audit(partner.id, userId, 'batch.funded', { type: 'batch', id: batchId });
+      await this.emitBatchEvent(partner, batchId, 'batch.executed', { total_amount: Number(batch.total_amount), item_count: batch.item_count });
     }
     return this.view(partner.id, batchId);
   }
@@ -611,6 +733,35 @@ export class PartnerPayoutsService {
       .order('created_at', { ascending: false })
       .limit(50);
     return data ?? [];
+  }
+
+  async listViaApi(integratorId: string, limit = 25) {
+    const partner = await this.partnerForIntegrator(integratorId);
+    const { data } = await this.supabase.payoutBatches
+      .select(BATCH_COLUMNS)
+      .eq('partner_id', partner.id)
+      .order('created_at', { ascending: false })
+      .limit(Math.min(Math.max(Math.floor(limit) || 25, 1), 100));
+    return data ?? [];
+  }
+
+  /**
+   * An API key may call off a batch that has not been prepared yet. Cancelling can only ever stop money from
+   * moving, so it needs no approval. Once payouts exist (awaiting funding or later) it is refused.
+   */
+  async cancelViaApi(integratorId: string, batchId: string) {
+    const partner = await this.partnerForIntegrator(integratorId);
+    await this.getOwnedBatch(partner.id, batchId);
+    const { data: won } = await this.supabase.payoutBatches
+      .update({ status: 'cancelled' })
+      .eq('id', batchId)
+      .eq('partner_id', partner.id)
+      .in('status', ['pending_approval', 'approved'])
+      .select('id');
+    if (!won?.length) throw new ConflictException('This batch can no longer be cancelled.');
+    await this.partners.audit(partner.id, null, 'batch.cancelled', { type: 'batch', id: batchId }, { via: 'api' });
+    await this.emitBatchEvent(partner, batchId, 'batch.cancelled');
+    return this.view(partner.id, batchId);
   }
 
   async get(orgId: string, userId: string, batchId: string) {

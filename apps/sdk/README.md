@@ -85,6 +85,22 @@ const status = await loofta.partner.getBatch(batch.batchId); // pending_approval
 
 Rows are email addresses, 1 to 100 per batch, $1 to $10,000 each.
 
+**Schedule it.** Add `scheduledFor: new Date("2026-12-01T09:00:00Z")` (5 minutes to 90 days ahead). Your team still
+approves the batch. At that time Loofta creates the payouts and asks your company wallet's signers to fund them. A
+schedule never sends money by itself.
+
+**List, cancel, and get told.**
+
+```ts
+await loofta.partner.listBatches({ limit: 10 });
+await loofta.partner.cancelBatch(batchId); // only before payouts exist
+
+const { secret } = await loofta.partner.setWebhook("https://yourapp.com/loofta-webhook");
+// events: batch.created, batch.approved, batch.ready_to_fund, batch.executed, batch.cancelled,
+// batch.schedule_failed, payout.funded, payout.claimed, payout.withdrawn (with your fee)
+const event = verifyWebhook<BatchWebhookEvent | PayoutWebhookEvent>(rawBody, signatureHeader, secret);
+```
+
 ## Bulk payouts from your own wallet (bulk, portal, webhooks)
 
 For platforms that pay from a wallet they sign with themselves. Needs an `apiKey`.

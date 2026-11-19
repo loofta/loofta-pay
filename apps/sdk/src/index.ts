@@ -17,6 +17,7 @@ export type {
   PayoutBatchStatus,
   SentPayoutBatch,
   PartnerBatch,
+  BatchWebhookEvent,
   PartnerPayoutRow,
   CreatePartnerBatchParams,
   PortalToken,

@@ -94,3 +94,11 @@ export class SetApiAccessDto {
   @IsBoolean()
   payout_batches: boolean;
 }
+
+export class SetWebhookDto {
+  @ApiProperty({ description: 'An https URL that receives signed payout and batch events, or null to turn webhooks off.', nullable: true })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  url: string | null;
+}

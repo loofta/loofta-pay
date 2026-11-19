@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '@/database/supabase.service';
 import { IntegratorsService } from '@/modules/integrators/integrators.service';
 import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
+import { PartnerWebhooksService } from '@/modules/payouts/partner-webhooks.service';
 import { PartnersService } from './partners.service';
 
 export const PARTNER_KEY_SCOPES = ['portal:token'];
@@ -21,6 +22,7 @@ export class PartnerKeysService {
     private readonly partners: PartnersService,
     private readonly integrators: IntegratorsService,
     private readonly config: ConfigService,
+    private readonly webhooks: PartnerWebhooksService,
   ) {}
 
   async list(orgId: string, userId: string) {
@@ -50,6 +52,43 @@ export class PartnerKeysService {
     if (error) throw new BadRequestException('Could not save this setting.');
     await this.partners.audit(partner.id, userId, payoutBatches ? 'api_access.batches_enabled' : 'api_access.batches_disabled');
     return { payout_batches: payoutBatches };
+  }
+
+  /** The webhook URL, its signing secret, and how the last events went. Owners and admins only. */
+  async getWebhook(orgId: string, userId: string) {
+    const { partner } = await this.partners.requireMembership(orgId, userId, 'keys.manage');
+    if (!partner.integrator_id) return { url: null, secret: null, recent: [] };
+    const { data: settings } = await this.supabase.partnerSettings.select('webhook_url, webhook_secret').eq('integrator_id', partner.integrator_id).maybeSingle();
+    const { data: recent } = await this.supabase.payoutWebhookEvents
+      .select('id, event_type, status, attempts, last_error, created_at, delivered_at')
+      .eq('integrator_id', partner.integrator_id)
+      .order('created_at', { ascending: false })
+      .limit(15);
+    return {
+      url: (settings?.webhook_url as string | null) ?? null,
+      secret: (settings?.webhook_secret as string | null) ?? null,
+      recent: recent ?? [],
+    };
+  }
+
+  async setWebhook(orgId: string, userId: string, url: string | null) {
+    const { partner } = await this.partners.requireMembership(orgId, userId, 'keys.manage');
+    return this.setWebhookForPartner(partner, url, userId);
+  }
+
+  async setWebhookForIntegrator(integratorId: string, url: string | null) {
+    const { data } = await this.supabase.partners.select('id, integrator_id, status').eq('integrator_id', integratorId).maybeSingle();
+    if (!data || (data as { status: string }).status !== 'active') throw new NotFoundException('Partner not found.');
+    return this.setWebhookForPartner(data as { id: string; integrator_id: string | null }, url, null);
+  }
+
+  /** Used by both the portal and a partner's own API key. The URL is checked to be a public https address. */
+  async setWebhookForPartner(partner: { id: string; integrator_id: string | null }, url: string | null, userId: string | null) {
+    if (!partner.integrator_id) throw new BadRequestException('Create an API key first.');
+    const clean = url?.trim() || null;
+    const out = await this.webhooks.setWebhookUrl(partner.integrator_id, clean);
+    await this.partners.audit(partner.id, userId, clean ? 'webhook.set' : 'webhook.cleared', undefined, clean ? { host: new URL(clean).host } : undefined);
+    return { url: out.webhook_url, secret: out.webhook_secret };
   }
 
   async create(orgId: string, userId: string) {

@@ -158,10 +158,11 @@ function SavedPicker({ base, onAdd }: { base: string; onAdd: (rows: DraftRow[]) 
  * checked before anything is saved, fix or drop the ones with problems, then continue. Nothing is
  * sent or funded from here: it only prepares the rows for the approval flow.
  */
-export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows: DraftRow[], label: string) => Promise<boolean> }) {
+export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows: DraftRow[], label: string, scheduledFor?: string) => Promise<boolean> }) {
   const [source, setSource] = useState<Source>("upload");
   const [rows, setRows] = useState<DraftRow[]>([]);
   const [label, setLabel] = useState("");
+  const [runAt, setRunAt] = useState("");
   const [paste, setPaste] = useState("");
   const [drag, setDrag] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -211,10 +212,12 @@ export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows
       const ok = await onSubmit(
         rows.map((r) => ({ ...r })),
         label.trim(),
+        runAt ? new Date(runAt).toISOString() : undefined,
       );
       if (ok) {
         setRows([]);
         setLabel("");
+        setRunAt("");
         setPaste("");
       }
     } finally {
@@ -347,6 +350,9 @@ export function BatchBuilder({ base, onSubmit }: { base: string; onSubmit: (rows
 
             <Field label="Label" optional>
               <input className={inputCls} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="October creator payouts" maxLength={120} />
+            </Field>
+            <Field label="Run at" optional hint="Leave empty to run it as soon as it is approved. At this time we prepare the payouts and ask your signers to approve the funding. Nothing is sent until they do.">
+              <input type="datetime-local" className={`${inputCls} max-w-xs`} value={runAt} onChange={(e) => setRunAt(e.target.value)} />
             </Field>
             <div className="flex flex-wrap items-center justify-between gap-4">
               <p className="max-w-2xl text-[14.5px] leading-[1.6] text-[#B4B4BC]">

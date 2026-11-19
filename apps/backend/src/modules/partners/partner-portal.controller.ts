@@ -138,7 +138,7 @@ export class PortalController {
       }));
     const sum = (state: 'available' | 'withdrawn') => Math.round(history.filter((h) => h.state === state).reduce((a, h) => a + h.amount, 0) * 100) / 100;
 
-    const base = (this.config.get<string>('PAY_APP_URL') || 'https://pay.loofta.xyz').replace(/\/$/, '');
+    const base = (this.config.get<string>('PAY_APP_URL') || 'https://pay.loofta.com').replace(/\/$/, '');
     return {
       partner: { name: partner.name, logo_url: partner.logo_url, brand_color: partner.brand_color, description: partner.description },
       identity: s.email ?? `${s.platform}:${s.handle}`,

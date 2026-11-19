@@ -4,7 +4,7 @@ import bs58 from "bs58";
 import { PartnerApi, PayoutsApi, PortalApi, WebhooksApi, type Requester } from "./payouts";
 import type { LooftaPayClientOptions, PayHumanParams, PayHumanResult, CreatePaymentLinkParams, CreatePaymentLinkResult, PaymentLinkStatus } from "./types";
 
-const DEFAULT_BASE_URL = "https://api.loofta.xyz";
+const DEFAULT_BASE_URL = "https://api.loofta.com";
 const USDC_DECIMALS = 6;
 
 // Mirrors @x402/svm's exported constants (SOLANA_MAINNET_CAIP2, SOLANA_DEVNET_CAIP2,

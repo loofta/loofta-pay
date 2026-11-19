@@ -26,6 +26,81 @@ function Snippet({ title, code }: { title: string; code: string }) {
   );
 }
 
+type WebhookState = { url: string | null; secret: string | null; recent: Array<{ id: string; event_type: string; status: string; attempts: number; last_error: string | null; created_at: string }> };
+
+/** Where Loofta sends signed events: a batch is ready to fund, a payout is funded, claimed or withdrawn. */
+function WebhookSection({ orgId }: { orgId: string }) {
+  const call = usePartnerApi();
+  const path = `partners/${encodeURIComponent(orgId)}/webhook`;
+  const [state, setState] = useState<WebhookState | null>(null);
+  const [url, setUrl] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    call<WebhookState>(path).then((s) => { setState(s); setUrl(s.url ?? ""); }).catch((e: Error) => setError(e.message));
+  }, [call, path]);
+  useEffect(load, [load]);
+
+  const save = async (next: string | null) => {
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await call(path, post({ url: next }));
+      setSaved(true);
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section
+      title="Webhooks"
+      desc="Get a signed message at your server when a batch is ready to fund, a payout is funded or opened, and when a recipient cashes out (with your fee). Failed deliveries are retried for a day."
+    >
+      {error && <div className="mb-4"><Notice kind="error">{error}</Notice></div>}
+      <div className="flex flex-wrap items-center gap-3">
+        <input
+          className="w-full max-w-xl rounded-[10px] border border-white/10 bg-[#0F0F11] px-3.5 py-[11px] text-[15px] text-[#EDEDEF] placeholder:text-[#85858F] focus:border-[#FF6A1F]/55 focus:outline-none"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://yourapp.com/loofta-webhook"
+          aria-label="Webhook URL"
+        />
+        <Btn disabled={busy || !url.trim()} onClick={() => void save(url.trim())}>Save</Btn>
+        {state?.url && <Btn kind="ghost" disabled={busy} onClick={() => void save(null)}>Turn off</Btn>}
+        {saved && <span className="text-[14px] text-[#9C9CA5]">Saved.</span>}
+      </div>
+      {state?.secret && (
+        <p className="mt-4 text-[14px] text-[#9C9CA5]">
+          Signing secret: <span className="break-all font-mono text-[#C9C9D0]">{state.secret}</span>. Check the <span className="font-mono text-[#C9C9D0]">X-Loofta-Signature</span> header with it before you trust a message.
+        </p>
+      )}
+      {state && state.recent.length > 0 && (
+        <div className="mt-6 overflow-hidden rounded-2xl border border-white/10 bg-[#101012]">
+          <div className="divide-y divide-white/10">
+            {state.recent.map((e) => (
+              <div key={e.id} className="flex flex-wrap items-center justify-between gap-3 px-6 py-3.5 text-[15px]">
+                <span className="font-mono text-[#EDEDEF]">{e.event_type}</span>
+                <span className="text-[#9C9CA5]">
+                  {e.status === "delivered" ? "Delivered" : e.status === "failed" ? `Gave up: ${e.last_error ?? "no answer"}` : e.attempts ? `Retrying: ${e.last_error ?? ""}` : "Queued"}
+                  {" · "}
+                  {new Date(e.created_at).toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
 /** API keys for the partner's own server, and the snippets to show a user's payouts inside the partner's app. */
 export function DevelopersTab({ orgId, myRole }: { orgId: string; myRole: PartnerRole }) {
   const call = usePartnerApi();
@@ -82,6 +157,7 @@ const loofta = new LooftaPayClient({ apiKey: process.env.LOOFTA_API_KEY });
 const batch = await loofta.partner.createBatch({
   idempotencyKey: \`payout-\${cycleId}\`, // the same key never creates a second batch
   label: "November creators",
+  scheduledFor: new Date("2026-12-01T09:00:00Z"), // optional: we prepare it then and ask your signers to fund it
   rows: creators.map((c) => ({ email: c.email, amount: c.owed, externalRef: c.id })),
 });
 
@@ -89,7 +165,10 @@ const batch = await loofta.partner.createBatch({
 redirect(batch.approveUrl);
 
 // Later, to show progress in your own admin:
-const status = await loofta.partner.getBatch(batch.batchId);`;
+const status = await loofta.partner.getBatch(batch.batchId);
+
+// Or get told: signed events when a batch is ready, funded, or a recipient cashes out.
+const { secret } = await loofta.partner.setWebhook("https://yourapp.com/loofta-webhook");`;
 
   const html = `<div id="payouts"></div>
 <script src="https://unpkg.com/@loofta/portal/dist/loofta-portal.global.js"></script>
@@ -193,6 +272,8 @@ const status = await loofta.partner.getBatch(batch.batchId);`;
           <Snippet title="Your server · draft a batch and send your admin to approve it" code={bulk} />
         </Section>
       )}
+
+      {allowed && <WebhookSection orgId={orgId} />}
 
       <Section
         title="Show payouts inside your app"

@@ -8,6 +8,8 @@ import { PartnerWithdrawController } from './partner-withdraw.controller';
 import { PartnerPayoutsService } from './partner-payouts.service';
 import { PartnerBatchesController } from './partner-batches.controller';
 import { IntegratorsModule } from '@/modules/integrators/integrators.module';
+import { EmailModule } from '@/modules/email/email.module';
+import { PayoutsModule } from '@/modules/payouts/payouts.module';
 import { PartnerTreasuryService } from './partner-treasury.service';
 import { PartnerTreasuryController } from './partner-treasury.controller';
 import { PartnerKeysService } from './partner-keys.service';
@@ -16,7 +18,7 @@ import { PartnerApiController } from './partner-api.controller';
 import { PartnerPortalTokenController, PortalController, PortalGuard } from './partner-portal.controller';
 
 @Module({
-  imports: [UsersModule, ClaimsModule, IntegratorsModule],
+  imports: [UsersModule, ClaimsModule, IntegratorsModule, EmailModule, PayoutsModule],
   controllers: [PartnersController, PartnerBatchesController, PartnerTreasuryController, PartnerWithdrawController, PartnerPortalTokenController, PortalController, PartnerApiController],
   providers: [PartnersService, PartnerWithdrawService, PartnerPayoutsService, PartnerTreasuryService, PartnerKeysService, PortalTokenService, PortalGuard],
   exports: [PartnersService],

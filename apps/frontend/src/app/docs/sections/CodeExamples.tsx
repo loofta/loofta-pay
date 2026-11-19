@@ -10,7 +10,7 @@ export function CodeExamples({ onNavigate }: { onNavigate: (slug: string) => voi
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">curl</h2>
       <DocsCodeBlock
-        code={`curl -X POST https://api.loofta.xyz/payment-links \\
+        code={`curl -X POST https://api.loofta.com/payment-links \\
   -H "Authorization: Bearer $LOOFTA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"amount": 25, "message": "Invoice #1042"}'`}

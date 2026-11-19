@@ -29,7 +29,7 @@ function make(over: { partner?: unknown } = {}) {
     payoutBatchItems: chain({ error: null }),
   };
   const partners = { audit: jest.fn() };
-  const svc = new PartnerPayoutsService(supabase as never, partners as never, {} as never, {} as never, { get: () => undefined } as never);
+  const svc = new PartnerPayoutsService(supabase as never, partners as never, {} as never, {} as never, { get: () => undefined } as never, { sendPartnerBatchReadyEmail: jest.fn() } as never);
   jest.spyOn(svc as never, 'view' as never).mockResolvedValue({ id: 'b1' } as never);
   return { svc, inserted, partners };
 }

@@ -13,7 +13,7 @@ export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Request</h2>
       <DocsCodeBlock
         label="POST /payment-links"
-        code={`curl -X POST https://api.loofta.xyz/payment-links \\
+        code={`curl -X POST https://api.loofta.com/payment-links \\
   -H "Authorization: Bearer lft_live_..." \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -99,7 +99,7 @@ export function ReceivePayments({ onNavigate }: { onNavigate: (slug: string) => 
       </p>
       <DocsCodeBlock
         label="GET /payment-links/{short_id}"
-        code={`curl https://api.loofta.xyz/payment-links/aB3xK9pQ \\
+        code={`curl https://api.loofta.com/payment-links/aB3xK9pQ \\
   -H "Authorization: Bearer lft_live_..."
 
 {

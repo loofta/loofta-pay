@@ -9,6 +9,7 @@ import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { isValidSolanaAddress } from '@/common/solana-address';
 import { PartnersService, Partner, PublicPartner } from './partners.service';
 import { allocateFeeUnits, computePartnerFeeUsdc } from './partner-fee';
+import { DEMO_ORG_ID, demoConfirm, demoQuote } from './partner-demo';
 
 const MAX_PAYOUTS_PER_WITHDRAWAL = 50;
 const toUnits = (usd: number) => BigInt(Math.round(usd * 1_000_000));
@@ -148,6 +149,7 @@ export class PartnerWithdrawService {
   }
 
   async quote(orgId: string, userId: string): Promise<WithdrawQuote> {
+    if (orgId === DEMO_ORG_ID) return demoQuote();
     const partner = await this.loadPartner(orgId);
     const c = await this.compute(partner, userId);
     const { data: pub } = await this.supabase.partners
@@ -171,6 +173,11 @@ export class PartnerWithdrawService {
    * shown; if the real fee is higher (the partner changed it in between) nothing is stamped or sent.
    */
   async confirm(orgId: string, userId: string, opts: { maxFeeUsdc: number; destinationAddress?: string }) {
+    if (orgId === DEMO_ORG_ID) {
+      if (!Number.isFinite(opts.maxFeeUsdc) || opts.maxFeeUsdc < 0) throw new BadRequestException('max_fee_usdc is required.');
+      if (opts.destinationAddress && !isValidSolanaAddress(opts.destinationAddress.trim())) throw new BadRequestException('Invalid destination address.');
+      return demoConfirm();
+    }
     const dest = opts.destinationAddress?.trim();
     if (dest && !isValidSolanaAddress(dest)) throw new BadRequestException('Invalid destination address.');
     if (!Number.isFinite(opts.maxFeeUsdc) || opts.maxFeeUsdc < 0) throw new BadRequestException('max_fee_usdc is required.');

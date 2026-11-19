@@ -19,7 +19,7 @@ export function Intro({ onNavigate }: { onNavigate: (slug: string) => void }) {
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Base URL</h2>
       <p className="text-base text-slate-400 mb-6">
-        <code className="text-orange-300">https://api.loofta.xyz</code>
+        <code className="text-orange-300">https://api.loofta.com</code>
       </p>
 
       <div className="rounded-xl border border-white/10 bg-white/5 p-4">

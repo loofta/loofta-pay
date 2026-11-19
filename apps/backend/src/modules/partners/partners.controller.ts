@@ -12,6 +12,7 @@ import {
   ImportRecipientsDto,
   InviteMemberDto,
   SetApiAccessDto,
+  SetWebhookDto,
   UpdatePartnerDto,
   UpdatePartnerSettingsDto,
 } from './dto/partner.dto';
@@ -148,6 +149,19 @@ export class PartnersController {
   @RateLimit(10, 60, 'partners:api-access-set')
   setApiAccess(@PrivyUser() user: Caller, @Param('orgId') orgId: string, @Body() dto: SetApiAccessDto) {
     return this.keys.setApiAccess(orgId, user.id, dto.payout_batches);
+  }
+
+  @Get(':orgId/webhook')
+  @RateLimit(30, 60, 'partners:webhook-get')
+  getWebhook(@PrivyUser() user: Caller, @Param('orgId') orgId: string) {
+    return this.keys.getWebhook(orgId, user.id);
+  }
+
+  @Post(':orgId/webhook')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(10, 60, 'partners:webhook-set')
+  setWebhook(@PrivyUser() user: Caller, @Param('orgId') orgId: string, @Body() dto: SetWebhookDto) {
+    return this.keys.setWebhook(orgId, user.id, dto.url ?? null);
   }
 
   @Delete(':orgId/api-keys/:keyId')

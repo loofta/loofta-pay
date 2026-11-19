@@ -25,11 +25,17 @@ const stored = {
 };
 
 function make() {
-  const payouts = { createDraftViaApi: jest.fn().mockResolvedValue(stored), getViaApi: jest.fn().mockResolvedValue(stored) };
+  const payouts = {
+    createDraftViaApi: jest.fn().mockResolvedValue(stored),
+    getViaApi: jest.fn().mockResolvedValue(stored),
+    cancelViaApi: jest.fn().mockResolvedValue({ ...stored, status: 'cancelled' }),
+    listViaApi: jest.fn().mockResolvedValue([{ ...stored, sender_wallet: 'Wallet111' }]),
+  };
+  const keys = { setWebhookForIntegrator: jest.fn().mockResolvedValue({ url: 'https://x.co/h', secret: 'whsec_1' }) };
   const partners = { orgIdForIntegrator: jest.fn().mockResolvedValue('org_x') };
   const config = { get: (k: string) => (k === 'PAY_APP_URL' ? 'https://pay.example/' : undefined) };
-  const ctl = new PartnerApiController(payouts as never, partners as never, config as never);
-  return { ctl, payouts };
+  const ctl = new PartnerApiController(payouts as never, partners as never, config as never, keys as never);
+  return { ctl, payouts, keys };
 }
 const req = { integrator: { id: 'int1' } } as never;
 
@@ -55,10 +61,38 @@ describe('partner API controller', () => {
     expect(payouts.getViaApi).toHaveBeenCalledWith('int1', 'b1');
   });
 
-  it('demands the batches:write scope on both routes', () => {
-    for (const route of ['create', 'get'] as const) {
+  it('demands the batches:write scope on every route', () => {
+    for (const route of ['create', 'get', 'list', 'cancel', 'setWebhook'] as const) {
       expect(Reflect.getMetadata(REQUIRE_SCOPE_KEY, PartnerApiController.prototype[route])).toBe('batches:write');
     }
+  });
+
+  it('shows when a batch is scheduled', async () => {
+    const { ctl, payouts } = make();
+    payouts.getViaApi.mockResolvedValue({ ...stored, scheduled_for: '2026-12-01T09:00:00Z', scheduled_error: null });
+    const out = await ctl.get('b1', req);
+    expect(out.scheduled_for).toBe('2026-12-01T09:00:00Z');
+  });
+
+  it('lists batches without internal fields', async () => {
+    const { ctl, payouts } = make();
+    const out = await ctl.list('10', req);
+    expect(payouts.listViaApi).toHaveBeenCalledWith('int1', 10);
+    expect(JSON.stringify(out)).not.toContain('Wallet111');
+    expect(out.batches[0].approve_url).toContain('batch=b1');
+  });
+
+  it('cancels only through the key that owns the batch', async () => {
+    const { ctl, payouts } = make();
+    const out = await ctl.cancel('b1', req);
+    expect(payouts.cancelViaApi).toHaveBeenCalledWith('int1', 'b1');
+    expect(out.status).toBe('cancelled');
+  });
+
+  it('sets the webhook for the partner that owns the key', async () => {
+    const { ctl, keys } = make();
+    await ctl.setWebhook({ url: 'https://x.co/h' }, req);
+    expect(keys.setWebhookForIntegrator).toHaveBeenCalledWith('int1', 'https://x.co/h');
   });
 
   it('is behind the integrator guard, so a missing or foreign key is rejected', () => {

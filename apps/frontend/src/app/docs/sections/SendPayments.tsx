@@ -473,7 +473,7 @@ export function SendPayments({ onNavigate }: { onNavigate: (slug: string) => voi
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Request</h2>
       <DocsCodeBlock
         label="POST /payouts"
-        code={`curl -X POST https://api.loofta.xyz/payouts \\
+        code={`curl -X POST https://api.loofta.com/payouts \\
   -H "Authorization: Bearer lft_live_..." \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -611,7 +611,7 @@ const signature = await connection.sendRawTransaction(tx.serialize());`}
       </p>
       <DocsCodeBlock
         label="POST /payouts"
-        code={`curl -X POST https://api.loofta.xyz/payouts \\
+        code={`curl -X POST https://api.loofta.com/payouts \\
   -H "Authorization: Bearer lft_live_..." \\
   -H "Content-Type: application/json" \\
   -d '{

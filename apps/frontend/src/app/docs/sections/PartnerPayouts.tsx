@@ -62,7 +62,7 @@ console.log(batch.approveUrl);`}
       />
       <DocsCodeBlock
         label="Or with curl"
-        code={`curl -X POST https://api.loofta.xyz/partner-api/batches \\
+        code={`curl -X POST https://api.loofta.com/partner-api/batches \\
   -H "Authorization: Bearer $LOOFTA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -101,6 +101,74 @@ console.log(batch.approveUrl);`}
 // batch.status: pending_approval, approved, awaiting_funding, executed, cancelled or rejected
 // batch.items[i].withdrawn: true once that person has withdrawn it`}
       />
+
+      <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Schedule a batch</h2>
+      <p className="text-base text-slate-400 mb-3">
+        Pass <code className="text-orange-300">scheduledFor</code> to run a batch later, between 5 minutes and 90 days
+        ahead. Your team still approves it first. When the time comes, Loofta creates the payouts and asks your company
+        wallet&apos;s signers to approve the funding, and emails your owners and admins. Nothing is sent until they sign.
+        Loofta holds no keys, so a schedule can never spend money on its own.
+      </p>
+      <DocsCodeBlock
+        code={`const batch = await loofta.partner.createBatch({
+  idempotencyKey: "payout-2026-12",
+  label: "December creators",
+  scheduledFor: new Date("2026-12-01T09:00:00Z"),
+  rows,
+});
+// batch.scheduledFor is the run time. If the run could not prepare the batch,
+// batch.scheduledError says why and your admin can fund it by hand.`}
+      />
+
+      <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">List and cancel batches</h2>
+      <DocsCodeBlock
+        code={`const recent = await loofta.partner.listBatches({ limit: 10 });
+
+// Call off a batch that is waiting for approval, or approved and not yet prepared.
+// Once payouts exist (awaiting funding or later) it is refused.
+await loofta.partner.cancelBatch(batchId);`}
+      />
+
+      <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Webhooks</h2>
+      <p className="text-base text-slate-400 mb-3">
+        Get a signed message at your server instead of polling. Failed deliveries are retried for a day.
+      </p>
+      <DocsCodeBlock
+        code={`const { secret } = await loofta.partner.setWebhook("https://yourapp.com/loofta-webhook");
+// keep the secret on your server; pass null to turn webhooks off`}
+      />
+      <ul className="list-disc pl-5 space-y-2 text-base text-slate-400 mb-4">
+        <li><code className="text-orange-300">batch.created</code>, <code className="text-orange-300">batch.approved</code>, <code className="text-orange-300">batch.cancelled</code>: the batch moved.</li>
+        <li><code className="text-orange-300">batch.ready_to_fund</code>: the payouts exist and your signers can fund them. For a scheduled batch this is the run.</li>
+        <li><code className="text-orange-300">batch.executed</code>: every payout in the batch is funded.</li>
+        <li><code className="text-orange-300">batch.schedule_failed</code>: the scheduled run could not prepare the batch. The event carries the reason.</li>
+        <li><code className="text-orange-300">payout.funded</code>, <code className="text-orange-300">payout.claimed</code>: one payout was funded, or opened by its recipient.</li>
+        <li><code className="text-orange-300">payout.withdrawn</code>: the recipient cashed out. It carries <code className="text-orange-300">partner_fee_usdc</code> (your fee), <code className="text-orange-300">net_usdc</code> and the transaction.</li>
+      </ul>
+      <p className="text-base text-slate-400 mb-3">
+        Verify every message with the raw request body and the <code className="text-orange-300">X-Loofta-Signature</code> header
+        before you trust it:
+      </p>
+      <DocsCodeBlock
+        code={`import { verifyWebhook, type BatchWebhookEvent, type PayoutWebhookEvent } from "@loofta/pay-sdk";
+
+export async function POST(req: Request) {
+  const raw = await req.text(); // the raw body, not parsed JSON
+  const event = verifyWebhook<BatchWebhookEvent | PayoutWebhookEvent>(
+    raw,
+    req.headers.get("x-loofta-signature"),
+    process.env.LOOFTA_WEBHOOK_SECRET!,
+  ); // throws if the signature is wrong
+
+  if (event.event === "payout.withdrawn") {
+    // mark ref \${event.external_ref} as cashed out
+  }
+  return new Response("ok");
+}`}
+      />
+      <p className="text-base text-slate-400 mb-3">
+        Events can arrive more than once. Treat the event id in the <code className="text-orange-300">X-Loofta-Event-Id</code> header as the key to ignore repeats.
+      </p>
 
       <h2 className="text-xl font-medium text-slate-100 mt-8 mb-3">Show creators their earnings</h2>
       <p className="text-base text-slate-400 mb-3">

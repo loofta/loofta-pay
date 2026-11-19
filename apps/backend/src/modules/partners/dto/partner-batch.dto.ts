@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsNotEmpty, IsOptional, IsString, Length, MaxLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsISO8601, IsNotEmpty, IsOptional, IsString, Length, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MAX_BATCH_ROWS, PayoutBatchRowDto } from '@/modules/payouts/dto/create-payout-batch.dto';
 
@@ -14,6 +14,11 @@ export class CreatePartnerBatchDto {
   @IsString()
   @MaxLength(120)
   label?: string;
+
+  @ApiPropertyOptional({ description: 'ISO 8601 time to run this batch, between 5 minutes and 90 days from now. At that time Loofta prepares the payouts and asks the company wallet signers to approve the funding. Leave out to run it as soon as it is approved.' })
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  scheduled_for?: string;
 
   @ApiProperty({ type: [PayoutBatchRowDto], description: `1 to ${MAX_BATCH_ROWS} payouts` })
   @IsArray()
