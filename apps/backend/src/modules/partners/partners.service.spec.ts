@@ -39,3 +39,10 @@ describe('allocateFeeUnits', () => {
     expect(allocateFeeUnits([], BigInt(100))).toEqual([]);
   });
 });
+
+describe('computePartnerFeeUsdc flat fee already paid', () => {
+  it('drops only the flat part', () => {
+    expect(computePartnerFeeUsdc({ fee_fixed_usd: 0.5, fee_percent_bps: 200 }, 10, { flatAlreadyPaid: true })).toBe(0.2);
+    expect(computePartnerFeeUsdc({ fee_fixed_usd: 0.5, fee_percent_bps: 200 }, 10)).toBe(0.7);
+  });
+});

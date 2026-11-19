@@ -24,7 +24,7 @@ const basePartner = {
   fee_fixed_usd: 0.5, fee_percent_bps: 200, fee_wallet: FEE_WALLET,
 };
 
-type Pay = { id: string; amount: number; burner_address: string; recipient_user_id: string | null };
+type Pay = { id: string; amount: number; burner_address: string; recipient_user_id: string | null; partner_fee_stamped_at?: string | null };
 const pay = (id: string, amount: number, burner: string, registered = false): Pay => ({
   id, amount, burner_address: burner, recipient_user_id: registered ? 'u1' : null,
 });
@@ -48,6 +48,7 @@ function make(opts: {
   staleStamp?: string[];
   sweepFails?: string[];
   feeWalletReady?: boolean;
+  siblingWithdrawn?: boolean;
 } = {}) {
   const partner = { ...basePartner, ...(opts.partner ?? {}) };
   const payments = opts.payments ?? [pay('a', 10, B1)];
@@ -59,8 +60,11 @@ function make(opts: {
   const paymentsTable: Record<string, unknown> = {};
   for (const m of ['select', 'is', 'not', 'order', 'limit']) paymentsTable[m] = () => paymentsTable;
   paymentsTable.update = (v: Record<string, unknown>) => { stamps.__pending = v; return paymentsTable; };
+  let sibling = false;
+  paymentsTable.in = () => { sibling = true; return paymentsTable; };
   paymentsTable.eq = (col: string, val: string) => { if (col === 'id') currentId = val; return paymentsTable; };
   paymentsTable.then = (res: (v: unknown) => unknown) => {
+    if (sibling) { sibling = false; return Promise.resolve({ data: opts.siblingWithdrawn ? [{ id: 'done' }] : [], error: null }).then(res); }
     const isStamp = '__pending' in stamps;
     if (!isStamp) return Promise.resolve({ data: payments, error: null }).then(res);
     const id = currentId; const v = stamps.__pending; delete stamps.__pending;
@@ -259,5 +263,34 @@ describe('the demo partner (orgId=demo)', () => {
 
   it('is a name no real partner can have: real org ids are org_ plus hex', () => {
     expect('demo').not.toMatch(/^org_[0-9a-f]{12}$/);
+  });
+});
+
+describe('flat fee on a retried withdrawal', () => {
+  const retry = (siblingWithdrawn: boolean) =>
+    make({ payments: [{ ...pay('b', 10, B1), partner_fee_stamped_at: '2026-11-19T10:00:00.000Z' }], siblingWithdrawn });
+
+  it('is not charged again when a payout of the same withdrawal already went through', async () => {
+    const { svc } = retry(true);
+    const q = await svc.quote('org_x', 'u1');
+    // only the 2% part: $0.20, not $0.50 flat + $0.20
+    expect(q.partner_fee_usdc).toBeCloseTo(0.2, 6);
+  });
+
+  it('is charged normally when an earlier attempt was stamped but nothing went through', async () => {
+    const { svc } = retry(false);
+    expect((await svc.quote('org_x', 'u1')).partner_fee_usdc).toBeCloseTo(0.7, 6);
+  });
+
+  it('stamps every payout of one withdrawal with the same time so a retry can find its siblings', async () => {
+    const { svc, stamps } = make({ payments: [pay('a', 5, B1), pay('b', 5, B2)], balances: { [B1]: BigInt(5_000_000), [B2]: BigInt(5_000_000) } });
+    await svc.confirm('org_x', 'u1', { maxFeeUsdc: 1 });
+    expect(stamps.a.partner_fee_stamped_at).toBe(stamps.b.partner_fee_stamped_at);
+  });
+
+  it('confirm on the retry stamps only the percent fee', async () => {
+    const { svc, stamps } = retry(true);
+    await svc.confirm('org_x', 'u1', { maxFeeUsdc: 0.2 });
+    expect(Number(stamps.b.partner_fee_usdc)).toBeCloseTo(0.2, 6);
   });
 });

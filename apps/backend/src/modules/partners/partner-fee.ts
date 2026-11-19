@@ -5,13 +5,17 @@ export const MAX_PARTNER_FEE_SHARE = 0.25;
  * The partner's cut for one withdrawal of `grossUsdc`, always on top of Loofta's own fee. A flat
  * fee is charged once per withdrawal (the caller passes the whole withdrawal's gross, not one
  * payout's), and the result is capped so a recipient always keeps at least 75% of what they were
- * paid, whatever the partner configured. Rounded up to the base unit.
+ * paid, whatever the partner configured. Rounded up to the base unit. `flatAlreadyPaid` drops the flat part.
  */
 export function computePartnerFeeUsdc(
   partner: { fee_fixed_usd: number | string; fee_percent_bps: number | string },
   grossUsdc: number,
+  opts: { flatAlreadyPaid?: boolean } = {},
 ): number {
-  const raw = Number(partner.fee_fixed_usd) + (grossUsdc * Number(partner.fee_percent_bps)) / 10_000;
+  // A retry after a partial failure must not charge the flat fee a second time: it was already taken from a payout
+  // of the same withdrawal that went through.
+  const flat = opts.flatAlreadyPaid ? 0 : Number(partner.fee_fixed_usd);
+  const raw = flat + (grossUsdc * Number(partner.fee_percent_bps)) / 10_000;
   const capped = Math.min(raw, grossUsdc * MAX_PARTNER_FEE_SHARE);
   return Math.ceil(capped * 1_000_000) / 1_000_000;
 }

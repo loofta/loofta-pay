@@ -72,9 +72,9 @@ export class PartnerWithdrawService {
   }
 
   /** The payouts this logged-in user may withdraw from this partner: identity-checked, and funded on-chain. */
-  private async findPayouts(partner: Partner, userId: string): Promise<{ rows: Array<PayoutView & { units: bigint; registered: boolean }> }> {
+  private async findPayouts(partner: Partner, userId: string): Promise<{ rows: Array<PayoutView & { units: bigint; registered: boolean; stampedAt: string | null }> }> {
     const { data, error } = await this.supabase.payments
-      .select('id, amount, description, created_at, burner_address, recipient_user_id, is_devnet')
+      .select('id, amount, description, created_at, burner_address, recipient_user_id, is_devnet, partner_fee_stamped_at')
       .eq('partner_id', partner.id)
       .is('partner_withdrawn_at', null)
       .not('burner_address', 'is', null)
@@ -89,7 +89,7 @@ export class PartnerWithdrawService {
 
     const conn = this.sponsor.getConnectionForCluster(this.isDevnet ? 'devnet' : 'mainnet');
     const mint = this.usdcMint();
-    const rows: Array<PayoutView & { units: bigint; registered: boolean }> = [];
+    const rows: Array<PayoutView & { units: bigint; registered: boolean; stampedAt: string | null }> = [];
     for (const p of data ?? []) {
       if ((p.is_devnet === true) !== this.isDevnet) continue;
       // Identity comes from the verified login, checked against who the payout was sent to.
@@ -106,6 +106,7 @@ export class PartnerWithdrawService {
       rows.push({
         payment_id: p.id, amount: Number(p.amount), message: p.description ?? null, created_at: p.created_at, funded, units,
         registered: Boolean(p.recipient_user_id),
+        stampedAt: (p as { partner_fee_stamped_at?: string | null }).partner_fee_stamped_at ?? null,
       });
     }
     return { rows };
@@ -119,7 +120,17 @@ export class PartnerWithdrawService {
     const gross = Number(grossUnits) / 1e6;
 
     const partnerActive = partner.status === 'active';
-    const partnerFee = partnerActive ? computePartnerFeeUsdc(partner, gross) : 0;
+    // Payouts left over from a withdrawal that partly failed carry that withdrawal's stamp time. If a sibling with the
+    // same stamp already went through, the flat fee was taken then and is not taken again.
+    const stamps = [...new Set(available.map((r) => r.stampedAt).filter((t): t is string => !!t))];
+    let flatAlreadyPaid = false;
+    if (stamps.length) {
+      const { data: done, error } = await this.supabase.payments
+        .select('id').eq('partner_id', partner.id).in('partner_fee_stamped_at', stamps).not('partner_withdrawn_at', 'is', null).limit(1);
+      if (error) throw new ServiceUnavailableException('Withdrawals are temporarily unavailable. Please try again soon.');
+      flatAlreadyPaid = !!done?.length;
+    }
+    const partnerFee = partnerActive ? computePartnerFeeUsdc(partner, gross, { flatAlreadyPaid }) : 0;
     const looftaFee = available.reduce(
       (a, r) => a + (r.registered && r.units > toUnits(REGISTERED_BURNER_CLAIM_FEE_USD) * BigInt(2) ? REGISTERED_BURNER_CLAIM_FEE_USD : 0),
       0,
@@ -141,7 +152,7 @@ export class PartnerWithdrawService {
       }
     }
 
-    const strip = ({ units: _u, registered: _r, ...v }: PayoutView & { units: bigint; registered: boolean }): PayoutView => v;
+    const strip = ({ units: _u, registered: _r, stampedAt: _s, ...v }: PayoutView & { units: bigint; registered: boolean; stampedAt: string | null }): PayoutView => v;
     return {
       available, processing: processing.map(strip), partnerFee, looftaFee, gross, net, reason,
       view: available.map(strip),
@@ -189,6 +200,8 @@ export class PartnerWithdrawService {
       throw new ConflictException('The fee changed since you last looked. Review it and confirm again.');
     }
 
+    // One stamp time for the whole withdrawal, so a retry can tell which payouts belonged to it.
+    const stampedAt = new Date().toISOString();
     const shares = allocateFeeUnits(c.available.map((r) => r.units), toUnits(c.partnerFee));
     const wallet = c.partnerFee > 0 ? partner.fee_wallet : null;
     const results: Array<{ payment_id: string; ok: boolean; tx?: string; error?: string }> = [];
@@ -201,7 +214,7 @@ export class PartnerWithdrawService {
           .update({
             partner_fee_usdc: Number(shares[i]) / 1e6,
             partner_fee_wallet: shares[i] > BigInt(0) ? wallet : null,
-            partner_fee_stamped_at: new Date().toISOString(),
+            partner_fee_stamped_at: stampedAt,
           })
           .eq('id', p.payment_id)
           .eq('partner_id', partner.id)
