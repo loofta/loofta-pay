@@ -203,8 +203,8 @@ export class PartnerWithdrawService {
     }));
   }
 
-  async quote(orgId: string, userId: string): Promise<WithdrawQuote> {
-    if (orgId === DEMO_ORG_ID) return demoQuote();
+  async quote(orgId: string, userId: string, demo?: { methods?: string; history?: string }): Promise<WithdrawQuote> {
+    if (orgId === DEMO_ORG_ID) return demoQuote(demo);
     const partner = await this.loadPartner(orgId);
     const c = await this.compute(partner, userId);
     const { data: pub } = await this.supabase.partners

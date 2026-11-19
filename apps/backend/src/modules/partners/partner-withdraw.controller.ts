@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { IsIn, IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { AuthGuard, RateLimitGuard } from '@/common/guards';
@@ -25,8 +25,9 @@ export class PartnerWithdrawController {
 
   @Get(':orgId/quote')
   @RateLimit(30, 60, 'partner-withdraw:quote')
-  quote(@PrivyUser() user: { id: string }, @Param('orgId') orgId: string) {
-    return this.withdraw.quote(orgId, user.id);
+  quote(@PrivyUser() user: { id: string }, @Param('orgId') orgId: string, @Query('methods') methods?: string, @Query('history') history?: string) {
+    // methods and history only mean something for the built-in demo partner; real partners ignore them.
+    return this.withdraw.quote(orgId, user.id, { methods, history });
   }
 
   @Post(':orgId/confirm')

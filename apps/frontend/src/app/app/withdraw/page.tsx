@@ -116,7 +116,8 @@ function History({ items }: { items: HistoryItem[] }) {
 }
 
 function WithdrawContent() {
-  const orgId = useSearchParams().get("orgId") ?? "";
+  const params = useSearchParams();
+  const orgId = params.get("orgId") ?? "";
   // orgId=demo is a built-in sample partner: the real page and the real fee math, but nothing is sent.
   const isDemo = orgId === "demo";
   const { ready, authenticated, login, logout, getAccessToken, email } = useAuth();
@@ -165,12 +166,14 @@ function WithdrawContent() {
 
   const loadQuote = useCallback(async () => {
     try {
-      setQuote(await call(`partner-withdraw/${encodeURIComponent(orgId)}/quote`));
+      // Only the sample partner reads these from the link, so a demo can show any mix of routes and history.
+      const demoQs = orgId === "demo" ? `?${new URLSearchParams({ ...(params.get("methods") ? { methods: params.get("methods")! } : {}), ...(params.get("history") ? { history: params.get("history")! } : {}) })}` : "";
+      setQuote(await call(`partner-withdraw/${encodeURIComponent(orgId)}/quote${demoQs}`));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load your payouts.");
     }
-  }, [call, orgId]);
+  }, [call, orgId, params]);
 
   useEffect(() => {
     if (ready && authenticated && orgId) void loadQuote();

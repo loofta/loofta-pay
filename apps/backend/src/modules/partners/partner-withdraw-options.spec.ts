@@ -20,3 +20,23 @@ describe('withdraw options', () => {
     expect(normalizeDisabledMethods(['token', 'bank', 'p2p'])).toHaveLength(3);
   });
 });
+
+import { demoQuote } from './partner-demo';
+
+describe('demo partner options from the link', () => {
+  it('shows every route and history by default', () => {
+    const q = demoQuote();
+    expect(q.methods).toEqual(['usdc', 'token', 'bank', 'p2p']);
+    expect(q.history_enabled).toBe(true);
+    expect(q.history.length).toBeGreaterThan(0);
+  });
+  it('takes a chosen set of routes and can hide history', () => {
+    const q = demoQuote({ methods: 'usdc,bank,nonsense', history: '0' });
+    expect(q.methods).toEqual(['usdc', 'bank']);
+    expect(q.history_enabled).toBe(false);
+    expect(q.history).toEqual([]);
+  });
+  it('falls back to everything if no valid route is given', () => {
+    expect(demoQuote({ methods: 'x,y' }).methods).toHaveLength(4);
+  });
+});
