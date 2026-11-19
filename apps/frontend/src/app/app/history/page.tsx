@@ -100,7 +100,7 @@ function getPayeeDisplay(claim: PaymentHistoryClaim, anonymous: string): string 
     const platform = sep >= 0 ? rest.slice(0, sep).trim() : null;
     const handle = (sep >= 0 ? rest.slice(sep + 1) : rest).trim();
     if (platform === "meld") return "Your bank account";
-    const cashName = platform === "venmo" ? "Venmo" : platform === "cashapp" ? "Cash App" : platform === "revolut" ? "Revolut" : platform === "xmoney" ? "X Money" : platform === "chime" ? "Chime" : platform === "monzo" ? "Monzo" : platform === "upi" ? "UPI" : null;
+    const cashName = platform === "venmo" ? "Venmo" : platform === "cashapp" ? "Cash App" : platform === "revolut" ? "Revolut" : platform === "wise" ? "Wise" : platform === "paypal" ? "PayPal" : platform === "xmoney" ? "X Money" : platform === "chime" ? "Chime" : platform === "monzo" ? "Monzo" : platform === "upi" ? "UPI" : null;
     if (cashName) return `${handle} on ${cashName}`;
     return platform ? `@${handle} on ${platform}` : `@${handle}`;
   }

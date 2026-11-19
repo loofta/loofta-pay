@@ -56,7 +56,7 @@
     "@supabase/supabase-js": "^2.87.3",
     "@ton/core": "0.63.1",
     "@ton/crypto": "3.3.0",
-    "@zkp2p/cash": "0.7.3",
+    "@zkp2p/cash": "0.8.2",
     "@zkp2p/sdk": "0.14.10",
     "bn.js": "^5.2.1",
     "bs58": "^6.0.0",

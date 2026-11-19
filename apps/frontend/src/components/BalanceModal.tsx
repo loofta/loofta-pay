@@ -1388,7 +1388,7 @@ export function BalanceModal({
         // for Venmo/Cash App/PayPal the follow-up access-policy transaction — replacing what used
         // to be a hand-rolled allowance check + OfframpClient.createDeposit + receipt-log parse.
         const { peerCashout } = await import("@/services/peerCash");
-        const { depositId, txHash: depositTxHash, accessPolicyTxHash } = await peerCashout({
+        const { depositId, txHash: depositTxHash } = await peerCashout({
           amountAtomicUsdc: atomicUsdc,
           grossAtomicUsdc: grossAtomic,
           platform: platform.processorName,
@@ -1402,14 +1402,14 @@ export function BalanceModal({
 
         if (cancelled) return;
 
-        console.log(PEER_LOG, "Peer deposit created", { depositId, depositTxHash, accessPolicyTxHash });
+        console.log(PEER_LOG, "Peer deposit created", { depositId, depositTxHash });
 
         // Notify backend to record the deposit
         const accessToken = await getAccessToken();
         await fetch(`/api/offramp/${peerOfframpId}?action=record-deposit`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
-          body: JSON.stringify({ depositId, txHash: depositTxHash, accessPolicyTxHash: accessPolicyTxHash ?? null, etaSeconds: peerEstimate?.eta?.seconds ?? null, etaLabel: peerEstimate?.eta?.label ?? null }),
+          body: JSON.stringify({ depositId, txHash: depositTxHash, etaSeconds: peerEstimate?.eta?.seconds ?? null, etaLabel: peerEstimate?.eta?.label ?? null }),
         });
 
         if (!cancelled) {

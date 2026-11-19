@@ -56,7 +56,7 @@ const METHODS: Record<Method, { title: string; hint: string; badge?: string; ico
   usdc: { title: "USDC on Solana", hint: "To any Solana wallet", badge: "Fastest", icons: [{ src: "/images/usdc.svg", bg: "#2775CA" }, { src: "/images/logo/solana-mark.svg", bg: "#111" }] },
   token: { title: "Other tokens", hint: "BTC, ETH, ZEC, and other chains", icons: [{ src: "/images/btc.svg", bg: "#F7931A" }, { src: "/images/eth.svg", bg: "#627EEA" }] },
   bank: { title: "Bank or cards", hint: "Bank account, debit card or PAJ Cash", icons: [{ src: "/images/icons/card-chip.svg", bg: "#1C1C22" }] },
-  p2p: { title: "Private P2P", hint: "Revolut, Venmo, Cash App and more", icons: [{ src: "/images/platforms/revolut.png", bg: "#1C1C22" }, { src: "/images/platforms/venmo.png", bg: "#008CFF" }] },
+  p2p: { title: "Private P2P", hint: "Wise, PayPal, Revolut, Venmo and more", icons: [{ src: "/images/platforms/revolut.png", bg: "#1C1C22" }, { src: "/images/platforms/venmo.png", bg: "#008CFF" }] },
 };
 const GROUPS: Record<Group, Method[]> = { crypto: ["usdc", "token"], cash: ["bank", "p2p"] };
 

@@ -83,13 +83,15 @@ const PAYOUT_METHOD_LABEL: Record<string, string> = {
   venmo: "Venmo",
   cashapp: "Cash App",
   revolut: "Revolut",
+  wise: "Wise",
+  paypal: "PayPal",
   zelle: "Zelle",
   xmoney: "X Money",
   coinbase: "Coinbase",
   paj: "PAJ Cash",
 };
 
-const PEER_PAYOUT_METHODS = new Set(["venmo", "cashapp", "revolut", "zelle", "xmoney"]);
+const PEER_PAYOUT_METHODS = new Set(["venmo", "cashapp", "revolut", "wise", "paypal", "zelle", "xmoney"]);
 
 function payoutStatusCopy(status: string): string {
   if (status === "in_wallet") return "In your Loofta wallet";
@@ -2300,7 +2302,7 @@ export function ClaimPayView({
   // recipient last actually claimed through shown first (readPreferredClaimMethod/
   // rememberPreferredClaimMethod), a per-browser convenience only — never anything load-bearing.
   const [cryptoMenuStep, setCryptoMenuStep] = useState<CryptoClaimMethod | null>(null);
-  const [cashMenuStep, setCashMenuStep] = useState<"venmo" | "cashapp" | "revolut" | "zelle" | "xmoney" | "coinbase" | "paj" | null>(null);
+  const [cashMenuStep, setCashMenuStep] = useState<"venmo" | "cashapp" | "revolut" | "wise" | "paypal" | "zelle" | "xmoney" | "coinbase" | "paj" | null>(null);
   const [peerHandle, setPeerHandle] = useState("");
   const [peerEtaLabel, setPeerEtaLabel] = useState<string | null>(null);
   const [peerEtaLoading, setPeerEtaLoading] = useState(false);
@@ -2979,7 +2981,7 @@ export function ClaimPayView({
                   <button
                     key={p.id}
                     type="button"
-                    onClick={() => { setPeerHandle(""); setCashMenuStep(p.id as "venmo" | "cashapp" | "revolut" | "zelle"); }}
+                    onClick={() => { setPeerHandle(""); setCashMenuStep(p.id as "venmo" | "cashapp" | "revolut" | "wise" | "paypal" | "zelle"); }}
                     disabled={claimActionDisabled}
                     className={cn(
                       "w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 text-left font-semibold text-slate-100 transition-all hover:border-white/20 hover:bg-white/10",
@@ -2987,7 +2989,7 @@ export function ClaimPayView({
                       claimActionDisabled && "opacity-50 cursor-not-allowed",
                     )}
                   >
-                    <DepositIcons icons={[{ src: p.logo, bg: p.id === "venmo" ? "#3D95CE" : p.id === "cashapp" ? "#00D632" : p.id === "revolut" ? "#191C1F" : p.id === "xmoney" ? "#000000" : "#6D1ED4" }]} />
+                    <DepositIcons icons={[{ src: p.logo, bg: p.id === "venmo" ? "#3D95CE" : p.id === "cashapp" ? "#00D632" : p.id === "revolut" ? "#191C1F" : p.id === "wise" ? "#9FE870" : p.id === "paypal" ? "#FFFFFF" : p.id === "xmoney" ? "#000000" : "#6D1ED4" }]} />
                     <span className="flex-1 min-w-0">
                       <span className="block text-base">{p.name}</span>
                       <span className="block text-base font-normal text-slate-500">Cash out to {p.name}</span>

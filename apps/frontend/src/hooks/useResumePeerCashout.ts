@@ -180,7 +180,7 @@ export function useResumePeerCashout(authenticated: boolean, onNeedsManualRetry?
         // 5. Record it so the row leaves BRIDGING and the status cron takes over.
         const recorded = await authedFetch(`/api/offramp/${record.id}?action=record-deposit`, {
           method: "POST",
-          body: JSON.stringify({ depositId: created.depositId, txHash: created.txHash, accessPolicyTxHash: created.accessPolicyTxHash ?? null, etaSeconds: null, etaLabel: null }),
+          body: JSON.stringify({ depositId: created.depositId, txHash: created.txHash, etaSeconds: null, etaLabel: null }),
         });
         if (!recorded.ok) console.error(LOG, "deposit created on-chain but record-deposit failed", created.depositId, recorded.status);
         recordPlatformWithdraw(platform.id);
