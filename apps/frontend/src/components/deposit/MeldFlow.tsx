@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Clock, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { MELD_SESSION_KEY } from "@/lib/meldOfframp";
+import { MELD_PARTNER_KEY, MELD_SESSION_KEY, type MeldPartnerStash } from "@/lib/meldOfframp";
 import { cn } from "@/lib/utils";
 
 const SORA = "var(--font-home-sora), Sora, sans-serif";
@@ -68,12 +68,15 @@ export function MeldFlow({
   balanceNum = 0,
   getAccessToken,
   onBack,
+  partnerWithdraw,
 }: {
   side: "buy" | "sell";
   solanaAddress: string;
   balanceNum?: number;
   getAccessToken: () => Promise<string | null>;
   onBack: () => void;
+  /** A partner payout not yet claimed: remembered for the return page, which claims it on the final Send step. */
+  partnerWithdraw?: { orgId: string; maxFeeUsdc: number };
 }) {
   const { toast } = useToast();
   const [amount, setAmount] = useState(side === "buy" ? "50" : "");
@@ -148,7 +151,11 @@ export function MeldFlow({
       if (!res.ok || !body.widgetUrl) throw new Error(body.error || "Couldn't continue.");
       if (sell) {
         if (!body.sessionId) throw new Error("Couldn't continue.");
-        try { window.localStorage.setItem(MELD_SESSION_KEY, body.sessionId); } catch { /* storage blocked, the return page then needs the sessionId param */ }
+        try {
+          window.localStorage.setItem(MELD_SESSION_KEY, body.sessionId);
+          if (partnerWithdraw) window.localStorage.setItem(MELD_PARTNER_KEY, JSON.stringify({ ...partnerWithdraw, done: false } satisfies MeldPartnerStash));
+          else window.localStorage.removeItem(MELD_PARTNER_KEY);
+        } catch { /* storage blocked, the return page then needs the sessionId param */ }
       }
       if (tab && !tab.closed) {
         tab.location.href = body.widgetUrl;

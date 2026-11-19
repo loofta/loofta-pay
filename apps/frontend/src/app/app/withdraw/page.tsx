@@ -167,11 +167,17 @@ function WithdrawContent() {
 
   async function confirm() {
     if (!quote || !method) return;
+    // Bank or card: nothing is claimed yet. The payout is claimed on the last step, after the provider quote is
+    // confirmed, so backing out before then costs nothing.
+    if (method === "bank") {
+      setBankBalance(quote.net_usdc);
+      setBankOpen(true);
+      return;
+    }
     setBusy(true);
     setNotice(null);
     setStage(method === "usdc" ? "Sending..." : "Preparing...");
     let navigating = false;
-    let keepQuote = false;
     try {
       const out = await call(`partner-withdraw/${encodeURIComponent(orgId)}/confirm`, {
         method: "POST",
@@ -183,14 +189,7 @@ function WithdrawContent() {
         setNotice(`${sent} sent, ${failed} could not be sent yet. Try again in a minute.`);
       } else {
         setNotice(method === "usdc" ? `Sent ${sent} payout${sent === 1 ? "" : "s"}.` : null);
-        // Tokens, bank and P2P need the recipient's own wallet to sign, so they finish in the usual Loofta withdraw screen.
-        if (method === "bank") {
-          // Hand over to the bank and card options on this same page, with what was just paid out.
-          setBankBalance(quote.net_usdc);
-          setBankOpen(true);
-          keepQuote = true;
-          return;
-        }
+        // Tokens and P2P need the recipient's own wallet to sign, so they finish in the usual Loofta withdraw screen.
         const next = NEXT_METHOD[method];
         if (next) {
           navigating = true;
@@ -213,7 +212,7 @@ function WithdrawContent() {
       if (!navigating) {
         setBusy(false);
         setStage(null);
-        if (!keepQuote) await loadQuote();
+        await loadQuote();
       }
     }
   }
@@ -266,6 +265,7 @@ function WithdrawContent() {
                 side="sell"
                 solanaAddress={solanaWallets[0].address}
                 balanceNum={bankBalance}
+                partnerWithdraw={quote ? { orgId, maxFeeUsdc: quote.partner_fee_usdc } : undefined}
                 getAccessToken={getAccessToken}
                 onBack={() => {
                   setBankOpen(false);
@@ -409,19 +409,21 @@ function WithdrawContent() {
                       )}
                     </div>
                   ) : (
-                    <p className="text-base leading-relaxed text-[#C8C6D0]">Cash out to your bank account or card. You pick the option and see the exact amount you get on the next step.</p>
+                    <p className="text-base leading-relaxed text-[#C8C6D0]">Cash out to your bank account or card. You pick the option and see the exact amount you get on the next step. Fees are only taken when you confirm the cash-out.</p>
                   )}
 
-                  <div className="mt-5 divide-y divide-white/10 rounded-2xl bg-[#0E0E12] px-4">
-                    <div className="flex items-center justify-between py-3">
-                      <span className="text-base text-[#8A8893]">Fees</span>
-                      <span className="text-base text-[#C8C6D0]">{usd(fees)}</span>
+                  {(
+                    <div className="mt-5 divide-y divide-white/10 rounded-2xl bg-[#0E0E12] px-4">
+                      <div className="flex items-center justify-between py-3">
+                        <span className="text-base text-[#8A8893]">Fees</span>
+                        <span className="text-base text-[#C8C6D0]">{usd(fees)}</span>
+                      </div>
+                      <div className="flex items-center justify-between py-3">
+                        <span className="text-base font-semibold text-white">You receive</span>
+                        <span className="text-base font-semibold text-white">{usd(quote.net_usdc)}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between py-3">
-                      <span className="text-base font-semibold text-white">You receive</span>
-                      <span className="text-base font-semibold text-white">{usd(quote.net_usdc)}</span>
-                    </div>
-                  </div>
+                  )}
 
                   <GradientActionButton className="mt-5" onClick={() => void confirm()} disabled={busy || !quote.can_withdraw || !walletOk} loading={busy} loadingText={stage ?? "Sending..."}>
                     {method === "usdc" ? `Withdraw ${usd(quote.net_usdc)}` : method === "p2p" ? `Cash out ${usd(quote.net_usdc)}` : method === "token" ? `Swap ${usd(quote.net_usdc)}` : "Continue to bank or card"}

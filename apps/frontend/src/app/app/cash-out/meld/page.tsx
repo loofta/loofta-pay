@@ -7,7 +7,8 @@ import { Connection } from "@solana/web3.js";
 import { Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useLooftaSigner } from "@/components/deposit/DepositSheet";
 import { sendUsdcWithBackendFeePayer } from "@/services/privyEmbeddedUsdcSend";
-import { MELD_SESSION_KEY } from "@/lib/meldOfframp";
+import { MELD_PARTNER_KEY, MELD_SESSION_KEY, type MeldPartnerStash } from "@/lib/meldOfframp";
+import { clientApiBase } from "@/services/api/client";
 import { getRpcForMode, getUsdcMintForMode, getPrivySolanaChainForMode } from "@/lib/solanaRpc";
 
 type Transfer = {
@@ -85,6 +86,20 @@ function MeldReturn() {
     setError(null);
     try {
       const accessToken = await getAccessToken();
+      // A partner payout is claimed only now, after the provider quote is confirmed, so cancelling earlier cost nothing.
+      let stash: MeldPartnerStash | null = null;
+      try { stash = JSON.parse(window.localStorage.getItem(MELD_PARTNER_KEY) || "null") as MeldPartnerStash | null; } catch { /* storage blocked */ }
+      if (stash && !stash.done) {
+        const res = await fetch(`${clientApiBase()}/partner-withdraw/${encodeURIComponent(stash.orgId)}/confirm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+          body: JSON.stringify({ max_fee_usdc: stash.maxFeeUsdc }),
+        });
+        const out = await res.json().catch(() => ({})) as { message?: string; results?: Array<{ ok: boolean }> };
+        if (!res.ok) throw new Error(out.message || "Could not release your payout. Nothing was sent.");
+        if (out.results?.some((r) => !r.ok)) throw new Error("Your payout is not ready yet. Try again in a minute.");
+        try { window.localStorage.setItem(MELD_PARTNER_KEY, JSON.stringify({ ...stash, done: true })); } catch { /* storage blocked */ }
+      }
       const connection = new Connection(getRpcForMode("mainnet"), "confirmed");
       const signature = await sendUsdcWithBackendFeePayer({
         senderAddress: wallet.address,
@@ -105,7 +120,7 @@ function MeldReturn() {
         headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
         body: JSON.stringify({ offrampId: transfer.offrampId, signature }),
       });
-      try { window.localStorage.removeItem(MELD_SESSION_KEY); } catch { /* storage blocked */ }
+      try { window.localStorage.removeItem(MELD_SESSION_KEY); window.localStorage.removeItem(MELD_PARTNER_KEY); } catch { /* storage blocked */ }
       setTransfer({ ...transfer, sent: true, state: "pending" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "The transfer didn't go through. Nothing was sent. Try again.");
@@ -210,7 +225,7 @@ function MeldReturn() {
           <span className="text-base text-slate-400">You get</span>
           <span className="text-2xl font-bold">{transfer.receive != null ? money(transfer.receive, transfer.currency) : "Your quoted amount"}</span>
         </div>
-        <p className="mt-4 text-base text-slate-400">Paid to the bank account you just added. Loofta covers the network fee.</p>
+        <p className="mt-4 text-base text-slate-400">Paid to the bank account you just added. Loofta covers the network fee. If this came from a partner payout, its fees are taken when you press Send.</p>
       </div>
       <button
         type="button"
