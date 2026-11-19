@@ -6,6 +6,7 @@ import { tracker } from "../lib/tracker";
 import { cached, sharedGet, sharedSet } from "../lib/sharedCache";
 import { dexInfo } from "../lib/dex";
 import { recordTick, ticksToCandles } from "../lib/priceTicks";
+import { heliusCandles } from "../lib/heliusCandles";
 import { fixScale, referencePrice } from "../lib/priceScale";
 
 export const dynamic = "force-dynamic";
@@ -153,6 +154,12 @@ async function chartResponse(req: Request) {
         /* rate limited or down: fall through to the fallbacks */
       }
       const last = await sharedGet<{ candles: Candle[] }>(`chartlast:${mint}:${tfKey}`);
+      // Next best: the coin's real swaps read through Helius. Beats a line we only just started drawing.
+      const swapCandles = await heliusCandles(mint, SIZE_SEC[tfKey] ?? 900);
+      if (swapCandles.length > 1 && swapCandles.length >= (last?.candles?.length ?? 0)) {
+        void sharedSet(`chartlast:${mint}:${tfKey}`, { candles: swapCandles }, 6 * 3600);
+        return { candles: swapCandles, swaps: true };
+      }
       const price = (await dexInfo([mint]).catch(() => new Map())).get(mint)?.priceUsd ?? null;
       if (price) recordTick(mint, price);
       const own = ticksToCandles(mint, SIZE_SEC[tfKey] ?? 900, price);

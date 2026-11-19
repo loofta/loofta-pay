@@ -117,6 +117,8 @@ export async function POST(request: Request) {
     if (/recipient override/i.test(msg)) {
       return new NextResponse(JSON.stringify({ error: "Peer deposit isn't available yet — recipient overrides aren't enabled for this merchant account." }), { status: 503, headers });
     }
-    return new NextResponse(JSON.stringify({ error: "Failed to create Peer checkout" }), { status: 502, headers });
+    // Peer's real error is only exposed in local development; production keeps the generic message.
+    const error = isDev ? `Failed to create Peer checkout: ${msg}` : "Failed to create Peer checkout";
+    return new NextResponse(JSON.stringify({ error }), { status: 502, headers });
   }
 }
