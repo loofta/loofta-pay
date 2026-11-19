@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsIn,
   IsInt,
@@ -86,4 +87,10 @@ export class ChangeRoleDto {
 
 export class AcceptInviteDto {
   @IsString() @MaxLength(200) token: string;
+}
+
+export class SetApiAccessDto {
+  @ApiProperty({ description: 'Let this partner\'s API keys draft payout batches. They are still approved and funded by your team.' })
+  @IsBoolean()
+  payout_batches: boolean;
 }

@@ -16,6 +16,7 @@ import { Whitelabel } from "./sections/Whitelabel";
 import { ApiKeySetup } from "./sections/ApiKeySetup";
 import { TryIt } from "./sections/TryIt";
 import { TelegramBot } from "./sections/TelegramBot";
+import { PartnerPayouts } from "./sections/PartnerPayouts";
 
 // All doc content lives in ./sections as plain components, not separate routes — clicking the
 // sidebar just swaps which one is rendered (instant, client-side only), instead of every doc
@@ -56,6 +57,8 @@ function DocsBody() {
         return <SendPayments onNavigate={navigate} />;
       case "telegram-bot":
         return <TelegramBot />;
+      case "partner-payouts":
+        return <PartnerPayouts onNavigate={navigate} />;
       case "whitelabel":
         return <Whitelabel onNavigate={navigate} />;
       default:

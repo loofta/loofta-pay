@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BatchBuilder, type DraftRow } from "./BatchBuilder";
 import { Btn, Notice, PageHeader, Pill, Row, Section, Table } from "./ui";
 import { post, usd, usePartnerApi, type PartnerRole } from "./usePartnerApi";
@@ -42,7 +42,7 @@ const STATUS: Record<string, { label: string; tone: "grey" | "blue" | "amber" | 
   rejected: { label: "Rejected", tone: "red" },
 };
 
-export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet }: { orgId: string; myRole: PartnerRole; myUserId?: string; treasury: Treasury; goWallet: () => void }) {
+export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet, openBatchId }: { orgId: string; myRole: PartnerRole; myUserId?: string; treasury: Treasury; goWallet: () => void; openBatchId?: string | null }) {
   const call = usePartnerApi();
   const base = `partners/${encodeURIComponent(orgId)}`;
 
@@ -64,6 +64,14 @@ export function PayoutsTab({ orgId, myRole, myUserId, treasury, goWallet }: { or
     call<Batch[]>(`${base}/batches`).then((b) => (setBatches(b), setLoaded(true))).catch((e: Error) => (setError(e.message), setLoaded(true)));
   }, [call, base]);
   useEffect(load, [load]);
+
+  // A batch drafted from the partner's own platform arrives as a link: open it straight away, once.
+  const openedFromLink = useRef(false);
+  useEffect(() => {
+    if (!openBatchId || openedFromLink.current) return;
+    openedFromLink.current = true;
+    call<Batch>(`${base}/batches/${encodeURIComponent(openBatchId)}`).then(setOpen).catch((e: Error) => setError(e.message));
+  }, [openBatchId, call, base]);
 
   const openBatch = async (id: string) => {
     try {

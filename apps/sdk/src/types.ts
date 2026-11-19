@@ -171,3 +171,42 @@ export interface PayoutWebhookEvent {
   external_ref: string | null;
   amount: number;
 }
+
+/** One person to pay from your partner account. Partner payouts go to email addresses. */
+export interface PartnerPayoutRow {
+  email: string;
+  /** USD, $1 to $10,000. */
+  amount: number;
+  /** Your own reference (user id, invoice id). Returned as-is. */
+  externalRef?: string;
+  /** Shown to the recipient in the email and on the withdraw page. */
+  message?: string;
+}
+
+export interface CreatePartnerBatchParams {
+  /** Unique per batch. Sending the same key again returns the same batch, it never creates a second one. */
+  idempotencyKey: string;
+  label?: string;
+  /** 1 to 100 rows. */
+  rows: PartnerPayoutRow[];
+}
+
+export interface PartnerBatch {
+  batchId: string;
+  /** pending_approval, approved, awaiting_funding, executed, cancelled or rejected. */
+  status: string;
+  label: string | null;
+  itemCount: number;
+  totalAmount: number;
+  /** Send your admin here. Your team approves the batch and pays it from the company wallet. */
+  approveUrl: string;
+  items: Array<{
+    rowIndex: number;
+    email: string;
+    amount: number;
+    externalRef: string | null;
+    status: string;
+    error: string | null;
+    withdrawn: boolean;
+  }>;
+}

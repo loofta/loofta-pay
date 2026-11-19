@@ -5,7 +5,7 @@ import { SupabaseService } from '@/database/supabase.service';
 import { ClaimsService, runWithPartnerBatchAllowance } from '@/modules/claims/claims.service';
 import { RedisService } from '@/redis/redis.service';
 import { isValidSolanaAddress } from '@/common/solana-address';
-import { PartnersService } from './partners.service';
+import { Partner, PartnersService } from './partners.service';
 import { ApproveBatchDto, ConfirmBatchDto, CreatePartnerBatchDto, PrepareBatchDto } from './dto/partner-batch.dto';
 
 type BatchRow = {
@@ -106,7 +106,32 @@ export class PartnerPayoutsService {
 
   async createDraft(orgId: string, userId: string, dto: CreatePartnerBatchDto) {
     const { partner } = await this.partners.requireMembership(orgId, userId, 'payout.create');
+    return this.insertDraft(partner, userId, dto);
+  }
 
+  /**
+   * A batch drafted by the partner's own server with an API key. It can never approve itself: it always
+   * waits for a signed-in owner or admin, and money only moves when the company wallet's signers sign.
+   */
+  async createDraftViaApi(integratorId: string, dto: CreatePartnerBatchDto) {
+    const partner = await this.partnerForIntegrator(integratorId);
+    return this.insertDraft(partner, null, dto);
+  }
+
+  async getViaApi(integratorId: string, batchId: string) {
+    const partner = await this.partnerForIntegrator(integratorId);
+    return this.view(partner.id, batchId);
+  }
+
+  private async partnerForIntegrator(integratorId: string): Promise<Partner> {
+    const { data } = await this.supabase.partners.select('*').eq('integrator_id', integratorId).maybeSingle();
+    if (!data) throw new ForbiddenException('This API key is not linked to a partner account.');
+    if ((data as Partner).status !== 'active') throw new ForbiddenException('This partner account is suspended.');
+    return data as Partner;
+  }
+
+  /** `userId` is null for a batch drafted through the API. */
+  private async insertDraft(partner: Partner, userId: string | null, dto: CreatePartnerBatchDto) {
     const { data: existing } = await this.supabase.payoutBatches
       .select('id')
       .eq('partner_id', partner.id)
@@ -129,7 +154,7 @@ export class PartnerPayoutsService {
     this.assertWithinCaps(rows.map((r) => r.amount));
 
     const total = Math.round(rows.reduce((a, r) => a + r.amount, 0) * 1e6) / 1e6;
-    const needsApproval = partner.approval_threshold_usd > 0 && total > Number(partner.approval_threshold_usd);
+    const needsApproval = userId === null || (partner.approval_threshold_usd > 0 && total > Number(partner.approval_threshold_usd));
     const rowsHash = hashBatchRows(rows);
 
     const { data: batch, error } = await this.supabase.payoutBatches
@@ -142,7 +167,7 @@ export class PartnerPayoutsService {
         status: needsApproval ? 'pending_approval' : 'approved',
         rows_hash: rowsHash,
         created_by_user_id: userId,
-        ...(needsApproval ? {} : { approved_by_user_id: userId, approved_at: new Date().toISOString() }),
+        ...(needsApproval || !userId ? {} : { approved_by_user_id: userId, approved_at: new Date().toISOString() }),
       })
       .select('id')
       .single();
@@ -171,7 +196,7 @@ export class PartnerPayoutsService {
       throw new BadRequestException('Could not save the batch rows.');
     }
 
-    await this.partners.audit(partner.id, userId, 'batch.created', { type: 'batch', id: batch.id }, { total, rows: rows.length, needsApproval });
+    await this.partners.audit(partner.id, userId, 'batch.created', { type: 'batch', id: batch.id }, { total, rows: rows.length, needsApproval, ...(userId ? {} : { via: 'api' }) });
     return this.view(partner.id, batch.id);
   }
 

@@ -291,10 +291,110 @@ or dashboard toggle.
 - Links are public (not private) by default. \`is_private: true\` requires the payer to pay
   privately and adds a fee to their total — you still net exactly \`amount\` either way. Don't
   assume privacy or add your own fee expecting to net more.
-- \`/payouts\` is single-recipient only — there is no batch/multi-recipient payout endpoint.
+- \`POST /payouts\` pays one recipient. To pay many people from a wallet you sign with, use
+  \`POST /payouts/batches\` (up to 100 rows). To pay many people from a partner company wallet, use the
+  partner payouts skill instead.
 - \`/payouts\` never signs or broadcasts anything itself — with \`sender_wallet\`, you must sign
   \`unsigned_transaction\` with that key and submit it; with \`funding_source\`, you must actually
   send the token to \`deposit_address\`. Don't expect funds to move just from calling the endpoint.
 - No sandbox/test mode — every key is live. Don't build a "test mode" flag expecting one to exist.
 - Full reference: https://pay.loofta.com/docs
+`;
+
+export const LOOFTA_PARTNER_PAYOUTS_SKILL = `---
+name: loofta-partner-payouts
+description: Pay many people from a platform through Loofta partner payouts. Use when the user asks to "pay creators", "pay my users in bulk", "mass payouts", "bulk payouts by email", "add a pay creators button", "show users their earnings", "payout widget", or "integrate Loofta partner payouts" for an app that owes money to many people (creators, freelancers, contributors, affiliates).
+---
+
+# Loofta partner payouts
+
+A platform pays many people by email from its own company wallet. Each recipient gets an email under the
+platform's name and logo and withdraws on a page that carries the platform's branding. The platform can also
+show every user their earnings inside its own app.
+
+An API key can NEVER move money. The platform's server drafts a batch, a signed-in owner or admin approves it
+in the Loofta partner portal, and the company wallet's signers sign it. Never promise the user that calling the
+API sends money.
+
+## 1. One-time setup (the user does this, an agent cannot)
+
+1. Create an organisation at https://pay.loofta.com/app/partner and sign in with email.
+2. Create the company wallet under Wallet, then add USDC to it.
+3. Under Developers, create an API key (starts with \`lft_live_\`) and switch on "Pay in bulk from your
+   platform". Only an owner can switch it on. It is off by default.
+
+Ask the user to paste the key and store it as \`LOOFTA_API_KEY\`. Use it only on the server, never in a browser
+or a client bundle. Keys are live (mainnet). There is no sandbox, so test with small amounts.
+
+## 2. Draft a batch (server side)
+
+\`\`\`bash
+npm install @loofta/pay-sdk
+\`\`\`
+
+\`\`\`ts
+import { LooftaPayClient } from "@loofta/pay-sdk";
+
+const loofta = new LooftaPayClient({ apiKey: process.env.LOOFTA_API_KEY });
+
+const batch = await loofta.partner.createBatch({
+  idempotencyKey: \`payout-\${cycleId}\`, // reuse the same key on retry, it never creates a second batch
+  label: "November creators",
+  rows: creators.map((c) => ({ email: c.email, amount: c.owed, externalRef: c.id })),
+});
+// batch.approveUrl is where the admin approves and pays it
+\`\`\`
+
+Raw HTTP: \`POST https://api.loofta.xyz/partner-api/batches\` with \`Authorization: Bearer $LOOFTA_API_KEY\` and
+\`{ idempotency_key, label?, rows: [{ recipient_type: "email", recipient_identifier, amount, external_ref?, message? }] }\`.
+
+Rules to respect:
+- Recipients are email addresses only. Twitter, wallets and other handles are rejected.
+- 1 to 100 rows per batch. Each amount is $1 to $10,000. Split bigger payouts across batches.
+- Use a stable, unique \`idempotencyKey\` per payout cycle (for example the cycle or invoice id), never a random value
+  per request, or a retry will draft a second batch.
+- The batch always starts as \`pending_approval\`. Do not build a flow that waits for it to pay on its own.
+
+## 3. Send the admin to approve and pay
+
+Redirect (or link) the admin to \`batch.approveUrl\`. That is a "Pay creators" button: the click handler runs
+step 2 on the server and then redirects. They approve and pay from the company wallet, and recipients are
+emailed once it is funded.
+
+## 4. Follow progress
+
+\`\`\`ts
+const b = await loofta.partner.getBatch(batchId);
+// b.status: pending_approval | approved | awaiting_funding | executed | cancelled | rejected
+// b.items[i].withdrawn is true once that person withdrew
+\`\`\`
+
+Poll this from your own admin screen. There are no webhooks for these batches yet, so do not wait for one.
+
+## 5. Show users their earnings (optional)
+
+Server, for the signed-in user:
+
+\`\`\`ts
+const { token } = await loofta.portal.createToken({ email: user.email });
+return Response.json({ token });
+\`\`\`
+
+Browser (React):
+
+\`\`\`tsx
+import { Payouts } from "@loofta/portal";
+
+<Payouts getToken={() => fetch("/api/loofta-token").then((r) => r.json()).then((j) => j.token)} />
+\`\`\`
+
+The token lasts 15 minutes and is scoped to that one user. Mint it per page load, never store it.
+
+## Errors
+
+- 403: key not linked to a partner, partner suspended, or "Pay in bulk" is switched off.
+- 400: a recipient is not an email, or an amount is outside $1 to $10,000.
+- 429: rate limited. Retry later with the same idempotency key.
+
+Full reference: https://pay.loofta.com/docs?p=partner-payouts
 `;

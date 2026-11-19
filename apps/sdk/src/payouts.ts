@@ -1,7 +1,9 @@
 import { Connection, Keypair, Transaction } from "@solana/web3.js";
 import { createHmac, timingSafeEqual } from "crypto";
 import type {
+  CreatePartnerBatchParams,
   CreatePayoutBatchParams,
+  PartnerBatch,
   PayoutWebhookEvent,
   PayoutBatchResult,
   PayoutBatchStatus,
@@ -122,6 +124,57 @@ export class PayoutsApi {
         error: i.error ?? null,
       })),
     };
+  }
+}
+
+function mapPartnerBatch(d: any): PartnerBatch {
+  return {
+    batchId: d.batch_id ?? d.id,
+    status: d.status,
+    label: d.label ?? null,
+    itemCount: d.item_count,
+    totalAmount: Number(d.total_amount),
+    approveUrl: d.approve_url,
+    items: (d.items ?? []).map((i: any) => ({
+      rowIndex: i.row_index,
+      email: i.recipient_identifier,
+      amount: Number(i.amount),
+      externalRef: i.external_ref ?? null,
+      status: i.status,
+      error: i.error ?? null,
+      withdrawn: Boolean(i.withdrawn),
+    })),
+  };
+}
+
+/**
+ * Pay many people from your partner account's company wallet. Your server drafts the batch here and
+ * sends your admin to `approveUrl`. An API key can never move money: your team approves the batch and
+ * your company wallet's signers sign it. Needs "Payout batches" switched on under Developers in the
+ * partner portal.
+ */
+export class PartnerApi {
+  constructor(private readonly http: Requester) {}
+
+  /** Drafts a batch of email payouts. Safe to retry with the same idempotencyKey. */
+  async createBatch(params: CreatePartnerBatchParams): Promise<PartnerBatch> {
+    const d = await this.http.request<unknown>("POST", "/partner-api/batches", {
+      idempotency_key: params.idempotencyKey,
+      label: params.label,
+      rows: params.rows.map((r) => ({
+        recipient_type: "email",
+        recipient_identifier: r.email,
+        amount: r.amount,
+        external_ref: r.externalRef,
+        message: r.message,
+      })),
+    });
+    return mapPartnerBatch(d);
+  }
+
+  /** Where a batch stands and what happened to each payout. */
+  async getBatch(batchId: string): Promise<PartnerBatch> {
+    return mapPartnerBatch(await this.http.request<unknown>("GET", `/partner-api/batches/${encodeURIComponent(batchId)}`));
   }
 }
 

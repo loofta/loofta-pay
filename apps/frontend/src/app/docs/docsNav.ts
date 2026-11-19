@@ -27,7 +27,7 @@ export const DOCS_NAV: DocsNavSection[] = [
       { slug: "api-key", title: "API key & branding" },
       { slug: "code-examples", title: "Code examples" },
       { slug: "try-it", title: "Try it" },
-      { slug: "agent-skill", title: "Agent skill" },
+      { slug: "agent-skill", title: "Agent skills" },
     ],
   },
   {
@@ -47,5 +47,9 @@ export const DOCS_NAV: DocsNavSection[] = [
       { slug: "send-payments", title: "Pay a recipient" },
       { slug: "whitelabel", title: "Whitelabel the claim page" },
     ],
+  },
+  {
+    section: "Partner payouts",
+    pages: [{ slug: "partner-payouts", title: "Pay in bulk from your platform" }],
   },
 ];

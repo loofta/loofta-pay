@@ -5,8 +5,8 @@ Payout portal your users see inside your own app. They see what they were paid a
 ## 1. Mint a token on your server
 
 ```ts
-// POST https://<loofta-api>/payouts/portal-token   (Authorization: Bearer <your lft_live_ key>)
-const { token } = await fetch(`${LOOFTA_API}/payouts/portal-token`, {
+// POST https://<loofta-api>/partner-portal/token   (Authorization: Bearer <your lft_live_ key>)
+const { token } = await fetch(`${LOOFTA_API}/partner-portal/token`, {
   method: "POST",
   headers: { Authorization: `Bearer ${process.env.LOOFTA_API_KEY}`, "Content-Type": "application/json" },
   body: JSON.stringify({ external_user_id: currentUser.id }),
@@ -42,4 +42,4 @@ No React:
 
 ## Or skip the UI: hosted page
 
-`POST /payouts/portal-link` with `{ external_user_id, return_url }` returns a `url`. Redirect the user there; they land on a Loofta-hosted page with a back link to your `return_url`.
+Send people to `https://pay.loofta.xyz/withdraw?orgId=<your org id>`. They sign in with the email address you paid and withdraw on a page with your name and logo. The widget's Withdraw button opens the same page.

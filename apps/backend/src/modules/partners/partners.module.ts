@@ -12,11 +12,12 @@ import { PartnerTreasuryService } from './partner-treasury.service';
 import { PartnerTreasuryController } from './partner-treasury.controller';
 import { PartnerKeysService } from './partner-keys.service';
 import { PortalTokenService } from './portal-token.service';
+import { PartnerApiController } from './partner-api.controller';
 import { PartnerPortalTokenController, PortalController, PortalGuard } from './partner-portal.controller';
 
 @Module({
   imports: [UsersModule, ClaimsModule, IntegratorsModule],
-  controllers: [PartnersController, PartnerBatchesController, PartnerTreasuryController, PartnerWithdrawController, PartnerPortalTokenController, PortalController],
+  controllers: [PartnersController, PartnerBatchesController, PartnerTreasuryController, PartnerWithdrawController, PartnerPortalTokenController, PortalController, PartnerApiController],
   providers: [PartnersService, PartnerWithdrawService, PartnerPayoutsService, PartnerTreasuryService, PartnerKeysService, PortalTokenService, PortalGuard],
   exports: [PartnersService],
 })

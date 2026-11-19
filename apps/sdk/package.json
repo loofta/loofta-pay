@@ -1,6 +1,6 @@
 {
   "name": "@loofta/pay-sdk",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "description": "Pay any human by email, username, or social handle with stablecoin — SDK for the Loofta Pay Protocol. Works as a plain API-key client or as a fully autonomous x402 agent with its own Solana signer.",
   "license": "MIT",
   "main": "./dist/index.js",

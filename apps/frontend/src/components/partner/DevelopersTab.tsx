@@ -36,11 +36,14 @@ export function DevelopersTab({ orgId, myRole }: { orgId: string; myRole: Partne
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [batchesOn, setBatchesOn] = useState<boolean | null>(null);
+  const accessBase = `partners/${encodeURIComponent(orgId)}/api-access`;
 
   const load = useCallback(() => {
     if (!allowed) return;
     call<Key[]>(base).then(setKeys).catch((e: Error) => setError(e.message));
-  }, [call, base, allowed]);
+    call<{ payout_batches: boolean }>(accessBase).then((a) => setBatchesOn(a.payout_batches)).catch(() => undefined);
+  }, [call, base, accessBase, allowed]);
   useEffect(load, [load]);
 
   const run = async (fn: () => Promise<void>) => {
@@ -71,6 +74,23 @@ return Response.json({ token });`;
   getToken={() => fetch("/api/loofta-token").then((r) => r.json()).then((j) => j.token)}
 />`;
 
+  const bulk = `import { LooftaPayClient } from "@loofta/pay-sdk";
+
+const loofta = new LooftaPayClient({ apiKey: process.env.LOOFTA_API_KEY });
+
+// When your admin clicks "Pay creators":
+const batch = await loofta.partner.createBatch({
+  idempotencyKey: \`payout-\${cycleId}\`, // the same key never creates a second batch
+  label: "November creators",
+  rows: creators.map((c) => ({ email: c.email, amount: c.owed, externalRef: c.id })),
+});
+
+// Send your admin to approve and pay it from the company wallet.
+redirect(batch.approveUrl);
+
+// Later, to show progress in your own admin:
+const status = await loofta.partner.getBatch(batch.batchId);`;
+
   const html = `<div id="payouts"></div>
 <script src="https://unpkg.com/@loofta/portal/dist/loofta-portal.global.js"></script>
 <script>
@@ -81,7 +101,7 @@ return Response.json({ token });`;
 
   return (
     <>
-      <PageHeader crumb="Partner portal / Developers" title="API key and widget" blurb="Show each of your users their balance and payouts inside your own app." />
+      <PageHeader crumb="Partner portal / Developers" title="API keys and widget" blurb="Pay many people from your own platform, and show each user their balance and payouts inside your app." />
       {error && (
         <div className="mb-6">
           <Notice kind="error">{error}</Notice>
@@ -90,7 +110,7 @@ return Response.json({ token });`;
 
       <Section
         title="API keys"
-        desc="A key only creates widget tokens for your users. It cannot create payouts or move money. Keep it on your server."
+        desc="A key shows your users their payouts in the widget. It can never move money. Keep it on your server."
         right={
           allowed ? (
             <Btn
@@ -150,6 +170,30 @@ return Response.json({ token });`;
         )}
       </Section>
 
+      {allowed && (
+        <Section
+          title="Pay in bulk from your platform"
+          desc="Your server drafts a batch with its API key and sends your admin to approve it. The key cannot approve or fund anything: your team approves the batch and your company wallet's signers sign it."
+          right={
+            myRole === "owner" && batchesOn !== null ? (
+              <Btn
+                kind={batchesOn ? "ghost" : "primary"}
+                disabled={busy || (!batchesOn && keys.length === 0)}
+                onClick={() => void run(async () => setBatchesOn((await call<{ payout_batches: boolean }>(accessBase, post({ payout_batches: !batchesOn }))).payout_batches))}
+              >
+                {batchesOn ? "Turn off" : "Turn on"}
+              </Btn>
+            ) : undefined
+          }
+        >
+          <p className="text-[15px] text-[#C9C9D0]">
+            {batchesOn ? "On. Your API keys can draft payout batches." : "Off. Create an API key first, then an owner can turn this on."}
+            {myRole !== "owner" ? " Only an owner can change this." : ""}
+          </p>
+          <Snippet title="Your server · draft a batch and send your admin to approve it" code={bulk} />
+        </Section>
+      )}
+
       <Section
         title="Show payouts inside your app"
         desc="Your user sees their balance and every payout with a Withdraw button. Withdrawing opens a Loofta page with your logo where they sign in with the email address you paid."
@@ -157,7 +201,7 @@ return Response.json({ token });`;
         <Snippet title="1. Your server · create a token for the signed-in user" code={server} />
         <Snippet title="2. Your page · show the widget (React)" code={react} />
         <Snippet title="Or without React" code={html} />
-        <p className="mt-6 text-[14px] text-[#9C9CA5]">The packages are not on npm yet. Until they are published, use them from the Loofta repository.</p>
+        <p className="mt-6 text-[14px] text-[#9C9CA5]">Install with <span className="font-mono text-[#C9C9D0]">npm install @loofta/pay-sdk @loofta/portal</span>. Full guide in the developer docs.</p>
       </Section>
     </>
   );

@@ -11,6 +11,7 @@ import {
   CreatePartnerDto,
   ImportRecipientsDto,
   InviteMemberDto,
+  SetApiAccessDto,
   UpdatePartnerDto,
   UpdatePartnerSettingsDto,
 } from './dto/partner.dto';
@@ -134,6 +135,19 @@ export class PartnersController {
   @RateLimit(5, 60, 'partners:keys-create')
   createKey(@PrivyUser() user: Caller, @Param('orgId') orgId: string) {
     return this.keys.create(orgId, user.id);
+  }
+
+  @Get(':orgId/api-access')
+  @RateLimit(30, 60, 'partners:api-access-get')
+  getApiAccess(@PrivyUser() user: Caller, @Param('orgId') orgId: string) {
+    return this.keys.getApiAccess(orgId, user.id);
+  }
+
+  @Post(':orgId/api-access')
+  @HttpCode(HttpStatus.OK)
+  @RateLimit(10, 60, 'partners:api-access-set')
+  setApiAccess(@PrivyUser() user: Caller, @Param('orgId') orgId: string, @Body() dto: SetApiAccessDto) {
+    return this.keys.setApiAccess(orgId, user.id, dto.payout_batches);
   }
 
   @Delete(':orgId/api-keys/:keyId')

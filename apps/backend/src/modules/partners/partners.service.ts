@@ -161,6 +161,12 @@ export class PartnersService {
     };
   }
 
+  async orgIdForIntegrator(integratorId: string): Promise<string> {
+    const { data } = await this.supabase.partners.select('org_id').eq('integrator_id', integratorId).maybeSingle();
+    if (!data) throw new NotFoundException('Partner not found.');
+    return data.org_id as string;
+  }
+
   async listMine(userId: string) {
     const { data } = await this.supabase.partnerMembers
       .select('role, partners!inner(org_id, name, logo_url, status)')

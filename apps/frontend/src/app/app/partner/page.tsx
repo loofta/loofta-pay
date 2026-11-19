@@ -130,7 +130,9 @@ function PartnerContent() {
   const emailLogin = useCallback(() => void login({ loginMethods: ["email"], disableSignup: false }), [login]);
   const [orgs, setOrgs] = useState<Org[] | null>(null);
   const [orgId, setOrgId] = useState<string | null>(null);
-  const [tab, setTab] = useState<NavKey>("overview");
+  const wantedTab = params.get("tab");
+  const openBatchId = params.get("batch");
+  const [tab, setTab] = useState<NavKey>(wantedTab === "payouts" && openBatchId ? "payouts" : "overview");
   const [counts, setCounts] = useState<Counts | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -141,7 +143,9 @@ function PartnerContent() {
     try {
       const r = await call<{ partners: Org[] }>("partners/mine");
       setOrgs(r.partners);
-      setOrgId((cur) => cur ?? r.partners[0]?.org_id ?? null);
+      // A link from the partner's own platform names the org and batch to open.
+      const wantedOrg = new URLSearchParams(window.location.search).get("org");
+      setOrgId((cur) => cur ?? r.partners.find((o) => o.org_id === wantedOrg)?.org_id ?? r.partners[0]?.org_id ?? null);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -227,7 +231,7 @@ function PartnerContent() {
           <>
             {tab === "overview" && <OverviewTab orgId={current.org_id} treasury={treasury} counts={counts} go={setTab} />}
             {tab === "wallet" && <WalletTab orgId={current.org_id} myRole={current.role} treasury={treasury} />}
-            {tab === "payouts" && <PayoutsTab orgId={current.org_id} myRole={current.role} myUserId={userId} treasury={treasury} goWallet={() => setTab("wallet")} />}
+            {tab === "payouts" && <PayoutsTab orgId={current.org_id} myRole={current.role} myUserId={userId} treasury={treasury} goWallet={() => setTab("wallet")} openBatchId={openBatchId} />}
             {tab === "activity" && <ActivityTab orgId={current.org_id} />}
             {tab === "recipients" && <RecipientsTab orgId={current.org_id} myRole={current.role} />}
             {tab === "team" && <TeamTab orgId={current.org_id} myRole={current.role} myUserId={userId} />}

@@ -6,6 +6,8 @@ import { isSolanaDevnetFromConfig } from '@/common/solana-cluster-env';
 import { PartnersService } from './partners.service';
 
 export const PARTNER_KEY_SCOPES = ['portal:token'];
+/** Extra scope, off by default: lets the partner's server draft payout batches (never approve or fund them). */
+export const PARTNER_BATCH_SCOPES = ['batches:write'];
 const MAX_ACTIVE_KEYS = 3;
 
 /**
@@ -30,6 +32,24 @@ export class PartnerKeysService {
       .is('revoked_at', null)
       .order('created_at', { ascending: false });
     return (data ?? []).map((k) => ({ id: k.id as string, prefix: k.key_prefix as string, created_at: k.created_at as string }));
+  }
+
+  /** Whether this partner's keys may draft payout batches. Owner only: it widens what a leaked key can do. */
+  async getApiAccess(orgId: string, userId: string) {
+    const { partner } = await this.partners.requireMembership(orgId, userId, 'keys.manage');
+    if (!partner.integrator_id) return { payout_batches: false };
+    const { data } = await this.supabase.integrators.select('scopes').eq('id', partner.integrator_id).maybeSingle();
+    return { payout_batches: ((data?.scopes as string[] | null) ?? []).includes('batches:write') };
+  }
+
+  async setApiAccess(orgId: string, userId: string, payoutBatches: boolean) {
+    const { partner } = await this.partners.requireMembership(orgId, userId, 'treasury.manage');
+    if (!partner.integrator_id) throw new BadRequestException('Create an API key first.');
+    const scopes = payoutBatches ? [...PARTNER_KEY_SCOPES, ...PARTNER_BATCH_SCOPES] : PARTNER_KEY_SCOPES;
+    const { error } = await this.supabase.integrators.update({ scopes }).eq('id', partner.integrator_id);
+    if (error) throw new BadRequestException('Could not save this setting.');
+    await this.partners.audit(partner.id, userId, payoutBatches ? 'api_access.batches_enabled' : 'api_access.batches_disabled');
+    return { payout_batches: payoutBatches };
   }
 
   async create(orgId: string, userId: string) {

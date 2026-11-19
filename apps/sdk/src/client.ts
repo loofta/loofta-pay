@@ -1,7 +1,7 @@
 import { Connection, Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { createTransferCheckedInstruction, getAssociatedTokenAddress } from "@solana/spl-token";
 import bs58 from "bs58";
-import { PayoutsApi, PortalApi, WebhooksApi, type Requester } from "./payouts";
+import { PartnerApi, PayoutsApi, PortalApi, WebhooksApi, type Requester } from "./payouts";
 import type { LooftaPayClientOptions, PayHumanParams, PayHumanResult, CreatePaymentLinkParams, CreatePaymentLinkResult, PaymentLinkStatus } from "./types";
 
 const DEFAULT_BASE_URL = "https://api.loofta.xyz";
@@ -65,6 +65,8 @@ export class LooftaPayClient implements Requester {
 
   /** Bulk payouts (needs an apiKey). */
   readonly payouts: PayoutsApi;
+  /** Pay many people from your partner company wallet (needs a partner apiKey). */
+  readonly partner: PartnerApi;
   /** The payout portal your users see (needs an apiKey). */
   readonly portal: PortalApi;
   /** Webhook setup for payout events (needs an apiKey). */
@@ -79,6 +81,7 @@ export class LooftaPayClient implements Requester {
     this.baseUrl = options.baseUrl || DEFAULT_BASE_URL;
     this.rpcUrl = options.rpcUrl;
     this.payouts = new PayoutsApi(this);
+    this.partner = new PartnerApi(this);
     this.portal = new PortalApi(this);
     this.webhooks = new WebhooksApi(this);
   }

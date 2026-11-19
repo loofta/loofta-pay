@@ -59,9 +59,35 @@ const payHumanTool = createPayHumanTool(client);
   rather than `@x402/svm`'s client (which uses the newer `@solana/kit`/web3.js-v2 ecosystem) —
   keeps this package's dependency footprint small and consistent with the rest of Loofta's stack.
 
-## Partner payouts (bulk, portal, webhooks)
+## Partner payouts from your company wallet
 
-For platforms that pay many people (creators, affiliates, partners). Needs an `apiKey`.
+For platforms with a partner account. Your server drafts a batch of email payouts and sends your admin to
+approve and pay it from the company wallet. An API key can never move money: your team approves the batch and
+your company wallet's signers sign it. Switch on "Pay in bulk from your platform" under Developers in the
+partner portal first (it is off by default).
+
+```ts
+const loofta = new LooftaPayClient({ apiKey: process.env.LOOFTA_API_KEY });
+
+const batch = await loofta.partner.createBatch({
+  idempotencyKey: "2026-11-creator-payouts", // the same key never creates a second batch
+  label: "November creators",
+  rows: [
+    { email: "creator@example.com", amount: 120, externalRef: "inv_881" },
+    { email: "alex@example.com", amount: 40 },
+  ],
+});
+
+redirect(batch.approveUrl); // your admin approves and pays it
+
+const status = await loofta.partner.getBatch(batch.batchId); // pending_approval ... executed
+```
+
+Rows are email addresses, 1 to 100 per batch, $1 to $10,000 each.
+
+## Bulk payouts from your own wallet (bulk, portal, webhooks)
+
+For platforms that pay from a wallet they sign with themselves. Needs an `apiKey`.
 
 ```ts
 import { LooftaPayClient, verifyWebhook } from "@loofta/pay-sdk";
