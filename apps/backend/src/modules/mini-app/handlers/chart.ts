@@ -6,6 +6,7 @@ import { tracker } from "../lib/tracker";
 import { cached, sharedGet, sharedSet } from "../lib/sharedCache";
 import { dexInfo } from "../lib/dex";
 import { recordTick, ticksToCandles } from "../lib/priceTicks";
+import { fixScale, referencePrice } from "../lib/priceScale";
 
 export const dynamic = "force-dynamic";
 
@@ -105,7 +106,7 @@ async function binanceCandles(mint: string, tfKey: string): Promise<Candle[]> {
   }
 }
 
-export async function GET(req: Request) {
+async function chartResponse(req: Request) {
   const sp = new URL(req.url).searchParams;
   const mint = sp.get("mint") ?? "";
   const tfKey = sp.get("tf") ?? "15m";
@@ -162,4 +163,18 @@ export async function GET(req: Request) {
     (v) => v.candles.length > 1,
   );
   return NextResponse.json(data);
+}
+
+/** Same answer as above, with the candles rescaled when a pool reports the price off by a power of ten. */
+export async function GET(req: Request) {
+  const res = await chartResponse(req);
+  try {
+    const body = (await res.clone().json()) as { candles?: Array<{ time: number; open: number; high: number; low: number; close: number }> };
+    const mint = new URL(req.url).searchParams.get("mint") ?? "";
+    if (!body?.candles?.length || !mint) return res;
+    const fixed = fixScale(body.candles, await referencePrice(mint));
+    return fixed === body.candles ? res : Response.json({ ...body, candles: fixed });
+  } catch {
+    return res;
+  }
 }

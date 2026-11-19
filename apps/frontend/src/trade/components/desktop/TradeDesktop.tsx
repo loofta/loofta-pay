@@ -400,10 +400,7 @@ export function TradeDesktop({ initialCoin = null }: { initialCoin?: CoinRef | n
       ) : tab === "memes" && !q ? (
         <div className="-mx-4 md:mx-0">
           <MemepadTab
-            onOpen={(c) => {
-              setSelected({ ...c, kind: "Meme" });
-              setSheet(true);
-            }}
+            onOpen={(c) => openDetail({ ...c, kind: "Meme" })}
             paused={!!detail}
             embedded
             hideStories

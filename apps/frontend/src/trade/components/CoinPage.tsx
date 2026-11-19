@@ -657,7 +657,7 @@ export function CoinPage({ coin, onClose, startSide = "buy" }: { coin: CoinRef; 
 
       {/* pinned trade dock */}
       <div
-        className="absolute inset-x-0 bottom-0 rounded-t-[28px] border-t border-white/10 bg-[#141418] px-4 pt-4"
+        className="absolute inset-x-0 bottom-0 z-30 rounded-t-[28px] border-t border-white/10 bg-[#141418] px-4 pt-4"
         style={{ paddingBottom: "calc(var(--safe-bottom) + 16px)", boxShadow: "0 -20px 40px rgba(0,0,0,0.5)" }}
       >
         {done ? (
