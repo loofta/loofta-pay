@@ -1,6 +1,7 @@
 'use server'
 
 import { NextResponse } from "next/server";
+import { usableJwt } from "@/lib/usableJwt";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
 import { getRefundToForChain } from "@/lib/refundAddresses";
@@ -16,7 +17,7 @@ function getEnv(name: string, fallbacks: string[] = []) {
 }
 
 const ONECLICK_BASE = getEnv("ONECLICK_API_BASE", ["NEXT_PUBLIC_ONECLICK_API_BASE"]) || "https://1click.chaindefuser.com";
-const ONECLICK_JWT = getEnv("ONECLICK_JWT", ["NEXT_PUBLIC_ONECLICK_JWT"]);
+const ONECLICK_JWT = usableJwt(getEnv("ONECLICK_JWT", ["NEXT_PUBLIC_ONECLICK_JWT"]));
 OpenAPI.BASE = ONECLICK_BASE;
 if (ONECLICK_JWT) OpenAPI.TOKEN = ONECLICK_JWT;
 

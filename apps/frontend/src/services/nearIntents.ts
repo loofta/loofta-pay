@@ -38,14 +38,16 @@ export type NearToken = {
 };
 
 import { resolveTokenLogo } from "@/lib/tokenImages";
+import { usableJwt } from "@/lib/usableJwt";
 import { getDefuseAssetIdFor, getIconForAssetId } from "@/lib/tokenlist";
 // Removed getRefundToForChain - now using user-provided refund addresses only
 
 // Configure SDK base/token once
 // Match 1-click examples: https://1click.chaindefuser.com
 OpenAPI.BASE = ONECLICK_API_BASE;
-if (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_ONECLICK_JWT) {
-  OpenAPI.TOKEN = (process as any).env.NEXT_PUBLIC_ONECLICK_JWT;
+const oneClickToken = usableJwt(typeof process !== "undefined" ? (process as any).env?.NEXT_PUBLIC_ONECLICK_JWT : undefined);
+if (oneClickToken) {
+  OpenAPI.TOKEN = oneClickToken;
 }
 
 function mapSdkToken(t: any): NearToken {
