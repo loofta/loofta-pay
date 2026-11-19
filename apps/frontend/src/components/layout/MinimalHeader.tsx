@@ -64,7 +64,7 @@ function MobileMenu({
     { href: "/app/send", label: "Send & Receive", description: "Send and receive payments" },
     { href: "/app/stake", label: "Earn", description: "Earn interest and win prizes every week" },
     { href: "/app/trade", label: "Trade", description: "Trade coins and predictions" },
-    { href: "/rewards", label: "Campaign", description: t('earnSparks') },
+    { href: "/rewards", label: "Campaigns", description: t('earnSparks') },
     { href: TELEGRAM_BOT_URL, label: "Telegram App", description: "Send payments by chat on Telegram", external: true },
     { href: "/app/portfolio", label: "Portfolio", description: "Hold, send, swap and receive any token" },
   ];
@@ -356,7 +356,7 @@ export function MinimalHeader() {
     { href: "/app/send", label: "Send & Receive", active: isSendReceive },
     { href: "/app/stake", label: "Earn", active: isStake },
     { href: "/app/trade", label: "Trade", active: isTrade },
-    { href: "/rewards", label: "Campaign", active: isRewardsActive },
+    { href: "/rewards", label: "Campaigns", active: isRewardsActive },
     { href: "/app/portfolio", label: "Portfolio", active: isWallet },
   ];
 
