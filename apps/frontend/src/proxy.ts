@@ -64,6 +64,11 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL(`${pathname}${request.nextUrl.search}`, "https://pay.loofta.com"));
   }
 
+  // Same for /stake: it lives on the app host only.
+  if (!isAppDomain && !isLocalhost && (pathname === "/stake" || pathname.startsWith("/stake/"))) {
+    return NextResponse.redirect(new URL(`${pathname}${request.nextUrl.search}`, "https://pay.loofta.com"));
+  }
+
   // On localhost, / clashes with the app shell — push it to /home instead
   if (isLocalhost && pathname === "/") {
     return NextResponse.redirect(new URL("/home", request.url));
